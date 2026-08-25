@@ -1421,14 +1421,26 @@ impl Jojobot {
                             rendered["fields_backing"] = backing
                                 .iter()
                                 .map(|(key, from)| {
-                                    (
-                                        key.clone(),
-                                        serde_json::json!({
-                                            "claim": from.fact.as_str(),
-                                            "provenance": from.provenance.as_token(),
-                                            "standing": from.standing.as_token(),
-                                        }),
-                                    )
+                                    let mut backing = serde_json::json!({
+                                        "claim": from.fact.as_str(),
+                                        "provenance": from.provenance.as_token(),
+                                        "standing": from.standing.as_token(),
+                                    });
+                                    // **The caveat rides the value it is about.**
+                                    // A folded value reads as flat fact, and the
+                                    // sentence saying it was estimated sits on a
+                                    // record one hop away with nothing pointing at
+                                    // it — so the page a person reads is the one
+                                    // place it was missing.
+                                    //
+                                    // **Absent when the record carries none**,
+                                    // never an empty string: a key that was always
+                                    // there and always blank reads as a note
+                                    // somebody wrote saying nothing.
+                                    if let Some(note) = &from.note {
+                                        backing["note"] = serde_json::json!(note);
+                                    }
+                                    (key.clone(), backing)
                                 })
                                 .collect::<serde_json::Map<_, _>>()
                                 .into();
@@ -1682,6 +1694,71 @@ mod tests {
                 .as_str()
                 .is_some_and(|note| note.contains("backing")),
             "the answer leaves the backing out and does not say it exists: {object}",
+        );
+    }
+
+    /// 🚨 **The caveat rides the value it is about.**
+    ///
+    /// A record may say why its value is what it is — that a date was
+    /// approximated, what a number counts, what the operator hedged. **Read the
+    /// THING and the values come back folded, and that sentence was one hop
+    /// away with nothing pointing at it**: the page a person actually looks at
+    /// was the one place the caveat was missing, and a value with a caveat read
+    /// as flat fact.
+    ///
+    /// **Paired, and the pair is the whole case.** A value whose record carries
+    /// a note carries it here; a value whose record carries none carries no key
+    /// at all. ⛔️ **The positive alone passes against a build that always emits
+    /// the field**, and an empty string would be worse than the absence — a
+    /// reader cannot tell it from a note somebody wrote saying nothing.
+    #[tokio::test]
+    async fn a_value_whose_record_says_why_carries_that_note_and_one_with_none_carries_no_key() {
+        let jojobot = handler();
+        let sid = writing_as(&jojobot);
+        async fn wrote(jojobot: &Jojobot, sid: &str, key: &str, value: &str, why: Option<&str>) {
+            capture_ok(
+                jojobot,
+                CaptureArgs {
+                    sid: Some(sid.to_string()),
+                    provenance: Some("testimony".into()),
+                    details: why.map(str::to_string),
+                    fields: Some([(key.to_string(), value.to_string())].into_iter().collect()),
+                    ..capture_args("person:alpha", &format!("what the {key} is"))
+                },
+            )
+            .await;
+        }
+        wrote(
+            &jojobot,
+            &sid,
+            "moved_in",
+            "2026-08-15",
+            Some("exact day not given, approximated as mid-summer"),
+        )
+        .await;
+        wrote(&jojobot, &sid, "rent", "950", None).await;
+
+        let read = jojobot
+            .recall(Parameters(RecallArgs {
+                sid: Some(sid),
+                backing: Some(true),
+                facts: None,
+                ..of("person:alpha")
+            }))
+            .await
+            .expect("the read answers");
+        let backing = json_of(&read)["objects"][0]["fields_backing"].clone();
+
+        assert!(
+            backing["moved_in"]["note"]
+                .as_str()
+                .is_some_and(|note| note.contains("approximated")),
+            "the value reads as flat fact and what its record says about it is not here: \
+             {backing}",
+        );
+        assert!(
+            backing["rent"]["note"].is_null(),
+            "a value whose record says nothing carries a note key anyway: {backing}",
         );
     }
 

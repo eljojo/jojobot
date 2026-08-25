@@ -1607,6 +1607,7 @@ pub fn stood_after(
             status: edited.status,
             provenance: edited.provenance,
             standing: edited.standing,
+            note: edited.details.clone(),
         });
     }
     folded_fields(&next, declared)
@@ -1648,6 +1649,7 @@ pub fn stood_after_capture(
             value: Some(value.clone()),
             fact: captured.id.clone(),
             status: captured.status,
+            note: captured.details.clone(),
             provenance: captured.provenance,
             standing: captured.standing,
         });
@@ -2131,6 +2133,14 @@ pub struct KeyWrite {
     /// **How sure anyone was of that record**, the other axis. Both travel with
     /// the write because the write is what a folded value comes from.
     pub standing: Standing,
+    /// **The note that record carries beside the claim**, if it carries one.
+    ///
+    /// A folded value is one sentence out of a record, and the record may say
+    /// why: that a date was approximated, what a number counts, what the
+    /// operator hedged. **The caveat travels with the value or it sits one hop
+    /// away with nothing pointing at it** — and the read a person looks at is
+    /// the one that would be missing it.
+    pub note: Option<String>,
 }
 
 /// **Where a folded value came from, and who stands behind it.**
@@ -2153,6 +2163,12 @@ pub struct FieldBacking {
     pub provenance: Provenance,
     /// How sure anyone was of it.
     pub standing: Standing,
+    /// **What that record says beside the claim**, if anything.
+    ///
+    /// **Absent rather than empty**: a record nobody wrote a note on is not a
+    /// record carrying a note that says nothing, and a reader that met an empty
+    /// string would have to guess which.
+    pub note: Option<String>,
 }
 
 /// **Which write each folded value came from**, over the same rows and by the
@@ -2188,6 +2204,7 @@ pub fn folded_backing(
                         fact: write.fact.clone(),
                         provenance: write.provenance,
                         standing: write.standing,
+                        note: write.note.clone(),
                     },
                 );
             }
@@ -2489,6 +2506,9 @@ pub struct FieldWrite {
     pub provenance: Provenance,
     /// **How sure anyone was of that record.**
     pub standing: Standing,
+    /// **The note that record carries**, if it carries one — see
+    /// [`KeyWrite::note`].
+    pub note: Option<String>,
 }
 
 /// **One write of one claim — the substrate a claim read projects from.**
@@ -2999,6 +3019,7 @@ pub trait Memory: Send + Sync {
                         fact: write.fact.local.clone(),
                         provenance: write.provenance,
                         standing: write.standing,
+                        note: write.note.clone(),
                     },
                 );
             }
@@ -3400,6 +3421,7 @@ mod tests {
         KeyWrite {
             provenance: Provenance::Inference,
             standing: Standing::Open,
+            note: None,
             key: key.to_string(),
             ordinal,
             value: value.map(str::to_string),

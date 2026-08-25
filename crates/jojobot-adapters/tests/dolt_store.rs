@@ -839,6 +839,87 @@ async fn an_edit_does_not_re_stamp_the_claims_own_column() {
     store.stop().await;
 }
 
+/// **A folded value's backing carries the note the record it came from
+/// carries.**
+///
+/// 🚨 **The real store answers this over a DIFFERENT path from the double.**
+/// `DoltMemory` overrides `backing` and folds `KeyWrite`s read off a join; a
+/// store with no override walks `FieldWrite`s instead. **Both produce a
+/// `FieldBacking` and only one of them is exercised by any in-process case**,
+/// so a note that reached the second and not the first would be invisible
+/// everywhere but production.
+///
+/// **Both halves**, because a build that always emits the note satisfies the
+/// positive on its own.
+#[tokio::test]
+async fn a_folded_values_backing_carries_the_note_its_record_carries() {
+    let scratch = Scratch::new("noted");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("noted")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool.clone());
+
+    let subject = EntityId::person("person:noted-alpha");
+    memory
+        .add_entity(NewEntity::new(subject.clone(), "Noted Alpha", "fixture"))
+        .await
+        .expect("add_entity ok")
+        .written()
+        .expect("the guard waves it through");
+
+    let with_a_note = NewFact {
+        details: Some("exact day not given, approximated as mid-summer".into()),
+        fields: [("moved_in".to_string(), "2026-08-15".to_string())]
+            .into_iter()
+            .collect(),
+        ..NewFact::about(subject.clone(), "when they moved in", date(2026, 8, 15))
+    };
+    memory
+        .capture(with_a_note)
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("the guard waves it through");
+
+    let plain = NewFact {
+        fields: [("rent".to_string(), "950".to_string())]
+            .into_iter()
+            .collect(),
+        ..NewFact::about(subject.clone(), "what the rent is", date(2026, 8, 15))
+    };
+    memory
+        .capture(plain)
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("the guard waves it through");
+
+    let backing = memory.backing(&subject).await.expect("backing reads");
+
+    let moved_in = backing
+        .get("moved_in")
+        .expect("the value that has a note is backed");
+    assert_eq!(
+        moved_in.note.as_deref(),
+        Some("exact day not given, approximated as mid-summer"),
+        "the real store drops the note its record carries",
+    );
+    let rent = backing.get("rent").expect("the plain value is backed");
+    assert_eq!(
+        rent.note, None,
+        "a record with no note produced one anyway: {:?}",
+        rent.note,
+    );
+
+    store.stop().await;
+}
+
 /// **A store acting out a day stamps that day**, in the two columns that say
 /// when jojobot took a record in and when a write of it happened.
 ///

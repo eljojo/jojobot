@@ -389,6 +389,11 @@ impl InMemoryMemory {
                     status: carried.status,
                     provenance: carried.provenance,
                     standing: carried.standing,
+                    // **Off the record the write came from**, exactly as the
+                    // real store reads it off the joined row. A fake that left
+                    // it empty would pass every case about a caveat riding a
+                    // folded value on a build where none does.
+                    note: carried.details.clone(),
                 })
             })
             .collect()
@@ -768,6 +773,7 @@ impl Memory for InMemoryMemory {
                     status: carried.status,
                     provenance: carried.provenance,
                     standing: carried.standing,
+                    note: carried.details.clone(),
                 })
             })
             .collect())

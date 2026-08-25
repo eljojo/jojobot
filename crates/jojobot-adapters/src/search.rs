@@ -128,6 +128,8 @@ struct Fields {
     status: Field,
     /// A fact's provenance.
     provenance: Field,
+    /// A fact's standing — the other certainty axis.
+    standing: Field,
     /// A fact's edge shape, and the handle its edge points at.
     edge_shape: Field,
     edge_object: Field,
@@ -181,6 +183,7 @@ impl Fields {
             subject: b.add_text_field("subject", STRING),
             status: b.add_text_field("status", STRING),
             provenance: b.add_text_field("provenance", STRING),
+            standing: b.add_text_field("standing", STRING),
             edge_shape: b.add_text_field("edge_shape", STRING),
             edge_object: b.add_text_field("edge_object", STRING),
             edge_pair: b.add_text_field("edge_pair", STRING),
@@ -958,6 +961,7 @@ impl FullTextIndex {
                 f.subject => fact.subject.to_string(),
                 f.status => fact.status.as_token(),
                 f.provenance => fact.provenance.as_token(),
+                f.standing => fact.standing.as_token(),
                 f.payload => payload_json(&Payload::Fact { fact: fact.clone() })?,
             );
             // Home-doc membership counts alongside the subject column, exactly as
@@ -1114,6 +1118,9 @@ impl FullTextIndex {
         }
         if let Some(provenance) = query.provenance {
             clauses.push(self.must_term(f.provenance, provenance.as_token()));
+        }
+        if let Some(standing) = query.standing {
+            clauses.push(self.must_term(f.standing, standing.as_token()));
         }
         if let Some(subject) = &query.subject {
             clauses.push(self.must_term(f.subject, subject.as_str()));
@@ -2510,6 +2517,7 @@ mod tests {
                     value: Some(value.clone()),
                     fact: fact.id.clone(),
                     status: fact.status,
+                    note: fact.details.clone(),
                     provenance: fact.provenance,
                     standing: fact.standing,
                 });
@@ -3186,6 +3194,57 @@ mod tests {
         assert!(
             hits.iter().all(|h| matches!(h, Hit::Fact { .. })),
             "a fact-only filter must not surface entities or prose: {hits:?}"
+        );
+    }
+
+    /// 🚨 **The hedged ones can be asked for, and the settled ones stay out.**
+    ///
+    /// `standing` was stored, served and documented as the axis answering *how
+    /// sure is anybody*, and nothing could query it: a store full of claims
+    /// somebody hedged could be read one claim at a time and never gathered.
+    /// **It is the question an agent asks about its own work** — which of the
+    /// things I wrote down am I not sure about.
+    ///
+    /// **Paired, and the pair is the whole case.** Asking for `open` returns
+    /// the open one AND leaves the settled one out. ⛔️ **The positive alone
+    /// passes against a filter that ignores its argument**, which is exactly what
+    /// a field that is indexed and never clauses does.
+    #[tokio::test]
+    async fn asking_for_the_open_claims_returns_them_and_leaves_the_settled_ones_out() {
+        let hedged = Fact {
+            standing: Standing::Open,
+            ..fact(
+                "person:alpha",
+                "f1",
+                "alpha may be moving",
+                date(2026, 1, 1),
+            )
+        };
+        let settled = Fact {
+            standing: Standing::Settled,
+            ..fact("person:alpha", "f2", "alpha moved", date(2026, 1, 2))
+        };
+        let index = index_of(vec![scan(
+            "doc-1",
+            Some(entity("person:alpha", "Alpha")),
+            "",
+            vec![hedged, settled],
+        )]);
+
+        let open = index
+            .search(&SearchQuery {
+                standing: Some(Standing::Open),
+                ..SearchQuery::text("alpha")
+            })
+            .expect("search ok");
+        let said = format!("{open:?}");
+        assert!(
+            said.contains("may be moving"),
+            "the hedged claim cannot be asked for: {said}",
+        );
+        assert!(
+            !said.contains("alpha moved"),
+            "a settled claim came back to a caller asking what is still in doubt: {said}",
         );
     }
 
@@ -5049,6 +5108,7 @@ mod tests {
                     fact: jojobot_domain::memory::FactId("f1".into()),
                     provenance: Provenance::Testimony,
                     standing: jojobot_domain::memory::Standing::Settled,
+                    note: None,
                 },
             )]
             .into_iter()

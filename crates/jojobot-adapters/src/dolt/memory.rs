@@ -366,7 +366,8 @@ impl DoltMemory {
         entity: &EntityId,
     ) -> Result<Vec<KeyWrite>, MemoryError> {
         let rows = sqlx::query(
-            "SELECT w.`key`, w.ordinal, w.value, w.fact_id, f.status, f.provenance, f.standing
+            "SELECT w.`key`, w.ordinal, w.value, w.fact_id, f.status, f.provenance, f.standing,
+                     f.details
              FROM field_write w
              JOIN fact f ON f.entity = w.entity AND f.id = w.fact_id
              WHERE w.entity = ?",
@@ -400,6 +401,11 @@ impl DoltMemory {
                         .unwrap_or(""),
                     Provenance::from_token(&row.try_get::<String, _>("provenance").map_err(store)?),
                 ),
+                // **The note off the same row the standing comes from.** A
+                // folded value that dropped it hands back an estimate and the
+                // sentence saying it is an estimate stays on a record nothing
+                // points at.
+                note: row.try_get::<Option<String>, _>("details").map_err(store)?,
             });
         }
         Ok(writes)
@@ -1210,6 +1216,7 @@ impl Memory for DoltMemory {
                 status: fact.status,
                 provenance: fact.provenance,
                 standing: fact.standing,
+                note: fact.details.clone(),
             });
         }
         Ok(history)
