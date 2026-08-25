@@ -31,6 +31,22 @@ pub struct UpdateFactArgs {
     /// day forever.
     #[serde(default)]
     pub date: Option<String>,
+    /// **The day the thing this claim is about HAPPENED**, `YYYY-MM-DD`.
+    ///
+    /// A different question from `date`, and **learning it late is ordinary**:
+    /// a claim written when nobody knew the day gains one here. Leaving it off
+    /// keeps whatever the record says, like every other field this patch does
+    /// not name.
+    #[serde(default)]
+    pub happened_at: Option<String>,
+    /// **Take the happened-on day off**, leaving a claim that says nothing
+    /// about when the thing happened.
+    ///
+    /// Its own flag, because an absent `happened_at` means the patch does not
+    /// mention it. **This is the repair for a day somebody approximated** — the
+    /// guess comes off rather than being replaced by another guess.
+    #[serde(default)]
+    pub clear_happened_at: Option<bool>,
     /// `active` or `superseded`. **A refutation is not a status** — to record
     /// that something is not so, rewrite `content` to state the negative truth;
     /// it stays `active`, because that IS the current truth.
@@ -189,6 +205,12 @@ impl Jojobot {
                 .as_deref()
                 .map(|day| parse_date(Some(day), &self.zone_for(args.sid.as_deref())))
                 .transpose()?,
+            happened_at: args
+                .happened_at
+                .as_deref()
+                .map(|day| parse_date(Some(day), &self.zone_for(args.sid.as_deref())))
+                .transpose()?,
+            clear_happened_at: args.clear_happened_at.unwrap_or(false),
             status: args.status.as_deref().map(parse_status).transpose()?,
             provenance: args
                 .provenance

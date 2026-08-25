@@ -34,6 +34,11 @@ pub(crate) fn fact_json(fact: &Fact, as_of: jiff::civil::Date) -> serde_json::Va
         "standing": fact.standing.as_token(),
         "status": fact.status.as_token(),
         "date": fact.date.to_string(),
+        // **A THIRD question, and absent is its ordinary answer.** `date` is
+        // about the claim and this is about the thing the claim is about. A
+        // claim that says nothing here is complete: nobody gave a day, and a
+        // day nobody gave is not something jojobot invents.
+        "happened_at": fact.happened_at.map(|day| day.to_string()),
         // **The other clock, and it is not the one above.** `date` says when
         // the claim is true OF; this says when jojobot took the record in. They
         // disagree on every backfill and on every booking, and a reader

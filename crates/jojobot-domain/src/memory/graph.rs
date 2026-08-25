@@ -1800,6 +1800,7 @@ mod tests {
             standing: Standing::Settled,
             status: FactStatus::Active,
             date: "2026-08-10".parse().expect("a civil date"),
+            happened_at: None,
             edge: None,
             fields: Default::default(),
             refs: Vec::new(),

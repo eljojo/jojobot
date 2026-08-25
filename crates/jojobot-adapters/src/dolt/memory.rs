@@ -490,9 +490,9 @@ impl DoltMemory {
     ) -> Result<(), MemoryError> {
         sqlx::query(
             "REPLACE INTO fact (entity, id, content, details, provenance, standing, status,
-                                date, edge_shape, edge_object, derived_from, derived_from_id,
-                                inserted_at, stale_after)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                date, happened_at, edge_shape, edge_object, derived_from,
+                                derived_from_id, inserted_at, stale_after)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(fact.home.as_str())
         .bind(fact.id.as_str())
@@ -502,6 +502,7 @@ impl DoltMemory {
         .bind(fact.standing.as_token())
         .bind(fact.status.as_token())
         .bind(fact.date.to_string())
+        .bind(fact.happened_at.map(|d| d.to_string()))
         .bind(fact.edge.as_ref().map(|e| e.shape.as_token()))
         .bind(fact.edge.as_ref().map(|e| e.object.as_str()))
         .bind(fact.derived_from.as_ref().map(|d| d.home.as_str()))
@@ -572,10 +573,10 @@ impl DoltMemory {
         .map_err(store)?;
         sqlx::query(
             "INSERT INTO fact_write (entity, fact_id, ordinal, content, details, provenance,
-                                     standing, status, date, edge_shape, edge_object,
+                                     standing, status, date, happened_at, edge_shape, edge_object,
                                      derived_from, derived_from_id, inserted_at, stale_after,
                                      written_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(fact.home.as_str())
         .bind(fact.id.as_str())
@@ -586,6 +587,7 @@ impl DoltMemory {
         .bind(fact.standing.as_token())
         .bind(fact.status.as_token())
         .bind(fact.date.to_string())
+        .bind(fact.happened_at.map(|d| d.to_string()))
         .bind(fact.edge.as_ref().map(|e| e.shape.as_token()))
         .bind(fact.edge.as_ref().map(|e| e.object.as_str()))
         .bind(fact.derived_from.as_ref().map(|d| d.home.as_str()))
@@ -700,16 +702,16 @@ fn written_keys(fact: &Fact) -> Vec<(String, Option<String>)> {
 /// The columns a fact reads back from, in one place so every read takes the
 /// same ones.
 const FACT_COLUMNS: &str = "entity, id, content, details, provenance, standing, status, date, \
-                            edge_shape, edge_object, derived_from, derived_from_id, inserted_at, \
-                            stale_after";
+                            happened_at, edge_shape, edge_object, derived_from, derived_from_id, \
+                            inserted_at, stale_after";
 
 /// The same columns off the write table, with its key aliased to what
 /// [`DoltMemory::assemble`] reads. **The alias is the whole difference**: a
 /// second assembler would be a second place for the row shape to drift.
 const FACT_WRITE_COLUMNS: &str = "w.entity, w.fact_id AS id, w.content, w.details, w.provenance, \
-                                  w.standing, w.status, w.date, w.edge_shape, w.edge_object, \
-                                  w.derived_from, w.derived_from_id, w.inserted_at, \
-                                  w.stale_after";
+                                  w.standing, w.status, w.date, w.happened_at, w.edge_shape, \
+                                  w.edge_object, w.derived_from, w.derived_from_id, \
+                                  w.inserted_at, w.stale_after";
 
 /// A store failure, in the domain's own words. **The server's account never
 /// crosses** — no SQL, no table names, no product (rule 53); it goes to the log
@@ -842,6 +844,13 @@ fn fact_from(
         standing,
         status,
         date,
+        // **A day nothing can read is a day nobody set.** The claim then says
+        // nothing about when the thing happened, which is the honest reading
+        // and the one this column exists to make possible.
+        happened_at: row
+            .try_get::<Option<String>, _>("happened_at")
+            .map_err(store)?
+            .and_then(|day| day.parse().ok()),
         edge,
         fields,
         refs,
@@ -1044,6 +1053,7 @@ impl Memory for DoltMemory {
             standing,
             status: fact.status,
             date: fact.date,
+            happened_at: fact.happened_at,
             edge: fact.edge,
             fields: fact.fields,
             refs: fact.refs,
@@ -1442,6 +1452,7 @@ impl Memory for DoltMemory {
             standing,
             status: account.status,
             date: account.date,
+            happened_at: account.happened_at,
             edge: account.edge,
             fields: account.fields,
             refs: account.refs,
@@ -1517,6 +1528,7 @@ impl Memory for DoltMemory {
             standing,
             status: account.status,
             date: account.date,
+            happened_at: account.happened_at,
             edge: account.edge,
             fields: account.fields,
             refs: account.refs,

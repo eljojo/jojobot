@@ -644,6 +644,11 @@ fn record_history_json(history: &graph::ClaimHistory) -> serde_json::Value {
                 "written_at": write.written_at.map(|at| at.to_string()),
                 "content": write.content,
                 "date": write.date.to_string(),
+                // **What this write said about when the thing happened.**
+                // Versioned like everything else the write carries, so a claim
+                // that gained a day in a later edit reads apart from one that
+                // always had it — and a guessed day taken back leaves a trace.
+                "happened_at": write.happened_at.map(|day| day.to_string()),
                 "status": write.status.as_token(),
                 "provenance": write.provenance.as_token(),
                 "standing": write.standing.as_token(),

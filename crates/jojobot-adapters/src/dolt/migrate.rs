@@ -359,6 +359,16 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0036_fact_write_moment.sql"),
         leaves: Leaves::Column("fact_write", "written_at"),
     },
+    Migration {
+        version: "0037_fact_happened_at",
+        sql: include_str!("../../migrations/0037_fact_happened_at.sql"),
+        leaves: Leaves::Column("fact", "happened_at"),
+    },
+    Migration {
+        version: "0038_fact_write_happened_at",
+        sql: include_str!("../../migrations/0038_fact_write_happened_at.sql"),
+        leaves: Leaves::Column("fact_write", "happened_at"),
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a
@@ -762,6 +772,8 @@ mod tests {
         "0034_fact_write",
         "0035_fact_write_backfill",
         "0036_fact_write_moment",
+        "0037_fact_happened_at",
+        "0038_fact_write_happened_at",
     ];
 
     /// **A migration set of this test's own, carrying the shape no shipped

@@ -30,12 +30,35 @@ async fn keeping_track_of_bikes() {
     )
     .await;
 
-    // That date went into the only date field a plain claim has, which means
-    // when the claim became known. The two ARE separable: an occurrence goes
-    // under a key of its own on a typed record, where its meaning is the key
-    // name rather than the sentence beside it, and the service in session 2
-    // goes in that way. Nothing forces it, so a claim written this way still
-    // holds one date doing both jobs.
+    // ── the two dates, and the day nobody gave ──────────────────────────────
+    //
+    // A claim carries the day it was MADE. When the thing happened is its own
+    // field, so a purchase two years ago recorded today says both, and neither
+    // stands in for the other.
+    let bought = s
+        .fact_that_happened_on("thing:gravel-bike", "bought it new", "2024-04-11")
+        .await;
+    let read = s.recall("thing:gravel-bike").await;
+    read.claim(&bought)
+        .says("\"happened_at\":\"2024-04-11\"")
+        .never_says("\"date\":\"2024-04-11\"");
+
+    // 🚨 **And the day nobody gave stays absent.** *Over the summer* is not a
+    // day. A claim with one date field forced a writer to approximate one, and
+    // an approximation on a claim carrying the operator's own word reads back
+    // as a day the operator gave. **Saying nothing is the complete answer.**
+    let serviced = s
+        .fact_with_no_day("thing:gravel-bike", "had it serviced over the summer")
+        .await;
+    s.recall("thing:gravel-bike")
+        .await
+        .claim(&serviced)
+        .says("\"happened_at\":null")
+        .says("had it serviced over the summer");
+
+    // An occurrence can also go under a key of its own on a typed record, where
+    // its meaning is the key name; the service in session 2 goes in that way.
+    // Both routes are open and neither is forced.
 
     // Purchase plus five years is arithmetic, and the arithmetic is the
     // session's — but its ANSWER goes in as a value under a key rather than as

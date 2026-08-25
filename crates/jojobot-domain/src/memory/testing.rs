@@ -633,6 +633,7 @@ impl Memory for InMemoryMemory {
             standing,
             status: fact.status,
             date: fact.date,
+            happened_at: fact.happened_at,
             edge: fact.edge,
             fields: fact.fields,
             refs: fact.refs,
@@ -1059,6 +1060,7 @@ impl Memory for InMemoryMemory {
             standing,
             status: account.status,
             date: account.date,
+            happened_at: account.happened_at,
             edge: account.edge,
             fields: account.fields,
             refs: account.refs,
@@ -1154,6 +1156,7 @@ impl Memory for InMemoryMemory {
             standing,
             status: account.status,
             date: account.date,
+            happened_at: account.happened_at,
             edge: account.edge,
             fields: account.fields,
             refs: account.refs,
@@ -1631,6 +1634,127 @@ pub mod contract {
     /// Every field survives capture→recall unchanged and byte-identical —
     /// `derived_from` included, since it is a fact field like any other and
     /// this is the one test that pins ALL of them at once.
+    /// 🚨 **Told "over the summer", a claim records NO day, and that is the
+    /// whole point.**
+    ///
+    /// One date column meant one slot and two meanings, so a writer with a
+    /// vague answer had to pick a day or lose the claim — and picking one puts
+    /// a date nobody stated on a record that may carry the operator's own word.
+    /// **Absent is a complete answer.**
+    ///
+    /// ⛔️ **PAIRED, and the pair is what makes it a split rather than a
+    /// dropped column:** a claim told an actual day still records it, and the
+    /// claim's own date is untouched in both. **Without the second half this
+    /// passes against a store that silently discards every event date.**
+    pub async fn a_claim_can_say_nothing_about_when_the_thing_happened<M: Memory>(store: &M) {
+        let subject = EntityId::person("person:contract-summertime");
+        ensure(store, &subject).await;
+
+        let vague = capture(
+            store,
+            NewFact::about(subject.clone(), "brought the pump back", date(2026, 10, 11)),
+        )
+        .await;
+        assert_eq!(
+            vague.happened_at, None,
+            "a claim nobody gave a day for invented one",
+        );
+        assert_eq!(
+            vague.date,
+            date(2026, 10, 11),
+            "the claim's own date moved when the other one was left off",
+        );
+
+        let dated = capture(
+            store,
+            NewFact {
+                happened_at: Some(date(2026, 6, 14)),
+                ..NewFact::about(subject.clone(), "came to the survey", date(2026, 10, 11))
+            },
+        )
+        .await;
+        assert_eq!(
+            dated.happened_at,
+            Some(date(2026, 6, 14)),
+            "a day the caller was actually given was dropped",
+        );
+        assert_eq!(dated.date, date(2026, 10, 11));
+
+        // Both survive the journey back out of the store, which is the only
+        // thing that says the column exists rather than the value being echoed.
+        assert_eq!(read_back(store, &subject, &vague.id).await, vague);
+        assert_eq!(read_back(store, &subject, &dated.id).await, dated);
+    }
+
+    /// **The day a thing happened is versioned with the rest of the claim.**
+    ///
+    /// A claim is a projection over its writes and each write carries the whole
+    /// claim. **Without this column on the substrate, a claim that GAINED a day
+    /// in a later edit would read exactly like one that always had it** — and
+    /// taking a guessed day back would leave no trace at all, which is the
+    /// repair this split exists to make possible.
+    ///
+    /// **Three writes and three readings**: silent, then dated, then silent
+    /// again. The middle one is what a chain of identical values could not
+    /// produce.
+    pub async fn the_day_a_thing_happened_is_versioned_like_the_rest_of_the_claim<M: Memory>(
+        store: &M,
+    ) {
+        let subject = EntityId::person("person:contract-pumpback");
+        ensure(store, &subject).await;
+
+        let claim = capture(
+            store,
+            NewFact::about(subject.clone(), "brought the pump back", date(2026, 10, 11)),
+        )
+        .await;
+        let address = claim.address();
+
+        // Learned late: an ordinary edit, which is how a day usually arrives.
+        store
+            .update_fact(
+                &address,
+                FactPatch {
+                    happened_at: Some(date(2026, 8, 15)),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("update_fact ok")
+            .written()
+            .expect("the guard waves it through");
+
+        // …and taken back off, because it turned out to be somebody's estimate.
+        store
+            .update_fact(
+                &address,
+                FactPatch {
+                    clear_happened_at: true,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("update_fact ok")
+            .written()
+            .expect("the guard waves it through");
+
+        let chain = store
+            .claim_history(&address)
+            .await
+            .expect("the claim's history reads");
+        let said: Vec<Option<Date>> = chain.iter().map(|w| w.happened_at).collect();
+        assert_eq!(
+            said,
+            vec![None, Some(date(2026, 8, 15)), None],
+            "the substrate did not keep what each write said about the day",
+        );
+
+        // The claim as it stands says nothing, which is what the last write
+        // said — so the projection and the chain agree.
+        let now = read_back(store, &subject, &claim.id).await;
+        assert_eq!(now.happened_at, None);
+    }
+
     pub async fn preserves_all_fields<M: Memory>(store: &M) {
         let subject = EntityId::person("person:contract-fields");
         // A claim that is really there: `derived_from` names one, and naming
@@ -1654,6 +1778,7 @@ pub mod contract {
             standing: Some(Standing::Open),
             status: FactStatus::Active,
             date: date(2026, 3, 9),
+            happened_at: Some(date(2026, 3, 7)),
             edge: None,
             fields: [("seats".to_string(), "2".to_string())]
                 .into_iter()
@@ -1669,6 +1794,10 @@ pub mod contract {
         assert_eq!(captured.provenance, Provenance::Testimony);
         assert_eq!(captured.standing, Standing::Open);
         assert_eq!(captured.date, date(2026, 3, 9));
+        // **The two dates are stored apart and neither takes the other's
+        // value.** A store that kept one column would answer this with the
+        // claim's own day and look correct until somebody read it.
+        assert_eq!(captured.happened_at, Some(date(2026, 3, 7)));
         assert_eq!(captured.fields.get("seats").map(String::as_str), Some("2"));
         assert_eq!(captured.refs, vec![subject.clone()]);
         assert_eq!(captured.derived_from, Some(source));
@@ -9881,6 +10010,8 @@ pub mod contract {
     pub async fn run_all<M: Memory>(store: &M) {
         capture_reads_back(store).await;
         preserves_all_fields(store).await;
+        a_claim_can_say_nothing_about_when_the_thing_happened(store).await;
+        the_day_a_thing_happened_is_versioned_like_the_rest_of_the_claim(store).await;
         derived_from_must_name_a_fact_that_exists(store).await;
         pipe_in_content_round_trips(store).await;
         a_backslash_in_content_round_trips(store).await;

@@ -1,0 +1,11 @@
+-- The same column on the substrate, because every write carries the whole
+-- claim.
+--
+-- A claim is a projection over its writes and each write records everything
+-- the claim said at that moment. A write table without this column could not
+-- say what a write said about it — so correcting the day a thing happened
+-- would read as correcting nothing, and a claim that always carried an event
+-- date could not be told from one that gained it in a later edit.
+--
+-- **Nullable and unfilled**, for the reason the claim's own column is.
+ALTER TABLE fact_write ADD COLUMN happened_at VARCHAR(16) NULL;

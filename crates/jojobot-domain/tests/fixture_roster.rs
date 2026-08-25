@@ -263,6 +263,8 @@ const ROSTER: &[&str] = &[
     "person:contract-alias-borrower",
     "person:contract-alias-owner",
     "person:contract-alpha",
+    "person:contract-pumpback",
+    "person:contract-summertime",
     "person:contract-appended",
     "person:contract-away-talker",
     "person:contract-backing",

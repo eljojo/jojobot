@@ -229,6 +229,7 @@ mod tests {
             standing: FactStanding::Open,
             status: FactStatus::Active,
             date: date(2026, 8, 1),
+            happened_at: None,
             edge: None,
             derived_from: None,
             fields,

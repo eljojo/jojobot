@@ -1,0 +1,20 @@
+-- When the thing a claim is about happened, which is not when the claim was
+-- made.
+--
+-- **One date column meant one slot and two meanings.** A claim carries the day
+-- it is true of and the day somebody said it in the same cell, and three
+-- descriptions of that cell in this codebase disagreed about which. A writer
+-- with one slot and two meanings picks one — and a writer told "over the
+-- summer" picked the event, invented a day for it, and filed the invention on
+-- a claim marked as the operator's own word.
+--
+-- **Nullable, and it starts empty on every existing row.** No backfill is
+-- possible and none is wanted: the existing column holds an event day on some
+-- rows and a recording day on others, and nothing distinguishes them, so
+-- filling this from it would assert an event date for every row that never had
+-- one. **Absent is the honest answer** — a claim that says nothing about when
+-- the thing happened is exactly what "over the summer" should record.
+--
+-- The claim's own date keeps its rows and gains its real name in the migration
+-- that follows this one.
+ALTER TABLE fact ADD COLUMN happened_at VARCHAR(16) NULL;

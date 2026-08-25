@@ -1791,6 +1791,7 @@ mod tests {
             standing: Standing::Open,
             status: FactStatus::Active,
             date: jiff::civil::date(2026, 7, 1),
+            happened_at: None,
             edge: Some(Edge::new(
                 EdgeShape::Membership,
                 EntityId("org:guild".into()),

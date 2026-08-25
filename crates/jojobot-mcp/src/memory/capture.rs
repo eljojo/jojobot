@@ -53,6 +53,16 @@ pub struct CaptureArgs {
     /// The fact's freshness date, `YYYY-MM-DD`. Defaults to today (UTC).
     #[serde(default)]
     pub(crate) date: Option<String>,
+    /// **The day the thing this claim is about HAPPENED**, `YYYY-MM-DD` —
+    /// a different question from `date`, which is about the claim.
+    ///
+    /// ⛔️ **Leave it off unless you were told a day.** *Over the summer* is not
+    /// a day: a claim that says nothing about when the thing happened is a
+    /// complete claim, and approximating one puts a date nobody stated on a
+    /// record that may carry the operator's own authority. **jojobot never
+    /// fills this in.**
+    #[serde(default)]
+    pub(crate) happened_at: Option<String>,
     /// The shape of the edge this fact draws: `location` (object is a place) ·
     /// `membership` (an org) · `attendance` (an event) · `about` (any kind) ·
     /// `connection` (any kind — a link is there and how it relates was not
@@ -467,6 +477,14 @@ impl Jojobot {
             standing: args.standing.as_deref().map(parse_standing).transpose()?,
             status: Default::default(),
             date,
+            // **Only what the caller sent.** No default and no derivation: a
+            // claim that says nothing about when the thing happened says
+            // nothing, which is the whole reason this field is separate.
+            happened_at: args
+                .happened_at
+                .as_deref()
+                .map(|day| parse_date(Some(day), &self.zone_for(args.sid.as_deref())))
+                .transpose()?,
             edge,
             fields,
             refs: args

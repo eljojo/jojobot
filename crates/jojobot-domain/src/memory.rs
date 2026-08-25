@@ -499,6 +499,19 @@ pub struct FactPatch {
     /// day the call is made — the same reason [`Memory::retract`] carries a
     /// date of its own.
     pub date: Option<Date>,
+    /// **The day the thing happened**, when an edit names one. `None` leaves
+    /// whatever the record already says, exactly as every unnamed field does —
+    /// so learning WHEN something happened after the fact is an ordinary edit.
+    pub happened_at: Option<Date>,
+    /// **Take the happened-on day off**, leaving a claim that says nothing
+    /// about when the thing happened.
+    ///
+    /// Its own flag rather than an absent [`FactPatch::happened_at`], for the
+    /// reason [`FactPatch::clear_edge`] is one: absent means the patch does not
+    /// mention it. **And it is the repair for the failure this column exists to
+    /// end** — a day somebody approximated is taken off rather than replaced
+    /// with another guess.
+    pub clear_happened_at: bool,
     /// New provenance. Promoting inference → testimony additionally requires
     /// [`FactPatch::confirmed_by_user`].
     pub provenance: Option<Provenance>,
@@ -1449,6 +1462,14 @@ pub fn apply_fact_patch(fact: &mut Fact, patch: &FactPatch) -> Result<(), Memory
     if let Some(day) = patch.date {
         fact.date = day;
     }
+    // **Set, cleared, or left alone** — three states, because a patch that does
+    // not mention the day must not take it off, and a day somebody guessed has
+    // to be removable without inventing a replacement.
+    if patch.clear_happened_at {
+        fact.happened_at = None;
+    } else if let Some(day) = patch.happened_at {
+        fact.happened_at = Some(day);
+    }
     if let Some(provenance) = patch.provenance {
         fact.provenance = provenance;
     }
@@ -1929,6 +1950,9 @@ pub struct NewFact {
     pub status: FactStatus,
     /// The fact's own freshness stamp, authoritative in the source.
     pub date: Date,
+    /// **The day the thing happened**, when the caller says. `None` is the
+    /// ordinary case and says nothing — see [`Fact::happened_at`].
+    pub happened_at: Option<Date>,
     /// The typed edge this fact draws, if it draws one. Written atomically with
     /// the fact: an edge is never a second, separately-failing write.
     ///
@@ -1963,6 +1987,7 @@ impl NewFact {
             standing: None,
             status: FactStatus::default(),
             date,
+            happened_at: None,
             edge: None,
             fields: BTreeMap::new(),
             refs: Vec::new(),
@@ -1998,6 +2023,17 @@ pub struct Fact {
     /// is not when anybody learned it. See [`Fact::inserted_at`] for the other
     /// clock.
     pub date: Date,
+    /// **The day the thing this claim is about happened**, when anybody said.
+    ///
+    /// ⛔️ **Absent is ordinary and absent is honest.** *Over the summer* is not
+    /// a day, and a writer with nowhere to put it will approximate one — which
+    /// is a date nobody stated, filed on a claim that may be the operator's own
+    /// word. **A claim that says nothing about when the thing happened is a
+    /// complete claim.**
+    ///
+    /// It is the caller's, always: jojobot never derives it, never defaults it,
+    /// and never fills it in from the day the claim was made.
+    pub happened_at: Option<Date>,
     /// **When jojobot took this record in.** Written by the store, never by a
     /// caller, and never edited afterwards.
     ///
@@ -2558,6 +2594,13 @@ pub struct ClaimWrite {
     pub status: FactStatus,
     /// The day it was true of, as this write had it.
     pub date: Date,
+    /// **The day the thing happened, as this write had it** — absent when this
+    /// write said nothing about it.
+    ///
+    /// Versioned like everything else the write carries, or a claim that gained
+    /// an event day in a later edit would read as one that always had it, and
+    /// correcting a guessed day would read as correcting nothing.
+    pub happened_at: Option<Date>,
     /// The edge it drew then, if it drew one.
     pub edge: Option<Edge>,
     /// What it was worked out from, as this write had it.
@@ -2583,6 +2626,7 @@ impl ClaimWrite {
             standing: fact.standing,
             status: fact.status,
             date: fact.date,
+            happened_at: fact.happened_at,
             edge: fact.edge.clone(),
             derived_from: fact.derived_from.clone(),
             stale_after: fact.stale_after,

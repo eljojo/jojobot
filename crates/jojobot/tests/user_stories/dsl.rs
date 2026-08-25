@@ -982,10 +982,9 @@ impl Session {
             .to_string()
     }
 
-    /// A fact carrying a date. **Which date it is, is the whole problem** — the
-    /// one field means when a claim became known, and a caller almost always
-    /// holds a date for when the thing HAPPENED. Rule 101; the answer is
-    /// `happened_at` and `recorded_at` as separate columns, not yet built.
+    /// A fact carrying a date — **the day the CLAIM is about**, which is not
+    /// the day the thing happened. See [`Session::fact_that_happened_on`] and
+    /// [`Session::fact_with_no_day`] for the other question.
     pub async fn fact_on(&self, subject: &str, content: &str, date: &str) {
         self.write(
             &format!("a dated fact about {subject}"),
@@ -996,6 +995,44 @@ impl Session {
             }),
         )
         .await;
+    }
+
+    /// **A claim that says WHEN THE THING HAPPENED**, beside the day the claim
+    /// itself is made. Two questions, two fields.
+    pub async fn fact_that_happened_on(
+        &self,
+        subject: &str,
+        content: &str,
+        happened_at: &str,
+    ) -> String {
+        let body = self
+            .write(
+                &format!("a fact about {subject}, dated when it happened"),
+                "capture",
+                json!({
+                    "subject": subject, "content": content,
+                    "provenance": "testimony", "happened_at": happened_at,
+                }),
+            )
+            .await;
+        address_of(&body)
+    }
+
+    /// **A claim about something whose day nobody gave** — *over the summer*.
+    /// It records no day for the thing, which is the honest answer and the one
+    /// a single date field could not give.
+    pub async fn fact_with_no_day(&self, subject: &str, content: &str) -> String {
+        let body = self
+            .write(
+                &format!("a fact about {subject}, no day given"),
+                "capture",
+                json!({
+                    "subject": subject, "content": content,
+                    "provenance": "testimony",
+                }),
+            )
+            .await;
+        address_of(&body)
     }
 
     /// Something worked out rather than heard. Inference, and it reads back as one.
