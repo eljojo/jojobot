@@ -380,7 +380,20 @@ Shipped and live:
   write**, so a boot that does nothing leaves nothing behind. A session records
   what it is working on, so the offer can tell two of them apart — and a bot
   may have several running at once, because the `sid` is what tells them apart.
-  **A run may state the DAY it is working in, beside its zone, and everything day-grained defaults to it** — every write, every day-grained read, the staleness sweep and the offer window. A call naming its own date still wins, and a run that states no day is answered on the clock in its zone. **jojobot never derives the day and never advances it.** ⚠️ **So `ABANDONED_AFTER` is hours only for a run that states nothing: a run that states days is swept on stated days.** Nothing ever auto-wraps a session: a new one never closes an old one, and
+  **A run may state the DAY it is working in, beside its zone, and everything day-grained defaults to it** — every write, every day-grained read, the staleness sweep and the offer window. A call naming its own date still wins, and a run that states no day is answered on the clock in its zone. **jojobot never derives the day and never advances it.**
+  **AND THE SERVER MAY BE ACTING OUT A DAY OF ITS OWN.** `JOJOBOT_TODAY` sets one
+  day for a whole run and the server's `now` becomes it — the date an undated
+  write gets, when a loop falls due, whether an earlier run has gone quiet, and
+  both stamped columns. **Unset is the real clock.** ⭐ **So *the clock* above is
+  the server's clock rather than the wall clock, and on a simulated instance a
+  run that states nothing is answered on the fiction.** **A day that is no day
+  refuses the boot rather than falling back.**
+  🚨 **IT ANNOUNCES ITSELF at `start_here` and `ping`, and the boot logs it** —
+  an instance acting out a day that did not say so is the silently-wrong-state
+  class, and a real deployment could be handed one and never know. **The boot
+  answer names the day and tells a caller it need not send one, which is
+  narrower than it looks: send `today` only when YOUR day differs from the
+  server's.** ⚠️ **So `ABANDONED_AFTER` is hours only for a run that states nothing: a run that states days is swept on stated days.** Nothing ever auto-wraps a session: a new one never closes an old one, and
   wrapping is initiated from inside, by the bot that owns it. `journal` records
   a beat and moves the focus, `amend_journal` fixes the newest one,
   `wrap_session` folds the still-open
@@ -511,6 +524,20 @@ roles and never an operator.
   **Read that line: a green with no probe line under it means the tool could
   not answer, not that the case is sound.** It roughly doubles the run and it
   never gates the verdict.
+- 🚨 **A FIXTURE THAT WAS INVENTED RATHER THAN OBSERVED WILL PASS WHATEVER THE
+  CODE DOES WITH IT.** A case is only as good as the shape it is fed: hand it a
+  structure the real system never produces and it exercises a world that does
+  not exist. ⛔️ **The failure is silent and it protects the very bug it was
+  written against** — a check that scanned text for a date passed fixtures with
+  no address at all, because scanning text is all it did, and four of its own
+  cases went red the moment it was made to read structure. **Take the shape from
+  something the system actually emitted.** ⭐ **This is the hostile-double rule
+  one layer down: that one says a stand-in must lie where reality lies, this one
+  says the INPUT must look like what reality hands you.**
+  **Read the mutation before you read the verdict, too** — ask what value it
+  changes. A mutation that computes the same thing is a no-op, and the probe
+  above cannot see it: the site executes, a panic there would be noticed, and
+  the tool truthfully reports *depended on* about a change that changed nothing.
 - 🚨 **A constant asserted through itself pins NOTHING.** An assertion whose
   expected value is the same constant the code under test used proves the code
   consistent with itself and says nothing about the VALUE — rename the constant
