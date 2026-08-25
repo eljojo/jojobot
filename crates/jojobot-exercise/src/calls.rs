@@ -11,6 +11,12 @@
 //! one. So the stream goes to disk exactly as the CLI wrote it, beside the
 //! readable transcript and never instead of it — if a renderer is wrong, the
 //! material is still there and the run can be read again.
+//!
+//! ⚠️ **That is what lands in `transcripts/`, which is gitignored, and it is
+//! NOT what the fixtures below are.** A raw stream describes the machine the
+//! run happened on, so a copy of one committed here would carry that machine
+//! into the repository. The fixtures are cut down before they cross — see
+//! [`tests::fixture`], which says what comes out and why.
 
 /// **Where a run's raw stream goes, given where its readable transcript went.**
 ///
@@ -328,10 +334,24 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// The two captures, kept as they came off the CLI and scrubbed of ids,
-    /// paths and cost. **They are the primary source for every expectation
-    /// below** — the shapes here were read out of a real stream rather than
-    /// written from what the format ought to do.
+    /// The recorded captures. **They are the primary source for every
+    /// expectation below** — the shapes here were read out of a real stream
+    /// rather than written from what the format ought to do.
+    ///
+    /// 🚨 **SANITISED, AND NOT REGENERABLE BY RE-RUNNING THE CLI.** A stream
+    /// off the CLI describes the machine it ran on as much as the session: the
+    /// connected MCP servers, the working directory, the messaging socket, the
+    /// installed skills and commands, what the account was billed, when the
+    /// rate limit resets, the wall-clock times, the signature on every thinking
+    /// block. **Every one of those is the operator's environment riding along,
+    /// and this repository carries none of it.** What is kept is the keys the
+    /// readers in this module read, plus the event framing that makes the file
+    /// a stream — nothing else, and paths rewritten to a neutral directory.
+    ///
+    /// **So a fixture is never replaced by pasting a fresh capture in.** Cut
+    /// the new one down first; the gate that says whether it is cut down is
+    /// `a_recorded_session_carries_only_the_keys_its_readers_read`, in
+    /// `jojobot-domain`'s fixture roster suite, which holds the key list.
     fn fixture(name: &str) -> String {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures")

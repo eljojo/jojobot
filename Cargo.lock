@@ -1490,6 +1490,7 @@ dependencies = [
  "jiff",
  "jojobot-domain",
  "serde",
+ "serde_json",
  "thiserror",
  "tokio",
 ]

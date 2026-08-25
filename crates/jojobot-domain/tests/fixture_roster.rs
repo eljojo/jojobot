@@ -11,11 +11,20 @@
 //! No denylist exists anywhere: a list of forbidden names would re-embed the
 //! very strings this gate exists to keep out.
 //!
-//! Scope: handle-shaped text (`kind:slug`) in every `.rs`, `.md` and `.json`
-//! file under `crates/`, and in the markdown at the workspace root, which is
-//! where this repository's prose about itself lives. A comment is read on the
-//! same terms as code and on no wider ones — the handle form is what the scan
-//! looks for, wherever it sits, and comments are where past leaks lived.
+//! Scope: handle-shaped text (`kind:slug`) in every `.rs`, `.md`, `.json` and
+//! `.jsonl` file under `crates/`, and in the markdown at the workspace root,
+//! which is where this repository's prose about itself lives. A comment is read
+//! on the same terms as code and on no wider ones — the handle form is what the
+//! scan looks for, wherever it sits, and comments are where past leaks lived.
+//!
+//! **This file asks a second question of the same corpus, and it is the same
+//! kind of question.** A recorded agent session lands here as `.jsonl`, and
+//! what leaks in one is not a name but a FIELD: the CLI writes the machine it
+//! ran on into the stream — connected servers, working directory, socket,
+//! installed commands, billing — beside the session itself. So a capture is
+//! measured against [`CAPTURE_KEYS`], an allowlist of the keys its readers
+//! read, exactly as a handle is measured against [`ROSTER`]. **Two questions,
+//! one mechanism, one corpus** — and neither is a list of forbidden values.
 //!
 //! **A slug handed to a handle constructor is in scope too**, and it is what
 //! [`no_handle_in_the_workspace_is_built_from_a_bare_slug`] holds: a name given
@@ -30,9 +39,10 @@
 //! **A life specific written in ordinary words passes this gate, because
 //! nothing here is looking for it.** A comment, a doc string or a fixture that
 //! names a real person, place or event in prose carries nothing handle-shaped,
-//! so this suite has no opinion on it. A green run says one thing: no unlisted
-//! handle. It is not a clearance for the text around one. What holds that line
-//! is somebody's attention, and there is no second gate behind it.
+//! so this suite has no opinion on it. A green run says two narrow things: no
+//! unlisted handle, and no capture field outside [`CAPTURE_KEYS`]. It is not a
+//! clearance for the text around either. What holds that line is somebody's
+//! attention, and there is no third gate behind it.
 
 use jojobot_domain::memory::EntityKind;
 use std::fs;
@@ -78,6 +88,11 @@ const ROSTER: &[&str] = &[
     "bot:epsilon",
     "bot:gamm",
     "bot:gamma",
+    // The software's own name, and the one name this repository owns. A
+    // recorded session asked the room to boot as it and the room refused —
+    // which is the whole point of that capture. It names no instance and
+    // nobody's life, so it sits here on the same terms as `bot:assistant`.
+    "bot:jojobot",
     "bot:nobody",
     "bot:otto",
     "bot:worker-1",
@@ -432,6 +447,10 @@ const ROSTER: &[&str] = &[
 /// opens. The recorder points at a disposable collection and writes its own
 /// entities — which is exactly the kind of reasoning that is true until
 /// somebody records against something else.
+///
+/// **`.jsonl` is here for the same reason and it is the newest of them**: a
+/// recorded agent session is a stream of JSON events written straight to disk,
+/// and the handles in it were said by a real model to a real surface.
 fn scanned_sources(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in fs::read_dir(dir).expect("readable source dir") {
         let path = entry.expect("readable dir entry").path();
@@ -442,7 +461,7 @@ fn scanned_sources(dir: &Path, out: &mut Vec<PathBuf>) {
             scanned_sources(&path, out);
         } else if path
             .extension()
-            .is_some_and(|e| e == "rs" || e == "md" || e == "json")
+            .is_some_and(|e| e == "rs" || e == "md" || e == "json" || e == "jsonl")
         {
             out.push(path);
         }
@@ -1379,5 +1398,131 @@ fn the_check_reads_a_commit_for_the_operator_and_one_for_a_character_apart() {
         !unattached.iter().any(|line| line.starts_with("bbbbbbb")),
         "…and a pronoun for a character the block names must pass, or the report above is \
          the check flagging everything rather than working: {unattached:?}"
+    );
+}
+
+/// **The keys a recorded agent session may carry into this repository.**
+///
+/// A capture is written by an agent CLI running on somebody's machine, and the
+/// stream it writes describes that machine as much as the session: which
+/// servers were connected, which directory the run sat in, which socket it
+/// talked over, what the account was billed. **None of that is material — it is
+/// the environment, riding along.** Two captures reached `main` carrying a list
+/// of the operator's own connected products, and nothing here was looking.
+///
+/// So a committed capture is cut down to what the readers under test actually
+/// read, and this is that list. It is an allowlist for the same reason
+/// [`ROSTER`] is one: **a denylist of environment fields re-embeds the very
+/// values it filters and knows nothing about the next field the CLI adds.**
+/// Adding a key is a conscious, reviewed diff, and the question the review asks
+/// is whether a reader reads it.
+///
+/// `model` is the one entry no reader reads. It stays because a recording that
+/// does not say what produced it has lost its provenance, and the model driving
+/// the exercise is this project's own dependency rather than anything about the
+/// machine it ran on.
+const CAPTURE_KEYS: &[&str] = &[
+    "bot",
+    "content",
+    "file_path",
+    "id",
+    "input",
+    "message",
+    "model",
+    "name",
+    "result",
+    "role",
+    "subtype",
+    "text",
+    "thinking",
+    "today",
+    "tool_use_id",
+    "type",
+    "uuid",
+];
+
+/// Every recorded stream committed under `crates/`.
+fn capture_fixtures(root: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    scanned_sources(&root.join("crates"), &mut out);
+    out.retain(|p| p.extension().is_some_and(|e| e == "jsonl"));
+    out
+}
+
+/// Every key at every depth of one JSON value.
+fn keys_in(value: &serde_json::Value, out: &mut std::collections::BTreeSet<String>) {
+    match value {
+        serde_json::Value::Object(fields) => {
+            for (key, held) in fields {
+                out.insert(key.clone());
+                keys_in(held, out);
+            }
+        }
+        serde_json::Value::Array(items) => items.iter().for_each(|item| keys_in(item, out)),
+        _ => {}
+    }
+}
+
+/// 🚨 **A recorded session in this repository carries only the keys a reader
+/// reads, and every key on that list is one some capture carries.**
+///
+/// **Both halves in one read, and the negative alone is worth nothing here.**
+/// "No key outside the list" passes on an empty directory, on a deleted
+/// fixture, and on a file scrubbed down to nothing — every one of which is a
+/// gate that has stopped gating. The positive is what says the scan reached
+/// real recordings and that the list describes them.
+///
+/// **It asks about FIELDS, never values.** A check that hunted for the product
+/// names found in the two captures would be a denylist (rule 106), would
+/// re-embed them, and would say nothing about the next connector the CLI
+/// reports. A key the readers do not read is the environment whatever it holds.
+#[test]
+fn a_recorded_session_carries_only_the_keys_its_readers_read() {
+    let captures = capture_fixtures(&workspace_root());
+    assert!(
+        !captures.is_empty(),
+        "the scan found no recorded streams, so it is measuring nothing",
+    );
+
+    let mut found = std::collections::BTreeSet::new();
+    let mut loose = Vec::new();
+    for capture in &captures {
+        let text = fs::read_to_string(capture).expect("readable capture");
+        for (at, line) in text.lines().enumerate() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let event: serde_json::Value = serde_json::from_str(line).unwrap_or_else(|e| {
+                panic!(
+                    "a capture line nothing can parse: {}:{}: {e}",
+                    capture.display(),
+                    at + 1,
+                )
+            });
+            let mut here = std::collections::BTreeSet::new();
+            keys_in(&event, &mut here);
+            for key in here.iter().filter(|k| !CAPTURE_KEYS.contains(&k.as_str())) {
+                loose.push(format!("{key} in {}:{}", capture.display(), at + 1));
+            }
+            found.extend(here);
+        }
+    }
+    assert!(
+        loose.is_empty(),
+        "keys no reader reads — a capture describes the machine it ran on, so a field \
+         nothing under test consumes is that machine riding into the repo. Cut it, or add \
+         it to CAPTURE_KEYS in a reviewed diff that says which reader wants it:\n{}",
+        loose.join("\n"),
+    );
+
+    let orphaned: Vec<&str> = CAPTURE_KEYS
+        .iter()
+        .copied()
+        .filter(|key| !found.contains(*key))
+        .collect();
+    assert!(
+        orphaned.is_empty(),
+        "keys permitted that no capture carries — the list stops being a description of what \
+         is here and becomes permission granted to nothing:\n{orphaned:?}",
     );
 }

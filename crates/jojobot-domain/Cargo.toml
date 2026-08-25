@@ -29,6 +29,10 @@ testing = []
 
 [dev-dependencies]
 tokio = { workspace = true }
+# serde_json: the capture gate parses recorded agent streams as JSON rather
+# than grepping them, so a key inside a quoted payload is not read as a field.
+# Tests only — the domain itself still touches no wire format.
+serde_json = { workspace = true }
 # This crate's own integration suites use its fake, which the feature above
 # keeps out of a production build.
 jojobot-domain = { path = ".", features = ["testing"] }
