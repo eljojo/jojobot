@@ -200,16 +200,8 @@ impl Jojobot {
         let patch = FactPatch {
             content: args.content,
             details: args.details,
-            recorded_at: args
-                .recorded_at
-                .as_deref()
-                .map(|day| parse_date(Some(day), &self.zone_for(args.sid.as_deref())))
-                .transpose()?,
-            happened_at: args
-                .happened_at
-                .as_deref()
-                .map(|day| parse_date(Some(day), &self.zone_for(args.sid.as_deref())))
-                .transpose()?,
+            recorded_at: parse_date(args.recorded_at.as_deref())?,
+            happened_at: parse_date(args.happened_at.as_deref())?,
             clear_happened_at: args.clear_happened_at.unwrap_or(false),
             status: args.status.as_deref().map(parse_status).transpose()?,
             provenance: args
@@ -221,11 +213,7 @@ impl Jojobot {
             confirmed_by_user: args.confirmed_by_user.unwrap_or(false),
             fields: args.fields.unwrap_or_default(),
             clear_fields: args.clear_fields.unwrap_or_default(),
-            stale_after: args
-                .stale_after
-                .as_deref()
-                .map(|day| parse_date(Some(day), &self.zone_for(args.sid.as_deref())))
-                .transpose()?,
+            stale_after: parse_date(args.stale_after.as_deref())?,
             clear_stale_after: args.clear_stale_after.unwrap_or(false),
             derived_from: args
                 .derived_from

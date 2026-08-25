@@ -492,11 +492,7 @@ impl Jojobot {
             // **Only what the caller sent.** No default and no derivation: a
             // claim that says nothing about when the thing happened says
             // nothing, which is the whole reason this field is separate.
-            happened_at: args
-                .happened_at
-                .as_deref()
-                .map(|day| parse_date(Some(day), &self.zone_for(args.sid.as_deref())))
-                .transpose()?,
+            happened_at: parse_date(args.happened_at.as_deref())?,
             edge,
             fields,
             refs: args
@@ -506,11 +502,7 @@ impl Jojobot {
                 .map(|r| EntityId::person(r.trim()))
                 .collect(),
             derived_from,
-            stale_after: args
-                .stale_after
-                .as_deref()
-                .map(|day| parse_date(Some(day), &self.zone_for(args.sid.as_deref())))
-                .transpose()?,
+            stale_after: parse_date(args.stale_after.as_deref())?,
         };
         // Routed through the declined path rather than straight to the mapper:
         // a fact the validators refuse is a caller mistake, and it comes back

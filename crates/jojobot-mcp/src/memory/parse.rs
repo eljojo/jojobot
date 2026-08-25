@@ -329,24 +329,31 @@ pub(crate) fn parse_zone(raw: Option<&str>) -> Result<jiff::tz::TimeZone, McpErr
     })
 }
 
-/// Parse the date argument, or default to today **in the zone the run
-/// supplied**.
+/// **The day a caller named on a write**, or nothing when it named none.
 ///
-/// The domain stays clock-free: it takes the day it is asked about. This is
-/// where a caller that named no day is told which day that is, and the frame is
-/// the session's rather than the server's — two runs in different zones
-/// legitimately disagree about what today is, and that is the caller's frame
-/// working rather than a fault.
-pub(crate) fn parse_date(
-    raw: Option<&str>,
-    zone: &jiff::tz::TimeZone,
-) -> Result<jiff::civil::Date, McpError> {
-    match raw.map(str::trim) {
-        None | Some("") => Ok(jiff::Timestamp::now().to_zoned(zone.clone()).date()),
-        Some(s) => s.parse().map_err(|e| {
-            McpError::invalid_params(format!("date must be YYYY-MM-DD, got '{s}': {e}"), None)
-        }),
-    }
+/// 🚨 **An empty string is naming none, and this is the only place that is
+/// decided.** An empty string is an ordinary way for a client to serialise an
+/// optional field it has nothing for, so it is answered exactly as an absent
+/// argument is — and every date argument on every write verb comes through
+/// here to be told so. A filter at each call site is what produced the defect
+/// this replaces: one write path stripped empties before the parser, its
+/// neighbours did not, and the same empty string was answered three ways
+/// depending on which argument it landed in.
+///
+/// ⛔️ **Nothing is filled in here.** What an unnamed day means is not the
+/// parser's to say: on a write it is the run's frame ([`Jojobot::dated`]), and
+/// on a field like `happened_at` it is silence, because a claim that says
+/// nothing about when the thing happened says nothing. Reaching for the wall
+/// clock inside the parser bypassed both — a server acting out a day stamped
+/// records with the day the run really executed, which is a date nobody
+/// uttered.
+pub(crate) fn parse_date(raw: Option<&str>) -> Result<Option<jiff::civil::Date>, McpError> {
+    let Some(named) = raw.map(str::trim).filter(|day| !day.is_empty()) else {
+        return Ok(None);
+    };
+    named.parse().map(Some).map_err(|e| {
+        McpError::invalid_params(format!("date must be YYYY-MM-DD, got '{named}': {e}"), None)
+    })
 }
 
 #[cfg(test)]
@@ -397,6 +404,7 @@ mod tests {
 
     use crate::harness::*;
     use crate::memory::testing::*;
+    use jojobot_domain::clock::Clock;
 
     /// **Half an edge is a misuse, and misuses are answers here too.** Same
     /// class as `resume` without a `bot`: `shape` and `object` each parse, the
@@ -481,5 +489,201 @@ mod tests {
         );
         let wrong = named_bot(Some("person:milhouse")).expect_err("another kind is refused");
         assert_eq!(wrong.code, ErrorCode::INVALID_PARAMS);
+    }
+
+    /// **A date argument sent as an empty string is the argument NOT sent** —
+    /// on every verb that takes one.
+    ///
+    /// 🚨 An empty string is an ordinary way for a client to serialise an
+    /// optional field it has nothing for. A parser that read it as "no date,
+    /// so fill one in" reached for the WALL CLOCK rather than the frame the
+    /// run is standing in, so a server acting out a day stamped the record
+    /// with the day the run really executed — a date nobody uttered, on a
+    /// record carrying whatever authority its writer had. That is the
+    /// invented-date class arriving through the argument nobody was watching.
+    ///
+    /// **The coverage is what made it hard to see**: `capture`'s `recorded_at`
+    /// went through [`Jojobot::dated`], which filters empties, and its two
+    /// neighbours went straight to the parser; `update_fact` sent all three
+    /// straight. The same empty string was answered three different ways
+    /// depending on which argument it landed in. So this sends one to EVERY
+    /// date argument on both verbs rather than to the one that was found.
+    ///
+    /// **Paired in the same read**, because a negative alone passes on a fix
+    /// that ignored the argument entirely: a date the caller NAMES still wins,
+    /// and an argument the caller OMITS still answers in the run's frame.
+    #[tokio::test]
+    async fn an_empty_date_argument_is_no_date_argument_on_every_verb_that_takes_one() {
+        /// The day this server is acting out.
+        const JUNE: &str = "2026-06-01";
+        /// A day a caller names, well away from June and from any real today.
+        const NAMED: &str = "2026-03-04";
+        let jojobot = handler().on_clock(Clock::stating(JUNE.parse().expect("a day")));
+
+        // ── capture: every date argument, empty ──────────────────────────
+        let blank = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                recorded_at: Some(String::new()),
+                // Whitespace, because a client that trimmed nothing sends this
+                // and it is as empty as the one above.
+                happened_at: Some("   ".into()),
+                stale_after: Some(String::new()),
+                ..capture_args("alpha", "the kiln reached temperature")
+            },
+        )
+        .await;
+        assert_eq!(
+            blank["recorded_at"], JUNE,
+            "an empty recorded_at is the day the run states, never the day the run ran: {blank}"
+        );
+        assert!(
+            blank["happened_at"].is_null(),
+            "an empty happened_at says nothing about when it happened: {blank}"
+        );
+        assert!(
+            blank["stale_after"].is_null(),
+            "an empty stale_after puts no expiry on the claim: {blank}"
+        );
+
+        // ── capture: the same arguments, named ───────────────────────────
+        let named = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                recorded_at: Some(NAMED.into()),
+                happened_at: Some(NAMED.into()),
+                stale_after: Some(NAMED.into()),
+                ..capture_args("alpha", "the glaze was mixed")
+            },
+        )
+        .await;
+        assert_eq!(named["recorded_at"], NAMED, "a named date wins: {named}");
+        assert_eq!(named["happened_at"], NAMED, "…on each of them: {named}");
+        assert_eq!(named["stale_after"], NAMED, "…and on the third: {named}");
+
+        // ── capture: the same arguments, omitted ─────────────────────────
+        let omitted = capture_ok(&jojobot, capture_args("alpha", "the shelf was loaded")).await;
+        assert_eq!(
+            omitted["recorded_at"], JUNE,
+            "an omitted recorded_at is the run's day: {omitted}"
+        );
+        assert!(
+            omitted["happened_at"].is_null(),
+            "an omitted happened_at says nothing: {omitted}"
+        );
+
+        // ── update_fact: every date argument, empty ──────────────────────
+        let address = address_of(&blank);
+        let patched = json_of(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    recorded_at: Some(String::new()),
+                    happened_at: Some(String::new()),
+                    stale_after: Some("  ".into()),
+                    ..update_args(&address)
+                }))
+                .await
+                .expect("update ok"),
+        );
+        assert_eq!(
+            patched["recorded_at"], JUNE,
+            "an empty recorded_at changes nothing, so the run's day stands: {patched}"
+        );
+        assert!(
+            patched["happened_at"].is_null(),
+            "an empty happened_at does not invent one: {patched}"
+        );
+        assert!(
+            patched["stale_after"].is_null(),
+            "an empty stale_after does not invent an expiry: {patched}"
+        );
+
+        // ── update_fact: named, then omitted ─────────────────────────────
+        let renamed = json_of(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    recorded_at: Some(NAMED.into()),
+                    happened_at: Some(NAMED.into()),
+                    ..update_args(&address)
+                }))
+                .await
+                .expect("update ok"),
+        );
+        assert_eq!(
+            renamed["recorded_at"], NAMED,
+            "a named date wins: {renamed}"
+        );
+        assert_eq!(renamed["happened_at"], NAMED, "…on both: {renamed}");
+
+        let untouched = json_of(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    content: Some("the kiln held temperature".into()),
+                    ..update_args(&address)
+                }))
+                .await
+                .expect("update ok"),
+        );
+        assert_eq!(
+            untouched["recorded_at"], NAMED,
+            "an omitted recorded_at leaves the one that is there: {untouched}"
+        );
+        assert_eq!(
+            untouched["happened_at"], NAMED,
+            "…and so does an omitted happened_at: {untouched}"
+        );
+    }
+
+    /// **The control: a server nobody told a day to answers exactly as it
+    /// always did.**
+    ///
+    /// The sabotage that matters here is the opposite one — a fictional clock
+    /// leaking into an ordinary run. Every instance is this one, so an empty
+    /// argument on it must still land on the wall clock, which is what an
+    /// absent one has always done.
+    #[tokio::test]
+    async fn an_ordinary_server_dates_a_write_on_its_own_clock() {
+        let jojobot = handler();
+        let today = jiff::Timestamp::now()
+            .to_zoned(jiff::tz::TimeZone::UTC)
+            .date()
+            .to_string();
+
+        let omitted = capture_ok(
+            &jojobot,
+            capture_args("alpha", "the kiln reached temperature"),
+        )
+        .await;
+        assert_eq!(
+            omitted["recorded_at"], today,
+            "an omitted recorded_at is today on the clock: {omitted}"
+        );
+
+        let blank = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                recorded_at: Some(String::new()),
+                ..capture_args("alpha", "the glaze was mixed")
+            },
+        )
+        .await;
+        assert_eq!(
+            blank["recorded_at"], today,
+            "an empty recorded_at is answered the way an absent one is, and here that is the \
+             clock: {blank}"
+        );
+
+        let named = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                recorded_at: Some("2026-03-04".into()),
+                ..capture_args("alpha", "the shelf was loaded")
+            },
+        )
+        .await;
+        assert_eq!(
+            named["recorded_at"], "2026-03-04",
+            "a named date wins on an ordinary server too: {named}"
+        );
     }
 }

@@ -159,21 +159,6 @@ impl Jojobot {
         }))
     }
 
-    /// **The zone a call resolves days in**, from the run that carries the
-    /// handle.
-    ///
-    /// A call with no handle, or one this process is not holding, gets the
-    /// fallback. Both are already refused by [`Jojobot::identified`] and
-    /// [`Jojobot::attributable`] where carrying a good handle is required, so
-    /// this never decides whether a call is allowed — only which frame answers
-    /// it.
-    pub(crate) fn zone_for(&self, sid: Option<&str>) -> jiff::tz::TimeZone {
-        match self.caller(sid) {
-            Ok(Some(caller)) => caller.zone(),
-            _ => jiff::tz::TimeZone::UTC,
-        }
-    }
-
     /// **Which day this call is about**, in the caller's own frame: the date
     /// they named, else the day their run stated at the door, else the day
     /// this server is standing in — which is today on the clock in their zone
@@ -191,23 +176,31 @@ impl Jojobot {
     /// for. **A run that stated no day still gets the clock**, so the frame
     /// stays an option rather than a requirement.
     ///
-    /// A handle this process is not holding contributes no frame, exactly as
-    /// [`Jojobot::zone_for`] answers one: whether such a call is allowed is
-    /// decided before this, never here.
+    /// A handle this process is not holding contributes no frame, and gets the
+    /// fallback zone: whether such a call is allowed is decided before this, by
+    /// [`Jojobot::identified`] and [`Jojobot::attributable`], never here.
     pub(crate) fn dated(
         &self,
         named: Option<&str>,
         sid: Option<&str>,
     ) -> Result<jiff::civil::Date, McpError> {
         let caller = self.caller(sid).ok().flatten();
+        // **The zone the caller's own run resolves days in**, read off the
+        // caller already in hand rather than looked up again — this is the only
+        // thing left that needs one, now that naming no day is answered by a
+        // frame rather than by a clock reading.
         let zone = caller
             .as_ref()
             .map_or(jiff::tz::TimeZone::UTC, Caller::zone);
+        // **Emptiness is settled by the parser, not here** — see
+        // [`crate::memory::parse::parse_date`]. A second filter at this call
+        // site is how the arguments beside this one ended up answering the
+        // same empty string differently.
         match (
-            named.map(str::trim).filter(|day| !day.is_empty()),
+            crate::memory::parse::parse_date(named)?,
             caller.and_then(|caller| caller.day),
         ) {
-            (Some(named), _) => crate::memory::parse::parse_date(Some(named), &zone),
+            (Some(named), _) => Ok(named),
             (None, Some(stated)) => Ok(stated),
             (None, None) => Ok(self.clock().today_in(&zone)),
         }
