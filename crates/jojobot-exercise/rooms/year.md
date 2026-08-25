@@ -350,7 +350,7 @@ say     August: nothing on the club carries this sitting's own day, so the one t
 
 **Session: fresh.** **Day: 2026-09-13.**
 
-**Writes about an earlier day.** The pump came back at the survey in June, so
+The pump came back at the survey in June, so
 the record belongs on the June day and not on this sitting's own. The run
 generates no day assertion here and the lock below names the day instead.
 

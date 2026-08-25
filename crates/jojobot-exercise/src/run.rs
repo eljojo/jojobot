@@ -915,17 +915,6 @@ pub fn days_claimed(playbook: &crate::playbook::Playbook) -> Vec<Box<dyn Expecta
             if phase.read_this {
                 return None;
             }
-            // ⛔️ **A sitting whose subject is an earlier day does not write
-            // under its own**, and the room says which sittings those are.
-            // September answers what happened to a thing lent in February by
-            // recording the day it came back, which is the correct move: a date
-            // says when a claim is TRUE OF rather than when somebody typed it.
-            // Asserting the sitting's own day there marks the right answer a
-            // failure. The day it does write under is locked in the room, where
-            // the author can name it.
-            if phase.about_an_earlier_day {
-                return None;
-            }
             let day = phase.day.clone()?;
             Some(Box::new(DayClaimed {
                 name: format!("{} — the sitting claimed {day}", phase_key(&phase.name)),

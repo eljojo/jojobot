@@ -516,6 +516,30 @@ async fn september(room: &Surface, sid: &str) {
     .await;
 }
 
+/// **A September that thinks it is June.**
+///
+/// The fault the day assertion exists for, and the one the exemption used to
+/// hide: a sitting told in prose that it is September, whose writes land under
+/// some other day. **Nothing else in the run fails** — the prose is in period,
+/// the claim is right, and the year quietly collapses.
+///
+/// ⚠️ **It is played by booting in the wrong day rather than by naming one on
+/// the write.** A run's day is where a claim's day now comes from, so sitting
+/// in the wrong day IS the fault; naming a day on the call is a different
+/// thing and one the surface is about to refuse.
+async fn september_sits_in_the_wrong_day(room: &Surface, _sid: &str) {
+    let confused = sitting(room, "2026-06-14").await;
+    did(
+        room,
+        &confused,
+        "capture",
+        json!({"subject": "thing:floor-pump", "content": "came back at the survey",
+               "provenance": "testimony", "happened_at": "2026-06-14",
+               "shape": "connection", "object": "person:ralph"}),
+    )
+    .await;
+}
+
 async fn october(room: &Surface, sid: &str) {
     did(
         room,
@@ -753,6 +777,7 @@ async fn work_the_year(
                 5 => june_writes_the_turn_by_hand(room, sid).await,
                 12 => late_november_writes_the_turn_by_hand(room, sid).await,
                 1 => february_records_no_holder(room, sid).await,
+                8 => september_sits_in_the_wrong_day(room, sid).await,
                 13 => december_corrects_a_claim_nobody_questioned(room, sid).await,
                 14 => later_december_answers_from_the_claim_as_it_stands(room, sid).await,
                 _ => panic!("no guilty variant is written for sitting {at}"),
@@ -1151,18 +1176,21 @@ async fn every_assertion_a_run_makes_holds_once_the_year_is_worked() {
             missed.push(outcome.saying);
         }
     }
-    assert_eq!(
-        asked, 12,
-        "the year generates one assertion per dated sitting, less the two a person reads and \
-         September, which writes about the day the pump came back — and this asked about \
-         {asked}",
-    );
     assert!(
         missed.is_empty(),
         "a run of this year would fail {} of its generated date assertions, so it is not \
          winnable by anybody: {}",
         missed.len(),
         missed.join("\n  "),
+    );
+    // ⚠️ **The count comes after the failures, and the order is load-bearing.**
+    // It is a calibration: it moves whenever a sitting is added or an exemption
+    // comes out, so asserting it first masks the assertion underneath — the
+    // case stops before saying which sitting failed and why.
+    assert_eq!(
+        asked, 13,
+        "the year generates one assertion per dated sitting, less the two a person reads — and \
+         this asked about {asked}",
     );
 }
 
@@ -1619,5 +1647,40 @@ async fn the_pairings_claim_is_one_the_year_writes_once_and_the_old_one_was_not(
         writes("person:milhouse").await > 1,
         "the subject the lock used to read carries one claim, so the address it named was safe \
          after all and this case is measuring nothing",
+    );
+}
+
+/// 🚨 **September is graded like every other sitting now, and it still catches
+/// a sitting in the wrong day.**
+///
+/// The room used to exempt it by hand: it records something true of June while
+/// sitting in September, and one column carried both meanings, so its own day
+/// never reached the record. **The split ended that** — the day it writes under
+/// and the day the thing happened are different fields — **and the exemption
+/// was dead before this removed it.**
+///
+/// ⛔️ **Which is exactly why the pairing matters.** A marker removed because
+/// the check can no longer catch anything looks identical to a marker removed
+/// because the check no longer needs it.
+#[tokio::test]
+async fn september_is_graded_and_a_sitting_in_the_wrong_day_still_fails() {
+    let year = room_document();
+    let (_room, surface) = furnished().await;
+    let confused = work_the_year(&surface, &year, &WORKED, &[8]).await;
+    let seen = Observed {
+        room: &surface,
+        boundaries: &confused,
+    };
+    let mut missed = Vec::new();
+    for dated in days_claimed(&year) {
+        let outcome = dated.check(&seen).await;
+        if !outcome.held && outcome.applies {
+            missed.push(outcome.name.clone());
+        }
+    }
+    assert!(
+        missed.iter().any(|name| name.starts_with("Phase 9")),
+        "a September that wrote under June was not caught, so taking its exemption out left a \
+         check with nothing to catch: {missed:?}",
     );
 }
