@@ -594,6 +594,30 @@ async fn later_december_answers_from_the_claim_as_it_stands(room: &Surface, sid:
     .await;
 }
 
+/// **A later December that writes the old wording inside a fuller sentence.**
+///
+/// What a real sitting did: it answered the question and said more than the
+/// minimum — the old wording, plus when it was recorded and when it was put
+/// right. **It is a better answer than the bare one**, and a needle demanding
+/// the value BE the old wording scored it as not having answered at all.
+///
+/// ⚠️ **Called directly rather than through the guilty table**, because that
+/// table's index is the sitting's own and sitting 14 already has a variant. A
+/// second entry there would have ADDED this write beside the honest one rather
+/// than replacing it — which is what a first version did, and the lock then
+/// held on the honest value while the case claimed to be measuring this one.
+async fn later_december_writes_a_fuller_sentence(room: &Surface, sid: &str) {
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "org:north-trail-club", "content": "the record was corrected during the year",
+               "provenance": "inference", "date": "2026-12-20",
+               "fields": {"was": "The North Trail Club meets on Tuesdays (recorded 2026-03-15, corrected 2026-07-05)"}}),
+    )
+    .await;
+}
+
 /// **A December that rewrites a claim nobody raised.**
 ///
 /// What the pairing is for: it puts a second write behind a claim no sitting
@@ -604,7 +628,7 @@ async fn december_corrects_a_claim_nobody_questioned(room: &Surface, sid: &str) 
         room,
         sid,
         "update_fact",
-        json!({"address": "person:milhouse#f2", "content": "rides with the club most weeks",
+        json!({"address": "person:bart#f1", "content": "joined the club in the autumn",
                "date": "2026-12-13"}),
     )
     .await;
@@ -1409,5 +1433,108 @@ async fn no_lock_here_rests_on_a_needle_that_matches_somewhere_else() {
         summary.ambiguous, 2,
         "the walk sees a different number of ambiguous needles than the hand-check did, so it is \
          reading the answer differently",
+    );
+}
+
+/// ⛔️ **No lock in this room names the loop's handle.**
+///
+/// The room says it four lines above the sitting that opens the loop: January
+/// invents the name, so no lock may name it. **A lock did**, and a run whose
+/// January called the loop something else failed for the name rather than for
+/// the claim it was asked about.
+///
+/// ⭐ **The rule was written down and broken anyway**, so it is asked here
+/// rather than left to a reader of the document.
+#[test]
+fn no_lock_names_the_loop_the_occupant_invents() {
+    let locks = jojobot_exercise::lock::locks_of(expectations::YEAR_ROOM);
+    let named: Vec<&str> = locks
+        .iter()
+        .filter_map(|lock| lock.asked())
+        .filter(|(_, args)| args.contains("rhythm:"))
+        .map(|(_, args)| args)
+        .collect();
+    assert!(
+        named.is_empty(),
+        "a lock selects the loop by a handle the occupant invents, so a run that named it \
+         anything else fails here for the name rather than for the claim: {named:?}",
+    );
+}
+
+/// 🚨 **A sitting that says MORE than the minimum still satisfies the trace
+/// lock.**
+///
+/// The needle used to demand the value BE the old wording. A real sitting wrote
+/// the old wording inside a fuller sentence — when it was recorded, when it was
+/// put right — and was scored as not having answered.
+///
+/// **Paired, and the pairing is the whole risk here:** pinning the key rather
+/// than the value must not become pinning nothing. **A sitting that answers
+/// from the claim as it stands still fails.**
+#[tokio::test]
+async fn a_fuller_answer_satisfies_the_trace_lock_and_a_wrong_one_still_does_not() {
+    // **The year without its last sitting**, then this sitting played by hand.
+    // The lock reads the finished room, so a write after the boundaries are
+    // taken is the same to it.
+    const WITHOUT_LATER_DECEMBER: [usize; 12] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12];
+    let (_room, surface, sid) = furnished().await;
+    let fuller = work_the_year(
+        &surface,
+        &sid,
+        &room_document(),
+        &WITHOUT_LATER_DECEMBER,
+        &[],
+    )
+    .await;
+    later_december_writes_a_fuller_sentence(&surface, &sid).await;
+    let judged = judge_all(&surface, &fuller).await;
+    assert!(
+        judged[LATE_DECEMBER[0]].held,
+        "a sitting that wrote the old wording inside a fuller sentence was scored as not having \
+         written it: {}",
+        saying(&judged),
+    );
+
+    let (_room, surface, sid) = furnished().await;
+    let wrong = work_the_year(&surface, &sid, &room_document(), &WORKED, &[14]).await;
+    let judged = judge_all(&surface, &wrong).await;
+    assert!(
+        !judged[LATE_DECEMBER[0]].held,
+        "the needle was loosened until a sitting answering from the claim as it stands passes: {}",
+        saying(&judged),
+    );
+}
+
+/// ⚠️ **The claim the pairing reads is one the year never writes twice.**
+///
+/// A record's address is handed out in write order, which the occupant
+/// controls, so an address only means the same claim on a subject carrying
+/// ONE. **The subject this lock used to name gains a scripted second write** —
+/// April supersedes a claim on it — so the room guaranteed the answer the lock
+/// calls a fault.
+#[tokio::test]
+async fn the_pairings_claim_is_one_the_year_writes_once_and_the_old_one_was_not() {
+    let (_room, surface, sid) = furnished().await;
+    let _ = worked_the_year(&surface, &sid).await;
+    let writes = async |subject: &str| -> usize {
+        let read = surface
+            .call("recall", json!({"subject": subject, "facts": true}))
+            .await;
+        let parsed: Value = serde_json::from_str(&read).expect("json");
+        parsed["objects"][0]["facts"]
+            .as_array()
+            .map(|facts| facts.len())
+            .unwrap_or(0)
+    };
+    assert_eq!(
+        writes("person:bart").await,
+        1,
+        "the subject this lock reads gained more than the one claim its sitting writes, so its \
+         address no longer means what the lock means by it",
+    );
+    assert!(
+        writes("person:milhouse").await > 1,
+        "the subject the lock used to read carries one claim, so the address it named was safe \
+         after all and this case is measuring nothing",
     );
 }

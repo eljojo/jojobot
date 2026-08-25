@@ -531,7 +531,11 @@ is, and it must not.**
 #
 # **This is not a second copy of the conversion rule**, which is held where it
 # lives. It says this room's own record carries what December reads.
-recall {"subject": "rhythm:chain-check", "facts": true}
+# ⛔️ **Selected by KIND, because the handle is the occupant's own word.** The
+# room says so four lines above the lock below: January invents the name, so no
+# lock may name it. This one did, and a run whose January called the loop
+# something else failed here for the name rather than for the claim.
+recall {"kind": "rhythm", "facts": true}
 at least 2 of "provenance":"inference"
 say     late November: the year's turns are not on file as derivations, so they were written by hand rather than checked in, and December has nothing to notice about what the loop's standing rests on
 
@@ -590,8 +594,14 @@ said I would do*, beyond the pump, which came back.
 # here, and a sitting that guesses writes something else. **The key is named by
 # the operator**, for the reason the ledger room gives: a lock on a key the
 # occupant invents measures which word the occupant chose.
+# ⚠️ **The KEY is the operator's word and the VALUE is the occupant's.** A
+# needle demanding the value BE the old wording scored a sitting that wrote the
+# old wording inside a fuller sentence as not having written it at all — and
+# this room already says a needle in anybody's prose measures whoever wrote the
+# needle. **So: the key is there, and the old wording is in what it holds.**
 recall {"subject": "org:north-trail-club"}
-carries "was":"meets on Tuesdays"
+carries "was":"
+carries meets on Tuesdays
 say     later December: what the claim used to say is not on the record, so either the sitting never reached the correction's own history or it answered from the claim as it stands
 
 # 🚨 **THE PAIRING, AND IT CARRIES THE WEIGHT.** A lock that only asks whether
@@ -608,7 +618,15 @@ say     later December: what the claim used to say is not on the record, so eith
 # on every read of one object whatever the trace says. **The first draft of this
 # lock was satisfied by a claim carrying two writes.** `nth` is on the writes
 # and nowhere else.
-recall {"subject": "person:milhouse", "history_record": "person:milhouse#f2"}
+# ⚠️ **A claim the year never writes twice, and the address has to be stable.**
+# A record's address is handed out in write order, which the occupant controls,
+# so an address only means the same claim on a subject carrying ONE. April
+# supersedes a claim on the subject this lock used to name — a scripted write,
+# so the room guaranteed a second one — and `"nth":2` was the correct answer.
+# **Bart gains one claim, in the sitting that stands him up, and nothing in the
+# year touches it again**; the lock beside that sitting fails first if it is
+# missing, so a gap is reported where it happened.
+recall {"subject": "person:bart", "history_record": "person:bart#f1"}
 carries "nth":1
 lacks   "nth":2
 say     later December: a claim nobody ever corrected comes back carrying more than its own first write, so the trace says jojobot changed its mind about something it never did

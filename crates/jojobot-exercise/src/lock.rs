@@ -135,6 +135,16 @@ impl std::fmt::Debug for Lock {
 }
 
 impl Lock {
+    /// **The verb and arguments this lock sends**, when it sends any.
+    ///
+    /// A lock naming a Rust check asks nothing of the room and answers `None`.
+    pub fn asked(&self) -> Option<(&str, &str)> {
+        match &self.asks {
+            Asks::Query { verb, args } => Some((verb.as_str(), args.as_str())),
+            Asks::Check(_) => None,
+        }
+    }
+
     /// **Give this lock the Rust it names**, when it names one.
     ///
     /// A lock asking a query is left alone: it needs nothing but the room.
