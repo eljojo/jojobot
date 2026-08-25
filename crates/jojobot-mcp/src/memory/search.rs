@@ -39,6 +39,12 @@ pub struct SearchArgs {
     /// and it names the system it was read from.
     #[serde(default)]
     pub(crate) provenance: Option<String>,
+    /// `settled` or `open` — **the other certainty axis, and the one that
+    /// answers *which of these am I not sure about***. `provenance` says who
+    /// backs a claim; this says how sure anybody is of it. A hedge the operator
+    /// gave you, and an inference nobody confirmed, are both `open`.
+    #[serde(default)]
+    pub(crate) standing: Option<String>,
     /// Facts about this entity, as `kind:slug`.
     #[serde(default)]
     pub(crate) subject: Option<String>,
@@ -268,9 +274,9 @@ impl MailExcluded {
                  find a report another session filed."
             }
             MailExcluded::FactScoped => {
-                "this query filters on a property only a fact has (status, provenance, subject \
-                 or edge), so it is a question about facts — messages, entities and prose are \
-                 all out of it."
+                "this query filters on a property only a fact has (status, provenance, \
+                 standing, subject or edge), so it is a question about facts — messages, \
+                 entities and prose are all out of it."
             }
             MailExcluded::TypeFiltered => {
                 "this query names a type with answers_type, which asks which THINGS carry its \
@@ -488,6 +494,7 @@ impl Jojobot {
                        prose AND the messages in mailboxes at once. `query` is free text (ALL \
                        words must match) and is optional when a filter narrows it: kind · status \
                        (default active; superseded is excluded unless named) · provenance · \
+                       standing (`open` is how you ask which claims are still in doubt) · \
                        subject · edge {shape, object} · answers_type · fits_type; a call with \
                        neither query nor one of those filters is refused, and include_mail is not \
                        one of them \
@@ -590,6 +597,7 @@ impl Jojobot {
                 .as_deref()
                 .map(parse_one_provenance)
                 .transpose()?,
+            standing: args.standing.as_deref().map(parse_standing).transpose()?,
             subject: args.subject.as_deref().map(EntityId::person),
             edge,
             include_mail: args.include_mail.unwrap_or(false),
@@ -788,6 +796,7 @@ mod tests {
                 kind: Some("person".into()),
                 status: Some("superseded".into()),
                 provenance: Some("testimony".into()),
+                standing: Some("open".into()),
                 subject: Some("person:alpha".into()),
                 edge: Some(EdgeFilterArgs {
                     shape: Some("location".into()),
@@ -810,6 +819,7 @@ mod tests {
         assert_eq!(query.kind, Some(EntityKind::PERSON));
         assert_eq!(query.status, Some(FactStatus::Superseded));
         assert_eq!(query.provenance, Some(Provenance::Testimony));
+        assert_eq!(query.standing, Some(Standing::Open));
         assert_eq!(
             query.subject.as_ref().map(|s| s.as_str()),
             Some("person:alpha")

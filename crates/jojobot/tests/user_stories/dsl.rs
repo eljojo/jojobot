@@ -1239,6 +1239,20 @@ impl Session {
         .await
     }
 
+    /// **Every claim still in doubt, across the whole store** — the other
+    /// certainty axis, asked the way [`Session::unbacked`] asks the first.
+    ///
+    /// `unbacked` asks WHO backs a claim; this asks HOW SURE anybody is. The
+    /// two are independent, which is why one filter could never answer both.
+    pub async fn hedges(&self) -> Answer {
+        self.read(
+            "everything still in doubt".to_string(),
+            "search",
+            json!({"standing": "open"}),
+        )
+        .await
+    }
+
     /// Walk an edge backwards: every entity of `kind` whose fact draws a
     /// `shape` edge at `object`. The cross-entity question, in one call.
     pub async fn through(&self, shape: &str, object: &str, kind: &str) -> Answer {

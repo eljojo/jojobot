@@ -29,7 +29,7 @@ use std::collections::HashSet;
 
 use super::{
     Edge, EdgeShape, Entity, EntityId, EntityKind, Fact, FactStatus, MemoryError, Provenance,
-    types, validate_edge, validate_subject,
+    Standing, types, validate_edge, validate_subject,
 };
 use crate::mailbox::Message;
 use crate::session::SessionId;
@@ -166,6 +166,13 @@ pub struct SearchQuery {
     pub status: Option<FactStatus>,
     /// Narrow to testimony or inference.
     pub provenance: Option<Provenance>,
+    /// **Narrow to settled or open** — the other axis, and the question
+    /// *which of these am I not sure about*.
+    ///
+    /// `provenance` says who backs a claim and this says how sure anybody is.
+    /// A store full of hedged claims that could not be asked for them made the
+    /// axis a thing a reader could see one claim at a time and never gather.
+    pub standing: Option<Standing>,
     /// Facts about one entity.
     pub subject: Option<EntityId>,
     /// Facts drawing a matching edge.
@@ -247,6 +254,7 @@ impl Default for SearchQuery {
             kind: None,
             status: None,
             provenance: None,
+            standing: None,
             subject: None,
             edge: None,
             answers_type: None,
@@ -289,6 +297,7 @@ impl SearchQuery {
     pub fn is_fact_scoped(&self) -> bool {
         self.status.is_some()
             || self.provenance.is_some()
+            || self.standing.is_some()
             || self.subject.is_some()
             || self.edge.is_some()
     }

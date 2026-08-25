@@ -100,9 +100,25 @@ async fn a_hedged_claim_and_a_guess_no_longer_read_the_same() {
         .says("\"details\":null")
         .never_says("was not sure");
 
+    // ── and the question an agent asks about its own work ───────────────────
+    //
+    // *Which of the things I wrote down am I not sure about?* It is the whole
+    // point of the axis, and for a long time it could only be answered one
+    // claim at a time: `standing` was stored and served and nothing could
+    // narrow by it.
+    //
+    // **Both halves.** The two claims nobody is sure of come back, and the one
+    // the operator stated flatly stays out — without that, this passes against
+    // a filter that ignores what it was given and hands back everything.
+    let doubted = s.hedges().await;
+    doubted
+        .says("closes early on Sundays")
+        .says("a Sunday visit should be earlier")
+        .never_says("serves breakfast until 11am");
+
     // NOTE — nothing asks a session to weigh `standing` before repeating a
-    // claim. Moving the hedge out of prose made it parseable, not noticed, and
-    // no read is directed at it.
+    // claim. Moving the hedge out of prose made it parseable, and now
+    // askable; nothing yet directs a session to ask.
 
     s.wrap("asked which claims were reliable, and the answer separated them")
         .await;
