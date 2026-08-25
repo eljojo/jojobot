@@ -490,7 +490,7 @@ impl DoltMemory {
     ) -> Result<(), MemoryError> {
         sqlx::query(
             "REPLACE INTO fact (entity, id, content, details, provenance, standing, status,
-                                date, happened_at, edge_shape, edge_object, derived_from,
+                                recorded_at, happened_at, edge_shape, edge_object, derived_from,
                                 derived_from_id, inserted_at, stale_after)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
@@ -573,7 +573,7 @@ impl DoltMemory {
         .map_err(store)?;
         sqlx::query(
             "INSERT INTO fact_write (entity, fact_id, ordinal, content, details, provenance,
-                                     standing, status, date, happened_at, edge_shape,
+                                     standing, status, recorded_at, happened_at, edge_shape,
                                      edge_object,
                                      derived_from, derived_from_id, inserted_at, stale_after,
                                      written_at)
@@ -702,23 +702,15 @@ fn written_keys(fact: &Fact) -> Vec<(String, Option<String>)> {
 
 /// The columns a fact reads back from, in one place so every read takes the
 /// same ones.
-/// **The stored column is still called `date`, and the read renames it.**
-///
-/// What the column HOLDS is the day the claim was made, and every name above
-/// this adapter says so. The column itself keeps the old spelling because
-/// `0035_fact_write_backfill` names it, and a migration that has run somewhere
-/// is frozen (rule 198): renaming the column would leave that migration's own
-/// text describing a column that is not there. **One alias with a reason costs
-/// less than a migration whose SQL has stopped being true.**
 const FACT_COLUMNS: &str = "entity, id, content, details, provenance, standing, status, \
-                            date AS recorded_at, happened_at, edge_shape, edge_object, derived_from, derived_from_id, \
+                            recorded_at, happened_at, edge_shape, edge_object, derived_from, derived_from_id, \
                             inserted_at, stale_after";
 
 /// The same columns off the write table, with its key aliased to what
 /// [`DoltMemory::assemble`] reads. **The alias is the whole difference**: a
 /// second assembler would be a second place for the row shape to drift.
 const FACT_WRITE_COLUMNS: &str = "w.entity, w.fact_id AS id, w.content, w.details, w.provenance, \
-                                  w.standing, w.status, w.date AS recorded_at, w.happened_at, \
+                                  w.standing, w.status, w.recorded_at, w.happened_at, \
                                   w.edge_shape, \
                                   w.edge_object, w.derived_from, w.derived_from_id, \
                                   w.inserted_at, w.stale_after";

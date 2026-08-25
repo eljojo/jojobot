@@ -369,6 +369,19 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0038_fact_write_happened_at.sql"),
         leaves: Leaves::Column("fact_write", "happened_at"),
     },
+    Migration {
+        version: "0039_fact_recorded_at",
+        sql: include_str!("../../migrations/0039_fact_recorded_at.sql"),
+        // **The column it leaves, not the one it takes away.** A rename is one
+        // statement and the question is the one an ADD asks: is the name this
+        // migration produces already there.
+        leaves: Leaves::Column("fact", "recorded_at"),
+    },
+    Migration {
+        version: "0040_fact_write_recorded_at",
+        sql: include_str!("../../migrations/0040_fact_write_recorded_at.sql"),
+        leaves: Leaves::Column("fact_write", "recorded_at"),
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a
@@ -774,6 +787,8 @@ mod tests {
         "0036_fact_write_moment",
         "0037_fact_happened_at",
         "0038_fact_write_happened_at",
+        "0039_fact_recorded_at",
+        "0040_fact_write_recorded_at",
     ];
 
     /// **A migration set of this test's own, carrying the shape no shipped

@@ -1111,19 +1111,54 @@ async fn the_backfill_is_what_makes_a_claim_older_than_the_substrate_readable() 
          substrate empty: {dark:?}",
     );
 
-    // **The backfill, through the runner.** The ledger row is what makes a
-    // migration already-run, so taking it off is what asks for this one again.
-    for table in ["schema_migration", "schema_migration_begun"] {
-        sqlx::query(&format!("DELETE FROM {table} WHERE version = ?"))
-            .bind("0035_fact_write_backfill")
-            .execute(&pool)
-            .await
-            .expect("the ledger is writable");
+    // **The backfill, through the runner, with its own shipped SQL.** The
+    // ledger row is what makes a migration already-run, so taking it off is
+    // what asks for one again.
+    //
+    // 🚨 **A step older than a rename has to be replayed against the schema it
+    // was written for.** `0035` selects the claim's date under the name it had
+    // then, and `0039`/`0040` renamed it since. **So the replay puts the two
+    // columns back, asks for all three steps, and the renames carry the schema
+    // forward again** — the store ends where it started and the backfill ran
+    // its own text, which is the whole point of going through the runner.
+    //
+    // ⚠️ **This is a test technique and not a recovery procedure.** Nothing
+    // outside `#[cfg(test)]` deletes a row from `schema_migration`; the running
+    // code only ever clears the interruption marker beside it. An ordinary
+    // start applies the set in order, so `0035` meets the old name where it
+    // really runs and never meets the new one.
+    for table in ["fact", "fact_write"] {
+        sqlx::query(&format!(
+            "ALTER TABLE {table} RENAME COLUMN recorded_at TO date"
+        ))
+        .execute(&pool)
+        .await
+        .expect("the schema goes back to what the frozen step was written for");
+    }
+    for version in [
+        "0035_fact_write_backfill",
+        "0039_fact_recorded_at",
+        "0040_fact_write_recorded_at",
+    ] {
+        for table in ["schema_migration", "schema_migration_begun"] {
+            sqlx::query(&format!("DELETE FROM {table} WHERE version = ?"))
+                .bind(version)
+                .execute(&pool)
+                .await
+                .expect("the ledger is writable");
+        }
     }
     let applied = migrate::run(&pool).await.expect("the backfill runs again");
     assert!(
         applied.contains(&"0035_fact_write_backfill".to_string()),
         "the backfill did not run, so what follows says nothing about it: {applied:?}",
+    );
+    // **And the schema came forward again**, so every assertion below reads the
+    // store the rest of this suite reads rather than a half-migrated one.
+    assert!(
+        applied.contains(&"0039_fact_recorded_at".to_string())
+            && applied.contains(&"0040_fact_write_recorded_at".to_string()),
+        "the renames did not replay, so the store is left on the old names: {applied:?}",
     );
 
     let after = memory

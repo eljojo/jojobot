@@ -1,0 +1,18 @@
+-- The claim's own date says WHEN THE CLAIM WAS MADE, and the column says so.
+--
+-- It always held this: it defaults to the day the writing run is in, and a
+-- caller could name it. What it lacked was a name — and three descriptions of
+-- it in this codebase disagreed about what it meant, so a writer read it as
+-- whichever of two questions it needed answered. The day the thing happened is
+-- `happened_at` and got its own column above.
+--
+-- **The rows are not touched and no value moves.** A rename asserts nothing
+-- new about what is stored.
+--
+-- ⚠️ **A migration older than this one names the old column** —
+-- `0035_fact_write_backfill` selects it — and that migration is frozen. It is
+-- correct where it runs, which is always before this one: the set applies in
+-- order, so a store reaching this point has already been backfilled. **Only a
+-- REPLAY out of order meets the new name, and putting the schema back is that
+-- replay's job.**
+ALTER TABLE fact RENAME COLUMN date TO recorded_at;
