@@ -13,7 +13,7 @@
 
 use jojobot_exercise::expectations;
 use jojobot_exercise::room::{Room, server_binary};
-use jojobot_exercise::run::{Boundary, Observed, Outcome};
+use jojobot_exercise::run::{Boundary, Expectation, Observed, Outcome};
 use jojobot_exercise::surface::Surface;
 use serde_json::{Value, json};
 
@@ -254,5 +254,74 @@ async fn three_things_from_somebody_else_do_not_count_as_the_handover() {
         "a box holding three things, one of them from somebody other than the occupant, read as \
          the pile having been handed over: {}",
         mixed.saying,
+    );
+}
+
+/// 🚨 **A lock whose own query is REFUSED says so, rather than counting in a
+/// refusal.**
+///
+/// A blocked read carries no objects, so every `carries` fails and every
+/// `lacks` holds — and both look exactly like a room that was asked a fair
+/// question. ⛔️ **A paid run scored a lock zero when `recall` had come back
+/// *not an entity jojobot knows*: the needle was never looked for, and the
+/// failure named the needle.**
+///
+/// **Paired, because the risk is that this becomes an excuse.** A read that
+/// reaches the store and finds nothing must still fail on its needle — that is
+/// an answer, and *no* is what it says.
+#[tokio::test]
+async fn a_refused_query_is_told_apart_from_an_answer_that_says_no() {
+    let (_room, surface) = bare().await;
+    let boundaries: Vec<Boundary> = Vec::new();
+    let seen = Observed {
+        room: &surface,
+        boundaries: &boundaries,
+    };
+
+    // ① The query names somebody the empty room does not hold, so the read is
+    //    refused before any needle is looked for. **The same subject answers
+    //    the second half through a different verb**, which is what makes the
+    //    pair about the refusal rather than about the name.
+    let refused = jojobot_exercise::lock::read(
+        "```locks\n\
+         recall {\"subject\": \"person:milhouse\"}\n\
+         carries \"name\":\"Milhouse\"\n\
+         say     the person is not on the record\n\
+         ```\n",
+    )
+    .expect("the lock parses");
+    let outcome = refused[0].check(&seen).await;
+    assert!(!outcome.held, "a refused query is not a lock that held");
+    assert!(
+        outcome.saying.contains("refused"),
+        "the failure blames the needle rather than saying the query was refused: {}",
+        outcome.saying,
+    );
+    assert!(
+        !outcome.saying.contains("Milhouse"),
+        "the failure names the needle, which was never looked for: {}",
+        outcome.saying,
+    );
+
+    // ② A read that reaches the store and finds nothing still fails on its
+    //    needle. **Without this the fix is an excuse rather than a
+    //    distinction.**
+    let answered = jojobot_exercise::lock::read(
+        "```locks\n\
+         list_entities {\"kind\": \"person\"}\n\
+         carries person:milhouse\n\
+         say     nobody is on the roster\n\
+         ```\n",
+    )
+    .expect("the lock parses");
+    let outcome = answered[0].check(&seen).await;
+    assert!(
+        !outcome.held,
+        "an empty roster satisfied a lock that asks for somebody on it",
+    );
+    assert!(
+        !outcome.saying.contains("refused"),
+        "a read that reached the store was reported as a refusal: {}",
+        outcome.saying,
     );
 }

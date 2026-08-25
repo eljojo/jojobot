@@ -353,6 +353,38 @@ impl crate::run::Expectation for Lock {
             }
         };
         let answer = seen.room.call(verb, args).await;
+
+        // 🚨 **A REFUSED QUERY IS NOT AN ANSWER, AND COUNTING IN IT IS A
+        // VERDICT ABOUT NOTHING.**
+        //
+        // A blocked read carries no objects, so every `carries` fails and every
+        // `lacks` holds — and both read exactly like a room that was asked a
+        // fair question. ⛔️ **A run scored a lock zero when `recall` had come
+        // back *not an entity jojobot knows*: the needle was never looked for,
+        // and the failure named the needle.**
+        //
+        // **The question was malformed and the answer is no send a reader to
+        // different places**, so this says which. It fails rather than
+        // abstaining: a lock that cannot ask its question is not a lock that
+        // has nothing to say, and a room where one cannot be asked is a room
+        // somebody has to fix.
+        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&answer)
+            && parsed["status"] == "blocked"
+        {
+            return crate::run::Outcome {
+                name: self.name.clone(),
+                held: false,
+                applies: true,
+                saying: format!(
+                    "{}: this lock's own query was refused, so nothing was measured — {}",
+                    self.say,
+                    parsed["how_to_proceed"]
+                        .as_str()
+                        .unwrap_or("the answer carried no way forward"),
+                ),
+            };
+        }
+
         let short = |what: &str| -> String {
             // **The answer, cut but never summarised.** A reader needs enough
             // to see what came back instead; the whole of a two-hundred-hit
