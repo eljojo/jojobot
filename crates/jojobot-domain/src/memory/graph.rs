@@ -1079,9 +1079,19 @@ impl Ctx<'_> {
     /// **Records the neighbourhood clock could not place**, across everything
     /// this selection could otherwise have reached.
     ///
-    /// Counted over the same documents the read scans rather than over the
-    /// answer, because a record that could not be placed never reaches the
-    /// answer — which is the whole reason it has to be counted here.
+    /// Counted over the store's records rather than over the answer, because a
+    /// record that could not be placed never reaches the answer — which is the
+    /// whole reason it has to be counted here. **But over the records this
+    /// selection reaches, never over every record scanned:** a near-day read
+    /// makes the walk fetch every entity, so a count taken over the scan is a
+    /// fact about the store rather than about the question, and a caller who
+    /// named a handle would be told their own records were unreadable because
+    /// somebody else's were.
+    ///
+    /// Narrowed by [`Ctx::admits`] — the object's own properties, which is
+    /// every narrowing that still holds once the clock is what is in doubt.
+    /// The record filters are deliberately not applied: the near read is the
+    /// filter being measured, and a record it cannot place cannot answer it.
     fn unplaced(&self, select: &Selection) -> usize {
         let Some(near) = select.near else {
             return 0;
@@ -1090,6 +1100,10 @@ impl Ctx<'_> {
             .iter()
             .filter(|fact| fact.status == crate::memory::FactStatus::Active)
             .filter(|fact| near.unplaceable(fact))
+            // A record belongs to the page it is homed on as much as to the
+            // thing it is about — the rule [`Ctx::facts`] is built by — so
+            // either end being selected is this selection reaching it.
+            .filter(|fact| self.admits(&fact.subject, select) || self.admits(&fact.home, select))
             .count()
     }
 }
@@ -1223,21 +1237,7 @@ impl<'a> Ctx<'a> {
         let mut found: Vec<EntityId> = self
             .entities
             .values()
-            .filter(|e| select.kind.is_none_or(|k| e.kind == k))
-            // **An owned object is its owner's alone.** Objects declaring no
-            // owner are the whole store as it stands, and they answer everyone.
-            .filter(|e| self.readable_by(&e.id, select))
-            // **The type is asked of the thing and the keys of its records.**
-            // Two units, because they are two questions: whether this thing
-            // carries a type's keys across everything said about it, and
-            // whether one record describes what the caller is looking for.
-            .filter(|e| select.answers_type.is_none() || self.answers(&e.id, select).is_some())
-            // **A key filter is asked of the thing's folded fields by default,
-            // which is the same map the type question is asked of.** Asked of
-            // one record instead, "which of these have eaten three" misses the
-            // thing that ate three one at a time and returns the thing that
-            // recorded three at once — an answer that looks like an answer.
-            .filter(|e| holds_all(self.held(&e.id), select.fields.iter()))
+            .filter(|e| self.admits(&e.id, select))
             .filter(|e| {
                 !select.filters_records() || self.kept_facts(&e.id, select).next().is_some()
             })
@@ -1245,6 +1245,40 @@ impl<'a> Ctx<'a> {
             .collect();
         found.sort_by(|a, b| a.as_str().cmp(b.as_str()));
         Ok(found)
+    }
+
+    /// **Does this selection choose this object**, on the object's own
+    /// properties — everything [`Ctx::roots`] narrows on before it asks
+    /// anything of a record.
+    ///
+    /// One definition, because two readers ask it: which objects the answer is
+    /// built from, and which records a count of what the clock could not place
+    /// is taken over. A second copy could come to disagree, and the count would
+    /// then be about a different question than the answer beside it.
+    fn admits(&self, id: &EntityId, select: &Selection) -> bool {
+        // **Naming a handle skips every filter below**, the way `roots` returns
+        // the object it was given rather than filtering for it.
+        if let Some(subject) = &select.subject {
+            return subject == id;
+        }
+        let Some(entity) = self.entities.get(id) else {
+            return false;
+        };
+        select.kind.is_none_or(|k| entity.kind == k)
+            // **An owned object is its owner's alone.** Objects declaring no
+            // owner are the whole store as it stands, and they answer everyone.
+            && self.readable_by(id, select)
+            // **The type is asked of the thing and the keys of its records.**
+            // Two units, because they are two questions: whether this thing
+            // carries a type's keys across everything said about it, and
+            // whether one record describes what the caller is looking for.
+            && (select.answers_type.is_none() || self.answers(id, select).is_some())
+            // **A key filter is asked of the thing's folded fields by default,
+            // which is the same map the type question is asked of.** Asked of
+            // one record instead, "which of these have eaten three" misses the
+            // thing that ate three one at a time and returns the thing that
+            // recorded three at once — an answer that looks like an answer.
+            && holds_all(self.held(id), select.fields.iter())
     }
 
     /// **What this selection matched and kept back as another identity's.**
@@ -2205,6 +2239,107 @@ mod tests {
             by_stamp.unplaced, 2,
             "the read came back empty and said nothing about what it could not look at, which \
              reads exactly like a day with nothing around it",
+        );
+    }
+
+    /// 🚨 **The count answers the question that was asked, not the store.**
+    ///
+    /// A caller who named a subject or a kind asked about those records. A
+    /// count taken over every document the walk happened to scan tells them
+    /// their own records could not be placed when every one of them was — and
+    /// because a walk with a near-day read scans every entity, one unrelated
+    /// stampless record anywhere makes zero unreachable forever.
+    ///
+    /// **Both halves in one read, because the negative alone is satisfied by a
+    /// count that is always zero**: a selection whose own records are all
+    /// placeable reports none, and a selection whose own records cannot be
+    /// placed still reports them.
+    #[test]
+    fn the_unplaceable_count_is_narrowed_the_way_the_selection_is() {
+        let _booted = crate::memory::testing::InMemoryMemory::booted();
+        let stamped = |home: &str, id: &str, content: &str| Fact {
+            inserted_at: Some("2026-08-09T12:00:00Z".parse().expect("a timestamp")),
+            ..fact(home, id, content)
+        };
+        let scanned = vec![
+            // Every record placeable on the taken-in clock, and near the day.
+            doc(
+                entity("person:milhouse", "Milhouse"),
+                "His page.",
+                vec![
+                    stamped("person:milhouse", "f1", "taken in the day before"),
+                    stamped("person:milhouse", "f2", "and so was this one"),
+                ],
+            ),
+            // Unrelated, and written before the stamp existed — the backfilled
+            // corpus a real instance is mostly made of.
+            doc(
+                entity("place:moes", "Moe's Tavern"),
+                "The tavern's page.",
+                vec![
+                    fact("place:moes", "f1", "written before the stamp existed"),
+                    fact("place:moes", "f2", "also written before it"),
+                ],
+            ),
+        ];
+        let asking = |select: Selection| GraphQuery {
+            select: Selection {
+                near: Some(Nearness {
+                    day: "2026-08-10".parse().expect("a civil date"),
+                    within_days: 7,
+                    clock: Clock::TakenIn,
+                }),
+                ..select
+            },
+            ..GraphQuery::default()
+        };
+        let read = |select: Selection| resolve(&scanned, &[], &asking(select)).expect("a read");
+        let facts = |found: &Selected| found.objects.iter().flat_map(|o| o.facts.iter()).count();
+
+        let his = read(Selection {
+            subject: Some(EntityId("person:milhouse".to_string())),
+            ..Selection::default()
+        });
+        assert_eq!(facts(&his), 2, "his records are placeable and near the day");
+        assert_eq!(
+            his.unplaced, 0,
+            "every record he has was placed, so the read that named him has nothing to report \
+             about records it could not look at",
+        );
+
+        let theirs = read(Selection {
+            subject: Some(EntityId("place:moes".to_string())),
+            ..Selection::default()
+        });
+        assert_eq!(facts(&theirs), 0, "no record of the tavern's can be placed");
+        assert_eq!(
+            theirs.unplaced, 2,
+            "the tavern's own records are the ones this clock cannot look at, and a narrowed \
+             count must still report them",
+        );
+
+        let people = read(Selection {
+            kind: Some(EntityKind::PERSON),
+            ..Selection::default()
+        });
+        assert_eq!(
+            facts(&people),
+            2,
+            "the kind reaches the same placed records"
+        );
+        assert_eq!(
+            people.unplaced, 0,
+            "a kind narrows the count the way a handle does",
+        );
+
+        let places = read(Selection {
+            kind: Some(EntityKind::PLACE),
+            ..Selection::default()
+        });
+        assert_eq!(
+            places.unplaced, 2,
+            "the tavern drops out of the answer entirely because none of its records could be \
+             placed, which is exactly why the count cannot be taken over the answer",
         );
     }
 
