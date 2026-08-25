@@ -55,7 +55,12 @@ fn room_document() -> Playbook {
 
 /// A room furnished the way a run furnishes it, and a handle to write into it
 /// as an occupant would.
-async fn furnished() -> (Room, Surface, String) {
+/// ⛔️ **It boots nothing.** A sitting is a run of its own and brings its own
+/// session, in its own day. A session minted here would be a run in the day the
+/// server is actually having — months after the year's first sitting — and the
+/// sweep answering in January's frame would see a beat from its own future and
+/// keep offering it.
+async fn furnished() -> (Room, Surface) {
     let (room, surface) = Room::open_with_client(&server_binary().expect("a jojobot binary"))
         .await
         .expect("a room");
@@ -64,15 +69,67 @@ async fn furnished() -> (Room, Surface, String) {
         .furnish(&surface)
         .await
         .expect("the room is furnished");
-    let booted = surface
-        .must("start_here", json!({"bot": "assistant", "brief": true}))
+    (room, surface)
+}
+
+/// **A session for one sitting, in the day that sitting is in.**
+///
+/// 🚨 **Each sitting is a RUN OF ITS OWN.** The year used to thread one session
+/// through fifteen phases and name the day on every write; a sitting is a run
+/// on its own day, and the day belongs to the run rather than to each call.
+///
+/// ⭐ **No `resume` is sent, and that is an assertion rather than an omission.**
+/// A boot meeting a run still in flight hands back the resume-or-new choice and
+/// no handle. Each sitting here states a day weeks after the last one, so every
+/// earlier run has gone quiet in the frame the sweep answers in — **and a
+/// handle coming straight back is the sweep having worked.** A choice arriving
+/// instead means it did not, and the panic says which runs were offered.
+async fn sitting(room: &Surface, day: &str) -> String {
+    let booted = room
+        .must(
+            "start_here",
+            json!({"bot": "assistant", "brief": true, "today": day}),
+        )
         .await
         .expect("the shipped identity boots");
-    let sid = booted["session"]["sid"]
+    if let Some(sid) = booted["session"]["sid"].as_str() {
+        return sid.to_string();
+    }
+
+    // 🚨 **A choice here is the SWEEP HAVING WORKED, and it is asserted rather
+    // than answered blind.** The sitting before this one stopped without
+    // wrapping — which is what a sitting does — so booting a day later finds it
+    // gone quiet in this run's frame and offers it back.
+    //
+    // ⛔️ **An `active` run in that list is the sweep NOT having worked**: it
+    // means the earlier run still reads as working, which is what a year acted
+    // out in minutes looks like when nobody states a day.
+    let offered = booted["session"]["choices"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the boot on {day} handed back neither a handle nor a choice"));
+    let working: Vec<&Value> = offered
+        .iter()
+        .filter(|run| run["state"] == "active")
+        .collect();
+    assert!(
+        working.is_empty(),
+        "the boot on {day} was offered a run still ACTIVE, so an earlier sitting did not go \
+         quiet in this run's frame and the sweep answered on the clock instead: {working:?}",
+    );
+
+    // **A new run, deliberately.** Each sitting is its own; resuming the one
+    // before it would make the year one long session again by another route.
+    let answered = room
+        .must(
+            "start_here",
+            json!({"bot": "assistant", "brief": true, "today": day, "resume": "new"}),
+        )
+        .await
+        .expect("the boot answering the choice is ok");
+    answered["session"]["sid"]
         .as_str()
-        .expect("a handle")
-        .to_string();
-    (room, surface, sid)
+        .unwrap_or_else(|| panic!("answering `new` on {day} handed back no handle: {answered}"))
+        .to_string()
 }
 
 /// A call an occupant would make.
@@ -149,7 +206,7 @@ async fn january(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "rhythm:chain-check", "content": "look at the bike chain every ninety days",
-               "provenance": "testimony", "recorded_at": "2026-01-12",
+               "provenance": "testimony",
                "fields": {"name": "Chain check", "last_check_in": "2025-12-20",
                           "cadence_days": "90", "counts_from": "2025-12-20",
                           "advances_from": "due_date"}}),
@@ -160,7 +217,7 @@ async fn january(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "person:milhouse", "content": "lives in Springfield",
-               "provenance": "testimony", "recorded_at": "2026-01-12",
+               "provenance": "testimony",
                "shape": "location", "object": "place:springfield"}),
     )
     .await;
@@ -169,7 +226,7 @@ async fn january(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "person:milhouse", "content": "rides with the club",
-               "provenance": "testimony", "recorded_at": "2026-01-12",
+               "provenance": "testimony",
                "shape": "membership", "object": "org:north-trail-club"}),
     )
     .await;
@@ -213,7 +270,7 @@ async fn february(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "thing:floor-pump", "content": "lent out, wanted back before the survey",
-               "provenance": "testimony", "recorded_at": "2026-02-08",
+               "provenance": "testimony",
                "shape": "connection", "object": "person:ralph"}),
     )
     .await;
@@ -222,7 +279,7 @@ async fn february(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "person:nelson", "content": "joined the club",
-               "provenance": "testimony", "recorded_at": "2026-02-08",
+               "provenance": "testimony",
                "shape": "membership", "object": "org:north-trail-club"}),
     )
     .await;
@@ -266,7 +323,7 @@ async fn february_records_no_holder(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "person:nelson", "content": "joined the club",
-               "provenance": "testimony", "recorded_at": "2026-02-08",
+               "provenance": "testimony",
                "shape": "membership", "object": "org:north-trail-club"}),
     )
     .await;
@@ -297,7 +354,7 @@ async fn april(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "person:milhouse", "content": "moved to Shelbyville",
-               "provenance": "testimony", "recorded_at": "2026-04-19",
+               "provenance": "testimony",
                "shape": "location", "object": "place:shelbyville"}),
     )
     .await;
@@ -321,7 +378,7 @@ async fn june(room: &Surface, sid: &str) {
             sid,
             "capture",
             json!({"subject": who, "content": "was at the trail survey",
-                   "provenance": "testimony", "recorded_at": "2026-06-14",
+                   "provenance": "testimony",
                    "shape": "attendance", "object": "event:trail-survey"}),
         )
         .await;
@@ -331,7 +388,7 @@ async fn june(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "rhythm:chain-check", "content": "did the bike chain this morning",
-               "provenance": "testimony", "recorded_at": "2026-06-14",
+               "provenance": "testimony",
                "check_in": "ran"}),
     )
     .await;
@@ -351,7 +408,7 @@ async fn june_writes_the_turn_by_hand(room: &Surface, sid: &str) {
             sid,
             "capture",
             json!({"subject": who, "content": "was at the trail survey",
-                   "provenance": "testimony", "recorded_at": "2026-06-14",
+                   "provenance": "testimony",
                    "shape": "attendance", "object": "event:trail-survey"}),
         )
         .await;
@@ -361,7 +418,7 @@ async fn june_writes_the_turn_by_hand(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "rhythm:chain-check", "content": "did the bike chain this morning",
-               "provenance": "testimony", "recorded_at": "2026-06-14",
+               "provenance": "testimony",
                "fields": {"last_check_in": "2026-06-14"}}),
     )
     .await;
@@ -375,7 +432,7 @@ async fn late_november_writes_the_turn_by_hand(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "rhythm:chain-check", "content": "did the chain again today",
-               "provenance": "testimony", "recorded_at": "2026-11-22",
+               "provenance": "testimony",
                "fields": {"last_check_in": "2026-11-22"}}),
     )
     .await;
@@ -425,7 +482,7 @@ async fn august_puts_a_third_person_there(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "person:ralph", "content": "was at the trail survey",
-               "provenance": "inference", "recorded_at": "2026-08-16",
+               "provenance": "inference",
                "shape": "attendance", "object": "event:trail-survey"}),
     )
     .await;
@@ -447,9 +504,14 @@ async fn september(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
+        // ⚠️ **The one write in the year about a day that is not the
+        // sitting's.** Every other claim here is recorded on the day it is
+        // made, which the run's own frame now supplies. This one says WHEN
+        // THE THING HAPPENED — the pump came back at the June survey — and
+        // that is a different field from when the record was made.
         json!({"subject": "thing:floor-pump", "content": "came back at the survey",
-               "provenance": "testimony", "recorded_at": "2026-06-14",
-               "shape": "connection", "object": "person:ralph"}),
+                   "provenance": "testimony", "happened_at": "2026-06-14",
+                   "shape": "connection", "object": "person:ralph"}),
     )
     .await;
 }
@@ -460,7 +522,7 @@ async fn october(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "thing:floor-pump", "content": "brought round over the summer",
-               "provenance": "testimony", "recorded_at": "2026-10-11",
+               "provenance": "testimony",
                "shape": "connection", "object": "person:nelson"}),
     )
     .await;
@@ -495,7 +557,7 @@ async fn late_october(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "person:bart", "content": "joined the club",
-               "provenance": "testimony", "recorded_at": "2026-10-24",
+               "provenance": "testimony",
                "shape": "membership", "object": "org:north-trail-club"}),
     )
     .await;
@@ -513,7 +575,7 @@ async fn late_october_puts_a_third_person_there(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "person:bart", "content": "was at the trail survey",
-               "provenance": "inference", "recorded_at": "2026-10-24",
+               "provenance": "inference",
                "shape": "attendance", "object": "event:trail-survey"}),
     )
     .await;
@@ -529,7 +591,7 @@ async fn late_november(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "rhythm:chain-check", "content": "did the chain again today",
-               "provenance": "testimony", "recorded_at": "2026-11-22",
+               "provenance": "testimony",
                "check_in": "ran"}),
     )
     .await;
@@ -559,7 +621,7 @@ async fn later_december(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "org:north-trail-club", "content": "the record was corrected during the year",
-               "provenance": "inference", "recorded_at": "2026-12-20",
+               "provenance": "inference",
                "fields": {"was": was}}),
     )
     .await;
@@ -588,7 +650,7 @@ async fn later_december_answers_from_the_claim_as_it_stands(room: &Surface, sid:
         sid,
         "capture",
         json!({"subject": "org:north-trail-club", "content": "the record was corrected during the year",
-               "provenance": "inference", "recorded_at": "2026-12-20",
+               "provenance": "inference",
                "fields": {"was": now}}),
     )
     .await;
@@ -612,7 +674,7 @@ async fn later_december_writes_a_fuller_sentence(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "org:north-trail-club", "content": "the record was corrected during the year",
-               "provenance": "inference", "recorded_at": "2026-12-20",
+               "provenance": "inference",
                "fields": {"was": "The North Trail Club meets on Tuesdays (recorded 2026-03-15, corrected 2026-07-05)"}}),
     )
     .await;
@@ -635,8 +697,8 @@ async fn december_corrects_a_claim_nobody_questioned(room: &Surface, sid: &str) 
 }
 
 /// The whole year, worked the way it is meant to be.
-async fn worked_the_year(room: &Surface, sid: &str) -> Vec<Boundary> {
-    work_the_year(room, sid, &room_document(), &WORKED, &[]).await
+async fn worked_the_year(room: &Surface) -> Vec<Boundary> {
+    work_the_year(room, &room_document(), &WORKED, &[]).await
 }
 
 /// **The sittings that record something**, named rather than counted: the two
@@ -657,14 +719,29 @@ const WORKED: [usize; 13] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14];
 /// wrote, and a range cannot say that.
 async fn work_the_year(
     room: &Surface,
-    sid: &str,
     year: &Playbook,
     worked: &[usize],
     guilty: &[usize],
 ) -> Vec<Boundary> {
     let named = boundary_names(year);
     let mut boundaries = vec![boundary(room, &named[0]).await];
-    for (at, _phase) in year.phases.iter().enumerate() {
+    for (at, phase) in year.phases.iter().enumerate() {
+        // ⛔️ **Only a sitting that ACTS gets a run.** A boot mints nothing until
+        // its first write, so a run for a sitting this drive skips is a run that
+        // never happened — and it would sit in the day that sitting claims,
+        // where the next drive of the same day meets it still working.
+        if !worked.contains(&at) && !guilty.contains(&at) {
+            boundaries.push(boundary(room, &named[at + 1]).await);
+            continue;
+        }
+        let sid = &sitting(
+            room,
+            phase
+                .day
+                .as_deref()
+                .unwrap_or_else(|| panic!("{} claims no day", phase.name)),
+        )
+        .await;
         if guilty.contains(&at) {
             // **The sitting does the wrong thing, in its own window.** Here
             // rather than in a second driver: two copies of this order was how
@@ -758,7 +835,7 @@ fn the_year_is_fifteen_cold_sittings_and_every_one_claims_its_day() {
 /// A room gives the player every fact the task needs and never the move.
 #[tokio::test]
 async fn no_entry_names_a_verb_the_room_serves() {
-    let (_room, surface, _sid) = furnished().await;
+    let (_room, surface) = furnished().await;
     let verbs = surface
         .tools_for_the_model()
         .await
@@ -844,10 +921,10 @@ fn the_sittings_a_person_reads_are_marked_and_every_other_one_is_locked() {
 /// something.
 #[tokio::test]
 async fn a_year_nobody_worked_in_fails_every_lock() {
-    let (_room, surface, sid) = furnished().await;
+    let (_room, surface) = furnished().await;
     // The readings a run takes, with nothing done between them: a check scoped
     // to one sitting must see an empty window rather than no window at all.
-    let boundaries = work_the_year(&surface, &sid, &room_document(), &[], &[]).await;
+    let boundaries = work_the_year(&surface, &room_document(), &[], &[]).await;
     let outcomes = judge_all(&surface, &boundaries).await;
     for outcome in &outcomes {
         assert!(
@@ -869,8 +946,8 @@ async fn a_year_nobody_worked_in_fails_every_lock() {
 /// the failure would surface on a paid run reading as a defect in the product.
 #[tokio::test]
 async fn every_lock_holds_once_the_year_is_worked() {
-    let (_room, surface, sid) = furnished().await;
-    let boundaries = worked_the_year(&surface, &sid).await;
+    let (_room, surface) = furnished().await;
+    let boundaries = worked_the_year(&surface).await;
     let outcomes = judge_all(&surface, &boundaries).await;
     for outcome in &outcomes {
         assert!(
@@ -898,10 +975,10 @@ async fn every_lock_holds_once_the_year_is_worked() {
 /// is the honest version of the same failure their locks report on their own.
 #[tokio::test]
 async fn a_year_that_skipped_its_first_half_cannot_answer_its_second_half() {
-    let (_room, surface, sid) = furnished().await;
+    let (_room, surface) = furnished().await;
     // June onwards, done as well as a session can do it against a store that
     // holds nothing any of it refers to.
-    let boundaries = work_the_year(&surface, &sid, &room_document(), &[5, 7, 8, 9], &[]).await;
+    let boundaries = work_the_year(&surface, &room_document(), &[5, 7, 8, 9], &[]).await;
     let outcomes = judge_all(&surface, &boundaries).await;
     // **Nineteen of the twenty locks fail.** The one that holds is the only
     // claim in the year that rests on nothing before it — August files the
@@ -946,8 +1023,14 @@ async fn a_year_that_skipped_its_first_half_cannot_answer_its_second_half() {
 /// session cannot.
 #[tokio::test]
 async fn the_locks_fail_on_a_year_written_entirely_in_prose() {
-    let (_room, surface, sid) = furnished().await;
-    did(&surface, &sid, "read_mailbox", json!({})).await;
+    let (_room, surface) = furnished().await;
+    // **One sitting per DAY, not one per claim.** Two runs on the same stated
+    // day are both still working in that frame, so the second meets the first
+    // rather than sweeping it — which is right, and means a day gets one run.
+    let mut opened: std::collections::HashMap<&str, String> = std::collections::HashMap::new();
+    let opening = sitting(&surface, "2026-01-12").await;
+    opened.insert("2026-01-12", opening.clone());
+    did(&surface, &opening, "read_mailbox", json!({})).await;
     for (subject, said, day) in [
         (
             "person:milhouse",
@@ -965,16 +1048,25 @@ async fn the_locks_fail_on_a_year_written_entirely_in_prose() {
             "2026-02-08",
         ),
     ] {
+        // **Each claim under the day its own sitting is in.** The prose year
+        // is still a year: a run per day, saying nothing but sentences.
+        let said_on = match opened.get(day) {
+            Some(open) => open.clone(),
+            None => {
+                let fresh = sitting(&surface, day).await;
+                opened.insert(day, fresh.clone());
+                fresh
+            }
+        };
         did(
             &surface,
-            &sid,
+            &said_on,
             "capture",
-            json!({"subject": subject, "content": said,
-                   "provenance": "testimony", "recorded_at": day}),
+            json!({"subject": subject, "content": said, "provenance": "testimony"}),
         )
         .await;
     }
-    let boundaries = work_the_year(&surface, &sid, &room_document(), &[], &[]).await;
+    let boundaries = work_the_year(&surface, &room_document(), &[], &[]).await;
     let outcomes = judge_all(&surface, &boundaries).await;
     for at in JANUARY[1..].iter().chain(&FEBRUARY).chain(&JUNE) {
         assert!(
@@ -1028,12 +1120,12 @@ fn no_furniture_is_dated_on_a_day_a_sitting_claims() {
 /// asks the generated assertions the same question the run asks them.
 #[tokio::test]
 async fn every_assertion_a_run_makes_holds_once_the_year_is_worked() {
-    let (_room, surface, sid) = furnished().await;
+    let (_room, surface) = furnished().await;
     let year = room_document();
     // The run's own reads, in the run's own order and with the run's own names,
     // taken by the one driver the lock case uses. Two copies of this order was
     // how they came to disagree about which sittings write.
-    let boundaries = worked_the_year(&surface, &sid).await;
+    let boundaries = worked_the_year(&surface).await;
 
     let changed = boundaries[0].world != boundaries[boundaries.len() - 1].world;
     assert!(
@@ -1094,8 +1186,8 @@ async fn every_assertion_a_run_makes_holds_once_the_year_is_worked() {
 #[tokio::test]
 async fn the_march_window_says_whether_that_sitting_recorded_anything() {
     let without = [0, 1, 3, 4, 5, 7, 8, 9, 10];
-    let (_room, surface, sid) = furnished().await;
-    let boundaries = work_the_year(&surface, &sid, &room_document(), &without, &[]).await;
+    let (_room, surface) = furnished().await;
+    let boundaries = work_the_year(&surface, &room_document(), &without, &[]).await;
     let missing = judge_all(&surface, &boundaries).await;
     assert!(
         !missing[MARCH[0]].held,
@@ -1104,8 +1196,8 @@ async fn the_march_window_says_whether_that_sitting_recorded_anything() {
         saying(&missing),
     );
 
-    let (_room, surface, sid) = furnished().await;
-    let boundaries = worked_the_year(&surface, &sid).await;
+    let (_room, surface) = furnished().await;
+    let boundaries = worked_the_year(&surface).await;
     let worked = judge_all(&surface, &boundaries).await;
     assert!(
         worked[MARCH[0]].held,
@@ -1131,8 +1223,8 @@ async fn the_march_window_says_whether_that_sitting_recorded_anything() {
 async fn julys_window_catches_a_guilty_july_and_ignores_a_later_retraction() {
     // ① The accused sitting, guilty: July retracts the March claim rather than
     //    correcting it under July's own day.
-    let (_room, surface, sid) = furnished().await;
-    let guilty = work_the_year(&surface, &sid, &room_document(), &WORKED, &[6]).await;
+    let (_room, surface) = furnished().await;
+    let guilty = work_the_year(&surface, &room_document(), &WORKED, &[6]).await;
     let judged = judge_all(&surface, &guilty).await;
     assert!(
         !judged[JULY[0]].held,
@@ -1143,12 +1235,14 @@ async fn julys_window_catches_a_guilty_july_and_ignores_a_later_retraction() {
 
     // ② The year worked honestly, and then a later sitting takes a club claim
     //    back — the legitimate act that used to redden July.
-    let (_room, surface, sid) = furnished().await;
-    let boundaries = worked_the_year(&surface, &sid).await;
+    let (_room, surface) = furnished().await;
+    let boundaries = worked_the_year(&surface).await;
     let committee = address_of(&surface, "org:north-trail-club", "standing for election").await;
+    // **A sitting after the year's last**, which is what makes it a later one.
+    let later = sitting(&surface, "2026-12-22").await;
     did(
         &surface,
-        &sid,
+        &later,
         "retract",
         json!({"address": committee,
                "reason": "the operator never stood for the board and this was never so",
@@ -1178,8 +1272,8 @@ async fn julys_window_catches_a_guilty_july_and_ignores_a_later_retraction() {
 async fn augusts_window_catches_a_guilty_august_and_ignores_a_later_invention() {
     // ① The accused sitting, guilty: August answers with somebody who was not
     //    there rather than out of the record.
-    let (_room, surface, sid) = furnished().await;
-    let guilty = work_the_year(&surface, &sid, &room_document(), &WORKED, &[7]).await;
+    let (_room, surface) = furnished().await;
+    let guilty = work_the_year(&surface, &room_document(), &WORKED, &[7]).await;
     let judged = judge_all(&surface, &guilty).await;
     assert!(
         !judged[AUGUST[0]].held,
@@ -1190,14 +1284,16 @@ async fn augusts_window_catches_a_guilty_august_and_ignores_a_later_invention() 
 
     // ② The year worked honestly, and then a LATER sitting makes that mistake.
     //    It is a fault, and it is not August's.
-    let (_room, surface, sid) = furnished().await;
-    let boundaries = worked_the_year(&surface, &sid).await;
+    let (_room, surface) = furnished().await;
+    let boundaries = worked_the_year(&surface).await;
+    // **A sitting after the year's last**, which is what makes it a later one.
+    let later = sitting(&surface, "2026-12-22").await;
     did(
         &surface,
-        &sid,
+        &later,
         "capture",
         json!({"subject": "person:bart", "content": "was at the trail survey",
-               "provenance": "inference", "recorded_at": "2026-12-13",
+               "provenance": "inference",
                "shape": "attendance", "object": "event:trail-survey"}),
     )
     .await;
@@ -1222,8 +1318,8 @@ async fn augusts_window_catches_a_guilty_august_and_ignores_a_later_invention() 
 /// one would fail the very play it is written to allow.
 #[tokio::test]
 async fn late_octobers_window_catches_the_sitting_that_invents_an_attendee() {
-    let (_room, surface, sid) = furnished().await;
-    let guilty = work_the_year(&surface, &sid, &room_document(), &WORKED, &[10]).await;
+    let (_room, surface) = furnished().await;
+    let guilty = work_the_year(&surface, &room_document(), &WORKED, &[10]).await;
     let judged = judge_all(&surface, &guilty).await;
     assert!(
         !judged[LATE_OCTOBER[2]].held,
@@ -1232,8 +1328,8 @@ async fn late_octobers_window_catches_the_sitting_that_invents_an_attendee() {
         saying(&judged),
     );
 
-    let (_room, surface, sid) = furnished().await;
-    let boundaries = worked_the_year(&surface, &sid).await;
+    let (_room, surface) = furnished().await;
+    let boundaries = worked_the_year(&surface).await;
     let judged = judge_all(&surface, &boundaries).await;
     assert!(
         judged[LATE_OCTOBER[2]].held,
@@ -1254,8 +1350,8 @@ async fn late_octobers_window_catches_the_sitting_that_invents_an_attendee() {
 /// suite as the thing that must fail, so the route cannot quietly come back.
 #[tokio::test]
 async fn the_years_turns_are_checked_in_rather_than_set_by_hand() {
-    let (_room, surface, sid) = furnished().await;
-    let by_hand = work_the_year(&surface, &sid, &room_document(), &WORKED, &[5, 12]).await;
+    let (_room, surface) = furnished().await;
+    let by_hand = work_the_year(&surface, &room_document(), &WORKED, &[5, 12]).await;
     let judged = judge_all(&surface, &by_hand).await;
     assert!(
         !judged[LATE_NOVEMBER[0]].held,
@@ -1264,8 +1360,8 @@ async fn the_years_turns_are_checked_in_rather_than_set_by_hand() {
         saying(&judged),
     );
 
-    let (_room, surface, sid) = furnished().await;
-    let boundaries = worked_the_year(&surface, &sid).await;
+    let (_room, surface) = furnished().await;
+    let boundaries = worked_the_year(&surface).await;
     let judged = judge_all(&surface, &boundaries).await;
     assert!(
         judged[LATE_NOVEMBER[0]].held,
@@ -1290,8 +1386,8 @@ async fn the_rhythm_locks_still_fail_when_the_sitting_they_name_does_nothing() {
     // all — the play fails on the missing address rather than on the lock this
     // case is about. March's window case leaves July out for the same reason.
     const WITHOUT_JUNE: [usize; 10] = [0, 1, 2, 3, 4, 6, 7, 8, 9, 12];
-    let (_room, surface, sid) = furnished().await;
-    let boundaries = work_the_year(&surface, &sid, &room_document(), &WITHOUT_JUNE, &[]).await;
+    let (_room, surface) = furnished().await;
+    let boundaries = work_the_year(&surface, &room_document(), &WITHOUT_JUNE, &[]).await;
     let judged = judge_all(&surface, &boundaries).await;
     assert!(
         !judged[JUNE[1]].held,
@@ -1301,15 +1397,8 @@ async fn the_rhythm_locks_still_fail_when_the_sitting_they_name_does_nothing() {
     );
 
     const WITHOUT_LATE_NOVEMBER: [usize; 11] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-    let (_room, surface, sid) = furnished().await;
-    let boundaries = work_the_year(
-        &surface,
-        &sid,
-        &room_document(),
-        &WITHOUT_LATE_NOVEMBER,
-        &[],
-    )
-    .await;
+    let (_room, surface) = furnished().await;
+    let boundaries = work_the_year(&surface, &room_document(), &WITHOUT_LATE_NOVEMBER, &[]).await;
     let judged = judge_all(&surface, &boundaries).await;
     assert!(
         !judged[LATE_NOVEMBER[1]].held,
@@ -1329,8 +1418,8 @@ async fn the_rhythm_locks_still_fail_when_the_sitting_they_name_does_nothing() {
 /// touched says jojobot changed its mind when it did not.
 #[tokio::test]
 async fn the_trace_locks_tell_a_correction_from_a_claim_nobody_touched() {
-    let (_room, surface, sid) = furnished().await;
-    let wrong_route = work_the_year(&surface, &sid, &room_document(), &WORKED, &[14]).await;
+    let (_room, surface) = furnished().await;
+    let wrong_route = work_the_year(&surface, &room_document(), &WORKED, &[14]).await;
     let judged = judge_all(&surface, &wrong_route).await;
     assert!(
         !judged[LATE_DECEMBER[0]].held,
@@ -1339,8 +1428,8 @@ async fn the_trace_locks_tell_a_correction_from_a_claim_nobody_touched() {
         saying(&judged),
     );
 
-    let (_room, surface, sid) = furnished().await;
-    let invented = work_the_year(&surface, &sid, &room_document(), &WORKED, &[13]).await;
+    let (_room, surface) = furnished().await;
+    let invented = work_the_year(&surface, &room_document(), &WORKED, &[13]).await;
     let judged = judge_all(&surface, &invented).await;
     assert!(
         !judged[LATE_DECEMBER[1]].held,
@@ -1349,8 +1438,8 @@ async fn the_trace_locks_tell_a_correction_from_a_claim_nobody_touched() {
         saying(&judged),
     );
 
-    let (_room, surface, sid) = furnished().await;
-    let boundaries = worked_the_year(&surface, &sid).await;
+    let (_room, surface) = furnished().await;
+    let boundaries = worked_the_year(&surface).await;
     let judged = judge_all(&surface, &boundaries).await;
     assert!(
         judged[LATE_DECEMBER[0]].held && judged[LATE_DECEMBER[1]].held,
@@ -1368,8 +1457,8 @@ async fn the_trace_locks_tell_a_correction_from_a_claim_nobody_touched() {
 /// — it just also matches something else.
 #[tokio::test]
 async fn februarys_lock_cannot_be_satisfied_by_the_sitting_that_returns_the_pump() {
-    let (_room, surface, sid) = furnished().await;
-    let silent = work_the_year(&surface, &sid, &room_document(), &WORKED, &[1]).await;
+    let (_room, surface) = furnished().await;
+    let silent = work_the_year(&surface, &room_document(), &WORKED, &[1]).await;
     let judged = judge_all(&surface, &silent).await;
     assert!(
         !judged[FEBRUARY[1]].held,
@@ -1378,8 +1467,8 @@ async fn februarys_lock_cannot_be_satisfied_by_the_sitting_that_returns_the_pump
         saying(&judged),
     );
 
-    let (_room, surface, sid) = furnished().await;
-    let boundaries = worked_the_year(&surface, &sid).await;
+    let (_room, surface) = furnished().await;
+    let boundaries = worked_the_year(&surface).await;
     let judged = judge_all(&surface, &boundaries).await;
     assert!(
         judged[FEBRUARY[1]].held,
@@ -1405,8 +1494,8 @@ async fn februarys_lock_cannot_be_satisfied_by_the_sitting_that_returns_the_pump
 /// where a hand-check found three.
 #[tokio::test]
 async fn no_lock_here_rests_on_a_needle_that_matches_somewhere_else() {
-    let (_room, surface, sid) = furnished().await;
-    let _ = worked_the_year(&surface, &sid).await;
+    let (_room, surface) = furnished().await;
+    let _ = worked_the_year(&surface).await;
     let summary = jojobot_exercise::lock::needle_summary(
         &surface,
         &jojobot_exercise::lock::locks_of(expectations::YEAR_ROOM),
@@ -1477,16 +1566,10 @@ async fn a_fuller_answer_satisfies_the_trace_lock_and_a_wrong_one_still_does_not
     // The lock reads the finished room, so a write after the boundaries are
     // taken is the same to it.
     const WITHOUT_LATER_DECEMBER: [usize; 12] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12];
-    let (_room, surface, sid) = furnished().await;
-    let fuller = work_the_year(
-        &surface,
-        &sid,
-        &room_document(),
-        &WITHOUT_LATER_DECEMBER,
-        &[],
-    )
-    .await;
-    later_december_writes_a_fuller_sentence(&surface, &sid).await;
+    let (_room, surface) = furnished().await;
+    let fuller = work_the_year(&surface, &room_document(), &WITHOUT_LATER_DECEMBER, &[]).await;
+    let settling = sitting(&surface, "2026-12-20").await;
+    later_december_writes_a_fuller_sentence(&surface, &settling).await;
     let judged = judge_all(&surface, &fuller).await;
     assert!(
         judged[LATE_DECEMBER[0]].held,
@@ -1495,8 +1578,8 @@ async fn a_fuller_answer_satisfies_the_trace_lock_and_a_wrong_one_still_does_not
         saying(&judged),
     );
 
-    let (_room, surface, sid) = furnished().await;
-    let wrong = work_the_year(&surface, &sid, &room_document(), &WORKED, &[14]).await;
+    let (_room, surface) = furnished().await;
+    let wrong = work_the_year(&surface, &room_document(), &WORKED, &[14]).await;
     let judged = judge_all(&surface, &wrong).await;
     assert!(
         !judged[LATE_DECEMBER[0]].held,
@@ -1514,8 +1597,8 @@ async fn a_fuller_answer_satisfies_the_trace_lock_and_a_wrong_one_still_does_not
 /// calls a fault.
 #[tokio::test]
 async fn the_pairings_claim_is_one_the_year_writes_once_and_the_old_one_was_not() {
-    let (_room, surface, sid) = furnished().await;
-    let _ = worked_the_year(&surface, &sid).await;
+    let (_room, surface) = furnished().await;
+    let _ = worked_the_year(&surface).await;
     let writes = async |subject: &str| -> usize {
         let read = surface
             .call("recall", json!({"subject": subject, "facts": true}))

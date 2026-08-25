@@ -373,7 +373,7 @@ generates no day assertion here and the lock below names the day instead.
 # October's is dated October — so only this sitting can satisfy it.
 recall {"subject": "thing:floor-pump", "facts": true}
 carries person:ralph
-carries "recorded_at":"2026-06-14"
+carries "happened_at":"2026-06-14"
 say     September: nothing on the pump carries the day it came back, so the question February left open is still open on the record
 ```
 
