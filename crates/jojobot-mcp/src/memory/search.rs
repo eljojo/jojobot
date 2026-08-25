@@ -1790,7 +1790,7 @@ mod tests {
             provenance: Provenance::Testimony,
             standing: Standing::Open,
             status: FactStatus::Active,
-            date: jiff::civil::date(2026, 7, 1),
+            recorded_at: jiff::civil::date(2026, 7, 1),
             happened_at: None,
             edge: Some(Edge::new(
                 EdgeShape::Membership,
@@ -1877,7 +1877,7 @@ mod tests {
         assert_eq!(results[1]["details"], "said so in June");
         assert_eq!(results[1]["provenance"], "testimony");
         assert_eq!(results[1]["status"], "active");
-        assert_eq!(results[1]["date"], "2026-07-01");
+        assert_eq!(results[1]["recorded_at"], "2026-07-01");
         assert_eq!(results[1]["edge"]["type"], "memberOf");
         assert_eq!(results[1]["edge"]["object"], "org:guild");
         // …and the surroundings, resolved: who this is about, and whose page it

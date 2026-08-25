@@ -59,7 +59,7 @@ fn read() -> Playbook {
 fn world(records: &[(&str, &str)]) -> String {
     let hits: Vec<String> = records
         .iter()
-        .map(|(address, date)| format!("{{\"address\":\"{address}\",\"date\":\"{date}\"}}"))
+        .map(|(address, date)| format!("{{\"address\":\"{address}\",\"recorded_at\":\"{date}\"}}"))
         .collect();
     format!("{{\"entities\":[]}}\n{{\"results\":[{}]}}", hits.join(","))
 }
@@ -256,7 +256,7 @@ async fn a_day_typed_into_prose_does_not_satisfy_the_sitting() {
             // The day is in the answer's text, and the record is dated
             // something else.
             "{\"entities\":[]}\n{\"results\":[{\"address\":\"thing:kettle#f1\",\
-             \"date\":\"2026-08-21\",\"content\":\"descaled it (recorded 2026-03-04)\"}]}",
+             \"recorded_at\":\"2026-08-21\",\"content\":\"descaled it (recorded 2026-03-04)\"}]}",
         ),
     ];
     let outcome = made[0]

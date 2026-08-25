@@ -41,7 +41,7 @@ async fn keeping_track_of_bikes() {
     let read = s.recall("thing:gravel-bike").await;
     read.claim(&bought)
         .says("\"happened_at\":\"2024-04-11\"")
-        .never_says("\"date\":\"2024-04-11\"");
+        .never_says("\"recorded_at\":\"2024-04-11\"");
 
     // 🚨 **And the day nobody gave stays absent.** *Over the summer* is not a
     // day. A claim with one date field forced a writer to approximate one, and

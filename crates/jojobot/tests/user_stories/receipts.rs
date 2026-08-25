@@ -35,7 +35,7 @@ async fn two_accounts_of_one_evening_and_the_receipt_that_says_both_stand() {
                 "subject": "person:barney-gumble",
                 "content": "said the jukebox was working when he left",
                 "provenance": "testimony",
-                "date": "2026-08-14",
+                "recorded_at": "2026-08-14",
             }),
         )
         .await;
@@ -53,7 +53,7 @@ async fn two_accounts_of_one_evening_and_the_receipt_that_says_both_stand() {
                 "subject": "person:barney-gumble",
                 "content": "said the jukebox had been dead all week",
                 "provenance": "testimony",
-                "date": "2026-08-14",
+                "recorded_at": "2026-08-14",
             }),
         )
         .await;
@@ -119,7 +119,7 @@ async fn two_accounts_of_one_evening_and_the_receipt_that_says_both_stand() {
         json!({
             "subject": "rhythm:descale",
             "content": "set the loop up",
-            "date": "2026-08-01",
+            "recorded_at": "2026-08-01",
             "fields": {
                 "name": "Descale",
                 "last_check_in": "2026-08-01",
@@ -139,7 +139,7 @@ async fn two_accounts_of_one_evening_and_the_receipt_that_says_both_stand() {
                 "content": "did it this morning",
                 "provenance": "testimony",
                 "check_in": "ran",
-                "date": "2026-08-10",
+                "recorded_at": "2026-08-10",
             }),
         )
         .await;
@@ -163,7 +163,7 @@ async fn two_accounts_of_one_evening_and_the_receipt_that_says_both_stand() {
                 "subject": "person:barney-gumble",
                 "content": "says the jukebox sounds better now",
                 "provenance": "testimony",
-                "date": "2026-08-11",
+                "recorded_at": "2026-08-11",
             }),
         )
         .await;

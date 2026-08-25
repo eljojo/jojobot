@@ -20,10 +20,10 @@ pub struct MergeArgs {
     /// no reason was given rather than inventing one.
     #[serde(default)]
     pub(crate) reason: Option<String>,
-    /// **The day the two were put together**, `YYYY-MM-DD`. Defaults to today
-    /// in your session's zone.
+    /// **The day this merge was made**, `YYYY-MM-DD`. Defaults to today in
+    /// your session's zone.
     #[serde(default)]
-    pub date: Option<String>,
+    pub recorded_at: Option<String>,
     /// **Your session id**, exactly as the boot door returned it.
     #[serde(default)]
     pub(crate) sid: Option<String>,
@@ -61,7 +61,7 @@ impl Jojobot {
         }
         let duplicate = EntityId(args.duplicate.trim().to_string());
         let survivor = EntityId(args.survivor.trim().to_string());
-        let date = self.dated(args.date.as_deref(), args.sid.as_deref())?;
+        let date = self.dated(args.recorded_at.as_deref(), args.sid.as_deref())?;
 
         let done = match self
             .memory

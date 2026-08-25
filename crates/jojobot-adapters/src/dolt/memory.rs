@@ -501,7 +501,7 @@ impl DoltMemory {
         .bind(fact.provenance.as_token())
         .bind(fact.standing.as_token())
         .bind(fact.status.as_token())
-        .bind(fact.date.to_string())
+        .bind(fact.recorded_at.to_string())
         .bind(fact.happened_at.map(|d| d.to_string()))
         .bind(fact.edge.as_ref().map(|e| e.shape.as_token()))
         .bind(fact.edge.as_ref().map(|e| e.object.as_str()))
@@ -573,7 +573,8 @@ impl DoltMemory {
         .map_err(store)?;
         sqlx::query(
             "INSERT INTO fact_write (entity, fact_id, ordinal, content, details, provenance,
-                                     standing, status, date, happened_at, edge_shape, edge_object,
+                                     standing, status, date, happened_at, edge_shape,
+                                     edge_object,
                                      derived_from, derived_from_id, inserted_at, stale_after,
                                      written_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -586,7 +587,7 @@ impl DoltMemory {
         .bind(fact.provenance.as_token())
         .bind(fact.standing.as_token())
         .bind(fact.status.as_token())
-        .bind(fact.date.to_string())
+        .bind(fact.recorded_at.to_string())
         .bind(fact.happened_at.map(|d| d.to_string()))
         .bind(fact.edge.as_ref().map(|e| e.shape.as_token()))
         .bind(fact.edge.as_ref().map(|e| e.object.as_str()))
@@ -701,15 +702,24 @@ fn written_keys(fact: &Fact) -> Vec<(String, Option<String>)> {
 
 /// The columns a fact reads back from, in one place so every read takes the
 /// same ones.
-const FACT_COLUMNS: &str = "entity, id, content, details, provenance, standing, status, date, \
-                            happened_at, edge_shape, edge_object, derived_from, derived_from_id, \
+/// **The stored column is still called `date`, and the read renames it.**
+///
+/// What the column HOLDS is the day the claim was made, and every name above
+/// this adapter says so. The column itself keeps the old spelling because
+/// `0035_fact_write_backfill` names it, and a migration that has run somewhere
+/// is frozen (rule 198): renaming the column would leave that migration's own
+/// text describing a column that is not there. **One alias with a reason costs
+/// less than a migration whose SQL has stopped being true.**
+const FACT_COLUMNS: &str = "entity, id, content, details, provenance, standing, status, \
+                            date AS recorded_at, happened_at, edge_shape, edge_object, derived_from, derived_from_id, \
                             inserted_at, stale_after";
 
 /// The same columns off the write table, with its key aliased to what
 /// [`DoltMemory::assemble`] reads. **The alias is the whole difference**: a
 /// second assembler would be a second place for the row shape to drift.
 const FACT_WRITE_COLUMNS: &str = "w.entity, w.fact_id AS id, w.content, w.details, w.provenance, \
-                                  w.standing, w.status, w.date, w.happened_at, w.edge_shape, \
+                                  w.standing, w.status, w.date AS recorded_at, w.happened_at, \
+                                  w.edge_shape, \
                                   w.edge_object, w.derived_from, w.derived_from_id, \
                                   w.inserted_at, w.stale_after";
 
@@ -802,11 +812,11 @@ fn fact_from(
     // the status is a token, `from_token` is total, and a store that refused a
     // token this build does not know would refuse a row somebody wrote.
     let status = FactStatus::from_token(&row.try_get::<String, _>("status").map_err(store)?);
-    let date: Date = row
-        .try_get::<String, _>("date")
+    let recorded_at: Date = row
+        .try_get::<String, _>("recorded_at")
         .map_err(store)?
         .parse()
-        .map_err(|_| unreadable("its date cannot be read as a date"))?;
+        .map_err(|_| unreadable("its recorded-on day cannot be read as a date"))?;
     let edge = match (
         row.try_get::<Option<String>, _>("edge_shape")
             .map_err(store)?,
@@ -843,7 +853,7 @@ fn fact_from(
         provenance,
         standing,
         status,
-        date,
+        recorded_at,
         // **A day nothing can read is a day nobody set.** The claim then says
         // nothing about when the thing happened, which is the honest reading
         // and the one this column exists to make possible.
@@ -1052,7 +1062,7 @@ impl Memory for DoltMemory {
             provenance: fact.provenance,
             standing,
             status: fact.status,
-            date: fact.date,
+            recorded_at: fact.recorded_at,
             happened_at: fact.happened_at,
             edge: fact.edge,
             fields: fact.fields,
@@ -1222,7 +1232,7 @@ impl Memory for DoltMemory {
             history.push(FieldWrite {
                 value: row.try_get::<Option<String>, _>("value").map_err(store)?,
                 fact: fact.address(),
-                date: fact.date,
+                recorded_at: fact.recorded_at,
                 status: fact.status,
                 provenance: fact.provenance,
                 standing: fact.standing,
@@ -1451,7 +1461,7 @@ impl Memory for DoltMemory {
             provenance: account.provenance,
             standing,
             status: account.status,
-            date: account.date,
+            recorded_at: account.recorded_at,
             happened_at: account.happened_at,
             edge: account.edge,
             fields: account.fields,
@@ -1527,7 +1537,7 @@ impl Memory for DoltMemory {
             provenance: account.provenance,
             standing,
             status: account.status,
-            date: account.date,
+            recorded_at: account.recorded_at,
             happened_at: account.happened_at,
             edge: account.edge,
             fields: account.fields,

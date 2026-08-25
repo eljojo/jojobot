@@ -528,7 +528,7 @@ async fn a_fact_captured_through_the_front_door_is_findable_there() {
                     "subject": "person:frontdoor-probe",
                     "content": "keeps a zamboni in the garage",
                     "provenance": "testimony",
-                    "date": "2026-07-01",
+                    "recorded_at": "2026-07-01",
                     "sid": sid,
                 })
                 .as_object()

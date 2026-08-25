@@ -30,7 +30,7 @@ pub struct UpdateFactArgs {
     /// later would otherwise read back as if it were true on the original
     /// day forever.
     #[serde(default)]
-    pub date: Option<String>,
+    pub recorded_at: Option<String>,
     /// **The day the thing this claim is about HAPPENED**, `YYYY-MM-DD`.
     ///
     /// A different question from `date`, and **learning it late is ordinary**:
@@ -200,8 +200,8 @@ impl Jojobot {
         let patch = FactPatch {
             content: args.content,
             details: args.details,
-            date: args
-                .date
+            recorded_at: args
+                .recorded_at
                 .as_deref()
                 .map(|day| parse_date(Some(day), &self.zone_for(args.sid.as_deref())))
                 .transpose()?,
@@ -282,7 +282,7 @@ struct Declared {
     provenance: Option<String>,
     standing: Option<String>,
     status: Option<String>,
-    date: Option<String>,
+    recorded_at: Option<String>,
 }
 
 impl Declared {
@@ -291,7 +291,7 @@ impl Declared {
             provenance: args.provenance.clone(),
             standing: args.standing.clone(),
             status: args.status.clone(),
-            date: args.date.clone(),
+            recorded_at: args.recorded_at.clone(),
         }
     }
 
@@ -309,7 +309,11 @@ impl Declared {
                 fact.standing.as_token(),
             ),
             Difference::between("status", self.status.as_deref(), fact.status.as_token()),
-            Difference::between("date", self.date.as_deref(), &fact.date.to_string()),
+            Difference::between(
+                "recorded_at",
+                self.recorded_at.as_deref(),
+                &fact.recorded_at.to_string(),
+            ),
         ]
         .into_iter()
         .flatten()
@@ -537,7 +541,7 @@ mod tests {
         capture_ok(
             &jojobot,
             CaptureArgs {
-                date: Some("2026-03-01".into()),
+                recorded_at: Some("2026-03-01".into()),
                 shape: Some("attendance".into()),
                 object: Some("event:leaving-party".into()),
                 ..capture_args("alpha", "was at the leaving party")
@@ -548,7 +552,7 @@ mod tests {
         capture_ok(
             &jojobot,
             CaptureArgs {
-                date: Some("2026-03-01".into()),
+                recorded_at: Some("2026-03-01".into()),
                 ..capture_args("alpha", "closes the shop at six")
             },
         )
@@ -589,7 +593,7 @@ mod tests {
         capture_ok(
             &jojobot,
             CaptureArgs {
-                date: Some("2026-03-01".into()),
+                recorded_at: Some("2026-03-01".into()),
                 shape: Some("attendance".into()),
                 object: Some("event:leaving-party".into()),
                 ..capture_args("alpha", "stayed to the end of the leaving party")
@@ -1084,26 +1088,26 @@ mod tests {
         let captured = capture_ok(
             &jojobot,
             CaptureArgs {
-                date: Some("2026-06-01".into()),
+                recorded_at: Some("2026-06-01".into()),
                 ..capture_args("alpha", "the club meets on Tuesdays")
             },
         )
         .await;
         let address = address_of(&captured);
-        assert_eq!(captured["date"], "2026-06-01");
+        assert_eq!(captured["recorded_at"], "2026-06-01");
 
         let redated = json_of(
             &jojobot
                 .update_fact(Parameters(UpdateFactArgs {
                     content: Some("the club meets on Wednesdays".into()),
-                    date: Some("2026-08-15".into()),
+                    recorded_at: Some("2026-08-15".into()),
                     ..update_args(&address)
                 }))
                 .await
                 .expect("update ok"),
         );
         assert_eq!(
-            redated["date"], "2026-08-15",
+            redated["recorded_at"], "2026-08-15",
             "a correction given a day must carry that day rather than the day of the claim it \
              replaces: {redated}"
         );
@@ -1118,7 +1122,7 @@ mod tests {
                 .expect("update ok"),
         );
         assert_eq!(
-            untouched["date"], "2026-08-15",
+            untouched["recorded_at"], "2026-08-15",
             "an edit naming no day must leave the record's existing day alone: {untouched}"
         );
     }

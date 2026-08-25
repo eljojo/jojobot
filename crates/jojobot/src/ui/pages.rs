@@ -528,7 +528,7 @@ async fn history_section(state: &AppState, entity: &EntityId, key: Option<&str>)
                 Some(value) => escape(value),
                 None => "<em>taken off</em>".to_string(),
             },
-            escape(&write.date.to_string()),
+            escape(&write.recorded_at.to_string()),
             escape(&write.fact.to_string()),
             escape(write.status.as_token()),
         ));
@@ -612,7 +612,7 @@ fn facts_table(facts: &[Fact], by_id: &HashMap<&EntityId, &Entity>) -> String {
             escape(fact.provenance.as_token()),
             escape(fact.standing.as_token()),
             escape(fact.status.as_token()),
-            escape(&fact.date.to_string()),
+            escape(&fact.recorded_at.to_string()),
             relation(fact, by_id),
             escape(&fact.address().to_string()),
         ));

@@ -76,7 +76,7 @@ async fn a_curveball_collides_with_the_week() {
     // A day asked for WITHOUT naming a key is the missing piece, and it would
     // be an argument on this read rather than a verb beside it.
     //   s.shape("what falls on the 14th",
-    //           json!({"date": "2027-01-14"})).await;
+    //           json!({"recorded_at": "2027-01-14"})).await;
     s.has_no_argument("recall", "date", &["fields", "compare"])
         .await;
 

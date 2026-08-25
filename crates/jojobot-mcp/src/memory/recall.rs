@@ -375,10 +375,10 @@ const NEAR_WINDOW: u32 = 7;
 /// Which clock a neighbourhood read compares.
 fn parse_clock(raw: Option<&str>) -> Result<graph::Clock, McpError> {
     match raw.map(str::trim) {
-        None | Some("") | Some("true_of") => Ok(graph::Clock::TrueOf),
+        None | Some("") | Some("recorded_on") => Ok(graph::Clock::RecordedOn),
         Some("taken_in") => Ok(graph::Clock::TakenIn),
         Some(other) => Err(McpError::invalid_params(
-            format!("clock must be true_of or taken_in, got '{other}'"),
+            format!("clock must be recorded_on or taken_in, got '{other}'"),
             None,
         )),
     }
@@ -404,11 +404,13 @@ pub struct NearArgs {
     /// it. Omit it for a week.
     #[serde(default)]
     pub(crate) within_days: Option<u32>,
-    /// **Which clock to compare**: `true_of` — the day the claim is true of,
+    /// **Which clock to compare**: `recorded_on` — the day the claim was made,
     /// the default — or `taken_in`, the day jojobot took the record in.
     ///
     /// ⚠️ **They answer different questions.** *What did Milhouse say back in
     /// August* asks the first. *What was filed that week* asks the second.
+    /// ⛔️ **Neither is the day the thing happened** — that is `happened_at` on
+    /// the claim, and no window reads it.
     ///
     /// 🚨 **A record written before the taken-in stamp existed carries none**,
     /// so a read on that clock cannot place it. Those are counted in
@@ -583,7 +585,7 @@ fn history_json(history: &graph::KeyHistory) -> serde_json::Value {
         "writes": history.writes.iter().map(|write| {
             let mut rendered = serde_json::json!({
                 "record": write.fact.to_string(),
-                "date": write.date.to_string(),
+                "recorded_at": write.recorded_at.to_string(),
                 "status": write.status.as_token(),
                 // **Who backed the claim this write arrived in, and how sure
                 // anyone was.** A value the user stated and one an assistant
@@ -643,7 +645,7 @@ fn record_history_json(history: &graph::ClaimHistory) -> serde_json::Value {
                 // standing in for it.
                 "written_at": write.written_at.map(|at| at.to_string()),
                 "content": write.content,
-                "date": write.date.to_string(),
+                "recorded_at": write.recorded_at.to_string(),
                 // **What this write said about when the thing happened.**
                 // Versioned like everything else the write carries, so a claim
                 // that gained a day in a later edit reads apart from one that
@@ -1391,7 +1393,7 @@ impl Jojobot {
             "near_day": near.map(|n| n.day.to_string()),
             "near_within_days": near.map(|n| n.within_days),
             "near_clock": near.map(|n| match n.clock {
-                graph::Clock::TrueOf => "true_of",
+                graph::Clock::RecordedOn => "recorded_on",
                 graph::Clock::TakenIn => "taken_in",
             }),
             // 🚨 **How many records this clock could not place.**

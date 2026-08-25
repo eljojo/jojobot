@@ -433,7 +433,7 @@ fn collect_values(value: &Value, into: &mut Vec<String>) {
                     ("fields", Value::Object(keys)) => {
                         into.extend(keys.values().filter_map(|v| v.as_str().map(str::to_string)))
                     }
-                    ("date", Value::String(day)) => into.push(day.clone()),
+                    ("recorded_at", Value::String(day)) => into.push(day.clone()),
                     _ => {}
                 }
                 collect_values(held, into);
@@ -533,7 +533,7 @@ async fn the_pump_reached_its_holder_in_february(seen: &Observed<'_>) -> Result<
 
 /// The sitting that corrects the March claim, and the day it corrects it under.
 const JULY: &str = "Phase 7";
-const JULYS_DAY: &str = "\"date\":\"2026-07-05\"";
+const JULYS_DAY: &str = "\"recorded_at\":\"2026-07-05\"";
 
 /// **The key the record that took a claim back carries**, naming what it
 /// retracted.

@@ -127,7 +127,7 @@ async fn which_of_the_loops_have_gone_quiet() {
         "capture",
         json!({
             "subject": "rhythm:weekly-review", "content": "did the review, an hour",
-            "provenance": "testimony", "date": "2026-07-05", "check_in": "ran",
+            "provenance": "testimony", "recorded_at": "2026-07-05", "check_in": "ran",
         }),
     )
     .await
@@ -141,7 +141,7 @@ async fn which_of_the_loops_have_gone_quiet() {
         "capture",
         json!({
             "subject": "rhythm:worming", "content": "no tablets in the house",
-            "provenance": "testimony", "date": "2026-07-05", "check_in": "snoozed",
+            "provenance": "testimony", "recorded_at": "2026-07-05", "check_in": "snoozed",
         }),
     )
     .await
@@ -175,7 +175,7 @@ async fn which_of_the_loops_have_gone_quiet() {
         "capture",
         json!({
             "subject": "rhythm:chain-check", "content": "away all month, did not look at it",
-            "provenance": "testimony", "date": "2026-08-01", "check_in": "skipped",
+            "provenance": "testimony", "recorded_at": "2026-08-01", "check_in": "skipped",
         }),
     )
     .await
@@ -188,7 +188,7 @@ async fn which_of_the_loops_have_gone_quiet() {
         "capture",
         json!({
             "subject": "rhythm:chain-check", "content": "checked it, chain still fine",
-            "provenance": "testimony", "date": "2026-09-20", "check_in": "ran",
+            "provenance": "testimony", "recorded_at": "2026-09-20", "check_in": "ran",
             "fields": { "wear_mm": "0.4" },
         }),
     )
@@ -221,7 +221,7 @@ async fn which_of_the_loops_have_gone_quiet() {
         "capture",
         json!({
             "subject": "pet:snowball", "content": "fed her",
-            "provenance": "testimony", "date": "2026-09-20", "check_in": "ran",
+            "provenance": "testimony", "recorded_at": "2026-09-20", "check_in": "ran",
         }),
     )
     .await

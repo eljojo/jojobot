@@ -61,7 +61,7 @@ async fn what_was_recorded_around_a_day() {
     // that let jojobot supply today has no other way to learn either, and an
     // answer about an unnamed day is one nobody can check.
     august.says("\"near_day\":\"2026-08-18\"");
-    august.says("\"near_clock\":\"true_of\"");
+    august.says("\"near_clock\":\"recorded_on\"");
 
     // **Nothing was unreadable.** Zero is a claim of its own here: every record
     // was placed, so the two that did not come back are absent because they
@@ -96,7 +96,7 @@ async fn what_was_recorded_around_a_day() {
         }),
     )
     .await
-    .says("true_of");
+    .says("recorded_on");
 
     // GAP — the question arrives as "back in August", not as a day and a
     // window. Turning a month into a centre and a radius is the caller's

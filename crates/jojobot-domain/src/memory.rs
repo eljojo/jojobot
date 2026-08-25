@@ -491,14 +491,14 @@ pub struct FactPatch {
     /// New lifecycle state. A refutation is **not** one of these: rewrite
     /// `content` to state the negative truth instead (see [`FactStatus`]).
     pub status: Option<FactStatus>,
-    /// **A new day this claim is true of** — see [`Fact::date`]. `None` leaves
-    /// the record's existing day untouched, exactly as every other field this
-    /// patch does not name; a record rewritten with no day given keeps the day
-    /// of the claim it replaces, on purpose. The day an operator corrected a
-    /// claim is the fact a later reader most wants, and it is not always the
+    /// **A new day the claim was made on** — see [`Fact::recorded_at`]. `None`
+    /// leaves the record's existing day untouched, exactly as every other field
+    /// this patch does not name; a record rewritten with no day given keeps the
+    /// day of the claim it replaces, on purpose. The day an operator corrected
+    /// a claim is the fact a later reader most wants, and it is not always the
     /// day the call is made — the same reason [`Memory::retract`] carries a
     /// date of its own.
-    pub date: Option<Date>,
+    pub recorded_at: Option<Date>,
     /// **The day the thing happened**, when an edit names one. `None` leaves
     /// whatever the record already says, exactly as every unnamed field does —
     /// so learning WHEN something happened after the fact is an ordinary edit.
@@ -1459,8 +1459,8 @@ pub fn apply_fact_patch(fact: &mut Fact, patch: &FactPatch) -> Result<(), Memory
     if let Some(status) = patch.status {
         fact.status = status;
     }
-    if let Some(day) = patch.date {
-        fact.date = day;
+    if let Some(day) = patch.recorded_at {
+        fact.recorded_at = day;
     }
     // **Set, cleared, or left alone** — three states, because a patch that does
     // not mention the day must not take it off, and a day somebody guessed has
@@ -1948,8 +1948,8 @@ pub struct NewFact {
     pub standing: Option<Standing>,
     /// Lifecycle state; a fresh capture is [`FactStatus::Active`].
     pub status: FactStatus,
-    /// The fact's own freshness stamp, authoritative in the source.
-    pub date: Date,
+    /// **The day the claim was made** — see [`Fact::recorded_at`].
+    pub recorded_at: Date,
     /// **The day the thing happened**, when the caller says. `None` is the
     /// ordinary case and says nothing — see [`Fact::happened_at`].
     pub happened_at: Option<Date>,
@@ -1978,7 +1978,7 @@ pub struct NewFact {
 impl NewFact {
     /// A fact about `subject` with default provenance (inference) and active
     /// status — the common shape a capture takes.
-    pub fn about(subject: EntityId, content: impl Into<String>, date: Date) -> Self {
+    pub fn about(subject: EntityId, content: impl Into<String>, recorded_at: Date) -> Self {
         NewFact {
             subject,
             content: content.into(),
@@ -1986,7 +1986,7 @@ impl NewFact {
             provenance: Provenance::default(),
             standing: None,
             status: FactStatus::default(),
-            date,
+            recorded_at,
             happened_at: None,
             edge: None,
             fields: BTreeMap::new(),
@@ -2019,10 +2019,18 @@ pub struct Fact {
     pub standing: Standing,
     /// Lifecycle state.
     pub status: FactStatus,
-    /// The fact's own freshness stamp — **when the claim is true OF**, which
-    /// is not when anybody learned it. See [`Fact::inserted_at`] for the other
-    /// clock.
-    pub date: Date,
+    /// **The day the claim was MADE** — the day somebody said it, decided it,
+    /// or worked it out.
+    ///
+    /// ⛔️ **Not the day the thing happened**, which is [`Fact::happened_at`],
+    /// and not the moment the store took the row in, which is
+    /// [`Fact::inserted_at`]. **Three questions, three fields, and this one is
+    /// the claim's own.**
+    ///
+    /// It defaults to the day the writing run is in and a caller may name it,
+    /// which is what makes a backfill honest: notes dictated today about what
+    /// was said last March carry March here and today in `inserted_at`.
+    pub recorded_at: Date,
     /// **The day the thing this claim is about happened**, when anybody said.
     ///
     /// ⛔️ **Absent is ordinary and absent is honest.** *Over the summer* is not
@@ -2530,9 +2538,9 @@ pub struct FieldWrite {
     /// The record that carried the write — its address, so a reader can go and
     /// read what else that sitting said.
     pub fact: FactAddress,
-    /// That record's own date: **when**, for a caller counting occurrences over
-    /// time.
-    pub date: Date,
+    /// **The day the record this write arrived in was made** — see
+    /// [`Fact::recorded_at`].
+    pub recorded_at: Date,
     /// That record's status. A write inside a record somebody took back still
     /// happened, so it is reported rather than dropped — and reported as
     /// retracted, so a count can leave it out.
@@ -2592,8 +2600,8 @@ pub struct ClaimWrite {
     /// Whether it stood then. A retraction is a write like any other, so the
     /// write that took a claim back is in the chain rather than beside it.
     pub status: FactStatus,
-    /// The day it was true of, as this write had it.
-    pub date: Date,
+    /// The day the claim was made, as this write had it.
+    pub recorded_at: Date,
     /// **The day the thing happened, as this write had it** — absent when this
     /// write said nothing about it.
     ///
@@ -2625,7 +2633,7 @@ impl ClaimWrite {
             provenance: fact.provenance,
             standing: fact.standing,
             status: fact.status,
-            date: fact.date,
+            recorded_at: fact.recorded_at,
             happened_at: fact.happened_at,
             edge: fact.edge.clone(),
             derived_from: fact.derived_from.clone(),

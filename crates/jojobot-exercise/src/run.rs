@@ -1044,7 +1044,9 @@ fn dated_records(at: &Boundary) -> std::collections::HashMap<String, String> {
             continue;
         };
         for hit in results {
-            if let (Some(address), Some(date)) = (hit["address"].as_str(), hit["date"].as_str()) {
+            if let (Some(address), Some(date)) =
+                (hit["address"].as_str(), hit["recorded_at"].as_str())
+            {
                 found.insert(address.to_string(), date.to_string());
             }
         }

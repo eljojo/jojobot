@@ -86,7 +86,7 @@ async fn a_run_working_through_a_past_week_writes_in_that_week() {
         .recall("person:milhouse")
         .await
         .says("went to the fair")
-        .says(&format!("\"date\":\"{MARCH}\""));
+        .says(&format!("\"recorded_at\":\"{MARCH}\""));
 
     // ── a claim about another day still goes where it is sent ───────────────
     //
@@ -103,7 +103,7 @@ async fn a_run_working_through_a_past_week_writes_in_that_week() {
     march
         .recall("person:milhouse")
         .await
-        .says("\"date\":\"2026-03-08\"");
+        .says("\"recorded_at\":\"2026-03-08\"");
 
     // ── and a READ answers in that day too ──────────────────────────────────
     //

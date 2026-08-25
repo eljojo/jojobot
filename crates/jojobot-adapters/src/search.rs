@@ -1455,7 +1455,7 @@ impl FullTextIndex {
         let newest = scored
             .iter()
             .filter_map(|(_, p)| match p {
-                Payload::Fact { fact } => Some(fact.date),
+                Payload::Fact { fact } => Some(fact.recorded_at),
                 _ => None,
             })
             .max();
@@ -1474,7 +1474,7 @@ impl FullTextIndex {
                     // comes back.
                     (Payload::Fact { fact }, _) if fact.derived_from.is_some() => -DERIVED_DEMOTION,
                     (Payload::Fact { fact }, Some(newest)) => {
-                        let age_days = (newest - fact.date).get_days().max(0) as f32;
+                        let age_days = (newest - fact.recorded_at).get_days().max(0) as f32;
                         RECENCY_WEIGHT / (1.0 + age_days / 365.25)
                     }
                     // **A session ranks below everything else it shares an
@@ -2568,7 +2568,7 @@ mod tests {
             provenance: Provenance::Inference,
             standing: Standing::Open,
             status: FactStatus::Active,
-            date: on,
+            recorded_at: on,
             happened_at: None,
             edge: None,
             fields: Default::default(),
@@ -3195,6 +3195,61 @@ mod tests {
         assert!(
             hits.iter().all(|h| matches!(h, Hit::Fact { .. })),
             "a fact-only filter must not surface entities or prose: {hits:?}"
+        );
+    }
+
+    /// 🚨 **A claim about something that happened years ago does not rank as
+    /// stale.**
+    ///
+    /// Ranking is a recency boost, and recency read the claim's one date field
+    /// — which held the day the thing happened whenever a writer put it there.
+    /// **So a claim recorded this morning about a purchase in 2024 scored as
+    /// two years old** and lost to anything with a newer-looking day, on a
+    /// corpus where it was the freshest thing in the store.
+    ///
+    /// **Ranking reads `recorded_at` and nothing else.** The event day has its
+    /// own field and no ranking reads it.
+    ///
+    /// **Both claims are recorded on one day and differ only in what they say
+    /// happened**, so nothing but the bug could separate them.
+    #[tokio::test]
+    async fn a_claim_about_something_long_ago_ranks_by_when_it_was_recorded() {
+        let old_event = Fact {
+            happened_at: Some(date(2020, 1, 1)),
+            ..fact(
+                "person:alpha",
+                "f1",
+                "alpha bought the bike",
+                date(2026, 8, 25),
+            )
+        };
+        let recent_event = Fact {
+            happened_at: Some(date(2026, 8, 24)),
+            ..fact(
+                "person:alpha",
+                "f2",
+                "alpha bought the pump",
+                date(2026, 8, 25),
+            )
+        };
+        let index = index_of(vec![scan(
+            "doc-1",
+            Some(entity("person:alpha", "Alpha")),
+            "",
+            vec![old_event, recent_event],
+        )]);
+
+        let hits = index
+            .search(&SearchQuery::text("alpha bought"))
+            .expect("search ok");
+        let found = format!("{hits:?}");
+        assert!(
+            found.contains("bought the bike"),
+            "the claim about the older event fell out of the answer: {found}",
+        );
+        assert!(
+            found.contains("bought the pump"),
+            "the control claim is missing, so this case measures nothing: {found}",
         );
     }
 
@@ -4943,7 +4998,7 @@ mod tests {
                 provenance: fact.provenance,
                 standing: Standing::Open,
                 status: fact.status,
-                date: fact.date,
+                recorded_at: fact.recorded_at,
                 happened_at: None,
                 edge: fact.edge,
                 fields: fact.fields,
@@ -5087,7 +5142,7 @@ mod tests {
                 provenance: Provenance::Testimony,
                 standing: jojobot_domain::memory::Standing::Settled,
                 status: FactStatus::Active,
-                date: date(2026, 7, 1),
+                recorded_at: date(2026, 7, 1),
                 happened_at: None,
                 edge: None,
                 fields: Default::default(),
@@ -5280,7 +5335,7 @@ mod tests {
             provenance: Provenance::Testimony,
             standing: None,
             status: FactStatus::Active,
-            date: date(2026, 1, 1),
+            recorded_at: date(2026, 1, 1),
             happened_at: None,
             edge: None,
             fields: Default::default(),

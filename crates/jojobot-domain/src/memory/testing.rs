@@ -632,7 +632,7 @@ impl Memory for InMemoryMemory {
             provenance: fact.provenance,
             standing,
             status: fact.status,
-            date: fact.date,
+            recorded_at: fact.recorded_at,
             happened_at: fact.happened_at,
             edge: fact.edge,
             fields: fact.fields,
@@ -770,7 +770,7 @@ impl Memory for InMemoryMemory {
                 Some(FieldWrite {
                     value: write.value.clone(),
                     fact: carried.address(),
-                    date: carried.date,
+                    recorded_at: carried.recorded_at,
                     status: carried.status,
                     provenance: carried.provenance,
                     standing: carried.standing,
@@ -1059,7 +1059,7 @@ impl Memory for InMemoryMemory {
             provenance: account.provenance,
             standing,
             status: account.status,
-            date: account.date,
+            recorded_at: account.recorded_at,
             happened_at: account.happened_at,
             edge: account.edge,
             fields: account.fields,
@@ -1155,7 +1155,7 @@ impl Memory for InMemoryMemory {
             provenance: account.provenance,
             standing,
             status: account.status,
-            date: account.date,
+            recorded_at: account.recorded_at,
             happened_at: account.happened_at,
             edge: account.edge,
             fields: account.fields,
@@ -1660,7 +1660,7 @@ pub mod contract {
             "a claim nobody gave a day for invented one",
         );
         assert_eq!(
-            vague.date,
+            vague.recorded_at,
             date(2026, 10, 11),
             "the claim's own date moved when the other one was left off",
         );
@@ -1678,7 +1678,7 @@ pub mod contract {
             Some(date(2026, 6, 14)),
             "a day the caller was actually given was dropped",
         );
-        assert_eq!(dated.date, date(2026, 10, 11));
+        assert_eq!(dated.recorded_at, date(2026, 10, 11));
 
         // Both survive the journey back out of the store, which is the only
         // thing that says the column exists rather than the value being echoed.
@@ -1777,7 +1777,7 @@ pub mod contract {
             provenance: Provenance::Testimony,
             standing: Some(Standing::Open),
             status: FactStatus::Active,
-            date: date(2026, 3, 9),
+            recorded_at: date(2026, 3, 9),
             happened_at: Some(date(2026, 3, 7)),
             edge: None,
             fields: [("seats".to_string(), "2".to_string())]
@@ -1793,7 +1793,7 @@ pub mod contract {
         assert_eq!(captured.details.as_deref(), Some("mentioned it twice"));
         assert_eq!(captured.provenance, Provenance::Testimony);
         assert_eq!(captured.standing, Standing::Open);
-        assert_eq!(captured.date, date(2026, 3, 9));
+        assert_eq!(captured.recorded_at, date(2026, 3, 9));
         // **The two dates are stored apart and neither takes the other's
         // value.** A store that kept one column would answer this with the
         // claim's own day and look correct until somebody read it.
@@ -2143,7 +2143,7 @@ pub mod contract {
             ("the backfilled claim", &backfilled, date(2022, 3, 1)),
             ("the booking", &booked, date(2027, 6, 12)),
         ] {
-            assert_eq!(fact.date, held, "{what} lost the day it is true of");
+            assert_eq!(fact.recorded_at, held, "{what} lost the day it is true of");
             let stamp = fact
                 .inserted_at
                 .unwrap_or_else(|| panic!("{what} came back with no stamp: {fact:?}"));
@@ -2160,7 +2160,7 @@ pub mod contract {
             .await
             .expect("the claims read back")
             .into_iter()
-            .map(|fact| (fact.content, fact.date, fact.inserted_at))
+            .map(|fact| (fact.content, fact.recorded_at, fact.inserted_at))
             .collect::<Vec<_>>();
         assert_eq!(
             held,
@@ -3844,20 +3844,20 @@ pub mod contract {
             ),
         )
         .await;
-        assert_eq!(captured.date, date(2026, 7, 1));
+        assert_eq!(captured.recorded_at, date(2026, 7, 1));
 
         let redated = edit(
             store,
             &captured.address(),
             FactPatch {
                 content: Some("the club meets on Wednesdays".into()),
-                date: Some(date(2026, 8, 15)),
+                recorded_at: Some(date(2026, 8, 15)),
                 ..Default::default()
             },
         )
         .await;
         assert_eq!(
-            redated.date,
+            redated.recorded_at,
             date(2026, 8, 15),
             "a correction given a day must carry that day, not the day of the claim it replaces"
         );
@@ -3872,7 +3872,7 @@ pub mod contract {
         )
         .await;
         assert_eq!(
-            untouched.date,
+            untouched.recorded_at,
             date(2026, 8, 15),
             "an edit naming no day must leave the record's existing day alone"
         );
@@ -4631,7 +4631,7 @@ pub mod contract {
         assert!(
             history
                 .iter()
-                .all(|w| w.date == date(2026, 7, 1) && w.status == FactStatus::Active),
+                .all(|w| w.recorded_at == date(2026, 7, 1) && w.status == FactStatus::Active),
             "every write says when it happened and what became of the record that carried it"
         );
         // Each write names the record it arrived in, and the addresses differ:
@@ -5376,7 +5376,7 @@ pub mod contract {
 
         // And the account of why, as a record of its own.
         assert_eq!(taken_back.record.content, "it was rebooked twice");
-        assert_eq!(taken_back.record.date, date(2026, 7, 4));
+        assert_eq!(taken_back.record.recorded_at, date(2026, 7, 4));
         assert_eq!(
             taken_back.record.retracts(),
             Some(event.address().to_string().as_str()),

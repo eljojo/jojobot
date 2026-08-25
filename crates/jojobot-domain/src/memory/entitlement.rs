@@ -139,7 +139,7 @@ pub fn ranked<'a>(
         a.standing
             .cmp(&b.standing)
             .then_with(|| backing(a.fact).cmp(&backing(b.fact)))
-            .then_with(|| b.fact.date.cmp(&a.fact.date))
+            .then_with(|| b.fact.recorded_at.cmp(&a.fact.recorded_at))
             .then_with(|| a.fact.id.0.cmp(&b.fact.id.0))
     });
     held
@@ -228,7 +228,7 @@ mod tests {
             provenance,
             standing: FactStanding::Open,
             status: FactStatus::Active,
-            date: date(2026, 8, 1),
+            recorded_at: date(2026, 8, 1),
             happened_at: None,
             edge: None,
             derived_from: None,

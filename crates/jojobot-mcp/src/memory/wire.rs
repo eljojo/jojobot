@@ -33,7 +33,7 @@ pub(crate) fn fact_json(fact: &Fact, as_of: jiff::civil::Date) -> serde_json::Va
         // from the other, which is the bug this field exists to end.
         "standing": fact.standing.as_token(),
         "status": fact.status.as_token(),
-        "date": fact.date.to_string(),
+        "recorded_at": fact.recorded_at.to_string(),
         // **A THIRD question, and absent is its ordinary answer.** `date` is
         // about the claim and this is about the thing the claim is about. A
         // claim that says nothing here is complete: nobody gave a day, and a

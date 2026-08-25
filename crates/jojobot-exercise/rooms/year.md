@@ -342,7 +342,7 @@ say     August: somebody who was never at the survey is now recorded as having b
 # club on this day: January's claim is January's, March's is rewritten under
 # July's day, and October touches the pump.
 recall {"subject": "org:north-trail-club", "facts": true}
-carries "date":"2026-08-16"
+carries "recorded_at":"2026-08-16"
 say     August: nothing on the club carries this sitting's own day, so the one thing it was asked to record is not there
 ```
 
@@ -373,7 +373,7 @@ generates no day assertion here and the lock below names the day instead.
 # October's is dated October — so only this sitting can satisfy it.
 recall {"subject": "thing:floor-pump", "facts": true}
 carries person:ralph
-carries "date":"2026-06-14"
+carries "recorded_at":"2026-06-14"
 say     September: nothing on the pump carries the day it came back, so the question February left open is still open on the record
 ```
 

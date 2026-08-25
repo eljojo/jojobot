@@ -149,7 +149,7 @@ async fn january(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "rhythm:chain-check", "content": "look at the bike chain every ninety days",
-               "provenance": "testimony", "date": "2026-01-12",
+               "provenance": "testimony", "recorded_at": "2026-01-12",
                "fields": {"name": "Chain check", "last_check_in": "2025-12-20",
                           "cadence_days": "90", "counts_from": "2025-12-20",
                           "advances_from": "due_date"}}),
@@ -160,7 +160,7 @@ async fn january(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "person:milhouse", "content": "lives in Springfield",
-               "provenance": "testimony", "date": "2026-01-12",
+               "provenance": "testimony", "recorded_at": "2026-01-12",
                "shape": "location", "object": "place:springfield"}),
     )
     .await;
@@ -169,7 +169,7 @@ async fn january(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "person:milhouse", "content": "rides with the club",
-               "provenance": "testimony", "date": "2026-01-12",
+               "provenance": "testimony", "recorded_at": "2026-01-12",
                "shape": "membership", "object": "org:north-trail-club"}),
     )
     .await;
@@ -213,7 +213,7 @@ async fn february(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "thing:floor-pump", "content": "lent out, wanted back before the survey",
-               "provenance": "testimony", "date": "2026-02-08",
+               "provenance": "testimony", "recorded_at": "2026-02-08",
                "shape": "connection", "object": "person:ralph"}),
     )
     .await;
@@ -222,7 +222,7 @@ async fn february(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "person:nelson", "content": "joined the club",
-               "provenance": "testimony", "date": "2026-02-08",
+               "provenance": "testimony", "recorded_at": "2026-02-08",
                "shape": "membership", "object": "org:north-trail-club"}),
     )
     .await;
@@ -258,7 +258,7 @@ async fn february_records_no_holder(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "thing:floor-pump", "content": "lent out, wanted back before the survey",
-               "provenance": "testimony", "date": "2026-02-08"}),
+               "provenance": "testimony", "recorded_at": "2026-02-08"}),
     )
     .await;
     did(
@@ -266,7 +266,7 @@ async fn february_records_no_holder(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "person:nelson", "content": "joined the club",
-               "provenance": "testimony", "date": "2026-02-08",
+               "provenance": "testimony", "recorded_at": "2026-02-08",
                "shape": "membership", "object": "org:north-trail-club"}),
     )
     .await;
@@ -278,7 +278,7 @@ async fn march(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "org:north-trail-club", "content": "meets on Tuesdays",
-               "provenance": "testimony", "date": "2026-03-15"}),
+               "provenance": "testimony", "recorded_at": "2026-03-15"}),
     )
     .await;
 }
@@ -297,7 +297,7 @@ async fn april(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "person:milhouse", "content": "moved to Shelbyville",
-               "provenance": "testimony", "date": "2026-04-19",
+               "provenance": "testimony", "recorded_at": "2026-04-19",
                "shape": "location", "object": "place:shelbyville"}),
     )
     .await;
@@ -309,7 +309,7 @@ async fn may(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "place:north-trail", "content": "washed out at the top end this spring",
-               "provenance": "testimony", "date": "2026-05-10"}),
+               "provenance": "testimony", "recorded_at": "2026-05-10"}),
     )
     .await;
 }
@@ -321,7 +321,7 @@ async fn june(room: &Surface, sid: &str) {
             sid,
             "capture",
             json!({"subject": who, "content": "was at the trail survey",
-                   "provenance": "testimony", "date": "2026-06-14",
+                   "provenance": "testimony", "recorded_at": "2026-06-14",
                    "shape": "attendance", "object": "event:trail-survey"}),
         )
         .await;
@@ -331,7 +331,7 @@ async fn june(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "rhythm:chain-check", "content": "did the bike chain this morning",
-               "provenance": "testimony", "date": "2026-06-14",
+               "provenance": "testimony", "recorded_at": "2026-06-14",
                "check_in": "ran"}),
     )
     .await;
@@ -351,7 +351,7 @@ async fn june_writes_the_turn_by_hand(room: &Surface, sid: &str) {
             sid,
             "capture",
             json!({"subject": who, "content": "was at the trail survey",
-                   "provenance": "testimony", "date": "2026-06-14",
+                   "provenance": "testimony", "recorded_at": "2026-06-14",
                    "shape": "attendance", "object": "event:trail-survey"}),
         )
         .await;
@@ -361,7 +361,7 @@ async fn june_writes_the_turn_by_hand(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "rhythm:chain-check", "content": "did the bike chain this morning",
-               "provenance": "testimony", "date": "2026-06-14",
+               "provenance": "testimony", "recorded_at": "2026-06-14",
                "fields": {"last_check_in": "2026-06-14"}}),
     )
     .await;
@@ -375,7 +375,7 @@ async fn late_november_writes_the_turn_by_hand(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "rhythm:chain-check", "content": "did the chain again today",
-               "provenance": "testimony", "date": "2026-11-22",
+               "provenance": "testimony", "recorded_at": "2026-11-22",
                "fields": {"last_check_in": "2026-11-22"}}),
     )
     .await;
@@ -389,7 +389,7 @@ async fn july(room: &Surface, sid: &str) {
         "update_fact",
         json!({"address": wrong,
                "content": "The North Trail Club does not meet on Tuesdays — the operator was mistaken in March; that never stood.",
-               "date": "2026-07-05"}),
+               "recorded_at": "2026-07-05"}),
     )
     .await;
 }
@@ -408,7 +408,7 @@ async fn july_takes_the_claim_back(room: &Surface, sid: &str) {
         "retract",
         json!({"address": wrong,
                "reason": "the club does not meet on Tuesdays and the operator was mistaken",
-               "date": "2026-07-05"}),
+               "recorded_at": "2026-07-05"}),
     )
     .await;
 }
@@ -425,7 +425,7 @@ async fn august_puts_a_third_person_there(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "person:ralph", "content": "was at the trail survey",
-               "provenance": "inference", "date": "2026-08-16",
+               "provenance": "inference", "recorded_at": "2026-08-16",
                "shape": "attendance", "object": "event:trail-survey"}),
     )
     .await;
@@ -437,7 +437,7 @@ async fn august(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "org:north-trail-club", "content": "the operator is standing for election to the club board",
-               "provenance": "testimony", "date": "2026-08-16"}),
+               "provenance": "testimony", "recorded_at": "2026-08-16"}),
     )
     .await;
 }
@@ -448,7 +448,7 @@ async fn september(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "thing:floor-pump", "content": "came back at the survey",
-               "provenance": "testimony", "date": "2026-06-14",
+               "provenance": "testimony", "recorded_at": "2026-06-14",
                "shape": "connection", "object": "person:ralph"}),
     )
     .await;
@@ -460,7 +460,7 @@ async fn october(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "thing:floor-pump", "content": "brought round over the summer",
-               "provenance": "testimony", "date": "2026-10-11",
+               "provenance": "testimony", "recorded_at": "2026-10-11",
                "shape": "connection", "object": "person:nelson"}),
     )
     .await;
@@ -480,7 +480,7 @@ async fn late_october(room: &Surface, sid: &str) {
         "retract",
         json!({"address": wrong,
                "reason": "Nelson never actually made it to the survey — he was fixing a flat that morning",
-               "date": "2026-10-24"}),
+               "recorded_at": "2026-10-24"}),
     )
     .await;
     did(
@@ -495,7 +495,7 @@ async fn late_october(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "person:bart", "content": "joined the club",
-               "provenance": "testimony", "date": "2026-10-24",
+               "provenance": "testimony", "recorded_at": "2026-10-24",
                "shape": "membership", "object": "org:north-trail-club"}),
     )
     .await;
@@ -513,7 +513,7 @@ async fn late_october_puts_a_third_person_there(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "person:bart", "content": "was at the trail survey",
-               "provenance": "inference", "date": "2026-10-24",
+               "provenance": "inference", "recorded_at": "2026-10-24",
                "shape": "attendance", "object": "event:trail-survey"}),
     )
     .await;
@@ -529,7 +529,7 @@ async fn late_november(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "rhythm:chain-check", "content": "did the chain again today",
-               "provenance": "testimony", "date": "2026-11-22",
+               "provenance": "testimony", "recorded_at": "2026-11-22",
                "check_in": "ran"}),
     )
     .await;
@@ -559,7 +559,7 @@ async fn later_december(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "org:north-trail-club", "content": "the record was corrected during the year",
-               "provenance": "inference", "date": "2026-12-20",
+               "provenance": "inference", "recorded_at": "2026-12-20",
                "fields": {"was": was}}),
     )
     .await;
@@ -588,7 +588,7 @@ async fn later_december_answers_from_the_claim_as_it_stands(room: &Surface, sid:
         sid,
         "capture",
         json!({"subject": "org:north-trail-club", "content": "the record was corrected during the year",
-               "provenance": "inference", "date": "2026-12-20",
+               "provenance": "inference", "recorded_at": "2026-12-20",
                "fields": {"was": now}}),
     )
     .await;
@@ -612,7 +612,7 @@ async fn later_december_writes_a_fuller_sentence(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "org:north-trail-club", "content": "the record was corrected during the year",
-               "provenance": "inference", "date": "2026-12-20",
+               "provenance": "inference", "recorded_at": "2026-12-20",
                "fields": {"was": "The North Trail Club meets on Tuesdays (recorded 2026-03-15, corrected 2026-07-05)"}}),
     )
     .await;
@@ -629,7 +629,7 @@ async fn december_corrects_a_claim_nobody_questioned(room: &Surface, sid: &str) 
         sid,
         "update_fact",
         json!({"address": "person:bart#f1", "content": "joined the club in the autumn",
-               "date": "2026-12-13"}),
+               "recorded_at": "2026-12-13"}),
     )
     .await;
 }
@@ -970,7 +970,7 @@ async fn the_locks_fail_on_a_year_written_entirely_in_prose() {
             &sid,
             "capture",
             json!({"subject": subject, "content": said,
-                   "provenance": "testimony", "date": day}),
+                   "provenance": "testimony", "recorded_at": day}),
         )
         .await;
     }
@@ -1152,7 +1152,7 @@ async fn julys_window_catches_a_guilty_july_and_ignores_a_later_retraction() {
         "retract",
         json!({"address": committee,
                "reason": "the operator never stood for the board and this was never so",
-               "date": "2026-12-13"}),
+               "recorded_at": "2026-12-13"}),
     )
     .await;
     let judged = judge_all(&surface, &boundaries).await;
@@ -1197,7 +1197,7 @@ async fn augusts_window_catches_a_guilty_august_and_ignores_a_later_invention() 
         &sid,
         "capture",
         json!({"subject": "person:bart", "content": "was at the trail survey",
-               "provenance": "inference", "date": "2026-12-13",
+               "provenance": "inference", "recorded_at": "2026-12-13",
                "shape": "attendance", "object": "event:trail-survey"}),
     )
     .await;

@@ -99,7 +99,7 @@ async fn worked_the_first_phase(room: &Surface, sid: &str) {
         "capture",
         json!({
             "subject": "rhythm:descale", "content": "descale the kettle every sixty days",
-            "provenance": "testimony", "date": "2026-06-15",
+            "provenance": "testimony", "recorded_at": "2026-06-15",
             "fields": {
                 "name": "Descale the kettle", "last_check_in": "2026-06-15",
                 "cadence_days": "60", "counts_from": "2026-06-15",
@@ -125,7 +125,7 @@ async fn worked_the_first_phase(room: &Surface, sid: &str) {
         json!({
             "subject": "rhythm:swap-the-air-filter",
             "content": "swap the filter when it looks bad — no schedule",
-            "provenance": "testimony", "date": "2026-09-20",
+            "provenance": "testimony", "recorded_at": "2026-09-20",
             "fields": {"name": "Swap the air filter", "last_check_in": "2026-09-20"},
         }),
     )

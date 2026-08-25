@@ -20,13 +20,12 @@ pub struct RetractArgs {
     /// **The day the record was taken back**, `YYYY-MM-DD`. Defaults to today
     /// in your session's zone.
     ///
-    /// A retraction leaves a dated record of its own, and a date says when a
-    /// thing is TRUE OF rather than when somebody typed it. **The day an
-    /// operator changed their mind is the fact a later reader most wants about
-    /// a retraction**, and it is not always the day the call is made — a
-    /// session catching up on last week says so here.
+    /// A retraction leaves a record of its own, and this is the day THAT
+    /// record was made. **The day an operator changed their mind is the fact a
+    /// later reader most wants about a retraction**, and it is not always the
+    /// day the call is made — a session catching up on last week says so here.
     #[serde(default)]
-    pub date: Option<String>,
+    pub recorded_at: Option<String>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
     /// every call — it is what tells jojobot which bot is asking. Reads are
     /// attributed, never journalled.
@@ -67,7 +66,7 @@ impl Jojobot {
             return Ok(refused);
         }
         let address = FactAddress::parse(&args.address).map_err(memory_error)?;
-        let date = self.dated(args.date.as_deref(), args.sid.as_deref())?;
+        let date = self.dated(args.recorded_at.as_deref(), args.sid.as_deref())?;
 
         let taken_back = match self
             .memory
@@ -197,7 +196,7 @@ mod tests {
                 address: address_of(&withdrawn),
                 reason: Some("was somewhere else that day".into()),
                 sid: Some(sid.clone()),
-                date: None,
+                recorded_at: None,
             }))
             .await
             .expect("the retraction lands");
@@ -261,7 +260,7 @@ mod tests {
                     address: address.clone(),
                     reason: Some("he was never there".into()),
                     sid: Some(sid.clone()),
-                    date: None,
+                    recorded_at: None,
                 }))
                 .await
                 .expect("the retraction lands"),
@@ -304,7 +303,7 @@ mod tests {
                     address: address_of(&source),
                     reason: Some("the ferry moved back".into()),
                     sid: Some(sid.clone()),
-                    date: None,
+                    recorded_at: None,
                 }))
                 .await
                 .expect("the retraction lands"),
@@ -394,7 +393,7 @@ mod tests {
                 address: address_of(&source),
                 reason: Some("the ferry moved back".into()),
                 sid: Some(sid.clone()),
-                date: None,
+                recorded_at: None,
             }))
             .await
             .expect("the retraction lands");
@@ -417,7 +416,7 @@ mod tests {
                 address: address_of(&unrelated),
                 reason: Some("it reopened".into()),
                 sid: Some(sid),
-                date: None,
+                recorded_at: None,
             }))
             .await
             .expect("the retraction lands");
@@ -440,7 +439,7 @@ mod tests {
         RetractArgs {
             address: address.to_string(),
             reason: Some(reason.to_string()),
-            date: None,
+            recorded_at: None,
             sid: Some(crate::harness::TEST_SID.into()),
         }
     }
@@ -464,14 +463,14 @@ mod tests {
         let said = json_of(
             &jojobot
                 .retract(Parameters(RetractArgs {
-                    date: Some("2026-07-05".into()),
+                    recorded_at: Some("2026-07-05".into()),
                     ..retract_args(&address, "it never met on Tuesdays")
                 }))
                 .await
                 .expect("the retraction lands"),
         );
         assert_eq!(
-            said["retraction"]["date"], "2026-07-05",
+            said["retraction"]["recorded_at"], "2026-07-05",
             "the retraction carries the day the call happened rather than the day it is \
              about: {said}"
         );
@@ -488,7 +487,7 @@ mod tests {
             .date()
             .to_string();
         assert_eq!(
-            undated["retraction"]["date"], today,
+            undated["retraction"]["recorded_at"], today,
             "a retraction given no day stopped being stamped with today: {undated}"
         );
     }

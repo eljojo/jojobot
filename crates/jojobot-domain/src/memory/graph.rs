@@ -307,10 +307,15 @@ impl Selection {
 /// it, so it places no claim in time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Clock {
-    /// **The day the claim is true of** — the default, because a person naming
-    /// a date means the day the thing happened.
+    /// **The day the claim was MADE** — the default, because *what did they say
+    /// back in August* is a question about when things were said.
+    ///
+    /// ⛔️ **Not the day the thing happened.** That is its own field now, and
+    /// this clock does not read it: a claim recorded in October about a summer
+    /// event sits in October here, which is where a caller asking what was
+    /// recorded that week expects to find it.
     #[default]
-    TrueOf,
+    RecordedOn,
     /// **The day jojobot took the record in.**
     ///
     /// ⚠️ **Not every record carries one.** A record written before the stamp
@@ -345,7 +350,7 @@ impl Nearness {
     /// cannot place it.
     fn placed(&self, fact: &Fact) -> Option<jiff::civil::Date> {
         match self.clock {
-            Clock::TrueOf => Some(fact.date),
+            Clock::RecordedOn => Some(fact.recorded_at),
             Clock::TakenIn => fact
                 .inserted_at
                 .map(|at| at.to_zoned(jiff::tz::TimeZone::UTC).date()),
@@ -1799,7 +1804,7 @@ mod tests {
             provenance: Provenance::Testimony,
             standing: Standing::Settled,
             status: FactStatus::Active,
-            date: "2026-08-10".parse().expect("a civil date"),
+            recorded_at: "2026-08-10".parse().expect("a civil date"),
             happened_at: None,
             edge: None,
             fields: Default::default(),
@@ -2041,7 +2046,7 @@ mod tests {
     fn a_selection_near_a_day_keeps_the_records_in_its_window_and_drops_the_rest() {
         let _booted = crate::memory::testing::InMemoryMemory::booted();
         let dated = |id: &str, day: &str, content: &str| Fact {
-            date: day.parse().expect("a civil date"),
+            recorded_at: day.parse().expect("a civil date"),
             ..fact("person:milhouse", id, content)
         };
         let scanned = vec![doc(
@@ -2057,7 +2062,7 @@ mod tests {
                 near: Some(Nearness {
                     day: "2026-08-18".parse().expect("a civil date"),
                     within_days: 7,
-                    clock: Clock::TrueOf,
+                    clock: Clock::RecordedOn,
                 }),
                 ..Selection::default()
             },
@@ -2080,6 +2085,60 @@ mod tests {
         assert!(
             !content.iter().any(|c| c.contains("February")),
             "a record six months away came back, so the window keeps everything: {content:?}",
+        );
+
+        // 🚨 **A thing planned for next year does not sit in next year.** The
+        // booking below is recorded today and carries 2027 as the day it
+        // happens. Before the split there was one date field, so recording it
+        // put 2027 on the claim — and the claim then answered a window around
+        // 2027 and NOT one around the day it was written, which is where a
+        // caller asking what was recorded this week looks for it.
+        //
+        // **Both halves**: it comes back for the day it was recorded on, and
+        // it does not come back for the day it happens.
+        let booking = Fact {
+            happened_at: Some("2027-06-01".parse().expect("a civil date")),
+            ..dated("f3", "2026-08-16", "booked the trip for next June")
+        };
+        let with_booking = vec![doc(
+            entity("person:milhouse", "Milhouse"),
+            "His page.",
+            vec![booking],
+        )];
+        let recorded_week = resolve(&with_booking, &[], &query).expect("a read");
+        assert_eq!(
+            recorded_week
+                .objects
+                .iter()
+                .flat_map(|o| o.facts.iter())
+                .count(),
+            1,
+            "a claim recorded two days from the day asked about did not come back",
+        );
+        let next_year = resolve(
+            &with_booking,
+            &[],
+            &GraphQuery {
+                select: Selection {
+                    near: Some(Nearness {
+                        day: "2027-06-01".parse().expect("a civil date"),
+                        within_days: 7,
+                        clock: Clock::RecordedOn,
+                    }),
+                    ..Selection::default()
+                },
+                ..query.clone()
+            },
+        )
+        .expect("a read");
+        assert_eq!(
+            next_year
+                .objects
+                .iter()
+                .flat_map(|o| o.facts.iter())
+                .count(),
+            0,
+            "the day the thing HAPPENS placed the claim, so a booking sits in next year",
         );
     }
 
@@ -2123,7 +2182,8 @@ mod tests {
 
         // The claim's own date places every record, so nothing is unreadable
         // and the records really are near the day.
-        let by_day = resolve(&scanned, &[], &asking(Clock::TrueOf)).expect("a read");
+
+        let by_day = resolve(&scanned, &[], &asking(Clock::RecordedOn)).expect("a read");
         assert_eq!(
             by_day.unplaced, 0,
             "the claim's own date is never absent, so nothing can be unplaceable on it",

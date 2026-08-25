@@ -50,9 +50,14 @@ pub struct CaptureArgs {
     /// it settled.
     #[serde(default)]
     pub(crate) standing: Option<String>,
-    /// The fact's freshness date, `YYYY-MM-DD`. Defaults to today (UTC).
+    /// **The day the claim was MADE**, `YYYY-MM-DD` — the day it was said,
+    /// decided or worked out. Defaults to the day your run is in.
+    ///
+    /// Not the day the thing happened: that is `happened_at`, and it is
+    /// separate because one field answering both is how a vague answer becomes
+    /// an invented date.
     #[serde(default)]
-    pub(crate) date: Option<String>,
+    pub(crate) recorded_at: Option<String>,
     /// **The day the thing this claim is about HAPPENED**, `YYYY-MM-DD` —
     /// a different question from `date`, which is about the claim.
     ///
@@ -166,7 +171,7 @@ struct Declared {
     subject: String,
     provenance: Option<String>,
     standing: Option<String>,
-    date: Option<String>,
+    recorded_at: Option<String>,
 }
 
 impl Declared {
@@ -177,7 +182,7 @@ impl Declared {
             subject: args.subject.clone(),
             provenance: args.provenance.clone(),
             standing: args.standing.clone(),
-            date: args.date.clone(),
+            recorded_at: args.recorded_at.clone(),
         }
     }
 
@@ -203,7 +208,11 @@ impl Declared {
                 self.standing.as_deref(),
                 fact.standing.as_token(),
             ),
-            Difference::between("date", self.date.as_deref(), &fact.date.to_string()),
+            Difference::between(
+                "recorded_at",
+                self.recorded_at.as_deref(),
+                &fact.recorded_at.to_string(),
+            ),
         ]
         .into_iter()
         .flatten()
@@ -434,7 +443,7 @@ impl Jojobot {
         let checked_in = args.check_in.is_some();
         let subject = EntityId::person(&args.subject);
         let provenance = parse_provenance(args.provenance.as_deref())?;
-        let date = self.dated(args.date.as_deref(), args.sid.as_deref())?;
+        let recorded_at = self.dated(args.recorded_at.as_deref(), args.sid.as_deref())?;
         let edge = match parse_edge(args.shape.as_deref(), args.object.as_deref())? {
             Ok(edge) => edge,
             Err(refused) => return Ok(refused),
@@ -449,7 +458,10 @@ impl Jojobot {
 
         let mut fields = args.fields.unwrap_or_default();
         if let Some(outcome) = args.check_in.as_deref() {
-            match self.check_in(&subject, outcome, date, &fields).await? {
+            match self
+                .check_in(&subject, outcome, recorded_at, &fields)
+                .await?
+            {
                 Ok(computed) => fields.extend(computed),
                 Err(refused) => return Ok(refused),
             }
@@ -476,7 +488,7 @@ impl Jojobot {
             provenance,
             standing: args.standing.as_deref().map(parse_standing).transpose()?,
             status: Default::default(),
-            date,
+            recorded_at,
             // **Only what the caller sent.** No default and no derivation: a
             // claim that says nothing about when the thing happened says
             // nothing, which is the whole reason this field is separate.
@@ -610,7 +622,7 @@ mod tests {
             CaptureArgs {
                 check_in: Some("ran".into()),
                 provenance: Some("testimony".into()),
-                date: Some("2026-08-10".into()),
+                recorded_at: Some("2026-08-10".into()),
                 ..capture_args("rhythm:descale", "did it this morning")
             },
         )
@@ -656,7 +668,7 @@ mod tests {
             CaptureArgs {
                 check_in: Some("ran".into()),
                 provenance: Some("testimony".into()),
-                date: Some("2026-08-10".into()),
+                recorded_at: Some("2026-08-10".into()),
                 ..capture_args("rhythm:descale", "did it this morning")
             },
         )
@@ -736,7 +748,7 @@ mod tests {
         CaptureArgs {
             check_in: Some("ran".into()),
             provenance: Some("testimony".into()),
-            date: Some("2026-08-10".into()),
+            recorded_at: Some("2026-08-10".into()),
             ..capture_args("rhythm:descale", "did it this morning")
         }
     }
@@ -931,7 +943,7 @@ mod tests {
             &jojobot,
             CaptureArgs {
                 check_in: Some("ran".into()),
-                date: Some("2026-08-10".into()),
+                recorded_at: Some("2026-08-10".into()),
                 ..capture_args("rhythm:descale", "descaled it, took ten minutes")
             },
         )
@@ -950,7 +962,7 @@ mod tests {
             &jojobot,
             CaptureArgs {
                 check_in: Some("snoozed".into()),
-                date: Some("2026-08-19".into()),
+                recorded_at: Some("2026-08-19".into()),
                 ..capture_args("rhythm:descale", "not this week")
             },
         )
@@ -969,7 +981,7 @@ mod tests {
             &jojobot,
             CaptureArgs {
                 check_in: Some("skipped".into()),
-                date: Some("2026-08-20".into()),
+                recorded_at: Some("2026-08-20".into()),
                 ..capture_args("rhythm:descale", "away, not doing it")
             },
         )
@@ -996,7 +1008,7 @@ mod tests {
             &jojobot,
             CaptureArgs {
                 check_in: Some("ran".into()),
-                date: Some("2026-08-12".into()),
+                recorded_at: Some("2026-08-12".into()),
                 fields: Some(
                     [("reading_kwh".to_string(), "4184".to_string())]
                         .into_iter()
@@ -1055,7 +1067,7 @@ mod tests {
             &jojobot
                 .capture(Parameters(CaptureArgs {
                     check_in: Some("ran".into()),
-                    date: Some("2026-08-12".into()),
+                    recorded_at: Some("2026-08-12".into()),
                     ..capture_args("rhythm:half-made", "did it")
                 }))
                 .await
@@ -1096,7 +1108,7 @@ mod tests {
             &jojobot
                 .capture(Parameters(CaptureArgs {
                     check_in: Some("ran".into()),
-                    date: Some("2026-08-10".into()),
+                    recorded_at: Some("2026-08-10".into()),
                     fields: Some(
                         [("counts_from".to_string(), "2026-09-01".to_string())]
                             .into_iter()
@@ -1134,7 +1146,7 @@ mod tests {
             &jojobot,
             CaptureArgs {
                 check_in: Some("ran".into()),
-                date: Some("2026-08-10".into()),
+                recorded_at: Some("2026-08-10".into()),
                 ..capture_args("rhythm:descale", "descaled it")
             },
         )
@@ -1176,7 +1188,7 @@ mod tests {
             &jojobot
                 .capture(Parameters(CaptureArgs {
                     check_in: Some("ran".into()),
-                    date: Some("2026-08-10".into()),
+                    recorded_at: Some("2026-08-10".into()),
                     ..capture_args("thing:kettle", "boiled it")
                 }))
                 .await
@@ -1193,7 +1205,7 @@ mod tests {
             &jojobot,
             CaptureArgs {
                 check_in: Some("ran".into()),
-                date: Some("2026-08-10".into()),
+                recorded_at: Some("2026-08-10".into()),
                 ..capture_args("rhythm:descale", "boiled it")
             },
         )
@@ -1232,7 +1244,7 @@ mod tests {
         let receipt = json_of(
             &jojobot
                 .capture(Parameters(CaptureArgs {
-                    date: Some("2026-01-10".into()),
+                    recorded_at: Some("2026-01-10".into()),
                     stale_after: Some("2026-01-20".into()),
                     ..capture_args("person:alpha", "the rate the bank quoted")
                 }))
@@ -1329,7 +1341,7 @@ mod tests {
             "…and the standing this claim was given: {body}"
         );
         assert!(
-            body["date"].is_string(),
+            body["recorded_at"].is_string(),
             "…and the date it was stamped: {body}"
         );
         assert!(
@@ -1824,8 +1836,8 @@ mod tests {
         let stamped = async |sid: &str| {
             let mut args = capture_args("milhouse", "no date on this one");
             args.sid = Some(sid.to_string());
-            args.date = None;
-            capture_ok(&jojobot, args).await["date"]
+            args.recorded_at = None;
+            capture_ok(&jojobot, args).await["recorded_at"]
                 .as_str()
                 .expect("a capture is stamped with a day")
                 .to_string()
@@ -1890,10 +1902,10 @@ mod tests {
 
         let mut args = capture_args("milhouse", "went to the fair");
         args.sid = Some(acting.clone());
-        args.date = None;
+        args.recorded_at = None;
         let stated = capture_ok(&jojobot, args).await;
         assert_eq!(
-            stated["date"], "2026-03-15",
+            stated["recorded_at"], "2026-03-15",
             "the claim was stamped with the server's day, not the run's: {stated}"
         );
 
@@ -1901,9 +1913,9 @@ mod tests {
         // records claims about other days, and this is how.
         let mut args = capture_args("milhouse", "had been at the fair the day before");
         args.sid = Some(acting.clone());
-        args.date = Some("2026-03-14".into());
+        args.recorded_at = Some("2026-03-14".into());
         let named = capture_ok(&jojobot, args).await;
-        assert_eq!(named["date"], "2026-03-14");
+        assert_eq!(named["recorded_at"], "2026-03-14");
 
         // **A second run states another day, and the first one's frame does not
         // reach it.** Two runs of one bot are legitimately in two periods, and
@@ -1924,10 +1936,10 @@ mod tests {
         );
         let mut args = capture_args("milhouse", "was at the parade");
         args.sid = sid_of(&elsewhere);
-        args.date = None;
+        args.recorded_at = None;
         let second = capture_ok(&jojobot, args).await;
         assert_eq!(
-            second["date"], "2026-07-04",
+            second["recorded_at"], "2026-07-04",
             "the second run wrote under the first one's day: {second}"
         );
 
@@ -1936,10 +1948,10 @@ mod tests {
         let now = booted_in(&jojobot, "otto", "Etc/GMT+12", Some("new")).await;
         let mut args = capture_args("milhouse", "happening now");
         args.sid = Some(now);
-        args.date = None;
+        args.recorded_at = None;
         let clocked = capture_ok(&jojobot, args).await;
         assert_eq!(
-            clocked["date"],
+            clocked["recorded_at"],
             jiff::Timestamp::now()
                 .to_zoned(jiff::tz::TimeZone::get("Etc/GMT+12").expect("a zone"))
                 .date()
@@ -1961,7 +1973,7 @@ mod tests {
             .to_zoned(jiff::tz::TimeZone::UTC)
             .date();
         let captured = capture_ok(&jojobot, capture_args("alpha", "dated today")).await;
-        assert_eq!(captured["date"], today.to_string());
+        assert_eq!(captured["recorded_at"], today.to_string());
     }
 
     /// An explicit testimony provenance is honoured.
@@ -1972,13 +1984,13 @@ mod tests {
             &jojobot,
             CaptureArgs {
                 provenance: Some("testimony".into()),
-                date: Some("2026-01-01".into()),
+                recorded_at: Some("2026-01-01".into()),
                 ..capture_args("alpha", "speaks two languages")
             },
         )
         .await;
         assert_eq!(captured["provenance"], "testimony");
-        assert_eq!(captured["date"], "2026-01-01");
+        assert_eq!(captured["recorded_at"], "2026-01-01");
     }
 
     #[tokio::test]
@@ -1997,7 +2009,7 @@ mod tests {
     async fn malformed_date_is_a_client_error() {
         let err = handler()
             .capture(Parameters(CaptureArgs {
-                date: Some("not-a-date".into()),
+                recorded_at: Some("not-a-date".into()),
                 ..capture_args("alpha", "x")
             }))
             .await

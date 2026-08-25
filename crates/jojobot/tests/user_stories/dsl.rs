@@ -976,7 +976,7 @@ impl Session {
                 json!({"subject": subject, "content": content, "provenance": "testimony"}),
             )
             .await;
-        body["date"]
+        body["recorded_at"]
             .as_str()
             .unwrap_or_else(|| panic!("a capture is stamped with a day: {body}"))
             .to_string()
@@ -991,7 +991,7 @@ impl Session {
             "capture",
             json!({
                 "subject": subject, "content": content,
-                "provenance": "testimony", "date": date,
+                "provenance": "testimony", "recorded_at": date,
             }),
         )
         .await;

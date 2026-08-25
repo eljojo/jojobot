@@ -163,7 +163,7 @@ async fn a_server_acting_out_a_day_answers_in_that_day_without_being_told_the_da
         .recall("person:milhouse")
         .await
         .says("ate an apple")
-        .says(&format!("\"date\":\"{JUNE}\""));
+        .says(&format!("\"recorded_at\":\"{JUNE}\""));
 
     // ── and TWO from the other side: the loop has gone quiet now ────────────
     //
@@ -192,7 +192,7 @@ async fn a_server_acting_out_a_day_answers_in_that_day_without_being_told_the_da
     later
         .recall("person:milhouse")
         .await
-        .says("\"date\":\"2026-06-22\"");
+        .says("\"recorded_at\":\"2026-06-22\"");
 
     later.wrap("read June back from July").await;
     july.finish().await;

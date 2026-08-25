@@ -313,7 +313,7 @@ async fn the_terminal_lock_ignores_a_number_the_store_stamped() {
             "subject": "bot:gamma",
             "content": "had a look at what the second assistant is carrying",
             "provenance": "inference",
-            "date": "2026-07-03",
+            "recorded_at": "2026-07-03",
         }),
     )
     .await;

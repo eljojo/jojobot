@@ -63,7 +63,7 @@ async fn a_claim_is_settled_by_reading_it_at_its_address() {
         // Who backs it, and the day it was said: a reader can weigh the claim
         // without weighing whoever passed it on.
         .says("\"provenance\":\"testimony\"")
-        .says("\"date\":");
+        .says("\"recorded_at\":");
 
     // ── and the words themselves are checkable against what was rewritten ───
     //

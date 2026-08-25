@@ -338,10 +338,16 @@ mod tests {
     /// make unforgeable, so the surface does not implement the argument at all
     /// and the refusal names it.
     ///
-    /// **Paired with the clock a caller DOES own** — `date` says when the claim
-    /// is true of, and a backfill naming a day in 2022 goes through. Without
-    /// that half this passes against a build that refuses both, which would
-    /// take the backfill with it.
+    /// **Paired with the clock a caller DOES own** — `recorded_at` says when
+    /// the claim was made, and a backfill naming a day in 2022 goes through.
+    /// Without that half this passes against a build that refuses both, which
+    /// would take the backfill with it.
+    ///
+    /// ⭐ **And the third assertion is what makes the rename safe.** The column
+    /// was called `date` and a caller still sending that word is REFUSED by
+    /// name rather than having its day quietly dropped — which is the whole
+    /// reason this surface refuses an argument it does not implement instead of
+    /// discarding it.
     #[tokio::test]
     async fn a_caller_cannot_stamp_when_jojobot_learned_a_claim() {
         let jojobot = handler();
@@ -361,9 +367,17 @@ mod tests {
         );
         assert!(
             jojobot
-                .unimplemented_arguments(&call("capture", with("date", "2022-03-01")))
+                .unimplemented_arguments(&call("capture", with("recorded_at", "2022-03-01")))
                 .is_none(),
             "…and the clock the caller does own still takes a day long past"
+        );
+        // 🚨 **The retired spelling is refused BY NAME.** The column used to be
+        // `date`, and a caller still sending that word must be told rather than
+        // having the day dropped and the claim stamped with today.
+        assert!(
+            advice(jojobot.unimplemented_arguments(&call("capture", with("date", "2022-03-01"))))
+                .contains("date"),
+            "a caller sending the retired name has its day silently discarded"
         );
     }
 
