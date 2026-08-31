@@ -17,5 +17,6 @@ pub mod mailbox;
 pub mod memory;
 pub mod override_token;
 pub mod session;
+pub mod teaching;
 pub mod text;
 pub mod trust;

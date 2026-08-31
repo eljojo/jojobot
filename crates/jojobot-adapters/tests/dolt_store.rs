@@ -19,6 +19,7 @@ use jojobot_adapters::dolt::mailboxes::DoltMailboxes;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::dolt::sessions::DoltSessions;
+use jojobot_adapters::dolt::teaching::DoltTeachings;
 use jojobot_adapters::provisioned::Provisioned;
 use jojobot_adapters::search::{IndexedMemory, Retrieval};
 use jojobot_adapters::testing::free_port;
@@ -30,6 +31,7 @@ use jojobot_domain::memory::owned::{Provision, Provisions};
 use jojobot_domain::memory::testing::contract as memory;
 use jojobot_domain::memory::{EntityPatch, FactPatch, NewEntity, NewFact};
 use jojobot_domain::session::testing::contract as sessions;
+use jojobot_domain::teaching::testing::contract as teachings;
 
 /// A directory of this run's own, removed when it is done.
 struct Scratch(PathBuf);
@@ -738,6 +740,42 @@ async fn dolt_satisfies_the_mailbox_contract() {
 
     let handed = AtomicUsize::new(0);
     mailboxes::run_all(|| {
+        let n = handed.fetch_add(1, Ordering::SeqCst);
+        let store = prepared.get(n).cloned().unwrap_or_else(|| {
+            panic!(
+                "the contract has more cases than this suite prepared stores for \
+                 ({ROOM}). Raise ROOM — never let two cases share one store, or one \
+                 case's rows start satisfying another's assertions."
+            )
+        });
+        async move { store }
+    })
+    .await;
+
+    store.stop().await;
+}
+
+/// The teaching contract's cases, each against a store of its own.
+#[tokio::test]
+async fn dolt_satisfies_the_teaching_contract() {
+    let scratch = Scratch::new("teaching");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+
+    const ROOM: usize = 8;
+    let mut prepared = Vec::with_capacity(ROOM);
+    for n in 0..ROOM {
+        let pool = store
+            .database(&format!("teach{n}"))
+            .await
+            .expect("a database of this case's own");
+        migrate::run(&pool).await.expect("the schema");
+        prepared.push(DoltTeachings::open(pool));
+    }
+
+    let handed = AtomicUsize::new(0);
+    teachings::run_all(|| {
         let n = handed.fetch_add(1, Ordering::SeqCst);
         let store = prepared.get(n).cloned().unwrap_or_else(|| {
             panic!(

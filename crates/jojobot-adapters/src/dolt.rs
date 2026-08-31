@@ -22,6 +22,7 @@ pub mod mailboxes;
 pub mod memory;
 pub mod migrate;
 pub mod sessions;
+pub mod teaching;
 
 /// The database jojobot serves out of its data directory. Named rather than
 /// derived from the directory, so a test's temporary path and the deployed

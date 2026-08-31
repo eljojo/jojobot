@@ -382,6 +382,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0040_fact_write_recorded_at.sql"),
         leaves: Leaves::Column("fact_write", "recorded_at"),
     },
+    Migration {
+        version: "0041_session_teaching",
+        sql: include_str!("../../migrations/0041_session_teaching.sql"),
+        leaves: Leaves::Table("session_teaching"),
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a
@@ -789,6 +794,7 @@ mod tests {
         "0038_fact_write_happened_at",
         "0039_fact_recorded_at",
         "0040_fact_write_recorded_at",
+        "0041_session_teaching",
     ];
 
     /// **A migration set of this test's own, carrying the shape no shipped
