@@ -4,6 +4,7 @@
 //! and an entrypoint that chains the systems below it.
 
 use super::*;
+use crate::teaching::{CLAIMS_DOMAIN, CLAIMS_TEACHING};
 
 /// Arguments to `retract`.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -62,9 +63,10 @@ impl Jojobot {
     ) -> Result<CallToolResult, McpError> {
         // Refused here, before anything is written — see
         // [`Jojobot::attributable`].
-        if let Err(refused) = self.identified(args.sid.as_deref()) {
-            return Ok(refused);
-        }
+        let caller = match self.identified(args.sid.as_deref()) {
+            Ok(caller) => caller,
+            Err(refused) => return Ok(refused),
+        };
         let address = FactAddress::parse(&args.address).map_err(memory_error)?;
         let date = self.dated(args.recorded_at.as_deref(), args.sid.as_deref())?;
 
@@ -109,6 +111,9 @@ impl Jojobot {
             &mut body,
             what_a_retraction_left_standing(&address, &standing_on),
         );
+        if self.first_contact(CLAIMS_DOMAIN, Some(&caller)).await {
+            crate::answer::note_teaching(&mut body, CLAIMS_TEACHING);
+        }
         json_result(&body)
     }
 }

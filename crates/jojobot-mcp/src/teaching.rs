@@ -355,4 +355,107 @@ mod tests {
         let jojobot = handler();
         assert!(!jojobot.first_contact(CLAIMS_DOMAIN, None).await);
     }
+
+    /// A fact seeded straight through the store, bypassing `capture` — which
+    /// would consume the session's one teaching itself, leaving nothing for
+    /// the case under test to observe.
+    async fn a_seeded_fact_handler() -> (Jojobot, String) {
+        let memory = Arc::new(InMemoryMemory::booted());
+        let jojobot = Jojobot::new(
+            memory.clone(),
+            Arc::new(SpySearch::default()),
+            Arc::new(InMemoryMailboxes::knowing_any_owner()),
+            Arc::new(InMemorySessions::new()),
+            Arc::new(InMemoryTeachings::new()),
+            seeded_registry(),
+        );
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+        ensure(&jojobot, "person:alpha").await;
+        memory
+            .capture(jojobot_domain::memory::NewFact::about(
+                EntityId::person("person:alpha"),
+                "plays go",
+                jiff::civil::date(2026, 7, 1),
+            ))
+            .await
+            .expect("capture ok")
+            .written()
+            .expect("not blocked");
+        (jojobot, sid)
+    }
+
+    /// **`update_fact` teaches on the same trigger `capture` does: the write
+    /// landing.**
+    #[tokio::test]
+    async fn update_fact_teaches_on_the_first_edit() {
+        let (jojobot, sid) = a_seeded_fact_handler().await;
+
+        let edited = jojobot
+            .update_fact(rmcp::handler::server::wrapper::Parameters(
+                crate::memory::UpdateFactArgs {
+                    content: Some("plays go on weekends".into()),
+                    sid: Some(sid),
+                    ..update_args("person:alpha#f1")
+                },
+            ))
+            .await
+            .expect("update ok");
+        let edited = json_of(&edited);
+        assert_eq!(
+            edited["teaching"], CLAIMS_TEACHING,
+            "the first edit this session made carries the teaching: {edited}"
+        );
+    }
+
+    /// **`retract` teaches on the write landing.**
+    #[tokio::test]
+    async fn retract_teaches_on_the_first_retraction() {
+        let (jojobot, sid) = a_seeded_fact_handler().await;
+
+        let retracted = jojobot
+            .retract(rmcp::handler::server::wrapper::Parameters(
+                crate::memory::RetractArgs {
+                    address: "person:alpha#f1".into(),
+                    reason: Some("never happened".into()),
+                    recorded_at: None,
+                    sid: Some(sid),
+                },
+            ))
+            .await
+            .expect("retract ok");
+        let retracted = json_of(&retracted);
+        assert_eq!(
+            retracted["teaching"], CLAIMS_TEACHING,
+            "the first retraction this session made carries the teaching: {retracted}"
+        );
+    }
+
+    /// **`merge_entities` teaches on the write landing.**
+    #[tokio::test]
+    async fn merge_entities_teaches_on_the_first_merge() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+        ensure(&jojobot, "person:alpha").await;
+        ensure(&jojobot, "person:milhouse").await;
+
+        let merged = jojobot
+            .merge_entities(rmcp::handler::server::wrapper::Parameters(
+                crate::memory::merge_entities::MergeArgs {
+                    duplicate: "person:milhouse".into(),
+                    survivor: "person:alpha".into(),
+                    reason: Some("same person".into()),
+                    recorded_at: None,
+                    sid: Some(sid),
+                },
+            ))
+            .await
+            .expect("merge ok");
+        let merged = json_of(&merged);
+        assert_eq!(
+            merged["teaching"], CLAIMS_TEACHING,
+            "the first merge this session made carries the teaching: {merged}"
+        );
+    }
 }

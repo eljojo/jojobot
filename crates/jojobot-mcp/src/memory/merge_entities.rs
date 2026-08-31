@@ -4,6 +4,7 @@
 //! and an entrypoint that chains the systems below it.
 
 use super::*;
+use crate::teaching::{CLAIMS_DOMAIN, CLAIMS_TEACHING};
 
 /// Arguments to `merge_entities`.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -56,9 +57,10 @@ impl Jojobot {
         &self,
         Parameters(args): Parameters<MergeArgs>,
     ) -> Result<CallToolResult, McpError> {
-        if let Err(refused) = self.identified(args.sid.as_deref()) {
-            return Ok(refused);
-        }
+        let caller = match self.identified(args.sid.as_deref()) {
+            Ok(caller) => caller,
+            Err(refused) => return Ok(refused),
+        };
         let duplicate = EntityId(args.duplicate.trim().to_string());
         let survivor = EntityId(args.survivor.trim().to_string());
         let date = self.dated(args.recorded_at.as_deref(), args.sid.as_deref())?;
@@ -77,7 +79,7 @@ impl Jojobot {
             args.sid.as_deref(),
         )
         .await;
-        json_result(&serde_json::json!({
+        let mut body = serde_json::json!({
             "survivor": entity_json(&done.survivor),
             // **The handle that went, said back with where it now sends a
             // reader.** A caller holding it needs to know it still answers and
@@ -91,6 +93,10 @@ impl Jojobot {
             // for — and any address a caller held for those claims is stale.
             "claims_moved": done.rehomed,
             "addresses_changed": done.rehomed > 0,
-        }))
+        });
+        if self.first_contact(CLAIMS_DOMAIN, Some(&caller)).await {
+            crate::answer::note_teaching(&mut body, CLAIMS_TEACHING);
+        }
+        json_result(&body)
     }
 }

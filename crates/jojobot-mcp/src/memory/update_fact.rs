@@ -4,6 +4,7 @@
 //! and an entrypoint that chains the systems below it.
 
 use super::*;
+use crate::teaching::{CLAIMS_DOMAIN, CLAIMS_TEACHING};
 
 /// Arguments to `update_fact`.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -191,9 +192,10 @@ impl Jojobot {
     ) -> Result<CallToolResult, McpError> {
         // Refused here, before anything is written — see
         // [`Jojobot::attributable`].
-        if let Err(refused) = self.identified(args.sid.as_deref()) {
-            return Ok(refused);
-        }
+        let caller = match self.identified(args.sid.as_deref()) {
+            Ok(caller) => caller,
+            Err(refused) => return Ok(refused),
+        };
         let address = FactAddress::parse(&args.address).map_err(memory_error)?;
         let declared = Declared::of(&args);
         let cleared = args.clear_fields.clone().unwrap_or_default();
@@ -245,6 +247,9 @@ impl Jojobot {
                     &mut body,
                     self.what_an_update_left_standing(&fact, &cleared).await,
                 );
+                if self.first_contact(CLAIMS_DOMAIN, Some(&caller)).await {
+                    crate::answer::note_teaching(&mut body, CLAIMS_TEACHING);
+                }
                 json_result(&body)
             }
             Guarded::Blocked {
