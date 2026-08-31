@@ -4,6 +4,7 @@
 //! and an entrypoint that chains the systems below it.
 
 use super::*;
+use crate::teaching::{CLAIMS_DOMAIN, CLAIMS_TEACHING};
 
 /// The `edge` filter of a `search` — a shape and the entity it points at.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -622,7 +623,7 @@ impl Jojobot {
         // about a day, and two runs in two zones answer it differently for one
         // stored claim.
         let as_of = self.dated(None, args.sid.as_deref())?;
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "count": hits.len(),
             // **A different question from the two coverage notes below.**
             // Those answer *was everything searched*; this answers *did the
@@ -640,6 +641,14 @@ impl Jojobot {
                 .map(|hit| hit_json(hit, as_of))
                 .collect::<Vec<_>>(),
         });
+        // **A claim reached this session** — the trigger is a fact in the
+        // answer, not the call itself: a search that matched nothing never
+        // touched the domain.
+        if hits.iter().any(|hit| matches!(hit, Hit::Fact { .. }))
+            && self.first_contact(CLAIMS_DOMAIN, asking.as_ref()).await
+        {
+            crate::answer::note_teaching(&mut body, CLAIMS_TEACHING);
+        }
         json_result(&body)
     }
 }

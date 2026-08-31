@@ -11,6 +11,7 @@ use jojobot_domain::attention;
 use jojobot_domain::memory::graph;
 
 use super::*;
+use crate::teaching::{CLAIMS_DOMAIN, CLAIMS_TEACHING};
 
 /// Arguments to `capture`.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -436,9 +437,10 @@ impl Jojobot {
     ) -> Result<CallToolResult, McpError> {
         // Refused here, before anything is written — see
         // [`Jojobot::attributable`].
-        if let Err(refused) = self.identified(args.sid.as_deref()) {
-            return Ok(refused);
-        }
+        let caller = match self.identified(args.sid.as_deref()) {
+            Ok(caller) => caller,
+            Err(refused) => return Ok(refused),
+        };
         let declared = Declared::of(&args);
         let checked_in = args.check_in.is_some();
         let subject = EntityId::person(&args.subject);
@@ -530,6 +532,9 @@ impl Jojobot {
                     &mut body,
                     self.what_a_capture_left_standing(&fact).await,
                 );
+                if self.first_contact(CLAIMS_DOMAIN, Some(&caller)).await {
+                    crate::answer::note_teaching(&mut body, CLAIMS_TEACHING);
+                }
                 json_result(&body)
             }
             Guarded::Blocked {

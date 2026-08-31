@@ -1028,6 +1028,7 @@ mod tests {
             Arc::new(SpySearch::default()),
             client.mailboxes.clone(),
             client.sessions.clone(),
+            client.teachings.clone(),
             rebuilt,
         );
         let body = blocked(

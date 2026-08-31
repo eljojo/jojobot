@@ -759,6 +759,7 @@ mod tests {
             Arc::new(SpySearch::default()),
             Arc::new(UnopenableMailboxes(InMemoryMailboxes::knowing_any_owner())),
             Arc::new(InMemorySessions::new()),
+            Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
             crate::harness::seeded_registry(),
         );
         broken_bot(&jojobot, "gamma").await;

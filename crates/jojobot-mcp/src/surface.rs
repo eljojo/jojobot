@@ -1126,6 +1126,7 @@ fn agent_facing_text() -> Vec<(String, String)> {
                 Arc::new(crate::memory::testing::SpySearch::default()),
                 Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
                 Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
+                Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
                 crate::harness::seeded_registry(),
             )
             .get_info()

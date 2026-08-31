@@ -45,6 +45,7 @@ async fn an_unseeded_surface_says_so_and_recites_no_kinds() {
             jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner(),
         ),
         sessions: Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
+        teachings: Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
         registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
         ui: None,
         clock: jojobot_domain::clock::Clock::default(),

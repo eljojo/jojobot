@@ -48,6 +48,10 @@ pub struct AppState {
     /// the session half of `start_here`. A third context in the same collection, in
     /// **its own project** — never the mailbox one.
     pub sessions: Arc<dyn Sessions>,
+    /// The Teachings port — whether a session's handle has already been
+    /// taught how a domain behaves. Always the real adapter; no toy store
+    /// ships.
+    pub teachings: Arc<dyn jojobot_domain::teaching::Teachings>,
     /// **Every session handle this process can address**, shared by every
     /// connection. Built and filled from the board before the server serves, so
     /// the first caller after a restart gets the same answer as the second.
@@ -79,6 +83,7 @@ pub fn build_app(state: AppState, ct: CancellationToken) -> Router {
     let search = state.search.clone();
     let mailboxes = state.mailboxes.clone();
     let sessions = state.sessions.clone();
+    let teachings = state.teachings.clone();
     // **One registry per process, never per connection** — a session handle is
     // an address across connections, so a registry built per connect would
     // forget each one as it handed it out. Filled from the board before the
@@ -96,6 +101,7 @@ pub fn build_app(state: AppState, ct: CancellationToken) -> Router {
                 search.clone(),
                 mailboxes.clone(),
                 sessions.clone(),
+                teachings.clone(),
                 registry.clone(),
             )
             .on_clock(clock))

@@ -255,3 +255,13 @@ pub(crate) fn note_postcondition(body: &mut serde_json::Value, line: String) {
     };
     fields.insert("postcondition".into(), line.into());
 }
+
+/// **Ride a teaching on the answer that triggered it**, rather than a
+/// separate call the caller has to know to make — see
+/// [`crate::teaching`].
+pub(crate) fn note_teaching(body: &mut serde_json::Value, content: &str) {
+    let Some(fields) = body.as_object_mut() else {
+        return;
+    };
+    fields.insert("teaching".into(), content.into());
+}

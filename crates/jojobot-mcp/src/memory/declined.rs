@@ -467,6 +467,7 @@ mod tests {
             Arc::new(SpySearch::default()),
             Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
             Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
+            Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
             seeded_registry(),
         );
         let sid = writing_as(&jojobot);

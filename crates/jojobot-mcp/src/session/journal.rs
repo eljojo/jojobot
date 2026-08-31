@@ -307,6 +307,7 @@ mod tests {
             Arc::new(crate::memory::testing::SpySearch::default()),
             Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
             store.clone(),
+            Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
             crate::harness::seeded_registry(),
         );
         make_bot(&jojobot, "gamma").await;
@@ -430,6 +431,7 @@ mod tests {
             Arc::new(crate::memory::testing::SpySearch::default()),
             Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
             store.clone(),
+            Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
             crate::harness::seeded_registry(),
         );
         make_bot(&jojobot, "gamma").await;

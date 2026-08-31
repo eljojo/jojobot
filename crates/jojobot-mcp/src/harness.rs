@@ -13,6 +13,7 @@ use crate::memory::testing::{SpySearch, add_args};
 use jojobot_domain::mailbox::testing::InMemoryMailboxes;
 use jojobot_domain::memory::testing::InMemoryMemory;
 use jojobot_domain::session::testing::InMemorySessions;
+use jojobot_domain::teaching::testing::InMemoryTeachings;
 use rmcp::handler::server::wrapper::Parameters;
 
 /// **The identity a fixture writes as.** Every memory write needs one now, and
@@ -59,6 +60,7 @@ pub(crate) fn handler() -> Jojobot {
         Arc::new(SpySearch::default()),
         Arc::new(InMemoryMailboxes::knowing_any_owner()),
         Arc::new(InMemorySessions::new()),
+        Arc::new(InMemoryTeachings::new()),
         seeded_registry(),
     )
 }
@@ -73,6 +75,7 @@ pub(crate) fn handler_carrying(
         Arc::new(SpySearch::default()),
         Arc::new(InMemoryMailboxes::knowing_any_owner()),
         Arc::new(InMemorySessions::new()),
+        Arc::new(InMemoryTeachings::new()),
         seeded_registry(),
         carriers,
     )
@@ -85,6 +88,7 @@ pub(crate) fn handler_with(spy: Arc<SpySearch>) -> Jojobot {
         spy,
         Arc::new(InMemoryMailboxes::knowing_any_owner()),
         Arc::new(InMemorySessions::new()),
+        Arc::new(InMemoryTeachings::new()),
         seeded_registry(),
     )
 }

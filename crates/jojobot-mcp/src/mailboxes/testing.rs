@@ -25,6 +25,7 @@ pub(crate) fn with_mailboxes(mailboxes: Arc<InMemoryMailboxes>) -> Jojobot {
         Arc::new(SpySearch::default()),
         mailboxes,
         Arc::new(InMemorySessions::new()),
+        Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
         crate::harness::seeded_registry(),
     )
 }
@@ -149,6 +150,7 @@ pub(crate) fn handler_with_mailboxes_down(memory: Arc<InMemoryMemory>) -> Jojobo
         Arc::new(SpySearch::default()),
         Arc::new(DownMailboxes),
         Arc::new(InMemorySessions::new()),
+        Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
         crate::harness::seeded_registry(),
     )
 }
@@ -187,6 +189,7 @@ pub(crate) fn counting_handler() -> (Jojobot, Arc<CountingMailboxes>) {
         Arc::new(SpySearch::default()),
         mailboxes.clone(),
         Arc::new(InMemorySessions::new()),
+        Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
         crate::harness::seeded_registry(),
     );
     (jojobot, mailboxes)

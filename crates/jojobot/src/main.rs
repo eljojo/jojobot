@@ -9,6 +9,7 @@ use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::mailboxes::DoltMailboxes;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::sessions::DoltSessions;
+use jojobot_adapters::dolt::teaching::DoltTeachings;
 use jojobot_adapters::owners::MemoryOwners;
 use jojobot_adapters::provisioned::Provisioned;
 use jojobot_adapters::search::{IndexedMailboxes, IndexedMemory, IndexedSessions, Retrieval};
@@ -16,6 +17,7 @@ use jojobot_domain::mailbox::{Mailboxes, OwnerIndex};
 use jojobot_domain::memory::Memory;
 use jojobot_domain::memory::search::Search;
 use jojobot_domain::session::Sessions;
+use jojobot_domain::teaching::Teachings;
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -224,6 +226,7 @@ async fn main() -> anyhow::Result<()> {
     let mail_store: Arc<dyn Mailboxes> =
         Arc::new(DoltMailboxes::open(store.pool().clone(), owners));
     let sessions: Arc<dyn Sessions> = Arc::new(DoltSessions::open(store.pool().clone()));
+    let teachings: Arc<dyn Teachings> = Arc::new(DoltTeachings::open(store.pool().clone()));
 
     // Mail goes into the SAME index — one front door, one ranked list — so the
     // mailbox store gets the same decorator treatment Memory's does: every verb
@@ -350,6 +353,7 @@ async fn main() -> anyhow::Result<()> {
         search,
         mailboxes,
         sessions,
+        teachings,
         registry,
         ui,
         clock: config.clock,

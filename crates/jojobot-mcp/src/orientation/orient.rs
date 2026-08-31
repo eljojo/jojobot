@@ -334,6 +334,7 @@ mod tests {
             Arc::new(SpySearch::default()),
             boxes.clone(),
             Arc::new(InMemorySessions::new()),
+            Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
             crate::harness::seeded_registry(),
         );
         make_box(&reading, "dev").await;
@@ -354,6 +355,7 @@ mod tests {
             Arc::new(SpySearch::default()),
             boxes,
             Arc::new(InMemorySessions::new()),
+            Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
             crate::harness::seeded_registry(),
         );
         let unread = boot(&blind, "dev").await;
@@ -387,6 +389,7 @@ mod tests {
             Arc::new(SpySearch::default()),
             boxes.clone(),
             Arc::new(InMemorySessions::new()),
+            Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
             crate::harness::seeded_registry(),
         );
         make_box(&seeded, "dev").await;
@@ -397,6 +400,7 @@ mod tests {
             Arc::new(SpySearch::default()),
             boxes,
             Arc::new(InMemorySessions::new()),
+            Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
             crate::harness::seeded_registry(),
         );
         // **Read through the identity, which is where a caller's own mail now
@@ -911,6 +915,7 @@ mod tests {
             Arc::new(SpySearch::default()),
             Arc::new(InMemoryMailboxes::knowing_any_owner()),
             Arc::new(InMemorySessions::new()),
+            Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
             crate::harness::seeded_registry(),
         );
         make_bot(&healthy, "gamma").await;

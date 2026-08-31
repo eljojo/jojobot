@@ -55,6 +55,7 @@ pub mod seed;
 pub mod session;
 pub mod sid;
 mod status_bar;
+mod teaching;
 pub(crate) use status_bar::OwnBox;
 
 pub(crate) use answer::*;
@@ -131,6 +132,10 @@ pub struct Jojobot {
     mailboxes: Arc<dyn Mailboxes>,
     /// The Sessions port — a third context, on its own board.
     sessions: Arc<dyn Sessions>,
+    /// The Teachings port — a fourth context: whether a session's handle has
+    /// already been taught how a domain behaves. See
+    /// [`jojobot_domain::teaching`].
+    teachings: Arc<dyn jojobot_domain::teaching::Teachings>,
     /// **Every session handle this PROCESS has issued** — see [`sid`].
     ///
     /// Shared across connections rather than born with each one, which is what
@@ -188,6 +193,7 @@ impl Jojobot {
         search: Arc<dyn Search>,
         mailboxes: Arc<dyn Mailboxes>,
         sessions: Arc<dyn Sessions>,
+        teachings: Arc<dyn jojobot_domain::teaching::Teachings>,
         registry: Arc<sid::SessionRegistry>,
     ) -> Self {
         Self::carrying(
@@ -195,6 +201,7 @@ impl Jojobot {
             search,
             mailboxes,
             sessions,
+            teachings,
             registry,
             jojobot_domain::attention::shipped(),
         )
@@ -210,6 +217,7 @@ impl Jojobot {
         search: Arc<dyn Search>,
         mailboxes: Arc<dyn Mailboxes>,
         sessions: Arc<dyn Sessions>,
+        teachings: Arc<dyn jojobot_domain::teaching::Teachings>,
         registry: Arc<sid::SessionRegistry>,
         carriers: Vec<Box<dyn jojobot_domain::attention::Carrier>>,
     ) -> Self {
@@ -219,6 +227,7 @@ impl Jojobot {
             search,
             mailboxes,
             sessions,
+            teachings,
             registry,
             carriers: Arc::new(carriers),
             clock: jojobot_domain::clock::Clock::default(),

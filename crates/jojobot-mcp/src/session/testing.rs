@@ -96,6 +96,7 @@ pub(crate) fn with_sessions_port_and_memory(
         Arc::new(SpySearch::default()),
         Arc::new(InMemoryMailboxes::knowing_any_owner()),
         sessions,
+        Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
         crate::harness::seeded_registry(),
     );
     (jojobot, memory)
@@ -126,6 +127,7 @@ pub(crate) fn connection_sharing(
         Arc::new(SpySearch::default()),
         Arc::new(InMemoryMailboxes::knowing_any_owner()),
         sessions,
+        Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
         registry,
     )
 }
@@ -146,6 +148,7 @@ pub(crate) struct NoAffinity {
     pub(crate) memory: Arc<InMemoryMemory>,
     pub(crate) sessions: Arc<InMemorySessions>,
     pub(crate) mailboxes: Arc<InMemoryMailboxes>,
+    pub(crate) teachings: Arc<jojobot_domain::teaching::testing::InMemoryTeachings>,
     /// Process-wide, exactly as it is in production: the connections come
     /// and go, the handles this process issued do not.
     pub(crate) registry: Arc<sid::SessionRegistry>,
@@ -260,6 +263,7 @@ pub(crate) async fn refusing_close() -> (Jojobot, Arc<RefusingClose>, Arc<InMemo
         Arc::new(SpySearch::default()),
         Arc::new(InMemoryMailboxes::knowing_any_owner()),
         store.clone(),
+        Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
         crate::harness::seeded_registry(),
     );
     make_bot(&jojobot, "gamma").await;
@@ -389,6 +393,7 @@ pub(crate) fn racing(store: Arc<InMemorySessions>) -> Jojobot {
         Arc::new(SpySearch::default()),
         Arc::new(InMemoryMailboxes::knowing_any_owner()),
         Arc::new(Yielding(store)),
+        Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
         crate::harness::seeded_registry(),
     )
 }
@@ -404,6 +409,7 @@ impl NoAffinity {
             memory: Arc::new(InMemoryMemory::booted()),
             sessions: Arc::new(InMemorySessions::new()),
             mailboxes: Arc::new(InMemoryMailboxes::knowing_any_owner()),
+            teachings: Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
             registry: crate::harness::seeded_registry(),
         }
     }
@@ -415,6 +421,7 @@ impl NoAffinity {
             Arc::new(SpySearch::default()),
             self.mailboxes.clone(),
             self.sessions.clone(),
+            self.teachings.clone(),
             // **The one thing a reconnect must NOT rebuild.** A handle is
             // an address across connections or it is nothing.
             self.registry.clone(),

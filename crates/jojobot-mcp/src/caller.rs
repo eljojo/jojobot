@@ -1250,6 +1250,7 @@ mod tests {
                     Arc::new(SpySearch::default()),
                     ports.mailboxes.clone(),
                     Arc::new(Yielding(ports.sessions.clone())),
+                    Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
                     ports.registry.clone(),
                 )
             };

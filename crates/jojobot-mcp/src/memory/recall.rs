@@ -10,6 +10,7 @@
 use jojobot_domain::attention;
 
 use super::*;
+use crate::teaching::{CLAIMS_DOMAIN, CLAIMS_TEACHING};
 use jojobot_domain::memory::{entitlement, graph};
 use jojobot_domain::text;
 
@@ -1072,10 +1073,11 @@ impl Jojobot {
         // which owned objects this read may reach. Deriving it here rather than
         // taking it as an argument is the whole of that rule: a caller cannot
         // ask for somebody else's, because there is nowhere to say so.
-        let asked_by = match self.caller(args.sid.as_deref()) {
-            Ok(caller) => caller.map(|caller| caller.bot),
+        let caller = match self.caller(args.sid.as_deref()) {
+            Ok(caller) => caller,
             Err(refused) => return Ok(refused),
         };
+        let asked_by = caller.as_ref().map(|caller| caller.bot.clone());
         // **The name is resolved to its declaration here, once**, exactly as
         // `search` resolves it: everything below takes the keys rather than
         // the name, and a name nobody declared is answered where the roster to
@@ -1373,7 +1375,11 @@ impl Jojobot {
             )),
             _ => None,
         };
-        let body = serde_json::json!({
+        // **A claim reached this session** — computed before `found` is
+        // consumed below, the same trigger `search` uses: a read that asked
+        // for facts and got none never touched the domain.
+        let claims_reached = found.iter().any(|object| !object.facts.is_empty());
+        let mut body = serde_json::json!({
             "count": found.len(),
             "built_on": standing_on,
             "record_history_unreached": unreached,
@@ -1471,6 +1477,9 @@ impl Jojobot {
                 })
                 .collect::<Vec<_>>(),
         });
+        if claims_reached && self.first_contact(CLAIMS_DOMAIN, caller.as_ref()).await {
+            crate::answer::note_teaching(&mut body, CLAIMS_TEACHING);
+        }
         json_result(&body)
     }
 }

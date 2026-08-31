@@ -38,6 +38,7 @@ type TestPorts = (
     Arc<dyn Search>,
     Arc<dyn Mailboxes>,
     Arc<dyn Sessions>,
+    Arc<dyn jojobot_domain::teaching::Teachings>,
 );
 
 fn test_ports() -> TestPorts {
@@ -49,6 +50,7 @@ fn test_ports() -> TestPorts {
         search,
         Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
         Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
+        Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
     )
 }
 
@@ -84,7 +86,7 @@ async fn spawn_server(
 }
 
 fn no_auth_state(addr: SocketAddr) -> AppState {
-    let (memory, search, mailboxes, sessions) = test_ports();
+    let (memory, search, mailboxes, sessions, teachings) = test_ports();
     AppState {
         resource: format!("http://{addr}/mcp"),
         issuer: None,
@@ -94,6 +96,7 @@ fn no_auth_state(addr: SocketAddr) -> AppState {
         search,
         mailboxes,
         sessions,
+        teachings,
         registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
         ui: None,
         clock: jojobot_domain::clock::Clock::default(),
@@ -104,7 +107,7 @@ fn no_auth_state(addr: SocketAddr) -> AppState {
 /// mounts and rejects unauthenticated requests. Token *acceptance* is covered by
 /// the unit golden tests in `auth.rs`.
 fn auth_state(addr: SocketAddr) -> AppState {
-    let (memory, search, mailboxes, sessions) = test_ports();
+    let (memory, search, mailboxes, sessions, teachings) = test_ports();
     AppState {
         resource: format!("http://{addr}/mcp"),
         issuer: Some("https://issuer.example".to_string()),
@@ -118,6 +121,7 @@ fn auth_state(addr: SocketAddr) -> AppState {
         search,
         mailboxes,
         sessions,
+        teachings,
         registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
         ui: None,
         clock: jojobot_domain::clock::Clock::default(),
@@ -239,7 +243,7 @@ async fn an_unmounted_path_is_not_found_rather_than_unauthorized() {
 /// its own.
 fn allowlist_state(validator: Validator) -> impl FnOnce(SocketAddr) -> AppState {
     move |addr| {
-        let (memory, search, mailboxes, sessions) = test_ports();
+        let (memory, search, mailboxes, sessions, teachings) = test_ports();
         AppState {
             resource: format!("http://{addr}/mcp"),
             issuer: Some(support::ISS.to_string()),
@@ -249,6 +253,7 @@ fn allowlist_state(validator: Validator) -> impl FnOnce(SocketAddr) -> AppState 
             search,
             mailboxes,
             sessions,
+            teachings,
             registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
             ui: None,
             clock: jojobot_domain::clock::Clock::default(),
@@ -324,7 +329,7 @@ async fn mcp_is_open_when_auth_disabled() {
 /// Auth-off state whose resource is a *public* URL, so the transport's Host
 /// allowlist must accept that hostname rather than only loopback.
 fn public_no_auth_state(_addr: SocketAddr) -> AppState {
-    let (memory, search, mailboxes, sessions) = test_ports();
+    let (memory, search, mailboxes, sessions, teachings) = test_ports();
     AppState {
         resource: "https://jojobot.example/mcp".to_string(),
         issuer: None,
@@ -334,6 +339,7 @@ fn public_no_auth_state(_addr: SocketAddr) -> AppState {
         search,
         mailboxes,
         sessions,
+        teachings,
         registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
         ui: None,
         clock: jojobot_domain::clock::Clock::default(),
@@ -406,6 +412,7 @@ fn searchable_state(addr: SocketAddr) -> AppState {
             jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner(),
         ),
         sessions: Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
+        teachings: Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
         registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
         ui: None,
         clock: jojobot_domain::clock::Clock::default(),

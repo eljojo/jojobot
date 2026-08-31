@@ -414,6 +414,7 @@ impl Story {
             search,
             mailboxes: boxes,
             sessions: runs.clone(),
+            teachings: Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
             registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
             ui: Some(Arc::new(ui)),
             // The shape a story runs against is the one a fresh instance
