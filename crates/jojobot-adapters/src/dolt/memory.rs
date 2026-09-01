@@ -1207,6 +1207,57 @@ impl Memory for DoltMemory {
         Ok(history)
     }
 
+    async fn claim_histories(
+        &self,
+        entity: &EntityId,
+    ) -> Result<std::collections::HashMap<FactId, Vec<ClaimWrite>>, MemoryError> {
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        let index = Self::index(&mut tx).await?;
+        if !index.iter().any(|e| &e.id == entity) {
+            return Err(MemoryError::UnknownEntity {
+                attempted: entity.to_string(),
+                nearest: guard::screen(entity, &[], &index),
+            });
+        }
+        // **One query for the whole entity**, the batched sibling of
+        // claim_history's per-record read: every write of every claim this
+        // entity holds, ordered so each claim's own writes stay oldest-first
+        // once grouped by id below.
+        let rows = sqlx::query(&format!(
+            "SELECT w.ordinal, w.written_at, {FACT_WRITE_COLUMNS} FROM fact_write w
+             WHERE w.entity = ? ORDER BY w.fact_id, w.ordinal"
+        ))
+        .bind(entity.as_str())
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(store)?;
+        tx.commit().await.map_err(store)?;
+
+        let mut histories: std::collections::HashMap<FactId, Vec<ClaimWrite>> =
+            std::collections::HashMap::new();
+        for row in &rows {
+            let id = FactId(row.try_get::<String, _>("id").map_err(store)?);
+            let ordinal: i64 = row.try_get("ordinal").map_err(store)?;
+            let written_at = row
+                .try_get::<Option<String>, _>("written_at")
+                .map_err(store)?
+                .and_then(|at| at.parse::<jiff::Timestamp>().ok());
+            let fact = fact_from(
+                row,
+                entity.clone(),
+                id.clone(),
+                Default::default(),
+                Vec::new(),
+            )?;
+            histories.entry(id).or_default().push(ClaimWrite::of(
+                &fact,
+                ordinal.max(0) as usize,
+                written_at,
+            ));
+        }
+        Ok(histories)
+    }
+
     async fn history(&self, entity: &EntityId, key: &str) -> Result<Vec<FieldWrite>, MemoryError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
         let index = Self::index(&mut tx).await?;

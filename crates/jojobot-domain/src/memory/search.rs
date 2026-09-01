@@ -228,6 +228,16 @@ pub struct SearchQuery {
     /// something off: the safe branch is the default, never the documented
     /// preference (rule 62).
     pub include_mail: bool,
+    /// **Whether matching also reaches a claim's earlier wordings.** False by
+    /// default: an ordinary search never surfaces content that lived only in
+    /// a superseded write, which is the corpus note's own claim and stays
+    /// true unless a caller asks for otherwise.
+    ///
+    /// A claim that matches through this reaches the surface as the same
+    /// [`Hit::Fact`] any other match does — the current record, address and
+    /// all, never a second thing standing in its own right. Reading what it
+    /// used to say is `recall` with `history_record`, unchanged.
+    pub include_history: bool,
     /// **Who is asking, when anybody is** — the bot the caller booted as.
     ///
     /// It is what scopes session hits: a bot finds its own runs and nobody
@@ -261,6 +271,7 @@ impl Default for SearchQuery {
             fits_type: None,
             asked_by: None,
             include_mail: false,
+            include_history: false,
             limit: DEFAULT_LIMIT,
         }
     }

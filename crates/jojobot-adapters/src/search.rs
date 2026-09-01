@@ -41,8 +41,8 @@ use std::collections::BTreeMap;
 
 use jojobot_domain::memory::{
     ClaimWrite, Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress,
-    FactPatch, FactStatus, FieldWrite, Guarded, Memory, MemoryError, Merge, NewEntity, NewFact,
-    Retraction,
+    FactId, FactPatch, FactStatus, FieldWrite, Guarded, Memory, MemoryError, Merge, NewEntity,
+    NewFact, Retraction,
     guard::{self, MatchReason},
     kinds,
     search::{
@@ -61,6 +61,17 @@ const RECENCY_WEIGHT: f32 = 0.1;
 fn candidate_depth(limit: usize) -> usize {
     limit.saturating_mul(3).saturating_add(10)
 }
+
+/// **One fact's earlier wordings, concatenated, keyed by the fact's local
+/// id.** What `write_doc` adds to `history_text`. A fact nobody has
+/// corrected has no entry — matching the concatenated string a query would
+/// otherwise search over an empty field.
+type FactHistoryTerms = std::collections::HashMap<FactId, String>;
+
+/// [`FactHistoryTerms`] for every entity a scan reached, keyed by the
+/// entity's own id — what `ingest_all`/`ingest_changes` look each document's
+/// terms up in.
+type CorpusHistoryTerms = std::collections::HashMap<EntityId, FactHistoryTerms>;
 
 /// What the index stores per document, and hands back verbatim. Not the wire
 /// format and not [`Hit`]: keeping it separate means the response shape can
@@ -113,6 +124,13 @@ struct Fields {
     class: Field,
     /// Everything searchable, tokenized: handles, names, claims, details, prose.
     text: Field,
+    /// **A fact's earlier wordings, tokenized like `text`.** Never in the
+    /// unconditional match — gated at query time by `SearchQuery`'s
+    /// `include_history` — because search's ordinary promise is over current
+    /// content, and this field exists to widen a query past that promise on
+    /// request, not to change what an ordinary query finds. Empty on every
+    /// document that is not a fact, and on a fact nobody has ever corrected.
+    history_text: Field,
     /// The store's doc id — the unit of incremental re-indexing.
     doc_id: Field,
     /// A message's id — the mail half's unit of incremental re-indexing. Its own
@@ -166,11 +184,19 @@ impl Fields {
         let mut b = Schema::builder();
         let fields = Fields {
             class: b.add_text_field("class", STRING),
-            // **The one tokenized field, and the only one that stems.** Every
+            // **The two tokenized fields, and the only ones that stem.** Every
             // other field here is `STRING` — stored and matched whole — so a
             // handle, a kind and a status are untouched by any of this.
             text: b.add_text_field(
                 "text",
+                tantivy::schema::TextOptions::default().set_indexing_options(
+                    tantivy::schema::TextFieldIndexing::default()
+                        .set_tokenizer(ANALYZER)
+                        .set_index_option(IndexRecordOption::WithFreqs),
+                ),
+            ),
+            history_text: b.add_text_field(
+                "history_text",
                 tantivy::schema::TextOptions::default().set_indexing_options(
                     tantivy::schema::TextFieldIndexing::default()
                         .set_tokenizer(ANALYZER)
@@ -734,8 +760,13 @@ impl FullTextIndex {
     /// Memory silently emptied `search`'s mail half and then vouched for it.
     /// Only the boot ordering in `main.rs` — untested, and no invariant —
     /// happened to hide it.
-    pub fn ingest_all(&self, scan: &[DocScan], began: ReadingPoint) -> Result<(), MemoryError> {
-        self.ingest_changes(scan, began).map(|_| ())
+    pub fn ingest_all(
+        &self,
+        scan: &[DocScan],
+        began: ReadingPoint,
+        history: &CorpusHistoryTerms,
+    ) -> Result<(), MemoryError> {
+        self.ingest_changes(scan, began, history).map(|_| ())
     }
 
     /// Bring the index to what this scan says the corpus is, and return how many
@@ -761,6 +792,7 @@ impl FullTextIndex {
         &self,
         scan: &[DocScan],
         began: ReadingPoint,
+        history: &CorpusHistoryTerms,
     ) -> Result<usize, MemoryError> {
         let (rewrite, evict) = {
             let mirror = self.docs.read().expect("doc mirror poisoned");
@@ -776,6 +808,7 @@ impl FullTextIndex {
             )
         };
         let changed = rewrite.len() + evict.len();
+        let none = FactHistoryTerms::new();
 
         if changed > 0 {
             let mut writer = self.writer.write().expect("index writer poisoned");
@@ -783,7 +816,12 @@ impl FullTextIndex {
                 writer.delete_term(Term::from_field_text(self.fields.doc_id, doc_id));
             }
             for doc in &rewrite {
-                self.write_doc(&writer, doc)?;
+                let terms = doc
+                    .entity
+                    .as_ref()
+                    .and_then(|e| history.get(&e.id))
+                    .unwrap_or(&none);
+                self.write_doc(&writer, doc, terms)?;
             }
             // Before the commit, for the reason `ingest_mail` sets its flag early.
             self.memory_loaded
@@ -835,10 +873,10 @@ impl FullTextIndex {
     /// Re-index one document, replacing everything previously indexed under its
     /// doc id. Called with a fresh scan of the doc, never with a guess at what
     /// changed.
-    pub fn ingest_doc(&self, doc: &DocScan) -> Result<(), MemoryError> {
+    pub fn ingest_doc(&self, doc: &DocScan, history: &FactHistoryTerms) -> Result<(), MemoryError> {
         let mut writer = self.writer.write().expect("index writer poisoned");
         writer.delete_term(Term::from_field_text(self.fields.doc_id, &doc.doc_id));
-        self.write_doc(&writer, doc)?;
+        self.write_doc(&writer, doc, history)?;
         // Before the commit, for the reason `ingest_mail` sets its flag early.
         self.memory_touched
             .store(true, std::sync::atomic::Ordering::Release);
@@ -898,7 +936,16 @@ impl FullTextIndex {
 
     /// Every tantivy document one scanned doc produces: the entity it is, each
     /// fact in its table, and its prose — three classes, one index.
-    fn write_doc(&self, writer: &IndexWriter, scan: &DocScan) -> Result<(), MemoryError> {
+    ///
+    /// `history` carries this doc's facts' earlier wordings, when the caller
+    /// fetched any — empty for a scan that skipped it (a hand-built fixture,
+    /// most tests) or found none.
+    fn write_doc(
+        &self,
+        writer: &IndexWriter,
+        scan: &DocScan,
+        history: &FactHistoryTerms,
+    ) -> Result<(), MemoryError> {
         let f = &self.fields;
         let owner_kind = scan.entity.as_ref().map(|e| e.kind);
         // Every name the doc's entity answers to, indexed as one string: the
@@ -964,6 +1011,13 @@ impl FullTextIndex {
                 f.standing => fact.standing.as_token(),
                 f.payload => payload_json(&Payload::Fact { fact: fact.clone() })?,
             );
+            // **Only when there is one.** An empty field and an absent one are
+            // the same to a query that never asks for `history_text`, and
+            // writing one on every fact would cost every reindex for a field
+            // most documents never carry anything in.
+            if let Some(terms) = history.get(&fact.id) {
+                document.add_text(f.history_text, terms);
+            }
             // Home-doc membership counts alongside the subject column, exactly as
             // `recall` counts it: a row is reachable under the id its doc
             // declares, so a mistyped subject cell cannot hide a doc's own facts
@@ -1081,18 +1135,40 @@ impl FullTextIndex {
         };
         let any_of: Vec<Box<dyn Query>> = terms
             .into_iter()
-            .map(|term| {
-                Box::new(TermQuery::new(
-                    Term::from_field_text(self.fields.text, &term),
-                    IndexRecordOption::WithFreqs,
-                )) as Box<dyn Query>
-            })
+            .map(|term| self.term_in_text_or_history(&term, query.include_history))
             .collect();
         let q: Box<dyn Query> = Box::new(BooleanQuery::with_minimum_required_clauses(
             any_of.into_iter().map(|q| (Occur::Should, q)).collect(),
             wanted,
         ));
         vec![(Occur::Must, q)]
+    }
+
+    /// **One term's clause — the current wording alone, or widened to a
+    /// fact's earlier wordings too.**
+    ///
+    /// The widening is an OR on the term, not a second pass: a document
+    /// satisfies this one term by matching it in `text` OR in
+    /// `history_text`, and the surrounding minimum-required-clauses count in
+    /// [`text_clauses`](Self::text_clauses) is unaffected — this only
+    /// changes where ONE term is allowed to be found, never how many have
+    /// to be.
+    fn term_in_text_or_history(&self, term: &str, include_history: bool) -> Box<dyn Query> {
+        let current: Box<dyn Query> = Box::new(TermQuery::new(
+            Term::from_field_text(self.fields.text, term),
+            IndexRecordOption::WithFreqs,
+        ));
+        if !include_history {
+            return current;
+        }
+        let historical: Box<dyn Query> = Box::new(TermQuery::new(
+            Term::from_field_text(self.fields.history_text, term),
+            IndexRecordOption::WithFreqs,
+        ));
+        Box::new(BooleanQuery::new(vec![
+            (Occur::Should, current),
+            (Occur::Should, historical),
+        ]))
     }
 
     fn must_term(&self, field: Field, value: &str) -> (Occur, Box<dyn Query>) {
@@ -1849,13 +1925,48 @@ impl IndexedMemory {
         // re-read while the scan is in flight is not covered by it.
         let began = self.index.reading_begins();
         let scan = self.inner.scan().await?;
-        self.index.ingest_all(&scan, began)?;
+        let mut history = CorpusHistoryTerms::new();
+        for doc in &scan {
+            if let Some(entity) = &doc.entity {
+                history.insert(entity.id.clone(), self.history_terms(&entity.id).await?);
+            }
+        }
+        self.index.ingest_all(&scan, began, &history)?;
         Ok(scan)
     }
 
     /// The index, for handing to whatever serves the `search` verb.
     pub fn index(&self) -> Arc<FullTextIndex> {
         self.index.clone()
+    }
+
+    /// **One entity's facts, each mapped to the terms of its earlier
+    /// wordings** — empty for a fact nobody has ever corrected.
+    ///
+    /// One batched call against the write substrate rather than one per fact:
+    /// [`Memory::claim_histories`] is the door this reaches through, and the
+    /// reindex path pays one query per entity, not one per claim.
+    async fn history_terms(&self, entity: &EntityId) -> Result<FactHistoryTerms, MemoryError> {
+        Ok(self
+            .inner
+            .claim_histories(entity)
+            .await?
+            .into_iter()
+            .filter_map(|(id, chain)| {
+                let earlier = chain.len().checked_sub(1)?;
+                if earlier == 0 {
+                    return None;
+                }
+                Some((
+                    id,
+                    chain[..earlier]
+                        .iter()
+                        .map(|write| write.content.as_str())
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                ))
+            })
+            .collect())
     }
 
     /// Re-index one entity's doc by **re-reading it from the store**. A doc that
@@ -1865,7 +1976,8 @@ impl IndexedMemory {
     async fn reindex(&self, entity: &EntityId) -> Result<(), MemoryError> {
         match self.inner.scan_entity(entity).await? {
             Some(scan) => {
-                self.index.ingest_doc(&scan)?;
+                let history = self.history_terms(entity).await?;
+                self.index.ingest_doc(&scan, &history)?;
                 report_consistency(&scan, &self.index.known_entities());
                 Ok(())
             }
@@ -2593,7 +2705,7 @@ mod tests {
     fn index_of(scans: Vec<DocScan>) -> FullTextIndex {
         let index = FullTextIndex::open().expect("index opens");
         index
-            .ingest_all(&scans, index.reading_begins())
+            .ingest_all(&scans, index.reading_begins(), &Default::default())
             .expect("ingest");
         index
     }
@@ -3574,7 +3686,7 @@ mod tests {
             )],
         );
         index
-            .ingest_all(&[before], index.reading_begins())
+            .ingest_all(&[before], index.reading_begins(), &Default::default())
             .expect("ingest");
         assert_eq!(
             index
@@ -3596,7 +3708,7 @@ mod tests {
             )],
         );
         index
-            .ingest_all(&[after], index.reading_begins())
+            .ingest_all(&[after], index.reading_begins(), &Default::default())
             .expect("re-ingest");
         assert!(
             index
@@ -4421,6 +4533,7 @@ mod tests {
                     owner: None,
                 }],
                 index.reading_begins(),
+                &Default::default(),
             )
             .expect("memory ingested");
         index
@@ -4505,6 +4618,7 @@ mod tests {
                     owner: None,
                 }],
                 index.reading_begins(),
+                &Default::default(),
             )
             .expect("memory ingested");
 
@@ -4582,6 +4696,7 @@ mod tests {
                     owner: None,
                 }],
                 index.reading_begins(),
+                &Default::default(),
             )
             .expect("memory ingested");
 
@@ -4657,6 +4772,7 @@ mod tests {
                     owner: None,
                 }],
                 index.reading_begins(),
+                &Default::default(),
             )
             .expect("memory ingested");
 
@@ -4796,6 +4912,7 @@ mod tests {
                     owner: None,
                 }],
                 index.reading_begins(),
+                &Default::default(),
             )
             .expect("memory ingested");
 
@@ -5075,6 +5192,16 @@ mod tests {
         }
         async fn claim_history(&self, _: &FactAddress) -> Result<Vec<ClaimWrite>, MemoryError> {
             unimplemented!("this double only scans")
+        }
+        /// **This double holds no write substrate, only a flat snapshot.** The
+        /// default impl would reach `recall`/`claim_history`, neither of which
+        /// this double has — so this is truthful rather than a workaround: a
+        /// scan-only double genuinely has no history to report.
+        async fn claim_histories(
+            &self,
+            _: &EntityId,
+        ) -> Result<std::collections::HashMap<FactId, Vec<ClaimWrite>>, MemoryError> {
+            Ok(std::collections::HashMap::new())
         }
         async fn fields(&self, _: &EntityId) -> Result<BTreeMap<String, String>, MemoryError> {
             unimplemented!("this double only scans")
@@ -6578,13 +6705,13 @@ mod tests {
         let mail_first = FullTextIndex::open().expect("index opens");
         mail_first.ingest_mail(&[mail()]).expect("ingest mail");
         mail_first
-            .ingest_all(&docs(), mail_first.reading_begins())
+            .ingest_all(&docs(), mail_first.reading_begins(), &Default::default())
             .expect("ingest docs");
         both_survive(&mail_first, "mail then memory");
 
         let memory_first = FullTextIndex::open().expect("index opens");
         memory_first
-            .ingest_all(&docs(), memory_first.reading_begins())
+            .ingest_all(&docs(), memory_first.reading_begins(), &Default::default())
             .expect("ingest docs");
         memory_first.ingest_mail(&[mail()]).expect("ingest mail");
         both_survive(&memory_first, "memory then mail");

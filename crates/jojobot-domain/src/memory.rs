@@ -3260,6 +3260,30 @@ pub trait Memory: Send + Sync {
     /// record" and "the record says nothing" are different answers.
     async fn claim_history(&self, address: &FactAddress) -> Result<Vec<ClaimWrite>, MemoryError>;
 
+    /// **Every write of every claim on one entity, in one round trip** — the
+    /// batched sibling of [`claim_history`](Memory::claim_history), keyed by
+    /// each claim's local id.
+    ///
+    /// A reader that wants one entity's whole write history (a reindex
+    /// building a searchable trace of every claim's earlier wordings, say)
+    /// pays one query instead of one per fact. Each claim's writes come back
+    /// oldest first, exactly as `claim_history` orders them; a claim with one
+    /// write still has an entry, with one element in it.
+    ///
+    /// Defaulted off [`recall`](Memory::recall) and `claim_history` — an
+    /// adapter that can read the whole entity in one query overrides it.
+    async fn claim_histories(
+        &self,
+        entity: &EntityId,
+    ) -> Result<std::collections::HashMap<FactId, Vec<ClaimWrite>>, MemoryError> {
+        let mut histories = std::collections::HashMap::new();
+        for fact in self.recall(entity).await? {
+            let chain = self.claim_history(&fact.address()).await?;
+            histories.insert(fact.id, chain);
+        }
+        Ok(histories)
+    }
+
     /// **What the thing HOLDS: one value per key, the newest write winning.**
     ///
     /// The other read of the same substrate [`history`](Memory::history) reads:

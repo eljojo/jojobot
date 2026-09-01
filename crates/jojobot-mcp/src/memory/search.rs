@@ -97,6 +97,16 @@ pub struct SearchArgs {
     /// box, sender and a snippet, and this verb is the one to reach for first.
     #[serde(default)]
     pub(crate) include_mail: Option<bool>,
+    /// **Whether matching also reaches a claim's earlier wordings.** Defaults
+    /// to false: an ordinary search matches only the current wording of a
+    /// claim, exactly as the corpus note says. Worth passing true when a
+    /// query on the current wording came back thin — a claim that was
+    /// corrected may hold, in what it used to say, the words you are
+    /// looking for. A hit that matches through this is the same current
+    /// record every other fact hit is; reading the earlier wording itself is
+    /// still recall with history_record.
+    #[serde(default)]
+    pub(crate) include_history: Option<bool>,
     /// How many results; defaults to 20. There is no pagination — a second page
     /// is a better query.
     #[serde(default)]
@@ -602,6 +612,7 @@ impl Jojobot {
             subject: args.subject.as_deref().map(EntityId::person),
             edge,
             include_mail: args.include_mail.unwrap_or(false),
+            include_history: args.include_history.unwrap_or(false),
             limit: args.limit.map_or(DEFAULT_LIMIT, |l| l as usize),
         };
         // Checked here as well as in the index: a malformed query is the caller's
@@ -818,6 +829,30 @@ mod tests {
         }
     }
 
+    /// **A claim's earlier wordings are opt-in at the door, and the opt-in
+    /// reaches the port.** Same shape as `include_mail`, for the same reason:
+    /// the safe branch (current wording only) is the default, and reaching
+    /// history is asked for by name.
+    #[tokio::test]
+    async fn history_is_left_out_of_matching_unless_a_caller_asks_for_it() {
+        for (asked, wanted) in [(None, false), (Some(false), false), (Some(true), true)] {
+            let spy = Arc::new(SpySearch::default());
+            handler_with(spy.clone())
+                .search(Parameters(SearchArgs {
+                    query: Some("damper".into()),
+                    include_history: asked,
+                    ..search_args()
+                }))
+                .await
+                .expect("search ok");
+            assert_eq!(
+                spy.query().include_history,
+                wanted,
+                "include_history: {asked:?} must reach the port as {wanted}"
+            );
+        }
+    }
+
     /// Every argument reaches the port as the typed query it means — including the
     /// edge filter, which is the whole point of the verb.
     #[tokio::test]
@@ -838,6 +873,7 @@ mod tests {
                     object: "place:shelbyville".into(),
                 }),
                 include_mail: Some(false),
+                include_history: Some(false),
                 limit: Some(5),
                 sid: None,
                 fits_type: None,

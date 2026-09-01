@@ -274,6 +274,7 @@ pub(crate) fn search_args() -> SearchArgs {
         subject: None,
         edge: None,
         include_mail: None,
+        include_history: None,
         limit: None,
         sid: None,
         fits_type: None,

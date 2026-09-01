@@ -6503,6 +6503,92 @@ pub mod contract {
         assert_eq!(found_fact.address().local, found_fact.id);
     }
 
+    /// 🚨 **A term that lived only in a superseded wording is unfindable by
+    /// default, and findable when a caller opts in — never the other way
+    /// round.**
+    ///
+    /// A claim corrected from "borrowed the drill from milhouse on tuesday"
+    /// to "returned the drill to milhouse" loses `tuesday` from the current
+    /// wording. The edit was correct; the word is still real history. This is
+    /// the exact gap `include_history` exists to close.
+    ///
+    /// **Both halves in one read.** Without the flag the term is genuinely
+    /// unfindable — not a coverage gap, not a relaxed-match miss, the corpus
+    /// itself. With it, the SAME fact — same address, same current content —
+    /// comes back, never a second thing standing in its own right.
+    pub async fn a_term_from_a_superseded_wording_is_found_only_when_asked_for<
+        M: Memory,
+        S: Search,
+    >(
+        store: &M,
+        search: &S,
+    ) {
+        let subject = EntityId::person("person:contract-superseded-wording");
+        let captured = capture(
+            store,
+            NewFact::about(
+                subject.clone(),
+                "borrowed the drill from milhouse on tuesday",
+                date(2026, 7, 1),
+            ),
+        )
+        .await;
+        edit(
+            store,
+            &captured.address(),
+            FactPatch {
+                content: Some("returned the drill to milhouse".into()),
+                ..Default::default()
+            },
+        )
+        .await;
+
+        let ordinary = found(search, SearchQuery::text("tuesday")).await;
+        assert!(
+            fact_hits(&ordinary).is_empty(),
+            "by default, a word only the superseded wording carried is unfindable: {ordinary:?}"
+        );
+
+        let widened = found(
+            search,
+            SearchQuery {
+                include_history: true,
+                ..SearchQuery::text("tuesday")
+            },
+        )
+        .await;
+        let facts = fact_hits(&widened);
+        let hit = facts
+            .iter()
+            .find(|f| f.address() == captured.address())
+            .unwrap_or_else(|| {
+                panic!("the claim is found once its earlier wording is searched: {widened:?}")
+            });
+        assert_eq!(
+            hit.content, "returned the drill to milhouse",
+            "the hit is the CURRENT record, never the superseded wording standing in for it: \
+             {widened:?}"
+        );
+
+        // The negative that gives the positive meaning: a word only ever in
+        // the CURRENT wording is found either way, so include_history is a
+        // widening and not a second, different query.
+        let current_word = found(
+            search,
+            SearchQuery {
+                include_history: true,
+                ..SearchQuery::text("returned")
+            },
+        )
+        .await;
+        assert!(
+            fact_hits(&current_word)
+                .iter()
+                .any(|f| f.address() == captured.address()),
+            "a word in the current wording is still found with the flag on: {current_word:?}"
+        );
+    }
+
     /// A superseded fact is **out of a default search** — a claim the store has
     /// already moved past coming back as current truth is worse than no memory
     /// at all — and `status: superseded` is how it is reached deliberately, so
@@ -7565,6 +7651,7 @@ pub mod contract {
 
         search_finds_a_fact_captured_moments_ago(store, search).await;
         search_fact_hits_carry_an_address_and_provenance(store, search).await;
+        a_term_from_a_superseded_wording_is_found_only_when_asked_for(store, search).await;
         a_hit_carries_the_clocks_the_store_kept(store, search).await;
         search_excludes_superseded_by_default_and_lists_it_on_request(store, search).await;
         search_excludes_a_retracted_record_by_default(store, search).await;
@@ -9995,6 +10082,73 @@ pub mod contract {
         );
     }
 
+    /// 🚨 **The batched read of a whole entity's history agrees with the
+    /// per-record read, fact for fact.**
+    ///
+    /// One entity holding a claim nobody corrected and one corrected once —
+    /// the same pairing the per-fact case above uses, so a build that only
+    /// gets the single-write case right cannot pass both.
+    pub async fn claim_histories_agrees_with_claim_history_per_fact<M: Memory>(store: &M) {
+        let subject = EntityId::person("person:contract-claim-histories");
+        let once = capture(
+            store,
+            NewFact::about(subject.clone(), "said once", date(2026, 4, 18)),
+        )
+        .await;
+        let corrected = capture(
+            store,
+            NewFact::about(subject.clone(), "lent to ralph", date(2026, 4, 18)),
+        )
+        .await;
+        edit(
+            store,
+            &corrected.address(),
+            FactPatch {
+                content: Some("ralph gave it back".into()),
+                ..Default::default()
+            },
+        )
+        .await;
+
+        let batched = store
+            .claim_histories(&subject)
+            .await
+            .expect("claim_histories should succeed");
+        assert_eq!(
+            batched.len(),
+            2,
+            "one entry per fact on the entity: {batched:?}"
+        );
+
+        let words_of = |id: &FactId| -> Vec<String> {
+            batched
+                .get(id)
+                .unwrap_or_else(|| panic!("{id:?} missing from the batched result: {batched:?}"))
+                .iter()
+                .map(|w| w.content.clone())
+                .collect()
+        };
+        assert_eq!(words_of(&once.id), vec!["said once".to_string()]);
+        assert_eq!(
+            words_of(&corrected.id),
+            vec![
+                "lent to ralph".to_string(),
+                "ralph gave it back".to_string()
+            ],
+            "oldest first, agreeing with claim_history's own order",
+        );
+
+        // **The negative that gives it meaning.** An entity nobody wrote is a
+        // miss, exactly as claim_history and recall answer one — not an empty
+        // map, which would read as "written and holding nothing".
+        let ghost = EntityId::person("person:contract-claim-histories-ghost");
+        let missing = store.claim_histories(&ghost).await;
+        assert!(
+            matches!(missing, Err(MemoryError::UnknownEntity { .. })),
+            "an entity nobody created is a miss, not an empty history: {missing:?}"
+        );
+    }
+
     /// about the store rather than about the enum, and only a store can answer
     /// it. The negative is the filter: a pet is not returned by a listing of
     /// things, so the kind is carried rather than defaulted to something.
@@ -10521,5 +10675,6 @@ pub mod contract {
         a_long_history_is_cut_to_its_newest_and_says_how_many(store).await;
         a_read_of_facts_says_how_many_times_each_was_written(store).await;
         a_walk_with_no_facts_carries_no_revision_counts(store).await;
+        claim_histories_agrees_with_claim_history_per_fact(store).await;
     }
 }
