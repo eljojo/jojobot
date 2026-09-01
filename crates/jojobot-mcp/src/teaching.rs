@@ -17,7 +17,7 @@
 
 use super::*;
 
-/// The one domain this slice teaches. A caller-declared string, not a
+/// The first domain this slice teaches. A caller-declared string, not a
 /// compiled set — a second domain is a second constant beside this one, not
 /// a variant added here.
 pub(crate) const CLAIMS_DOMAIN: &str = "claims";
@@ -29,6 +29,20 @@ pub(crate) const CLAIMS_TEACHING: &str = "A further claim does not destroy the o
     there — capturing a second claim about the same thing does not erase the first. A \
     correction keeps what the record said before: update_fact rewrites a claim in place, and \
     recall with a history argument reads the earlier wording back.";
+
+/// **The second domain — a convention, not a rule about claims themselves.**
+/// A different string from [`CLAIMS_DOMAIN`], so a session already taught one
+/// has not been taught the other: they are independent rows on the same
+/// ledger, and the mechanism did not have to change to add this one.
+pub(crate) const CLAIM_SUBJECT_DOMAIN: &str = "claim-subject";
+
+/// **Ships in the binary, exactly as [`CLAIMS_TEACHING`] does.** No column,
+/// no migration, no verb: `fields` already takes any key a caller writes, so
+/// what was missing was agreement on the key, not a place to hold it.
+pub(crate) const CLAIM_SUBJECT_TEACHING: &str = "A claim's fields may carry `subject` — a \
+    one-line label, the way an email has a subject — written by whoever makes the claim. It \
+    lets a later read tell what a claim is about without opening it, and keeps two sessions \
+    from inventing two different names for the same idea.";
 
 impl Jojobot {
     /// Whether this call is the first time `domain` has reached this
@@ -89,9 +103,11 @@ mod tests {
         let sid = booted(&jojobot, "gamma").await;
 
         let first = capture_as(&jojobot, &sid, capture_args("alpha", "plays go")).await;
-        assert_eq!(
-            first["teaching"],
-            serde_json::json!([CLAIMS_TEACHING]),
+        assert!(
+            first["teaching"]
+                .as_array()
+                .expect("a list")
+                .contains(&serde_json::json!(CLAIMS_TEACHING)),
             "the first claim this session ever wrote carries the teaching: {first}"
         );
 
@@ -295,9 +311,11 @@ mod tests {
         make_bot(&first, "gamma").await;
         let opened = booted(&first, "gamma").await;
         let taught = capture_as(&first, &opened, capture_args("alpha", "plays go")).await;
-        assert_eq!(
-            taught["teaching"],
-            serde_json::json!([CLAIMS_TEACHING]),
+        assert!(
+            taught["teaching"]
+                .as_array()
+                .expect("a list")
+                .contains(&serde_json::json!(CLAIMS_TEACHING)),
             "taught once: {taught}"
         );
 
@@ -361,6 +379,130 @@ mod tests {
     async fn an_anonymous_caller_is_never_taught() {
         let jojobot = handler();
         assert!(!jojobot.first_contact(CLAIMS_DOMAIN, None).await);
+    }
+
+    /// **Both halves in one case, for the second domain.** The first capture
+    /// carries the subject-convention teaching; the same session capturing
+    /// again does not.
+    #[tokio::test]
+    async fn the_first_capture_teaches_the_subject_convention_and_the_second_does_not() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+
+        let first = capture_as(&jojobot, &sid, capture_args("alpha", "plays go")).await;
+        assert!(
+            first["teaching"]
+                .as_array()
+                .expect("a list")
+                .contains(&serde_json::json!(CLAIM_SUBJECT_TEACHING)),
+            "the first capture carries the subject-convention teaching: {first}"
+        );
+
+        let second = capture_as(&jojobot, &sid, capture_args("alpha", "also plays chess")).await;
+        assert!(
+            second.get("teaching").is_none(),
+            "the same session capturing again is not taught the convention twice: {second}"
+        );
+    }
+
+    /// ⭐ **The case that makes this a domain rather than a longer paragraph.**
+    /// A session taught about claims through `search` has NOT been taught the
+    /// subject convention — the two are independent rows on the same ledger,
+    /// not one teaching that happens to render in two places.
+    #[tokio::test]
+    async fn claims_and_the_subject_convention_are_independently_tracked() {
+        use jojobot_domain::memory::search::Hit;
+        use jojobot_domain::memory::{Fact, FactId, FactStatus, Provenance, Standing};
+
+        let fact = Fact {
+            id: FactId("f1".into()),
+            home: EntityId::person("person:alpha"),
+            subject: EntityId::person("person:alpha"),
+            content: "plays go".into(),
+            details: None,
+            provenance: Provenance::Testimony,
+            standing: Standing::Settled,
+            status: FactStatus::Active,
+            recorded_at: jiff::civil::date(2026, 7, 1),
+            happened_at: None,
+            edge: None,
+            fields: Default::default(),
+            refs: Vec::new(),
+            derived_from: None,
+            inserted_at: None,
+            stale_after: None,
+        };
+        let hit = Hit::Fact {
+            fact: Box::new(fact),
+            subject: jojobot_domain::memory::search::EntityRef::unresolved(EntityId::person(
+                "person:alpha",
+            )),
+            home: jojobot_domain::memory::search::EntityRef::unresolved(EntityId::person(
+                "person:alpha",
+            )),
+            source: None,
+        };
+        let spy = Arc::new(SpySearch::answering(vec![hit]));
+        let jojobot = handler_with(spy);
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+
+        // `search` touches only the claims domain — it never mentions a
+        // subject field — so this session is now taught claims and nothing
+        // else.
+        let searched = json_of(
+            &jojobot
+                .search(rmcp::handler::server::wrapper::Parameters(SearchArgs {
+                    query: Some("plays go".into()),
+                    sid: Some(sid.clone()),
+                    ..search_args()
+                }))
+                .await
+                .expect("search ok"),
+        );
+        assert_eq!(
+            searched["teaching"],
+            serde_json::json!([CLAIMS_TEACHING]),
+            "search taught claims, and only claims: {searched}"
+        );
+
+        // The first capture this session ever makes still owes it the
+        // subject-convention teaching, because that domain is untouched —
+        // and it must NOT re-teach claims, which search already covered.
+        let captured = capture_as(&jojobot, &sid, capture_args("alpha", "plays go too")).await;
+        assert_eq!(
+            captured["teaching"],
+            serde_json::json!([CLAIM_SUBJECT_TEACHING]),
+            "capture owes only the domain search never touched: {captured}"
+        );
+    }
+
+    /// ⭐ **The shape `first_contact`'s check-and-set could get wrong if
+    /// delivery clobbered.** A session whose very first call is a capture —
+    /// no prior search or recall — touches both domains at once, and the
+    /// answer must carry both. A second capture must then carry neither: both
+    /// rows are spent by the first answer, not just the one that rendered
+    /// last.
+    #[tokio::test]
+    async fn a_first_ever_capture_teaches_both_domains_and_spends_both() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+
+        let first = capture_as(&jojobot, &sid, capture_args("alpha", "plays go")).await;
+        assert_eq!(
+            first["teaching"],
+            serde_json::json!([CLAIMS_TEACHING, CLAIM_SUBJECT_TEACHING]),
+            "the first call ever touches both domains at once and both survive: {first}"
+        );
+
+        let second = capture_as(&jojobot, &sid, capture_args("alpha", "also plays chess")).await;
+        assert!(
+            second.get("teaching").is_none(),
+            "both domains were spent by the first answer, not just the one that rendered last: \
+             {second}"
+        );
     }
 
     /// A fact seeded straight through the store, bypassing `capture` — which

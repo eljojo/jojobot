@@ -11,7 +11,9 @@ use jojobot_domain::attention;
 use jojobot_domain::memory::graph;
 
 use super::*;
-use crate::teaching::{CLAIMS_DOMAIN, CLAIMS_TEACHING};
+use crate::teaching::{
+    CLAIM_SUBJECT_DOMAIN, CLAIM_SUBJECT_TEACHING, CLAIMS_DOMAIN, CLAIMS_TEACHING,
+};
 
 /// Arguments to `capture`.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -534,6 +536,12 @@ impl Jojobot {
                 );
                 if self.first_contact(CLAIMS_DOMAIN, Some(&caller)).await {
                     crate::answer::note_teaching(&mut body, CLAIMS_TEACHING);
+                }
+                if self
+                    .first_contact(CLAIM_SUBJECT_DOMAIN, Some(&caller))
+                    .await
+                {
+                    crate::answer::note_teaching(&mut body, CLAIM_SUBJECT_TEACHING);
                 }
                 json_result(&body)
             }
