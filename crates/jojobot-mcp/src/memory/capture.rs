@@ -398,7 +398,10 @@ impl Jojobot {
     #[tool(
         description = "Remember one fact about an entity: the claim, when it became true, and \
                        whether it is testimony, observation or inference (default \
-                       inference — a hypothesis, not a finding). OBSERVATION is a claim you READ \
+                       inference — a hypothesis, not a finding). A NEW THING THAT HAPPENED IS A \
+                       NEW CLAIM, even about a thing that already carries one — capture it again \
+                       rather than reaching for update_fact, because capture adds and never \
+                       erases what stood before. OBSERVATION is a claim you READ \
                        out of a system of record, confidently — a statement, an app, a service — \
                        and it reads back settled, so it MUST say where: give fields a read_from \
                        naming the system, and a read_ref for what you read there if you have \

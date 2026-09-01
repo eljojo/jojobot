@@ -26,12 +26,13 @@ pub(crate) const CLAIMS_DOMAIN: &str = "claims";
 /// row.** An upgrade improves the wording for every instance with nothing to
 /// migrate.
 pub(crate) const CLAIMS_TEACHING: &str = "A further claim does not destroy the one already \
-    there — capturing a second claim about the same thing does not erase the first, even when \
-    the two contradict each other. jojobot runs no inference and settles nothing, so two \
+    there — capture a second claim about the same thing and it does not erase the first, even \
+    when the two contradict each other. jojobot runs no inference and settles nothing, so two \
     accounts that disagree are both allowed to stand: recording the new one is not a judgment \
-    that it is the true one, and deciding between them was never the job. A correction keeps \
-    what the record said before: update_fact rewrites a claim in place, and recall with a \
-    history argument reads the earlier wording back.";
+    that it is the true one, and deciding between them was never the job. Reach for capture when \
+    a new thing happened; reach for update_fact only to correct what the record already says — \
+    it rewrites a claim in place, and recall with a history argument reads the earlier wording \
+    back.";
 
 /// **The second domain — a convention, not a rule about claims themselves.**
 /// A different string from [`CLAIMS_DOMAIN`], so a session already taught one

@@ -24,14 +24,11 @@ pub struct UpdateFactArgs {
     /// omitted — the record keeps the day of the claim it replaces, exactly as
     /// any field this patch does not name.
     ///
-    /// **Give this whenever the correction happened later than the day the
-    /// claim describes.** A date says when a thing is TRUE OF rather than
-    /// when somebody typed it, and the day an operator changed their mind is
-    /// the fact a later reader most wants — the same reason `retract` carries
-    /// a date of its own. Rewriting content with no date given leaves the
-    /// ORIGINAL day on the record, permanently: a correction made months
-    /// later would otherwise read back as if it were true on the original
-    /// day forever.
+    /// **Give this when the rewritten claim is true of a different day than
+    /// the one already on the record — never the day you happen to be
+    /// typing.** Rewriting content with no date given leaves the ORIGINAL day
+    /// on the record, permanently: a correction made months later would
+    /// otherwise read back as if it were true on the original day forever.
     #[serde(default)]
     pub recorded_at: Option<String>,
     /// **The day the thing this claim is about HAPPENED**, `YYYY-MM-DD`.
@@ -129,11 +126,16 @@ pub struct UpdateFactArgs {
     /// nor `object` says nothing about edges and leaves the one already there
     /// alone.
     ///
-    /// **This is what a disproved claim needs.** Rewriting *was there* into
-    /// *was not there* leaves an attendance edge standing behind a sentence
-    /// that denies it, and every walk goes on answering through it. Taking the
-    /// claim back is a different act: a retraction is one-way and says the
-    /// claim should never have been recorded.
+    /// **Reach for this only when the rewrite turns the claim into a
+    /// negation** — *was there* becoming *was not there*. Then the edge
+    /// belongs to the sentence you just erased, and leaving it standing has
+    /// every walk go on answering through a claim that now denies it. **A
+    /// rewrite that stays positive — who returned it, where it moved to — is
+    /// not this case: the edge still describes something true.** Clearing it
+    /// anyway costs a real path: the walk through it stops answering, and the
+    /// entity on the other end becomes unreachable from this record. Taking
+    /// the claim back is a different act again: a retraction is one-way and
+    /// says the claim should never have been recorded.
     #[serde(default)]
     pub(crate) clear_edge: Option<bool>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
@@ -151,11 +153,11 @@ impl Jojobot {
                        is NOT so, rewrite content to state the negative truth — that is an \
                        ordinary edit and the fact stays active; there is no negated status. \
                        DATE REWRITES WHICH DAY THE CLAIM IS TRUE OF, YYYY-MM-DD — the same \
-                       argument retract carries, and for the same reason: the day a correction \
-                       happened is not always the day the call is made. Omit it and the record \
-                       keeps the day of the claim it replaces; give it whenever that is wrong, or \
-                       a rewrite made long after the fact keeps the ORIGINAL day forever, with no \
-                       way to say later when the correction itself happened. \
+                       argument retract carries, and it is never the day the call happens to be \
+                       made on. Omit it and the record keeps the day of the claim it replaces; \
+                       give it when the rewritten claim is true of a different day, or a rewrite \
+                       made long after the fact keeps the ORIGINAL day forever, reading back as \
+                       if it had always been true on a day it was never about. \
                        TWO MOVES NEED confirmed_by_user, and they are different: moving a \
                        claim TO testimony (who backs it), from inference or from observation \
                        alike — a claim you read in a system of record is not a step towards the \
@@ -172,9 +174,12 @@ impl Jojobot {
                        because setting a key to an empty value and removing the key are \
                        different edits and a caller means one of them. AND IT REACHES THE \
                        EDGE BOTH WAYS: shape with object draws or replaces one, and clear_edge \
-                       takes it off. Reach for clear_edge when you rewrite a claim into its \
-                       negative — was there becoming was not there leaves the edge standing \
-                       behind a sentence that denies it, and walks keep answering through it. \
+                       takes it off. Reach for clear_edge ONLY when the rewrite turns the claim \
+                       into a negation — was there becoming was not there — because then the \
+                       edge belongs to the sentence you just erased and leaving it stands behind \
+                       a denial. A rewrite that stays positive is not this case: clearing the \
+                       edge there stops every walk through it and makes the entity on the other \
+                       end unreachable from this record, so leave it alone. \
                        An address that \
                        names no fact comes back status: blocked with the addresses that do \
                        exist — it never creates. IT ANSWERS WITH A RECEIPT, NOT THE RECORD: the \
