@@ -86,11 +86,14 @@ pub struct Call {
     pub head: String,
 }
 
-/// **How much of an answer is kept.** Enough to tell a refusal from an answer
-/// and one answer from another; never enough to bury the log.
+/// **How much of one VALUE is kept.** Enough to tell a refusal from an answer
+/// and one answer from another; never enough to bury the log. The unit this
+/// bounds is a value inside an answer, not the answer itself — a fixed cutoff
+/// on the whole document made a field's survival depend on where it happened
+/// to land, and `teaching` always landed last.
 const HEAD: usize = 160;
 
-/// The first `HEAD` characters, cut on a character boundary.
+/// The first `HEAD` characters of one value, cut on a character boundary.
 fn head_of(text: &str) -> String {
     let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
     match flat.char_indices().nth(HEAD) {
@@ -121,10 +124,7 @@ pub fn calls_in(stream: &str) -> Vec<Call> {
             // **`is_error` is absent on a call that worked.** Reading a missing
             // key as anything but "not an error" marks every good call refused.
             let refused = block["is_error"].as_bool().unwrap_or(false);
-            answers.insert(
-                id.to_string(),
-                (refused, head_of(&flatten(&block["content"]))),
-            );
+            answers.insert(id.to_string(), (refused, flatten(&block["content"])));
         }
     }
     events
@@ -142,7 +142,7 @@ pub fn calls_in(stream: &str) -> Vec<Call> {
             ));
             Call {
                 verb: block["name"].as_str().unwrap_or("[unnamed]").to_string(),
-                about: head_of(&flatten(&block["input"])),
+                about: flatten(&block["input"]),
                 refused,
                 head,
             }
@@ -189,10 +189,27 @@ fn blocks(event: &serde_json::Value) -> Vec<serde_json::Value> {
         .unwrap_or_default()
 }
 
-/// Text out of a value that may be a string, a list of blocks, or an object.
+/// **Text out of a value that may be a string, a list of blocks, or an
+/// object — eliding each VALUE it holds, never the document.**
+///
+/// A string leaf is the one place an answer can be arbitrarily long, so it is
+/// the one place this cuts, and it cuts only that leaf. Every key survives at
+/// every depth, because deciding which fields matter enough to keep is how a
+/// key that was appended last stopped rendering at all — the same judgement
+/// call reproduced with better manners is still the defect.
+///
+/// **jojobot's own answers arrive here as one JSON-encoded string.** A leaf
+/// that itself parses as a JSON object is not one value, it is a whole
+/// receipt — so this recurses into it and elides field by field, exactly as
+/// it would one level up. A leaf that does not parse (a refusal, a plain
+/// tool result, an argument the caller typed) is the one value there is, and
+/// that is what gets cut.
 fn flatten(value: &serde_json::Value) -> String {
     match value {
-        serde_json::Value::String(text) => text.clone(),
+        serde_json::Value::String(text) => match serde_json::from_str::<serde_json::Value>(text) {
+            Ok(nested @ serde_json::Value::Object(_)) => flatten(&nested),
+            _ => head_of(text),
+        },
         serde_json::Value::Array(items) => items.iter().map(flatten).collect::<Vec<_>>().join(" "),
         serde_json::Value::Object(fields) => fields
             .iter()
@@ -436,6 +453,109 @@ mod tests {
             final_text(&made).as_deref(),
             Some("Milhouse"),
             "the answer a person reads was not recovered from the stream",
+        );
+    }
+
+    /// ⭐ **The reproduction case.** A paid run's raw stream carried a
+    /// teaching field twenty-five times and the rendered transcript carried
+    /// it zero, because the old cutoff sliced the whole receipt's text at a
+    /// fixed offset and `teaching` is appended after every other field. The
+    /// receipt below puts `teaching` past that offset on purpose, and the
+    /// fixture is checked against it below so the case cannot go green by
+    /// accident.
+    #[test]
+    fn a_field_appended_last_to_a_long_receipt_survives() {
+        let receipt = serde_json::json!({
+            "address": "person:alpha#f1",
+            "content": serde_json::Value::Null,
+            "content_bytes": 8,
+            "content_elided": true,
+            "content_head": "plays go",
+            "delta": serde_json::Value::Array(vec![]),
+            "derived_from": serde_json::Value::Null,
+            "details": serde_json::Value::Null,
+            "edge": serde_json::Value::Null,
+            "fields": serde_json::Value::Null,
+            "fields_count": 0,
+            "fields_elided": true,
+            "happened_at": serde_json::Value::Null,
+            "how_to_read": "you wrote this claim. recall the subject to read it back, with its \
+                records and their addresses.",
+            "inserted_at": "2026-09-01T00:00:00Z",
+            "postcondition": "Recorded as an additional claim. 1 accounts now stand on \
+                person:alpha. No record was edited and none was removed.",
+            "provenance": "inference",
+            "recorded_at": "2026-09-01",
+            "refs": serde_json::Value::Array(vec![]),
+            "stale_after": serde_json::Value::Null,
+            "standing": "open",
+            "status": "active",
+            "subject": "person:alpha",
+            "teaching": ["A further claim does not destroy the one already there, even when \
+                the two contradict each other."],
+        });
+        let past_the_old_cutoff = receipt
+            .to_string()
+            .find("teaching")
+            .expect("the key is there");
+        assert!(
+            past_the_old_cutoff > 160,
+            "the fixture must put `teaching` past the old 160-character cutoff, or this case \
+             tests nothing: found at {past_the_old_cutoff}",
+        );
+        let content = serde_json::to_string(&receipt.to_string()).expect("a JSON string");
+        let stream = format!(
+            r#"{{"type":"assistant","message":{{"content":[{{"type":"tool_use","id":"id-1","name":"capture","input":{{"subject":"person:alpha"}}}}]}}}}
+{{"type":"user","message":{{"content":[{{"type":"tool_result","tool_use_id":"id-1","content":{content}}}]}}}}"#
+        );
+        let made = calls_in(&stream);
+        assert_eq!(made.len(), 1, "one call: {made:#?}");
+        assert!(
+            made[0].head.contains("teaching"),
+            "a field appended last to a long receipt did not survive rendering: {}",
+            made[0].head,
+        );
+        assert!(
+            made[0].head.contains("contradict"),
+            "the teaching's own content is not in the rendering, only the key that once held \
+             it: {}",
+            made[0].head,
+        );
+    }
+
+    /// **Bounded per value, not per document.** One enormous field must not
+    /// make the whole answer unreadable, and it must not do so at the cost of
+    /// the fields beside it either — each value is capped on its own, so the
+    /// total grows with how many fields there are rather than being fixed.
+    #[test]
+    fn one_long_value_is_capped_without_erasing_the_fields_beside_it() {
+        let receipt = serde_json::json!({
+            "address": "person:alpha#f1",
+            "content_head": "x".repeat(4_000),
+            "teaching": ["short"],
+        });
+        let content = serde_json::to_string(&receipt.to_string()).expect("a JSON string");
+        let stream = format!(
+            r#"{{"type":"assistant","message":{{"content":[{{"type":"tool_use","id":"id-1","name":"capture","input":{{"subject":"person:alpha"}}}}]}}}}
+{{"type":"user","message":{{"content":[{{"type":"tool_result","tool_use_id":"id-1","content":{content}}}]}}}}"#
+        );
+        let made = calls_in(&stream);
+        assert_eq!(made.len(), 1, "one call: {made:#?}");
+        assert!(
+            made[0].head.contains("address=person:alpha#f1"),
+            "the field before the long one was erased rather than capped: {}",
+            made[0].head,
+        );
+        assert!(
+            made[0].head.contains("teaching=short"),
+            "the field after the long one was erased rather than capped: {}",
+            made[0].head,
+        );
+        assert!(
+            made[0].head.chars().count() < 1_000,
+            "one enormous value was carried whole and buried the fields beside it: {} \
+             characters",
+            made[0].head.chars().count(),
         );
     }
 
