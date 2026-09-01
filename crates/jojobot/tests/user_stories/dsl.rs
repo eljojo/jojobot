@@ -936,6 +936,39 @@ impl Session {
         .await;
     }
 
+    /// **The same creation, over a near-miss the guard surfaces.** The token
+    /// that lifts it rides the refusal's own advice rather than a field of its
+    /// own (rule 68), so this reads it out of the prose exactly as a real
+    /// caller has to.
+    pub async fn add_over_the_screen(&self, handle: &str, name: &str) {
+        let (kind, slug) = handle.split_once(':').expect("a handle is kind:slug");
+        let refusal = self
+            .refused(
+                "add_entity",
+                json!({"kind": kind, "handle": slug, "name": name, "source": "user-named"}),
+            )
+            .await;
+        let how_to_proceed = refusal.json()["how_to_proceed"]
+            .as_str()
+            .expect("a blocked creation names how to proceed")
+            .to_string();
+        let token = how_to_proceed
+            .split("override_token: \"")
+            .nth(1)
+            .and_then(|rest| rest.split('"').next())
+            .unwrap_or_else(|| panic!("the refusal names no override_token: {how_to_proceed}"))
+            .to_string();
+        self.write(
+            &format!("adding {handle} over the screen"),
+            "add_entity",
+            json!({
+                "kind": kind, "handle": slug, "name": name, "source": "user-named",
+                "override_token": token,
+            }),
+        )
+        .await;
+    }
+
     /// **The same creation, under something else.** Where a thing sits is
     /// fixed when it is made and there is no reparenting verb, so this is the
     /// only moment a story can say it.

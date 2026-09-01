@@ -445,6 +445,45 @@ async fn dolt_satisfies_the_memory_contract() {
     store.stop().await;
 }
 
+/// **…and the creation guard's two supplied-record specs**, over a real store
+/// wired with the same shipped view [`memory::SUPPLIED_VIEW_FOR_THE_GUARD_SPECS`]
+/// names — a near-miss is caught and its own override lifts it, and an exact
+/// collision never clears, on the real store exactly as on the fake.
+#[tokio::test]
+async fn dolt_satisfies_the_supplied_record_guard_contract() {
+    let scratch = Scratch::new("supplied-guard");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("supplied-guard")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+
+    let supplied = Provisions::new(vec![Provision::record(
+        jojobot_domain::memory::Entity {
+            id: EntityId(memory::SUPPLIED_VIEW_FOR_THE_GUARD_SPECS.into()),
+            kind: jojobot_domain::memory::EntityKind::VIEW,
+            name: "The Loops".into(),
+            aliases: Vec::new(),
+            source: "jojobot".into(),
+            crm: None,
+            parent: None,
+            boot: Default::default(),
+            merged_into: None,
+        },
+        std::collections::BTreeMap::new(),
+    )]);
+    let known = DoltMemory::open(pool).knowing(supplied);
+
+    memory::a_near_miss_against_a_supplied_record_is_caught_and_its_override_lifts_it(&known).await;
+    memory::an_exact_collision_with_a_supplied_handle_is_never_forceable(&known).await;
+
+    store.stop().await;
+}
+
 /// **…and the same contract including retrieval**, with the search projection
 /// over this store.
 ///

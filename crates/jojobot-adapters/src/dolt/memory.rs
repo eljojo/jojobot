@@ -182,13 +182,22 @@ impl DoltMemory {
     /// silently. **A stored row wins**, so nothing the operator wrote is
     /// shadowed by what the build ships.
     async fn known(&self, tx: &mut Transaction<'_, MySql>) -> Result<Vec<Entity>, MemoryError> {
-        let mut known = Self::index(tx).await?;
+        let rows = Self::index(tx).await?;
+        Ok(self.extend_with_supplied(rows))
+    }
+
+    /// **Rows plus what the build supplies, over rows already read.** Split out
+    /// of [`Self::known`] so a caller that needs the rows on their own — to
+    /// find the one row a write targets, never a supplied record that is not
+    /// one — can still build the wider set to screen against, without a second
+    /// query for the same rows.
+    fn extend_with_supplied(&self, mut rows: Vec<Entity>) -> Vec<Entity> {
         for (entity, _) in self.supplied.records() {
-            if !known.iter().any(|held| held.id == entity.id) {
-                known.push(entity.clone());
+            if !rows.iter().any(|held| held.id == entity.id) {
+                rows.push(entity.clone());
             }
         }
-        Ok(known)
+        rows
     }
 
     async fn index(tx: &mut Transaction<'_, MySql>) -> Result<Vec<Entity>, MemoryError> {
@@ -885,7 +894,7 @@ impl Memory for DoltMemory {
             new.parent.as_ref(),
         )?;
         let mut tx = self.pool.begin().await.map_err(store)?;
-        let index = Self::index(&mut tx).await?;
+        let index = self.known(&mut tx).await?;
         if let guard::Decision::Block(candidates) = guard::decide(
             &new.id,
             &new.labels(),
@@ -942,16 +951,25 @@ impl Memory for DoltMemory {
     ) -> Result<Guarded<Entity>, MemoryError> {
         validate_write_subject(handle)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
-        let index = Self::index(&mut tx).await?;
-        let Some(mut entity) = index.iter().find(|e| &e.id == handle).cloned() else {
+        // **A row, never a supplied record.** `update_entity` mutates a stored
+        // row — there is no row to mutate for a record the build supplies, and
+        // finding one here would let an edit turn a shipped record into a
+        // stored one wearing its handle, which is exactly what a caller must
+        // not be able to do (rule 234's own exception).
+        let rows = Self::index(&mut tx).await?;
+        let Some(mut entity) = rows.iter().find(|e| &e.id == handle).cloned() else {
             return Err(MemoryError::UnknownEntity {
                 attempted: handle.to_string(),
-                nearest: guard::screen(handle, &[], &index),
+                nearest: guard::screen(handle, &[], &rows),
             });
         };
+        // **The screen alone reads the wider set** — rows plus what the build
+        // supplies — so a rename that collides with a supplied record is
+        // caught exactly as one against a stored record is.
+        let known = self.extend_with_supplied(rows);
         // Changing what an entity is CALLED is an entity-touching write, so it
         // faces the same gate — display name and aliases alike.
-        if let guard::Decision::Block(candidates) = screen_entity_patch(&entity, &patch, &index) {
+        if let guard::Decision::Block(candidates) = screen_entity_patch(&entity, &patch, &known) {
             return Ok(Guarded::Blocked {
                 attempted: handle.clone(),
                 candidates,

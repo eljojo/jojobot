@@ -80,6 +80,7 @@ const ROSTER: &[&str] = &[
     // this scan reads it on the same terms as every other name — a slug handed
     // to a constructor on its own would carry no handle for the scan to find.
     "view:colleagues",
+    "view:loop",
     "view:loops",
     "view:my-loops",
     "view:my-people",

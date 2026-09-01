@@ -88,9 +88,12 @@ async fn a_session_asks_a_shipped_view_and_its_own_by_name_through_one_read() {
     // The way forward is a name of their own, as it is for a shipped kind.
     taken.says("colleagues");
 
-    // …and the pairing it rests on: a name of the operator's own still lands.
-    // Without this the case passes on a build that refuses every view there is.
-    s.add("view:my-loops", "My Loops").await;
+    // …and the pairing it rests on: a name of the operator's own still lands —
+    // once confirmed over the near-miss the guard surfaces, because "loops"
+    // inside "my-loops" collides with the shipped view exactly as it would
+    // with a stored one (rule 234). Without this the case passes on a build
+    // that refuses every view there is.
+    s.add_over_the_screen("view:my-loops", "My Loops").await;
 
     story.finish().await;
 }

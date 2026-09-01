@@ -3644,6 +3644,42 @@ mod tests {
         contract::run_all(&InMemoryMemory::booted()).await;
     }
 
+    /// A store wired with a supplied record, for the two creation-guard specs
+    /// below that need one — `run_all` above never wires one, so these run on
+    /// their own.
+    fn fake_knowing_a_supplied_view() -> InMemoryMemory {
+        InMemoryMemory::booted().knowing(owned::Provisions::new(vec![owned::Provision::record(
+            Entity {
+                id: EntityId(contract::SUPPLIED_VIEW_FOR_THE_GUARD_SPECS.into()),
+                kind: EntityKind::VIEW,
+                name: "Contract Shipped View".into(),
+                aliases: Vec::new(),
+                source: "jojobot".into(),
+                crm: None,
+                parent: None,
+                boot: Default::default(),
+                merged_into: None,
+            },
+            BTreeMap::new(),
+        )]))
+    }
+
+    #[tokio::test]
+    async fn a_near_miss_against_a_supplied_record_is_caught_against_the_fake() {
+        contract::a_near_miss_against_a_supplied_record_is_caught_and_its_override_lifts_it(
+            &fake_knowing_a_supplied_view(),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn an_exact_collision_with_a_supplied_handle_is_never_forceable_against_the_fake() {
+        contract::an_exact_collision_with_a_supplied_handle_is_never_forceable(
+            &fake_knowing_a_supplied_view(),
+        )
+        .await;
+    }
+
     #[test]
     fn person_id_prefixes_a_bare_handle_but_respects_a_typed_one() {
         assert_eq!(EntityId::person("person:alpha").as_str(), "person:alpha");

@@ -254,23 +254,21 @@ impl InMemoryMemory {
             .push(entity);
     }
 
-    /// The entity index the creation screen reads: the rows this store holds.
+    /// The rows this store holds — used where a supplied record has no place
+    /// (`list_entities`, and as the base [`InMemoryMemory::known`] extends).
     fn index(&self) -> Vec<Entity> {
         self.entities.lock().expect("fake mutex poisoned").clone()
     }
 
-    /// **What EXISTS, as an existence gate has to see it**: the rows, plus what
-    /// the build supplies over this store.
+    /// **What EXISTS, as any guard that consults the store has to see it**: the
+    /// rows, plus what the build supplies over this store (rule 234) — read by
+    /// the existence gate and by the creation screen alike.
     ///
-    /// A read resolves a supplied record and a gate reading only the rows
-    /// refused a claim pointing at one — the two halves disagreeing about what
-    /// exists, with the gate as the half that fails silently. **A stored row
-    /// wins**, so nothing the operator wrote is shadowed.
-    ///
-    /// ⛔️ **The creation screen keeps the narrower set on purpose.** Whether a
-    /// caller may declare a name that RESEMBLES one the build ships is a
-    /// different question from whether a claim may point at one, and widening
-    /// both at once answers the second by changing the first.
+    /// A read resolves a supplied record, and a guard reading only the rows
+    /// disagrees with it about what exists: it either refuses a claim pointing
+    /// at a supplied record, or lets a caller declare a name that shadows one
+    /// the near-miss screen exists to catch. **A stored row wins**, so nothing
+    /// the operator wrote is shadowed by what the build ships.
     fn known(&self) -> Vec<Entity> {
         let mut known = self.index();
         for (entity, _) in self.supplied.lock().expect("fake mutex poisoned").records() {
@@ -427,7 +425,7 @@ impl Memory for InMemoryMemory {
             new.crm.as_deref(),
             new.parent.as_ref(),
         )?;
-        let index = self.index();
+        let index = self.known();
         if let Decision::Block(candidates) = guard::decide(
             &new.id,
             &new.labels(),
@@ -490,8 +488,8 @@ impl Memory for InMemoryMemory {
         patch: EntityPatch,
     ) -> Result<Guarded<Entity>, MemoryError> {
         validate_write_subject(handle)?;
-        // Taken before the lock: index() locks too.
-        let index = self.index();
+        // Taken before the lock: known() locks too.
+        let index = self.known();
         let mut entities = self.entities.lock().expect("fake mutex poisoned");
         let Some(entity) = entities.iter_mut().find(|e| &e.id == handle) else {
             return Err(MemoryError::UnknownEntity {
@@ -6175,6 +6173,90 @@ pub mod contract {
                 .iter()
                 .all(|e| e.id != under_the_alias),
             "a blocked add writes nothing"
+        );
+    }
+
+    /// **The handle a caller must supply a record at**, before running either
+    /// spec below — `known()` is what the creation guard screens against, and a
+    /// fixture that wired no supplied record there would pass on an index
+    /// nothing could ever miss (rule 234). The handle is the real shipped
+    /// view's, on the fictional roster already — the same one the review's
+    /// own example named.
+    pub const SUPPLIED_VIEW_FOR_THE_GUARD_SPECS: &str = "view:loops";
+
+    /// **A near-miss against a record the build supplies is caught, exactly as
+    /// one against a stored record is — and the refusal's own token lifts it.**
+    ///
+    /// The creation screen used to read the rows this store holds and nothing
+    /// else, so a handle one edit-step from a supplied record sailed straight
+    /// through: the guard's index had no row for it, found no candidate, and
+    /// the write landed, shadowing the supplied record under a name the guard
+    /// exists to catch. `known()` — rows plus what the build supplies — is
+    /// what fixes that, matching the existence gate `capture` already reads.
+    pub async fn a_near_miss_against_a_supplied_record_is_caught_and_its_override_lifts_it<
+        M: Memory,
+    >(
+        store: &M,
+    ) {
+        let shipped = EntityId(SUPPLIED_VIEW_FOR_THE_GUARD_SPECS.into());
+        let near = EntityId("view:loop".into());
+        let outcome = store
+            .add_entity(NewEntity::new(near.clone(), "Loop", "user-named"))
+            .await
+            .expect("the call itself succeeds; the guard answers in the result");
+        let Guarded::Blocked {
+            attempted,
+            candidates,
+        } = outcome
+        else {
+            panic!("a handle one edit-step from a supplied record must be screened");
+        };
+        assert!(
+            candidates.iter().any(|m| m.handle == shipped),
+            "the supplied record itself must be the candidate: {candidates:?}"
+        );
+        let token = guard::override_token(&attempted, &candidates);
+        store
+            .add_entity(NewEntity {
+                override_token: Some(token),
+                ..NewEntity::new(near, "Loop", "user-named")
+            })
+            .await
+            .expect("add_entity should succeed")
+            .written()
+            .expect("the refusal's own token must let a genuinely different thing through");
+    }
+
+    /// **An exact handle collision with a supplied record is refused and stays
+    /// refused — no token clears it**, exactly as an exact collision with a
+    /// stored handle never clears (rule 234's own first exception): a caller
+    /// cannot take over a name the build already uses.
+    pub async fn an_exact_collision_with_a_supplied_handle_is_never_forceable<M: Memory>(
+        store: &M,
+    ) {
+        let shipped = EntityId(SUPPLIED_VIEW_FOR_THE_GUARD_SPECS.into());
+        let outcome = store
+            .add_entity(NewEntity::new(
+                shipped.clone(),
+                "Somebody Else's View",
+                "user-named",
+            ))
+            .await
+            .expect("the call itself succeeds; the guard answers in the result");
+        let Guarded::Blocked { candidates, .. } = outcome else {
+            panic!("an exact handle collision with a supplied record must be refused");
+        };
+        let token = guard::override_token(&shipped, &candidates);
+        let forced = store
+            .add_entity(NewEntity {
+                override_token: Some(token),
+                ..NewEntity::new(shipped, "Somebody Else's View", "user-named")
+            })
+            .await
+            .expect("the call itself succeeds; the guard answers in the result");
+        assert!(
+            matches!(forced, Guarded::Blocked { .. }),
+            "an exact handle collision is never overridable, supplied or not: {forced:?}"
         );
     }
 
