@@ -9897,6 +9897,104 @@ pub mod contract {
         );
     }
 
+    /// 🚨 **A claim rewritten twice comes back field-for-field identical to one
+    /// written once, unless a walk that read facts also says how many writes
+    /// stand behind each of them.**
+    ///
+    /// Paired with a claim nobody corrected: the once-written claim's count is
+    /// the case that fails on a build where every claim reads as "revised".
+    pub async fn a_read_of_facts_says_how_many_times_each_was_written<M: Memory>(store: &M) {
+        let subject = EntityId::person("person:contract-revision-count");
+        let once = capture(
+            store,
+            NewFact::about(subject.clone(), "never touched again", date(2026, 4, 18)),
+        )
+        .await;
+        let corrected = capture(
+            store,
+            NewFact::about(subject.clone(), "lent to Ralph", date(2026, 4, 18)),
+        )
+        .await;
+        edit(
+            store,
+            &corrected.address(),
+            FactPatch {
+                content: Some("Ralph gave it back".into()),
+                ..Default::default()
+            },
+        )
+        .await;
+
+        let found = graph::walk(
+            store,
+            &graph::GraphQuery {
+                select: graph::Selection {
+                    subject: Some(subject.clone()),
+                    ..graph::Selection::default()
+                },
+                include: graph::Include {
+                    facts: true,
+                    prose: false,
+                },
+                follow: None,
+                history: None,
+            },
+        )
+        .await
+        .expect("a handle is a selection")
+        .objects;
+
+        let revisions = &found[0].fact_revisions;
+        assert_eq!(
+            revisions.get(&once.id),
+            Some(&1),
+            "a claim nobody corrected has one write: {revisions:?}"
+        );
+        assert_eq!(
+            revisions.get(&corrected.id),
+            Some(&2),
+            "the corrected claim carries the count that says so: {revisions:?}"
+        );
+    }
+
+    /// **No flag of its own.** A walk that never asked for facts has none on
+    /// its object either, so there is nothing to count — the signal follows
+    /// `include.facts` rather than asking a caller to name it twice, which
+    /// would be the extra argument rule 155 exists to refuse.
+    pub async fn a_walk_with_no_facts_carries_no_revision_counts<M: Memory>(store: &M) {
+        let subject = EntityId::person("person:contract-no-facts-no-counts");
+        capture(
+            store,
+            NewFact::about(subject.clone(), "said once", date(2026, 4, 18)),
+        )
+        .await;
+
+        let found = graph::walk(
+            store,
+            &graph::GraphQuery {
+                select: graph::Selection {
+                    subject: Some(subject.clone()),
+                    ..graph::Selection::default()
+                },
+                include: graph::Include {
+                    facts: false,
+                    prose: false,
+                },
+                follow: None,
+                history: None,
+            },
+        )
+        .await
+        .expect("a handle is a selection")
+        .objects;
+
+        assert!(
+            found[0].fact_revisions.is_empty(),
+            "a walk that did not ask for facts carries no revision counts either: {:?}",
+            found[0].fact_revisions
+        );
+    }
+
     /// about the store rather than about the enum, and only a store can answer
     /// it. The negative is the filter: a pet is not returned by a listing of
     /// things, so the kind is carried rather than defaulted to something.
@@ -10421,5 +10519,7 @@ pub mod contract {
         a_supersede_that_breaks_a_fit_is_refused_and_a_retraction_is_not(store).await;
         a_declared_type_governs_no_write(store).await;
         a_long_history_is_cut_to_its_newest_and_says_how_many(store).await;
+        a_read_of_facts_says_how_many_times_each_was_written(store).await;
+        a_walk_with_no_facts_carries_no_revision_counts(store).await;
     }
 }

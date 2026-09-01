@@ -155,7 +155,7 @@ fn hit_json(hit: &Hit, as_of: jiff::civil::Date) -> serde_json::Value {
             home,
             source,
         } => {
-            let mut body = fact_json(fact, as_of);
+            let mut body = fact_json(fact, as_of, None);
             if let Some(obj) = body.as_object_mut() {
                 obj.insert("hit".into(), "fact".into());
                 obj.insert("about".into(), entity_ref_json(subject));

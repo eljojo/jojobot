@@ -87,7 +87,7 @@ impl Jojobot {
             "merged": done.folded.as_str(),
             "now_resolves_to": done.survivor.id.as_str(),
             // **The account, because it is what makes the act readable later.**
-            "record": fact_json(&done.record, date),
+            "record": fact_json(&done.record, date, None),
             // **How many claims changed address.** Zero is an ordinary answer —
             // putting an empty duplicate away is exactly the repair this is
             // for — and any address a caller held for those claims is stale.

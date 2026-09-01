@@ -20,7 +20,16 @@ use super::*;
 /// that is belongs to the RUN asking: two runs in two zones disagree about
 /// today for the same stored claim, and both are right. The renderer reads no
 /// clock, exactly as the domain reads none.
-pub(crate) fn fact_json(fact: &Fact, as_of: jiff::civil::Date) -> serde_json::Value {
+/// **`revised` is the total writes behind this claim, when the caller checked
+/// — `None` where nobody did.** Not opt-in on its own: a caller that read no
+/// count says nothing about whether one exists, rather than saying there is
+/// none — the same reason `None` and `Some(1)` are two different answers
+/// below.
+pub(crate) fn fact_json(
+    fact: &Fact,
+    as_of: jiff::civil::Date,
+    revised: Option<usize>,
+) -> serde_json::Value {
     let mut rendered = serde_json::json!({
         "address": fact.address().to_string(),
         "subject": fact.subject.as_str(),
@@ -77,6 +86,21 @@ pub(crate) fn fact_json(fact: &Fact, as_of: jiff::civil::Date) -> serde_json::Va
              before acting on it"
         );
     }
+    // **Only when there is more than one, and only when the count was read at
+    // all.** A claim written once is silent here, exactly as an unstale claim
+    // is silent on `stale` — so the field a reader learns to watch for is the
+    // one that fires, never a `false`/`1` nobody needs.
+    if let Some(total) = revised
+        && total > 1
+    {
+        rendered["revised"] = serde_json::json!(true);
+        rendered["revision_count"] = serde_json::json!(total);
+        rendered["revision_note"] = serde_json::json!(format!(
+            "this claim has been written {total} times. The record above is the newest; recall \
+             the subject with history_record: \"{}\" to read the earlier wording, oldest first.",
+            fact.address()
+        ));
+    }
     rendered
 }
 
@@ -96,7 +120,11 @@ pub(crate) fn fact_json(fact: &Fact, as_of: jiff::civil::Date) -> serde_json::Va
 pub(crate) fn fact_receipt_json(fact: &Fact, as_of: jiff::civil::Date) -> serde_json::Value {
     const HOW: &str = "you wrote this claim. recall the subject to read it back, with its \
                        records and their addresses.";
-    let mut body = fact_json(fact, as_of);
+    // **A write does not check its own claim's history.** The count belongs to
+    // reading a claim, not to writing one — the caller that just wrote it
+    // already knows whether it was a correction, and recall is where the
+    // signal lives.
+    let mut body = fact_json(fact, as_of, None);
     elide_prose(&mut body, "content", &fact.content, HOW);
     if let Some(details) = &fact.details {
         elide_prose(&mut body, "details", details, HOW);

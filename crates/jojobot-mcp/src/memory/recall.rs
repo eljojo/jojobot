@@ -179,6 +179,14 @@ pub struct RecallArgs {
     /// of them unasked is the cost a caller cannot decline. Ask for them when
     /// you need a claim's own words, where it came from, or its address —
     /// and an answer that left them out says how many there were.
+    ///
+    /// **A claim written more than once says so.** `revised`/`revision_count`
+    /// come back on any record that was rewritten — absent on one that was
+    /// not, exactly as `stale` is absent on a fresh claim — because two
+    /// claims that were rewritten a different number of times otherwise read
+    /// back identical. `history_record` on this same call is the door that
+    /// opens onto the earlier wording; the count only says the door is worth
+    /// opening.
     #[serde(default)]
     pub(crate) facts: Option<bool>,
     /// Whether each object's **prose** comes back — the human half of its page,
@@ -853,7 +861,7 @@ fn object_json(
             object
                 .facts
                 .iter()
-                .map(|fact| fact_json(fact, as_of))
+                .map(|fact| fact_json(fact, as_of, object.fact_revisions.get(&fact.id).copied()))
                 .collect(),
         );
     } else if object.facts_held > 0 {
@@ -1349,9 +1357,12 @@ impl Jojobot {
                     Ok(claims) => Some(serde_json::json!({
                         "source": source.to_string(),
                         "count": claims.len(),
+                        // No revision count: lineage is read straight off the
+                        // store rather than through a walk, so there is no
+                        // `fact_revisions` map beside it to look one up in.
                         "claims": claims
                             .iter()
-                            .map(|fact| fact_json(fact, today))
+                            .map(|fact| fact_json(fact, today, None))
                             .collect::<Vec<_>>(),
                     })),
                     Err(e) => return memory_declined("recall", e),
@@ -2777,6 +2788,63 @@ mod tests {
         assert!(
             plain["objects"][0].get("record_history").is_none(),
             "a call that asked for no record is not charged for one: {plain}"
+        );
+    }
+
+    /// 🚨 **An ordinary read of a claim says it has been written more than
+    /// once — without a caller having to already hold its address and ask for
+    /// `history_record`.**
+    ///
+    /// A claim rewritten twice comes back field-for-field identical to one
+    /// written once unless something says otherwise; this is the signal that
+    /// says otherwise. Paired with a claim nobody corrected: the untouched
+    /// fact's silence is what a build that marks everything "revised" fails.
+    #[tokio::test]
+    async fn an_ordinary_read_says_a_claim_was_written_more_than_once() {
+        let jojobot = handler();
+        capture_ok(&jojobot, capture_args("alpha", "lent the drill to Ralph")).await;
+        capture_ok(&jojobot, capture_args("alpha", "rides to work")).await;
+        jojobot
+            .update_fact(Parameters(UpdateFactArgs {
+                content: Some("Ralph gave the drill back".into()),
+                ..update_args("person:alpha#f1")
+            }))
+            .await
+            .expect("update ok");
+
+        let read = json_of(
+            &jojobot
+                .recall(Parameters(of("alpha")))
+                .await
+                .expect("recall ok"),
+        );
+        let facts = read["objects"][0]["facts"].as_array().expect("a list");
+        let corrected = facts
+            .iter()
+            .find(|f| f["address"] == "person:alpha#f1")
+            .expect("the corrected claim is in the answer");
+        assert_eq!(corrected["revised"], true, "{corrected}");
+        assert_eq!(corrected["revision_count"], 2, "{corrected}");
+        let note = corrected["revision_note"]
+            .as_str()
+            .expect("a note says how to reach the earlier wording");
+        assert!(
+            note.contains("history_record") && note.contains("person:alpha#f1"),
+            "the note names the door and the address it opens: {note}"
+        );
+
+        // **The negative that gives it meaning.** A claim nobody rewrote is
+        // silent on all three keys, not `false`/`1` — the same convention
+        // `stale` already uses.
+        let untouched = facts
+            .iter()
+            .find(|f| f["address"] == "person:alpha#f2")
+            .expect("the untouched claim is in the answer");
+        assert!(
+            untouched.get("revised").is_none()
+                && untouched.get("revision_count").is_none()
+                && untouched.get("revision_note").is_none(),
+            "a claim written once carries none of these keys: {untouched}"
         );
     }
 

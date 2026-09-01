@@ -19,8 +19,8 @@
 use std::collections::{BTreeMap, HashSet};
 
 use super::{
-    Edge, EdgeShape, Entity, EntityId, EntityKind, Fact, FactAddress, FactStatus, MemoryError,
-    guard, search::DocScan, types, validate_subject,
+    Edge, EdgeShape, Entity, EntityId, EntityKind, Fact, FactAddress, FactId, FactStatus,
+    MemoryError, guard, search::DocScan, types, validate_subject,
 };
 
 /// **How far a walk may go.** A bound rather than a preference: an edge may
@@ -822,6 +822,18 @@ pub struct Object {
     /// much it left out — an empty [`Object::facts`] otherwise means both
     /// "nobody asked" and "nothing is recorded here".
     pub facts_held: usize,
+    /// **How many times each of [`Object::facts`] has been written**, keyed by
+    /// the fact's local id. Present, one entry per fact, whenever facts were
+    /// asked for — empty otherwise, exactly as `facts` is.
+    ///
+    /// **This is the signal, not the history.** A claim rewritten twice comes
+    /// back field-for-field identical to one written once unless something
+    /// says otherwise — this is that something, so a reader can tell "this is
+    /// the only account" from "there was another wording here" without
+    /// already holding the record's address. Reaching the earlier wording
+    /// itself stays the separate, opt-in door it already was: `history`
+    /// traces one record a caller names.
+    pub fact_revisions: std::collections::HashMap<FactId, usize>,
     /// Its prose, whole. `None` when prose was not asked for, so a caller can
     /// tell "not asked for" from "the page is blank".
     pub prose: Option<String>,
@@ -1465,6 +1477,7 @@ impl<'a> Ctx<'a> {
             // [`walk`].
             history: None,
             record_history: None,
+            fact_revisions: std::collections::HashMap::new(),
         }
     }
 
@@ -1741,7 +1754,35 @@ where
             fill_history(store, object, wanted).await?;
         }
     }
+    // **Read the same way, and for the same reason — but never opt-in.** A
+    // walk that did not ask for facts has none on any object, so this counts
+    // nothing on it either: the signal follows `include.facts` on its own
+    // rather than needing a flag of its own. See [`Object::fact_revisions`].
+    for object in &mut found.objects {
+        fill_revision_counts(store, object).await?;
+    }
     Ok(found)
+}
+
+/// Attach, to every fact on an object and everything it reached, how many
+/// times that claim has been written. See [`Object::fact_revisions`].
+fn fill_revision_counts<'a, M>(
+    store: &'a M,
+    object: &'a mut Object,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), MemoryError>> + Send + 'a>>
+where
+    M: super::Memory + ?Sized,
+{
+    Box::pin(async move {
+        for fact in &object.facts {
+            let total = store.claim_history(&fact.address()).await?.len();
+            object.fact_revisions.insert(fact.id.clone(), total);
+        }
+        for reached in &mut object.connected {
+            fill_revision_counts(store, reached).await?;
+        }
+        Ok(())
+    })
 }
 
 /// Attach the writes the query asked for to an object and to everything it

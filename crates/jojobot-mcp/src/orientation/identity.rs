@@ -115,7 +115,7 @@ impl Jojobot {
             "charter_elided": answering_an_offer,
             "rules": rules
                 .iter()
-                .map(|rule| fact_json(rule, as_of))
+                .map(|rule| fact_json(rule, as_of, None))
                 .collect::<Vec<_>>(),
             "owned_mailbox": self.owned_mailbox(&entity.id).await?,
         });

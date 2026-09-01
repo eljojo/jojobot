@@ -92,8 +92,8 @@ impl Jojobot {
             // **Both rows, because both were written.** The mark alone would
             // leave a caller holding a record it could not explain, and the
             // account alone would not prove the mark landed.
-            "retracted": fact_json(&taken_back.retracted, date),
-            "retraction": fact_json(&taken_back.record, date),
+            "retracted": fact_json(&taken_back.retracted, date, None),
+            "retraction": fact_json(&taken_back.record, date, None),
             // **Empty is the ordinary case and it is still here**, so a caller
             // reads "nothing rests on this" rather than inferring it from a
             // missing key.
