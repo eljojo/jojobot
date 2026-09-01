@@ -994,7 +994,7 @@ impl Memory for DoltMemory {
 
         let mut tx = self.pool.begin().await.map_err(store)?;
         // **What EXISTS**, which is the rows plus what the build supplies —
-        // never the narrower set the creation screen reads.
+        // the same set the creation screen reads (rule 234).
         let index = self.known(&mut tx).await?;
         // Every entity this write names must already exist — the subject first,
         // then the edge's object, then anything the record points at. Nothing
