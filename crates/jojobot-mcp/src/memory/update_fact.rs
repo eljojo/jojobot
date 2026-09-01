@@ -126,16 +126,18 @@ pub struct UpdateFactArgs {
     /// nor `object` says nothing about edges and leaves the one already there
     /// alone.
     ///
-    /// **Reach for this only when the rewrite turns the claim into a
-    /// negation** — *was there* becoming *was not there*. Then the edge
-    /// belongs to the sentence you just erased, and leaving it standing has
-    /// every walk go on answering through a claim that now denies it. **A
-    /// rewrite that stays positive — who returned it, where it moved to — is
-    /// not this case: the edge still describes something true.** Clearing it
-    /// anyway costs a real path: the walk through it stops answering, and the
-    /// entity on the other end becomes unreachable from this record. Taking
-    /// the claim back is a different act again: a retraction is one-way and
-    /// says the claim should never have been recorded.
+    /// **Reach for this when the rewrite turns a claim about what is true
+    /// NOW into its current negative** — was a member and is not any more,
+    /// was living somewhere and moved away. Then the edge belongs to the
+    /// sentence you just erased, and leaving it standing has every walk go on
+    /// answering through a claim that now denies it. **A rewrite that stays
+    /// positive — who returned it, where it moved to — is not this case: the
+    /// edge still describes something true.** Clearing it anyway costs a
+    /// real path: the walk through it stops answering, and the entity on the
+    /// other end becomes unreachable from this record. **A PAST EVENT THAT
+    /// TURNED OUT NEVER TO HAVE HAPPENED IS RETRACT'S CASE, NOT THIS ONE**:
+    /// retracting marks the record rather than rewriting it, and there is no
+    /// un-retract.
     #[serde(default)]
     pub(crate) clear_edge: Option<bool>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
@@ -174,12 +176,15 @@ impl Jojobot {
                        because setting a key to an empty value and removing the key are \
                        different edits and a caller means one of them. AND IT REACHES THE \
                        EDGE BOTH WAYS: shape with object draws or replaces one, and clear_edge \
-                       takes it off. Reach for clear_edge ONLY when the rewrite turns the claim \
-                       into a negation — was there becoming was not there — because then the \
-                       edge belongs to the sentence you just erased and leaving it stands behind \
-                       a denial. A rewrite that stays positive is not this case: clearing the \
-                       edge there stops every walk through it and makes the entity on the other \
-                       end unreachable from this record, so leave it alone. \
+                       takes it off. Reach for clear_edge when the rewrite turns a claim about \
+                       what is true NOW into its current negative — was a member and is not any \
+                       more, was living somewhere and moved away — because then the edge belongs \
+                       to the sentence you just erased. A rewrite that stays positive is not this \
+                       case: clearing the edge there stops every walk through it and makes the \
+                       entity on the other end unreachable from this record, so leave it alone. \
+                       A PAST EVENT THAT TURNED OUT NEVER TO HAVE HAPPENED IS RETRACT'S CASE, \
+                       NOT THIS ONE: retracting marks the record rather than rewriting it, and \
+                       there is no un-retract. \
                        An address that \
                        names no fact comes back status: blocked with the addresses that do \
                        exist — it never creates. IT ANSWERS WITH A RECEIPT, NOT THE RECORD: the \

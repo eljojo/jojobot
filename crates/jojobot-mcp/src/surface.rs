@@ -533,6 +533,44 @@ fn the_mark_processed_description_states_the_crash_contract() {
     );
 }
 
+/// **`retract` and `update_fact`'s `clear_edge` used to both claim the same
+/// case — a past event that turned out never to have happened.** `retract`
+/// names itself the move for it; `clear_edge`'s own worked example, until
+/// this fix, was exactly that case restated, with no mention of `retract` at
+/// all — so a caller reading `update_fact` alone met an endorsement and no
+/// fork.
+///
+/// **The deliverable is agreement, not either sentence alone**, so this reads
+/// both: `retract` still claims the case (unchanged, and worth pinning so a
+/// future edit there cannot silently drop it), and `update_fact` now names
+/// `retract` as the verb for it rather than explaining how to do it with
+/// `clear_edge`.
+#[test]
+fn retract_and_clear_edge_no_longer_claim_the_same_case() {
+    let tools = Jojobot::tool_router().list_all();
+    let described = |name: &str| -> String {
+        tools
+            .iter()
+            .find(|t| t.name == name)
+            .unwrap_or_else(|| panic!("{name} is a tool"))
+            .description
+            .as_deref()
+            .unwrap_or_default()
+            .to_string()
+    };
+    let retract = described("retract");
+    let update_fact = described("update_fact");
+    assert!(
+        retract.contains("SOMETHING THAT HAPPENED"),
+        "retract must still claim a past event that turned out not to have happened: {retract}"
+    );
+    assert!(
+        update_fact.contains("RETRACT'S CASE"),
+        "update_fact's clear_edge advice must name retract as the verb for that case rather \
+         than explaining how to do it here: {update_fact}"
+    );
+}
+
 /// **Polling is a read, and the surface has to say so where the expensive
 /// call is read.** A session whose standing loop was "check the box; if empty
 /// do nothing" paid ~14 state-changing deliveries of an empty box, because
