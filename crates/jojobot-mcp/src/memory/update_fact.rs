@@ -4,7 +4,9 @@
 //! and an entrypoint that chains the systems below it.
 
 use super::*;
-use crate::teaching::{CLAIMS_DOMAIN, CLAIMS_TEACHING};
+use crate::teaching::{
+    CLAIM_SUBJECT_DOMAIN, CLAIM_SUBJECT_TEACHING, CLAIMS_DOMAIN, CLAIMS_TEACHING,
+};
 
 /// Arguments to `update_fact`.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -249,6 +251,12 @@ impl Jojobot {
                 );
                 if self.first_contact(CLAIMS_DOMAIN, Some(&caller)).await {
                     crate::answer::note_teaching(&mut body, CLAIMS_TEACHING);
+                }
+                if self
+                    .first_contact(CLAIM_SUBJECT_DOMAIN, Some(&caller))
+                    .await
+                {
+                    crate::answer::note_teaching(&mut body, CLAIM_SUBJECT_TEACHING);
                 }
                 json_result(&body)
             }
@@ -1334,5 +1342,37 @@ mod tests {
             .await
             .expect_err("must reject an unknown status");
         assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+    }
+
+    /// **A session whose whole claim-writing life is edits still learns the
+    /// subject/purpose convention.** `capture` taught it; `update_fact` did
+    /// not, so a session that only ever edits — the one write path that
+    /// actually takes `fields`/`clear_fields` and can write those keys —
+    /// never met it.
+    #[tokio::test]
+    async fn a_session_that_only_ever_edits_is_taught_the_subject_convention() {
+        let jojobot = handler();
+        capture_ok(&jojobot, capture_args("alpha", "plays go")).await;
+
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+
+        let edited = json_of(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    content: Some("plays go and chess".into()),
+                    sid: Some(sid),
+                    ..update_args("person:alpha#f1")
+                }))
+                .await
+                .expect("update ok"),
+        );
+        assert!(
+            edited["teaching"]
+                .as_array()
+                .expect("a list")
+                .contains(&serde_json::json!(CLAIM_SUBJECT_TEACHING)),
+            "a session that only edits never learns the subject/purpose convention: {edited}"
+        );
     }
 }

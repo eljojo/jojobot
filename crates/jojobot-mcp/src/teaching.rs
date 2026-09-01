@@ -603,8 +603,9 @@ mod tests {
         let edited = json_of(&edited);
         assert_eq!(
             edited["teaching"],
-            serde_json::json!([CLAIMS_TEACHING]),
-            "the first edit this session made carries the teaching: {edited}"
+            serde_json::json!([CLAIMS_TEACHING, CLAIM_SUBJECT_TEACHING]),
+            "the first edit this session made touches both domains at once, \
+             the same as a first capture does: {edited}"
         );
     }
 
