@@ -26,9 +26,12 @@ pub(crate) const CLAIMS_DOMAIN: &str = "claims";
 /// row.** An upgrade improves the wording for every instance with nothing to
 /// migrate.
 pub(crate) const CLAIMS_TEACHING: &str = "A further claim does not destroy the one already \
-    there — capturing a second claim about the same thing does not erase the first. A \
-    correction keeps what the record said before: update_fact rewrites a claim in place, and \
-    recall with a history argument reads the earlier wording back.";
+    there — capturing a second claim about the same thing does not erase the first, even when \
+    the two contradict each other. jojobot runs no inference and settles nothing, so two \
+    accounts that disagree are both allowed to stand: recording the new one is not a judgment \
+    that it is the true one, and deciding between them was never the job. A correction keeps \
+    what the record said before: update_fact rewrites a claim in place, and recall with a \
+    history argument reads the earlier wording back.";
 
 /// **The second domain — a convention, not a rule about claims themselves.**
 /// A different string from [`CLAIMS_DOMAIN`], so a session already taught one
@@ -410,6 +413,22 @@ mod tests {
                  set: found {rejected:?} in {CLAIM_SUBJECT_TEACHING}"
             );
         }
+    }
+
+    /// **The teaching says recording is correct, not only that it is safe.**
+    /// A paid run lost the same phase four times: a sitting met two
+    /// contradicting accounts, recalled that a further claim does not erase
+    /// the first, and still asked instead of writing — because "does not
+    /// destroy" says nothing was destroyed, never that jojobot settles
+    /// nothing and both accounts are allowed to stand. Pinned on a
+    /// distinctive word, not the sentence around it.
+    #[test]
+    fn the_claims_teaching_says_a_contradiction_may_stand() {
+        assert!(
+            CLAIMS_TEACHING.to_lowercase().contains("contradict"),
+            "the teaching must say a contradiction is allowed to stand, not only that a write \
+             is non-destructive: {CLAIMS_TEACHING}"
+        );
     }
 
     /// **Both halves in one case, for the second domain.** The first capture
