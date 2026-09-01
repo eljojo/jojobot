@@ -337,7 +337,7 @@ async fn throwing_a_birthday_party() {
 
     // ── and one guest was never coming at all ──────────────────────────────
     //
-    // Different from dropping out. Barney was written down as attending on a
+    // Different from dropping out. Ralph was written down as attending on a
     // misreading, so the claim is corrected to say the opposite — and a
     // correction stays active, because what was recorded was wrong rather than
     // something that should never have been recorded.
