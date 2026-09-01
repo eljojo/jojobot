@@ -211,10 +211,13 @@ Shipped and live:
   build supplies over it, and its gate reads the rows plus that set with a
   stored row winning — asking the same resolver the read layer asks, so it holds
   no inventory.** So a claim may name or point at a supplied record.
-  ⛔️ **The CREATION screen deliberately does NOT read that wider set**, because
-  whether a caller may declare a name RESEMBLING one the build ships is an
-  undecided design question rather than a defect, and widening it there refuses
-  declarations that should stand. ⚠️ **Every other such guard is still
+  **The CREATION screen reads that wider set too**, so a near-miss against a
+  supplied record is caught exactly as one against a stored row is. ⭐ **The
+  question this was held open on is answered by the override the guard already
+  mints: a near-miss is BLOCKED WITH CANDIDATES AND A TOKEN, never refused — so
+  a declaration that should stand still stands, by re-calling with the token.**
+  **Only an exact handle collision is unforceable, and that is the shipped-row
+  rule rather than the screen.** ⚠️ **Every other such guard is still
   unenforced, and only the doubled contract makes that mechanical.** **`rhythm` is a shipped
   KIND and it declares every key its loop uses** — a name
   and the day of the last check-in are required; the cadence in days, the day
