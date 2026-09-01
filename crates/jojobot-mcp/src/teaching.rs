@@ -39,10 +39,20 @@ pub(crate) const CLAIM_SUBJECT_DOMAIN: &str = "claim-subject";
 /// **Ships in the binary, exactly as [`CLAIMS_TEACHING`] does.** No column,
 /// no migration, no verb: `fields` already takes any key a caller writes, so
 /// what was missing was agreement on the key, not a place to hold it.
-pub(crate) const CLAIM_SUBJECT_TEACHING: &str = "A claim's fields may carry `subject` — a \
-    one-line label, the way an email has a subject — written by whoever makes the claim. It \
-    lets a later read tell what a claim is about without opening it, and keeps two sessions \
-    from inventing two different names for the same idea.";
+///
+/// **`purpose`'s values are open, deliberately.** No fixed list ships beside
+/// it and none is named here — a closed set is a later move, made only if a
+/// vocabulary actually stabilizes from use, not proposed in advance. The
+/// loop is the design: this teaching names the key and says what it is for,
+/// `answers_type`/`fits_type` already read back whatever values are in use,
+/// and the convention settles by use rather than by enforcement.
+pub(crate) const CLAIM_SUBJECT_TEACHING: &str = "A claim's fields may carry two keys nothing \
+    enforces. `subject` is a one-line label, the way an email has a subject. `purpose` says \
+    what the claim is FOR — its value is open, read back from whatever is already in use rather \
+    than chosen from a fixed list, so it settles by use rather than by a list somebody \
+    maintains. Both are written by whoever makes the claim. Together they let a later read \
+    tell what a claim is about and why it was written without opening it, and keep two \
+    sessions from inventing two different names for the same idea.";
 
 impl Jojobot {
     /// Whether this call is the first time `domain` has reached this
@@ -379,6 +389,27 @@ mod tests {
     async fn an_anonymous_caller_is_never_taught() {
         let jojobot = handler();
         assert!(!jojobot.first_contact(CLAIMS_DOMAIN, None).await);
+    }
+
+    /// **The second key names itself, and names no value.** Pinned on the
+    /// identifier a caller would need to spell correctly, never on the
+    /// surrounding prose — and the operator's rejected fixed vocabulary
+    /// (user/feedback/project/reference) must never appear here: naming an
+    /// example is the first step toward a list somebody then has to
+    /// maintain.
+    #[test]
+    fn the_purpose_key_is_named_and_no_value_for_it_is() {
+        assert!(
+            CLAIM_SUBJECT_TEACHING.contains("`purpose`"),
+            "the key must be named: {CLAIM_SUBJECT_TEACHING}"
+        );
+        for rejected in ["user", "feedback", "project", "reference"] {
+            assert!(
+                !CLAIM_SUBJECT_TEACHING.to_lowercase().contains(rejected),
+                "the shipped text must not anchor the open vocabulary on the rejected fixed \
+                 set: found {rejected:?} in {CLAIM_SUBJECT_TEACHING}"
+            );
+        }
     }
 
     /// **Both halves in one case, for the second domain.** The first capture
