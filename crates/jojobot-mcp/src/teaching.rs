@@ -90,7 +90,8 @@ mod tests {
 
         let first = capture_as(&jojobot, &sid, capture_args("alpha", "plays go")).await;
         assert_eq!(
-            first["teaching"], CLAIMS_TEACHING,
+            first["teaching"],
+            serde_json::json!([CLAIMS_TEACHING]),
             "the first claim this session ever wrote carries the teaching: {first}"
         );
 
@@ -177,7 +178,8 @@ mod tests {
                 .expect("search ok"),
         );
         assert_eq!(
-            first["teaching"], CLAIMS_TEACHING,
+            first["teaching"],
+            serde_json::json!([CLAIMS_TEACHING]),
             "the first search surfacing a claim carries the teaching: {first}"
         );
 
@@ -252,7 +254,8 @@ mod tests {
             .expect("recall ok");
         let with_facts = json_of(&with_facts);
         assert_eq!(
-            with_facts["teaching"], CLAIMS_TEACHING,
+            with_facts["teaching"],
+            serde_json::json!([CLAIMS_TEACHING]),
             "the first recall of a claim carries the teaching: {with_facts}"
         );
 
@@ -292,7 +295,11 @@ mod tests {
         make_bot(&first, "gamma").await;
         let opened = booted(&first, "gamma").await;
         let taught = capture_as(&first, &opened, capture_args("alpha", "plays go")).await;
-        assert_eq!(taught["teaching"], CLAIMS_TEACHING, "taught once: {taught}");
+        assert_eq!(
+            taught["teaching"],
+            serde_json::json!([CLAIMS_TEACHING]),
+            "taught once: {taught}"
+        );
 
         // A second connection over the same stores and the same registry —
         // what a reconnect is. `resumed` answers the choice this boot is
@@ -403,7 +410,8 @@ mod tests {
             .expect("update ok");
         let edited = json_of(&edited);
         assert_eq!(
-            edited["teaching"], CLAIMS_TEACHING,
+            edited["teaching"],
+            serde_json::json!([CLAIMS_TEACHING]),
             "the first edit this session made carries the teaching: {edited}"
         );
     }
@@ -426,7 +434,8 @@ mod tests {
             .expect("retract ok");
         let retracted = json_of(&retracted);
         assert_eq!(
-            retracted["teaching"], CLAIMS_TEACHING,
+            retracted["teaching"],
+            serde_json::json!([CLAIMS_TEACHING]),
             "the first retraction this session made carries the teaching: {retracted}"
         );
     }
@@ -454,7 +463,8 @@ mod tests {
             .expect("merge ok");
         let merged = json_of(&merged);
         assert_eq!(
-            merged["teaching"], CLAIMS_TEACHING,
+            merged["teaching"],
+            serde_json::json!([CLAIMS_TEACHING]),
             "the first merge this session made carries the teaching: {merged}"
         );
     }

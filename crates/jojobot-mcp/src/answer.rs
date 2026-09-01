@@ -259,9 +259,44 @@ pub(crate) fn note_postcondition(body: &mut serde_json::Value, line: String) {
 /// **Ride a teaching on the answer that triggered it**, rather than a
 /// separate call the caller has to know to make — see
 /// [`crate::teaching`].
+///
+/// **Appends, never overwrites.** More than one domain can reach its first
+/// contact on the same call — a session's very first `capture` can be the
+/// first time it has ever touched two domains at once — and a single key a
+/// second call could overwrite would silently drop one of them. `first_contact`
+/// has already consumed that domain's row by the time this runs, so a
+/// teaching lost here is lost for good: the ledger would truthfully report it
+/// was taught, and it never was. A list makes that collision impossible on
+/// the wire rather than something a caller has to avoid by construction.
 pub(crate) fn note_teaching(body: &mut serde_json::Value, content: &str) {
     let Some(fields) = body.as_object_mut() else {
         return;
     };
-    fields.insert("teaching".into(), content.into());
+    fields
+        .entry("teaching")
+        .or_insert_with(|| serde_json::Value::Array(Vec::new()))
+        .as_array_mut()
+        .expect("teaching is always written as an array")
+        .push(content.into());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 🚨 **Two teachings on one body must both survive.** A single `"teaching"`
+    /// key that a second call overwrites drops the first one silently — no
+    /// error, no signal — which is worse than never teaching it, because the
+    /// domain's ledger row is already spent by the time this runs.
+    #[test]
+    fn two_teachings_on_one_body_both_survive() {
+        let mut body = serde_json::json!({});
+        note_teaching(&mut body, "first domain's content");
+        note_teaching(&mut body, "second domain's content");
+        assert_eq!(
+            body["teaching"],
+            serde_json::json!(["first domain's content", "second domain's content"]),
+            "both teachings must be readable, in the order they were recorded: {body}"
+        );
+    }
 }
