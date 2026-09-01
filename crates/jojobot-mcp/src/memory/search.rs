@@ -636,6 +636,9 @@ impl Jojobot {
             "matching": matching_note(&query),
             "memory": memory_coverage(self.search.memory_coverage()),
             "mail": mail_coverage(&query, self.search.mail_coverage()),
+            // **A third question, beside the two above and folded into
+            // neither.** See [`corpus_note`].
+            "corpus": corpus_note(),
             "results": hits
                 .iter()
                 .map(|hit| hit_json(hit, as_of))
@@ -663,6 +666,29 @@ impl Jojobot {
 ///
 /// **A handle is exempt and says so**: it is matched whole, so an empty answer
 /// under one really does mean no such thing is held.
+/// **A third axis, and it is not folded into either of the other two.**
+///
+/// Coverage answers *was everything searched*; [`matching_note`] answers *did
+/// the query match what is there*; this answers *is there content search
+/// never looks at at all* — true on a complete index, with a perfectly worded
+/// query, and neither of the other two says it.
+///
+/// **Unconditional, because the corpus itself is.** Matching only ever
+/// reaches a claim's CURRENT wording — a claim written more than once may
+/// hold, in an earlier wording, content this search can never surface,
+/// whatever the coverage state or how the query was worded. `recall` with
+/// `history_record` is the only door onto it; this note only says the door is
+/// worth trying, never that it holds something.
+fn corpus_note() -> serde_json::Value {
+    serde_json::json!({
+        "note": "matching only reaches a claim's CURRENT wording. A claim written more than \
+                 once may hold content that only an earlier wording carried, and search never \
+                 looks at that content at all — a thin or empty answer here can mean the words \
+                 sit in a superseded wording rather than that they were never recorded. recall \
+                 the subject with history_record to read what a claim used to say.",
+    })
+}
+
 fn matching_note(query: &search::SearchQuery) -> serde_json::Value {
     let exact = query
         .terms()
@@ -1047,6 +1073,54 @@ mod tests {
         assert_eq!(
             handle["matching"]["exact"], true,
             "a handle was reported as loosely matched: {handle}",
+        );
+    }
+
+    /// 🚨 **A third axis, and it is not folded into either of the other two.**
+    ///
+    /// Coverage answers *was everything searched*. The matching note answers
+    /// *did the query match what is there*. Neither answers *is there content
+    /// search never looks at at all* — matching only ever reaches a claim's
+    /// CURRENT wording, so a claim written more than once may hold, in an
+    /// earlier wording, content this search can never find regardless of how
+    /// complete the index is or how well the query is worded.
+    ///
+    /// **Both halves in one read, on purpose.** A fully-loaded index means the
+    /// note cannot be mistaken for a coverage gap; an exact-handle query means
+    /// it cannot be mistaken for the relaxed-matching warning. The note
+    /// survives both, which is what proves it is its own field rather than a
+    /// clause folded into either neighbour.
+    #[tokio::test]
+    async fn a_search_answer_names_the_content_matching_never_reaches() {
+        let spy = Arc::new(SpySearch::answering(Vec::new()));
+        let body = json_of(
+            &handler_with(spy)
+                .search(Parameters(SearchArgs {
+                    query: Some("person:alpha".into()),
+                    ..search_args()
+                }))
+                .await
+                .expect("search ok"),
+        );
+        assert_eq!(
+            body["memory"]["searched"], true,
+            "a loaded index, so the note below cannot be the coverage gap: {body}",
+        );
+        assert_eq!(
+            body["matching"]["exact"], true,
+            "an exact handle, so the note below cannot be the relaxed-matching warning: {body}",
+        );
+        let note = body["corpus"]["note"]
+            .as_str()
+            .unwrap_or_else(|| panic!("the field is there and says nothing: {body}"));
+        assert!(
+            !note.contains('\n') && !note.contains("  "),
+            "the note is not one clean line: {note:?}",
+        );
+        assert_ne!(
+            Some(note),
+            body["matching"]["note"].as_str(),
+            "the corpus note is not the matching note wearing a new key: {body}",
         );
     }
 
