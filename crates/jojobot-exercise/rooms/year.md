@@ -34,13 +34,15 @@ A run of this room once turned up four sittings that asked a question and
 wrote nothing at all: two stalled at the front door over which session to
 pick up, one stopped to ask which of two accounts was correct when the room's
 own design says both stand, and one stopped over a rhythm detail it could
-have recorded without.
+have recorded without. **Saying nobody is at the keyboard did not fix this,
+run after run**, because it says only that a question is futile — it gives a
+sitting no audience and no reason to finish the work either.
 
-**There is no operator to answer.** Each sitting is one turn, and a question
-spends the whole of it. So every entry below opens with two facts about the
-world it is playing in: that it is a role-play and the day it names is today,
-and that nobody is at the keyboard to answer anything — an unanswered
-question ends the sitting with nothing written down.
+**There is no operator to answer, but there is a reader, and finishing is not
+optional.** Each sitting is one turn, and a question spends the whole of it.
+So every entry below opens with two facts about the world it is playing in:
+that it is a role-play and the day it names is today, and that nobody will
+answer, but the answer is being read and one is required.
 
 ## Why cold sittings and not one long one
 
@@ -94,7 +96,7 @@ message assistant | starting to keep track of things | I am going to start keepi
 
 > This is a role-play: play the day below as if it is really today.
 >
-> Nobody else is here. A question with no one to answer it ends the sitting with nothing recorded.
+> Nobody will answer you, but your answer is being read. You must answer.
 >
 > start jojobot as assistant — it is 12 January 2026 and I want to get set up
 
@@ -146,7 +148,7 @@ say     January: nothing on Milhouse says where he lives, so April has nothing t
 
 > This is a role-play: play the day below as if it is really today.
 >
-> Nobody else is here. A question with no one to answer it ends the sitting with nothing recorded.
+> Nobody will answer you, but your answer is being read. You must answer.
 >
 > start jojobot as assistant — it is 8 February 2026, I lent Ralph my floor pump today and I want it back before the June survey, and Nelson has joined the club
 
@@ -179,7 +181,7 @@ say     February: the club cannot be walked to its members, so August's question
 
 > This is a role-play: play the day below as if it is really today.
 >
-> Nobody else is here. A question with no one to answer it ends the sitting with nothing recorded.
+> Nobody will answer you, but your answer is being read. You must answer.
 >
 > start jojobot as assistant — it is 15 March 2026 and the club meets on Tuesdays, put that down
 
@@ -203,7 +205,7 @@ say     March: nothing says the club meets on Tuesdays, so July has nothing to t
 
 > This is a role-play: play the day below as if it is really today.
 >
-> Nobody else is here. A question with no one to answer it ends the sitting with nothing recorded.
+> Nobody will answer you, but your answer is being read. You must answer.
 >
 > start jojobot as assistant — it is 19 April 2026 and Milhouse has moved to Shelbyville
 
@@ -226,7 +228,7 @@ say     April: the Springfield claim is either gone or still standing as current
 
 > This is a role-play: play the day below as if it is really today.
 >
-> Nobody else is here. A question with no one to answer it ends the sitting with nothing recorded.
+> Nobody will answer you, but your answer is being read. You must answer.
 >
 > start jojobot as assistant — it is 10 May 2026 and the north trail was washed out at the top end this spring, put it where it belongs
 
@@ -250,7 +252,7 @@ say     May: the washout was not filed against the trail that already existed �
 
 > This is a role-play: play the day below as if it is really today.
 >
-> Nobody else is here. A question with no one to answer it ends the sitting with nothing recorded.
+> Nobody will answer you, but your answer is being read. You must answer.
 >
 > start jojobot as assistant — it is 14 June 2026, the survey happened today and Milhouse and Nelson were both there, and I did the bike chain this morning
 
@@ -280,7 +282,7 @@ say     June: the chain check does not say it was done on the day this sitting c
 
 > This is a role-play: play the day below as if it is really today.
 >
-> Nobody else is here. A question with no one to answer it ends the sitting with nothing recorded.
+> Nobody will answer you, but your answer is being read. You must answer.
 >
 > start jojobot as assistant — it is 5 July 2026 and I was wrong in March, the club has never met on Tuesdays and I do not want that standing
 
@@ -318,7 +320,7 @@ say     July: nothing on the club carries July's own day, or the correction was 
 
 > This is a role-play: play the day below as if it is really today.
 >
-> Nobody else is here. A question with no one to answer it ends the sitting with nothing recorded.
+> Nobody will answer you, but your answer is being read. You must answer.
 >
 > start jojobot as assistant — it is 16 August 2026, tell me which club members were at the survey and then put down that I am standing for the committee
 
@@ -356,7 +358,7 @@ generates no day assertion here and the lock below names the day instead.
 
 > This is a role-play: play the day below as if it is really today.
 >
-> Nobody else is here. A question with no one to answer it ends the sitting with nothing recorded.
+> Nobody will answer you, but your answer is being read. You must answer.
 >
 > start jojobot as assistant — it is 13 September 2026, did that thing I lent out ever come back? Ralph gave it back at the survey, so put that down either way
 
@@ -383,7 +385,7 @@ say     September: nothing on the pump carries the day it came back, so the ques
 
 > This is a role-play: play the day below as if it is really today.
 >
-> Nobody else is here. A question with no one to answer it ends the sitting with nothing recorded.
+> Nobody will answer you, but your answer is being read. You must answer.
 >
 > start jojobot as assistant — it is 11 October 2026 and I should note that Nelson brought my floor pump back over the summer
 
@@ -407,7 +409,7 @@ say     October: one of the two accounts of how the pump came back is gone, so a
 
 > This is a role-play: play the day below as if it is really today.
 >
-> Nobody else is here. A question with no one to answer it ends the sitting with nothing recorded.
+> Nobody will answer you, but your answer is being read. You must answer.
 >
 > start jojobot as assistant — it is 24 October 2026, and it turns out Nelson never actually made it to the June survey — he was fixing a flat that morning and I only just found out — so I do not want him down as having been there, and Bart has joined the club
 
@@ -450,7 +452,7 @@ say     October (again): somebody who was never at the survey was put there by t
 
 > This is a role-play: play the day below as if it is really today.
 >
-> Nobody else is here. A question with no one to answer it ends the sitting with nothing recorded.
+> Nobody will answer you, but your answer is being read. You must answer.
 >
 > start jojobot as assistant — it is 8 November 2026 and I am writing to Milhouse. What is his address, and what did he say about the committee back in August?
 
@@ -493,7 +495,7 @@ is, and it must not.**
 
 > This is a role-play: play the day below as if it is really today.
 >
-> Nobody else is here. A question with no one to answer it ends the sitting with nothing recorded.
+> Nobody will answer you, but your answer is being read. You must answer.
 >
 > start jojobot as assistant — it is 22 November 2026, when did I last get the drivetrain serviced, and put down that I did it again today
 
@@ -549,7 +551,7 @@ say     late November: this sitting's day is not on the loop January opened — 
 
 > This is a role-play: play the day below as if it is really today.
 >
-> Nobody else is here. A question with no one to answer it ends the sitting with nothing recorded.
+> Nobody will answer you, but your answer is being read. You must answer.
 >
 > start jojobot as assistant — it is 13 December 2026 and I want to look back over the year. What have I let go quiet, and what did I say I would do that I never did?
 
@@ -574,7 +576,7 @@ said I would do*, beyond the pump, which came back.
 
 > This is a role-play: play the day below as if it is really today.
 >
-> Nobody else is here. A question with no one to answer it ends the sitting with nothing recorded.
+> Nobody will answer you, but your answer is being read. You must answer.
 >
 > start jojobot as assistant — it is 20 December 2026. The record says the club does not meet on Tuesdays. Has it always said that, or did we have it wrong at some point and fix it? Put down what it used to say, under `was`, so I do not have to ask again.
 
