@@ -20,15 +20,17 @@ pub struct UpdateFactArgs {
     /// Replacement details; pass an empty string to clear them.
     #[serde(default)]
     pub(crate) details: Option<String>,
-    /// **The day this claim is true of**, `YYYY-MM-DD`. Left alone when
-    /// omitted — the record keeps the day of the claim it replaces, exactly as
-    /// any field this patch does not name.
+    /// **The day this claim was MADE**, `YYYY-MM-DD` — the day it was said,
+    /// decided or worked out. Left alone when omitted — the record keeps the
+    /// day of the claim it replaces, exactly as any field this patch does
+    /// not name.
     ///
-    /// **Give this when the rewritten claim is true of a different day than
-    /// the one already on the record — never the day you happen to be
+    /// **Give this when the correction itself was made on a different day
+    /// than the one already on the record — never the day you happen to be
     /// typing.** Rewriting content with no date given leaves the ORIGINAL day
     /// on the record, permanently: a correction made months later would
-    /// otherwise read back as if it were true on the original day forever.
+    /// otherwise read back as if it had been made on the original day
+    /// forever.
     #[serde(default)]
     pub recorded_at: Option<String>,
     /// **The day the thing this claim is about HAPPENED**, `YYYY-MM-DD`.
@@ -154,12 +156,13 @@ impl Jojobot {
                        (content/details/date/status/provenance/standing). To record that something \
                        is NOT so, rewrite content to state the negative truth — that is an \
                        ordinary edit and the fact stays active; there is no negated status. \
-                       DATE REWRITES WHICH DAY THE CLAIM IS TRUE OF, YYYY-MM-DD — the same \
-                       argument retract carries, and it is never the day the call happens to be \
-                       made on. Omit it and the record keeps the day of the claim it replaces; \
-                       give it when the rewritten claim is true of a different day, or a rewrite \
-                       made long after the fact keeps the ORIGINAL day forever, reading back as \
-                       if it had always been true on a day it was never about. \
+                       DATE REWRITES THE DAY THIS CLAIM WAS MADE — the day it was said, decided \
+                       or worked out, YYYY-MM-DD — the same argument retract carries, and it is \
+                       never the day the call happens to be made on. Omit it and the record \
+                       keeps the day of the claim it replaces; give it when the correction \
+                       itself was made on a different day, or a rewrite made long after the \
+                       fact keeps the ORIGINAL day forever, reading back as if it had always \
+                       been made on a day it was never made on. \
                        TWO MOVES NEED confirmed_by_user, and they are different: moving a \
                        claim TO testimony (who backs it), from inference or from observation \
                        alike — a claim you read in a system of record is not a step towards the \
@@ -1352,6 +1355,42 @@ mod tests {
             .await
             .expect_err("must reject an unknown status");
         assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+    }
+
+    /// 🚨 **The made-on field's served description must not carry the
+    /// happened-on field's definition.** `recorded_at` answers when a claim
+    /// was said, decided or worked out; `happened_at` answers when the thing
+    /// it describes occurred. "True of [a day]" is this codebase's own
+    /// phrase for the second question — a description of `recorded_at` that
+    /// uses it is printing the wrong field's definition on this field's
+    /// name.
+    ///
+    /// Checked on both surfaces a caller can read it from: the argument's own
+    /// schema description and the tool-level prose.
+    #[test]
+    fn the_recorded_at_argument_does_not_carry_happened_ats_definition() {
+        let tools = Jojobot::tool_router().list_all();
+        let update_fact = tools
+            .iter()
+            .find(|t| t.name.as_ref() == "update_fact")
+            .expect("update_fact is a tool");
+        let schema =
+            serde_json::to_value(&update_fact.input_schema).expect("the schema serializes");
+        let recorded_at = schema["properties"]["recorded_at"]["description"]
+            .as_str()
+            .expect("recorded_at carries its own description")
+            .to_lowercase();
+        assert!(
+            !recorded_at.contains("true of"),
+            "the made-on field's schema description carries the happened-on field's definition: \
+             {recorded_at}"
+        );
+        let tool_description = update_fact.description.as_deref().unwrap_or_default();
+        assert!(
+            !tool_description.to_lowercase().contains("true of"),
+            "the tool-level description carries the happened-on field's definition on the \
+             wrong field: {tool_description}"
+        );
     }
 
     /// **A session whose whole claim-writing life is edits still learns the
