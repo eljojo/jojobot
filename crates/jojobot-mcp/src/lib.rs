@@ -289,18 +289,15 @@ pub(crate) const SERVER_NAME: &str = "jojobot";
 pub(crate) const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub(crate) const INSTRUCTIONS: &str = "jojobot — a personal-assistant server. Two worlds live here.\
-                 \n\n**MEMORY.** What jojobot knows is **entities** — a person, project, place, \
-                 event, work, thing, org, topic, bot, pet, rhythm, machine or view, each with a typed \
+                 \n\n**MEMORY.** What jojobot knows is **entities** — each with a typed \
                  handle, \
                  `kind:slug` \
                  — the name it is addressed by, and the only name a caller ever sends — and **facts** about them: single dated claims, each carrying an \
                  **address** (`kind:slug#local-id`) it can be edited through and a \
-                 **provenance** — `testimony` (the user said or confirmed it) or `inference` \
-                 (you derived it). **Inference is the default and reads back as a hypothesis, \
-                 never as truth**; only the user's explicit confirmation promotes a claim. A \
-                 fact may also draw one typed **edge** at another entity — `location` · \
-                 `membership` · `attendance` · `about` · `connection` (a link is there and how \
-                 it relates was not recorded) — and edges are what make cross-entity \
+                 **provenance** saying how strongly it is backed. **The default is the weakest \
+                 backing and reads back as a hypothesis, never as truth**; only the user's \
+                 explicit confirmation promotes a claim. A fact may also draw one typed \
+                 **edge** at another entity — and edges are what make cross-entity \
                  questions (\"which people are in X\") answerable without reading everything. \
                  **Start with `search`**: one ranked list over entities, facts and free prose, \
                  every hit arriving with its surroundings — and over mailbox messages too when \
@@ -312,25 +309,16 @@ pub(crate) const INSTRUCTIONS: &str = "jojobot — a personal-assistant server. 
                  off takes it off the thing — and **carrying keys is what makes a thing a \
                  type**: declare a type to say which keys it names, and a thing holding \
                  all of them fits it. Declaring admits nothing — a thing is found by the keys it \
-                 carries whether or not anybody declared the type. `answers_type` selects things \
-                 carrying SOME of a type's keys and says which each lacks; `fits_type` keeps \
-                 only the ones with no gaps.\
-                 \n\n**A key holds one value, so WHO was there is an edge rather than a key.** \
-                 A trip records where and when as keys, and each person who came is a record on \
-                 THAT PERSON carrying an `attendance` edge at the trip — many people per trip, \
-                 where a key would keep only the last one. One edge answers both questions, \
-                 because a walk carries its own direction: who came on this trip, and which \
-                 trips this person was on.\
+                 carries whether or not anybody declared the type.\
                  \n\n**jojobot hands back the small answer and keeps the large one reachable.** \
                  A write returns a receipt, not the thing you wrote; a body is not echoed to its \
                  author; a delivery leaves out what it handed you once; prose is off by default \
                  on a read. Context is the scarce thing, and **eliding is never silent** — the \
                  answer says what was left out and which call returns it.\
                  \n\n**MAILBOXES.** A place to leave a message for someone who is not in this \
-                 conversation. A mailbox is a named box (`[a-z0-9-]+`); a message in one is \
-                 `new` → `read` → `processed`. **Read is not processed, and processed is not \
-                 deleted**: reading takes delivery, processing means you acted, and `processed` \
-                 is a terminal archive. **Messages are searchable, on request**: `search` with \
+                 conversation. A mailbox is a named box (`[a-z0-9-]+`); a message in one moves \
+                 from left, to delivered, to acted on — a terminal archive, never deleted. \
+                 **Messages are searchable, on request**: `search` with \
                  `include_mail: true` returns them beside \
                  the memory hits, in every state including the processed archive, each hit \
                  carrying its box, its state, its sender and the id `read_message` takes — so a \
@@ -355,8 +343,12 @@ pub(crate) const INSTRUCTIONS: &str = "jojobot — a personal-assistant server. 
                  mark first and then fail, and it is gone from every future delivery with \
                  nobody the wiser; act first and crash, and the next read hands it back, \
                  flagged `seen_before` — recoverable.\
-                 \n\nResponses name types the schema.org way (`Person`, `CreativeWork`, \
-                 `memberOf`); input stays lowercase (`person`, `membership`, `kind:slug`).";
+                 \n\nThat is the shape. The vocabulary — which provenance, which edge, which \
+                 kind, which mailbox state — lives on `start_here` and on each tool's own \
+                 description, and moves faster than this text could stay true to; call \
+                 `start_here` for the full orientation and worked examples.\
+                 \n\nResponses name types the schema.org way; input stays lowercase, \
+                 `kind:slug`.";
 
 #[tool_handler]
 impl ServerHandler for Jojobot {

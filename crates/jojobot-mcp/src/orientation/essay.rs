@@ -108,12 +108,15 @@ mod tests {
     /// mentioned in a passing sentence, so it is a floor rather than a
     /// guarantee, and a reader adding the eleventh kind still has to put it in
     /// the list a caller reads.
+    ///
+    /// **Checked against the orientation essay only.** The connection-time
+    /// instructions deliberately stop naming kinds (see the guard below that
+    /// checks the opposite: that they never enumerate a growing vocabulary),
+    /// so asserting they enumerate every kind would fight that design on
+    /// purpose.
     #[test]
     fn every_kind_is_named_in_the_prose_a_session_reads() {
-        let taught: [(&str, &str); 2] = [
-            ("the orientation essay", super::ORIENTATION),
-            ("the server instructions", crate::INSTRUCTIONS),
-        ];
+        let taught: [(&str, &str); 1] = [("the orientation essay", super::ORIENTATION)];
         for (what, text) in taught {
             for kind in EntityKind::ALL {
                 let token = kind.as_token();
@@ -144,6 +147,11 @@ mod tests {
     /// vocabulary of the model this door exists to teach, and the narrowing is
     /// what keeps the negative direction free of false alarms — every `_type`
     /// token in this prose is a filter, where a bare word could be anything.
+    ///
+    /// **Checked against the orientation essay only**, for the same reason
+    /// the kind test above is: the connection-time instructions deliberately
+    /// stopped naming `answers_type`/`fits_type`, so this does not ask them
+    /// to.
     #[test]
     fn every_type_filter_the_surface_publishes_is_taught_by_the_prose() {
         let published: Vec<String> = crate::arguments::published_argument_names()
@@ -156,10 +164,7 @@ mod tests {
              type filters are not among them",
         );
 
-        let taught: [(&str, &str); 2] = [
-            ("the orientation essay", super::ORIENTATION),
-            ("the server instructions", crate::INSTRUCTIONS),
-        ];
+        let taught: [(&str, &str); 1] = [("the orientation essay", super::ORIENTATION)];
         for (what, text) in taught {
             for filter in &published {
                 assert!(
@@ -177,6 +182,81 @@ mod tests {
                      it is refused by the same build that told it to",
                 );
             }
+        }
+    }
+
+    /// 🚨 **The connection-time instructions carry shape, never the growing
+    /// vocabulary — and this is the guard that would have caught the defect
+    /// this design replaced.**
+    ///
+    /// `INSTRUCTIONS` (`lib.rs`) is served to every client at connection, no
+    /// call required, so it used to restate the same vocabulary the
+    /// orientation essay teaches — and drifted: it named only two of the
+    /// three provenance values, missing `observation` entirely, because a
+    /// growing list copied by hand is exactly what goes stale. The fix is not
+    /// to sync the two documents — they will always differ in length, and
+    /// keeping them in step means hand-recompressing the long one on every
+    /// addition, which is the habit that produced the drift. Instead
+    /// `INSTRUCTIONS` stops naming specific values and points at
+    /// `start_here` and each tool's own description for them.
+    ///
+    /// **Checked against the closed sets that can grow**, not against a
+    /// pinned sentence: a value this test does not yet know about is exactly
+    /// the case a hand-maintained list would miss, so the sets are read from
+    /// the domain's own enums, the same way [`EntityKind::ALL`] already
+    /// drives the presence check above.
+    ///
+    /// **Backtick-quoted only.** A bare `about` or `new` is ordinary English
+    /// this text cannot avoid; a backtick-quoted `` `about` `` or `` `new` ``
+    /// is this codebase's own convention for citing a literal wire value —
+    /// every example elsewhere in this file and in `INSTRUCTIONS` itself
+    /// quotes a value that way. A plain word-boundary check, the kind
+    /// [`names`] does for kinds, would flag ordinary prose as a violation on
+    /// a text this size; this is the narrower, reliable half of the same
+    /// question.
+    ///
+    /// **Two categories are deliberately left unchecked, on purpose rather
+    /// than by oversight.** Entity kind names are not reliably
+    /// backtick-quoted in either document (see the list `INSTRUCTIONS` used
+    /// to carry, in plain prose) and several of them are ordinary English
+    /// words on their own — `work`, `thing`, `view`, `place` — so a
+    /// word-boundary absence check would false-positive on prose this text
+    /// cannot avoid using. And the refusal categories named in the
+    /// orientation essay's six gates (resemblance, absence, ownership,
+    /// unreadable, shape, malformed) have no matching closed set in code —
+    /// that taxonomy is prose the essay itself invented, not a wire
+    /// vocabulary — so checking their absence would mean pinning words this
+    /// codebase chose to write, which is refused on its own terms.
+    #[test]
+    fn the_connection_instructions_never_enumerate_a_growing_vocabulary() {
+        use jojobot_domain::mailbox::MessageState;
+        use jojobot_domain::memory::{EdgeShape, Provenance};
+
+        let provenance_tokens = [
+            Provenance::Testimony,
+            Provenance::Observation,
+            Provenance::Inference,
+        ]
+        .map(Provenance::as_token);
+        let edge_tokens = EdgeShape::ALL.map(EdgeShape::as_token);
+        let mailbox_state_tokens = MessageState::ALL.map(MessageState::as_token);
+
+        let guarded = provenance_tokens
+            .iter()
+            .chain(edge_tokens.iter())
+            .chain(mailbox_state_tokens.iter())
+            .copied()
+            .chain(["answers_type", "fits_type"]);
+
+        for token in guarded {
+            let quoted = format!("`{token}`");
+            assert!(
+                !crate::INSTRUCTIONS.contains(&quoted),
+                "the connection instructions cite {quoted} — a specific value from a set that \
+                 grows, which is exactly the pattern that let `observation` fall out of the \
+                 provenance list: {}",
+                crate::INSTRUCTIONS
+            );
         }
     }
 
