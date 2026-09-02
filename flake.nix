@@ -65,8 +65,52 @@
           nativeCheckInputs = [
             dolt
             pkgs.tzdata
+            pkgs.python3
           ];
           TZDIR = "${pkgs.tzdata}/share/zoneinfo";
+          # scripts/sabotage carries `#!/usr/bin/env python3`. The check
+          # phase spawns it straight from the source tree, before fixup's
+          # patchShebangs ever runs — and that only rewrites $out anyway,
+          # never the source. The sandbox has no /usr/bin/env, so the tests
+          # that spawn it get ENOENT unless the shebang is patched first.
+          preCheck = ''
+            patchShebangs scripts
+          '';
+          # **Two kinds of test live in this workspace, and only one of them
+          # is about the package being built here.** Most suites prove the
+          # shipped binary behaves; a few prove something about the DEV-TIME
+          # tooling around it instead, and neither belongs in a packaged
+          # build's checkPhase — they test a tool or a workflow, not the
+          # artifact this derivation produces.
+          #
+          # `jojobot-exercise` is the whole crate for one of those: its own
+          # manifest calls it "the third test tier", a harness that drives a
+          # real model through a throwaway instance and costs money to run
+          # for real. Nothing in the shipped `jojobot` binary depends on it.
+          # Its free unit tests prove the harness itself works — spawning a
+          # real jojobot+dolt process pair and watching for a ready line —
+          # which `make check` already does, in the dev shell that harness
+          # was built for. Excluded at the crate level rather than skipped
+          # test by test, because the whole crate is the same kind of thing.
+          #
+          # fixture_roster's unpushed-commit check is the other kind, at test
+          # granularity: it reads `git log origin/main..HEAD` against the
+          # checkout it runs in, and fails loud rather than passing quietly
+          # when it cannot — by design, so a missing check is never reported
+          # as a clean one. `src` here is a Nix store path: it has no `.git`,
+          # the same reason JOJOBOT_BUILD below falls back to "unknown"
+          # instead of reading `self.rev`. That makes the check unrunnable in
+          # this checkPhase on every build, not occasionally broken.
+          #
+          # Both stay enforced by `make check`, which is where dev-time
+          # tooling is actually exercised.
+          cargoTestFlags = [
+            "--workspace"
+            "--exclude=jojobot-exercise"
+          ];
+          checkFlags = [
+            "--skip=no_unpushed_commit_message_writes_a_pronoun_for_the_operator"
+          ];
           # What `ping` reports as the running build. This has to come from
           # here: the build sandbox has no `.git` — src is a store path — so
           # the build script's git fallback cannot fire, and the deployed
