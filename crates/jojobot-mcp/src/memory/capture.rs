@@ -181,6 +181,14 @@ const WHY_THIS_BASIS_IS_HAND_TYPED: &str = "counts_from on this record is exactl
     capture asked for no check_in. A check-in is what stores the schedule jojobot works out \
     beside your sentence; capture one on this rhythm and jojobot computes it instead.";
 
+/// **The mirror of [`WHY_THIS_BASIS_IS_HAND_TYPED`].** That sentence tells a
+/// caller jojobot did not do the arithmetic; this one tells them it did, on
+/// the one check-in where the basis came from nowhere but the check-in itself.
+/// It names the day so the caller can see WHICH date was taken, which is the
+/// only part they could not have predicted.
+const WHY_THIS_BASIS_WAS_DERIVED: &str = "This check-in opened the loop: it held a cadence and no basis, so counts_from was derived \
+    from this check-in's own date,";
+
 struct Declared {
     subject: String,
     provenance: Option<String>,
@@ -271,7 +279,12 @@ impl Jojobot {
     /// compare — and it is not caught anywhere else either, since a
     /// half-taught session or one that ignored the teaching still reaches
     /// `capture` directly. This is the receipt's own chance to say so.
-    async fn what_a_capture_left_standing(&self, fact: &Fact, checked_in: bool) -> String {
+    async fn what_a_capture_left_standing(
+        &self,
+        fact: &Fact,
+        checked_in: bool,
+        opened_the_loop: bool,
+    ) -> String {
         let standing = self
             .memory
             .recall(&fact.subject)
@@ -296,7 +309,14 @@ impl Jojobot {
                 fact.subject.as_str(),
             )
         };
-        let basis = if !checked_in
+        let basis = if opened_the_loop {
+            let derived = fact
+                .fields
+                .get(attention::COUNTS_FROM)
+                .map(String::as_str)
+                .unwrap_or_default();
+            format!(" {WHY_THIS_BASIS_WAS_DERIVED} {derived}. Later cycles advance from it.")
+        } else if !checked_in
             && fact.subject.kind() == Some(EntityKind::RHYTHM)
             && fact.fields.contains_key(attention::COUNTS_FROM)
         {
@@ -325,7 +345,7 @@ impl Jojobot {
         outcome: &str,
         on: jiff::civil::Date,
         sent: &BTreeMap<String, String>,
-    ) -> Result<Result<BTreeMap<String, String>, CallToolResult>, McpError> {
+    ) -> Result<Result<(BTreeMap<String, String>, bool), CallToolResult>, McpError> {
         // An unparseable token is an error rather than a refusal, exactly as an
         // unknown provenance or edge shape is: nothing about the store is
         // wrong, and the vocabulary is closed.
@@ -392,13 +412,35 @@ impl Jojobot {
         };
 
         match attention::check_in(&held, outcome, on) {
-            Ok(computed) => Ok(Ok(computed)),
+            // **Observed rather than restated.** Whether the loop was opened
+            // is read off what changed — a basis where the thing held none —
+            // so it stays true if the domain's rule for opening one moves.
+            // The emptiness test is the domain's own: a key holding blank
+            // space is a key nobody wrote.
+            Ok(computed) => {
+                let had_a_basis = held
+                    .get(attention::COUNTS_FROM)
+                    .is_some_and(|held| !held.trim().is_empty());
+                let opened = !had_a_basis && computed.contains_key(attention::COUNTS_FROM);
+                Ok(Ok((computed, opened)))
+            }
             // **The way forward names the key and, when it is a vocabulary, its
             // values.** A rhythm short of a schedule is the caller's to
             // complete, and the repair is a capture of the missing key — which
             // is a different move from correcting a value that is already
             // there, so the domain's own sentence carries which of the two it
             // is.
+            // **A refusal that carries its own way through keeps it.** The
+            // advice below names a key to capture, which is right for a loop
+            // short of a declaration no check-in can make. It is wrong for a
+            // snooze on a loop with no basis: there the missing key is one a
+            // check-in supplies, and sending the caller to type it is the
+            // move this whole path exists to remove.
+            Err(why) if why.names_its_own_way_through() => Ok(Err(blocked_body(
+                subject,
+                &[],
+                format!("Nothing was written: {why}."),
+            ))),
             Err(why) => Ok(Err(blocked_body(
                 subject,
                 &[],
@@ -491,12 +533,16 @@ impl Jojobot {
             .map_err(memory_error)?;
 
         let mut fields = args.fields.unwrap_or_default();
+        let mut opened_the_loop = false;
         if let Some(outcome) = args.check_in.as_deref() {
             match self
                 .check_in(&subject, outcome, recorded_at, &fields)
                 .await?
             {
-                Ok(computed) => fields.extend(computed),
+                Ok((computed, opened)) => {
+                    opened_the_loop = opened;
+                    fields.extend(computed);
+                }
                 Err(refused) => return Ok(refused),
             }
         }
@@ -562,7 +608,8 @@ impl Jojobot {
                 );
                 crate::answer::note_postcondition(
                     &mut body,
-                    self.what_a_capture_left_standing(&fact, checked_in).await,
+                    self.what_a_capture_left_standing(&fact, checked_in, opened_the_loop)
+                        .await,
                 );
                 if self.first_contact(CLAIMS_DOMAIN, Some(&caller)).await {
                     crate::answer::note_teaching(&mut body, CLAIMS_TEACHING);
@@ -1242,6 +1289,260 @@ mod tests {
                 .expect("a postcondition string")
                 .contains("hand-typed"),
             "a capture naming no schedule key is not this case: {untouched}"
+        );
+    }
+
+    /// A loop that holds a cadence and a policy and has never been checked in
+    /// — what `add_entity` plus one ordinary capture leaves behind, and the
+    /// shape every observed opening actually starts from.
+    async fn a_cadenced_rhythm_with_no_basis(jojobot: &Jojobot, handle: &str, advances: &str) {
+        ensure(jojobot, "thing:kettle").await;
+        jojobot
+            .add_entity(Parameters(AddEntityArgs {
+                parent: Some("thing:kettle".into()),
+                ..add_args("rhythm", handle, handle)
+            }))
+            .await
+            .expect("add ok");
+        capture_ok(
+            jojobot,
+            CaptureArgs {
+                fields: Some(
+                    [
+                        ("cadence_days".to_string(), "7".to_string()),
+                        ("advances_from".to_string(), advances.to_string()),
+                    ]
+                    .into_iter()
+                    .collect(),
+                ),
+                ..capture_args(&format!("rhythm:{handle}"), "every week")
+            },
+        )
+        .await;
+    }
+
+    /// Which loops a `recall` says have gone quiet as of a day.
+    async fn quiet_as_of(jojobot: &Jojobot, as_of: &str) -> Vec<String> {
+        let read = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    kind: Some("rhythm".into()),
+                    subject: None,
+                    overdue: Some(super::recall::OverdueArgs {
+                        as_of: Some(as_of.into()),
+                    }),
+                    ..recall_args("rhythm:descale")
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        read["objects"]
+            .as_array()
+            .map(|objects| {
+                objects
+                    .iter()
+                    .filter_map(|one| one["id"].as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// 🚨 **A back-dated check-in ALONE opens a loop, with no basis typed by
+    /// hand.** This is the route the rhythms procedure teaches, and until the
+    /// opening derive existed the engine refused it: a check-in was blocked
+    /// until `counts_from` was already there, and `counts_from` cannot ride a
+    /// check-in call, so the only way to open a loop was to type the one value
+    /// a check-in exists to derive.
+    ///
+    /// **The whole journey, through the served surface**: capture writes it,
+    /// the store folds it, and the loop's own carrier computes a due date the
+    /// read selects on. Asserted from BOTH sides of the boundary, because a
+    /// build that put the basis anywhere else still answers one side
+    /// correctly.
+    #[tokio::test]
+    async fn a_back_dated_check_in_alone_opens_a_loop_that_holds_a_cadence() {
+        let jojobot = handler();
+        a_cadenced_rhythm_with_no_basis(&jojobot, "descale", "check_in_date").await;
+
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                check_in: Some("ran".into()),
+                recorded_at: Some("2026-06-14".into()),
+                ..capture_args(
+                    "rhythm:descale",
+                    "did it back before this session opened it",
+                )
+            },
+        )
+        .await;
+
+        let held = fields_of(&jojobot, "rhythm:descale").await;
+        assert_eq!(
+            held["counts_from"], "2026-06-14",
+            "the basis is the check-in's own date: {held}"
+        );
+        assert_eq!(
+            held["last_check_in"], "2026-06-14",
+            "and the turn is recorded on the day it happened: {held}"
+        );
+
+        // A cadence of seven from the fourteenth falls due on the twenty-first.
+        assert!(
+            !quiet_as_of(&jojobot, "2026-06-20")
+                .await
+                .contains(&"rhythm:descale".to_string()),
+            "the day before it falls due, the loop is not owed",
+        );
+        assert!(
+            quiet_as_of(&jojobot, "2026-06-21")
+                .await
+                .contains(&"rhythm:descale".to_string()),
+            "and a cadence after the check-in's date, it is",
+        );
+    }
+
+    /// **The receipt says the basis was derived, and says it only when it
+    /// was.** The mirror of the hand-typed sentence beside it: one caller
+    /// learns jojobot did the arithmetic, the other learns it did not.
+    ///
+    /// Three calls, because either negative alone passes on a build that
+    /// always attaches the note or never does.
+    #[tokio::test]
+    async fn the_receipt_says_when_a_check_in_opened_the_loop_and_only_then() {
+        let jojobot = handler();
+        a_cadenced_rhythm_with_no_basis(&jojobot, "descale", "check_in_date").await;
+
+        let opening = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                check_in: Some("ran".into()),
+                recorded_at: Some("2026-06-14".into()),
+                ..capture_args("rhythm:descale", "did it back then")
+            },
+        )
+        .await;
+        let note = opening["postcondition"]
+            .as_str()
+            .expect("a postcondition string");
+        assert!(
+            note.contains("derived") && note.contains("2026-06-14"),
+            "the receipt says the basis was derived and from which day: {note}"
+        );
+
+        // The paired negative: the NEXT check-in on the same loop advances a
+        // basis that was already there, so it opened nothing.
+        let later = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                check_in: Some("ran".into()),
+                recorded_at: Some("2026-06-28".into()),
+                ..capture_args("rhythm:descale", "did it again")
+            },
+        )
+        .await;
+        assert!(
+            !later["postcondition"]
+                .as_str()
+                .expect("a postcondition string")
+                .contains("derived"),
+            "a check-in on a loop that already had a basis opened nothing: {later}"
+        );
+
+        // The second negative: an ordinary capture is not this case at all.
+        let plain = capture_ok(
+            &jojobot,
+            capture_args("rhythm:descale", "just a note about it"),
+        )
+        .await;
+        assert!(
+            !plain["postcondition"]
+                .as_str()
+                .expect("a postcondition string")
+                .contains("derived"),
+            "a capture that asked for no check-in opened nothing: {plain}"
+        );
+    }
+
+    /// ⚠️ **A snooze cannot open a loop, and the refusal says what can.**
+    ///
+    /// A snooze is the outcome that leaves a schedule where it was, and a loop
+    /// with no basis has no schedule to leave anywhere. The generic
+    /// missing-key sentence is the WRONG advice here: it tells the caller to
+    /// capture `counts_from`, which is the one move this whole path exists to
+    /// remove. So the refusal names the outcomes that do open a loop instead.
+    #[tokio::test]
+    async fn a_snooze_cannot_open_a_loop_and_the_refusal_names_what_can() {
+        let jojobot = handler();
+        a_cadenced_rhythm_with_no_basis(&jojobot, "descale", "check_in_date").await;
+
+        let refused = json_of(
+            &jojobot
+                .capture(Parameters(CaptureArgs {
+                    check_in: Some("snoozed".into()),
+                    recorded_at: Some("2026-06-14".into()),
+                    ..capture_args("rhythm:descale", "not today")
+                }))
+                .await
+                .expect("capture returns"),
+        );
+        assert_eq!(refused["status"], "blocked", "{refused}");
+        let how = refused["how_to_proceed"].as_str().expect("a way forward");
+        assert!(
+            how.contains("ran") && how.contains("skipped"),
+            "the refusal names the outcomes that DO open a loop: {how}"
+        );
+        assert!(
+            !how.contains("Capture the missing key"),
+            "and it does not send the caller to type the basis by hand: {how}"
+        );
+
+        // The positive this rests on: the same call with a consuming outcome
+        // is not refused, so the refusal is about the outcome and not the loop.
+        let opened = json_of(
+            &jojobot
+                .capture(Parameters(CaptureArgs {
+                    check_in: Some("skipped".into()),
+                    recorded_at: Some("2026-06-14".into()),
+                    ..capture_args("rhythm:descale", "did not do it, cycle moves on")
+                }))
+                .await
+                .expect("capture returns"),
+        );
+        assert_ne!(opened["status"], "blocked", "a skip opens it: {opened}");
+    }
+
+    /// **The refusal that is still right stays exactly as it was.** No
+    /// check-in can say how long a cycle lasts, so a loop short of its cadence
+    /// is refused and told which key to capture — which is the case the
+    /// opening derive must not reach.
+    #[tokio::test]
+    async fn a_loop_short_of_its_cadence_still_names_the_key_to_capture() {
+        let jojobot = handler();
+        ensure(&jojobot, "thing:kettle").await;
+        jojobot
+            .add_entity(Parameters(AddEntityArgs {
+                parent: Some("thing:kettle".into()),
+                ..add_args("rhythm", "half-made", "half-made")
+            }))
+            .await
+            .expect("add ok");
+
+        let refused = json_of(
+            &jojobot
+                .capture(Parameters(CaptureArgs {
+                    check_in: Some("ran".into()),
+                    recorded_at: Some("2026-06-14".into()),
+                    ..capture_args("rhythm:half-made", "did it back then")
+                }))
+                .await
+                .expect("capture returns"),
+        );
+        assert_eq!(refused["status"], "blocked", "{refused}");
+        let how = refused["how_to_proceed"].as_str().expect("a way forward");
+        assert!(
+            how.contains("cadence_days") && how.contains("Capture the missing key"),
+            "a loop with no cadence is told which key to capture: {how}"
         );
     }
 

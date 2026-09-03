@@ -47,11 +47,15 @@ pub const ADVANCES_FROM: &str = "advances_from";
 /// **The date this cycle counts from.** The rhythm is next due
 /// [`CADENCE_DAYS`] after it, which is the whole of the overdue arithmetic.
 ///
-/// It is a stored date rather than a derived one because deriving it means
-/// reading every check-in ever recorded and folding them in order — the scan
-/// the projection exists to replace. A consuming check-in moves it; a snooze
-/// leaves it exactly where it was, which is how a snoozed rhythm returns at
-/// its own date instead of at a later one.
+/// It is a STORED date rather than one recomputed on every read, because
+/// recomputing it means reading every check-in ever recorded and folding them
+/// in order — the scan the projection exists to replace. A consuming check-in
+/// moves it; a snooze leaves it exactly where it was, which is how a snoozed
+/// rhythm returns at its own date instead of at a later one.
+///
+/// **The check-in that opens a loop supplies it**, from that check-in's own
+/// date — see [`check_in`]. So no caller ever has to type it, which is what
+/// makes *do not send this key* a rule a caller can actually keep.
 pub const COUNTS_FROM: &str = "counts_from";
 
 /// **The day of the last check-in** — what *when did I last do this* reads,
@@ -171,6 +175,23 @@ pub struct NotSchedulable {
     /// The values this key accepts, when it is a vocabulary. Empty for a key
     /// whose value is a number or a date.
     pub(crate) accepts: Vec<&'static str>,
+    /// **Set when the loop has no basis and a consuming outcome would have
+    /// supplied it.** The repair is a different outcome rather than a key to
+    /// capture, so the sentence and the way through are both different — and
+    /// telling this caller to capture the missing key would send them to type
+    /// the one value a check-in exists to derive.
+    pub(crate) a_consuming_outcome_would_open_it: bool,
+}
+
+impl NotSchedulable {
+    /// **Whether this refusal already carries its own way through.**
+    ///
+    /// A caller composing advice around it needs to know: every other refusal
+    /// here names a key to capture, and this one names an outcome to send
+    /// instead. Appending the usual advice to it would contradict it.
+    pub fn names_its_own_way_through(&self) -> bool {
+        self.a_consuming_outcome_would_open_it
+    }
 }
 
 impl std::fmt::Display for NotSchedulable {
@@ -180,6 +201,21 @@ impl std::fmt::Display for NotSchedulable {
         } else {
             format!(" ({})", self.accepts.join(" or "))
         };
+        if self.a_consuming_outcome_would_open_it {
+            let opens = Outcome::ALL
+                .iter()
+                .filter(|outcome| outcome.consumes_the_cycle())
+                .map(|outcome| format!("'{}'", outcome.as_token()))
+                .collect::<Vec<_>>()
+                .join(" or ");
+            return write!(
+                f,
+                "this loop has no basis yet and a snooze does not open one, because a snooze is \
+                 the outcome that leaves a schedule where it was and there is no schedule here to \
+                 leave. Check in with {opens}, dated the day the loop last ran, and jojobot works \
+                 the basis out from there"
+            );
+        }
         match &self.held {
             None => write!(
                 f,
@@ -287,6 +323,8 @@ fn read<T>(
         key,
         held: held.map(str::to_string),
         accepts: accepts.to_vec(),
+        // Set by `check_in`, which is the only place that knows the outcome.
+        a_consuming_outcome_would_open_it: false,
     };
     let held = held.ok_or_else(|| refuse(None))?;
     parse(held).ok_or_else(|| refuse(Some(held)))
@@ -386,28 +424,70 @@ pub fn shipped() -> Vec<Box<dyn Carrier>> {
     vec![Box::new(Rhythms)]
 }
 
+/// **Whether this check-in is the one that opens the loop.**
+///
+/// Only the basis is ever derived, and only when nobody has written one: the
+/// cadence and the policy are declarations no check-in can make for itself,
+/// and a basis that is present and unreadable is a value to correct rather
+/// than one to overrule.
+///
+/// **A snooze cannot open a loop.** It is defined as the outcome that leaves
+/// the schedule where it was, and on a loop with no basis there is no schedule
+/// to leave anywhere — so the one property that separates the three outcomes
+/// is what decides this, rather than a rule of its own.
+fn opens_the_loop(why: &NotSchedulable, outcome: Outcome) -> bool {
+    why.key == COUNTS_FROM && why.held.is_none() && outcome.consumes_the_cycle()
+}
+
 /// **What a check-in writes**, given what the rhythm holds now.
 ///
 /// The caller supplies the outcome and the day; everything else is arithmetic
 /// this module owns, because a caller doing it by hand is a caller who can get
 /// it wrong once and never find out. Returns the fields the check-in record
 /// carries — which are also, folded onto the thing, the rhythm's new state.
+///
+/// **The first cycle rests on a derivation like every later one.** A loop that
+/// holds a cadence and a policy but no basis is opened by this check-in, and
+/// the basis is the check-in's own date. Without that, opening a loop meant
+/// typing the basis by hand — the one move [`COUNTS_FROM`] exists to keep away
+/// from callers — because a check-in was refused until a basis it could have
+/// supplied was already there.
+///
+/// **The opening basis is the check-in's date under either policy**, and it is
+/// not run through [`Schedule::after`]. [`AdvancesFrom`] chooses between the
+/// day a cycle fell due and the day the check-in happened; on an opening
+/// check-in no cycle has ever fallen due, so there is nothing for it to choose
+/// between and a due date to advance from does not exist.
 pub fn check_in(
     fields: &BTreeMap<String, String>,
     outcome: Outcome,
     on: Date,
 ) -> Result<BTreeMap<String, String>, NotSchedulable> {
-    let schedule = schedule_of(fields)?;
     let mut written = BTreeMap::new();
     written.insert(OUTCOME.to_string(), outcome.as_token().to_string());
     written.insert(LAST_CHECK_IN.to_string(), on.to_string());
-    let moved = schedule.after(outcome, on);
-    // **A snooze writes no date the schedule reads.** Writing the unchanged
-    // value would be indistinguishable in the fold from a cycle that advanced
-    // onto the same day, and it would put a write in the key's history that
-    // nothing did.
-    if moved.counts_from != schedule.counts_from {
-        written.insert(COUNTS_FROM.to_string(), moved.counts_from.to_string());
+    match schedule_of(fields) {
+        Ok(schedule) => {
+            let moved = schedule.after(outcome, on);
+            // **A snooze writes no date the schedule reads.** Writing the
+            // unchanged value would be indistinguishable in the fold from a
+            // cycle that advanced onto the same day, and it would put a write
+            // in the key's history that nothing did.
+            if moved.counts_from != schedule.counts_from {
+                written.insert(COUNTS_FROM.to_string(), moved.counts_from.to_string());
+            }
+        }
+        Err(why) if opens_the_loop(&why, outcome) => {
+            written.insert(COUNTS_FROM.to_string(), on.to_string());
+        }
+        // **The complement of [`opens_the_loop`], and it is read off the same
+        // predicate rather than restated.** Reaching here with the basis
+        // simply absent means the outcome is the only reason it was not
+        // opened, so the refusal says that instead of naming a key to capture.
+        Err(mut why) => {
+            why.a_consuming_outcome_would_open_it = why.key == COUNTS_FROM && why.held.is_none();
+            return Err(why);
+        }
     }
     Ok(written)
 }
@@ -553,6 +633,110 @@ mod tests {
             Some("2026-08-10"),
             "…but it is still a check-in, and it says when it happened",
         );
+    }
+
+    /// A rhythm that holds a cadence and a policy and has never been checked
+    /// in — the shape `add_entity` plus one capture leaves behind.
+    fn unopened(advances_from: AdvancesFrom) -> BTreeMap<String, String> {
+        let mut fields = weekly(date(2026, 8, 1), advances_from);
+        fields.remove(COUNTS_FROM);
+        fields
+    }
+
+    /// **A loop with no basis yet is opened by the check-in itself**, and the
+    /// basis is that check-in's own date.
+    ///
+    /// **Asserted under BOTH policies, which is the whole point of the case.**
+    /// `advances_from` chooses between the day a cycle fell due and the day
+    /// the check-in happened, and on an opening check-in no cycle has ever
+    /// fallen due — so the policy has nothing to choose between and the two
+    /// must agree. A build that ran the opening date through
+    /// [`Schedule::after`] would pass under `CheckInDate` and put the basis a
+    /// whole cadence late under `DueDate`.
+    #[test]
+    fn an_opening_check_in_derives_the_basis_from_its_own_date() {
+        let on = date(2026, 6, 14);
+        for advances_from in AdvancesFrom::ALL {
+            let fields = unopened(advances_from);
+            let opened = check_in(&fields, Outcome::Ran, on)
+                .expect("a cadenced loop with no basis takes the check-in that opens it");
+            assert_eq!(
+                opened.get(COUNTS_FROM).map(String::as_str),
+                Some("2026-06-14"),
+                "under {}, the basis is the check-in's own date",
+                advances_from.as_token(),
+            );
+
+            // **The read the caller actually makes**, folded the way the store
+            // folds it: what the loop holds now is what it held plus what this
+            // check-in wrote.
+            let mut folded = fields.clone();
+            folded.extend(opened.clone());
+            assert_eq!(
+                schedule_of(&folded)
+                    .expect("an opened loop reads a whole schedule")
+                    .due_on(),
+                date(2026, 6, 21),
+                "and the next one is a cadence after it, under {}",
+                advances_from.as_token(),
+            );
+        }
+    }
+
+    /// **Only an outcome that consumes the cycle opens a loop.**
+    ///
+    /// A snooze is defined as not moving the schedule, and on a loop with no
+    /// basis there is no schedule to leave where it was — so it refuses, and
+    /// it refuses naming the key a caller can add. A run and a skip both open
+    /// it, and they open it identically, exactly as they advance an opened one
+    /// identically.
+    #[test]
+    fn only_an_outcome_that_consumes_the_cycle_opens_a_loop() {
+        let on = date(2026, 6, 14);
+        let fields = unopened(AdvancesFrom::CheckInDate);
+
+        let ran = check_in(&fields, Outcome::Ran, on).expect("a run opens it");
+        let skipped = check_in(&fields, Outcome::Skipped, on).expect("a skip opens it too");
+        assert_eq!(
+            ran.get(COUNTS_FROM),
+            skipped.get(COUNTS_FROM),
+            "a skipped opening cycle rests on the same basis a completed one does",
+        );
+
+        let refused = check_in(&fields, Outcome::Snoozed, on)
+            .expect_err("a snooze moves nothing, so it cannot open a loop that has no basis");
+        assert_eq!(refused.key, COUNTS_FROM);
+        assert_eq!(
+            refused.held, None,
+            "and it is the key nobody wrote rather than a value to correct",
+        );
+    }
+
+    /// **The derive adds a key nobody wrote; it never overrules one somebody
+    /// did.** A basis that is present and unreadable is a value to correct, and
+    /// silently replacing it would throw away what the caller meant to say.
+    #[test]
+    fn an_opening_derive_does_not_rescue_a_basis_that_is_unreadable() {
+        let mut fields = unopened(AdvancesFrom::CheckInDate);
+        fields.insert(COUNTS_FROM.to_string(), "sometime".to_string());
+
+        let refused = check_in(&fields, Outcome::Ran, date(2026, 6, 14))
+            .expect_err("a basis that is there and unreadable is not one to derive over");
+        assert_eq!(refused.key, COUNTS_FROM);
+        assert_eq!(refused.held.as_deref(), Some("sometime"));
+    }
+
+    /// **A loop short of its cadence still refuses, and the derive does not
+    /// reach it.** The opening derive supplies the one key a check-in can know
+    /// by itself; it cannot invent how long a cycle lasts.
+    #[test]
+    fn an_opening_check_in_cannot_invent_a_cadence() {
+        let mut fields = unopened(AdvancesFrom::CheckInDate);
+        fields.remove(CADENCE_DAYS);
+
+        let refused = check_in(&fields, Outcome::Ran, date(2026, 6, 14))
+            .expect_err("no check-in can say how long a cycle lasts");
+        assert_eq!(refused.key, CADENCE_DAYS);
     }
 
     /// **A key the rhythm does not hold is named, and a key it holds wrongly is
