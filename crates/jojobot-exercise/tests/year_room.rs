@@ -418,7 +418,6 @@ async fn june_writes_the_turn_by_hand(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "rhythm:chain-check", "content": "did the bike chain this morning",
-               "provenance": "testimony",
                "fields": {"last_check_in": "2026-06-14"}}),
     )
     .await;
@@ -432,7 +431,6 @@ async fn late_november_writes_the_turn_by_hand(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "rhythm:chain-check", "content": "did the chain again today",
-               "provenance": "testimony",
                "fields": {"last_check_in": "2026-11-22"}}),
     )
     .await;
