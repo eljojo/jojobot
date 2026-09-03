@@ -779,14 +779,25 @@ async fn the_service_landed_on_the_loop_that_already_existed(
 /// here would fail a genuine check-in that snoozed.
 const OUTCOME: &str = "outcome";
 
-/// **The year's two turns are on file as derivations, not as hand-set keys.**
+/// **EVERY turn on the loop is on file as a derivation, and there is no
+/// threshold.**
+///
+/// A count cannot support a sentence with a universal in it. This lock's own
+/// words are about *the year's turns*, so it asks the question its sentence
+/// asks: of the turns recorded on this loop, how many were checked in — and
+/// the answer has to be all of them.
+///
+/// **Scoped to ONE loop**, because turns counted across every rhythm in the
+/// store let two loops carrying one qualifying turn each stand in for one loop
+/// carrying two. **The loop is identified by the day January opened it**
+/// rather than by a handle, for the reason the sitting beside this one gives:
+/// the handle is a word the occupant invents.
 ///
 /// `provenance` cannot be the needle. Inference is the enum's own default
 /// (`#[default]` on `Provenance`, `crates/jojobot-domain/src/memory.rs`), so a
 /// capture that names no provenance gets the identical token a check-in
 /// writes — counting `"provenance":"inference"` cannot tell a caller who said
-/// nothing from a caller who ran the arithmetic, and it held on a year that
-/// hand-set both turns and sent no provenance at all.
+/// nothing from a caller who ran the arithmetic.
 ///
 /// **What a check-in writes that nothing else does is two keys landing on ONE
 /// record in the same act**: `outcome` beside `last_check_in`
@@ -814,21 +825,57 @@ async fn the_years_turns_are_on_file_as_derivations(seen: &Observed<'_>) -> Resu
             "no loop came back at all, so nothing was measured: {read}"
         ));
     };
-    let derived = loops
+    // A record is a TURN when it says which day the loop was last done. That
+    // is the claim this lock is about, whoever wrote it and however.
+    let turn_on = |fact: &Value| -> Option<String> {
+        fact["fields"]
+            .get(TURNS)
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    };
+    let checked_in = |fact: &Value| {
+        fact["fields"]
+            .get(OUTCOME)
+            .and_then(Value::as_str)
+            .is_some()
+    };
+
+    // **The positive the whole lock rests on.** Without it a store where
+    // January never ran reports every turn as a derivation, vacuously, because
+    // there are no turns to fail.
+    let Some(january) = loops.iter().find(|one| {
+        one["facts"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|fact| turn_on(fact).as_deref() == Some(OPENED))
+    }) else {
+        return Err(format!(
+            "no loop carries a turn on {OPENED}, so the loop this year is about was never opened \
+             and it has no turns to be derivations: {read}"
+        ));
+    };
+
+    let turns: Vec<(String, bool)> = january["facts"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|fact| turn_on(fact).map(|day| (day, checked_in(fact))))
+        .collect();
+    let by_hand: Vec<&str> = turns
         .iter()
-        .flat_map(|one| one["facts"].as_array().into_iter().flatten())
-        .filter(|fact| {
-            let fields = &fact["fields"];
-            fields.get(TURNS).and_then(Value::as_str).is_some()
-                && fields.get(OUTCOME).and_then(Value::as_str).is_some()
-        })
-        .count();
-    match derived >= 2 {
-        true => Ok(()),
-        false => Err(format!(
-            "{derived} record(s) under kind:rhythm carry {OUTCOME} beside {TURNS} on the same \
-             record, where a check-in writes both together every time — so the year's turns are \
-             not on file as derivations, they were written by hand rather than checked in: {read}"
-        )),
+        .filter(|(_, checked_in)| !checked_in)
+        .map(|(day, _)| day.as_str())
+        .collect();
+    if by_hand.is_empty() {
+        return Ok(());
     }
+    Err(format!(
+        "the loop opened on {OPENED} records {} turn(s), and {} of them carry {TURNS} with no \
+         {OUTCOME} beside it on the same record — the turn(s) dated {} were written by hand \
+         rather than checked in, where a check-in writes both keys together every time: {read}",
+        turns.len(),
+        by_hand.len(),
+        by_hand.join(", "),
+    ))
 }

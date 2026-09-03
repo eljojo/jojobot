@@ -523,7 +523,10 @@ is, and it must not.**
 # has gone quiet and nothing asserts over it, by design — but what it can NOTICE
 # depends on what the year left. A check-in stores the schedule jojobot worked
 # out beside the sentence, and a record carrying both is a derivation, so the
-# year's two turns are on file as inference rather than as the operator's word.
+# year's turns are on file as inference rather than as the operator's word.
+# **January's opening turn is one of them**: the chain was last done before the
+# year began, so January declares the cadence and then opens the loop with a
+# back-dated check-in rather than typing the basis in.
 #
 # ⛔️ **A sitting that sets the key by hand instead writes the same day and no
 # derivation.** Every lock that reads the day holds either way. Without this
@@ -540,6 +543,14 @@ is, and it must not.**
 # is two keys landing on ONE record together — `outcome` and `last_check_in`,
 # which a check-in writes in the same act every time — and correlating two
 # keys inside one object is past what a substring assertion can say.
+#
+# 🚨 **EVERY turn, on ONE loop, and no threshold.** The sentence below has a
+# universal in it, and a count cannot support one: a lock that passed at two
+# went green on a year whose opening turn was hand-typed while its own words
+# claimed otherwise. Counting across every rhythm was the same fault one level
+# up — two loops carrying one qualifying turn each stood in for one loop
+# carrying two. So the lock finds the loop by the day January opened it, and
+# asks whether all of that loop's turns were checked in.
 #
 # **This is not a second copy of the conversion rule**, which is held where it
 # lives. It says this room's own record carries what December reads.

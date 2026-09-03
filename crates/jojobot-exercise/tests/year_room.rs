@@ -201,15 +201,29 @@ async fn january(room: &Surface, sid: &str) {
                "source": "the operator", "parent": "thing:gravel-bike"}),
     )
     .await;
+    // **The loop is declared, then opened by a back-dated check-in.** The
+    // cadence and the policy are the operator's word and no check-in can state
+    // them. The basis is not sent: the chain was last done before this sitting
+    // opened the loop, so the opening turn is a check-in dated that day and
+    // jojobot derives `counts_from` from it. Sending the basis by hand is what
+    // this room's own lock on derivations exists to catch.
     did(
         room,
         sid,
         "capture",
         json!({"subject": "rhythm:chain-check", "content": "look at the bike chain every ninety days",
                "provenance": "testimony",
-               "fields": {"name": "Chain check", "last_check_in": "2025-12-20",
-                          "cadence_days": "90", "counts_from": "2025-12-20",
+               "fields": {"name": "Chain check", "cadence_days": "90",
                           "advances_from": "due_date"}}),
+    )
+    .await;
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "rhythm:chain-check", "content": "last did the chain just before christmas",
+               "provenance": "testimony",
+               "check_in": "ran", "recorded_at": "2025-12-20"}),
     )
     .await;
     did(
