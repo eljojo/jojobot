@@ -258,7 +258,11 @@ compute them and do not send them. Put what the check measured in `fields`.
 
 A loop whose last run already happened, before this session opened it, is
 opened the same way: capture a check-in on it, dated the day it last ran, and
-jojobot works the rest of the schedule out from there.
+jojobot works the rest of the schedule out from there. Give the loop its
+cadence first — `cadence_days` and `advances_from` are the operator's word and
+no check-in can state them, so a loop that holds neither is refused until it
+does. A snooze does not open a loop, because it moves nothing and there is
+nothing yet to leave where it was.
 
 ## How to run a rhythm
 
@@ -454,6 +458,15 @@ mod tests {
             names(section, "check-in") && names(section, "already"),
             "the section on closing a rhythm does not cover a loop whose last run already \
              happened before this session: {section}"
+        );
+        // **The rider names what the route needs, not only the route.** A
+        // session following it on a loop that holds no cadence meets a
+        // refusal; the refusal names the key, so the session recovers, but the
+        // stumble costs a round trip the sentence can spend instead.
+        assert!(
+            names(section, "cadence") && names(section, "first"),
+            "the rider sends a session down a route without saying the loop needs its cadence \
+             before the route works: {section}"
         );
     }
 }
