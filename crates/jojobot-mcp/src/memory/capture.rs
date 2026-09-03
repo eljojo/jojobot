@@ -170,6 +170,17 @@ pub struct CaptureArgs {
 const WHY_A_CHECK_IN_DERIVES: &str = "a check-in stores the schedule jojobot worked out beside your sentence, and a record \
      carrying both is a derivation";
 
+/// **The other direction of [`WHY_A_CHECK_IN_DERIVES`].** That sentence
+/// explains why a check-in's computed schedule overrides a caller's own
+/// value; it rides only when a check-in was asked for, so it says nothing on
+/// the path every failing run actually takes — a rhythm's `counts_from` sent
+/// by hand, with no `check_in` at all. Built from the same fact, stated the
+/// other way round: a check-in is the only thing that derives `counts_from`,
+/// so absent one, whatever the caller sent for it stands exactly as typed.
+const WHY_THIS_BASIS_IS_HAND_TYPED: &str = "counts_from on this record is exactly what you sent — hand-typed, not derived, because this \
+    capture asked for no check_in. A check-in is what stores the schedule jojobot works out \
+    beside your sentence; capture one on this rhythm and jojobot computes it instead.";
+
 struct Declared {
     subject: String,
     provenance: Option<String>,
@@ -252,7 +263,15 @@ impl Jojobot {
     /// The count is read for this line and left out when the store cannot
     /// answer, because a number nobody can stand behind is worse than the
     /// sentence without one.
-    async fn what_a_capture_left_standing(&self, fact: &Fact) -> String {
+    ///
+    /// **`checked_in` is what tells this apart from the case
+    /// [`WHY_A_CHECK_IN_DERIVES`] already covers.** A rhythm's `counts_from`
+    /// sent by hand with no check-in is not a difference — the stored value
+    /// IS what the caller sent, so [`Difference::between`] has nothing to
+    /// compare — and it is not caught anywhere else either, since a
+    /// half-taught session or one that ignored the teaching still reaches
+    /// `capture` directly. This is the receipt's own chance to say so.
+    async fn what_a_capture_left_standing(&self, fact: &Fact, checked_in: bool) -> String {
         let standing = self
             .memory
             .recall(&fact.subject)
@@ -277,9 +296,17 @@ impl Jojobot {
                 fact.subject.as_str(),
             )
         };
+        let basis = if !checked_in
+            && fact.subject.kind() == Some(EntityKind::RHYTHM)
+            && fact.fields.contains_key(attention::COUNTS_FROM)
+        {
+            format!(" {WHY_THIS_BASIS_IS_HAND_TYPED}")
+        } else {
+            String::new()
+        };
         format!(
             "Recorded as an additional claim.{standing} No record was edited and none was \
-             removed.{keys}"
+             removed.{keys}{basis}"
         )
     }
 
@@ -535,7 +562,7 @@ impl Jojobot {
                 );
                 crate::answer::note_postcondition(
                     &mut body,
-                    self.what_a_capture_left_standing(&fact).await,
+                    self.what_a_capture_left_standing(&fact, checked_in).await,
                 );
                 if self.first_contact(CLAIMS_DOMAIN, Some(&caller)).await {
                     crate::answer::note_teaching(&mut body, CLAIMS_TEACHING);
@@ -1145,6 +1172,77 @@ mod tests {
         let held = fields_of(&jojobot, "thing:kettle").await;
         assert_eq!(held["outcome"], serde_json::Value::Null);
         assert_eq!(held["last_check_in"], serde_json::Value::Null);
+    }
+
+    /// **The path the teaching in `add_entity` cannot reach: a session that
+    /// never saw it, or saw it and hand-typed the schedule anyway.** The
+    /// receipt says so — the basis this cycle counts from is hand-typed, not
+    /// derived — and names the call that would derive it instead.
+    ///
+    /// Three calls, because either negative alone passes on a build that
+    /// always attaches the note or never does. A check-in derives
+    /// `counts_from` itself — `WHY_A_CHECK_IN_DERIVES` already covers that
+    /// path — and a capture naming no schedule key is not this case at all.
+    #[tokio::test]
+    async fn a_hand_typed_schedule_basis_says_so_in_the_receipt_and_only_then() {
+        let jojobot = handler();
+        a_weekly_rhythm(&jojobot, "descale", "2026-08-01", "check_in_date").await;
+
+        // The failing path: `counts_from` sent by hand, no `check_in`.
+        let hand_typed = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                fields: Some(
+                    [("counts_from".to_string(), "2026-09-01".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..capture_args("rhythm:descale", "moved the schedule myself")
+            },
+        )
+        .await;
+        let note = hand_typed["postcondition"]
+            .as_str()
+            .expect("a postcondition string");
+        assert!(
+            note.contains("hand-typed") && note.contains("check_in"),
+            "the receipt says the basis is hand-typed and names the call that would derive it: \
+             {note}"
+        );
+
+        // The paired negative: an ordinary check-in derives `counts_from`
+        // itself, so it is not this case.
+        let checked_in = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                check_in: Some("ran".into()),
+                recorded_at: Some("2026-08-10".into()),
+                ..capture_args("rhythm:descale", "descaled it")
+            },
+        )
+        .await;
+        assert!(
+            !checked_in["postcondition"]
+                .as_str()
+                .expect("a postcondition string")
+                .contains("hand-typed"),
+            "a check-in derives counts_from itself, so it is not hand-typed: {checked_in}"
+        );
+
+        // The second negative: a capture naming no schedule key at all is
+        // not this case either.
+        let untouched = capture_ok(
+            &jojobot,
+            capture_args("rhythm:descale", "just a note about it"),
+        )
+        .await;
+        assert!(
+            !untouched["postcondition"]
+                .as_str()
+                .expect("a postcondition string")
+                .contains("hand-typed"),
+            "a capture naming no schedule key is not this case: {untouched}"
+        );
     }
 
     /// **Fields ride on a fact, and no label is asked for.**

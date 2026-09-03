@@ -58,6 +58,25 @@ pub(crate) const CLAIM_SUBJECT_TEACHING: &str = "A claim's fields may carry two 
     tell what a claim is about and why it was written without opening it, and keep two \
     sessions from inventing two different names for the same idea.";
 
+/// **The third domain — a rhythm that already has a history when it is
+/// made.** `add_entity` takes no `fields`, so nothing about a schedule can be
+/// sent through it: the mistake this teaches against happens on the `capture`
+/// that follows, once the caller reaches for the only keys it can see and
+/// types them by hand. `capture` on a subject that does not exist is refused
+/// (`Blocked::MustExist`), so the entity always precedes that capture — this
+/// domain is taught at `add_entity` instead, which is a teaching landing
+/// before the mistake rather than after it.
+pub(crate) const RHYTHM_HISTORY_DOMAIN: &str = "rhythm-history";
+
+/// **Ships in the binary, exactly as the other teachings do.** Says what the
+/// case is — a loop with a history already behind it — rather than listing
+/// the keys a schedule is made of; the rhythms procedure and the engine's own
+/// refusals are where those are named.
+pub(crate) const RHYTHM_HISTORY_TEACHING: &str = "A rhythm's schedule is jojobot's arithmetic, never a caller's to type in — even for the \
+    first cycle. A loop whose last run already happened, before this session opened it, is \
+    opened the same way an ordinary cycle is closed: capture a check-in on it, dated the day it \
+    last ran, and jojobot works the rest of the schedule out from there.";
+
 impl Jojobot {
     /// Whether this call is the first time `domain` has reached this
     /// session's handle.
@@ -660,6 +679,77 @@ mod tests {
             merged["teaching"],
             serde_json::json!([CLAIMS_TEACHING]),
             "the first merge this session made carries the teaching: {merged}"
+        );
+    }
+
+    /// **`add_entity` teaches the rhythm-history domain, and only for a
+    /// rhythm.** The absence has to be proved next to a build that DOES teach
+    /// it — a person carrying no teaching passes identically whether the
+    /// mechanism is wired or missing entirely, so the positive on a rhythm
+    /// rides in the same test. The third call, a second rhythm in the same
+    /// session, proves the ledger rather than a constant that always renders.
+    #[tokio::test]
+    async fn add_entity_teaches_rhythm_history_only_for_a_rhythm_and_once() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+
+        let person = json_of(
+            &jojobot
+                .add_entity(rmcp::handler::server::wrapper::Parameters(AddEntityArgs {
+                    sid: Some(sid.clone()),
+                    ..add_args("person", "alpha", "Alpha")
+                }))
+                .await
+                .expect("add ok"),
+        );
+        assert!(
+            person.get("teaching").is_none(),
+            "an ordinary entity never touches the rhythm-history domain: {person}"
+        );
+
+        let parent = json_of(
+            &jojobot
+                .add_entity(rmcp::handler::server::wrapper::Parameters(AddEntityArgs {
+                    sid: Some(sid.clone()),
+                    ..add_args("thing", "kettle", "Kettle")
+                }))
+                .await
+                .expect("add ok"),
+        );
+        assert_ne!(parent["status"], "blocked", "{parent}");
+
+        let first = json_of(
+            &jojobot
+                .add_entity(rmcp::handler::server::wrapper::Parameters(AddEntityArgs {
+                    parent: Some("thing:kettle".into()),
+                    sid: Some(sid.clone()),
+                    ..add_args("rhythm", "descale", "Descale")
+                }))
+                .await
+                .expect("add ok"),
+        );
+        assert!(
+            first["teaching"]
+                .as_array()
+                .expect("a list")
+                .contains(&serde_json::json!(RHYTHM_HISTORY_TEACHING)),
+            "the first rhythm this session creates carries the teaching: {first}"
+        );
+
+        let second = json_of(
+            &jojobot
+                .add_entity(rmcp::handler::server::wrapper::Parameters(AddEntityArgs {
+                    parent: Some("thing:kettle".into()),
+                    sid: Some(sid),
+                    ..add_args("rhythm", "water-the-fern", "Water The Fern")
+                }))
+                .await
+                .expect("add ok"),
+        );
+        assert!(
+            second.get("teaching").is_none(),
+            "the same session creating a second rhythm is not taught again: {second}"
         );
     }
 }

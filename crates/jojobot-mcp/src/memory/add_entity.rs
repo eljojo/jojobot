@@ -4,6 +4,7 @@
 //! and an entrypoint that chains the systems below it.
 
 use super::*;
+use crate::teaching::{RHYTHM_HISTORY_DOMAIN, RHYTHM_HISTORY_TEACHING};
 
 /// Arguments to `add_entity`.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -164,9 +165,10 @@ impl Jojobot {
     ) -> Result<CallToolResult, McpError> {
         // Refused here, before anything is written — see
         // [`Jojobot::attributable`].
-        if let Err(refused) = self.identified(args.sid.as_deref()) {
-            return Ok(refused);
-        }
+        let caller = match self.identified(args.sid.as_deref()) {
+            Ok(caller) => caller,
+            Err(refused) => return Ok(refused),
+        };
         let id = entity_id(&args.kind, &args.handle)?;
         // Kept for the refusal below: which handle the guard turned back is
         // what says whether it was this entity or the one it named as parent.
@@ -217,6 +219,19 @@ impl Jojobot {
                     .into_iter()
                     .collect(),
                 );
+                // **The teaching that lands before the mistake, not after
+                // it.** `capture` cannot be the one to teach this — a rhythm
+                // must exist before anything can be captured on it, and the
+                // caller who reaches for a hand-typed schedule does so on
+                // the very first capture that follows. This is that
+                // capture's only chance to have already been told.
+                if entity.id.kind() == Some(EntityKind::RHYTHM)
+                    && self
+                        .first_contact(RHYTHM_HISTORY_DOMAIN, Some(&caller))
+                        .await
+                {
+                    crate::answer::note_teaching(&mut body, RHYTHM_HISTORY_TEACHING);
+                }
                 json_result(&body)
             }
             // **A parent refusal is not a near miss, and saying it is offers a

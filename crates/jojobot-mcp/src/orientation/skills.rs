@@ -256,6 +256,10 @@ the work was done, and nothing later can tell it from work that was done.
 jojobot writes `outcome`, `last_check_in` and `counts_from` itself. Do not
 compute them and do not send them. Put what the check measured in `fields`.
 
+A loop whose last run already happened, before this session opened it, is
+opened the same way: capture a check-in on it, dated the day it last ran, and
+jojobot works the rest of the schedule out from there.
+
 ## How to run a rhythm
 
 Read what is due. Offer each rhythm that is due, in one line. Record a
@@ -429,6 +433,27 @@ mod tests {
             "the section introducing the keys does not name `{creates}` — it says what a \
              rhythm holds and never says to write one, so a key the operator has yet to \
              choose reads as a reason to create nothing"
+        );
+    }
+
+    /// **The rider on a loop opened with history already behind it.** The
+    /// procedure never said what to do with a rhythm whose last run already
+    /// happened before the session that opens it — a session with no other
+    /// way to see the case reached for the only keys it could see and typed
+    /// them by hand. Pinned in the section that already tells a session how
+    /// to close a cycle, since the rider says to close one, backdated,
+    /// rather than opening with the schedule pre-filled.
+    #[test]
+    fn the_rhythms_procedure_covers_a_loop_opened_with_history_already_behind_it() {
+        let text = body("rhythms");
+        let section = text
+            .split("\n## ")
+            .find(|section| names(section, "close"))
+            .expect("the rhythms procedure has a section on closing a cycle");
+        assert!(
+            names(section, "check-in") && names(section, "already"),
+            "the section on closing a rhythm does not cover a loop whose last run already \
+             happened before this session: {section}"
         );
     }
 }
