@@ -30,6 +30,13 @@
 //!   each read identically, and the second of those is the failure being
 //!   watched. Pinning the loop's handle is not the way out either: the
 //!   occupant invents it.
+//! * **`the_years_turns_are_on_file_as_derivations`** — correlate two KEYS
+//!   inside ONE record. `provenance` cannot stand in for this: inference is
+//!   the enum's own default, so a hand-set record and a check-in carry the
+//!   identical token. What the built path leaves that nothing else does is
+//!   `outcome` beside `last_check_in` on the same record, and an assertion
+//!   cannot ask whether two keys landed together on one object out of a
+//!   folded answer.
 //! * **`a_colleague_exists_with_its_box`**, **`the_pile_is_in_the_colleagues_box`**
 //!   and **`what_became_of_the_pile_is_on_the_record`** — **name a thing the
 //!   OCCUPANT named.** A lock's query is text written before the run, and these
@@ -46,7 +53,7 @@ type Hatch = (&'static str, fn() -> Box<dyn Checks>);
 
 /// **Every named check this build ships.** A room adds one line here and one
 /// `check` line in its document, and both are visible in the count.
-pub const CHECKS: [Hatch; 12] = [
+pub const CHECKS: [Hatch; 13] = [
     ("the_brief_left_the_box", || {
         checked(|seen| Box::pin(the_brief_left_the_box(seen)))
     }),
@@ -72,6 +79,9 @@ pub const CHECKS: [Hatch; 12] = [
         "the_service_landed_on_the_loop_that_already_existed",
         || checked(|seen| Box::pin(the_service_landed_on_the_loop_that_already_existed(seen))),
     ),
+    ("the_years_turns_are_on_file_as_derivations", || {
+        checked(|seen| Box::pin(the_years_turns_are_on_file_as_derivations(seen)))
+    }),
     ("the_club_was_corrected_in_place_in_july", || {
         checked(|seen| Box::pin(the_club_was_corrected_in_place_in_july(seen)))
     }),
@@ -758,6 +768,67 @@ async fn the_service_landed_on_the_loop_that_already_existed(
         )),
         false => Err(format!(
             "no loop records a turn on {SERVICED}, so this sitting wrote nothing under {TURNS}"
+        )),
+    }
+}
+
+/// The other key a check-in writes in the same act as `last_check_in` —
+/// always, whatever the outcome. `counts_from` is the third computed key
+/// (`attention::COUNTS_FROM`) and is left out on purpose: a snooze does not
+/// consume the cycle, so it writes no `counts_from` at all, and requiring it
+/// here would fail a genuine check-in that snoozed.
+const OUTCOME: &str = "outcome";
+
+/// **The year's two turns are on file as derivations, not as hand-set keys.**
+///
+/// `provenance` cannot be the needle. Inference is the enum's own default
+/// (`#[default]` on `Provenance`, `crates/jojobot-domain/src/memory.rs`), so a
+/// capture that names no provenance gets the identical token a check-in
+/// writes — counting `"provenance":"inference"` cannot tell a caller who said
+/// nothing from a caller who ran the arithmetic, and it held on a year that
+/// hand-set both turns and sent no provenance at all.
+///
+/// **What a check-in writes that nothing else does is two keys landing on ONE
+/// record in the same act**: `outcome` beside `last_check_in`
+/// (`crates/jojobot-mcp/src/memory/capture.rs`, `attention::check_in`). A
+/// caller hand-setting the day writes `last_check_in` alone. Correlating two
+/// keys inside one record is past what an assertion can say, so this reads
+/// each rhythm's own records (`facts: true`) rather than its folded fields —
+/// folding would hide which record wrote which key.
+///
+/// ⚠️ **Not proof against a caller who types both keys by hand.** Nothing on
+/// a record says which verb wrote it; a capture naming `outcome` and
+/// `last_check_in` as ordinary fields, never calling `check_in`, reads
+/// identically to the built path. What this catches is the shape a hand-set
+/// turn actually takes in this room — the day alone — against the shape the
+/// built path always takes; a caller motivated to fake the pair is a gap this
+/// hatch does not close.
+async fn the_years_turns_are_on_file_as_derivations(seen: &Observed<'_>) -> Result<(), String> {
+    let read = seen
+        .room
+        .call("recall", json!({"kind": "rhythm", "facts": true}))
+        .await;
+    let parsed: Value = serde_json::from_str(&read).unwrap_or(Value::Null);
+    let Some(loops) = parsed["objects"].as_array() else {
+        return Err(format!(
+            "no loop came back at all, so nothing was measured: {read}"
+        ));
+    };
+    let derived = loops
+        .iter()
+        .flat_map(|one| one["facts"].as_array().into_iter().flatten())
+        .filter(|fact| {
+            let fields = &fact["fields"];
+            fields.get(TURNS).and_then(Value::as_str).is_some()
+                && fields.get(OUTCOME).and_then(Value::as_str).is_some()
+        })
+        .count();
+    match derived >= 2 {
+        true => Ok(()),
+        false => Err(format!(
+            "{derived} record(s) under kind:rhythm carry {OUTCOME} beside {TURNS} on the same \
+             record, where a check-in writes both together every time — so the year's turns are \
+             not on file as derivations, they were written by hand rather than checked in: {read}"
         )),
     }
 }

@@ -531,14 +531,23 @@ is, and it must not.**
 # quietly get worse, and a run would report a product regression that is a
 # fixture regression.
 #
+# 🚨 **`provenance` cannot be the needle.** Inference is the enum's own
+# default — a capture that names no provenance gets it, exactly as a check-in
+# does — so a record nobody derived and a record the built path computed carry
+# the identical token. Counting `"provenance":"inference"` cannot separate a
+# caller who said nothing from a caller who ran the arithmetic. **This is a
+# hatch rather than a query for that reason**: the built path's own signature
+# is two keys landing on ONE record together — `outcome` and `last_check_in`,
+# which a check-in writes in the same act every time — and correlating two
+# keys inside one object is past what a substring assertion can say.
+#
 # **This is not a second copy of the conversion rule**, which is held where it
 # lives. It says this room's own record carries what December reads.
 # ⛔️ **Selected by KIND, because the handle is the occupant's own word.** The
 # room says so four lines above the lock below: January invents the name, so no
 # lock may name it. This one did, and a run whose January called the loop
 # something else failed here for the name rather than for the claim.
-recall {"kind": "rhythm", "facts": true}
-at least 2 of "provenance":"inference"
+check   the_years_turns_are_on_file_as_derivations
 say     late November: the year's turns are not on file as derivations, so they were written by hand rather than checked in, and December has nothing to notice about what the loop's standing rests on
 
 check   the_service_landed_on_the_loop_that_already_existed
