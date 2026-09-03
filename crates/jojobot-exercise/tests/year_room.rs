@@ -716,11 +716,15 @@ async fn later_december_writes_a_fuller_sentence(room: &Surface, sid: &str) {
     .await;
 }
 
-/// **A December that rewrites a claim nobody raised.**
+/// **A December that rewrites a claim nobody raised — and this is LEGITIMATE.**
 ///
-/// What the pairing is for: it puts a second write behind a claim no sitting
-/// was ever asked about, so the claim starts carrying a history that says
-/// jojobot changed its mind about it.
+/// A sitting may notice its own mistake and correct it, on any record it made.
+/// The pairing's lock used to score this as a fault, because it demanded the
+/// record carry one write and no other; that asserted what the model happened
+/// to do rather than anything about jojobot, and a paid run failed on it while
+/// the product did nothing wrong. **The play is kept and its verdict is
+/// flipped**: a run that really made a second write must produce a trace
+/// reporting two.
 async fn december_corrects_a_claim_nobody_questioned(room: &Surface, sid: &str) {
     did(
         room,
@@ -1456,6 +1460,14 @@ async fn the_rhythm_locks_still_fail_when_the_sitting_they_name_does_nothing() {
 /// a lock that only asks whether a trace is THERE holds identically against a
 /// read that hands a chain back for everything, and a chain on a claim nobody
 /// touched says jojobot changed its mind when it did not.
+///
+/// ⚠️ **The pairing's failing half is NOT asserted here, and it cannot be.** A
+/// play can only make writes that really happened, so every play produces a
+/// trace agreeing with the boundaries. The failure is a product fault — a
+/// trace reporting a write nobody made — and it is watched by breaking the
+/// trace under `scripts/sabotage`, never by driving the year differently. What
+/// this case holds is that a legitimate correction passes and the worked year
+/// passes, which is the half a play can reach.
 #[tokio::test]
 async fn the_trace_locks_tell_a_correction_from_a_claim_nobody_touched() {
     let (_room, surface) = furnished().await;
@@ -1468,13 +1480,18 @@ async fn the_trace_locks_tell_a_correction_from_a_claim_nobody_touched() {
         saying(&judged),
     );
 
+    // ⛔️ **A legitimate correction PASSES, and that is the fix.** The occupant
+    // owns this record and may rewrite it; the trace then truthfully reports
+    // two writes, and two writes is what the run made. A lock that failed here
+    // was measuring the model rather than the product.
     let (_room, surface) = furnished().await;
-    let invented = work_the_year(&surface, &room_document(), &WORKED, &[13]).await;
-    let judged = judge_all(&surface, &invented).await;
+    let corrected = work_the_year(&surface, &room_document(), &WORKED, &[13]).await;
+    let judged = judge_all(&surface, &corrected).await;
     assert!(
-        !judged[LATE_DECEMBER[1]].held,
-        "a claim that gained a second write held the lock that says it has only its own first \
-         one, so the pairing is satisfied by anything: {}",
+        judged[LATE_DECEMBER[1]].held,
+        "a sitting corrected a record it made and the trace reported that correction, and the \
+         lock still failed — so it is scoring what the occupant did rather than whether the \
+         trace agrees with it: {}",
         saying(&judged),
     );
 

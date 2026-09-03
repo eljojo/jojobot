@@ -634,24 +634,37 @@ say     later December: what the claim used to say is not on the record, so eith
 #
 # So the same read is asked of a claim no sitting ever corrected: one write,
 # and nothing behind it.
-# ⚠️ **`nth` rather than a count, and this is not a style choice.** The obvious
-# needle is the history's own `count`, and it is ambiguous: the answer opens
-# with a `count` of its own — how many OBJECTS came back — so `"count":1` holds
-# on every read of one object whatever the trace says. **The first draft of this
-# lock was satisfied by a claim carrying two writes.** `nth` is on the writes
-# and nowhere else.
+# ⛔️ **NOT a count of writes, and this is the correction that matters.** This
+# lock used to demand that the record carry its first write and no other. **The
+# control record is one the OCCUPANT creates and may legitimately correct** — a
+# sitting that notices its own mistake and rewrites it is doing the right
+# thing — so a paid run failed here while the product did nothing wrong. The
+# lock was asserting what the model happened to do that run.
+#
+# ⛔️ **Naming a different record does not fix it**, because every record in
+# this room is reachable by some sitting. **So the lock asks a RELATION**: how
+# many times the run wrote this record, counted from the phase boundaries the
+# runner takes, against how many writes the record's own trace reports. Two
+# readings that cannot both be wrong in the same direction. A legitimate
+# correction moves both and passes; a trace reporting a write nobody made moves
+# one and fails.
+#
+# ⚠️ **A hatch, because a document assertion cannot hold a relation.** The
+# needle it would need is a number that is not known until the run has been
+# read.
+# ⚠️ **The failing half cannot be staged by a play.** Every play makes writes
+# that really happened, so every play produces an agreeing trace. The negative
+# is a product fault and it is watched by breaking the trace, not by driving
+# the year differently.
 # ⚠️ **A claim the year never writes twice, and the address has to be stable.**
 # A record's address is handed out in write order, which the occupant controls,
 # so an address only means the same claim on a subject carrying ONE. April
 # supersedes a claim on the subject this lock used to name — a scripted write,
-# so the room guaranteed a second one — and `"nth":2` was the correct answer.
-# **Bart gains one claim, in the sitting that stands him up, and nothing in the
-# year touches it again**; the lock beside that sitting fails first if it is
+# so the room guaranteed a second one. **Bart gains one claim, in the sitting
+# that stands him up**; the lock beside that sitting fails first if it is
 # missing, so a gap is reported where it happened.
-recall {"subject": "person:bart", "history_record": "person:bart#f1"}
-carries "nth":1
-lacks   "nth":2
-say     later December: a claim nobody ever corrected comes back carrying more than its own first write, so the trace says jojobot changed its mind about something it never did
+check   a_records_trace_matches_the_writes_the_run_made
+say     later December: a record's trace does not agree with what the run actually wrote to it, so the history read is inventing or losing a write and a reader is told jojobot changed its mind about something it never did
 ```
 
 ## What this room cannot measure

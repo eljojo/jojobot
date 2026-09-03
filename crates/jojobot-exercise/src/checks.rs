@@ -53,7 +53,7 @@ type Hatch = (&'static str, fn() -> Box<dyn Checks>);
 
 /// **Every named check this build ships.** A room adds one line here and one
 /// `check` line in its document, and both are visible in the count.
-pub const CHECKS: [Hatch; 13] = [
+pub const CHECKS: [Hatch; 14] = [
     ("the_brief_left_the_box", || {
         checked(|seen| Box::pin(the_brief_left_the_box(seen)))
     }),
@@ -81,6 +81,9 @@ pub const CHECKS: [Hatch; 13] = [
     ),
     ("the_years_turns_are_on_file_as_derivations", || {
         checked(|seen| Box::pin(the_years_turns_are_on_file_as_derivations(seen)))
+    }),
+    ("a_records_trace_matches_the_writes_the_run_made", || {
+        checked(|seen| Box::pin(a_records_trace_matches_the_writes_the_run_made(seen)))
     }),
     ("the_club_was_corrected_in_place_in_july", || {
         checked(|seen| Box::pin(the_club_was_corrected_in_place_in_july(seen)))
@@ -877,5 +880,107 @@ async fn the_years_turns_are_on_file_as_derivations(seen: &Observed<'_>) -> Resu
         turns.len(),
         by_hand.len(),
         by_hand.join(", "),
+    ))
+}
+
+/// The subject the pairing's control record hangs off, and the address it is
+/// read through. **The occupant creates this record and may legitimately
+/// correct it**, which is why the lock below asks about a relation rather than
+/// a count.
+const UNTOUCHED: &str = "person:bart";
+const UNTOUCHED_RECORD: &str = "person:bart#f1";
+
+/// **What one boundary saw this record holding**, or nothing when the record
+/// did not exist yet.
+///
+/// A boundary's world is `list_entities` and a `search` over everything, joined
+/// by a newline; the search half carries each fact under `results` with its
+/// own `address` and `content`. **The shape is read off a real boundary rather
+/// than assumed** — a stand-in built from what the format ought to be would
+/// exercise a world this room never produces.
+fn held_at(world: &str, address: &str) -> Option<String> {
+    let (_, searched) = world.split_once('\n')?;
+    let parsed: Value = serde_json::from_str(searched).ok()?;
+    parsed["results"]
+        .as_array()?
+        .iter()
+        .find(|hit| hit["address"].as_str() == Some(address))
+        .and_then(|hit| hit["content"].as_str())
+        .map(str::to_string)
+}
+
+/// **A record's trace carries exactly the writes the run made to it.**
+///
+/// ⛔️ **Not a count of writes, and the difference is the whole lock.** The
+/// control record is one the OCCUPANT creates, so a sitting may legitimately
+/// notice its own mistake and rewrite it — and a lock demanding one write
+/// scored that correction as a fault. It was asserting what the model happened
+/// to do that run, never anything about jojobot. **Moving to a different
+/// control record would move the trap rather than close it**: every record in
+/// this room is reachable by some sitting.
+///
+/// So the two halves are read from two places that cannot both be wrong in the
+/// same direction: **how many times the run wrote this record is counted from
+/// the phase boundaries**, which are readings taken by the runner and not by
+/// the verb under test, and **what the record says about itself is read from
+/// its trace**. A legitimate correction moves both and passes. A trace that
+/// reports a write nobody made moves only one and fails, which is the class
+/// this exists for — a history read that fabricates a wording says jojobot
+/// changed its mind when it did not, and that is worse than silence because a
+/// reader acts on it.
+///
+/// ⚠️ **The count is exact at PHASE granularity, which is the granularity
+/// every reading in this room has.** Two writes to this record inside one
+/// sitting are one observed change, so the lock would read them as one. No
+/// sitting here writes this record twice, and a room that grew one would have
+/// to say so.
+///
+/// ⚠️ **The failing half cannot be staged by a play.** A play can only make
+/// writes that really happened, so every play produces a trace that agrees
+/// with the boundaries. The negative is a product fault, and it is watched by
+/// breaking the trace rather than by driving the year differently.
+async fn a_records_trace_matches_the_writes_the_run_made(
+    seen: &Observed<'_>,
+) -> Result<(), String> {
+    let held: Vec<String> = seen
+        .boundaries
+        .iter()
+        .filter_map(|at| held_at(&at.world, UNTOUCHED_RECORD))
+        .collect();
+    // **The positive the lock rests on.** Without it a year where the record
+    // was never written reports a trace of one write as correct, because zero
+    // observed states and a one-write trace would never be compared at all.
+    if held.is_empty() {
+        return Err(format!(
+            "no boundary saw {UNTOUCHED_RECORD} at all, so the record this lock is about was never written and there is nothing here to have a trace"
+        ));
+    }
+    // The record's first appearance is one write; every later change of what it
+    // holds is one more.
+    let made = 1 + held.windows(2).filter(|pair| pair[0] != pair[1]).count();
+
+    let read = seen
+        .room
+        .call(
+            "recall",
+            json!({"subject": UNTOUCHED, "history_record": UNTOUCHED_RECORD}),
+        )
+        .await;
+    let parsed: Value = serde_json::from_str(&read).unwrap_or(Value::Null);
+    // **`count` rather than the length of `writes`.** A trace ships what it
+    // shows and says how many there are; a long history comes back elided, and
+    // measuring the shipped list would read an elision as a missing write.
+    let trace = &parsed["objects"][0]["record_history"];
+    let Some(reported) = trace["count"].as_u64().map(|count| count as usize) else {
+        return Err(format!(
+            "the trace of {UNTOUCHED_RECORD} came back with no writes on it at all, so nothing was measured: {read}"
+        ));
+    };
+    if reported == made {
+        return Ok(());
+    }
+    let seen_holding: Vec<&str> = held.iter().map(String::as_str).collect();
+    Err(format!(
+        "the trace of {UNTOUCHED_RECORD} reports {reported} write(s) and the run made {made} — across the boundaries the record was seen holding {seen_holding:?}, so the trace and what the run actually did disagree: {read}"
     ))
 }
