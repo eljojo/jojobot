@@ -37,6 +37,10 @@
 //!   `outcome` beside `last_check_in` on the same record, and an assertion
 //!   cannot ask whether two keys landed together on one object out of a
 //!   folded answer.
+//! * **`one_record_names_a_person_a_place_and_an_event`** — say that three
+//!   things landed on ONE record. Three `carries` lines are three claims about
+//!   the whole answer, so they hold on three records naming one thing each,
+//!   which is the easy case rather than the one being watched.
 //! * **`a_colleague_exists_with_its_box`**, **`the_pile_is_in_the_colleagues_box`**
 //!   and **`what_became_of_the_pile_is_on_the_record`** — **name a thing the
 //!   OCCUPANT named.** A lock's query is text written before the run, and these
@@ -53,7 +57,7 @@ type Hatch = (&'static str, fn() -> Box<dyn Checks>);
 
 /// **Every named check this build ships.** A room adds one line here and one
 /// `check` line in its document, and both are visible in the count.
-pub const CHECKS: [Hatch; 14] = [
+pub const CHECKS: [Hatch; 15] = [
     ("the_brief_left_the_box", || {
         checked(|seen| Box::pin(the_brief_left_the_box(seen)))
     }),
@@ -96,6 +100,9 @@ pub const CHECKS: [Hatch; 14] = [
     }),
     ("the_pump_reached_its_holder_in_february", || {
         checked(|seen| Box::pin(the_pump_reached_its_holder_in_february(seen)))
+    }),
+    ("one_record_names_a_person_a_place_and_an_event", || {
+        checked(|seen| Box::pin(one_record_names_a_person_a_place_and_an_event(seen)))
     }),
 ];
 
@@ -773,6 +780,72 @@ async fn the_service_landed_on_the_loop_that_already_existed(
             "no loop records a turn on {SERVICED}, so this sitting wrote nothing under {TURNS}"
         )),
     }
+}
+
+/// **The three handle kinds one record has to carry.**
+///
+/// ⛔️ **The KINDS are named and the slugs are not.** January invents the
+/// event's handle, so a check that spelled one would fail a run whose January
+/// chose a different word for the same thing — which is the fault this room
+/// removed from its late November lock.
+const NAMES_A_PERSON: &str = "@person:";
+const NAMES_A_PLACE: &str = "@place:";
+const NAMES_AN_EVENT: &str = "@event:";
+
+/// 🚨 **One record names a person, a place and an event as HANDLES.**
+///
+/// The operator names three things in one breath. A sitting that writes them as
+/// words leaves a sentence; a sitting that writes them as handles leaves
+/// pointers, and a later sitting can go from the claim to the things it names.
+///
+/// ⚠️ **A hatch, because an assertion is a substring of the WHOLE answer.**
+/// Three `carries` lines hold on three separate records naming one thing each,
+/// which is the easy case and not the one the operator asked for. **Whether the
+/// three landed on ONE record is a correlation inside one object**, and the
+/// lock format's three words do not branch — the same reason the loop's own
+/// lock is a hatch.
+///
+/// ⛔️ **The empty board is a failure with its own words.** A store the run
+/// never wrote in holds no records, and reporting *no record names three
+/// things* about it would blame a sitting for a room nobody worked.
+async fn one_record_names_a_person_a_place_and_an_event(seen: &Observed<'_>) -> Result<(), String> {
+    let read = seen
+        .room
+        .call("search", json!({"query": "*", "limit": 200}))
+        .await;
+    let parsed: Value = serde_json::from_str(&read).unwrap_or(Value::Null);
+    let Some(hits) = parsed["results"].as_array() else {
+        return Err(format!(
+            "the board came back with no results at all, so nothing here was measured: {read}"
+        ));
+    };
+    // **What a reader sees, which is the only side of a mention a room can
+    // reach.** The store keeps a badge; every read serves the handle it wears
+    // today, and the index scans through the same layer — so a hit's own text
+    // is what a later sitting would follow.
+    let written = |hit: &Value| -> String {
+        ["content", "details"]
+            .iter()
+            .filter_map(|key| hit[*key].as_str())
+            .collect::<Vec<&str>>()
+            .join(" ")
+    };
+    let kinds = [NAMES_A_PERSON, NAMES_A_PLACE, NAMES_AN_EVENT];
+    if hits
+        .iter()
+        .any(|hit| kinds.iter().all(|kind| written(hit).contains(kind)))
+    {
+        return Ok(());
+    }
+    let anywhere: Vec<&str> = kinds
+        .into_iter()
+        .filter(|kind| hits.iter().any(|hit| written(hit).contains(kind)))
+        .collect();
+    Err(format!(
+        "no one record names a person, a place and an event as handles. Across all {} records \
+         the board holds, the handle kinds written into a sentence anywhere are {anywhere:?}",
+        hits.len(),
+    ))
 }
 
 /// The other key a check-in writes in the same act as `last_check_in` —

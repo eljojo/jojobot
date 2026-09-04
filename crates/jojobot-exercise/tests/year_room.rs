@@ -31,18 +31,18 @@ const FEBRUARY: [usize; 3] = [3, 4, 5];
 const MARCH: [usize; 1] = [6];
 const APRIL: [usize; 2] = [7, 8];
 const MAY: [usize; 1] = [9];
-const JUNE: [usize; 2] = [10, 11];
-const JULY: [usize; 1] = [12];
-const AUGUST: [usize; 2] = [13, 14];
-const SEPTEMBER: [usize; 1] = [15];
-const OCTOBER: [usize; 1] = [16];
-const LATE_OCTOBER: [usize; 3] = [17, 18, 19];
-const LATE_NOVEMBER: [usize; 2] = [20, 21];
+const JUNE: [usize; 3] = [10, 11, 12];
+const JULY: [usize; 1] = [13];
+const AUGUST: [usize; 2] = [14, 15];
+const SEPTEMBER: [usize; 1] = [16];
+const OCTOBER: [usize; 1] = [17];
+const LATE_OCTOBER: [usize; 3] = [18, 19, 20];
+const LATE_NOVEMBER: [usize; 2] = [21, 22];
 
 /// How many locks the year carries.
-const LATE_DECEMBER: [usize; 2] = [22, 23];
+const LATE_DECEMBER: [usize; 2] = [23, 24];
 
-const LOCKS: usize = 24;
+const LOCKS: usize = 25;
 
 /// **The sittings a person reads**, which assert nothing and must not.
 const READ_THESE: [&str; 2] = ["Phase 12", "Phase 14"];
@@ -131,6 +131,15 @@ async fn sitting(room: &Surface, day: &str) -> String {
         .unwrap_or_else(|| panic!("answering `new` on {day} handed back no handle: {answered}"))
         .to_string()
 }
+
+/// **The operator's own sentence, written as handles rather than as words.**
+///
+/// ⚠️ **One line, and that is the point of it being a constant.** A wrapped
+/// literal whose continuation is lost stores runs of spaces mid-sentence, every
+/// check on it still passes, and the fault reaches a reader — five instances of
+/// it across three crates so far.
+const WHAT_JUNE_SAW: &str =
+    "@event:trail-survey ran on @place:north-trail with @person:milhouse and @person:nelson";
 
 /// A call an occupant would make.
 async fn did(room: &Surface, sid: &str, verb: &str, mut args: Value) -> String {
@@ -386,6 +395,59 @@ async fn may(room: &Surface, sid: &str) {
 }
 
 async fn june(room: &Surface, sid: &str) {
+    // **What the operator said, written as handles rather than as words.** The
+    // three things named in one breath land on ONE record, so a later sitting
+    // reading this claim can go from it to any of them. Filed on the club
+    // because the record names the event, and a claim cannot mention the thing
+    // it is already filed against.
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "org:north-trail-club",
+               "content": WHAT_JUNE_SAW,
+               "provenance": "testimony"}),
+    )
+    .await;
+    for who in ["person:milhouse", "person:nelson"] {
+        did(
+            room,
+            sid,
+            "capture",
+            json!({"subject": who, "content": "was at the trail survey",
+                   "provenance": "testimony",
+                   "shape": "attendance", "object": "event:trail-survey"}),
+        )
+        .await;
+    }
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "rhythm:chain-check", "content": "did the bike chain this morning",
+               "provenance": "testimony",
+               "check_in": "ran"}),
+    )
+    .await;
+}
+
+/// **A June that records the same three things as WORDS.**
+///
+/// Everything else this sitting does is unchanged: the attendance edges are
+/// drawn and the loop is checked in, so every other June lock holds. **Only the
+/// sentence changes** — the operator's three nouns are written as text rather
+/// than as handles, which is what a session that never reached for a mention
+/// leaves behind.
+async fn june_records_in_words(room: &Surface, sid: &str) {
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "org:north-trail-club",
+               "content": "the trail survey ran on the north trail with Milhouse and Nelson",
+               "provenance": "testimony"}),
+    )
+    .await;
     for who in ["person:milhouse", "person:nelson"] {
         did(
             room,
@@ -741,6 +803,21 @@ async fn worked_the_year(room: &Surface) -> Vec<Boundary> {
     work_the_year(room, &room_document(), &WORKED, &[]).await
 }
 
+/// Where June sits in the year, named because two guilty plays share it.
+const JUNE_AT: usize = 5;
+
+/// **A second guilt for June, named by an index no sitting has.**
+///
+/// The guilty list is indexed by sitting and June already carries one wrong —
+/// setting the loop's key by hand. This is the other one, and the two must stay
+/// apart: a play carrying both would turn two locks red at once and no case
+/// could say which wrong it measured.
+///
+/// ⚠️ **The year holds fifteen sittings, so `15` addresses none of them.** It
+/// names a variant rather than a phase, which is why it is a constant with this
+/// paragraph beside it rather than a number in a call.
+const JUNE_IN_WORDS: usize = 15;
+
 /// **The sittings that record something**, named rather than counted: the two
 /// a person reads write nothing by design, and one of them sits between the
 /// sittings that do, so a range cannot say it.
@@ -782,11 +859,14 @@ async fn work_the_year(
                 .unwrap_or_else(|| panic!("{} claims no day", phase.name)),
         )
         .await;
-        if guilty.contains(&at) {
+        if guilty.contains(&at) || (at == JUNE_AT && guilty.contains(&JUNE_IN_WORDS)) {
             // **The sitting does the wrong thing, in its own window.** Here
             // rather than in a second driver: two copies of this order was how
             // they came to disagree about which sittings write.
             match at {
+                JUNE_AT if guilty.contains(&JUNE_IN_WORDS) => {
+                    june_records_in_words(room, sid).await
+                }
                 6 => july_takes_the_claim_back(room, sid).await,
                 7 => august_puts_a_third_person_there(room, sid).await,
                 10 => late_october_puts_a_third_person_there(room, sid).await,
@@ -1379,6 +1459,51 @@ async fn late_octobers_window_catches_the_sitting_that_invents_an_attendee() {
         judged[LATE_OCTOBER[2]].held,
         "the honest late October failed its own lock, so the check cannot tell an attendance \
          taken away from one added: {}",
+        saying(&judged),
+    );
+}
+
+/// 🚨 **A June that wrote WORDS where it could have written handles fails, and
+/// everything else it recorded still holds.**
+///
+/// ⛔️ **This is the discrimination the room can make, and it is about the
+/// SITTING rather than about the build.** A mention is stored as a badge and
+/// served as the handle it wears today, so on a build with nothing renaming
+/// anything the served text is what was typed either way — text in, same text
+/// out, whether or not the layer is in the chain. **What a room measures is the
+/// model**: whether a session told nothing reached for the capability. Whether
+/// the layer works is the contract's question, and it is asked of both stores
+/// there.
+///
+/// **Paired in one case**, because a lock that only fails is a lock that could
+/// be failing for any reason: the guilty June draws the same edges and checks
+/// the same loop in, so its other locks hold and the one that moves is the one
+/// about handles.
+#[tokio::test]
+async fn a_june_that_wrote_words_leaves_a_later_sitting_nothing_to_follow() {
+    let (_room, surface) = furnished().await;
+    let in_words = work_the_year(&surface, &room_document(), &WORKED, &[JUNE_IN_WORDS]).await;
+    let judged = judge_all(&surface, &in_words).await;
+    assert!(
+        !judged[JUNE[2]].held,
+        "a June that named three things as words held the lock about handles, so the room          cannot tell a pointer from a sentence: {}",
+        saying(&judged),
+    );
+    // **The positive that says the guilty sitting is otherwise a good one.**
+    // Without it this passes on a June that did nothing at all, and the lock
+    // would be reporting an absent sitting rather than a worded one.
+    assert!(
+        judged[JUNE[0]].held && judged[JUNE[1]].held,
+        "the guilty June failed a lock it was meant to hold, so the case above is measuring a          sitting that did not happen: {}",
+        saying(&judged),
+    );
+
+    let (_room, surface) = furnished().await;
+    let boundaries = worked_the_year(&surface).await;
+    let judged = judge_all(&surface, &boundaries).await;
+    assert!(
+        judged[JUNE[2]].held,
+        "the year wrote the operator's three nouns as handles and the lock still failed: {}",
         saying(&judged),
     );
 }

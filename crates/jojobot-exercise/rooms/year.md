@@ -254,7 +254,7 @@ say     May: the washout was not filed against the trail that already existed �
 >
 > Nobody will answer you, but your answer is being read. You must answer.
 >
-> start jojobot as assistant — it is 14 June 2026, the survey happened today and Milhouse and Nelson were both there, and I did the bike chain this morning
+> start jojobot as assistant — it is 14 June 2026, the survey happened today up on the north trail and Milhouse and Nelson were both there, and I did the bike chain this morning
 
 ```locks
 # Attendance is an edge. August walks it.
@@ -274,6 +274,25 @@ say     June: the survey cannot be walked to who was at it, so August's question
 recall {"kind": "rhythm", "history": "last_check_in"}
 carries "value":"2026-06-14"
 say     June: the chain check does not say it was done on the day this sitting claims, so it is either untouched or stamped with the day the run happened
+
+# 🚨 **A handle written INTO a sentence, which no sitting has ever done.** The
+# operator names a person, a place and an event in one breath, and a session
+# that writes them as words leaves text; a session that writes them as handles
+# leaves pointers a later sitting can follow.
+#
+# ⚠️ **A hatch, because an assertion is a substring of the WHOLE answer.** Three
+# `carries` lines would hold on three separate records naming one thing each,
+# which is the easy case and not the one the operator asked for. Whether the
+# three landed on ONE record is a correlation inside one object, and this
+# format's three words do not branch — the same reason the loop's own lock two
+# sittings from here is a hatch.
+#
+# ⛔️ **No handle is named here.** January invents the event's, so a lock that
+# spelled it would fail a run whose January called it something else. What is
+# asked is that one record names a person, a place and an event, whatever they
+# are called.
+check   one_record_names_a_person_a_place_and_an_event
+say     June: no single record names a person, a place and an event as handles, so the sitting wrote words where it could have written pointers and a later sitting has nothing to follow
 ```
 
 ## Phase 7 — July, a claim taken back
