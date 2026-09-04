@@ -229,9 +229,17 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
     async fn referring_to(&self, target: &EntityId) -> Result<Vec<Fact>, MemoryError> {
         self.inner.referring_to(target).await
     }
-    async fn children(&self, parent: &EntityId) -> Result<Vec<EntityId>, MemoryError> {
-        self.inner.children(parent).await
-    }
+    // **`children` is deliberately NOT overridden here** (rule 234). The port
+    // derives it from `list_entities`, and this layer's `list_entities` already
+    // resolves what the build supplies — so the default asks the right question
+    // by construction. Forwarding it to the inner store asked the store's own
+    // rows, which hold no supplied record, and a read that resolves the record
+    // while the read beside it says the handle names nothing is the two halves
+    // disagreeing about what exists.
+    //
+    // ⛔️ **Not a rescue either.** An arm turning the miss into an empty answer
+    // would hide a child the operator really filed under a supplied record; the
+    // default returns it.
     /// **A supplied record is not the caller's to rename.**
     ///
     /// It is refused the way creating one under that handle is refused, and for
@@ -711,6 +719,60 @@ mod tests {
                 .iter()
                 .any(|e| e.id == id),
             "the build's record was written down, so this instance is frozen on this build",
+        );
+    }
+
+    /// 🚨 **Asking what sits under a supplied record is an answer, not a
+    /// miss.**
+    ///
+    /// A read that resolves the record while the read beside it says the handle
+    /// names nothing is the two halves disagreeing about what exists — the
+    /// failure rule 234 is about, met a second time at a second read.
+    ///
+    /// **Three answers in one case, because the middle one is what a rescue
+    /// gets wrong.** A supplied record nothing sits under answers with none; a
+    /// supplied record something DOES sit under answers with that child, which
+    /// an empty rescue would hide; and a handle nobody has is still a miss.
+    #[tokio::test]
+    async fn what_sits_under_a_supplied_record_is_an_answer_and_a_missing_handle_is_still_a_miss() {
+        let shipped = EntityId("view:loops".into());
+        let under = EntityId("view:my-week".into());
+        // **Both halves told the same set**, as the binary wires it: the store
+        // below has to see the supplied record when its guard asks whether the
+        // parent of this write exists.
+        let supplied = Provisions::new(vec![shipped_record("loops")]);
+        let store = InMemoryMemory::booted().knowing(supplied.clone());
+        let over = Provisioned::new(store, supplied);
+
+        assert_eq!(
+            over.children(&shipped).await.expect("the read answers"),
+            Vec::<EntityId>::new(),
+            "a supplied record nothing sits under answers with none rather than a miss",
+        );
+
+        // **A child filed under it**, which is what tells a rescue from a read.
+        let mut child = NewEntity::new(under.clone(), "My Week", "user-named");
+        child.parent = Some(shipped.clone());
+        over.add_entity(child)
+            .await
+            .expect("the operator files one under it")
+            .written()
+            .expect("nothing collides with it");
+        assert_eq!(
+            over.children(&shipped).await.expect("the read answers"),
+            vec![under],
+            "the child under a supplied record came back empty, so the read is a rescue \
+             rather than an answer",
+        );
+
+        // …and the absence this read exists to report still reports.
+        assert!(
+            matches!(
+                over.children(&EntityId("view:nobody-has-this".into()))
+                    .await,
+                Err(jojobot_domain::memory::MemoryError::UnknownEntity { .. }),
+            ),
+            "a handle nobody has stopped being a miss",
         );
     }
 

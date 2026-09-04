@@ -87,6 +87,7 @@ const ROSTER: &[&str] = &[
     "view:my-loops",
     "view:my-people",
     "view:names-no-kind",
+    "view:nobody-has-this",
     "bot:delta",
     "bot:epsilo",
     "bot:epsilon",

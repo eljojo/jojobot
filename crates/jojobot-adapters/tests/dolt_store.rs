@@ -445,6 +445,70 @@ async fn dolt_satisfies_the_memory_contract() {
     store.stop().await;
 }
 
+/// **…and what sits under a supplied record answers over the real store too.**
+///
+/// The read is derived from `list_entities` rather than implemented by either
+/// store, so the claim is about which layer answers it — and that is worth
+/// asking of the real store, because the row half is where a supplied record is
+/// genuinely absent.
+#[tokio::test]
+async fn what_sits_under_a_supplied_record_answers_over_the_real_store() {
+    let scratch = Scratch::new("supplied-children");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("suppliedchildren")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+
+    let shipped = EntityId("view:loops".into());
+    let under = EntityId("view:my-week".into());
+    let supplied = Provisions::new(vec![Provision::record(
+        jojobot_domain::memory::Entity {
+            id: shipped.clone(),
+            kind: jojobot_domain::memory::EntityKind::VIEW,
+            name: "The Loops".into(),
+            aliases: Vec::new(),
+            source: "jojobot".into(),
+            crm: None,
+            parent: None,
+            boot: Default::default(),
+            merged_into: None,
+            badge: None,
+        },
+        std::collections::BTreeMap::new(),
+    )]);
+    let served = Provisioned::new(
+        DoltMemory::open(pool.clone()).knowing(supplied.clone()),
+        supplied,
+    );
+
+    assert_eq!(
+        served.children(&shipped).await.expect("the read answers"),
+        Vec::<EntityId>::new(),
+        "a supplied record nothing sits under answers with none rather than a miss",
+    );
+
+    let mut child = NewEntity::new(under.clone(), "My Week", "user-named");
+    child.parent = Some(shipped.clone());
+    served
+        .add_entity(child)
+        .await
+        .expect("the operator files one under it")
+        .written()
+        .expect("nothing collides with it");
+    assert_eq!(
+        served.children(&shipped).await.expect("the read answers"),
+        vec![under],
+        "the child under a supplied record came back empty over the real store",
+    );
+
+    store.stop().await;
+}
+
 /// **The mention contract against the real store**, over the layer that
 /// resolves and renders and over the same store read bare.
 ///
