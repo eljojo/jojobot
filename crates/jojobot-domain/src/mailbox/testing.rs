@@ -468,6 +468,9 @@ fn stand_in(owner: &EntityId) -> Result<crate::memory::Entity, MailboxError> {
         crm: None,
         parent: None,
         boot: Default::default(),
+        // A stand-in for a lookup, not a row: it wears no badge because there
+        // is no row behind it to keep a name for.
+        badge: None,
         merged_into: None,
     })
 }

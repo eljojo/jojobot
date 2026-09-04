@@ -257,16 +257,21 @@ impl Story {
     /// stood up the bare store would serve a jojobot poorer than the deployment
     /// it stands for, and would report the fixture's limits as the software's.
     pub async fn begin(bot: &str) -> Self {
-        Self::serve(bot, Arc::new(Self::wired(InMemoryMemory::booted()))).await
+        Self::serve(bot, Self::wired(InMemoryMemory::booted())).await
     }
 
     /// The store, plus what this build supplies over it.
-    fn wired(store: InMemoryMemory) -> Provisioned<InMemoryMemory> {
+    fn wired(store: InMemoryMemory) -> Arc<dyn jojobot_domain::memory::Memory> {
         // **Both halves are told the same set**, exactly as the binary wires
         // it: the layer above resolves supplied records into answers and the
         // store below sees them when its guard asks what exists.
         let supplied = jojobot_mcp::provisions();
-        Provisioned::new(store.knowing(supplied.clone()), supplied)
+        let resolved: Arc<dyn jojobot_domain::memory::Memory> =
+            Arc::new(Provisioned::new(store.knowing(supplied.clone()), supplied));
+        // **And mentions above that, exactly where the binary puts them**: a
+        // mention may name a record the build supplies, so this layer has to
+        // see one.
+        Arc::new(jojobot_domain::memory::mention::Mentioning::new(resolved))
     }
 
     /// **Serve a jojobot on an instance an older build left behind** — a store
@@ -289,7 +294,7 @@ impl Story {
         .await
         .expect("an older build declared its own kinds");
         store.boot();
-        Self::serve(bot, Arc::new(Self::wired(store))).await
+        Self::serve(bot, Self::wired(store)).await
     }
 
     /// **Serve a jojobot that is acting out a day**, the way an operator does
@@ -302,7 +307,7 @@ impl Story {
         // fixture that clocked only the handler could not see it move.
         Self::serve_on_clock(
             bot,
-            Arc::new(Self::wired(InMemoryMemory::booted().on_clock(clock))),
+            Self::wired(InMemoryMemory::booted().on_clock(clock)),
             clock,
         )
         .await

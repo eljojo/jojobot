@@ -39,6 +39,10 @@ fn view(handle: &str, name: &str, keys: &[(&str, &str)]) -> Provision {
             parent: None,
             boot: Default::default(),
             merged_into: None,
+            // **A record the build supplies is in no table**, so it wears no
+            // badge: a badge is the name a ROW keeps, and there is no row here
+            // to rename. Text cannot store a mention of one.
+            badge: None,
         },
         keys.iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))

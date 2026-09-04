@@ -380,4 +380,40 @@ mod tests {
             "a capitalized kind stays rejected"
         );
     }
+
+    /// 🚨 **A badge never reaches a caller**, on the wire or through serde.
+    ///
+    /// The handle is the only public name (rule 205): a caller sends handles,
+    /// reads handles, and has no word for the name a row keeps underneath. A
+    /// badge that leaked would become something a client stored and sent back,
+    /// and the one thing it must never be is addressable.
+    ///
+    /// **Both doors in one case.** `entity_json` is hand-built and could simply
+    /// omit it; `Entity` also derives `Serialize`, and a field added without
+    /// `skip` would ride out through any path that serialises the struct.
+    #[test]
+    fn an_entitys_badge_reaches_no_caller() {
+        let entity = Entity {
+            id: EntityId::person("person:alpha"),
+            kind: EntityKind::PERSON,
+            name: "Alpha".into(),
+            aliases: Vec::new(),
+            source: "the roster".into(),
+            crm: None,
+            parent: None,
+            boot: Default::default(),
+            merged_into: None,
+            badge: Some("zzzzzz".into()),
+        };
+        let served = entity_json(&entity).to_string();
+        assert!(
+            !served.contains("zzzzzz") && !served.contains("badge"),
+            "the wire answer carries the badge: {served}",
+        );
+        let serialised = serde_json::to_string(&entity).expect("an entity serialises");
+        assert!(
+            !serialised.contains("zzzzzz") && !serialised.contains("badge"),
+            "serde carries the badge out: {serialised}",
+        );
+    }
 }

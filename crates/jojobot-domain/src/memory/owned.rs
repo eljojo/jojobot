@@ -89,8 +89,12 @@ pub enum Supplies {
     /// record answers every read a stored one answers, so the code that uses
     /// it cannot tell which half supplied it — which is the whole point, and
     /// what keeps a capability from forking over where its data came from.
+    ///
+    /// **The entity is boxed**: a supplied record is the rare variant and a
+    /// paragraph is the common one, so carrying the whole record inline would
+    /// make every provision the size of the largest.
     Record {
-        entity: Entity,
+        entity: Box<Entity>,
         fields: BTreeMap<String, String>,
     },
 }
@@ -125,7 +129,10 @@ impl Provision {
     pub fn record(entity: Entity, fields: BTreeMap<String, String>) -> Self {
         Provision {
             at: entity.id.clone(),
-            supplies: Supplies::Record { entity, fields },
+            supplies: Supplies::Record {
+                entity: Box::new(entity),
+                fields,
+            },
         }
     }
 }
@@ -153,7 +160,7 @@ impl Provisions {
     /// Every whole record this build supplies.
     pub fn records(&self) -> impl Iterator<Item = (&Entity, &BTreeMap<String, String>)> {
         self.0.iter().filter_map(|p| match &p.supplies {
-            Supplies::Record { entity, fields } => Some((entity, fields)),
+            Supplies::Record { entity, fields } => Some((entity.as_ref(), fields)),
             Supplies::Prose(_) => None,
         })
     }

@@ -87,6 +87,7 @@ mod tests {
             parent: parent.map(|p| EntityId(p.to_string())),
             boot: Boot::default(),
             merged_into: None,
+            badge: None,
         }
     }
 

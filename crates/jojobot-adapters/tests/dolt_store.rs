@@ -445,6 +445,57 @@ async fn dolt_satisfies_the_memory_contract() {
     store.stop().await;
 }
 
+/// **The mention contract against the real store**, over the layer that
+/// resolves and renders and over the same store read bare.
+///
+/// The two handles address one database: the claim is that what is KEPT and
+/// what is SERVED differ, and a case holding only one of them cannot make it.
+#[tokio::test]
+async fn the_dolt_store_keeps_a_mention_as_a_badge_and_serves_it_as_a_handle() {
+    let scratch = Scratch::new("mentions");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("mentions")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+
+    let bare: Arc<dyn Memory> = Arc::new(DoltMemory::open(pool.clone()));
+    memory::run_all_mentioning(
+        &jojobot_domain::memory::mention::Mentioning::new(bare.clone()),
+        &*bare,
+        &DoltRehandles(pool.clone()),
+    )
+    .await;
+
+    store.stop().await;
+}
+
+/// **The real store's way of moving a handle**: the row is rewritten in place,
+/// badge and all.
+///
+/// There is no rename verb and this does not add one. What the mention layer
+/// claims is that text survives a handle moving, and the only way that state
+/// arises today is an edit made outside jojobot — so that is how the case
+/// produces it.
+struct DoltRehandles(sqlx::MySqlPool);
+
+#[async_trait::async_trait]
+impl memory::Rehandles for DoltRehandles {
+    async fn rehandle(&self, from: &EntityId, to: &EntityId) {
+        sqlx::query("UPDATE entity SET id = ?, kind = ? WHERE id = ?")
+            .bind(to.as_str())
+            .bind(to.kind_token())
+            .bind(from.as_str())
+            .execute(&self.0)
+            .await
+            .expect("the row moves");
+    }
+}
+
 /// **…and the creation guard's two supplied-record specs**, over a real store
 /// wired with the same shipped view [`memory::SUPPLIED_VIEW_FOR_THE_GUARD_SPECS`]
 /// names — a near-miss is caught and its own override lifts it, and an exact
@@ -473,6 +524,7 @@ async fn dolt_satisfies_the_supplied_record_guard_contract() {
             parent: None,
             boot: Default::default(),
             merged_into: None,
+            badge: None,
         },
         std::collections::BTreeMap::new(),
     )]);
@@ -630,6 +682,7 @@ async fn a_record_the_build_ships_is_in_no_table_of_the_real_store() {
             parent: None,
             boot: Default::default(),
             merged_into: None,
+            badge: None,
         },
         std::collections::BTreeMap::from([("selects".to_string(), "rhythm".to_string())]),
     )]);
@@ -745,6 +798,7 @@ impl OwnerIndex for RosterOnly {
                     parent: None,
                     boot: Default::default(),
                     merged_into: None,
+                    badge: None,
                 }
             })
             .collect();

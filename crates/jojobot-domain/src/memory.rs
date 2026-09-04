@@ -26,6 +26,7 @@ pub mod entitlement;
 pub mod graph;
 pub mod guard;
 pub mod kinds;
+pub mod mention;
 pub mod owned;
 pub mod search;
 pub mod types;
@@ -377,6 +378,26 @@ pub struct Entity {
     pub parent: Option<EntityId>,
     /// Boot tier.
     pub boot: Boot,
+    /// **The name this thing keeps when its handle changes** (rule 205).
+    ///
+    /// A handle is a path and a path moves: a thing is renamed, reparented or
+    /// retyped, and everything holding the old handle is left pointing at
+    /// nothing. So a row wears a second name that nobody chose and nobody can
+    /// change, and text that names this thing stores THAT.
+    ///
+    /// ⛔️ **Never accepted from a caller and never served outward.** The
+    /// handle stays the only public name: a caller sends handles, reads
+    /// handles, and has no word for this. It is on the port because the two
+    /// stores both have to answer for it and because resolving a mention needs
+    /// to travel both ways — handle to badge on the way in, badge to handle on
+    /// the way out.
+    ///
+    /// **`None` is a row written before the column existed**, and a store fills
+    /// those in at startup rather than leaving them. It is not a default and
+    /// not a value: a row sharing a default with every other row would make the
+    /// column look populated while saying nothing.
+    #[serde(skip)]
+    pub badge: Option<String>,
 }
 
 impl Entity {
@@ -3668,6 +3689,24 @@ mod tests {
         contract::run_all(&InMemoryMemory::booted()).await;
     }
 
+    /// **The mention contract against the fake**, over the layer that resolves
+    /// and renders and over the same store read bare.
+    ///
+    /// The two handles address one store: the claim is that what is KEPT and
+    /// what is SERVED differ, and a case holding only one of them cannot make
+    /// it.
+    #[tokio::test]
+    async fn the_fake_stores_a_mention_as_a_badge_and_serves_it_as_a_handle() {
+        let store = std::sync::Arc::new(InMemoryMemory::booted());
+        let bare: std::sync::Arc<dyn Memory> = store.clone();
+        contract::run_all_mentioning(
+            &mention::Mentioning::new(bare.clone()),
+            &*bare,
+            &contract::FakeRehandles(store),
+        )
+        .await;
+    }
+
     /// A store wired with a supplied record, for the two creation-guard specs
     /// below that need one — `run_all` above never wires one, so these run on
     /// their own.
@@ -3683,6 +3722,7 @@ mod tests {
                 parent: None,
                 boot: Default::default(),
                 merged_into: None,
+                badge: None,
             },
             BTreeMap::new(),
         )]))
@@ -4109,6 +4149,7 @@ mod tests {
             parent: None,
             boot: Boot::OnDemand,
             merged_into: None,
+            badge: None,
         };
 
         apply_entity_patch(
@@ -4180,6 +4221,7 @@ mod tests {
             parent: None,
             boot: Boot::OnDemand,
             merged_into: None,
+            badge: None,
         };
         assert_eq!(
             entity("Alpha", vec!["Al".into(), "Alph".into()]).labels(),

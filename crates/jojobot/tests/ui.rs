@@ -100,6 +100,7 @@ async fn memory_with_an_orphan() -> Arc<dyn Memory> {
         parent: Some(EntityId("person:ghost".into())),
         boot: Boot::default(),
         merged_into: None,
+        badge: None,
     });
     store
 }

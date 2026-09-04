@@ -1071,6 +1071,7 @@ mod tests {
                 parent: None,
                 boot: Boot::OnDemand,
                 merged_into: None,
+                badge: None,
             },
             doc_id: "doc-alpha".into(),
             edges: Vec::new(),

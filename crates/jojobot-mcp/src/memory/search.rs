@@ -1388,6 +1388,7 @@ mod tests {
                     parent: None,
                     boot: Boot::OnDemand,
                     merged_into: None,
+                    badge: None,
                 },
                 doc_id: "doc-9".into(),
                 edges: Vec::new(),
@@ -1899,6 +1900,7 @@ mod tests {
             parent: None,
             boot: Boot::OnDemand,
             merged_into: None,
+            badge: None,
         };
         let fact = Fact {
             id: FactId("f3".into()),
@@ -1931,6 +1933,7 @@ mod tests {
             parent: None,
             boot: Boot::OnDemand,
             merged_into: None,
+            badge: None,
         };
         let guild = Edge::new(EdgeShape::Membership, EntityId("org:guild".into()));
         let spy = Arc::new(SpySearch::answering(vec![

@@ -957,6 +957,9 @@ pub fn projected(session: &Session) -> crate::memory::search::DocScan {
             parent: Some(session.bot.clone()),
             boot: Default::default(),
             merged_into: None,
+            // A session is projected as an entity so search can rank it; it is
+            // no row in the entity table, so it wears no badge.
+            badge: None,
         }),
         facts: Vec::new(),
         fields: std::collections::BTreeMap::from([

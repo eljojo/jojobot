@@ -879,6 +879,7 @@ mod tests {
             parent: None,
             boot: Boot::OnDemand,
             merged_into: None,
+            badge: None,
         };
         let row = |id: &str, subject: &str| Fact {
             id: FactId(id.into()),
@@ -961,6 +962,7 @@ mod tests {
             parent: None,
             boot: Boot::OnDemand,
             merged_into: None,
+            badge: None,
         };
         let row = |id: &str, subject: &str| Fact {
             id: FactId(id.into()),

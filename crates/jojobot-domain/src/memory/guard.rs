@@ -526,6 +526,7 @@ mod tests {
             parent: None,
             boot: Default::default(),
             merged_into: None,
+            badge: None,
         }
     }
 
@@ -865,6 +866,7 @@ mod tests {
                 parent: None,
                 boot: Default::default(),
                 merged_into: None,
+                badge: None,
             };
             let incoming = EntityId((*incoming_handle).into());
             let decision = decide(

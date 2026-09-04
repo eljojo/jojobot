@@ -202,7 +202,8 @@ impl DoltMemory {
 
     async fn index(tx: &mut Transaction<'_, MySql>) -> Result<Vec<Entity>, MemoryError> {
         let rows = sqlx::query(
-            "SELECT id, kind, name, source, crm, parent, boot, merged_into FROM entity ORDER BY id",
+            "SELECT id, kind, name, source, crm, parent, boot, merged_into, badge
+             FROM entity ORDER BY id",
         )
         .fetch_all(&mut **tx)
         .await
@@ -787,6 +788,10 @@ fn entity_from(row: &sqlx::mysql::MySqlRow, aliases: Vec<String>) -> Result<Enti
             .try_get::<Option<String>, _>("merged_into")
             .map_err(store)?
             .map(EntityId),
+        // **Read, never written from here.** A badge is minted by
+        // `write_entity` and carried across every rewrite; this is the read
+        // that lets the layer above resolve a mention both ways.
+        badge: row.try_get::<Option<String>, _>("badge").map_err(store)?,
     })
 }
 
@@ -916,6 +921,7 @@ impl Memory for DoltMemory {
             parent: new.parent,
             boot: new.boot,
             merged_into: None,
+            badge: None,
         };
         // The entity this one sits under must already exist, and must not be
         // this one. Screened after the record is assembled because a
@@ -929,9 +935,12 @@ impl Memory for DoltMemory {
                 candidates,
             });
         }
-        write_entity(&mut tx, &self.draw, &entity).await?;
+        let badge = write_entity(&mut tx, &self.draw, &entity).await?;
         tx.commit().await.map_err(store)?;
-        Ok(Guarded::Written(entity))
+        Ok(Guarded::Written(Entity {
+            badge: Some(badge),
+            ..entity
+        }))
     }
 
     async fn list_entities(&self, kind: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError> {
@@ -976,9 +985,12 @@ impl Memory for DoltMemory {
             });
         }
         apply_entity_patch(&mut entity, &patch)?;
-        write_entity(&mut tx, &self.draw, &entity).await?;
+        let badge = write_entity(&mut tx, &self.draw, &entity).await?;
         tx.commit().await.map_err(store)?;
-        Ok(Guarded::Written(entity))
+        Ok(Guarded::Written(Entity {
+            badge: Some(badge),
+            ..entity
+        }))
     }
 
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
@@ -2050,11 +2062,14 @@ async fn mint_badge(tx: &mut Transaction<'_, MySql>, draw: &Draw) -> Result<Stri
         .ok_or_else(|| MemoryError::Store("no free entity badge could be drawn".into()))
 }
 
+/// **Hands back the badge the row wears afterwards**, so the caller's copy of
+/// the entity says what the row says. A receipt carrying no badge while the row
+/// wears one is the two halves disagreeing about the same record.
 async fn write_entity(
     tx: &mut Transaction<'_, MySql>,
     draw: &Draw,
     entity: &Entity,
-) -> Result<(), MemoryError> {
+) -> Result<String, MemoryError> {
     // **The prose is carried across rather than blanked.** A rewrite of an
     // entity's metadata is not a rewrite of what somebody wrote on its page,
     // and `REPLACE` deletes the row before inserting the new one.
@@ -2111,7 +2126,7 @@ async fn write_entity(
             .await
             .map_err(store)?;
     }
-    Ok(())
+    Ok(badge)
 }
 
 #[cfg(test)]

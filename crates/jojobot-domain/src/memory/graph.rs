@@ -1911,6 +1911,7 @@ mod tests {
             parent: None,
             boot: Boot::OnDemand,
             merged_into: None,
+            badge: None,
         }
     }
 

@@ -593,6 +593,7 @@ mod tests {
                 parent: None,
                 boot: Default::default(),
                 merged_into: None,
+                badge: None,
             },
             BTreeMap::from([("selects".to_string(), "rhythm".to_string())]),
         )

@@ -15,6 +15,7 @@ use jojobot_adapters::provisioned::Provisioned;
 use jojobot_adapters::search::{IndexedMailboxes, IndexedMemory, IndexedSessions, Retrieval};
 use jojobot_domain::mailbox::{Mailboxes, OwnerIndex};
 use jojobot_domain::memory::Memory;
+use jojobot_domain::memory::mention;
 use jojobot_domain::memory::search::Search;
 use jojobot_domain::session::Sessions;
 use jojobot_domain::teaching::Teachings;
@@ -177,12 +178,18 @@ async fn main() -> anyhow::Result<()> {
     // when its guard decides whether a handle names anything, or a claim
     // pointing at a supplied record is refused as naming nothing.
     let supplied = jojobot_mcp::provisions();
-    let memory: Arc<dyn Memory> = Arc::new(Provisioned::new(
+    let resolved: Arc<dyn Memory> = Arc::new(Provisioned::new(
         DoltMemory::open(store.pool().clone())
             .knowing(supplied.clone())
             .on_clock(config.clock),
         supplied,
     ));
+    // **Mentions resolve above the supplied layer and below the index.** Above,
+    // because a mention of a record the build supplies has to see that record;
+    // below, because the index scans through here and what search holds must be
+    // what a reader sees — a claim naming a thing is findable by that thing's
+    // handle rather than by a badge nobody types.
+    let memory: Arc<dyn Memory> = Arc::new(mention::Mentioning::new(resolved));
 
     // **The kinds, before anything reads a handle.** Every kind this instance
     // holds is written and then read back, and what comes back is the set this

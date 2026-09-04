@@ -254,6 +254,23 @@ impl InMemoryMemory {
             .push(entity);
     }
 
+    /// **Move a row to another handle, keeping the badge it wears** — staged
+    /// past every verb, because no verb does this.
+    ///
+    /// There is no rename on the surface and the mention layer does not add
+    /// one. What it claims is that text survives a handle moving, and the only
+    /// way that state arises today is an edit made outside jojobot — so that is
+    /// how the case produces it.
+    pub fn rehandle_past_the_guard(&self, from: &EntityId, to: &EntityId) {
+        let mut rows = self.entities.lock().expect("fake mutex poisoned");
+        let row = rows
+            .iter_mut()
+            .find(|e| &e.id == from)
+            .expect("the row to move is there");
+        row.id = to.clone();
+        row.kind = to.kind().expect("a staged handle names a kind");
+    }
+
     /// The rows this store holds — used where a supplied record has no place
     /// (`list_entities`, and as the base [`InMemoryMemory::known`] extends).
     fn index(&self) -> Vec<Entity> {
@@ -447,6 +464,10 @@ impl Memory for InMemoryMemory {
             parent: new.parent,
             boot: new.boot,
             merged_into: None,
+            // **Minted with the row and never changed after**, which is what
+            // the real store's column does. Drawn from the same alphabet, so a
+            // case reasoning about the shape reads the same here.
+            badge: Some(crate::handle::draw(6)),
         };
         // The entity this one sits under must already exist, and must not be
         // this one. Screened after the record is assembled because a
@@ -464,13 +485,10 @@ impl Memory for InMemoryMemory {
             .lock()
             .expect("fake mutex poisoned")
             .push(entity.clone());
-        // **Minted with the entity and never changed after**, which is what the
-        // real store's column does. Drawn from the same alphabet, so a case
-        // that reasons about the shape of a document id reads the same here.
-        self.badges
-            .lock()
-            .expect("fake mutex poisoned")
-            .insert(entity.id.clone(), crate::handle::draw(6));
+        self.badges.lock().expect("fake mutex poisoned").insert(
+            entity.id.clone(),
+            entity.badge.clone().expect("a row minted here wears one"),
+        );
         Ok(Guarded::Written(entity))
     }
 
@@ -1375,6 +1393,7 @@ impl Memory for InMemoryMemory {
 pub mod contract {
     use super::*;
     use crate::memory::graph;
+    use crate::memory::mention;
     use crate::memory::search::{EdgeFilter, Hit, Search, SearchQuery};
     use crate::memory::types::{DeclaredType, Field, Origin, ValueType};
     use crate::memory::{Boot, Edge, EdgeShape, FACTS_HEADER, FactStatus, Provenance, RETRACTS};
@@ -1386,7 +1405,7 @@ pub mod contract {
     ///
     /// The gate itself has its own specs below; everywhere else, provisioning is
     /// setup, not the subject under test.
-    async fn ensure<M: Memory>(store: &M, id: &EntityId) {
+    async fn ensure<M: Memory + ?Sized>(store: &M, id: &EntityId) {
         let known = store
             .list_entities(None)
             .await
@@ -1424,7 +1443,7 @@ pub mod contract {
     /// Capture a fact the guard is expected to wave through — provisioning its
     /// subject and any edge object first, because every write that names an
     /// entity now requires one that exists.
-    async fn capture<M: Memory>(store: &M, fact: NewFact) -> Fact {
+    async fn capture<M: Memory + ?Sized>(store: &M, fact: NewFact) -> Fact {
         ensure(store, &fact.subject).await;
         if let Some(edge) = &fact.edge {
             ensure(store, &edge.object).await;
@@ -1439,7 +1458,7 @@ pub mod contract {
     }
 
     /// Add an entity the guard is expected to wave through.
-    async fn add<M: Memory>(store: &M, new: NewEntity) -> Entity {
+    async fn add<M: Memory + ?Sized>(store: &M, new: NewEntity) -> Entity {
         let id = new.id.clone();
         store
             .add_entity(new)
@@ -10541,6 +10560,460 @@ pub mod contract {
             claim_at(store, &written).await.is_some(),
             "the chain says a claim was built on {written}, where no claim is",
         );
+    }
+
+    /// **A store this suite can rename a handle in.**
+    ///
+    /// There is no rename verb and this slice does not add one, so the only way
+    /// to move a handle is the way it really happens: an edit outside jojobot.
+    /// Each store stages it in its own words, and the case that reads the
+    /// result is written once.
+    #[async_trait::async_trait]
+    pub trait Rehandles: Send + Sync {
+        /// Move a row from one handle to another, keeping the badge it wears.
+        async fn rehandle(&self, from: &EntityId, to: &EntityId);
+    }
+
+    /// 🚨 **A mention is stored as the badge and read back as the handle.**
+    ///
+    /// A handle is a path: the kind and the slug, both of which move when a
+    /// thing is renamed or retyped. Text holding the spelling is text pointing
+    /// at nothing the day either moves, and nothing indexes it or knows to go
+    /// and repair it.
+    ///
+    /// **Both halves in one read**, because either alone passes on a build that
+    /// does nothing: the stored form must NOT carry the handle, and the read
+    /// form must.
+    ///
+    /// ⭐ **Four mentions across four kinds in one claim**, which is the shape
+    /// the requirement was stated in — a case with one mention proves a
+    /// mechanism that stops at the first.
+    pub async fn a_mention_is_stored_as_a_badge_and_read_back_as_a_handle<
+        M: Memory + ?Sized,
+        B: Memory + ?Sized,
+    >(
+        mentioning: &M,
+        bare: &B,
+    ) {
+        let author = EntityId::person("person:contract-mention-author");
+        let named = [
+            ("person:contract-mention-rider", "The Rider"),
+            ("thing:contract-mention-cart", "The Cart"),
+            ("place:contract-mention-yard", "The Yard"),
+            ("pet:contract-mention-dog", "The Dog"),
+        ];
+        ensure(mentioning, &author).await;
+        for (handle, name) in named {
+            mentioning
+                .add_entity(NewEntity::new(EntityId(handle.into()), name, "the roster"))
+                .await
+                .expect("the fixture is written")
+                .written()
+                .expect("nothing on this store collides with it");
+        }
+
+        let content = concat!(
+            "@person:contract-mention-rider took @pet:contract-mention-dog to ",
+            "@place:contract-mention-yard on @thing:contract-mention-cart",
+        );
+        let written = capture(
+            mentioning,
+            NewFact::about(author.clone(), content, date(2026, 4, 18)),
+        )
+        .await;
+
+        // ① **What the store keeps carries no handle.** Read underneath the
+        // layer that renders, because every read above it would show the
+        // handles whether or not they were stored.
+        let stored = bare
+            .recall(&author)
+            .await
+            .expect("the store answers")
+            .into_iter()
+            .find(|f| f.id == written.id)
+            .expect("the claim is there")
+            .content;
+        for (handle, _) in named {
+            assert!(
+                !stored.contains(handle),
+                "the stored claim still carries the handle {handle}, so a rename breaks it: \
+                 {stored}",
+            );
+        }
+        assert_eq!(
+            stored.matches(mention::MARK).count(),
+            named.len(),
+            "every mention was stored resolved, not just the first: {stored}",
+        );
+
+        // ② …and the read gives every one of them back as a handle.
+        let read = mentioning
+            .recall(&author)
+            .await
+            .expect("the store answers")
+            .into_iter()
+            .find(|f| f.id == written.id)
+            .expect("the claim is there")
+            .content;
+        for (handle, _) in named {
+            assert!(
+                read.contains(handle),
+                "the read left out the mention of {handle}: {read}",
+            );
+        }
+    }
+
+    /// 🚨 **A mention of a thing that moves renders as where it is now**, with
+    /// nothing rewritten anywhere.
+    ///
+    /// **Paired with the stored form in the same read**, because a build that
+    /// rewrote every claim on a rename would pass the first assertion and fail
+    /// the second — and the two are the difference between a pointer and a
+    /// find-and-replace.
+    pub async fn a_mention_follows_a_thing_that_is_rehandled<
+        M: Memory + ?Sized,
+        B: Memory + ?Sized,
+    >(
+        mentioning: &M,
+        bare: &B,
+        rehandles: &dyn Rehandles,
+    ) {
+        let author = EntityId::person("person:contract-mention-moved");
+        let was = EntityId("thing:contract-mention-was".into());
+        let now = EntityId("work:contract-mention-now".into());
+        ensure(mentioning, &author).await;
+        mentioning
+            .add_entity(NewEntity::new(was.clone(), "The Moved One", "the roster"))
+            .await
+            .expect("the fixture is written")
+            .written()
+            .expect("nothing collides with it");
+
+        let written = capture(
+            mentioning,
+            NewFact::about(
+                author.clone(),
+                "the survey went out on @thing:contract-mention-was",
+                date(2026, 4, 18),
+            ),
+        )
+        .await;
+        let before = read_claim(mentioning, &author, &written.id).await;
+        assert!(
+            before.contains(was.as_str()),
+            "the mention reads as the handle it was written with: {before}",
+        );
+
+        // **A retype is a rename** (rule 202): the kind moves and the row is
+        // the same row, which is exactly what the badge is for.
+        rehandles.rehandle(&was, &now).await;
+
+        let after = read_claim(mentioning, &author, &written.id).await;
+        assert!(
+            after.contains(now.as_str()),
+            "the mention did not follow the thing to its new handle: {after}",
+        );
+        assert!(
+            !after.contains(was.as_str()),
+            "the mention still reads as the handle nobody answers to: {after}",
+        );
+        // ⭐ **And nothing was rewritten to do it.** The claim in the store says
+        // exactly what it said before the move.
+        let stored = bare
+            .recall(&author)
+            .await
+            .expect("the store answers")
+            .into_iter()
+            .find(|f| f.id == written.id)
+            .expect("the claim is there")
+            .content;
+        assert!(
+            !stored.contains(now.as_str()) && !stored.contains(was.as_str()),
+            "the stored claim was rewritten, so this is find-and-replace rather than a \
+             pointer: {stored}",
+        );
+    }
+
+    /// 🚨 **A link that leads nowhere and text that was never a link render
+    /// differently, and neither renders bare.**
+    ///
+    /// They are told apart because they are STORED differently, never by how
+    /// they are dressed: one is a badge nothing wears, the other is a handle
+    /// nobody answers to. **Both in one read**, because a build that marked
+    /// everything the same way would satisfy either half alone.
+    ///
+    /// Written through the bare store, which is how both really arise: text
+    /// that predates this layer, and a row that left the store afterwards.
+    pub async fn a_dead_link_and_text_that_was_never_a_link_read_differently<
+        M: Memory + ?Sized,
+        B: Memory + ?Sized,
+    >(
+        mentioning: &M,
+        bare: &B,
+    ) {
+        let author = EntityId::person("person:contract-mention-broken");
+        ensure(bare, &author).await;
+        let dead = format!("{}zzzzzz", mention::MARK);
+        let never = "@person:contract-mention-nobody";
+        let written = capture(
+            bare,
+            NewFact::about(
+                author.clone(),
+                format!("the note pointed at {dead} and at {never}"),
+                date(2026, 4, 18),
+            ),
+        )
+        .await;
+
+        let read = read_claim(mentioning, &author, &written.id).await;
+        assert!(
+            read.contains("zzzzzz"),
+            "the dead link keeps its badge, so a person has something to look for: {read}",
+        );
+        assert!(
+            read.contains(never),
+            "the text that was never a link is still the words the author wrote: {read}",
+        );
+        // **Neither is served as it was stored**, which is what *never bare*
+        // means: a broken pointer that reads as ordinary text reads as a
+        // complete sentence.
+        assert!(
+            !read.contains(&format!("{dead} and")),
+            "the dead link was served bare: {read}",
+        );
+        assert!(
+            !read.contains(&format!("{never}\""))
+                && read != stored_of(bare, &author, &written.id).await,
+            "the never-a-link text was served bare: {read}",
+        );
+        // ⭐ **And the two are marked differently**, which is the whole claim:
+        // a reader can tell *this pointed somewhere and the thing is gone* from
+        // *this was never a pointer at all*.
+        let after_dead = read
+            .split_once("zzzzzz")
+            .expect("the dead link is in the answer")
+            .1;
+        let after_never = read
+            .split_once(never)
+            .expect("the never-a-link text is in the answer")
+            .1;
+        assert_ne!(
+            mark_at(after_dead),
+            mark_at(after_never),
+            "the two render identically, so nothing tells them apart: {read}",
+        );
+    }
+
+    /// The bracketed note a render leaves after a mention it could not make a
+    /// link, or the empty string where it left none.
+    fn mark_at(rest: &str) -> &str {
+        let rest = rest.trim_start();
+        match rest.starts_with('(') {
+            true => rest.split_once(')').map_or("", |(mark, _)| mark),
+            false => "",
+        }
+    }
+
+    async fn read_claim<M: Memory + ?Sized>(store: &M, subject: &EntityId, id: &FactId) -> String {
+        stored_of(store, subject, id).await
+    }
+
+    async fn stored_of<M: Memory + ?Sized>(store: &M, subject: &EntityId, id: &FactId) -> String {
+        store
+            .recall(subject)
+            .await
+            .expect("the store answers")
+            .into_iter()
+            .find(|f| &f.id == id)
+            .expect("the claim is there")
+            .content
+    }
+
+    /// **The fake's way of moving a handle**: rewrite the row in place, badge
+    /// and all, which is what a hand edit outside jojobot does to a real store.
+    pub struct FakeRehandles(pub std::sync::Arc<InMemoryMemory>);
+
+    #[async_trait::async_trait]
+    impl Rehandles for FakeRehandles {
+        async fn rehandle(&self, from: &EntityId, to: &EntityId) {
+            self.0.rehandle_past_the_guard(from, to);
+        }
+    }
+
+    /// 🚨 **A mention naming nothing is refused, and nothing is written.**
+    ///
+    /// The rule an edge's object already faces and a record's refs already
+    /// face: every entity a claim names must already exist. A mention treated
+    /// more loosely would be the same act guarded in one column and waved
+    /// through in the next — and the place it is waved through is the one place
+    /// nobody looks, because it reads as a sentence.
+    ///
+    /// **Paired with the write that must still land**, or a build refusing
+    /// every claim with an `@` in it passes the first half.
+    pub async fn a_mention_naming_nothing_is_refused_and_writes_nothing<
+        M: Memory + ?Sized,
+        B: Memory + ?Sized,
+    >(
+        mentioning: &M,
+        bare: &B,
+    ) {
+        let author = EntityId::person("person:contract-mention-typist");
+        ensure(mentioning, &author).await;
+        let before = bare.recall(&author).await.expect("the store answers").len();
+
+        let refused = mentioning
+            .capture(NewFact::about(
+                author.clone(),
+                "the note named @person:contract-mention-nobody",
+                date(2026, 4, 18),
+            ))
+            .await
+            .expect("a refusal is an answer rather than an error");
+        match &refused {
+            Guarded::Blocked { attempted, .. } => assert_eq!(
+                attempted.as_str(),
+                "person:contract-mention-nobody",
+                "the refusal names the mention that could not be followed",
+            ),
+            Guarded::Written(written) => panic!(
+                "a claim naming something that is not there was stored: {}",
+                written.content
+            ),
+        }
+        assert_eq!(
+            bare.recall(&author).await.expect("the store answers").len(),
+            before,
+            "the refused write left a record behind",
+        );
+
+        // …and a claim mentioning something that IS there still lands.
+        let landed = capture(
+            mentioning,
+            NewFact::about(
+                author.clone(),
+                "the note named @person:contract-mention-typist",
+                date(2026, 4, 18),
+            ),
+        )
+        .await;
+        assert!(
+            landed.content.contains("person:contract-mention-typist"),
+            "a mention of something that exists is written and read back: {}",
+            landed.content,
+        );
+    }
+
+    /// 🚨 **Every read that returns text serves handles, and no read serves a
+    /// badge.**
+    ///
+    /// A layer that renders text has to cover every read that returns any, and
+    /// a read added later inherits nothing — so the case walks them rather than
+    /// trusting that one implies the rest. **A badge reaching a caller is the
+    /// failure**: it is not addressable, nothing accepts it back, and a client
+    /// that stored one would be holding a name jojobot has no verb for.
+    pub async fn no_read_serves_a_badge_and_every_one_serves_the_handle<M: Memory + ?Sized>(
+        store: &M,
+    ) {
+        let author = EntityId::person("person:contract-mention-bookkeeper");
+        let named = EntityId("place:contract-mention-inn".into());
+        ensure(store, &author).await;
+        store
+            .add_entity(NewEntity::new(named.clone(), "The Inn", "the roster"))
+            .await
+            .expect("the fixture is written")
+            .written()
+            .expect("nothing collides with it");
+
+        // A page, a claim, a correction, a note on a key, and a retraction —
+        // every door text leaves this store by.
+        let page = store
+            .set_prose(&author, "keeps the books at @place:contract-mention-inn")
+            .await
+            .expect("the page is written");
+        let written = capture(
+            store,
+            NewFact {
+                details: Some("first heard at @place:contract-mention-inn".into()),
+                fields: [("tabs".to_string(), "3".to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(
+                    author.clone(),
+                    "was owed money by @place:contract-mention-inn",
+                    date(2026, 4, 18),
+                )
+            },
+        )
+        .await;
+        store
+            .update_fact(
+                &written.address(),
+                FactPatch {
+                    content: Some("was owed nothing by @place:contract-mention-inn".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("the correction lands")
+            .written()
+            .expect("nothing blocks it");
+
+        let mut served: Vec<String> = vec![page];
+        served.push(
+            store
+                .scan_entity(&author)
+                .await
+                .expect("the scan reads")
+                .expect("the author is a document")
+                .prose,
+        );
+        for write in store
+            .claim_history(&written.address())
+            .await
+            .expect("the chain reads")
+        {
+            served.push(write.content);
+            served.extend(write.details);
+        }
+        let taken_back = store
+            .retract(
+                &written.address(),
+                Some("nobody at @place:contract-mention-inn remembers it"),
+                date(2026, 4, 19),
+            )
+            .await
+            .expect("the retraction lands");
+        served.push(taken_back.record.content);
+        served.push(taken_back.retracted.content);
+
+        for text in &served {
+            assert!(
+                !text.contains(mention::MARK),
+                "a badge reached a caller, which is a name nothing here accepts back: {text}",
+            );
+        }
+        assert!(
+            served
+                .iter()
+                .filter(|text| text.contains(named.as_str()))
+                .count()
+                >= 5,
+            "some read served text with the mention taken out of it: {served:?}",
+        );
+    }
+
+    /// The mention contract, over a store that resolves and renders them and
+    /// the same store read bare.
+    pub async fn run_all_mentioning<M: Memory + ?Sized, B: Memory + ?Sized>(
+        mentioning: &M,
+        bare: &B,
+        rehandles: &dyn Rehandles,
+    ) {
+        a_mention_is_stored_as_a_badge_and_read_back_as_a_handle(mentioning, bare).await;
+        a_mention_follows_a_thing_that_is_rehandled(mentioning, bare, rehandles).await;
+        a_dead_link_and_text_that_was_never_a_link_read_differently(mentioning, bare).await;
+        a_mention_naming_nothing_is_refused_and_writes_nothing(mentioning, bare).await;
+        no_read_serves_a_badge_and_every_one_serves_the_handle(mentioning).await;
     }
 
     pub async fn run_all<M: Memory>(store: &M) {
