@@ -533,9 +533,13 @@ async fn view_section(
             kind: Some(kind),
             ..graph::Selection::default()
         },
+        // **The objects, and nothing of each.** A view's `shows` says what of
+        // each one comes back on a READ; this is a directory listing, and it
+        // lists. Asking for prose here would cost a page per result and put
+        // none of it on screen.
         include: graph::Include {
-            facts: asked.facts,
-            prose: asked.prose || asked.charter,
+            facts: false,
+            prose: false,
         },
         follow: None,
         history: None,
