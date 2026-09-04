@@ -167,6 +167,18 @@ Shipped and live:
   and reports as absent rather than borrowing the claim's.** **The surface says so at the moment of the write**,
   because a capability a caller does not know about does not change what the
   caller does.
+- **A handle written into text is a link, not a spelling.** A caller writes
+  `@kind:slug` into a claim's words, its nuance or a thing's prose; jojobot
+  stores the permanent id that row wears and serves back the handle the thing
+  answers to now. **So renaming, reparenting or retyping a thing changes what
+  every past mention reads as, and no stored text is rewritten.** **A mention
+  naming something absent is refused with candidates**, the rule an edge's
+  object already faces — ⚠️ **except on a thing's prose, whose answer has no
+  blocked shape to give.** ⛔️ **Text written before this is not migrated**, and
+  the two unresolvable shapes are stored differently so a reader can tell a
+  pointer whose thing is gone from words that never named one. ⚠️ **No verb
+  moves a handle**, so this is the protection arriving ahead of the move it
+  protects.
 - **Fields, and what declaring a type buys** — **a record carries fields**: a
   flat bag of key/value pairs beside the claim, where a key the caller invents is
   kept as written and a key some type declared is held to what that type says.
