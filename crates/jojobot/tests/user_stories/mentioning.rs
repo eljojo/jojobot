@@ -56,12 +56,13 @@ async fn a_session_writes_handles_into_a_sentence_and_reads_them_all_back() {
         read.says(named);
     }
 
-    // ⭐ **And the claim is findable by the thing it names.** A session looking
-    // for what happened to the dog searches its handle; the index reads what a
-    // reader reads, so it is there.
-    s.call("search", json!({"query": "santas-little-helper"}))
+    // ⭐ **And what search holds is what a reader reads.** The query is a word
+    // out of the claim, and what is asserted is the HANDLE inside the hit — so
+    // an index holding the stored form instead would answer with a badge here
+    // and fail. Asserting the query's own word back would pass either way.
+    s.call("search", json!({"query": "driving"}))
         .await
-        .says("person:milhouse");
+        .says("pet:santas-little-helper");
 
     s.wrap("recorded one outing, naming everyone who was on it")
         .await;

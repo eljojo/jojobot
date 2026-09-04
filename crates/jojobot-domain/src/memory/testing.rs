@@ -10646,6 +10646,49 @@ pub mod contract {
             "every mention was stored resolved, not just the first: {stored}",
         );
 
+        // ⭐ **A correction is where a mention most often arrives**, because
+        // that is where somebody rewrites the sentence — so an edit resolves
+        // what it writes exactly as a capture does.
+        mentioning
+            .update_fact(
+                &written.address(),
+                FactPatch {
+                    content: Some(
+                        "@person:contract-mention-rider walked @pet:contract-mention-dog home"
+                            .into(),
+                    ),
+                    // **The nuance is text too**, and it leaves the store by a
+                    // line of its own — so it is asserted rather than assumed
+                    // to follow the claim above it.
+                    details: Some("along @place:contract-mention-yard".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("the correction lands")
+            .written()
+            .expect("nothing blocks it");
+        let corrected = bare
+            .recall(&author)
+            .await
+            .expect("the store answers")
+            .into_iter()
+            .find(|f| f.id == written.id)
+            .expect("the claim is there");
+        let under = corrected.details.clone().expect("the nuance is stored");
+        let corrected = corrected.content;
+        assert!(
+            !corrected.contains("person:contract-mention-rider")
+                && corrected.matches(mention::MARK).count() == 2,
+            "the correction stored the handles it was written with, so an edit undoes what \
+             the capture bought: {corrected}",
+        );
+        assert!(
+            !under.contains("place:contract-mention-yard")
+                && under.matches(mention::MARK).count() == 1,
+            "the correction's nuance stored the handle it was written with: {under}",
+        );
+
         // ② …and the read gives every one of them back as a handle.
         let read = mentioning
             .recall(&author)
@@ -10655,7 +10698,7 @@ pub mod contract {
             .find(|f| f.id == written.id)
             .expect("the claim is there")
             .content;
-        for (handle, _) in named {
+        for handle in ["person:contract-mention-rider", "pet:contract-mention-dog"] {
             assert!(
                 read.contains(handle),
                 "the read left out the mention of {handle}: {read}",
@@ -10959,6 +11002,14 @@ pub mod contract {
             .expect("nothing blocks it");
 
         let mut served: Vec<String> = vec![page];
+        // **A claim's own two texts, from the read a caller makes.** The
+        // nuance under a claim is text like the claim, and it leaves the store
+        // by a different line of the same function — so a case reading only
+        // the headline proves half an arm.
+        for fact in store.recall(&author).await.expect("the store answers") {
+            served.push(fact.content);
+            served.extend(fact.details);
+        }
         served.push(
             store
                 .scan_entity(&author)
@@ -10974,6 +11025,61 @@ pub mod contract {
         {
             served.push(write.content);
             served.extend(write.details);
+        }
+        // A key's history carries the note its record carried, which is the
+        // same text under a different name.
+        for write in store
+            .history(&author, "tabs")
+            .await
+            .expect("the writes read")
+        {
+            served.extend(write.note);
+        }
+        // What points here, and what was built on what — two reads that hand
+        // back claims written on something else.
+        // **A key holding the handle**, which is what this read matches: it
+        // answers who points here through a field rather than through an edge.
+        let pointing = capture(
+            store,
+            NewFact {
+                fields: [("owed_by".to_string(), author.to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(
+                    named.clone(),
+                    "keeps a tab for @person:contract-mention-bookkeeper",
+                    date(2026, 4, 18),
+                )
+            },
+        )
+        .await;
+        let pointed: Vec<_> = store
+            .referring_to(&author)
+            .await
+            .expect("what points here reads");
+        assert!(
+            !pointed.is_empty(),
+            "nothing points here, so this read proves nothing about how it renders",
+        );
+        served.extend(pointed.into_iter().map(|fact| fact.content));
+        capture(
+            store,
+            NewFact {
+                derived_from: Some(pointing.address()),
+                ..NewFact::about(
+                    named.clone(),
+                    "so the tab at @place:contract-mention-inn is still open",
+                    date(2026, 4, 19),
+                )
+            },
+        )
+        .await;
+        for fact in store
+            .built_on(&pointing.address())
+            .await
+            .expect("the lineage reads")
+        {
+            served.push(fact.content);
         }
         let taken_back = store
             .retract(
@@ -10997,8 +11103,111 @@ pub mod contract {
                 .iter()
                 .filter(|text| text.contains(named.as_str()))
                 .count()
-                >= 5,
+                >= 11,
             "some read served text with the mention taken out of it: {served:?}",
+        );
+    }
+
+    /// 🚨 **An account jojobot writes from a caller's reason carries that
+    /// caller's mentions**, stored as a pointer and read back as a handle.
+    ///
+    /// A fold and a retraction both write one, and both outlive everybody who
+    /// remembers the act — which is exactly the text a stale handle spoils.
+    /// **Both halves in one read**: the store keeps no handle, and the answer
+    /// carries one.
+    pub async fn an_account_written_from_a_reason_stores_its_mentions<
+        M: Memory + ?Sized,
+        B: Memory + ?Sized,
+    >(
+        mentioning: &M,
+        bare: &B,
+    ) {
+        let survivor = EntityId::person("person:contract-mention-kept");
+        let folded = EntityId::person("person:contract-mention-gone");
+        let named = EntityId("org:contract-mention-guild".into());
+        for (handle, name) in [
+            (&survivor, "The One Kept"),
+            (&folded, "The One Folded"),
+            (&named, "The Guild"),
+        ] {
+            mentioning
+                .add_entity(NewEntity::new(handle.clone(), name, "the roster"))
+                .await
+                .expect("the fixture is written")
+                .written()
+                .expect("nothing collides with it");
+        }
+
+        let done = mentioning
+            .merge(
+                &folded,
+                &survivor,
+                Some("both were the same member of @org:contract-mention-guild"),
+                date(2026, 4, 18),
+            )
+            .await
+            .expect("the fold lands");
+        assert!(
+            done.record.content.contains(named.as_str())
+                || done
+                    .record
+                    .details
+                    .as_deref()
+                    .is_some_and(|d| d.contains(named.as_str())),
+            "the account handed back carries no handle: {:?}",
+            done.record,
+        );
+
+        let kept = bare
+            .recall(&survivor)
+            .await
+            .expect("the store answers")
+            .into_iter()
+            .find(|f| f.id == done.record.id)
+            .expect("the account is on the survivor");
+        let stored = format!("{}{}", kept.content, kept.details.unwrap_or_default());
+        assert!(
+            !stored.contains(named.as_str()) && stored.contains(mention::MARK),
+            "the account was stored with the handle in it, so a rename spoils the one record \
+             that outlives everybody who remembers the fold: {stored}",
+        );
+
+        // **A retraction writes the same kind of account**, so its reason is
+        // asked the same question rather than trusted to follow.
+        let claim = capture(
+            mentioning,
+            NewFact::about(survivor.clone(), "paid the subscription", date(2026, 4, 18)),
+        )
+        .await;
+        let taken_back = mentioning
+            .retract(
+                &claim.address(),
+                Some("@org:contract-mention-guild says otherwise"),
+                date(2026, 4, 19),
+            )
+            .await
+            .expect("the retraction lands");
+        assert!(
+            taken_back
+                .record
+                .details
+                .as_deref()
+                .is_some_and(|d| d.contains(named.as_str()))
+                || taken_back.record.content.contains(named.as_str()),
+            "the retraction handed back carries no handle: {:?}",
+            taken_back.record,
+        );
+        let kept = bare
+            .recall(&survivor)
+            .await
+            .expect("the store answers")
+            .into_iter()
+            .find(|f| f.id == taken_back.record.id)
+            .expect("the retraction is on the thing");
+        let stored = format!("{}{}", kept.content, kept.details.unwrap_or_default());
+        assert!(
+            !stored.contains(named.as_str()) && stored.contains(mention::MARK),
+            "the retraction was stored with the handle in it: {stored}",
         );
     }
 
@@ -11014,6 +11223,7 @@ pub mod contract {
         a_dead_link_and_text_that_was_never_a_link_read_differently(mentioning, bare).await;
         a_mention_naming_nothing_is_refused_and_writes_nothing(mentioning, bare).await;
         no_read_serves_a_badge_and_every_one_serves_the_handle(mentioning).await;
+        an_account_written_from_a_reason_stores_its_mentions(mentioning, bare).await;
     }
 
     pub async fn run_all<M: Memory>(store: &M) {
