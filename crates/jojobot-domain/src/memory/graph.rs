@@ -632,6 +632,51 @@ impl GraphQuery {
     }
 }
 
+/// **What a view's keys say to ask** — the one reader of a view's vocabulary.
+///
+/// A view is a record and its keys ARE its question: `selects` names the kind
+/// it looks at, `shows` names what of each one comes back, and `asks` names the
+/// one question a selection cannot express.
+///
+/// **Both callers read it here** (rule 51). The served verb fills a call in
+/// from a view, and a view's page runs one; a second reader of the same keys
+/// is two answers to what a view means, and the page and the verb would come
+/// to disagree the first time either grew a key.
+///
+/// **Nothing is validated here.** Whether `selects` names a kind this instance
+/// holds is the caller's question and the answers differ: the verb refuses the
+/// call, the page says the view cannot be run.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Asked {
+    /// The kind token the view selects over, exactly as it is written.
+    pub selects: Option<String>,
+    /// Each thing's records.
+    pub facts: bool,
+    /// Each thing's prose.
+    pub prose: bool,
+    /// Each bot's charter, which is its prose under the name a reader asked
+    /// for it by.
+    pub charter: bool,
+    /// **Only what has fallen due.** Arithmetic over dates rather than a value
+    /// to filter on, which is why it is a named ask rather than a key filter.
+    pub overdue: bool,
+}
+
+/// Read a view's question off the keys it holds. See [`Asked`].
+pub fn asked_by_view(held: &BTreeMap<String, String>) -> Asked {
+    let shows = |what: &str| {
+        held.get("shows")
+            .is_some_and(|s| s.split(',').any(|part| part.trim() == what))
+    };
+    Asked {
+        selects: held.get("selects").cloned(),
+        facts: shows("facts"),
+        prose: shows("prose"),
+        charter: shows("charter"),
+        overdue: held.get("asks").map(String::as_str) == Some("overdue"),
+    }
+}
+
 /// **A relation is a KEY that some declaration says holds a reference.**
 ///
 /// The name is derived rather than configured: it is the key itself, and the

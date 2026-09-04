@@ -1541,3 +1541,385 @@ async fn a_long_beat_is_collapsed_the_same_way_as_a_long_body() {
     );
     ct.cancel();
 }
+
+// --- a view's page runs the view -------------------------------------------
+
+/// The seeded roster, plus the views this build supplies, over a store that
+/// resolves them.
+///
+/// **The suite's ordinary board has no `Provisioned` layer**, so no shipped
+/// view exists on any page it serves and a view page cannot be exercised at
+/// all. The wiring here is what the binary wires: one set of provisions, read
+/// by the store's guard and by the layer that resolves them into answers.
+///
+/// Two loops sit under a root, one long past due and one not due for
+/// centuries. **The dates are far from any day this runs on**, because the
+/// page reads the server's clock and a case whose verdict moved with the
+/// calendar would be a case nobody can trust.
+async fn memory_with_views() -> Arc<dyn Memory> {
+    let supplied = jojobot_mcp::provisions();
+    let store = InMemoryMemory::booted().knowing(supplied.clone());
+    let memory: Arc<dyn Memory> = Arc::new(jojobot_adapters::provisioned::Provisioned::new(
+        store, supplied,
+    ));
+    seed(memory.as_ref()).await;
+
+    for (handle, name) in [
+        ("rhythm:descale", "Descale the machine"),
+        ("rhythm:worming", "Worm the dog"),
+    ] {
+        let mut new = NewEntity::new(EntityId(handle.into()), name, "the fixture roster");
+        new.parent = Some(EntityId("person:alpha".into()));
+        memory
+            .add_entity(new)
+            .await
+            .expect("the loop is written")
+            .written()
+            .expect("nothing on this board collides with it");
+    }
+    // The loop that has gone quiet, and the one that has not. Only the
+    // schedule differs.
+    for (handle, counts_from) in [
+        ("rhythm:descale", "2020-01-06"),
+        ("rhythm:worming", "2400-01-06"),
+    ] {
+        memory
+            .capture(NewFact {
+                fields: [
+                    ("cadence_days".to_string(), "7".to_string()),
+                    ("advances_from".to_string(), "due_date".to_string()),
+                    ("counts_from".to_string(), counts_from.to_string()),
+                ]
+                .into_iter()
+                .collect(),
+                ..NewFact::about(
+                    EntityId(handle.into()),
+                    "the loop was set up",
+                    Date::constant(2026, 3, 5),
+                )
+            })
+            .await
+            .expect("the schedule is written");
+    }
+
+    // The operator's own, beside the two the build ships: one that narrows the
+    // same kind to what is late, and one nobody has finished writing.
+    memory
+        .add_entity(NewEntity::new(
+            EntityId("view:my-week".into()),
+            "My Week",
+            "the operator",
+        ))
+        .await
+        .expect("the operator's view is written")
+        .written()
+        .expect("nothing on this board collides with it");
+    memory
+        .capture(NewFact {
+            fields: [
+                ("selects".to_string(), "rhythm".to_string()),
+                ("asks".to_string(), "overdue".to_string()),
+            ]
+            .into_iter()
+            .collect(),
+            ..NewFact::about(
+                EntityId("view:my-week".into()),
+                "what has gone quiet",
+                Date::constant(2026, 3, 5),
+            )
+        })
+        .await
+        .expect("the question is written");
+    memory
+        .add_entity(NewEntity::new(
+            EntityId("view:matches-nothing".into()),
+            "The Empty Shelf",
+            "the operator",
+        ))
+        .await
+        .expect("the view that finds none is written")
+        .written()
+        .expect("nothing on this board collides with it");
+    memory
+        .capture(NewFact {
+            fields: [("selects".to_string(), "pet".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(
+                EntityId("view:matches-nothing".into()),
+                "which pets are here",
+                Date::constant(2026, 3, 5),
+            )
+        })
+        .await
+        .expect("the question is written");
+    memory
+        .add_entity(NewEntity::new(
+            EntityId("view:names-no-kind".into()),
+            "The Sandwich Board",
+            "the operator",
+        ))
+        .await
+        .expect("the view naming no kind is written")
+        .written()
+        .expect("nothing on this board collides with it");
+    memory
+        .capture(NewFact {
+            fields: [("selects".to_string(), "sandwich".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(
+                EntityId("view:names-no-kind".into()),
+                "which sandwiches are here",
+                Date::constant(2026, 3, 5),
+            )
+        })
+        .await
+        .expect("the question is written");
+    memory
+        .add_entity(NewEntity::new(
+            EntityId("view:my-people".into()),
+            "My People",
+            "the operator",
+        ))
+        .await
+        .expect("the half-written view is created")
+        .written()
+        .expect("nothing on this board collides with it");
+
+    memory
+}
+
+async fn spawn_over_views(
+    idp: &support::TestIdp,
+    endpoints: IssuerEndpoints,
+) -> (SocketAddr, CancellationToken) {
+    let board = seeded_board_over(memory_with_views().await).await;
+    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], idp, board).await;
+    (addr, ct)
+}
+
+/// The refusal sentence alone — everything the page says about why the view
+/// could not be run, and nothing else it happens to carry.
+fn refusal_on(page: &str) -> &str {
+    let why = page
+        .split_once("This view cannot be run:")
+        .expect("the page says the view cannot be run")
+        .1
+        .split_once("</p>")
+        .expect("…and the sentence closes")
+        .0;
+    // **A sentence whose whole purpose is to be read is asserted on its
+    // shape.** A wrapped literal whose continuation collapses serves a run of
+    // spaces mid-sentence and passes every check that only asks whether the
+    // words are there.
+    assert!(
+        !why.contains("  "),
+        "the refusal reads as one line: {why:?}"
+    );
+    why
+}
+
+/// **A view's page runs the view.**
+///
+/// A view IS a node, so its page rendered what the node holds — the keys of its
+/// own definition — and never the answer. A reader who went looking for a view
+/// found a page that reads as empty.
+///
+/// **Both halves in one read**: the definition stays, because a reader has to
+/// see what question they just asked, and the answer arrives beside it with
+/// each result linking onward.
+#[tokio::test]
+async fn a_views_page_runs_the_view_and_shows_the_result() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct) = spawn_over_views(&idp, endpoints).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let page = read(&client, addr, "/view:loops/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+
+    let answer = page
+        .split_once("id=\"answer\"")
+        .expect("the page carries the view's answer")
+        .1;
+    let answer = answer.split_once("</table>").expect("…and it closes").0;
+    assert!(
+        answer.contains("rhythm:descale") && answer.contains("rhythm:worming"),
+        "every loop the view selects is in the answer: {answer}"
+    );
+    assert!(
+        answer.contains("href=\"/person:alpha/rhythm:descale/\""),
+        "each result links onward to where it lives: {answer}"
+    );
+    // **The definition stays.** A page that swapped the keys for the answer
+    // would leave a reader unable to see which question they asked.
+    assert!(
+        page.contains("id=\"fields\"") && page.contains("selects"),
+        "the view's own definition is still on the page: {page}"
+    );
+    ct.cancel();
+}
+
+/// **A view whose question legitimately matches nothing says so**, and says it
+/// differently from a view that could not be run at all.
+#[tokio::test]
+async fn a_view_that_matches_nothing_says_so() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct) = spawn_over_views(&idp, endpoints).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let page = read(&client, addr, "/view:matches-nothing/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+
+    let said = page
+        .split_once("This view matches nothing")
+        .expect("a question with no answer says so")
+        .1
+        .split_once("</p>")
+        .expect("…and the sentence closes")
+        .0;
+    assert!(!said.contains("  "), "…and it reads as one line: {said:?}");
+    assert!(
+        !page.contains("cannot be run"),
+        "…and it is not reported as a view that could not be run: {page}"
+    );
+    ct.cancel();
+}
+
+/// **A view short of a key it needs says which key**, rather than rendering as
+/// a view whose answer is empty.
+///
+/// The two are different states with different repairs: one is a question
+/// nobody can ask, the other is a question with no answer today.
+#[tokio::test]
+async fn a_view_short_of_a_key_names_the_key_rather_than_reading_as_empty() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct) = spawn_over_views(&idp, endpoints).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let page = read(&client, addr, "/view:my-people/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+
+    let why = refusal_on(&page);
+    assert!(
+        why.contains("selects"),
+        "the refusal names the key the view lacks: {why}"
+    );
+    assert!(
+        !page.contains("matches nothing"),
+        "…and it does not read as a question that simply found none: {page}"
+    );
+    ct.cancel();
+}
+
+/// **A view whose `selects` names no kind cannot be run either**, and the page
+/// says what it holds rather than reporting an empty answer.
+///
+/// It is the same repair as a view short of the key — the value is on the view
+/// — and a different sentence, because *there is no such key* and *that key
+/// holds something that is no kind* send a reader to different places.
+#[tokio::test]
+async fn a_view_selecting_something_that_is_no_kind_says_what_it_holds() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct) = spawn_over_views(&idp, endpoints).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let page = read(&client, addr, "/view:names-no-kind/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+
+    // **Scoped to the sentence**, because the view's own definition is on the
+    // page too: a substring over the whole page finds `sandwich` in the fields
+    // table and calls it an explanation.
+    let why = refusal_on(&page);
+    assert!(
+        why.contains("sandwich"),
+        "the refusal names the value the view holds: {why}"
+    );
+    assert!(
+        !page.contains("id=\"answer\""),
+        "…and answers nothing: {page}"
+    );
+    ct.cancel();
+}
+
+/// **A view narrows by what it ASKS as well as by what it selects.**
+///
+/// `asks: overdue` is the one question a selection cannot express, and a page
+/// that ran the selection alone would answer with more than the view asked
+/// for. Asserted against the view one key away from it: the same kind, and a
+/// different answer.
+#[tokio::test]
+async fn a_view_that_asks_for_what_is_overdue_leaves_out_what_is_not() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct) = spawn_over_views(&idp, endpoints).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let page = read(&client, addr, "/view:my-week/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    let answer = page
+        .split_once("id=\"answer\"")
+        .expect("the page carries the view's answer")
+        .1;
+    let answer = answer.split_once("</table>").expect("…and it closes").0;
+
+    assert!(
+        answer.contains("rhythm:descale"),
+        "the loop that has gone quiet is in the answer: {answer}"
+    );
+    assert!(
+        !answer.contains("rhythm:worming"),
+        "…and the loop that is not due is left out, which is what `asks` narrows: {answer}"
+    );
+    ct.cancel();
+}
+
+/// **A handle that is no view is unaffected.**
+#[tokio::test]
+async fn a_page_that_is_no_view_carries_no_answer() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct) = spawn_over_views(&idp, endpoints).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let page = read(&client, addr, "/person:alpha/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+
+    assert!(
+        page.contains("<h1>Index of /person:alpha/</h1>"),
+        "the page renders as it does today: {page}"
+    );
+    assert!(
+        !page.contains("id=\"answer\"") && !page.contains("cannot be run"),
+        "…and carries nothing a view page carries: {page}"
+    );
+    ct.cancel();
+}

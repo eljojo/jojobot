@@ -770,19 +770,16 @@ impl Jojobot {
                 )));
             }
         };
-        let shows = |what: &str| {
-            held.get("shows")
-                .is_some_and(|s| s.split(',').any(|part| part.trim() == what))
-        };
+        // **The view's own keys, read where the page reads them** (rule 51).
+        let asked = graph::asked_by_view(&held);
         Ok(RecallArgs {
-            kind: args.kind.or_else(|| held.get("selects").cloned()),
-            facts: args.facts.or(shows("facts").then_some(true)),
-            prose: args.prose.or(shows("prose").then_some(true)),
-            charter: args.charter.or(shows("charter").then_some(true)),
-            overdue: args.overdue.or_else(|| {
-                (held.get("asks").map(String::as_str) == Some("overdue"))
-                    .then_some(OverdueArgs { as_of: None })
-            }),
+            kind: args.kind.or(asked.selects),
+            facts: args.facts.or(asked.facts.then_some(true)),
+            prose: args.prose.or(asked.prose.then_some(true)),
+            charter: args.charter.or(asked.charter.then_some(true)),
+            overdue: args
+                .overdue
+                .or_else(|| asked.overdue.then_some(OverdueArgs { as_of: None })),
             ..args
         })
     }

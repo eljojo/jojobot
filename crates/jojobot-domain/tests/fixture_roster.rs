@@ -75,15 +75,18 @@ fn kinds() -> Vec<&'static str> {
 /// fictional and must stay that way.
 const ROSTER: &[&str] = &[
     "bot:assistant",
-    // The views: the two the software ships, and the two a story declares to
-    // stand beside them. **A shipped record names itself by its handle**, so
-    // this scan reads it on the same terms as every other name — a slug handed
-    // to a constructor on its own would carry no handle for the scan to find.
+    // The views: the ones the software ships, and the ones a story or a page
+    // case declares to stand beside them. **A shipped record names itself by
+    // its handle**, so this scan reads it on the same terms as every other
+    // name — a slug handed to a constructor on its own would carry no handle
+    // for the scan to find.
     "view:colleagues",
     "view:loop",
     "view:loops",
+    "view:matches-nothing",
     "view:my-loops",
     "view:my-people",
+    "view:names-no-kind",
     "bot:delta",
     "bot:epsilo",
     "bot:epsilon",

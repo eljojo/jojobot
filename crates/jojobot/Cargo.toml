@@ -29,6 +29,9 @@ sha2 = "0.10"
 base64 = "0.22"
 thiserror.workspace = true
 anyhow.workspace = true
+# The page that runs a view compares a due day to the server's clock, and a day
+# here is the domain's civil date.
+jiff.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
@@ -46,9 +49,6 @@ rmcp = { workspace = true, features = [
     "transport-streamable-http-client-reqwest",
     "reqwest-native-tls",
 ] }
-# The fixtures the listing is read against carry dated facts, and a date here is
-# the domain's civil date.
-jiff.workspace = true
 rsa = { version = "0.9", features = ["pem"] }
 rand = "0.8"
 base64 = "0.22"

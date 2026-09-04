@@ -9,7 +9,8 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
 };
 
-use jojobot_domain::memory::{Entity, EntityId, EntityKind, Fact};
+use jojobot_domain::attention;
+use jojobot_domain::memory::{Entity, EntityId, EntityKind, Fact, graph, kinds};
 use jojobot_domain::text;
 
 use crate::AppState;
@@ -192,6 +193,12 @@ pub async fn node(
     );
     body.push_str(&about(entity));
     body.push_str(&fields_section(&held, &canonical));
+    // **A view is a question, so its page answers it.** It sits under the
+    // definition rather than over it: a reader has to see which question they
+    // asked before they read what it came back with.
+    if entity.kind == EntityKind::VIEW {
+        body.push_str(&view_section(&state, &held, &by_id).await);
+    }
     body.push_str(&history_section(&state, &entity.id, asked.history.as_deref()).await);
     body.push_str(&conforms_section(&state, &held).await);
 
@@ -476,6 +483,112 @@ fn fields_section(folded: &BTreeMap<String, String>, canonical: &str) -> String 
     }
     out.push_str("</table>\n");
     out
+}
+
+/// **What this view answers** — the view, run.
+///
+/// A view is a record that holds a query, so a page that rendered only what the
+/// record holds showed the question and never the answer. **Running it is
+/// showing what is there**, for a thing whose contents are defined by a query.
+///
+/// **Nothing here computes anything the query does not.** It reads the view's
+/// keys through the one reader of that vocabulary, hands the graph the same
+/// query the served verb would hand it, and renders the objects in the shape
+/// every other listing on this page uses.
+///
+/// ⛔️ **It writes nothing and takes no delivery.** Looking at a view cannot
+/// move a message, mark anything read, or open a session.
+///
+/// **A caller with no identity**, so the answer reaches everything unowned and
+/// nothing owned. There is no session behind a browser, and the access rule is
+/// the absence of an argument rather than a check on one.
+async fn view_section(
+    state: &AppState,
+    held: &BTreeMap<String, String>,
+    by_id: &HashMap<&EntityId, &Entity>,
+) -> String {
+    let asked = graph::asked_by_view(held);
+    // **A view short of what it selects is a question nobody can ask**, and it
+    // says which key it lacks. Rendering it as an empty answer would send a
+    // reader looking for the records instead of for the key.
+    let Some(selects) = asked
+        .selects
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    else {
+        return cannot_run(
+            "it holds no <code>selects</code>, so it does not say which kind it looks at.",
+        );
+    };
+    let kind = match kinds::resolve(selects) {
+        Ok(kind) => kind,
+        // **The resolver's own answer**, which already names the value and the
+        // kinds this instance holds. A sentence of this page's own beside it
+        // would be a second account of one refusal.
+        Err(why) => return cannot_run(&escape(&why.to_string())),
+    };
+    let query = graph::GraphQuery {
+        select: graph::Selection {
+            kind: Some(kind),
+            ..graph::Selection::default()
+        },
+        include: graph::Include {
+            facts: asked.facts,
+            prose: asked.prose || asked.charter,
+        },
+        follow: None,
+        history: None,
+    };
+    let mut found = match graph::walk(&*state.memory, &query).await {
+        Ok(selected) => selected.objects,
+        Err(err) => {
+            return blind(
+                "What this view answers",
+                "the records it selects",
+                &err.to_string(),
+            );
+        }
+    };
+    // **The one narrowing a selection cannot express.** A page that ran the
+    // selection alone would answer with more than the view asked for, which is
+    // the page telling a reader something the view does not say.
+    if asked.overdue {
+        let carriers = attention::shipped();
+        let carriers: Vec<&dyn attention::Carrier> =
+            carriers.iter().map(std::convert::AsRef::as_ref).collect();
+        // **The server's own day, in UTC.** A browser states no timezone, and
+        // UTC is the same stated fallback every other unzoned read here uses.
+        let today = state.clock.today_in(&jiff::tz::TimeZone::UTC);
+        found.retain(|object| {
+            attention::owed(&carriers, object.entity.id.kind_token(), &object.fields).owed_on(today)
+        });
+    }
+    if found.is_empty() {
+        return "<h2>What this view answers</h2>\n\
+                <p>This view matches nothing today. The question is a good one; \
+                nothing here answers it.</p>\n"
+            .to_string();
+    }
+    let mut out = String::from(
+        "<h2>What this view answers</h2>\n<table id=\"answer\">\n\
+         <tr><th>Name</th><th>Called</th></tr>\n",
+    );
+    for object in &found {
+        out.push_str(&row(&object.entity, by_id));
+    }
+    out.push_str("</table>\n");
+    out
+}
+
+/// **A view that cannot be run says why, under the heading its answer would
+/// have had.**
+///
+/// A section that vanished, or one that rendered as an empty answer, tells a
+/// reader that nothing matches — which sends them looking at the records when
+/// the repair is on the view itself.
+fn cannot_run(why: &str) -> String {
+    format!("<h2>What this view answers</h2>\n<p>This view cannot be run: {why}</p>\n")
 }
 
 /// **The writes behind one key, oldest first** — what the fold above projects
