@@ -985,12 +985,12 @@ impl Memory for DoltMemory {
             });
         }
         apply_entity_patch(&mut entity, &patch)?;
-        let badge = write_entity(&mut tx, &self.draw, &entity).await?;
+        // **The badge rides on the record this edit was read from**, and
+        // `write_entity` carries the row's own across — so the answer already
+        // says what the row says and nothing has to put it back.
+        write_entity(&mut tx, &self.draw, &entity).await?;
         tx.commit().await.map_err(store)?;
-        Ok(Guarded::Written(Entity {
-            badge: Some(badge),
-            ..entity
-        }))
+        Ok(Guarded::Written(entity))
     }
 
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {

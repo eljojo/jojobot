@@ -137,6 +137,7 @@ const ROSTER: &[&str] = &[
     "person:backfill-alpha",
     "person:badge-alpha",
     "person:badge-beta",
+    "person:badge-gamma",
     "person:barney-gumble",
     "person:bart",
     "person:bet",

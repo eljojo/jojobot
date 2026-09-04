@@ -177,8 +177,28 @@ async fn an_entity_keeps_its_badge_through_every_rewrite() {
         .await
         .expect("a created entity is given a badge");
 
+    // ⭐ **The receipt says what the row says.** A write that handed back a
+    // record wearing no badge, or a different one, would be the answer and the
+    // row disagreeing about the same thing — and the caller has only the
+    // answer.
+    let created = memory
+        .add_entity(NewEntity::new(
+            EntityId::person("person:badge-gamma"),
+            "Badge Gamma",
+            "contract-fixture",
+        ))
+        .await
+        .expect("add_entity ok")
+        .written()
+        .expect("the guard waves it through");
+    assert_eq!(
+        created.badge,
+        badge("person:badge-gamma").await,
+        "the answer to a creation and the row disagree about the badge",
+    );
+
     // ── the path that edits ─────────────────────────────────────────────────
-    memory
+    let renamed = memory
         .update_entity(
             &alpha,
             EntityPatch {
@@ -194,6 +214,11 @@ async fn an_entity_keeps_its_badge_through_every_rewrite() {
         badge("person:badge-alpha").await.as_deref(),
         Some(minted.as_str()),
         "the row was rewritten and stopped being the thing anything else pointed at",
+    );
+    assert_eq!(
+        renamed.badge.as_deref(),
+        Some(minted.as_str()),
+        "the answer to a rename carries a different badge from the row it renamed",
     );
 
     // ── the path that writes prose ──────────────────────────────────────────
