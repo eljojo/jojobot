@@ -181,6 +181,11 @@ impl DoltMemory {
     /// disagreeing about what exists, with the guard as the half that fails
     /// silently. **A stored row wins**, so nothing the operator wrote is
     /// shadowed by what the build ships.
+    ///
+    /// ⭐ **The READS ask it too, not only the guards.** A claim may be written
+    /// on a supplied record, because the write path's gate already reads this
+    /// set — so a read gated on the rows alone answered as if that claim did
+    /// not exist, over a store holding its rows.
     async fn known(&self, tx: &mut Transaction<'_, MySql>) -> Result<Vec<Entity>, MemoryError> {
         let rows = Self::index(tx).await?;
         Ok(self.extend_with_supplied(rows))
@@ -1123,7 +1128,7 @@ impl Memory for DoltMemory {
 
     async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
-        let index = Self::index(&mut tx).await?;
+        let index = self.known(&mut tx).await?;
         // An unknown entity is a miss with its near candidates — never an empty
         // page. Empty-but-real and nonexistent are different answers.
         if !index.iter().any(|e| &e.id == subject) {
@@ -1142,7 +1147,7 @@ impl Memory for DoltMemory {
         entity: &EntityId,
     ) -> Result<std::collections::BTreeMap<String, String>, MemoryError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
-        let index = Self::index(&mut tx).await?;
+        let index = self.known(&mut tx).await?;
         // An unknown entity is a miss with its near candidates, exactly as a
         // recall of one is: a thing nobody has written a key on and a handle
         // nobody created are different answers with different repairs.
@@ -1159,7 +1164,7 @@ impl Memory for DoltMemory {
 
     async fn claim_history(&self, address: &FactAddress) -> Result<Vec<ClaimWrite>, MemoryError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
-        let index = Self::index(&mut tx).await?;
+        let index = self.known(&mut tx).await?;
         // A miss on the HANDLE is an entity miss, exactly as every other
         // addressed read answers one.
         if !index.iter().any(|e| e.id == address.home) {
@@ -1224,7 +1229,7 @@ impl Memory for DoltMemory {
         entity: &EntityId,
     ) -> Result<std::collections::HashMap<FactId, Vec<ClaimWrite>>, MemoryError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
-        let index = Self::index(&mut tx).await?;
+        let index = self.known(&mut tx).await?;
         if !index.iter().any(|e| &e.id == entity) {
             return Err(MemoryError::UnknownEntity {
                 attempted: entity.to_string(),
@@ -1272,7 +1277,7 @@ impl Memory for DoltMemory {
 
     async fn history(&self, entity: &EntityId, key: &str) -> Result<Vec<FieldWrite>, MemoryError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
-        let index = Self::index(&mut tx).await?;
+        let index = self.known(&mut tx).await?;
         // An unknown entity is a miss with its near candidates, exactly as a
         // recall of one is: a key nobody wrote and a handle nobody created are
         // different answers with different repairs.

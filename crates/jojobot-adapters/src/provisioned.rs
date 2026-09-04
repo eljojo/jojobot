@@ -195,17 +195,14 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
         Ok(held)
     }
 
+    /// **What the store holds under the build's keys.**
+    ///
+    /// ⛔️ **No rescue here.** The store's own existence gate reads what the
+    /// build supplies, so a supplied record is not a miss underneath and there
+    /// is nothing to turn into an empty answer — and an arm that did would hide
+    /// the keys a caller really wrote on that handle.
     async fn fields(&self, entity: &EntityId) -> Result<BTreeMap<String, String>, MemoryError> {
-        // A handle the store does not hold is a miss, which is right for a
-        // handle nobody wrote and wrong for a record the software ships.
-        let held = match self.inner.fields(entity).await {
-            Err(MemoryError::UnknownEntity { .. })
-                if self.provisions.record_for(entity).is_some() =>
-            {
-                BTreeMap::new()
-            }
-            answer => answer?,
-        };
+        let held = self.inner.fields(entity).await?;
         match self.provisions.record_for(entity) {
             // Supplied keys sit UNDER what the store holds, for the reason
             // prose does: the operator's write is the narrowing one.
@@ -274,19 +271,11 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
         self.inner.capture(fact).await
     }
-    /// **A supplied record is not a miss.** Recall of a handle the store does
-    /// not hold is an absence rather than an empty page — which is right, and
-    /// wrong for a record the software ships: it is there, and nobody has made
-    /// a claim about it yet.
+    /// **Straight through.** The store's existence gate reads what the build
+    /// supplies, so a supplied record answers with the claims written on it —
+    /// none, usually, and whatever a caller wrote when there are some.
     async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
-        match self.inner.recall(subject).await {
-            Err(MemoryError::UnknownEntity { .. })
-                if self.provisions.record_for(subject).is_some() =>
-            {
-                Ok(Vec::new())
-            }
-            answer => answer,
-        }
+        self.inner.recall(subject).await
     }
     async fn update_fact(
         &self,
@@ -669,8 +658,12 @@ mod tests {
 
     #[tokio::test]
     async fn a_record_the_build_ships_answers_like_a_stored_one_and_is_stored_nowhere() {
-        let store = InMemoryMemory::booted();
-        let over = Provisioned::new(store, Provisions::new(vec![shipped_record("loops")]));
+        // **Both halves told the same set**, as the binary wires it: the store
+        // below has to see the supplied record when its own gate asks what
+        // exists, and a fixture telling only the layer above is a fixture
+        // poorer than the deployment it stands for.
+        let supplied = Provisions::new(vec![shipped_record("loops")]);
+        let over = Provisioned::new(InMemoryMemory::booted().knowing(supplied.clone()), supplied);
         let id = EntityId("view:loops".into());
 
         assert!(

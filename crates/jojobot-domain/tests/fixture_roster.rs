@@ -81,6 +81,7 @@ const ROSTER: &[&str] = &[
     // name — a slug handed to a constructor on its own would carry no handle
     // for the scan to find.
     "view:colleagues",
+    "view:contract-no-such-view",
     "view:loop",
     "view:loops",
     "view:matches-nothing",

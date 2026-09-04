@@ -621,6 +621,7 @@ async fn dolt_satisfies_the_supplied_record_guard_contract() {
 
     memory::a_near_miss_against_a_supplied_record_is_caught_and_its_override_lifts_it(&known).await;
     memory::an_exact_collision_with_a_supplied_handle_is_never_forceable(&known).await;
+    memory::a_claim_on_a_supplied_record_reads_back(&known).await;
 
     store.stop().await;
 }

@@ -3737,6 +3737,11 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_claim_on_a_supplied_record_reads_back_against_the_fake() {
+        contract::a_claim_on_a_supplied_record_reads_back(&fake_knowing_a_supplied_view()).await;
+    }
+
+    #[tokio::test]
     async fn an_exact_collision_with_a_supplied_handle_is_never_forceable_against_the_fake() {
         contract::an_exact_collision_with_a_supplied_handle_is_never_forceable(
             &fake_knowing_a_supplied_view(),

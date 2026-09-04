@@ -286,6 +286,10 @@ impl InMemoryMemory {
     /// at a supplied record, or lets a caller declare a name that shadows one
     /// the near-miss screen exists to catch. **A stored row wins**, so nothing
     /// the operator wrote is shadowed by what the build ships.
+    /// ⭐ **The READS ask it too, not only the guards.** A claim may be
+    /// written on a supplied record — the write path's gate already reads this
+    /// set — so a read gated on the rows alone answered as if that claim did
+    /// not exist, over a store holding its rows.
     fn known(&self) -> Vec<Entity> {
         let mut known = self.index();
         for (entity, _) in self.supplied.lock().expect("fake mutex poisoned").records() {
@@ -696,7 +700,7 @@ impl Memory for InMemoryMemory {
     async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
         // An unknown entity is a miss with its near candidates — never an
         // empty page. Empty-but-real and nonexistent are different answers.
-        let index = self.index();
+        let index = self.known();
         if !index.iter().any(|e| &e.id == subject) {
             return Err(MemoryError::UnknownEntity {
                 attempted: subject.to_string(),
@@ -717,7 +721,7 @@ impl Memory for InMemoryMemory {
         &self,
         entity: &EntityId,
     ) -> Result<std::collections::BTreeMap<String, String>, MemoryError> {
-        let index = self.index();
+        let index = self.known();
         if !index.iter().any(|e| &e.id == entity) {
             return Err(MemoryError::UnknownEntity {
                 attempted: entity.to_string(),
@@ -728,7 +732,7 @@ impl Memory for InMemoryMemory {
     }
 
     async fn claim_history(&self, address: &FactAddress) -> Result<Vec<ClaimWrite>, MemoryError> {
-        let index = self.index();
+        let index = self.known();
         if !index.iter().any(|e| e.id == address.home) {
             return Err(MemoryError::UnknownEntity {
                 attempted: address.home.to_string(),
@@ -761,7 +765,7 @@ impl Memory for InMemoryMemory {
     }
 
     async fn history(&self, entity: &EntityId, key: &str) -> Result<Vec<FieldWrite>, MemoryError> {
-        let index = self.index();
+        let index = self.known();
         if !index.iter().any(|e| &e.id == entity) {
             return Err(MemoryError::UnknownEntity {
                 attempted: entity.to_string(),
@@ -6202,6 +6206,94 @@ pub mod contract {
     /// view's, on the fictional roster already — the same one the review's
     /// own example named.
     pub const SUPPLIED_VIEW_FOR_THE_GUARD_SPECS: &str = "view:loops";
+
+    /// 🚨 **A claim written on a record the build supplies reads back.**
+    ///
+    /// The write path already lets one land: the existence gate reads what the
+    /// build supplies, so `capture` on a supplied handle succeeds and hands
+    /// back an address. **The read path gated on the ROWS alone**, and a store
+    /// holding no row for that handle answered every read as if the claim did
+    /// not exist — so a caller was told the write landed and could then reach
+    /// it by no route at all.
+    ///
+    /// ⛔️ **An empty answer is not the repair.** The rows are really there;
+    /// saying nobody ever wrote them turns a loud wrong answer into a quiet
+    /// one. **The gate reads rows plus what the build supplies, a stored row
+    /// winning** — the same set the write path already asks (rule 234).
+    ///
+    /// **Every read that faulted, in one case**, because they fault for one
+    /// reason and a case covering one of them says nothing about the rest.
+    pub async fn a_claim_on_a_supplied_record_reads_back<M: Memory>(store: &M) {
+        let shipped = EntityId(SUPPLIED_VIEW_FOR_THE_GUARD_SPECS.into());
+        let written = store
+            .capture(NewFact {
+                fields: [("asks".to_string(), "overdue".to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(
+                    shipped.clone(),
+                    "the operator narrowed this one",
+                    date(2026, 4, 18),
+                )
+            })
+            .await
+            .expect("a claim on a supplied record is a write the gate allows")
+            .written()
+            .expect("nothing blocks it");
+
+        let recalled = store.recall(&shipped).await.expect("recall answers");
+        assert!(
+            recalled.iter().any(|f| f.id == written.id),
+            "the claim that was just written is not in the read: {recalled:?}",
+        );
+        assert_eq!(
+            store
+                .fields(&shipped)
+                .await
+                .expect("the keys read")
+                .get("asks"),
+            Some(&"overdue".to_string()),
+            "the key the write put on it is not in what the thing holds",
+        );
+        assert_eq!(
+            store
+                .history(&shipped, "asks")
+                .await
+                .expect("the writes behind the key read")
+                .len(),
+            1,
+            "the write behind the key is unreachable",
+        );
+        assert_eq!(
+            store
+                .claim_history(&written.address())
+                .await
+                .expect("the claim's own chain reads")
+                .len(),
+            1,
+            "the claim's chain is unreachable",
+        );
+        assert!(
+            store
+                .claim_histories(&shipped)
+                .await
+                .expect("the chains read")
+                .contains_key(&written.id),
+            "the claim is missing from the chains of the thing it is filed on",
+        );
+
+        // **And a handle nobody has is still a miss**, which is what the gate
+        // is for: widening it must not turn every typo into an empty page.
+        assert!(
+            matches!(
+                store
+                    .recall(&EntityId("view:contract-no-such-view".into()))
+                    .await,
+                Err(MemoryError::UnknownEntity { .. }),
+            ),
+            "a handle nobody has stopped being a miss",
+        );
+    }
 
     /// **A near-miss against a record the build supplies is caught, exactly as
     /// one against a stored record is — and the refusal's own token lifts it.**
