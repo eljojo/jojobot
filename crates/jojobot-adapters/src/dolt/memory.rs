@@ -1657,6 +1657,19 @@ impl Memory for DoltMemory {
     ) -> Result<std::collections::BTreeMap<String, jojobot_domain::memory::FieldBacking>, MemoryError>
     {
         let mut tx = self.pool.begin().await.map_err(store)?;
+        // **The same gate every read beside it keeps** (rule 234): the rows
+        // plus what the build supplies. The port derives this read from
+        // `fields` and `history`, and both of those miss a handle nobody has,
+        // so a store that overrides it owes that answer too. An empty map says
+        // nobody has written a key here, which is a different answer from
+        // there is no such thing and has a different repair.
+        let index = self.known(&mut tx).await?;
+        if !index.iter().any(|e| &e.id == entity) {
+            return Err(MemoryError::UnknownEntity {
+                attempted: entity.to_string(),
+                nearest: guard::screen(entity, &[], &index),
+            });
+        }
         let writes = Self::writes_on(&mut tx, entity).await?;
         let declared = Self::types_in(&mut tx).await?;
         tx.commit().await.map_err(store)?;

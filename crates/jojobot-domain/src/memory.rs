@@ -3741,6 +3741,13 @@ mod tests {
         contract::a_claim_on_a_supplied_record_reads_back(&fake_knowing_a_supplied_view()).await;
     }
 
+    /// **Every entity read, counted in one place, against the fake.**
+    #[tokio::test]
+    async fn every_entity_read_answers_for_a_supplied_record_against_the_fake() {
+        contract::every_entity_read_answers_for_a_supplied_record(&fake_knowing_a_supplied_view())
+            .await;
+    }
+
     #[tokio::test]
     async fn an_exact_collision_with_a_supplied_handle_is_never_forceable_against_the_fake() {
         contract::an_exact_collision_with_a_supplied_handle_is_never_forceable(

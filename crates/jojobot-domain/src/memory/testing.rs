@@ -6295,6 +6295,186 @@ pub mod contract {
         );
     }
 
+    /// 🚨 **Every entity read either answers for a record the build supplies,
+    /// or says here why it must not.**
+    ///
+    /// Which set a read consults is a per-method decision and nothing counts
+    /// the methods. A read added after the rule was written inherits whichever
+    /// half its author copied, and no case asks. **This is the count**: one
+    /// place naming every read on the port, so a new one is a line somebody has
+    /// to write rather than a behaviour nobody notices.
+    ///
+    /// **Three groups, and which group a read is in is the content of the
+    /// case.**
+    ///
+    /// * **Gated on what EXISTS** — the rows plus what the build supplies (rule
+    ///   234). `recall`, `fields`, `history`, `claim_history`,
+    ///   `claim_histories` and `backing`. These answer for a supplied record,
+    ///   and a handle nobody has is still a miss.
+    /// * **Rows only, deliberately.** `list_entities` is the base the layer
+    ///   above extends, so a store resolving supplied records here would
+    ///   resolve them twice; `children` and `scan_entity` derive from it and
+    ///   inherit that. What they answer for a supplied record is the layer
+    ///   above's claim and is asked where that layer is wired.
+    /// * **Not a lookup at all.** `built_on` and `referring_to` select claims
+    ///   by a pointer rather than resolving a handle, so a handle nobody has
+    ///   selects nothing. **An empty answer is right here and a miss would be
+    ///   the fault.**
+    ///
+    /// ⛔️ **The miss half is what carries this case.** Asking only that the
+    /// reads answer passes on a build where every read answers everything,
+    /// which is exactly what a read with no gate of its own does.
+    pub async fn every_entity_read_answers_for_a_supplied_record<M: Memory>(store: &M) {
+        let shipped = EntityId(SUPPLIED_VIEW_FOR_THE_GUARD_SPECS.into());
+        let nobodys = EntityId("view:contract-no-such-view".into());
+        let written = store
+            .capture(NewFact {
+                fields: [("holds".to_string(), "the operator's own".to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(
+                    shipped.clone(),
+                    "the operator wrote on the record the build ships",
+                    date(2026, 5, 11),
+                )
+            })
+            .await
+            .expect("a claim on a supplied record is a write the gate allows")
+            .written()
+            .expect("nothing blocks it");
+
+        // **`backing` is the read this case was written for.** It says which
+        // claim stands behind each key, and the port derives it from `fields`
+        // and `history` — so a store that overrides it owes the gate they keep,
+        // and one that answers without asking tells a caller the handle is fine
+        // while every read beside it says it is not.
+        let backed = store.backing(&shipped).await.expect("the backing reads");
+        assert!(
+            backed.contains_key("holds"),
+            "the key written on a supplied record has no claim behind it: {backed:?}",
+        );
+
+        // ── a handle nobody has is still a miss, on every gated read ────────
+        //
+        // ⚠️ **Named one at a time on purpose.** Each read carries its own
+        // gate, so they fault independently: a case asking this of one of them
+        // reports the others as covered and measures nothing about them.
+        assert!(
+            matches!(
+                store.recall(&nobodys).await,
+                Err(MemoryError::UnknownEntity { .. })
+            ),
+            "recall stopped missing a handle nobody has",
+        );
+        assert!(
+            matches!(
+                store.fields(&nobodys).await,
+                Err(MemoryError::UnknownEntity { .. })
+            ),
+            "fields stopped missing a handle nobody has",
+        );
+        assert!(
+            matches!(
+                store.history(&nobodys, "holds").await,
+                Err(MemoryError::UnknownEntity { .. })
+            ),
+            "history stopped missing a handle nobody has",
+        );
+        assert!(
+            matches!(
+                store
+                    .claim_history(&FactAddress::new(nobodys.clone(), written.id.clone()))
+                    .await,
+                Err(MemoryError::UnknownEntity { .. })
+            ),
+            "claim_history stopped missing a handle nobody has",
+        );
+        assert!(
+            matches!(
+                store.claim_histories(&nobodys).await,
+                Err(MemoryError::UnknownEntity { .. })
+            ),
+            "claim_histories stopped missing a handle nobody has",
+        );
+        assert!(
+            matches!(
+                store.backing(&nobodys).await,
+                Err(MemoryError::UnknownEntity { .. })
+            ),
+            "backing answers for a handle nobody has, while every read beside it misses",
+        );
+
+        // ── the two reads that are a selection rather than a lookup ────────
+        //
+        // **Each is asked twice in one read**, because an emptiness on its own
+        // holds identically on a build where the read returns nothing at all.
+        // The positive is that the selection reaches a supplied record; the
+        // negative is that a handle nobody has selects nothing rather than
+        // missing.
+        let pointer = EntityId("person:contract-supplied-pointer".into());
+        add(
+            store,
+            NewEntity::new(pointer.clone(), "Contract Pointer", "contract-fixture"),
+        )
+        .await;
+        let points_at_it = capture(
+            store,
+            NewFact {
+                fields: [("asks".to_string(), shipped.to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(pointer.clone(), "runs the shipped one", date(2026, 5, 12))
+            },
+        )
+        .await;
+        let stands_on_it = capture(
+            store,
+            NewFact {
+                derived_from: Some(written.address()),
+                ..NewFact::about(
+                    pointer.clone(),
+                    "so the shipped one is narrowed",
+                    date(2026, 5, 13),
+                )
+            },
+        )
+        .await;
+
+        let standing_on = store
+            .built_on(&written.address())
+            .await
+            .expect("the lineage of a claim on a supplied record reads");
+        assert!(
+            standing_on.iter().any(|f| f.id == stands_on_it.id),
+            "a claim built on one written on a supplied record is unreachable from it",
+        );
+        assert!(
+            store
+                .built_on(&FactAddress::new(nobodys.clone(), written.id.clone()))
+                .await
+                .expect("a lineage read is a selection on a pointer, never a lookup")
+                .is_empty(),
+            "a lineage read of a handle nobody has selected something",
+        );
+
+        let pointing = store
+            .referring_to(&shipped)
+            .await
+            .expect("what points at a supplied record reads");
+        assert!(
+            pointing.iter().any(|f| f.id == points_at_it.id),
+            "a key holding a supplied record's handle does not answer from the far end",
+        );
+        assert!(
+            store
+                .referring_to(&nobodys)
+                .await
+                .expect("a pointer read is a selection, never a lookup")
+                .is_empty(),
+            "a pointer read of a handle nobody has selected something",
+        );
+    }
+
     /// **A near-miss against a record the build supplies is caught, exactly as
     /// one against a stored record is — and the refusal's own token lifts it.**
     ///

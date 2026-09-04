@@ -626,6 +626,46 @@ async fn dolt_satisfies_the_supplied_record_guard_contract() {
     store.stop().await;
 }
 
+/// **…and every entity read counted in one place, over the real store.**
+///
+/// A database of its own, because the case is the one a sabotage is aimed at:
+/// sharing a run with the specs above would let their assertions answer for
+/// it, and a verdict about somebody else's case measures nothing.
+#[tokio::test]
+async fn dolt_answers_every_entity_read_for_a_supplied_record() {
+    let scratch = Scratch::new("supplied-reads");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("suppliedreads")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+
+    let supplied = Provisions::new(vec![Provision::record(
+        jojobot_domain::memory::Entity {
+            id: EntityId(memory::SUPPLIED_VIEW_FOR_THE_GUARD_SPECS.into()),
+            kind: jojobot_domain::memory::EntityKind::VIEW,
+            name: "The Loops".into(),
+            aliases: Vec::new(),
+            source: "jojobot".into(),
+            crm: None,
+            parent: None,
+            boot: Default::default(),
+            merged_into: None,
+            badge: None,
+        },
+        std::collections::BTreeMap::new(),
+    )]);
+    let known = DoltMemory::open(pool).knowing(supplied);
+
+    memory::every_entity_read_answers_for_a_supplied_record(&known).await;
+
+    store.stop().await;
+}
+
 /// **…and the same contract including retrieval**, with the search projection
 /// over this store.
 ///
