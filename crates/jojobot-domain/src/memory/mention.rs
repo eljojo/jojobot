@@ -51,9 +51,9 @@ pub const MARK: &str = "@#";
 pub fn named(text: &str) -> Vec<EntityId> {
     let mut found = Vec::new();
     for (at, _) in text.match_indices('@') {
-        if text[at..].starts_with(MARK) {
-            continue;
-        }
+        // **A stored mark needs no skip of its own.** What follows it is a
+        // badge rather than a kind, so the read below turns it down for the
+        // reason it turns down any other word.
         if let Some((handle, _)) = handle_at(text, at) {
             found.push(handle);
         }

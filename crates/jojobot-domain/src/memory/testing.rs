@@ -10904,29 +10904,81 @@ pub mod contract {
         ensure(mentioning, &author).await;
         let before = bare.recall(&author).await.expect("the store answers").len();
 
-        let refused = mentioning
-            .capture(NewFact::about(
+        // **The claim and the nuance are two lines of the same guard**, so each
+        // is refused on its own rather than on the other.
+        for fact in [
+            NewFact::about(
                 author.clone(),
                 "the note named @person:contract-mention-nobody",
                 date(2026, 4, 18),
-            ))
-            .await
-            .expect("a refusal is an answer rather than an error");
-        match &refused {
-            Guarded::Blocked { attempted, .. } => assert_eq!(
-                attempted.as_str(),
-                "person:contract-mention-nobody",
-                "the refusal names the mention that could not be followed",
             ),
-            Guarded::Written(written) => panic!(
-                "a claim naming something that is not there was stored: {}",
-                written.content
-            ),
+            NewFact {
+                details: Some("named @person:contract-mention-nobody underneath".into()),
+                ..NewFact::about(author.clone(), "the note said nothing", date(2026, 4, 18))
+            },
+        ] {
+            let refused = mentioning
+                .capture(fact)
+                .await
+                .expect("a refusal is an answer rather than an error");
+            match &refused {
+                Guarded::Blocked { attempted, .. } => assert_eq!(
+                    attempted.as_str(),
+                    "person:contract-mention-nobody",
+                    "the refusal names the mention that could not be followed",
+                ),
+                Guarded::Written(written) => panic!(
+                    "a claim naming something that is not there was stored: {}",
+                    written.content
+                ),
+            }
         }
         assert_eq!(
             bare.recall(&author).await.expect("the store answers").len(),
             before,
             "the refused write left a record behind",
+        );
+
+        // **An EDIT names entities exactly as a capture does**, and it is the
+        // likelier of the two: a correction is where somebody rewrites the
+        // sentence. Its own assertion, because it is its own screen.
+        let standing = capture(
+            mentioning,
+            NewFact::about(author.clone(), "kept the books", date(2026, 4, 18)),
+        )
+        .await;
+        // **The claim and the nuance are two lines of the same guard**, so
+        // each is refused on its own rather than on the other.
+        for patch in [
+            FactPatch {
+                content: Some("kept the books for @person:contract-mention-nobody".into()),
+                ..Default::default()
+            },
+            FactPatch {
+                details: Some("for @person:contract-mention-nobody".into()),
+                ..Default::default()
+            },
+        ] {
+            let refused = mentioning
+                .update_fact(&standing.address(), patch)
+                .await
+                .expect("a refusal is an answer rather than an error");
+            match &refused {
+                Guarded::Blocked { attempted, .. } => assert_eq!(
+                    attempted.as_str(),
+                    "person:contract-mention-nobody",
+                    "the refused edit names the mention that could not be followed",
+                ),
+                Guarded::Written(written) => panic!(
+                    "an edit naming something that is not there was stored: {}",
+                    written.content
+                ),
+            }
+        }
+        assert_eq!(
+            stored_of(bare, &author, &standing.id).await,
+            "kept the books",
+            "the refused edit rewrote the claim anyway",
         );
 
         // …and a claim mentioning something that IS there still lands.
