@@ -406,7 +406,7 @@ say     September: nothing on the pump carries the day it came back, so the ques
 >
 > Nobody will answer you, but your answer is being read. You must answer.
 >
-> start jojobot as assistant — it is 11 October 2026 and I should note that Nelson brought my floor pump back over the summer
+> start jojobot as assistant — it is 11 October 2026 and I should note that Nelson brought my floor pump back over the summer, and put down where we held the survey — the ground there needs a look before next year
 
 ```locks
 # 🚨 The operator says nothing about September and does not take anything back.
@@ -420,6 +420,27 @@ recall {"subject": "thing:floor-pump", "facts": true}
 carries person:ralph
 carries person:nelson
 say     October: one of the two accounts of how the pump came back is gone, so a sitting picked a winner where the design says both stand
+
+# 🚨 **A write only a sitting that READ June's claim could have made.** The
+# operator asks where the survey was held and never says. **One record in the
+# year answers it** — June's claim, which names the place as a handle. Nothing
+# on the event says it, and the room holds two names close enough to guess
+# wrong between.
+#
+# ⛔️ **Following is not what is locked, because following leaves no trace.** A
+# sitting that read the claim and one that guessed leave the same store, exactly
+# as this room says about August's walk. **What is locked is the WRITE**: the
+# survey can be walked to the place it was held at, which is a thing this
+# sitting could only record after finding it.
+#
+# ⚠️ **A walk rather than a record on the trail.** A claim filed on the place
+# needs the place to exist and nothing else, so a year that skipped January
+# would satisfy it — the trail came with the furniture. The event did not: it is
+# January's, so this lock rests on January and June both, which is what the
+# sentence beside it claims.
+recall {"subject": "event:trail-survey", "follow": {"shape": "location", "direction": "out"}}
+carries place:north-trail
+say     October: the survey cannot be walked to the place it was held at, so where it happened is in one sitting's sentence and nowhere a later reader of the event will look
 ```
 
 ## Phase 11 — later in October, somebody who was never there

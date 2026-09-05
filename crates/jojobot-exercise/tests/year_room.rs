@@ -35,14 +35,14 @@ const JUNE: [usize; 3] = [10, 11, 12];
 const JULY: [usize; 1] = [13];
 const AUGUST: [usize; 2] = [14, 15];
 const SEPTEMBER: [usize; 1] = [16];
-const OCTOBER: [usize; 1] = [17];
-const LATE_OCTOBER: [usize; 3] = [18, 19, 20];
-const LATE_NOVEMBER: [usize; 2] = [21, 22];
+const OCTOBER: [usize; 2] = [17, 18];
+const LATE_OCTOBER: [usize; 3] = [19, 20, 21];
+const LATE_NOVEMBER: [usize; 2] = [22, 23];
 
 /// How many locks the year carries.
-const LATE_DECEMBER: [usize; 2] = [23, 24];
+const LATE_DECEMBER: [usize; 2] = [24, 25];
 
-const LOCKS: usize = 25;
+const LOCKS: usize = 26;
 
 /// **The sittings a person reads**, which assert nothing and must not.
 const READ_THESE: [&str; 2] = ["Phase 12", "Phase 14"];
@@ -624,6 +624,46 @@ async fn october(room: &Surface, sid: &str) {
                "shape": "connection", "object": "person:nelson"}),
     )
     .await;
+    // **The note lands on the place, which this sitting had to find.** The
+    // operator says where we held the survey and never says where that was;
+    // June's claim is the one record that answers it.
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "event:trail-survey",
+               "content": "the ground needs a look before next year",
+               "provenance": "testimony",
+               "shape": "location", "object": "place:north-trail"}),
+    )
+    .await;
+}
+
+/// **An October that writes the note and never says where.**
+///
+/// The sitting does everything else it is asked and files the note on the event
+/// itself, so the pump lock still holds and the note is really there. **What it
+/// never did is work out WHERE the survey was held** — the one thing only
+/// June's claim says, and the one thing the walk asks for.
+async fn october_files_the_note_on_the_event(room: &Surface, sid: &str) {
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "thing:floor-pump", "content": "brought round over the summer",
+               "provenance": "testimony",
+               "shape": "connection", "object": "person:nelson"}),
+    )
+    .await;
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "event:trail-survey",
+               "content": "the ground needs a look before next year",
+               "provenance": "testimony"}),
+    )
+    .await;
 }
 
 /// **The retraction case, worked for the first time all year.** Nelson's
@@ -867,6 +907,7 @@ async fn work_the_year(
                 JUNE_AT if guilty.contains(&JUNE_IN_WORDS) => {
                     june_records_in_words(room, sid).await
                 }
+                9 => october_files_the_note_on_the_event(room, sid).await,
                 6 => july_takes_the_claim_back(room, sid).await,
                 7 => august_puts_a_third_person_there(room, sid).await,
                 10 => late_october_puts_a_third_person_there(room, sid).await,
@@ -1504,6 +1545,49 @@ async fn a_june_that_wrote_words_leaves_a_later_sitting_nothing_to_follow() {
     assert!(
         judged[JUNE[2]].held,
         "the year wrote the operator's three nouns as handles and the lock still failed: {}",
+        saying(&judged),
+    );
+}
+
+/// 🚨 **An October that recorded the note and never said WHERE fails, and
+/// everything else it recorded still holds.**
+///
+/// The operator asks where the survey was held and never says. **June's claim
+/// is the one record in the year that answers it**, so a sitting that never
+/// read it has the note and not the place.
+///
+/// ⛔️ **Whether the sitting FOLLOWED the mention is not what moves this.**
+/// Following leaves no trace: a sitting that read the claim and one that
+/// guessed leave the same store, which is what this room already says about
+/// August's walk. **What moves it is the write.**
+///
+/// **Paired in one case.** The guilty October files the note on the event and
+/// records the pump exactly as the good one does, so its other lock holds and
+/// the one that moves is the walk to the place.
+#[tokio::test]
+async fn an_october_that_never_said_where_leaves_the_survey_unplaceable() {
+    let (_room, surface) = furnished().await;
+    let nowhere = work_the_year(&surface, &room_document(), &WORKED, &[9]).await;
+    let judged = judge_all(&surface, &nowhere).await;
+    assert!(
+        !judged[OCTOBER[1]].held,
+        "an October that never said where the survey was held satisfied the walk to the place,          so the lock is not about where it happened: {}",
+        saying(&judged),
+    );
+    // **The positive that says the guilty sitting is otherwise a good one.**
+    // Without it this passes on an October that did nothing at all.
+    assert!(
+        judged[OCTOBER[0]].held,
+        "the guilty October failed the lock it was meant to hold, so the case above is          measuring a sitting that did not happen: {}",
+        saying(&judged),
+    );
+
+    let (_room, surface) = furnished().await;
+    let boundaries = worked_the_year(&surface).await;
+    let judged = judge_all(&surface, &boundaries).await;
+    assert!(
+        judged[OCTOBER[1]].held,
+        "the year recorded where the survey was held and the walk still failed: {}",
         saying(&judged),
     );
 }
