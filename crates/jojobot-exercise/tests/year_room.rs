@@ -1527,7 +1527,7 @@ async fn a_june_that_wrote_words_leaves_a_later_sitting_nothing_to_follow() {
     let judged = judge_all(&surface, &in_words).await;
     assert!(
         !judged[JUNE[2]].held,
-        "a June that named three things as words held the lock about handles, so the room          cannot tell a pointer from a sentence: {}",
+        "a June that named three things as words held the lock about handles, so the room cannot tell a pointer from a sentence: {}",
         saying(&judged),
     );
     // **The positive that says the guilty sitting is otherwise a good one.**
@@ -1535,7 +1535,7 @@ async fn a_june_that_wrote_words_leaves_a_later_sitting_nothing_to_follow() {
     // would be reporting an absent sitting rather than a worded one.
     assert!(
         judged[JUNE[0]].held && judged[JUNE[1]].held,
-        "the guilty June failed a lock it was meant to hold, so the case above is measuring a          sitting that did not happen: {}",
+        "the guilty June failed a lock it was meant to hold, so the case above is measuring a sitting that did not happen: {}",
         saying(&judged),
     );
 
@@ -1571,14 +1571,14 @@ async fn an_october_that_never_said_where_leaves_the_survey_unplaceable() {
     let judged = judge_all(&surface, &nowhere).await;
     assert!(
         !judged[OCTOBER[1]].held,
-        "an October that never said where the survey was held satisfied the walk to the place,          so the lock is not about where it happened: {}",
+        "an October that never said where the survey was held satisfied the walk to the place, so the lock is not about where it happened: {}",
         saying(&judged),
     );
     // **The positive that says the guilty sitting is otherwise a good one.**
     // Without it this passes on an October that did nothing at all.
     assert!(
         judged[OCTOBER[0]].held,
-        "the guilty October failed the lock it was meant to hold, so the case above is          measuring a sitting that did not happen: {}",
+        "the guilty October failed the lock it was meant to hold, so the case above is measuring a sitting that did not happen: {}",
         saying(&judged),
     );
 
