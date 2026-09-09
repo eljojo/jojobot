@@ -319,6 +319,9 @@ impl super::Memory for Mentioning {
     ) -> Result<Vec<Entity>, super::MemoryError> {
         self.inner.list_entities(kind).await
     }
+    async fn former_handles(&self) -> Result<Vec<super::FormerHandle>, super::MemoryError> {
+        self.inner.former_handles().await
+    }
     async fn update_entity(
         &self,
         handle: &EntityId,

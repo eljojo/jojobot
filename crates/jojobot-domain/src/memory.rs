@@ -400,6 +400,41 @@ pub struct Entity {
     pub badge: Option<String>,
 }
 
+/// **One rename event: a handle a thing used to answer to, and the badge it
+/// still answers to under whatever handle it wears now** (rule 243).
+///
+/// Kept forever, one row per event: the reference this exists to protect is
+/// one written under the FIRST handle a thing ever wore, so keeping only the
+/// newest former handle would break exactly that case — silently, since a
+/// miss on it would read no differently from a handle that never existed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormerHandle {
+    /// The handle this thing no longer answers to.
+    pub former: EntityId,
+    /// The badge it answers to now — never the handle, which is what makes
+    /// this survive the thing being renamed again after this event.
+    pub badge: String,
+    /// The day this handle stopped being current.
+    pub changed_at: Date,
+}
+
+/// **Resolve a handle that may be stale.** A direct match wins; failing that,
+/// the handle's own rename history is checked, and the entity now wearing
+/// that badge is returned. `None` means nothing — not now, not ever —
+/// answered to this handle, which is what tells a genuinely unknown handle
+/// apart from one that moved.
+pub fn resolve_handle<'a>(
+    id: &EntityId,
+    known: &'a [Entity],
+    former: &[FormerHandle],
+) -> Option<&'a Entity> {
+    if let Some(direct) = known.iter().find(|e| &e.id == id) {
+        return Some(direct);
+    }
+    let badge = &former.iter().find(|f| &f.former == id)?.badge;
+    known.iter().find(|e| e.badge.as_ref() == Some(badge))
+}
+
 impl Entity {
     /// Every name this entity answers to: its display name first, then its
     /// aliases, blanks dropped.
@@ -3050,6 +3085,25 @@ pub trait Memory: Send + Sync {
 
     /// Every entity jojobot knows, optionally filtered to one kind.
     async fn list_entities(&self, kind: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError>;
+
+    /// **Every handle a thing used to answer to, before it does not any
+    /// more.**
+    ///
+    /// One row per rename event, kept forever: a reference written under the
+    /// first handle a thing ever wore has to keep resolving, and keeping only
+    /// the newest former handle would break exactly that case, silently — a
+    /// miss on a twice-renamed thing's first name would read no differently
+    /// from a handle that never existed.
+    ///
+    /// **No verb writes here yet.** Nothing renames a handle in this build, so
+    /// this always answers empty in production — a decorator that forgets to
+    /// delegate it is invisible until the day something does. The default
+    /// answers empty for the same reason [`backing`](Memory::backing) has one:
+    /// a store that has nothing to say about its own history is not a store
+    /// that has to say so twice.
+    async fn former_handles(&self) -> Result<Vec<FormerHandle>, MemoryError> {
+        Ok(Vec::new())
+    }
     /// **Where each folded value came from, and who backs it.**
     ///
     /// [`fields`](Memory::fields) says what a thing holds; this says which
@@ -3512,6 +3566,49 @@ pub trait Memory: Send + Sync {
 mod tests {
     use super::testing::{InMemoryMemory, contract};
     use super::*;
+
+    fn thing(handle: &str, badge: Option<&str>) -> Entity {
+        Entity {
+            id: EntityId(handle.into()),
+            kind: EntityId(handle.into()).kind().expect("a test handle"),
+            name: handle.into(),
+            aliases: Vec::new(),
+            source: "the fixture roster".into(),
+            crm: None,
+            parent: None,
+            boot: Boot::OnDemand,
+            merged_into: None,
+            badge: badge.map(str::to_string),
+        }
+    }
+
+    /// 🚨 **Both halves of a stale handle, in one case**: a rename it survives,
+    /// and a handle that never existed, which must stay a miss.
+    ///
+    /// A resolver that answered every handle would pass on the first half
+    /// alone; one that answered none would pass on the second.
+    #[test]
+    fn resolve_handle_follows_a_rename_and_a_never_existed_handle_still_misses() {
+        let _booted = InMemoryMemory::booted();
+        let survivor = thing("person:milhouse-2", Some("k7h2mn"));
+        let known = [survivor.clone()];
+        let former = [FormerHandle {
+            former: EntityId("person:milhouse".into()),
+            badge: "k7h2mn".into(),
+            changed_at: Date::constant(2026, 3, 1),
+        }];
+
+        assert_eq!(
+            resolve_handle(&EntityId("person:milhouse".into()), &known, &former),
+            Some(&survivor),
+            "a handle that renamed must still resolve to whoever wears its badge now",
+        );
+        assert_eq!(
+            resolve_handle(&EntityId("person:zzz".into()), &known, &former),
+            None,
+            "a handle nothing ever answered to must stay a miss",
+        );
+    }
 
     /// One write of a key, at the place in that key's history it took.
     fn wrote(key: &str, ordinal: u64, value: Option<&str>) -> KeyWrite {

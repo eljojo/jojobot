@@ -26,6 +26,7 @@ use jojobot_adapters::testing::free_port;
 use jojobot_domain::mailbox::testing::contract as mailboxes;
 use jojobot_domain::mailbox::{MailboxError, OwnerIndex, OwnerLookup};
 use jojobot_domain::memory::EntityId;
+use jojobot_domain::memory::FormerHandle;
 use jojobot_domain::memory::Memory;
 use jojobot_domain::memory::owned::{Provision, Provisions};
 use jojobot_domain::memory::testing::contract as memory;
@@ -582,6 +583,18 @@ impl memory::Rehandles for DoltRehandles {
             .execute(&self.0)
             .await
             .expect("the row moves");
+    }
+
+    async fn note_former_handle(&self, event: FormerHandle) {
+        sqlx::query(
+            "INSERT INTO entity_former_handle (former_handle, badge, changed_at) VALUES (?, ?, ?)",
+        )
+        .bind(event.former.as_str())
+        .bind(&event.badge)
+        .bind(event.changed_at.to_string())
+        .execute(&self.0)
+        .await
+        .expect("the rename event is recorded");
     }
 }
 

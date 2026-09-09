@@ -41,8 +41,8 @@ use std::collections::BTreeMap;
 
 use jojobot_domain::memory::{
     ClaimWrite, Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress,
-    FactId, FactPatch, FactStatus, FieldWrite, Guarded, Memory, MemoryError, Merge, NewEntity,
-    NewFact, Retraction,
+    FactId, FactPatch, FactStatus, FieldWrite, FormerHandle, Guarded, Memory, MemoryError, Merge,
+    NewEntity, NewFact, Retraction,
     guard::{self, MatchReason},
     kinds,
     search::{
@@ -2028,6 +2028,10 @@ impl Memory for IndexedMemory {
 
     async fn list_entities(&self, kind: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError> {
         self.inner.list_entities(kind).await
+    }
+
+    async fn former_handles(&self) -> Result<Vec<FormerHandle>, MemoryError> {
+        self.inner.former_handles().await
     }
 
     async fn update_entity(

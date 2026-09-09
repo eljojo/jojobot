@@ -39,8 +39,8 @@ use jiff::civil::Date;
 use jojobot_domain::memory::owned::{Provisions, extended, guard_extension};
 use jojobot_domain::memory::{
     ClaimWrite, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactPatch,
-    FieldBacking, FieldWrite, Guarded, Memory, MemoryError, Merge, NewEntity, NewFact, Retraction,
-    guard, search, types,
+    FieldBacking, FieldWrite, FormerHandle, Guarded, Memory, MemoryError, Merge, NewEntity,
+    NewFact, Retraction, guard, search, types,
 };
 
 /// A store, plus what this build supplies over it.
@@ -193,6 +193,12 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
             }
         }
         Ok(held)
+    }
+
+    /// A build-supplied record is not a row, so it has no rename history —
+    /// this is the store's own, unchanged.
+    async fn former_handles(&self) -> Result<Vec<FormerHandle>, MemoryError> {
+        self.inner.former_handles().await
     }
 
     /// **What the store holds under the build's keys.**

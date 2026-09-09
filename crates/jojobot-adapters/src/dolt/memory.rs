@@ -33,9 +33,9 @@ use jojobot_domain::clock::Clock;
 use jojobot_domain::memory::owned::Provisions;
 use jojobot_domain::memory::{
     ClaimWrite, Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress,
-    FactId, FactPatch, FactStatus, FieldWrite, Guarded, KeyWrite, Memory, MemoryError, Merge,
-    NewEntity, NewFact, Provenance, Retraction, Standing, apply_entity_patch, apply_fact_patch,
-    folded_fields, guard, guard_fit,
+    FactId, FactPatch, FactStatus, FieldWrite, FormerHandle, Guarded, KeyWrite, Memory,
+    MemoryError, Merge, NewEntity, NewFact, Provenance, Retraction, Standing, apply_entity_patch,
+    apply_fact_patch, folded_fields, guard, guard_fit,
     kinds::{self, NotAKind},
     merge_account, normalize_content, normalize_details, normalize_prose, referenced_by,
     retraction_of, screen_entity_patch, search, standing_of, stood_after, stood_after_capture,
@@ -956,6 +956,33 @@ impl Memory for DoltMemory {
             .into_iter()
             .filter(|e| kind.is_none_or(|k| e.kind == k))
             .collect())
+    }
+
+    async fn former_handles(&self) -> Result<Vec<FormerHandle>, MemoryError> {
+        let rows = sqlx::query(
+            "SELECT former_handle, badge, changed_at FROM entity_former_handle ORDER BY former_handle",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(store)?;
+        let mut out = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let former = EntityId(row.try_get::<String, _>("former_handle").map_err(store)?);
+            let badge = row.try_get::<String, _>("badge").map_err(store)?;
+            let changed_at: Date = row
+                .try_get::<String, _>("changed_at")
+                .map_err(store)?
+                .parse()
+                .map_err(|_| {
+                    unreadable("a former handle's changed-on day cannot be read as a date")
+                })?;
+            out.push(FormerHandle {
+                former,
+                badge,
+                changed_at,
+            });
+        }
+        Ok(out)
     }
 
     async fn update_entity(

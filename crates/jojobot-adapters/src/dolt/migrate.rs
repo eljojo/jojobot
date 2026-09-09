@@ -387,6 +387,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0041_session_teaching.sql"),
         leaves: Leaves::Table("session_teaching"),
     },
+    Migration {
+        version: "0042_entity_former_handle",
+        sql: include_str!("../../migrations/0042_entity_former_handle.sql"),
+        leaves: Leaves::Table("entity_former_handle"),
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a
@@ -795,6 +800,7 @@ mod tests {
         "0039_fact_recorded_at",
         "0040_fact_write_recorded_at",
         "0041_session_teaching",
+        "0042_entity_former_handle",
     ];
 
     /// **A migration set of this test's own, carrying the shape no shipped

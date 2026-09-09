@@ -17,12 +17,12 @@ use jiff::civil::Date;
 
 use super::{
     ClaimWrite, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactId, FactPatch,
-    FactStatus, FieldWrite, Guarded, MAX_KEY_CHARS, MERGED_FROM, Memory, MemoryError, Merge,
-    NewEntity, NewFact, Retraction, Standing, apply_entity_patch, apply_fact_patch,
+    FactStatus, FieldWrite, FormerHandle, Guarded, MAX_KEY_CHARS, MERGED_FROM, Memory, MemoryError,
+    Merge, NewEntity, NewFact, Retraction, Standing, apply_entity_patch, apply_fact_patch,
     guard::{self, Decision},
-    merge_account, normalize_content, normalize_details, normalize_prose, retraction_of,
-    screen_entity_patch, search, standing_of, validate_content, validate_details, validate_edge,
-    validate_entity, validate_fields, validate_prose, validate_provenance_source,
+    merge_account, normalize_content, normalize_details, normalize_prose, resolve_handle,
+    retraction_of, screen_entity_patch, search, standing_of, validate_content, validate_details,
+    validate_edge, validate_entity, validate_fields, validate_prose, validate_provenance_source,
     validate_write_subject,
 };
 
@@ -86,6 +86,11 @@ pub struct InMemoryMemory {
     /// read *when jojobot took this in* off the wall clock, and pass on a build
     /// where the stated day never reaches the store at all.
     clock: crate::clock::Clock,
+    /// **Rename history.** No verb writes here yet — nothing renames a handle
+    /// in this build — so this is populated only through
+    /// [`InMemoryMemory::past_the_guard_rename`], the same seam
+    /// `past_the_guard` is, for the state a verb cannot produce yet.
+    former_handles: Mutex<Vec<FormerHandle>>,
 }
 
 impl InMemoryMemory {
@@ -269,6 +274,15 @@ impl InMemoryMemory {
             .expect("the row to move is there");
         row.id = to.clone();
         row.kind = to.kind().expect("a staged handle names a kind");
+    }
+
+    /// **Stage a rename event** — the record a real rename verb would leave
+    /// behind, so a stale handle keeps resolving. No verb writes this yet.
+    pub fn former_handle_past_the_guard(&self, event: FormerHandle) {
+        self.former_handles
+            .lock()
+            .expect("fake mutex poisoned")
+            .push(event);
     }
 
     /// The rows this store holds — used where a supplied record has no place
@@ -502,6 +516,14 @@ impl Memory for InMemoryMemory {
             .into_iter()
             .filter(|e| kind.is_none_or(|k| e.kind == k))
             .collect())
+    }
+
+    async fn former_handles(&self) -> Result<Vec<FormerHandle>, MemoryError> {
+        Ok(self
+            .former_handles
+            .lock()
+            .expect("fake mutex poisoned")
+            .clone())
     }
 
     async fn update_entity(
@@ -10844,6 +10866,9 @@ pub mod contract {
     pub trait Rehandles: Send + Sync {
         /// Move a row from one handle to another, keeping the badge it wears.
         async fn rehandle(&self, from: &EntityId, to: &EntityId);
+        /// Stage the rename event a real verb would leave behind, so a lookup
+        /// on the old handle can be proved to fall through to the new one.
+        async fn note_former_handle(&self, event: FormerHandle);
     }
 
     /// 🚨 **A mention is stored as the badge and read back as the handle.**
@@ -11049,6 +11074,63 @@ pub mod contract {
         );
     }
 
+    /// 🚨 **A stale handle resolves through its own rename history, and a
+    /// handle nothing ever answered to still misses — over a real store, not
+    /// only the pure function.**
+    ///
+    /// No verb writes a rename event yet, so `rehandles` stages both halves of
+    /// the state one would leave: the row moved, and the event recorded. Both
+    /// assertions in one read, because a resolver answering every handle would
+    /// pass the first alone.
+    pub async fn a_stale_handle_resolves_through_its_rename_history<M: Memory + ?Sized>(
+        store: &M,
+        rehandles: &dyn Rehandles,
+    ) {
+        let was = EntityId("thing:contract-former-handle-was".into());
+        let now = EntityId("work:contract-former-handle-now".into());
+        store
+            .add_entity(NewEntity::new(was.clone(), "The Renamed One", "the roster"))
+            .await
+            .expect("the fixture is written")
+            .written()
+            .expect("nothing collides with it");
+        let badge = store
+            .list_entities(None)
+            .await
+            .expect("the store answers")
+            .into_iter()
+            .find(|e| e.id == was)
+            .expect("the fixture is there")
+            .badge
+            .expect("a written row wears a badge");
+
+        rehandles.rehandle(&was, &now).await;
+        rehandles
+            .note_former_handle(FormerHandle {
+                former: was.clone(),
+                badge,
+                changed_at: date(2026, 4, 18),
+            })
+            .await;
+
+        let known = store.list_entities(None).await.expect("the store answers");
+        let former = store.former_handles().await.expect("the store answers");
+
+        let resolved = resolve_handle(&was, &known, &former);
+        assert_eq!(
+            resolved.map(|e| &e.id),
+            Some(&now),
+            "the old handle did not resolve to the thing's current one: {resolved:?}",
+        );
+
+        let never = EntityId("person:contract-former-handle-never".into());
+        assert_eq!(
+            resolve_handle(&never, &known, &former),
+            None,
+            "a handle nothing ever answered to must stay a miss",
+        );
+    }
+
     /// 🚨 **A link that leads nowhere and text that was never a link render
     /// differently, and neither renders bare.**
     ///
@@ -11152,6 +11234,9 @@ pub mod contract {
     impl Rehandles for FakeRehandles {
         async fn rehandle(&self, from: &EntityId, to: &EntityId) {
             self.0.rehandle_past_the_guard(from, to);
+        }
+        async fn note_former_handle(&self, event: FormerHandle) {
+            self.0.former_handle_past_the_guard(event);
         }
     }
 
@@ -11548,6 +11633,7 @@ pub mod contract {
         a_mention_naming_nothing_is_refused_and_writes_nothing(mentioning, bare).await;
         no_read_serves_a_badge_and_every_one_serves_the_handle(mentioning).await;
         an_account_written_from_a_reason_stores_its_mentions(mentioning, bare).await;
+        a_stale_handle_resolves_through_its_rename_history(bare, rehandles).await;
     }
 
     pub async fn run_all<M: Memory>(store: &M) {
