@@ -117,6 +117,33 @@ pub fn rendered(text: &str, known: &[Entity]) -> String {
     })
 }
 
+/// **Where a mention sits in text a reader is about to see, and what it
+/// points at** — for a caller that wants to draw a mention as something
+/// rather than serve it as a string.
+///
+/// **Reads served text, not stored text.** Only [`rendered`]'s output is a
+/// safe input: the two shapes it cannot make followable — a badge nothing
+/// wears, a handle nothing answers — are told apart by their trailing marker,
+/// which is what this reads to leave them out. **Neither becomes a link, and
+/// this is the one place that rule is enforced**: a caller that walks the
+/// result never has to re-derive it.
+pub fn followable(text: &str) -> Vec<(std::ops::Range<usize>, EntityId)> {
+    let mut found = Vec::new();
+    for (at, _) in text.match_indices('@') {
+        // **A stored mark parses as no handle at all**, so it is already
+        // excluded — `handle_at` needs `kind:` right after the `@`, and `#`
+        // is never that.
+        let Some((handle, end)) = handle_at(text, at) else {
+            continue;
+        };
+        if text[end..].starts_with(&format!(" {UNKNOWN}")) {
+            continue;
+        }
+        found.push((at..end, handle));
+    }
+    found
+}
+
 /// **A link whose thing is no longer in the store.**
 const GONE: &str = "(gone)";
 
@@ -634,6 +661,28 @@ mod tests {
         assert_eq!(
             rendered(stored, &[thing("work:handcart", Some("k7h2mn"))]),
             "the survey went out on @work:handcart",
+        );
+    }
+
+    /// 🚨 **The two shapes `rendered` cannot make followable are excluded, and
+    /// a genuine mention beside them is not** — the pairing is the point: a
+    /// scanner that called nothing followable would pass on the negative
+    /// halves alone.
+    #[test]
+    fn followable_finds_a_genuine_mention_and_leaves_the_two_dead_shapes_out() {
+        let _booted = crate::memory::testing::InMemoryMemory::booted();
+        let known = [thing("person:milhouse", Some("k7h2mn"))];
+        let served = rendered("ask @#k7h2mn about @person:zzz and about @#dead1", &known);
+        assert_eq!(
+            served,
+            "ask @person:milhouse about @person:zzz (no such handle) and about @#dead1 (gone)",
+        );
+
+        let spans = followable(&served);
+        assert_eq!(
+            spans,
+            vec![(4..20, EntityId("person:milhouse".into()))],
+            "found: {spans:?}, in: {served:?}",
         );
     }
 }

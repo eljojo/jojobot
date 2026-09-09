@@ -463,6 +463,7 @@ const ROSTER: &[&str] = &[
     "thing:contract-vocabulary-answerer",
     "thing:green-kite",
     "thing:handcart",
+    "thing:handcart-lost",
     "topic:contract-run-of-stalls",
     "topic:contract-widgets",
     "view:my-week",

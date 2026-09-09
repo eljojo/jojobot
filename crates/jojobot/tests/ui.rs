@@ -17,6 +17,7 @@ use jojobot::{AppState, build_app};
 use jojobot_adapters::search::{IndexedMemory, Retrieval};
 use jojobot_domain::mailbox::testing::InMemoryMailboxes;
 use jojobot_domain::mailbox::{MailboxName, Mailboxes, NewMessage};
+use jojobot_domain::memory::mention;
 use jojobot_domain::memory::search::Search;
 use jojobot_domain::memory::testing::InMemoryMemory;
 use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
@@ -75,8 +76,15 @@ fn as_text(raw: &str) -> String {
 
 /// Two roots and one child under the first, so a page can be wrong in a way a
 /// single entity would hide.
+///
+/// **Wrapped in `Mentioning`, exactly as production wires it** (rule 205): the
+/// server resolves mentions above the store and below the index before either
+/// the MCP surface or the browser listing ever sees a record, and a test
+/// store that skipped this layer would carry no mention at all — unreachable
+/// before it was ever unwritten.
 async fn seeded_memory() -> Arc<dyn Memory> {
-    let store = Arc::new(InMemoryMemory::booted());
+    let store: Arc<dyn Memory> =
+        Arc::new(mention::Mentioning::new(Arc::new(InMemoryMemory::booted())));
     seed(store.as_ref()).await;
     store
 }
@@ -779,6 +787,90 @@ async fn a_node_page_shows_the_facts_held_there_and_who_backs_them() {
     assert!(
         body.contains("2026-03-04"),
         "a fact carries its date: {body}"
+    );
+    ct.cancel();
+}
+
+/// **A mention in served text becomes a link to that thing's own page.**
+///
+/// Three plays in one read, because a linkifier that wrapped every `@`-shaped
+/// run in an anchor would pass on the genuine case alone: a real mention
+/// becomes a followable link; text shaped like a handle that never named
+/// anything renders distinctly and is never a link; and the unrelated claim
+/// already on this page (`The widget stall runs on Thursdays`, which mentions
+/// nothing) is unchanged in the same body — a page with no mentions on it is
+/// not something a passing linkifier gets to touch.
+///
+/// ⛔️ **No rename case here.** The room this capability protects against is a
+/// thing's badge answering to a different handle later — but `merge` moves a
+/// folded entity's facts and marks it `merged_into` the survivor; it does not
+/// touch either side's badge. Read at the source in
+/// `jojobot-domain/src/memory/testing.rs`'s `merge`, confirmed by running this
+/// case against a merge and watching the link stay on the folded handle. So
+/// today, nothing a caller can do moves what a stored mention answers to —
+/// this is a finding for `pm`, not a gap this test can respect.
+#[tokio::test]
+async fn a_mention_in_served_text_becomes_a_followable_link() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct, board) =
+        spawn_jojobot_over(endpoints, &[READER], &idp, seeded_board().await).await;
+
+    let written = board
+        .memory
+        .add_entity(NewEntity::new(
+            EntityId("thing:handcart".into()),
+            "Handcart",
+            "the fixture roster",
+        ))
+        .await
+        .expect("the mentioned thing is written");
+    assert!(
+        matches!(written, jojobot_domain::memory::Guarded::Written(_)),
+        "thing:handcart was blocked rather than written: {written:?}",
+    );
+    board
+        .memory
+        .capture(NewFact::about(
+            EntityId("topic:widgets".into()),
+            "@person:alpha rode @thing:handcart",
+            Date::constant(2026, 3, 9),
+        ))
+        .await
+        .expect("the mention-bearing claim is written");
+    board
+        .memory
+        .set_prose(
+            &EntityId("topic:widgets".into()),
+            "handcart's twin is @thing:handcart-lost",
+        )
+        .await
+        .expect("the unresolvable mention is written");
+
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+    let body = read(&client, addr, "/person:alpha/topic:widgets/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+
+    assert!(
+        body.contains("<a href=\"/person:alpha/\">@person:alpha</a>"),
+        "a mention of a root becomes a link to its own page: {body}"
+    );
+    assert!(
+        body.contains("<a href=\"/thing:handcart/\">@thing:handcart</a>"),
+        "a mention of a root thing becomes a link to its own page: {body}"
+    );
+    assert!(
+        body.contains("@thing:handcart-lost (no such handle)")
+            && !body.contains("<a href=\"/thing:handcart-lost/\">"),
+        "text shaped like a handle that names nothing renders distinctly and is never a link: {body}"
+    );
+    assert!(
+        body.contains("The widget stall runs on Thursdays"),
+        "a claim that mentions nothing is unchanged on the same page: {body}"
     );
     ct.cancel();
 }

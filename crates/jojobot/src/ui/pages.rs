@@ -10,7 +10,7 @@ use axum::{
 };
 
 use jojobot_domain::attention;
-use jojobot_domain::memory::{Entity, EntityId, EntityKind, Fact, graph, kinds};
+use jojobot_domain::memory::{Entity, EntityId, EntityKind, Fact, graph, kinds, mention};
 use jojobot_domain::text;
 
 use crate::AppState;
@@ -718,10 +718,10 @@ fn facts_table(facts: &[Fact], by_id: &HashMap<&EntityId, &Entity>) -> String {
         let claim = match &fact.details {
             Some(details) if !details.trim().is_empty() => format!(
                 "{}<br><small>{}</small>",
-                escape(&fact.content),
-                escape(details)
+                linkify(&fact.content, by_id),
+                linkify(details, by_id)
             ),
-            _ => escape(&fact.content),
+            _ => linkify(&fact.content, by_id),
         };
         out.push_str(&format!(
             "<tr><td>{claim}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td>\
@@ -761,6 +761,37 @@ fn record_fields(fact: &Fact) -> String {
         "<tr class=\"fields\"><td colspan=\"7\"><small>{}</small></td></tr>\n",
         pairs.join(" · ")
     )
+}
+
+/// **A mention in served text becomes a link to that thing's own page.**
+///
+/// The text a reader sees is unchanged — today's handle, exactly as
+/// `mention::rendered` already resolved it — and a followable span becomes
+/// an anchor. **The two shapes that cannot be followed stay exactly as
+/// served, never as a dead link**: `mention::followable` is the one place
+/// that tells them apart, so this never has to.
+fn linkify(text: &str, by_id: &HashMap<&EntityId, &Entity>) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut cut = 0;
+    for (span, handle) in mention::followable(text) {
+        out.push_str(&escape(&text[cut..span.start]));
+        let written = escape(&text[span.clone()]);
+        match by_id.get(&handle).copied() {
+            Some(entity) => out.push_str(&format!(
+                "<a href=\"{}\">{written}</a>",
+                escape(&tree::canonical_path(entity, by_id)),
+            )),
+            // **Followable and not on this page's listing.** `by_id` is every
+            // entity `list_entities` returned, so this is a read that raced a
+            // deletion rather than a scope this page never carries — rare
+            // enough that the safe fallback is the plain text, not a link
+            // that might not resolve.
+            None => out.push_str(&written),
+        }
+        cut = span.end;
+    }
+    out.push_str(&escape(&text[cut..]));
+    out
 }
 
 /// The relation a fact draws, as a link to where that entity lives.
