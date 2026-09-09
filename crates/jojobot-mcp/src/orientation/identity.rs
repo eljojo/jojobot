@@ -26,9 +26,15 @@ pub(crate) fn booting_unknown(
     candidates: &[EntityMatch],
     index: &[Entity],
 ) -> CallToolResult {
+    // **By the `kind` column, not the handle's prefix.** They agree today only
+    // because a handle's kind is parsed off its own prefix — the coincidence a
+    // rename breaks, since a retype changes the column and a rename can change
+    // the prefix independently of it. Every other place on this surface that
+    // asks "is this a bot" already reads the column; this was the one that did
+    // not.
     let roster: Vec<&str> = index
         .iter()
-        .filter(|e| e.id.as_str().starts_with("bot:"))
+        .filter(|e| e.kind == EntityKind::BOT)
         .map(|e| e.id.as_str())
         .collect();
     let how_to_proceed = if roster.is_empty() {
@@ -777,6 +783,63 @@ mod tests {
         assert!(
             note.contains("could not"),
             "an honest failure, not a silent absence: {note}"
+        );
+    }
+
+    /// 🚨 **The boot roster asks the `kind` column, not the handle's prefix.**
+    ///
+    /// The two agree today only because a handle's kind is parsed off its own
+    /// prefix — a coincidence a rename or a retype breaks. This never happens
+    /// through any verb yet, so the case is built directly rather than driven
+    /// through one: an entity whose `kind` is `bot` but whose handle does not
+    /// start with `bot:`, and the reverse, side by side.
+    #[test]
+    fn the_roster_reads_the_kind_column_even_when_the_prefix_disagrees() {
+        let looks_like_a_bot_and_is_not = Entity {
+            id: EntityId("bot:milhouse".into()),
+            kind: EntityKind::PERSON,
+            name: "Milhouse".into(),
+            aliases: Vec::new(),
+            source: "the fixture roster".into(),
+            crm: None,
+            parent: None,
+            boot: jojobot_domain::memory::Boot::OnDemand,
+            merged_into: None,
+            badge: None,
+        };
+        let is_a_bot_and_does_not_look_like_one = Entity {
+            id: EntityId("thing:gamma".into()),
+            kind: EntityKind::BOT,
+            name: "Gamma".into(),
+            aliases: Vec::new(),
+            source: "the fixture roster".into(),
+            crm: None,
+            parent: None,
+            boot: jojobot_domain::memory::Boot::OnDemand,
+            merged_into: None,
+            badge: None,
+        };
+        let index = [
+            looks_like_a_bot_and_is_not,
+            is_a_bot_and_does_not_look_like_one,
+        ];
+
+        let refused = booting_unknown(&EntityId("bot:nobody".into()), &[], &index);
+        let body = crate::harness::json_of(&refused);
+        let roster = body["bots"]
+            .as_array()
+            .expect("a roster")
+            .iter()
+            .map(|v| v.as_str().expect("a handle"))
+            .collect::<Vec<_>>();
+
+        assert!(
+            roster.contains(&"thing:gamma"),
+            "a bot whose handle does not start with bot: is still on the roster: {roster:?}",
+        );
+        assert!(
+            !roster.contains(&"bot:milhouse"),
+            "a handle that merely looks like a bot's is not one: {roster:?}",
         );
     }
 }

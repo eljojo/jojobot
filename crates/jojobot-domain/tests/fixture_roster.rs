@@ -99,6 +99,7 @@ const ROSTER: &[&str] = &[
     // which is the whole point of that capture. It names no instance and
     // nobody's life, so it sits here on the same terms as `bot:assistant`.
     "bot:jojobot",
+    "bot:milhouse",
     "bot:nobody",
     "bot:otto",
     "bot:worker-1",
@@ -238,6 +239,7 @@ const ROSTER: &[&str] = &[
     "thing:commit-omicron",
     "thing:floor-pump",
     "thing:folding-chairs",
+    "thing:gamma",
     "thing:gravel-bike",
     "thing:leftorium-menu",
     "thing:record-crate",
