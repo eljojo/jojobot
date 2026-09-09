@@ -438,7 +438,13 @@ say     October: one of the two accounts of how the pump came back is gone, so a
 # would satisfy it — the trail came with the furniture. The event did not: it is
 # January's, so this lock rests on January and June both, which is what the
 # sentence beside it claims.
-recall {"subject": "event:trail-survey", "follow": {"shape": "location", "direction": "out"}}
+#
+# ⛔️ **No handle is named here.** January invents the event's name, so a lock
+# that spelled it would be refused by a run whose January called it something
+# else — measuring nothing while reporting the walk itself as broken. June's
+# own lock reaches the event the same way, by kind and edge, and this one
+# follows suit.
+recall {"kind": "event", "follow": {"shape": "location", "direction": "out"}}
 carries place:north-trail
 say     October: the survey cannot be walked to the place it was held at, so where it happened is in one sitting's sentence and nowhere a later reader of the event will look
 ```

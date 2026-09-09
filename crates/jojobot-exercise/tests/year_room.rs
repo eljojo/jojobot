@@ -1592,6 +1592,53 @@ async fn an_october_that_never_said_where_leaves_the_survey_unplaceable() {
     );
 }
 
+/// 🚨 **The walk to the place holds whatever the event is actually called.**
+///
+/// A paid run named the event `event:trail-survey-2026` — a reasonable slug
+/// nothing in the year rules out. The lock used to name `event:trail-survey`
+/// literally, so that run's October was refused rather than measured: the
+/// walk never ran, and the tally read as a product failure that was really a
+/// mismatched string. The scripted sittings above always use the one slug
+/// this file's own `january` picks, so they cannot catch that — this test
+/// picks a different one on purpose.
+#[tokio::test]
+async fn the_walk_to_the_place_holds_whatever_the_event_is_actually_called() {
+    let (_room, surface) = furnished().await;
+    let sid = sitting(&surface, "2026-06-14").await;
+    did(
+        &surface,
+        &sid,
+        "add_entity",
+        json!({"kind": "event", "handle": "trail-survey-2026", "name": "The trail survey",
+               "source": "the operator"}),
+    )
+    .await;
+    did(
+        &surface,
+        &sid,
+        "capture",
+        json!({"subject": "event:trail-survey-2026",
+               "content": "the ground needs a look before next year",
+               "provenance": "testimony",
+               "shape": "location", "object": "place:north-trail"}),
+    )
+    .await;
+
+    let judged = judge_all(&surface, &[]).await;
+    assert!(
+        !judged[OCTOBER[1]].refused,
+        "the walk to the place was refused rather than measured, so the lock still depends on \
+         January's exact slug: {}",
+        saying(&judged),
+    );
+    assert!(
+        judged[OCTOBER[1]].held,
+        "the walk to the place failed against an event named something other than \
+         event:trail-survey: {}",
+        saying(&judged),
+    );
+}
+
 /// 🚨 **The year's turns are CHECKED IN rather than written by hand.**
 ///
 /// The two are indistinguishable to every lock that reads the day, and that is
