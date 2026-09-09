@@ -253,11 +253,37 @@ impl Mentioning {
         self.inner.list_entities(None).await
     }
 
-    /// Rewrite a claim's text for a reader.
-    fn render_fact(&self, fact: &mut super::Fact, known: &[Entity]) {
+    /// **Every rename event, for the one thing that reads it going out**: an
+    /// edge stores a plain handle rather than a badge, so a rename after the
+    /// edge was drawn leaves it stale in a way text mentions are not — this is
+    /// what lets [`render_fact`](Self::render_fact) follow it anyway.
+    async fn former(&self) -> Result<Vec<super::FormerHandle>, super::MemoryError> {
+        self.inner.former_handles().await
+    }
+
+    /// Rewrite a claim's text for a reader, and follow an edge to wherever its
+    /// object answers to now.
+    ///
+    /// **The edge is not a mention and carries no badge** — it is validated to
+    /// exist at write time and stored as the plain handle, so a rename after
+    /// the edge was drawn is the one way it goes stale. `resolve_handle` is
+    /// the same fallback a stale handle gets anywhere: a direct match first, a
+    /// handle's own history next, and a genuinely unknown one is left as
+    /// written rather than guessed at.
+    fn render_fact(
+        &self,
+        fact: &mut super::Fact,
+        known: &[Entity],
+        former: &[super::FormerHandle],
+    ) {
         fact.content = rendered(&fact.content, known);
         if let Some(details) = &fact.details {
             fact.details = Some(rendered(details, known));
+        }
+        if let Some(edge) = &mut fact.edge
+            && let Some(current) = super::resolve_handle(&edge.object, known, former)
+        {
+            edge.object = current.id.clone();
         }
     }
 
@@ -266,17 +292,23 @@ impl Mentioning {
             return Ok(());
         }
         let known = self.known().await?;
+        let former = self.former().await?;
         for fact in facts {
-            self.render_fact(fact, &known);
+            self.render_fact(fact, &known, &former);
         }
         Ok(())
     }
 
     /// Rewrite a whole document for a reader: its page and every claim on it.
-    fn render_scan(&self, doc: &mut super::search::DocScan, known: &[Entity]) {
+    fn render_scan(
+        &self,
+        doc: &mut super::search::DocScan,
+        known: &[Entity],
+        former: &[super::FormerHandle],
+    ) {
         doc.prose = rendered(&doc.prose, known);
         for fact in &mut doc.facts {
-            self.render_fact(fact, known);
+            self.render_fact(fact, known, former);
         }
     }
 
@@ -353,7 +385,8 @@ impl super::Memory for Mentioning {
             .await?;
         Ok(match written {
             super::Guarded::Written(mut stored) => {
-                self.render_fact(&mut stored, &known);
+                let former = self.former().await?;
+                self.render_fact(&mut stored, &known, &former);
                 super::Guarded::Written(stored)
             }
             blocked => blocked,
@@ -395,7 +428,8 @@ impl super::Memory for Mentioning {
             .await?;
         Ok(match written {
             super::Guarded::Written(mut stored) => {
-                self.render_fact(&mut stored, &known);
+                let former = self.former().await?;
+                self.render_fact(&mut stored, &known, &former);
                 super::Guarded::Written(stored)
             }
             blocked => blocked,
@@ -461,10 +495,11 @@ impl super::Memory for Mentioning {
         date: jiff::civil::Date,
     ) -> Result<super::Retraction, super::MemoryError> {
         let known = self.known().await?;
+        let former = self.former().await?;
         let reason = reason.map(|r| resolved(r, &known));
         let mut done = self.inner.retract(address, reason.as_deref(), date).await?;
-        self.render_fact(&mut done.retracted, &known);
-        self.render_fact(&mut done.record, &known);
+        self.render_fact(&mut done.retracted, &known, &former);
+        self.render_fact(&mut done.record, &known, &former);
         Ok(done)
     }
     /// **A fold writes an account on the survivor**, which is a claim like any
@@ -477,12 +512,13 @@ impl super::Memory for Mentioning {
         date: jiff::civil::Date,
     ) -> Result<super::Merge, super::MemoryError> {
         let known = self.known().await?;
+        let former = self.former().await?;
         let reason = reason.map(|r| resolved(r, &known));
         let mut done = self
             .inner
             .merge(folded, survivor, reason.as_deref(), date)
             .await?;
-        self.render_fact(&mut done.record, &known);
+        self.render_fact(&mut done.record, &known, &former);
         Ok(done)
     }
     /// **A page is text, so it carries mentions too.** What comes back is the
@@ -506,8 +542,9 @@ impl super::Memory for Mentioning {
     async fn scan(&self) -> Result<Vec<super::search::DocScan>, super::MemoryError> {
         let mut scanned = self.inner.scan().await?;
         let known = self.known().await?;
+        let former = self.former().await?;
         for doc in &mut scanned {
-            self.render_scan(doc, &known);
+            self.render_scan(doc, &known, &former);
         }
         Ok(scanned)
     }
@@ -520,7 +557,8 @@ impl super::Memory for Mentioning {
             return Ok(None);
         };
         let known = self.known().await?;
-        self.render_scan(&mut doc, &known);
+        let former = self.former().await?;
+        self.render_scan(&mut doc, &known, &former);
         Ok(Some(doc))
     }
 
