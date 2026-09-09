@@ -18,6 +18,10 @@ pub struct SetCharterArgs {
     /// ⚠️ **Send what YOU are writing, not a charter you just read back.** Some
     /// of what a read hands you may be text the software already supplies, and
     /// sending that back comes back blocked with nothing written.
+    ///
+    /// Write `@kind:slug` to link to something that already exists, e.g.
+    /// `@person:milhouse` — stored as the name that does not move, served as the
+    /// handle that thing wears today, even after a rename.
     pub(crate) prose: String,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
     /// every call — it is what tells jojobot which bot is asking. Reads are

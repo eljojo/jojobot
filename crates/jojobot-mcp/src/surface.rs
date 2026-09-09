@@ -292,6 +292,49 @@ fn every_kind_the_store_accepts_is_listed_where_a_caller_reads() {
     }
 }
 
+/// **The `@kind:slug` mention spelling reaches a caller where they are
+/// already standing, not only in the domain crate that resolves it.**
+///
+/// A year-long paid run wrote twenty-nine handle-shaped mentions and not one
+/// carried the `@`: nothing an agent reads before writing named the syntax,
+/// so a bare `person:milhouse` is a string that resembles a pointer and is
+/// not one. This pins that every argument which actually resolves a mention
+/// teaches the spelling, and that the door's own orientation shows it worked.
+///
+/// **Cites rather than restates.** The full mechanism — the badge, the
+/// rename, what renders when a link is broken — is written once in
+/// `jojobot_domain::memory::mention` (rule 51); a second explanation here
+/// would be the second copy that drifts.
+#[test]
+fn the_mention_spelling_is_taught_on_every_argument_that_resolves_one() {
+    let tools = Jojobot::tool_router().list_all();
+    for (tool, field) in [
+        ("capture", "content"),
+        ("capture", "details"),
+        ("update_fact", "content"),
+        ("update_fact", "details"),
+        ("set_charter", "prose"),
+    ] {
+        let found = tools
+            .iter()
+            .find(|t| t.name.as_ref() == tool)
+            .unwrap_or_else(|| panic!("the surface offers {tool}"));
+        let schema = serde_json::to_value(&found.input_schema).expect("the schema serializes");
+        let described = schema["properties"][field]["description"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{tool}'s {field} argument carries its own description"));
+        assert!(
+            described.contains("@kind:slug"),
+            "{tool}'s {field} argument does not teach the @kind:slug mention spelling: {described}",
+        );
+    }
+
+    assert!(
+        ORIENTATION.contains("@person:milhouse and @person:nelson"),
+        "the orientation essay's worked example for writing a mention is missing",
+    );
+}
+
 /// **The whole tool surface, named.** Production jojobot never deletes
 /// anything: the standing rule is structural at the store (the Mailboxes
 /// port has no delete operation at all), and this pins the other end — that

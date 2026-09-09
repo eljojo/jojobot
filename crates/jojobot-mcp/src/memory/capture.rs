@@ -24,8 +24,13 @@ pub struct CaptureArgs {
     /// `add_entity` first if it is genuinely new.
     pub(crate) subject: String,
     /// The crisp claim to remember — single line, no line breaks.
+    ///
+    /// Write `@kind:slug` to link to something that already exists, e.g.
+    /// `@person:milhouse` — stored as the name that does not move, served as the
+    /// handle that thing wears today, even after a rename.
     pub(crate) content: String,
     /// Nuance, the why, merge notes — the description under the claim.
+    /// Carries `@kind:slug` mentions exactly as `content` does.
     #[serde(default)]
     pub(crate) details: Option<String>,
     /// `testimony` (the user said it), `observation` (you read it in a system

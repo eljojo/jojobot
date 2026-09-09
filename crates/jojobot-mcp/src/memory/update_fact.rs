@@ -15,9 +15,14 @@ pub struct UpdateFactArgs {
     /// returned it.
     pub(crate) address: String,
     /// Replacement claim.
+    ///
+    /// Write `@kind:slug` to link to something that already exists, e.g.
+    /// `@person:milhouse` — stored as the name that does not move, served as the
+    /// handle that thing wears today, even after a rename.
     #[serde(default)]
     pub(crate) content: Option<String>,
-    /// Replacement details; pass an empty string to clear them.
+    /// Replacement details; pass an empty string to clear them. Carries
+    /// `@kind:slug` mentions exactly as `content` does.
     #[serde(default)]
     pub(crate) details: Option<String>,
     /// **The day this claim was MADE**, `YYYY-MM-DD` — the day it was said,
