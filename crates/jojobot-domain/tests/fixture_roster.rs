@@ -174,6 +174,7 @@ const ROSTER: &[&str] = &[
     "person:ned-flanders",
     "person:nelson",
     "person:nelson-2",
+    "person:nobody-such-handle",
     "person:otto",
     "person:patana",
     "person:someone-else",

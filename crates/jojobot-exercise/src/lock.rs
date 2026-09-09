@@ -323,6 +323,7 @@ impl crate::run::Expectation for Lock {
                     name: self.name.clone(),
                     held: false,
                     applies: true,
+                    refused: false,
                     saying: format!("this lock names a check nobody wrote: {named}"),
                 };
             };
@@ -331,12 +332,14 @@ impl crate::run::Expectation for Lock {
                     name: self.name.clone(),
                     held: true,
                     applies: true,
+                    refused: false,
                     saying: self.say.clone(),
                 },
                 Err(found) => crate::run::Outcome {
                     name: self.name.clone(),
                     held: false,
                     applies: true,
+                    refused: false,
                     saying: format!("{}: {found}", self.say),
                 },
             };
@@ -348,6 +351,7 @@ impl crate::run::Expectation for Lock {
                     name: self.name.clone(),
                     held: false,
                     applies: true,
+                    refused: false,
                     saying: format!("this lock's query is not json: {e}"),
                 };
             }
@@ -375,6 +379,7 @@ impl crate::run::Expectation for Lock {
                 name: self.name.clone(),
                 held: false,
                 applies: true,
+                refused: true,
                 saying: format!(
                     "{}: this lock's own query was refused, so nothing was measured — {}",
                     self.say,
@@ -417,6 +422,7 @@ impl crate::run::Expectation for Lock {
                     name: self.name.clone(),
                     held: false,
                     applies: true,
+                    refused: false,
                     saying: format!("{}: {missed}. What came back: {}", self.say, short(&answer)),
                 };
             }
@@ -425,6 +431,7 @@ impl crate::run::Expectation for Lock {
             name: self.name.clone(),
             held: true,
             applies: true,
+            refused: false,
             saying: self.say.clone(),
         }
     }
@@ -688,6 +695,62 @@ mod tests {
             outcome.saying.contains("nobody_wrote_this"),
             "the failure does not name the check that is missing: {}",
             outcome.saying,
+        );
+    }
+
+    /// **A refused query is a fourth way `held` reads false, and it must be
+    /// told apart from a query that ran and found the room wanting.**
+    ///
+    /// Both halves, because a resolver that answered `refused` for everything
+    /// would pass on this alone: a subject that does not exist is refused, and
+    /// a query that runs cleanly is not.
+    #[tokio::test]
+    async fn a_refused_query_is_told_apart_from_one_that_ran_and_held() {
+        let (_room, surface) = crate::room::Room::open_with_client(
+            &crate::room::server_binary().expect("a jojobot binary"),
+        )
+        .await
+        .expect("a room");
+        let boundaries: Vec<crate::run::Boundary> = Vec::new();
+        let seen = crate::run::Observed {
+            room: &surface,
+            boundaries: &boundaries,
+        };
+
+        let locks = read(
+            "```locks\n\
+             recall  {\"subject\": \"person:nobody-such-handle\"}\n\
+             carries \"anything\"\n\
+             say     this cannot be measured because the subject does not exist\n\
+             \n\
+             search  {\"query\": \"*\", \"limit\": 1}\n\
+             carries \"results\"\n\
+             say     this ran cleanly and holds\n\
+             ```\n",
+        )
+        .expect("both read");
+
+        let refused = locks[0].check(&seen).await;
+        assert!(
+            refused.refused,
+            "a subject that does not exist must be reported as refused: {}",
+            refused.saying,
+        );
+        assert!(
+            !refused.held,
+            "a refused query cannot also be reported as holding",
+        );
+
+        let ran = locks[1].check(&seen).await;
+        assert!(
+            !ran.refused,
+            "a query that ran cleanly must not be reported as refused: {}",
+            ran.saying,
+        );
+        assert!(
+            ran.held,
+            "a query that ran cleanly and met its assertion must hold: {}",
+            ran.saying,
         );
     }
 

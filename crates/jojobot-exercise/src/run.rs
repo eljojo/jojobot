@@ -27,6 +27,15 @@ pub struct Outcome {
     /// not applicable, and the run says so rather than counting them either
     /// way.**
     pub applies: bool,
+    /// **The lock's own query was refused, so nothing was measured.**
+    ///
+    /// A fourth way `held` reads false and means nothing: `applies` already
+    /// separates a question that was never asked from one that was, but a
+    /// question the room refused to answer still lands here as `held: false`
+    /// unless this says otherwise — indistinguishable, on the bare bool, from
+    /// a query that ran and found the room wanting. This is that distinction,
+    /// carried on the outcome instead of buried in `saying` alone.
+    pub refused: bool,
     /// What was actually found — the sentence a reader needs when it did not
     /// hold, and a receipt when it did.
     pub saying: String,
@@ -591,10 +600,11 @@ impl Results {
             );
         }
         for outcome in &self.outcomes {
-            let mark = match (outcome.applies, outcome.held) {
-                (false, _) => "n/a",
-                (true, true) => "held",
-                (true, false) => "FAILED",
+            let mark = match (outcome.refused, outcome.applies, outcome.held) {
+                (true, _, _) => "REFUSED",
+                (false, false, _) => "n/a",
+                (false, true, true) => "held",
+                (false, true, false) => "FAILED",
             };
             let _ = writeln!(out, "  [{mark}] {} — {}", outcome.name, outcome.saying);
         }
@@ -945,6 +955,7 @@ impl Expectation for DayClaimed {
             name: self.name.clone(),
             held,
             applies,
+            refused: false,
             saying,
         };
         let missed = |saying: String| verdict(false, true, saying);
