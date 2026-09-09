@@ -138,7 +138,40 @@ fn said_in(text: &str) -> Vec<(usize, String)> {
         .collect()
 }
 
-/// The two corpora, as `path, line, text`.
+/// **The room-suite test files.** Every string literal in each of these is an
+/// assert! sentence, the same shape as `src/checks.rs`: nothing exercises the
+/// failing branch, so a collapsed one survives a green suite. This is where
+/// the guard's own defect landed — `year_room.rs`, fixed at `91962c8` — and
+/// the boundary covers exactly the five files that shape occurs in, no more.
+///
+/// ⛔️ **Deliberately not wider.** A workspace-wide scan of every string
+/// literal finds SQL text, room-DSL fixture strings and raw multi-line
+/// literals alongside real sentences, and the predicate cannot tell them
+/// apart — only file selection can. Widening further would need a
+/// per-string allow-list, which is the guard somebody eventually turns off.
+const ROOM_SUITE: [&str; 5] = [
+    "bike_room.rs",
+    "handover_room.rs",
+    "ledger_room.rs",
+    "loop_room.rs",
+    "year_room.rs",
+];
+
+/// Every string literal in the room-suite files, as `path, line, text`.
+fn room_suite_sentences() -> Vec<(PathBuf, usize, String)> {
+    let dir = workspace_root().join("crates/jojobot-exercise/tests");
+    let mut out = Vec::new();
+    for name in ROOM_SUITE {
+        let path = dir.join(name);
+        let text = fs::read_to_string(&path).expect("a readable room-suite test");
+        for (line, said) in literals_in(&text) {
+            out.push((path.clone(), line, said));
+        }
+    }
+    out
+}
+
+/// The three corpora, as `path, line, text`.
 fn every_sentence() -> Vec<(PathBuf, usize, String)> {
     let root = workspace_root();
     let mut out = Vec::new();
@@ -159,6 +192,8 @@ fn every_sentence() -> Vec<(PathBuf, usize, String)> {
             }
         }
     }
+
+    out.extend(room_suite_sentences());
     out
 }
 
@@ -200,6 +235,24 @@ fn the_predicate_tells_a_collapsed_sentence_from_a_continued_one() {
     );
 }
 
+/// **The room-suite corpus alone reaches real content.**
+///
+/// The other floor, on `every_sentence()`, is already cleared by the hatches
+/// and the room documents before the room suite adds a single literal — so it
+/// cannot catch this corpus silently contributing nothing. This one asks the
+/// room suite by itself, which is what makes a broken path or an empty scan
+/// here visible.
+#[test]
+fn the_room_suite_scan_actually_reaches_its_five_files() {
+    let sentences = room_suite_sentences();
+    assert!(
+        sentences.len() > 1000,
+        "the room-suite scan found only {} literals, but the five files hold over 1300 between \
+         them, so it is reading almost nothing and a broken predicate would pass unnoticed",
+        sentences.len(),
+    );
+}
+
 /// **Every sentence the room can print reads as one line.**
 ///
 /// The floor is asserted with it: a scanner that silently found nothing would
@@ -209,7 +262,7 @@ fn the_predicate_tells_a_collapsed_sentence_from_a_continued_one() {
 fn every_sentence_the_room_can_print_reads_as_one_line() {
     let sentences = every_sentence();
     assert!(
-        sentences.len() > 100,
+        sentences.len() > 1300,
         "the scan found only {} sentences, so it is reading almost nothing and would pass \
          whatever the rooms say",
         sentences.len(),
