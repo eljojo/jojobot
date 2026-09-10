@@ -2978,6 +2978,22 @@ pub enum MemoryError {
         /// What it is called now.
         now: String,
     },
+    /// **The named handle is real, and still cannot be renamed.**
+    ///
+    /// Neither of rename's other two misses fits: this is not
+    /// [`UnknownEntity`](Self::UnknownEntity) — the handle names a record
+    /// the build supplies, so it exists — and it is not
+    /// [`HandleMoved`](Self::HandleMoved) either, since it never moved
+    /// anywhere. A rename mutates a stored row, and a build-supplied
+    /// record has none: there is nothing under the handle for the verb to
+    /// move, on this call or any other.
+    #[error(
+        "'{attempted}' is a record the build supplies: it exists, and there is no row under it to rename"
+    )]
+    SuppliedHandle {
+        /// The build-supplied handle that was named.
+        attempted: String,
+    },
     /// **The claim this one would rest on was taken back.**
     ///
     /// Not a missing source — the claim is there, and it is there precisely
@@ -3347,6 +3363,10 @@ pub trait Memory: Send + Sync {
     /// something *before* an earlier rename moved it is
     /// [`MemoryError::HandleMoved`] instead — told where the thing went,
     /// never a bare miss indistinguishable from a handle that never existed.
+    /// **A third answer for a third case**: a `from` naming a record the
+    /// build supplies is real and has no row to mutate, which is neither of
+    /// the above — [`MemoryError::SuppliedHandle`], never a claim that it
+    /// moved to itself.
     async fn rename_entity(
         &self,
         from: &EntityId,

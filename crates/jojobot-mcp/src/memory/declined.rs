@@ -389,6 +389,7 @@ pub(crate) fn memory_error(e: MemoryError) -> McpError {
         | MemoryError::AlreadyMerged { .. }
         | MemoryError::NothingToRename { .. }
         | MemoryError::HandleMoved { .. }
+        | MemoryError::SuppliedHandle { .. }
         | MemoryError::UnconfirmedPromotion
         | MemoryError::UnconfirmedSettling => McpError::invalid_params(e.to_string(), None),
         MemoryError::Store(msg) => {

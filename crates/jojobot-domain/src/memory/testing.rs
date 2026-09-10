@@ -667,6 +667,21 @@ impl Memory for InMemoryMemory {
         let stored = self.entities.lock().expect("fake mutex poisoned").clone();
         let known = self.known();
         let Some(entity) = stored.iter().find(|e| &e.id == from).cloned() else {
+            // **A supplied record is real and still not a row** — checked
+            // before `resolve_handle`, whose own direct-match branch reads
+            // the wider `known` set and would otherwise report this exact
+            // case as a rename that moved the handle to itself.
+            if self
+                .supplied
+                .lock()
+                .expect("fake mutex poisoned")
+                .record_for(from)
+                .is_some()
+            {
+                return Err(MemoryError::SuppliedHandle {
+                    attempted: from.to_string(),
+                });
+            }
             let former = self.former();
             if let Some(moved) = super::resolve_handle(from, &known, &former) {
                 return Err(MemoryError::HandleMoved {
@@ -6897,7 +6912,8 @@ pub mod contract {
     }
 
     /// **Renaming a record the build supplies is refused, never a silent
-    /// no-op.** `rename_entity`'s existence check reads stored rows only,
+    /// no-op — and never a claim that it moved to itself.**
+    /// `rename_entity`'s existence check reads stored rows only,
     /// deliberately excluding what the build supplies — a comment beside it
     /// names why: resolving that check through `known()` would let a
     /// supplied handle pass it and fall through every guard below, while
@@ -6917,19 +6933,10 @@ pub mod contract {
             .expect_err(
                 "a rename of a build-supplied handle must be refused, not silently accepted",
             );
-        // **The family, not the exact shape.** A supplied handle has no row
-        // to rename, so either miss-shaped error is a genuine refusal:
-        // `UnknownEntity` if the store reports it as never having a row, or
-        // `HandleMoved` if the not-found branch's own former-handle check
-        // resolves it directly against the wider set first. Either rules
-        // out the one thing this case exists to catch — `Ok(Guarded::Written)`
-        // reporting a rename that never touched a row.
         assert!(
-            matches!(
-                &err,
-                MemoryError::UnknownEntity { .. } | MemoryError::HandleMoved { .. }
-            ),
-            "a supplied handle's rename must be refused as a genuine miss, not some other class of error: {err:?}",
+            matches!(&err, MemoryError::SuppliedHandle { attempted } if attempted == &shipped.to_string()),
+            "a supplied handle's rename must say it is a supplied record with no row to move, \
+             never a bare miss, and never a claim that it moved to itself: {err:?}",
         );
         assert!(
             store
@@ -6964,6 +6971,52 @@ pub mod contract {
                 .iter()
                 .any(|e| e.id == now),
             "a genuinely stored rename must land",
+        );
+    }
+
+    /// **A genuine move still says where the thing went; a handle nothing
+    /// ever held still misses — from `rename_entity` itself**, not only
+    /// the pure resolver [`super::resolve_handle`] already covers.
+    ///
+    /// Paired so the two misses cannot be confused: a store that answered
+    /// `HandleMoved` for every not-found handle would still pass the
+    /// second half alone, and one that answered `UnknownEntity` for every
+    /// not-found handle would still pass the first half alone.
+    pub async fn a_second_rename_of_a_stale_handle_reports_where_it_went<M: Memory>(store: &M) {
+        let was = EntityId("thing:contract-double-rename-was".into());
+        add(
+            store,
+            NewEntity::new(was.clone(), "Double Rename", "contract-fixture"),
+        )
+        .await;
+        let now = EntityId("work:contract-double-rename-now".into());
+        store
+            .rename_entity(&was, &now, None, date(2026, 6, 11), None)
+            .await
+            .expect("the first rename lands")
+            .written()
+            .expect("nothing collides with the destination");
+
+        let elsewhere = EntityId("person:contract-double-rename-elsewhere".into());
+        let moved = store
+            .rename_entity(&was, &elsewhere, None, date(2026, 6, 12), None)
+            .await
+            .expect_err("a stale handle must not be renamed as if it still had a row");
+        assert!(
+            matches!(&moved, MemoryError::HandleMoved { attempted, now: reported }
+                if attempted == &was.to_string() && reported == &now.to_string()),
+            "a genuinely moved handle must say where it went: {moved:?}",
+        );
+
+        let never = EntityId("person:contract-rename-attempt-never-existed".into());
+        let missed = store
+            .rename_entity(&never, &elsewhere, None, date(2026, 6, 12), None)
+            .await
+            .expect_err("a handle nothing ever held must miss");
+        assert!(
+            matches!(&missed, MemoryError::UnknownEntity { attempted, .. }
+                if attempted == &never.to_string()),
+            "a handle nothing ever held must be a bare miss, not a move: {missed:?}",
         );
     }
 
@@ -12909,6 +12962,7 @@ pub mod contract {
         update_entity_does_not_re_screen_the_handle(store).await;
         update_entity_without_a_rename_is_not_screened(store).await;
         update_entity_unknown_handle_never_creates(store).await;
+        a_second_rename_of_a_stale_handle_reports_where_it_went(store).await;
         add_entity_keeps_its_alternate_names(store).await;
         add_entity_screens_every_name_an_entity_answers_to(store).await;
 

@@ -1253,6 +1253,15 @@ impl Memory for DoltMemory {
         let rows = Self::index(&mut tx).await?;
         let known = self.extend_with_supplied(rows.clone());
         let Some(entity) = rows.iter().find(|e| &e.id == from).cloned() else {
+            // **A supplied record is real and still not a row** — checked
+            // before `resolve_handle`, whose own direct-match branch reads
+            // the wider `known` set and would otherwise report this exact
+            // case as a rename that moved the handle to itself.
+            if self.supplied.record_for(from).is_some() {
+                return Err(MemoryError::SuppliedHandle {
+                    attempted: from.to_string(),
+                });
+            }
             // **A stale-but-renamed FROM still resolves**, through the wider
             // set, so the caller is told where the thing went rather than
             // met with a miss indistinguishable from a handle that never
