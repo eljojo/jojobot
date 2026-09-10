@@ -257,6 +257,83 @@ async fn three_things_from_somebody_else_do_not_count_as_the_handover() {
     );
 }
 
+/// **`one_record_points_at_two_kinds` is windowed to June, not to the
+/// finished board.**
+///
+/// 🚨 **The false green this proves against.** The check used to run a live
+/// `search` over the whole room, so any sitting that ever wrote two handles
+/// into one record satisfied it — June discriminated only because it was the
+/// one sitting the reference transcript happened to write a pointer in, not
+/// because the check looked at June's window. This drives the two cases apart:
+/// a later sitting writes the pointer alone, outside June's own window, and
+/// the check must still fail — paired with June doing the thing itself, which
+/// must still hold.
+#[tokio::test]
+async fn the_pointer_check_is_windowed_to_june_and_not_to_a_later_sitting() {
+    let make = jojobot_exercise::checks::CHECKS
+        .iter()
+        .find(|(name, _)| *name == "one_record_points_at_two_kinds")
+        .map(|(_, make)| *make)
+        .expect("the check ships");
+
+    // June's window shows nothing, and a later sitting writes the pointer on
+    // its own — the false green this check must no longer produce.
+    {
+        let (_room, surface, sid) = furnished(expectations::YEAR_ROOM).await;
+        let before = jojobot_exercise::run::boundary(&surface, "Phase 6 — testing").await;
+        let after_june = jojobot_exercise::run::boundary(&surface, "Phase 7 — after").await;
+        did(
+            &surface,
+            &sid,
+            "capture",
+            json!({"subject": "org:north-trail-club",
+                   "content": "@place:north-trail and @person:milhouse came up today",
+                   "provenance": "testimony"}),
+        )
+        .await;
+        let after_everything = jojobot_exercise::run::boundary(&surface, "the end").await;
+        let boundaries = vec![before, after_june, after_everything];
+        let seen = Observed {
+            room: &surface,
+            boundaries: &boundaries,
+        };
+        let outcome = make().run(&seen).await;
+        assert!(
+            outcome.is_err(),
+            "a later sitting wrote the pointer and June's own window shows nothing, so the \
+             check must not credit June for it: {outcome:?}",
+        );
+    }
+
+    // June itself writes the pointer, inside its own window — the positive
+    // the case above rests on.
+    {
+        let (_room, surface, sid) = furnished(expectations::YEAR_ROOM).await;
+        let before = jojobot_exercise::run::boundary(&surface, "Phase 6 — testing").await;
+        did(
+            &surface,
+            &sid,
+            "capture",
+            json!({"subject": "org:north-trail-club",
+                   "content": "@place:north-trail and @person:milhouse came up today",
+                   "provenance": "testimony"}),
+        )
+        .await;
+        let after_june = jojobot_exercise::run::boundary(&surface, "Phase 7 — after").await;
+        let boundaries = vec![before, after_june];
+        let seen = Observed {
+            room: &surface,
+            boundaries: &boundaries,
+        };
+        let outcome = make().run(&seen).await;
+        assert!(
+            outcome.is_ok(),
+            "June wrote the pointer inside its own window and the check still failed: \
+             {outcome:?}",
+        );
+    }
+}
+
 /// 🚨 **A lock whose own query is REFUSED says so, rather than counting in a
 /// refusal.**
 ///

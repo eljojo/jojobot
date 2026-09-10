@@ -851,11 +851,29 @@ fn kinds_pointed_at(text: &str) -> Vec<String> {
     found
 }
 
-/// 🚨 **One record points at two kinds of thing as HANDLES.**
+/// The sitting whose window this reads — the only sitting the year's story
+/// asks to write a pointer at all.
+const JUNE: &str = "Phase 6";
+
+/// 🚨 **One record points at two kinds of thing as HANDLES, asked in June's own
+/// window.**
 ///
 /// The operator names several things in one breath. A sitting that writes them
 /// as words leaves a sentence; a sitting that writes them as handles leaves
 /// pointers, and a later sitting can go from the claim to the things it names.
+///
+/// ⛔️ **Asked of the finished room, this discriminated for June only by
+/// accident.** The check used to run a live `search` over the whole board at
+/// the end of the run, so ANY sitting that ever wrote two handles into one
+/// record satisfied it — June was the one sitting the reference transcript
+/// happened to write pointers in, not something the check enforced. A later
+/// sitting that wrote the pointer instead would have passed this exactly the
+/// same way, crediting June for work it did not do.
+///
+/// **So this reads the world either side of June and asks whether a
+/// two-kind record landed there**, the same pattern the club's and the pump's
+/// locks use. No later sitting can satisfy it, because no later sitting's
+/// window is read.
 ///
 /// ⚠️ **A hatch, because an assertion is a substring of the WHOLE answer.**
 /// Two `carries` lines hold on two separate records naming one thing each,
@@ -874,54 +892,79 @@ fn kinds_pointed_at(text: &str) -> Vec<String> {
 /// never wrote in holds no records, and reporting *no record points at two
 /// things* about it would blame a sitting for a room nobody worked.
 async fn one_record_points_at_two_kinds(seen: &Observed<'_>) -> Result<(), String> {
-    let read = seen
-        .room
-        .call("search", json!({"query": "*", "limit": 200}))
-        .await;
-    let parsed: Value = serde_json::from_str(&read).unwrap_or(Value::Null);
-    let Some(hits) = parsed["results"].as_array() else {
+    let Some((before, after)) = seen.across(JUNE) else {
         return Err(format!(
-            "the board came back with no results at all, so nothing here was measured: {read}"
+            "this run took no reading either side of {JUNE}, so nothing here can say what that \
+             sitting recorded. A check scoped to one sitting needs the run's own boundaries.",
         ));
     };
-    // **What a reader sees, which is the only side of a mention a room can
-    // reach.** The store keeps a badge; every read serves the handle it wears
-    // today, and the index scans through the same layer — so a hit's own text
-    // is what a later sitting would follow.
-    let written = |hit: &Value| -> String {
-        ["content", "details"]
-            .iter()
-            .filter_map(|key| hit[*key].as_str())
-            .collect::<Vec<&str>>()
-            .join(" ")
-    };
-    let pointing: Vec<Vec<String>> = hits
-        .iter()
-        .map(|hit| kinds_pointed_at(&written(hit)))
-        .collect();
-    if pointing.iter().any(|kinds| kinds.len() >= TOGETHER) {
+    let had = records_pointing_at_two_kinds(&before.world);
+    let has = records_pointing_at_two_kinds(&after.world);
+    if has > had {
         return Ok(());
     }
     // **The two ways of not holding are worth telling apart.** No pointer at
     // all is the sitting that wrote words; pointers that never share a record
-    // is a sitting that tagged things one at a time and linked nothing.
-    let mut anywhere: Vec<&str> = pointing.iter().flatten().map(String::as_str).collect();
+    // is a sitting that tagged things one at a time and linked nothing. Both
+    // are read off June's own window, never off the finished board.
+    let Some(hits) = search_hits(&after.world) else {
+        return Err(format!(
+            "the board came back with no results at all after {JUNE}, so nothing here was \
+             measured: {}",
+            after.world,
+        ));
+    };
+    let mut anywhere: Vec<String> = hits
+        .iter()
+        .flat_map(|hit| kinds_pointed_at(&written(hit)))
+        .collect();
     anywhere.sort_unstable();
     anywhere.dedup();
     match anywhere.is_empty() {
         true => Err(format!(
-            "not one of the {} records the board holds writes a handle into its words, so every \
-             thing the year names is spelled out rather than pointed at",
+            "not one of the {} records the board holds after {JUNE} writes a handle into its \
+             words, so every thing the year names is spelled out rather than pointed at",
             hits.len(),
         )),
         false => Err(format!(
             "handles are written into sentences and the kinds they point at anywhere on the \
-             board are {anywhere:?}, but no ONE of the {} records names two of different kinds \
-             together — so every pointer stands alone and no claim leads from a thing of one \
-             kind to a thing of another",
+             board after {JUNE} are {anywhere:?}, but no ONE of the {} records names two of \
+             different kinds together — so every pointer stands alone and no claim leads from a \
+             thing of one kind to a thing of another",
             hits.len(),
         )),
     }
+}
+
+/// **What a reader sees, which is the only side of a mention a room can
+/// reach.** The store keeps a badge; every read serves the handle it wears
+/// today, and the index scans through the same layer — so a hit's own text
+/// is what a later sitting would follow.
+fn written(hit: &Value) -> String {
+    ["content", "details"]
+        .iter()
+        .filter_map(|key| hit[*key].as_str())
+        .collect::<Vec<&str>>()
+        .join(" ")
+}
+
+/// **The search half of a boundary's world**, parsed. A boundary's world is
+/// `list_entities` and a `search` over everything, joined by a newline; only
+/// the second carries the records a mention could be written on.
+fn search_hits(world: &str) -> Option<Vec<Value>> {
+    let (_, searched) = world.split_once('\n')?;
+    let parsed: Value = serde_json::from_str(searched).ok()?;
+    parsed["results"].as_array().cloned()
+}
+
+/// How many records in one boundary's world point at two different kinds of
+/// thing as handles.
+fn records_pointing_at_two_kinds(world: &str) -> usize {
+    search_hits(world)
+        .into_iter()
+        .flatten()
+        .filter(|hit| kinds_pointed_at(&written(hit)).len() >= TOGETHER)
+        .count()
 }
 
 /// The other key a check-in writes in the same act as `last_check_in` —
