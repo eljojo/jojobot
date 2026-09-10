@@ -510,18 +510,22 @@ say     October (again): somebody who was never at the survey was put there by t
 # is where that is watched rather than assumed.** October gives a reason to
 # rename the survey; nothing about that touches June's own words, because a
 # rename moves the handle and leaves every stored mention exactly as it was
-# typed. What changes is what a READ of June's claim renders back, and this
-# sitting is the first cold one after the reason was given.
+# typed. What changes is what a READ of June's claim renders back.
 #
 # ⛔️ **No handle is named here, on either side.** January invents the
 # survey's first one and October's reason invents its second, and a lock
 # that spelled either would fail a run that chose different words for
 # either sitting — the fault this room already removed from June's own
-# lock, five sittings up. What is locked is that the handle a read renders
-# after this sitting closes differs from the one a read rendered before
-# October gave its reason: a build that stores the word June typed shows the
-# same handle either side of a rename that never touched anything, and a
-# build that stores the pointer does not.
+# lock, five sittings up.
+#
+# 🚨 **Anchored to June's own RECORD, not to whichever claim currently
+# points at an event.** A sitting can reach the same end state two ways: it
+# can rename the survey, or it can retract June's claim and write a fresh
+# one naming a different event. Both leave a claim pointing at an event
+# under a handle June's own words never used, and only one of them is what
+# October's reason was given for. So this asks about June's own address
+# specifically, live and status-aware: a retracted address fails naming
+# that, rather than reporting an unrelated handle as unchanged.
 check   junes_survey_mention_renders_under_the_current_handle
 say     October (again): June's own claim still renders the survey under the handle it wore before October's reason to rename it, so a stored mention is not resolving to what the thing is called now
 ```

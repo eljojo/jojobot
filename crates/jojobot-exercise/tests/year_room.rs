@@ -675,6 +675,43 @@ async fn october_without_renaming_the_survey(room: &Surface, sid: &str) {
     october_writes_the_pump_and_the_place(room, sid).await;
 }
 
+/// **October reaches the rename's END STATE without ever calling the verb.**
+///
+/// June's own claim is retracted and a fresh one is written on the club
+/// naming a different event by a mention — the same shape a rename leaves,
+/// arrived at a different way. A lock anchored to whichever claim currently
+/// points at an event cannot tell this from a rename; one anchored to June's
+/// own address can, because that address is retracted rather than renamed.
+async fn october_retracts_junes_claim_instead_of_renaming(room: &Surface, sid: &str) {
+    october_writes_the_pump_and_the_place(room, sid).await;
+    let junes = address_of(room, "org:north-trail-club", "ran on").await;
+    did(
+        room,
+        sid,
+        "retract",
+        json!({"address": junes,
+               "reason": "filing the survey under its proper record instead"}),
+    )
+    .await;
+    did(
+        room,
+        sid,
+        "add_entity",
+        json!({"kind": "event", "handle": "the-jotting", "name": "The Jotting",
+               "source": "the operator"}),
+    )
+    .await;
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "org:north-trail-club",
+               "content": "the survey ran on @place:north-trail, filed now as @event:the-jotting",
+               "provenance": "testimony"}),
+    )
+    .await;
+}
+
 async fn october_writes_the_pump_and_the_place(room: &Surface, sid: &str) {
     did(
         room,
@@ -987,6 +1024,11 @@ const OCTOBER_REMOVES_ONE_OF_THE_TWO_ACCOUNTS: usize = 19;
 /// own reason was given for.
 const OCTOBER_DOES_NOT_RENAME_THE_SURVEY: usize = 20;
 
+/// **October's fourth guilt, named the same way.** The rename's end state
+/// without the rename: June's claim retracted, a fresh one written naming a
+/// different event.
+const OCTOBER_RETRACTS_JUNES_CLAIM_INSTEAD_OF_RENAMING: usize = 21;
+
 /// Where late November sits in the year, named for the reason `JUNE_AT` is.
 const LATE_NOVEMBER_AT: usize = 12;
 
@@ -1040,6 +1082,8 @@ async fn work_the_year(
             at == OCTOBER_AT && guilty.contains(&OCTOBER_REMOVES_ONE_OF_THE_TWO_ACCOUNTS);
         let october_no_rename_variant =
             at == OCTOBER_AT && guilty.contains(&OCTOBER_DOES_NOT_RENAME_THE_SURVEY);
+        let october_retracts_variant =
+            at == OCTOBER_AT && guilty.contains(&OCTOBER_RETRACTS_JUNES_CLAIM_INSTEAD_OF_RENAMING);
         // ⛔️ **Only a sitting that ACTS gets a run.** A boot mints nothing until
         // its first write, so a run for a sitting this drive skips is a run that
         // never happened — and it would sit in the day that sitting claims,
@@ -1050,6 +1094,7 @@ async fn work_the_year(
             && !late_november_variant
             && !october_variant
             && !october_no_rename_variant
+            && !october_retracts_variant
         {
             boundaries.push(boundary(room, &named[at + 1]).await);
             continue;
@@ -1073,6 +1118,8 @@ async fn work_the_year(
             october_removes_one_of_the_two_accounts(room, sid).await;
         } else if october_no_rename_variant {
             october_without_renaming_the_survey(room, sid).await;
+        } else if october_retracts_variant {
+            october_retracts_junes_claim_instead_of_renaming(room, sid).await;
         } else if guilty.contains(&at) {
             match at {
                 9 => october_files_the_note_on_the_event(room, sid).await,
@@ -1707,6 +1754,38 @@ async fn junes_mention_lock_catches_a_survey_that_was_never_renamed() {
     assert!(
         judged[LATE_OCTOBER[3]].held,
         "the honest year, which does rename the survey, failed the lock that watches for it: {}",
+        saying(&judged),
+    );
+}
+
+/// **The rename's END STATE, reached without the rename.** June's claim is
+/// retracted and a fresh one is written naming a different event — the same
+/// shape a rename leaves on a lock that is not anchored to June's own
+/// record. This lock must tell the two apart.
+#[tokio::test]
+async fn junes_mention_lock_is_not_satisfied_by_a_retraction_and_a_fresh_claim() {
+    let (_room, surface) = furnished().await;
+    let guilty = work_the_year(
+        &surface,
+        &room_document(),
+        &WORKED,
+        &[OCTOBER_RETRACTS_JUNES_CLAIM_INSTEAD_OF_RENAMING],
+    )
+    .await;
+    let judged = judge_all(&surface, &guilty).await;
+    assert!(
+        !judged[LATE_OCTOBER[3]].held,
+        "an October that retracted June's claim and wrote a fresh one naming a different event \
+         held the lock that watches for a rename, so the lock cannot tell the two apart: {}",
+        saying(&judged),
+    );
+    // The half that stops the assertion above passing on a room where every
+    // lock fails: October's other work is still there, and the walk to the
+    // place still finds it, because the fresh claim never gives a location.
+    assert!(
+        judged[OCTOBER[1]].held,
+        "the sitting that retracted June's claim failed a lock that has nothing to do with it: \
+         {}",
         saying(&judged),
     );
 }

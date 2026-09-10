@@ -1135,12 +1135,19 @@ fn mention_of_kind(text: &str, kind: &str) -> Option<String> {
     None
 }
 
-/// The survey's handle, wherever June's claim mentions it — the only claim in
-/// this year that ever points at an event.
-fn event_mention(world: &str) -> Option<String> {
-    search_hits(world)?
-        .iter()
-        .find_map(|hit| mention_of_kind(&written(hit), "event"))
+/// **Address and event-mention of every record in one boundary's world that
+/// points at an event.** The address is what lets a later read ask about the
+/// SAME record again rather than about whichever one currently qualifies.
+fn event_mentions_by_address(world: &str) -> std::collections::HashMap<String, String> {
+    search_hits(world)
+        .into_iter()
+        .flatten()
+        .filter_map(|hit| {
+            let address = hit["address"].as_str()?.to_string();
+            let mention = mention_of_kind(&written(&hit), "event")?;
+            Some((address, mention))
+        })
+        .collect()
 }
 
 /// 🚨 **A stored mention renders under whichever handle its thing wears NOW,
@@ -1150,58 +1157,107 @@ fn event_mention(world: &str) -> Option<String> {
 /// [`one_record_points_at_two_kinds`] exists to prove happened. October gives
 /// a reason to rename the survey. Nothing about a rename touches June's own
 /// words: the badge behind its mention is permanent, and what changes is
-/// what a READ of that claim renders back. Late October is the first cold
-/// sitting after the reason was given, so a read taken once its window
-/// closes is the one this room can ask the question of.
+/// what a READ of that claim renders back.
 ///
 /// ⚠️ **A hatch, for the reason [`one_record_points_at_two_kinds`] already
 /// gives one level up.** No query on this surface asks *what did a mention
 /// render as at one time, against what it renders as at another* — `carries`
 /// is a claim about the answer as it stands, never about a change in it.
 ///
+/// 🚨 **Anchored to June's own RECORD, not to whichever claim currently
+/// points at an event.** A sitting can reach the same end state two ways: it
+/// can rename the survey, or it can retract June's claim and write a fresh
+/// one naming a different event. Both leave a claim pointing at an event
+/// under a handle June's own words never used — but only one of them is a
+/// rename, and only one is what October's reason was given for. **A
+/// retraction never appears in a boundary at all** — `search` serves active
+/// records only, [`both_accounts_of_the_pump_stand`] says why — so this
+/// finds June's own address by the same window-diff that check uses, and
+/// asks a LIVE, status-aware read whether that address is still active
+/// before comparing what it renders now against what June's window first
+/// recorded. A retracted address fails naming that rather than reporting an
+/// unrelated handle as unchanged.
+///
 /// ⛔️ **No handle is named here, on either side.** January invents the
 /// survey's first one and October's reason invents its second, and a lock
 /// that spelled either would fail a run that chose different words for
 /// either sitting — the fault this room already removed from June's own
-/// lock. **What is locked is that the handle a read renders after this
-/// sitting closes differs from the one a read rendered before October gave
-/// its reason**: a build that stores the word June typed shows the same
-/// handle either side of a rename that never touched anything; a build that
-/// stores the pointer does not.
+/// lock. **What is locked is that June's own address, read live, renders a
+/// different handle than the one its own window first recorded**: a build
+/// that stores the word June typed shows the same handle either time; a
+/// build that stores the pointer does not.
 async fn junes_survey_mention_renders_under_the_current_handle(
     seen: &Observed<'_>,
 ) -> Result<(), String> {
-    let Some((before, _)) = seen.across(OCTOBER) else {
+    let Some((before, after)) = seen.across(JUNE) else {
         return Err(format!(
-            "this run took no reading before {OCTOBER}, so there is nothing here to compare a \
-             later mention against",
+            "this run took no reading either side of {JUNE}, so nothing here can say which \
+             record is June's own claim about the survey",
         ));
     };
-    let Some((_, after)) = seen.across(LATE_OCTOBER) else {
+    let earlier = event_mentions_by_address(&before.world);
+    let mut arrived: Vec<(String, String)> = event_mentions_by_address(&after.world)
+        .into_iter()
+        .filter(|(address, _)| !earlier.contains_key(address))
+        .collect();
+    let (address, original) = match arrived.as_mut_slice() {
+        [one] => std::mem::take(one),
+        [] => {
+            return Err(format!(
+                "{JUNE}'s own window left no record newly pointing at an event, so there is no \
+                 claim here to watch get renamed",
+            ));
+        }
+        many => {
+            return Err(format!(
+                "{JUNE}'s own window left {} records newly pointing at an event rather than \
+                 one, so there is no single claim here to watch get renamed: {many:?}",
+                many.len(),
+            ));
+        }
+    };
+    let read = seen
+        .room
+        .call(
+            "recall",
+            json!({"subject": "org:north-trail-club", "facts": true}),
+        )
+        .await;
+    let parsed: Value = serde_json::from_str(&read).unwrap_or(Value::Null);
+    let Some(facts) = parsed["objects"][0]["facts"].as_array() else {
         return Err(format!(
-            "this run took no reading after {LATE_OCTOBER}, so there is no later mention to \
-             read at all",
+            "the club came back with no facts at all, so June's own claim cannot be read back: \
+             {read}"
         ));
     };
-    let Some(was) = event_mention(&before.world) else {
+    let Some(fact) = facts.iter().find(|fact| fact["address"] == address) else {
         return Err(format!(
-            "no claim on the board points at the survey as a handle before {OCTOBER}, so there \
-             is nothing here to watch get renamed",
+            "{address} — June's own claim about the survey — is not on the club's record any \
+             more: {read}"
         ));
     };
-    let Some(now) = event_mention(&after.world) else {
+    if fact["status"] != "active" {
         return Err(format!(
-            "no claim on the board points at the survey as a handle by the time {LATE_OCTOBER} \
-             closes, so a rename cannot be told from a mention that was never made",
-        ));
-    };
-    if was == now {
-        return Err(format!(
-            "the survey still answers to {was} after {OCTOBER} gave a reason to rename it, so \
-             no mention on the board renders under a handle it did not wear when it was written",
+            "{address} — June's own claim about the survey — is {} rather than active, so \
+             whatever satisfies a different mention is a fresh claim naming a different event \
+             rather than a rename of the one June pointed at: {read}",
+            fact["status"],
         ));
     }
-    Ok(())
+    let now = fact["content"]
+        .as_str()
+        .and_then(|content| mention_of_kind(content, "event"));
+    match now {
+        Some(now) if now != original => Ok(()),
+        Some(now) => Err(format!(
+            "{address} still renders the survey under {now}, the handle {JUNE}'s own window \
+             recorded, so nothing here shows a stored mention resolving to a handle it did not \
+             wear when it was written"
+        )),
+        None => Err(format!(
+            "{address} no longer renders as pointing at an event at all: {read}"
+        )),
+    }
 }
 
 /// The other key a check-in writes in the same act as `last_check_in` —
