@@ -160,6 +160,21 @@ impl jojobot_domain::memory::Memory for Blindable {
     > {
         self.inner.update_entity(handle, patch).await
     }
+    async fn rename_entity(
+        &self,
+        from: &jojobot_domain::memory::EntityId,
+        to: &jojobot_domain::memory::EntityId,
+        parent: Option<jojobot_domain::memory::EntityId>,
+        date: jiff::civil::Date,
+        override_token: Option<&str>,
+    ) -> Result<
+        jojobot_domain::memory::Guarded<jojobot_domain::memory::Entity>,
+        jojobot_domain::memory::MemoryError,
+    > {
+        self.inner
+            .rename_entity(from, to, parent, date, override_token)
+            .await
+    }
 
     async fn capture(
         &self,

@@ -1232,6 +1232,130 @@ impl Memory for DoltMemory {
         Ok(Guarded::Written(entity))
     }
 
+    async fn rename_entity(
+        &self,
+        from: &EntityId,
+        to: &EntityId,
+        parent: Option<EntityId>,
+        date: Date,
+        override_token: Option<&str>,
+    ) -> Result<Guarded<Entity>, MemoryError> {
+        validate_write_subject(from)?;
+        if from == to {
+            return Err(MemoryError::NothingToRename {
+                attempted: from.to_string(),
+            });
+        }
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        // **A row, never a supplied record** — the same exception
+        // `update_entity` reads off: a rename mutates a stored row, and a
+        // build-shipped record has none to mutate.
+        let rows = Self::index(&mut tx).await?;
+        let known = self.extend_with_supplied(rows.clone());
+        let Some(entity) = rows.iter().find(|e| &e.id == from).cloned() else {
+            // **A stale-but-renamed FROM still resolves**, through the wider
+            // set, so the caller is told where the thing went rather than
+            // met with a miss indistinguishable from a handle that never
+            // existed.
+            let former = Self::former_handles_in(&mut tx).await?;
+            if let Some(moved) = jojobot_domain::memory::resolve_handle(from, &known, &former) {
+                return Err(MemoryError::HandleMoved {
+                    attempted: from.to_string(),
+                    now: moved.id.to_string(),
+                });
+            }
+            return Err(MemoryError::UnknownEntity {
+                attempted: from.to_string(),
+                nearest: guard::screen(from, &[], &known),
+            });
+        };
+        // A forwarding row is not a thing to rename, for the same reason it
+        // is not a side to fold or a survivor to fold into.
+        if let Some(into) = &entity.merged_into {
+            return Err(MemoryError::AlreadyMerged {
+                attempted: from.to_string(),
+                into: into.to_string(),
+            });
+        }
+        let effective_parent = parent.clone().or_else(|| entity.parent.clone());
+        validate_entity(
+            to,
+            &entity.name,
+            &entity.aliases,
+            &entity.source,
+            entity.crm.as_deref(),
+            effective_parent.as_ref(),
+        )?;
+        let renamed = Entity {
+            id: to.clone(),
+            kind: to.kind().expect("validated above"),
+            parent: effective_parent,
+            ..entity.clone()
+        };
+        // Screened like a creation, with the thing's own row excluded — or
+        // it would collide with its own former name the moment the new one
+        // is close to it.
+        let others: Vec<Entity> = known.into_iter().filter(|e| &e.id != from).collect();
+        if let guard::Decision::Block(candidates) =
+            guard::decide(to, &renamed.labels(), &others, override_token)
+        {
+            return Ok(Guarded::Blocked {
+                attempted: to.clone(),
+                candidates,
+            });
+        }
+        if let Some(new_parent) = &parent
+            && let guard::Decision::Block(candidates) =
+                guard::decide_parent(&renamed, new_parent, &others)
+        {
+            return Ok(Guarded::Blocked {
+                attempted: new_parent.clone(),
+                candidates,
+            });
+        }
+
+        // **A straight primary-key rewrite, never delete-then-insert.**
+        // Every other column — the badge above all — rides along untouched:
+        // nothing here asks "what was this row's badge" the way
+        // `write_entity`'s REPLACE would if handed a row that already
+        // carries the new id, which is exactly the shape that would mint a
+        // fresh one and sever it from everything the old one wore.
+        sqlx::query("UPDATE entity SET id = ?, kind = ?, parent = ? WHERE id = ?")
+            .bind(to.as_str())
+            .bind(to.kind_token())
+            .bind(renamed.parent.as_ref().map(EntityId::as_str))
+            .bind(from.as_str())
+            .execute(&mut *tx)
+            .await
+            .map_err(store)?;
+        // Every entity naming the OLD handle as its parent follows to the
+        // new one — the same statement shape `merge` already uses on this
+        // column.
+        sqlx::query("UPDATE entity SET parent = ? WHERE parent = ?")
+            .bind(to.as_str())
+            .bind(from.as_str())
+            .execute(&mut *tx)
+            .await
+            .map_err(store)?;
+        sqlx::query(
+            "INSERT INTO entity_former_handle (former_handle, badge, changed_at) VALUES \
+             (?, ?, ?)",
+        )
+        .bind(from.as_str())
+        .bind(
+            entity
+                .badge
+                .as_deref()
+                .expect("a written row wears a badge"),
+        )
+        .bind(date.to_string())
+        .execute(&mut *tx)
+        .await
+        .map_err(store)?;
+        tx.commit().await.map_err(store)?;
+        Ok(Guarded::Written(renamed))
+    }
+
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
         validate_write_subject(&fact.subject)?;
         validate_content(&fact.content)?;

@@ -2956,6 +2956,28 @@ pub enum MemoryError {
         /// Where it forwards to — the handle to use instead.
         into: String,
     },
+    /// **Nothing was named to rename, because the two handles are one
+    /// handle.**
+    #[error("'{attempted}' cannot be renamed to itself: name a different handle")]
+    NothingToRename {
+        /// The handle that was given as both the source and the destination.
+        attempted: String,
+    },
+    /// **The named handle is not gone — it moved.**
+    ///
+    /// Distinct from [`UnknownEntity`](Self::UnknownEntity): that is a
+    /// handle nothing ever held, with nothing to point a caller toward but
+    /// itself. This is a handle something held before a rename moved it —
+    /// the caller's evidence is stale but real, so the way forward is naming
+    /// what it is called now (rules 261, 262), never a bare miss that reads
+    /// the same as a handle that never existed.
+    #[error("'{attempted}' was renamed to '{now}': use '{now}' instead")]
+    HandleMoved {
+        /// The stale handle that was named.
+        attempted: String,
+        /// What it is called now.
+        now: String,
+    },
     /// **The claim this one would rest on was taken back.**
     ///
     /// Not a missing source — the claim is there, and it is there precisely
@@ -3276,6 +3298,57 @@ pub trait Memory: Send + Sync {
         &self,
         handle: &EntityId,
         patch: EntityPatch,
+    ) -> Result<Guarded<Entity>, MemoryError>;
+
+    /// **Move a handle** — the verb [`EntityPatch`]'s own doc names and does
+    /// not implement: a slug change, a retype, a reparent, or any two of the
+    /// three together, since all three are the same act (rule 202: retype is
+    /// a rename) — the id is one string and this replaces it.
+    ///
+    /// **What survives the move, on its own**: the badge (never touched —
+    /// see [`Entity::badge`]), so every claim's home, every alias, and every
+    /// mention or reference a reader resolves through
+    /// [`resolve_handle`]/[`entity_wearing`] keeps answering, no rewrite
+    /// anywhere (rule 243 — a move rewrites nothing, the path renders on the
+    /// way out). **What this verb moves explicitly, because nothing else
+    /// would**: every entity naming `from` as its parent is repointed to
+    /// `to`, in the same write.
+    ///
+    /// **What does not follow, and never will**: a handle written into a
+    /// journal beat, a mailbox message, or the store's own commit history is
+    /// append-only text this verb cannot reach — those keep naming the old
+    /// handle forever, exactly as a fact's own stored words would if a
+    /// caller had typed the handle instead of writing an `@kind:slug`
+    /// mention. And a thing renamed and later folded into another resolves
+    /// through its rename history to the folded row, one hop short of the
+    /// survivor — a second, composing lookup this verb does not perform (a
+    /// separate card owns that gap).
+    ///
+    /// `parent`: `None` leaves the current parent alone; `Some(handle)`
+    /// reparents to it. There is no way to clear a parent through this verb —
+    /// narrower than [`NewEntity::parent`] on purpose, since nothing has
+    /// asked for it yet and a field that can be set but never cleared is
+    /// smaller than the one that also carries the case nobody has used.
+    ///
+    /// **The destination faces the same gate a creation does**
+    /// ([`guard::decide`]), with `from`'s own row excluded from the screen —
+    /// otherwise the thing renames into a collision with its own old name.
+    /// The near-miss shape is identical to [`add_entity`](Memory::add_entity)'s,
+    /// override token included.
+    ///
+    /// Two handles that are one handle is
+    /// [`MemoryError::NothingToRename`]. A `from` naming nothing this store
+    /// ever held is [`MemoryError::UnknownEntity`]; a `from` that named
+    /// something *before* an earlier rename moved it is
+    /// [`MemoryError::HandleMoved`] instead — told where the thing went,
+    /// never a bare miss indistinguishable from a handle that never existed.
+    async fn rename_entity(
+        &self,
+        from: &EntityId,
+        to: &EntityId,
+        parent: Option<EntityId>,
+        date: Date,
+        override_token: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError>;
 
     /// Write a fact and return it with the id its home assigned, its content

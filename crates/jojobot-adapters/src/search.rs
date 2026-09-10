@@ -2046,6 +2046,28 @@ impl Memory for IndexedMemory {
         Ok(written)
     }
 
+    /// **Reindexed under its new handle**, the same "reindex the doc the
+    /// store just wrote" step every other write here takes. The doc itself
+    /// is found by badge underneath, so this is what makes the new spelling
+    /// findable rather than what makes the record exist.
+    async fn rename_entity(
+        &self,
+        from: &EntityId,
+        to: &EntityId,
+        parent: Option<EntityId>,
+        date: Date,
+        override_token: Option<&str>,
+    ) -> Result<Guarded<Entity>, MemoryError> {
+        let written = self
+            .inner
+            .rename_entity(from, to, parent, date, override_token)
+            .await?;
+        if let Guarded::Written(entity) = &written {
+            self.refresh(&entity.id).await;
+        }
+        Ok(written)
+    }
+
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
         let written = self.inner.capture(fact).await?;
         if let Guarded::Written(fact) = &written {
@@ -2519,6 +2541,16 @@ impl Mailboxes for IndexedMailboxes {
         // A box holds no text of its own — nothing to index until a message
         // lands in it.
         self.inner.create_mailbox(name, owner, override_token).await
+    }
+
+    async fn repoint_owner(
+        &self,
+        from: &jojobot_domain::memory::EntityId,
+        to: &jojobot_domain::memory::EntityId,
+    ) -> Result<Option<jojobot_domain::mailbox::Mailbox>, MailboxError> {
+        // Same reason as create_mailbox: a box holds no text of its own, so
+        // there is nothing here to reindex.
+        self.inner.repoint_owner(from, to).await
     }
 
     async fn list_mailboxes(&self) -> Result<Vec<jojobot_domain::mailbox::Mailbox>, MailboxError> {
@@ -4213,6 +4245,14 @@ mod tests {
             unimplemented!("this double only scans messages")
         }
 
+        async fn repoint_owner(
+            &self,
+            _: &jojobot_domain::memory::EntityId,
+            _: &jojobot_domain::memory::EntityId,
+        ) -> Result<Option<jojobot_domain::mailbox::Mailbox>, MailboxError> {
+            unimplemented!("this double only scans messages")
+        }
+
         async fn list_mailboxes(
             &self,
         ) -> Result<Vec<jojobot_domain::mailbox::Mailbox>, MailboxError> {
@@ -5189,6 +5229,30 @@ mod tests {
             doc.title = entity.name.clone();
             Ok(Guarded::Written(entity.clone()))
         }
+        /// Same shape as `update_entity` above: no guard, because what is
+        /// under test is what the decorator does after the write, not
+        /// whether it was allowed.
+        async fn rename_entity(
+            &self,
+            from: &EntityId,
+            to: &EntityId,
+            parent: Option<EntityId>,
+            _: Date,
+            _: Option<&str>,
+        ) -> Result<Guarded<Entity>, MemoryError> {
+            let mut docs = self.docs.write().expect("docs poisoned");
+            let doc = docs
+                .iter_mut()
+                .find(|d| d.entity.as_ref().is_some_and(|e| &e.id == from))
+                .ok_or_else(|| MemoryError::Store("this double edits pages it holds".into()))?;
+            let entity = doc.entity.as_mut().expect("found by its entity");
+            entity.id = to.clone();
+            entity.kind = to.kind().expect("a staged handle names a kind");
+            if let Some(new_parent) = parent {
+                entity.parent = Some(new_parent);
+            }
+            Ok(Guarded::Written(entity.clone()))
+        }
         async fn recall(&self, _: &EntityId) -> Result<Vec<Fact>, MemoryError> {
             unimplemented!("this double only scans")
         }
@@ -5327,6 +5391,16 @@ mod tests {
             &self,
             _: &EntityId,
             _: EntityPatch,
+        ) -> Result<Guarded<Entity>, MemoryError> {
+            unimplemented!("this double answers the three reads a store owns")
+        }
+        async fn rename_entity(
+            &self,
+            _: &EntityId,
+            _: &EntityId,
+            _: Option<EntityId>,
+            _: Date,
+            _: Option<&str>,
         ) -> Result<Guarded<Entity>, MemoryError> {
             unimplemented!("this double answers the three reads a store owns")
         }

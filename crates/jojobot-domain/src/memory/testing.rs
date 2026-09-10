@@ -643,6 +643,108 @@ impl Memory for InMemoryMemory {
         Ok(Guarded::Written(entity.clone()))
     }
 
+    async fn rename_entity(
+        &self,
+        from: &EntityId,
+        to: &EntityId,
+        parent: Option<EntityId>,
+        date: Date,
+        override_token: Option<&str>,
+    ) -> Result<Guarded<Entity>, MemoryError> {
+        validate_write_subject(from)?;
+        if from == to {
+            return Err(MemoryError::NothingToRename {
+                attempted: from.to_string(),
+            });
+        }
+        // **A row, never a supplied record** — the same exception
+        // `update_entity` reads off: a rename mutates a stored row, and a
+        // build-shipped record has none to mutate. Looking this up through
+        // `known()` (which extends with what the build supplies) would let
+        // a supplied handle pass this check, fall through every guard, and
+        // then silently rename nothing — the mutation loop below only ever
+        // touches `self.entities`.
+        let stored = self.entities.lock().expect("fake mutex poisoned").clone();
+        let known = self.known();
+        let Some(entity) = stored.iter().find(|e| &e.id == from).cloned() else {
+            let former = self.former();
+            if let Some(moved) = super::resolve_handle(from, &known, &former) {
+                return Err(MemoryError::HandleMoved {
+                    attempted: from.to_string(),
+                    now: moved.id.to_string(),
+                });
+            }
+            return Err(MemoryError::UnknownEntity {
+                attempted: from.to_string(),
+                nearest: guard::screen(from, &[], &stored),
+            });
+        };
+        // A forwarding row is not a thing to rename, for the same reason it
+        // is not a side to fold or a survivor to fold into.
+        if let Some(into) = &entity.merged_into {
+            return Err(MemoryError::AlreadyMerged {
+                attempted: from.to_string(),
+                into: into.to_string(),
+            });
+        }
+        let effective_parent = parent.clone().or_else(|| entity.parent.clone());
+        validate_entity(
+            to,
+            &entity.name,
+            &entity.aliases,
+            &entity.source,
+            entity.crm.as_deref(),
+            effective_parent.as_ref(),
+        )?;
+        let renamed = Entity {
+            id: to.clone(),
+            kind: to.kind().expect("validated above"),
+            parent: effective_parent,
+            ..entity.clone()
+        };
+        // Screened like a creation, with the thing's own row excluded from
+        // the index it is screened against — or it would collide with its
+        // own former name the moment the new one is close to it.
+        let others: Vec<Entity> = known.iter().filter(|e| &e.id != from).cloned().collect();
+        if let Decision::Block(candidates) =
+            guard::decide(to, &renamed.labels(), &others, override_token)
+        {
+            return Ok(Guarded::Blocked {
+                attempted: to.clone(),
+                candidates,
+            });
+        }
+        if let Some(new_parent) = &parent
+            && let Decision::Block(candidates) = guard::decide_parent(&renamed, new_parent, &others)
+        {
+            return Ok(Guarded::Blocked {
+                attempted: new_parent.clone(),
+                candidates,
+            });
+        }
+
+        let mut entities = self.entities.lock().expect("fake mutex poisoned");
+        for held in entities.iter_mut() {
+            if &held.id == from {
+                held.id = to.clone();
+                held.kind = renamed.kind;
+                held.parent = renamed.parent.clone();
+            } else if held.parent.as_ref() == Some(from) {
+                held.parent = Some(to.clone());
+            }
+        }
+        drop(entities);
+        self.former_handles
+            .lock()
+            .expect("fake mutex poisoned")
+            .push(FormerHandle {
+                former: from.clone(),
+                badge: entity.badge.clone().expect("a written row wears a badge"),
+                changed_at: date,
+            });
+        Ok(Guarded::Written(renamed))
+    }
+
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
         // Same guards the real adapter applies, so the fake can't drift.
         validate_write_subject(&fact.subject)?;
@@ -11632,6 +11734,276 @@ pub mod contract {
         );
     }
 
+    /// 🚨 **A rename, through the real verb, and every kind of reference a
+    /// reader resolves still resolves in the same call: a mention, a
+    /// reference-typed field value, an edge and a ref.**
+    ///
+    /// **Through the served surface, not the test-only bypass.** Every case
+    /// above proves the READ side by staging a rename past the guard,
+    /// because no verb existed to produce one honestly. This is the one
+    /// case that calls `rename_entity` itself, so it is the proof that the
+    /// write side and the read side actually meet — four references, four
+    /// assertions, because a case covering one says nothing about the
+    /// others.
+    ///
+    /// **Paired with a claim's own home**, both directions in the same read:
+    /// the renamed thing's own claim is found under its new handle AND its
+    /// stale one, and a handle that never existed still misses — resolving
+    /// a stale handle and refusing an unknown one are two different
+    /// mechanisms, and a case proving only the first cannot tell a working
+    /// redirect from a gate that answers everything.
+    pub async fn a_rename_moves_the_handle_and_every_reference_still_resolves<
+        M: Memory + ?Sized,
+        B: Memory + ?Sized,
+    >(
+        mentioning: &M,
+        bare: &B,
+    ) {
+        mentioning
+            .declare_type(DeclaredType::new(
+                "contract-rename-link",
+                vec![Field::new("about", ValueType::Reference)],
+            ))
+            .await
+            .expect("the type is declared");
+
+        let author = EntityId::person("person:contract-rename-author");
+        ensure(mentioning, &author).await;
+        let was = EntityId("thing:contract-rename-was".into());
+        mentioning
+            .add_entity(NewEntity::new(
+                was.clone(),
+                "The Renamed Thing",
+                "the roster",
+            ))
+            .await
+            .expect("the fixture is written")
+            .written()
+            .expect("nothing collides with it");
+
+        let mut linking = NewFact::about(
+            author.clone(),
+            "mentioned @thing:contract-rename-was in the same breath",
+            date(2026, 6, 1),
+        );
+        linking.edge = Some(Edge::new(EdgeShape::About, was.clone()));
+        linking.refs = vec![was.clone()];
+        linking.fields = [("about".to_string(), was.to_string())]
+            .into_iter()
+            .collect();
+        let written = capture(mentioning, linking).await;
+
+        // **What the store keeps, before anything moves.** A mention is
+        // stored as the badge, never the handle, so "nothing was rewritten"
+        // is proved by this staying byte-identical across the rename — not
+        // by it still naming the old handle as text, which an edge or a ref
+        // would but a mention never does.
+        let stored_before = bare
+            .recall(&author)
+            .await
+            .expect("the store answers")
+            .into_iter()
+            .find(|f| f.id == written.id)
+            .expect("the claim is there")
+            .content;
+
+        // The renamed thing's own claim — what proves "a claim's home" is
+        // the fourth reference, not a repeat of the first three.
+        let own = capture(
+            mentioning,
+            NewFact::about(was.clone(), "a claim on the thing itself", date(2026, 6, 1)),
+        )
+        .await;
+
+        let now = EntityId("work:contract-rename-now".into());
+        mentioning
+            .rename_entity(&was, &now, None, date(2026, 6, 2), None)
+            .await
+            .expect("the rename lands")
+            .written()
+            .expect("nothing collides with the destination");
+
+        let after = mentioning
+            .recall(&author)
+            .await
+            .expect("the store answers")
+            .into_iter()
+            .find(|f| f.id == written.id)
+            .expect("the claim is there");
+        assert!(
+            after.content.contains(now.as_str()) && !after.content.contains(was.as_str()),
+            "the mention did not follow the rename: {after:?}",
+        );
+        assert_eq!(
+            after.edge.as_ref().map(|e| &e.object),
+            Some(&now),
+            "the edge did not follow the rename: {after:?}",
+        );
+        assert_eq!(
+            after.refs,
+            vec![now.clone()],
+            "the ref did not follow the rename: {after:?}",
+        );
+        assert_eq!(
+            after.fields.get("about").map(String::as_str),
+            Some(now.as_str()),
+            "the reference-typed field did not follow the rename: {after:?}",
+        );
+
+        // The claim's own home, both directions, in the same read as a
+        // handle that never existed.
+        let by_new_name = mentioning
+            .recall(&now)
+            .await
+            .expect("the store answers")
+            .into_iter()
+            .find(|f| f.id == own.id);
+        assert!(
+            by_new_name.is_some(),
+            "the renamed thing's own claim did not resolve under its new handle",
+        );
+        let by_old_name = mentioning
+            .recall(&was)
+            .await
+            .expect("a stale handle still resolves")
+            .into_iter()
+            .find(|f| f.id == own.id);
+        assert!(
+            by_old_name.is_some(),
+            "the renamed thing's own claim did not resolve under its stale handle",
+        );
+        let never = EntityId("thing:contract-rename-never-existed".into());
+        assert!(
+            mentioning.recall(&never).await.is_err(),
+            "a handle nothing ever answered to must still miss",
+        );
+
+        // Nothing was rewritten to do it: the stored form is byte-identical
+        // to what it was before the rename.
+        let stored_after = bare
+            .recall(&author)
+            .await
+            .expect("the store answers")
+            .into_iter()
+            .find(|f| f.id == written.id)
+            .expect("the claim is there")
+            .content;
+        assert_eq!(
+            stored_after, stored_before,
+            "the stored mention changed, so this is find-and-replace rather than a pointer",
+        );
+    }
+
+    /// 🚨 **A retype and a reparent are each their own case, not a slug
+    /// change in disguise.**
+    ///
+    /// The handle is one string, so this verb reaches all three the same
+    /// way — but a case that only ever moved the slug half would say
+    /// nothing about whether the kind half and the parent pointer actually
+    /// move too. `children()` is the proof that matters for the parent: a
+    /// fix that only patched `Entity::parent` and left the reverse lookup
+    /// reading a stale value would still lose a session asking what is
+    /// under a thing now.
+    pub async fn a_retype_and_a_reparent_are_each_a_rename<M: Memory + ?Sized>(store: &M) {
+        let parent = EntityId("person:contract-retype-parent".into());
+        store
+            .add_entity(NewEntity::new(
+                parent.clone(),
+                "Contract Retype Parent",
+                "the roster",
+            ))
+            .await
+            .expect("the fixture is written")
+            .written()
+            .expect("nothing collides with it");
+
+        let was = EntityId("thing:contract-retype-was".into());
+        store
+            .add_entity(NewEntity::new(
+                was.clone(),
+                "Contract Retype Was",
+                "the roster",
+            ))
+            .await
+            .expect("the fixture is written")
+            .written()
+            .expect("nothing collides with it");
+
+        let child = EntityId("thing:contract-retype-child".into());
+        store
+            .add_entity(NewEntity {
+                parent: Some(was.clone()),
+                ..NewEntity::new(child.clone(), "Contract Retype Child", "the roster")
+            })
+            .await
+            .expect("the fixture is written")
+            .written()
+            .expect("nothing collides with it");
+
+        // Both at once: a different kind AND a different parent, in the one
+        // call — proving neither rides on the other.
+        let now = EntityId("work:contract-retype-now".into());
+        let renamed = store
+            .rename_entity(&was, &now, Some(parent.clone()), date(2026, 6, 3), None)
+            .await
+            .expect("the rename lands")
+            .written()
+            .expect("nothing collides with the destination");
+        assert_eq!(
+            renamed.kind,
+            EntityKind::WORK,
+            "the retype did not land: {renamed:?}",
+        );
+        assert_eq!(
+            renamed.parent.as_ref(),
+            Some(&parent),
+            "the reparent did not land: {renamed:?}",
+        );
+
+        let read_back = store
+            .list_entities(None)
+            .await
+            .expect("the store answers")
+            .into_iter()
+            .find(|e| e.id == now)
+            .expect("the renamed row is there");
+        assert_eq!(read_back.kind, EntityKind::WORK);
+        assert_eq!(read_back.parent.as_ref(), Some(&parent));
+
+        // The reverse lookup — not only the field on the child, which a
+        // half-built fix could patch and leave the walk reading the old
+        // value.
+        let kids = store
+            .children(&parent)
+            .await
+            .expect("children reads under the current handle");
+        assert!(
+            kids.contains(&now),
+            "the renamed-and-reparented thing is not among its new parent's children: {kids:?}",
+        );
+
+        // **The other repoint in the same write**: `child` named `was` as
+        // its own parent, so it follows to `now` — the mechanism
+        // `entity.parent` resolve-on-read already proved through the test
+        // harness, re-proved here through the real verb.
+        let grandkids = store
+            .children(&now)
+            .await
+            .expect("children reads under the current handle");
+        assert_eq!(
+            grandkids,
+            vec![child],
+            "a thing parented on the renamed entity did not follow it: {grandkids:?}",
+        );
+
+        // The old handle is gone outright, not merely relabelled — nothing
+        // answers to it, so asking what is under it is asking about nothing.
+        assert!(
+            store.children(&was).await.is_err(),
+            "the old handle must not still name an entity to ask children() of",
+        );
+    }
+
     /// 🚨 **A stale address resolves to the SAME claim after a rename, even
     /// once new claims exist under the new handle.**
     ///
@@ -12415,6 +12787,8 @@ pub mod contract {
         a_childs_parent_pointer_follows_a_rename(bare, rehandles).await;
         an_edge_follows_a_thing_that_is_rehandled(mentioning, bare, rehandles).await;
         a_ref_follows_a_thing_that_is_rehandled(mentioning, bare, rehandles).await;
+        a_rename_moves_the_handle_and_every_reference_still_resolves(mentioning, bare).await;
+        a_retype_and_a_reparent_are_each_a_rename(bare).await;
         a_stale_address_resolves_to_the_same_claim_after_a_rename(bare, rehandles).await;
         an_edit_through_a_stale_address_reaches_the_record_it_always_named(bare, rehandles).await;
         a_retraction_through_a_stale_address_reaches_the_record_it_always_named(bare, rehandles)

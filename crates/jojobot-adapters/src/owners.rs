@@ -201,6 +201,16 @@ mod tests {
             ) -> Result<Guarded<Entity>, MemoryError> {
                 unimplemented!("the owner index only reads the index")
             }
+            async fn rename_entity(
+                &self,
+                _: &EntityId,
+                _: &EntityId,
+                _: Option<EntityId>,
+                _: jiff::civil::Date,
+                _: Option<&str>,
+            ) -> Result<Guarded<Entity>, MemoryError> {
+                unimplemented!("the owner index only reads the index")
+            }
             async fn capture(&self, _: NewFact) -> Result<Guarded<Fact>, MemoryError> {
                 unimplemented!("the owner index only reads the index")
             }

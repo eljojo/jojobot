@@ -274,6 +274,34 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
         }
         self.inner.update_entity(handle, patch).await
     }
+    /// **The build's own half is not a rename's to move.** Same shape as
+    /// [`update_entity`](Self::update_entity): a supplied record answers
+    /// with itself, an exact-handle match, before the write ever reaches the
+    /// store underneath.
+    async fn rename_entity(
+        &self,
+        from: &EntityId,
+        to: &EntityId,
+        parent: Option<EntityId>,
+        date: Date,
+        override_token: Option<&str>,
+    ) -> Result<Guarded<Entity>, MemoryError> {
+        if let Some((supplied, _)) = self.provisions.record_for(from) {
+            return Ok(Guarded::Blocked {
+                attempted: from.clone(),
+                candidates: vec![guard::EntityMatch {
+                    handle: supplied.id.clone(),
+                    kind: supplied.kind,
+                    name: supplied.name.clone(),
+                    source: supplied.source.clone(),
+                    reason: guard::MatchReason::ExactHandle,
+                }],
+            });
+        }
+        self.inner
+            .rename_entity(from, to, parent, date, override_token)
+            .await
+    }
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
         self.inner.capture(fact).await
     }
