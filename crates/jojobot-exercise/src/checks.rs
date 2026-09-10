@@ -49,6 +49,11 @@
 //!   answer, so two of them hold on two records naming one thing each, which is
 //!   the easy case rather than the one being watched. Naming the kinds is not a
 //!   way out either: the sitting chooses which things it points at.
+//! * **`junes_survey_mention_renders_under_the_current_handle`** — say that
+//!   ONE mention's rendering CHANGED between two readings. `carries` is a
+//!   claim about the answer as it stands, never about a difference from an
+//!   earlier answer, and pinning either handle is not a way out: January and
+//!   October each invent one.
 //! * **`a_colleague_exists_with_its_box`**, **`the_pile_is_in_the_colleagues_box`**
 //!   and **`what_became_of_the_pile_is_on_the_record`** — **name a thing the
 //!   OCCUPANT named.** A lock's query is text written before the run, and these
@@ -65,7 +70,7 @@ type Hatch = (&'static str, fn() -> Box<dyn Checks>);
 
 /// **Every named check this build ships.** A room adds one line here and one
 /// `check` line in its document, and both are visible in the count.
-pub const CHECKS: [Hatch; 16] = [
+pub const CHECKS: [Hatch; 17] = [
     ("the_brief_left_the_box", || {
         checked(|seen| Box::pin(the_brief_left_the_box(seen)))
     }),
@@ -115,6 +120,10 @@ pub const CHECKS: [Hatch; 16] = [
     ("one_record_points_at_two_kinds", || {
         checked(|seen| Box::pin(one_record_points_at_two_kinds(seen)))
     }),
+    (
+        "junes_survey_mention_renders_under_the_current_handle",
+        || checked(|seen| Box::pin(junes_survey_mention_renders_under_the_current_handle(seen))),
+    ),
 ];
 
 /// The identity a fresh instance ships with, and the one every occupant wears.
@@ -1096,6 +1105,103 @@ fn records_pointing_at_two_kinds(world: &str) -> usize {
         .flatten()
         .filter(|hit| kinds_pointed_at(&written(hit)).len() >= TOGETHER)
         .count()
+}
+
+/// **The one full handle of `kind` written into a sentence**, slug included.
+///
+/// [`kinds_pointed_at`] asks only which KINDS a sentence points at, and says
+/// beside itself why: the slug is the sitting's own choice and a lock that
+/// spelled it would fail a run that chose a different one. This reads the
+/// slug too, on purpose — it is safe here because nothing calls it with a
+/// literal slug to compare against, only with another slug this same
+/// function read off the board a different time.
+fn mention_of_kind(text: &str, kind: &str) -> Option<String> {
+    for (at, _) in text.match_indices(MENTION) {
+        let rest = &text[at + MENTION.len_utf8()..];
+        let found = handle_run(rest);
+        if found != kind {
+            continue;
+        }
+        let after = &rest[found.len()..];
+        if !after.starts_with(KIND_ENDS) {
+            continue;
+        }
+        let slug = handle_run(&after[KIND_ENDS.len_utf8()..]);
+        if slug.is_empty() {
+            continue;
+        }
+        return Some(format!("{found}:{slug}"));
+    }
+    None
+}
+
+/// The survey's handle, wherever June's claim mentions it — the only claim in
+/// this year that ever points at an event.
+fn event_mention(world: &str) -> Option<String> {
+    search_hits(world)?
+        .iter()
+        .find_map(|hit| mention_of_kind(&written(hit), "event"))
+}
+
+/// 🚨 **A stored mention renders under whichever handle its thing wears NOW,
+/// and this is where that is watched rather than assumed.**
+///
+/// June points at the survey by handle, not by word — the claim
+/// [`one_record_points_at_two_kinds`] exists to prove happened. October gives
+/// a reason to rename the survey. Nothing about a rename touches June's own
+/// words: the badge behind its mention is permanent, and what changes is
+/// what a READ of that claim renders back. Late October is the first cold
+/// sitting after the reason was given, so a read taken once its window
+/// closes is the one this room can ask the question of.
+///
+/// ⚠️ **A hatch, for the reason [`one_record_points_at_two_kinds`] already
+/// gives one level up.** No query on this surface asks *what did a mention
+/// render as at one time, against what it renders as at another* — `carries`
+/// is a claim about the answer as it stands, never about a change in it.
+///
+/// ⛔️ **No handle is named here, on either side.** January invents the
+/// survey's first one and October's reason invents its second, and a lock
+/// that spelled either would fail a run that chose different words for
+/// either sitting — the fault this room already removed from June's own
+/// lock. **What is locked is that the handle a read renders after this
+/// sitting closes differs from the one a read rendered before October gave
+/// its reason**: a build that stores the word June typed shows the same
+/// handle either side of a rename that never touched anything; a build that
+/// stores the pointer does not.
+async fn junes_survey_mention_renders_under_the_current_handle(
+    seen: &Observed<'_>,
+) -> Result<(), String> {
+    let Some((before, _)) = seen.across(OCTOBER) else {
+        return Err(format!(
+            "this run took no reading before {OCTOBER}, so there is nothing here to compare a \
+             later mention against",
+        ));
+    };
+    let Some((_, after)) = seen.across(LATE_OCTOBER) else {
+        return Err(format!(
+            "this run took no reading after {LATE_OCTOBER}, so there is no later mention to \
+             read at all",
+        ));
+    };
+    let Some(was) = event_mention(&before.world) else {
+        return Err(format!(
+            "no claim on the board points at the survey as a handle before {OCTOBER}, so there \
+             is nothing here to watch get renamed",
+        ));
+    };
+    let Some(now) = event_mention(&after.world) else {
+        return Err(format!(
+            "no claim on the board points at the survey as a handle by the time {LATE_OCTOBER} \
+             closes, so a rename cannot be told from a mention that was never made",
+        ));
+    };
+    if was == now {
+        return Err(format!(
+            "the survey still answers to {was} after {OCTOBER} gave a reason to rename it, so \
+             no mention on the board renders under a handle it did not wear when it was written",
+        ));
+    }
+    Ok(())
 }
 
 /// The other key a check-in writes in the same act as `last_check_in` —

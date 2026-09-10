@@ -416,7 +416,7 @@ say     September: nothing on the pump carries the day it came back, so the ques
 >
 > Nobody will answer you, but your answer is being read. You must answer.
 >
-> start jojobot as assistant — it is 11 October 2026 and I should note that Nelson brought my floor pump back over the summer, and put down where we held the survey — the ground there needs a look before next year
+> start jojobot as assistant — it is 11 October 2026 and I should note that Nelson brought my floor pump back over the summer, and put down where we held the survey — the ground there needs a look before next year, and the trail association has renamed that survey — from now on it goes on record as the Erosion Review
 
 ```locks
 # 🚨 The operator says nothing about September and does not take anything back.
@@ -473,7 +473,7 @@ say     October: the survey cannot be walked to the place it was held at, so whe
 >
 > Nobody will answer you, but your answer is being read. You must answer.
 >
-> start jojobot as assistant — it is 24 October 2026, and it turns out Nelson never actually made it to the June survey — he was fixing a flat that morning and I only just found out — so I do not want him down as having been there, and Bart has joined the club
+> start jojobot as assistant — it is 24 October 2026, and it turns out Nelson never actually made it to the June survey — he was fixing a flat that morning and I only just found out — so I do not want him down as having been there, and Bart has joined the club, and remind me where that review was held and when, now that it has its new name
 
 ```locks
 # `retract`'s own case, walked for the first time all year. June's attendance
@@ -505,6 +505,25 @@ say     October (again): Bart cannot be walked to the club, so he is a name in a
 # lowers the count; adding one is not.
 check   late_october_put_nobody_new_at_the_survey
 say     October (again): somebody who was never at the survey was put there by this sitting, which was asked to take an attendance away rather than add one
+
+# 🚨 **A mention renders under whichever handle its thing wears NOW, and this
+# is where that is watched rather than assumed.** October gives a reason to
+# rename the survey; nothing about that touches June's own words, because a
+# rename moves the handle and leaves every stored mention exactly as it was
+# typed. What changes is what a READ of June's claim renders back, and this
+# sitting is the first cold one after the reason was given.
+#
+# ⛔️ **No handle is named here, on either side.** January invents the
+# survey's first one and October's reason invents its second, and a lock
+# that spelled either would fail a run that chose different words for
+# either sitting — the fault this room already removed from June's own
+# lock, five sittings up. What is locked is that the handle a read renders
+# after this sitting closes differs from the one a read rendered before
+# October gave its reason: a build that stores the word June typed shows the
+# same handle either side of a rename that never touched anything, and a
+# build that stores the pointer does not.
+check   junes_survey_mention_renders_under_the_current_handle
+say     October (again): June's own claim still renders the survey under the handle it wore before October's reason to rename it, so a stored mention is not resolving to what the thing is called now
 ```
 
 

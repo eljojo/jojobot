@@ -36,13 +36,13 @@ const JULY: [usize; 1] = [13];
 const AUGUST: [usize; 2] = [14, 15];
 const SEPTEMBER: [usize; 1] = [16];
 const OCTOBER: [usize; 2] = [17, 18];
-const LATE_OCTOBER: [usize; 3] = [19, 20, 21];
-const LATE_NOVEMBER: [usize; 2] = [22, 23];
+const LATE_OCTOBER: [usize; 4] = [19, 20, 21, 22];
+const LATE_NOVEMBER: [usize; 2] = [23, 24];
 
 /// How many locks the year carries.
-const LATE_DECEMBER: [usize; 2] = [24, 25];
+const LATE_DECEMBER: [usize; 2] = [25, 26];
 
-const LOCKS: usize = 26;
+const LOCKS: usize = 27;
 
 /// **The sittings a person reads**, which assert nothing and must not.
 const READ_THESE: [&str; 2] = ["Phase 12", "Phase 14"];
@@ -215,6 +215,19 @@ async fn address_of(room: &Surface, subject: &str, needle: &str) -> String {
         })
         .and_then(|fact| fact["address"].as_str())
         .unwrap_or_else(|| panic!("no record on {subject} says {needle:?}: {read}"))
+        .to_string()
+}
+
+/// **The one entity of `kind`'s current handle.** Looked up rather than
+/// hardcoded: October may have renamed it by the time this is asked, and a
+/// literal written here would go stale under exactly the rename this room
+/// now weaves in.
+async fn handle_of_kind(room: &Surface, kind: &str) -> String {
+    let read = room.call("recall", json!({"kind": kind})).await;
+    let parsed: Value = serde_json::from_str(&read).expect("the read is json");
+    parsed["objects"][0]["id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("no {kind} is on the board: {read}"))
         .to_string()
 }
 
@@ -638,6 +651,31 @@ async fn september_sits_in_the_wrong_day(room: &Surface, _sid: &str) {
 }
 
 async fn october(room: &Surface, sid: &str) {
+    october_writes_the_pump_and_the_place(room, sid).await;
+    // **The reason is given in words; the rename is the move it was given
+    // for.** The operator never names the verb, and finding it is the
+    // measurement — the same posture this room takes with every walk it
+    // asks for elsewhere.
+    did(
+        room,
+        sid,
+        "rename_entity",
+        json!({"handle": "event:trail-survey", "to": "event:erosion-review"}),
+    )
+    .await;
+}
+
+/// **October, minus the one move its reason was given for.**
+///
+/// Everything else this sitting is asked to do is done — the pump's account
+/// and the survey's place are both on the record — so a run built on this
+/// fails only the lock that watches for the rename, never a lock that would
+/// fail for an unrelated reason.
+async fn october_without_renaming_the_survey(room: &Surface, sid: &str) {
+    october_writes_the_pump_and_the_place(room, sid).await;
+}
+
+async fn october_writes_the_pump_and_the_place(room: &Surface, sid: &str) {
     did(
         room,
         sid,
@@ -771,13 +809,14 @@ async fn late_october(room: &Surface, sid: &str) {
 /// together is one plausible step rather than an invention out of nothing.
 async fn late_october_puts_a_third_person_there(room: &Surface, sid: &str) {
     late_october(room, sid).await;
+    let survey = handle_of_kind(room, "event").await;
     did(
         room,
         sid,
         "capture",
         json!({"subject": "person:bart", "content": "was at the trail survey",
                "provenance": "inference",
-               "shape": "attendance", "object": "event:trail-survey"}),
+               "shape": "attendance", "object": survey}),
     )
     .await;
 }
@@ -943,6 +982,11 @@ const OCTOBER_AT: usize = 9;
 /// must stay apart for the reason June's own variants do.
 const OCTOBER_REMOVES_ONE_OF_THE_TWO_ACCOUNTS: usize = 19;
 
+/// **October's third guilt, named the same way.** Everything else this
+/// sitting is asked to do is done; the one thing missing is the rename its
+/// own reason was given for.
+const OCTOBER_DOES_NOT_RENAME_THE_SURVEY: usize = 20;
+
 /// Where late November sits in the year, named for the reason `JUNE_AT` is.
 const LATE_NOVEMBER_AT: usize = 12;
 
@@ -994,6 +1038,8 @@ async fn work_the_year(
             at == LATE_NOVEMBER_AT && guilty.contains(&LATE_NOVEMBER_STANDS_UP_A_SECOND_LOOP);
         let october_variant =
             at == OCTOBER_AT && guilty.contains(&OCTOBER_REMOVES_ONE_OF_THE_TWO_ACCOUNTS);
+        let october_no_rename_variant =
+            at == OCTOBER_AT && guilty.contains(&OCTOBER_DOES_NOT_RENAME_THE_SURVEY);
         // ⛔️ **Only a sitting that ACTS gets a run.** A boot mints nothing until
         // its first write, so a run for a sitting this drive skips is a run that
         // never happened — and it would sit in the day that sitting claims,
@@ -1003,6 +1049,7 @@ async fn work_the_year(
             && june_variant.is_none()
             && !late_november_variant
             && !october_variant
+            && !october_no_rename_variant
         {
             boundaries.push(boundary(room, &named[at + 1]).await);
             continue;
@@ -1024,6 +1071,8 @@ async fn work_the_year(
             late_november_stands_up_a_second_loop(room, sid).await;
         } else if october_variant {
             october_removes_one_of_the_two_accounts(room, sid).await;
+        } else if october_no_rename_variant {
+            october_without_renaming_the_survey(room, sid).await;
         } else if guilty.contains(&at) {
             match at {
                 9 => october_files_the_note_on_the_event(room, sid).await,
@@ -1570,6 +1619,7 @@ async fn augusts_window_catches_a_guilty_august_and_ignores_a_later_invention() 
     //    It is a fault, and it is not August's.
     let (_room, surface) = furnished().await;
     let boundaries = worked_the_year(&surface).await;
+    let survey = handle_of_kind(&surface, "event").await;
     // **A sitting after the year's last**, which is what makes it a later one.
     let later = sitting(&surface, "2026-12-22").await;
     did(
@@ -1578,7 +1628,7 @@ async fn augusts_window_catches_a_guilty_august_and_ignores_a_later_invention() 
         "capture",
         json!({"subject": "person:bart", "content": "was at the trail survey",
                "provenance": "inference",
-               "shape": "attendance", "object": "event:trail-survey"}),
+               "shape": "attendance", "object": survey}),
     )
     .await;
     let judged = judge_all(&surface, &boundaries).await;
@@ -1619,6 +1669,44 @@ async fn late_octobers_window_catches_the_sitting_that_invents_an_attendee() {
         judged[LATE_OCTOBER[2]].held,
         "the honest late October failed its own lock, so the check cannot tell an attendance \
          taken away from one added: {}",
+        saying(&judged),
+    );
+}
+
+/// **An October that gives the reason and never makes the move it was given
+/// for.** Everything else it is asked to do is done, so a red here is about
+/// the rename and nothing else.
+#[tokio::test]
+async fn junes_mention_lock_catches_a_survey_that_was_never_renamed() {
+    let (_room, surface) = furnished().await;
+    let guilty = work_the_year(
+        &surface,
+        &room_document(),
+        &WORKED,
+        &[OCTOBER_DOES_NOT_RENAME_THE_SURVEY],
+    )
+    .await;
+    let judged = judge_all(&surface, &guilty).await;
+    assert!(
+        !judged[LATE_OCTOBER[3]].held,
+        "an October that was given a reason to rename the survey and never did held the lock \
+         that watches for it: {}",
+        saying(&judged),
+    );
+    // The half that stops the assertion above passing on a room where every
+    // lock fails: October's other work is still there.
+    assert!(
+        judged[OCTOBER[1]].held,
+        "the sitting that skipped the rename failed a lock that has nothing to do with it: {}",
+        saying(&judged),
+    );
+
+    let (_room, surface) = furnished().await;
+    let boundaries = worked_the_year(&surface).await;
+    let judged = judge_all(&surface, &boundaries).await;
+    assert!(
+        judged[LATE_OCTOBER[3]].held,
+        "the honest year, which does rename the survey, failed the lock that watches for it: {}",
         saying(&judged),
     );
 }
