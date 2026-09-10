@@ -11436,6 +11436,103 @@ pub mod contract {
         );
     }
 
+    /// 🚨 **A ref follows a rehandled thing exactly as an edge does.**
+    ///
+    /// **A ref carries no badge either** — the same shape as an edge's
+    /// object: a plain handle, validated to exist at write time and never
+    /// touched again, so a rename after the record was written is the one
+    /// way it goes stale. Read back through `mentioning`, the layer that
+    /// resolves both on the way out.
+    ///
+    /// **Paired with the stored form**, for the reason the edge case is: a
+    /// build that rewrote the ref in place would pass the first half and
+    /// fail the second.
+    pub async fn a_ref_follows_a_thing_that_is_rehandled<M: Memory + ?Sized, B: Memory + ?Sized>(
+        mentioning: &M,
+        bare: &B,
+        rehandles: &dyn Rehandles,
+    ) {
+        let subject = EntityId::person("person:contract-ref-subject");
+        let was = EntityId("thing:contract-ref-was".into());
+        let now = EntityId("work:contract-ref-now".into());
+        ensure(mentioning, &subject).await;
+        mentioning
+            .add_entity(NewEntity::new(
+                was.clone(),
+                "The Referenced Object",
+                "the roster",
+            ))
+            .await
+            .expect("the fixture is written")
+            .written()
+            .expect("nothing collides with it");
+        let badge = mentioning
+            .list_entities(None)
+            .await
+            .expect("the store answers")
+            .into_iter()
+            .find(|e| e.id == was)
+            .expect("the fixture is there")
+            .badge
+            .expect("a written row wears a badge");
+
+        let mut fact = NewFact::about(
+            subject.clone(),
+            "pointed at the referenced object",
+            date(2026, 4, 21),
+        );
+        fact.refs = vec![was.clone()];
+        let written = capture(mentioning, fact).await;
+        let before = mentioning
+            .recall(&subject)
+            .await
+            .expect("the store answers")
+            .into_iter()
+            .find(|f| f.id == written.id)
+            .expect("the claim is there");
+        assert_eq!(
+            before.refs,
+            vec![was.clone()],
+            "the ref reads as the handle it was written with",
+        );
+
+        rehandles.rehandle(&was, &now).await;
+        rehandles
+            .note_former_handle(FormerHandle {
+                former: was.clone(),
+                badge,
+                changed_at: date(2026, 4, 21),
+            })
+            .await;
+
+        let after = mentioning
+            .recall(&subject)
+            .await
+            .expect("the store answers")
+            .into_iter()
+            .find(|f| f.id == written.id)
+            .expect("the claim is there");
+        assert_eq!(
+            after.refs,
+            vec![now],
+            "the ref did not follow the thing to its new handle: {after:?}",
+        );
+
+        // Nothing was rewritten to do it.
+        let stored = bare
+            .recall(&subject)
+            .await
+            .expect("the store answers")
+            .into_iter()
+            .find(|f| f.id == written.id)
+            .expect("the claim is there");
+        assert_eq!(
+            stored.refs,
+            vec![was],
+            "the stored ref was rewritten, so this is find-and-replace rather than a pointer",
+        );
+    }
+
     /// 🚨 **A stale address resolves to the SAME claim after a rename, even
     /// once new claims exist under the new handle.**
     ///
@@ -12034,6 +12131,7 @@ pub mod contract {
         an_account_written_from_a_reason_stores_its_mentions(mentioning, bare).await;
         a_stale_handle_resolves_through_its_rename_history(bare, rehandles).await;
         an_edge_follows_a_thing_that_is_rehandled(mentioning, bare, rehandles).await;
+        a_ref_follows_a_thing_that_is_rehandled(mentioning, bare, rehandles).await;
         a_stale_address_resolves_to_the_same_claim_after_a_rename(bare, rehandles).await;
     }
 

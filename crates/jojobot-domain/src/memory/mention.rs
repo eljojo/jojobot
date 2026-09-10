@@ -261,15 +261,16 @@ impl Mentioning {
         self.inner.former_handles().await
     }
 
-    /// Rewrite a claim's text for a reader, and follow an edge to wherever its
-    /// object answers to now.
+    /// Rewrite a claim's text for a reader, and follow an edge or a ref to
+    /// wherever what it names answers to now.
     ///
-    /// **The edge is not a mention and carries no badge** — it is validated to
-    /// exist at write time and stored as the plain handle, so a rename after
-    /// the edge was drawn is the one way it goes stale. `resolve_handle` is
-    /// the same fallback a stale handle gets anywhere: a direct match first, a
-    /// handle's own history next, and a genuinely unknown one is left as
-    /// written rather than guessed at.
+    /// **Neither an edge nor a ref is a mention and neither carries a
+    /// badge** — both are validated to exist at write time and stored as a
+    /// plain handle, so a rename after the record was written is the one way
+    /// either goes stale. `resolve_handle` is the same fallback a stale
+    /// handle gets anywhere: a direct match first, a handle's own history
+    /// next, and a genuinely unknown one is left as written rather than
+    /// guessed at.
     fn render_fact(
         &self,
         fact: &mut super::Fact,
@@ -284,6 +285,11 @@ impl Mentioning {
             && let Some(current) = super::resolve_handle(&edge.object, known, former)
         {
             edge.object = current.id.clone();
+        }
+        for object in &mut fact.refs {
+            if let Some(current) = super::resolve_handle(object, known, former) {
+                *object = current.id.clone();
+            }
         }
     }
 
