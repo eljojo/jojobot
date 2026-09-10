@@ -173,6 +173,31 @@ async fn main() -> anyhow::Result<()> {
         ),
     }
 
+    // **Rekey what the badge fill just made possible.** A row written before
+    // a thing wore a badge still names it by handle in `fact`, `fact_write`
+    // and `field_write`; every read here resolves a handle to a badge before
+    // it queries, so a row still keyed by the handle is a row nothing can
+    // reach. This has to run after the fill above — it reads the badge the
+    // fill just gave out — so it cannot be a migration, which runs before
+    // either exists.
+    //
+    // **Not fatal, for the same reason the fill above is not**: the store
+    // already reports on itself, and a restart once it is reachable finishes
+    // what this pass could not.
+    match badging.backfill_handle_keyed_rows().await {
+        Ok(0) => {}
+        Ok(given) => tracing::info!(
+            given,
+            "store: rekeyed rows written under a handle to the badge they answer to now"
+        ),
+        Err(e) => tracing::warn!(
+            error = %e,
+            "ROWS NOT REKEYED — some rows written before a thing's badge existed may still be \
+             unreachable by handle. Nothing was lost; a restart once the store is reachable \
+             finishes the rekey."
+        ),
+    }
+
     // **One set, read by both halves.** The layer above resolves what the
     // build supplies into an answer; the store below has to see the same set
     // when its guard decides whether a handle names anything, or a claim

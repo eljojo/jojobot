@@ -167,6 +167,105 @@ impl DoltMemory {
         Ok(given)
     }
 
+    /// **Rekey a row written before entities carried a badge**, onto the
+    /// badge the row's own entity wears now.
+    ///
+    /// A migration cannot do this: it runs before [`Self::badge_the_unbadged`]
+    /// does, over a database where the badge column may exist but no row's
+    /// badge is drawn yet — so a migrated backfill would rewrite nothing, the
+    /// ledger would record it as applied, and it would never run again. This
+    /// sits beside the badge fill instead, at startup, immediately after it —
+    /// the one place both preconditions (the column, and the values in it)
+    /// are actually met.
+    ///
+    /// **The completion gate is a live question, not a memory of having
+    /// run.** There is no ledger row for this: a second call re-asks, of
+    /// every badged entity, whether any of its rows still hold its handle,
+    /// and only touches the ones that answer yes. A boot that half-finished
+    /// and a boot that never started reach the same place, because both are
+    /// just "some entities still answer yes" to the same question.
+    ///
+    /// **Every badge-keyed column, and no other.** `fact.entity`,
+    /// `fact.derived_from`, `field_write.entity`, `fact_write.entity`,
+    /// `fact_write.derived_from` and `fact_event_metadata`/`fact_event_ref`'s
+    /// `fact_home` are what [`Self::merge`] already treats as holding a
+    /// storage key rather than a plain handle — the same list, because a fold
+    /// and a backfill are rekeying the same columns for different reasons.
+    /// `fact_event_ref.entity` and `entity.parent`, the columns that name a
+    /// handle rather than a row, are untouched — they are not badge-keyed at
+    /// all yet, a separate gap.
+    ///
+    /// Returns how many entities had rows rekeyed. **Idempotent**: a second
+    /// run touches none.
+    pub async fn backfill_handle_keyed_rows(&self) -> Result<usize, MemoryError> {
+        let badged: Vec<(String, String)> =
+            sqlx::query_as("SELECT id, badge FROM entity WHERE badge IS NOT NULL")
+                .fetch_all(&self.pool)
+                .await
+                .map_err(store)?;
+        let mut rekeyed = 0;
+        for (handle, badge) in badged {
+            if !Self::still_handle_keyed(&self.pool, &handle, &badge).await? {
+                continue;
+            }
+            let mut tx = self.pool.begin().await.map_err(store)?;
+            for statement in [
+                "UPDATE fact SET entity = ? WHERE entity = ?",
+                "UPDATE fact SET derived_from = ? WHERE derived_from = ?",
+                "UPDATE field_write SET entity = ? WHERE entity = ?",
+                "UPDATE fact_write SET entity = ? WHERE entity = ?",
+                "UPDATE fact_write SET derived_from = ? WHERE derived_from = ?",
+                "UPDATE fact_event_metadata SET fact_home = ? WHERE fact_home = ?",
+                "UPDATE fact_event_ref SET fact_home = ? WHERE fact_home = ?",
+            ] {
+                sqlx::query(statement)
+                    .bind(&badge)
+                    .bind(&handle)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(store)?;
+            }
+            tx.commit().await.map_err(store)?;
+            rekeyed += 1;
+        }
+        Ok(rekeyed)
+    }
+
+    /// **The completion gate `backfill_handle_keyed_rows` asks**, over one
+    /// entity: does any badge-keyed column still hold this handle rather than
+    /// the badge it now wears. A handle that already equals its own badge
+    /// (never true in practice, but checked rather than assumed) needs
+    /// nothing either.
+    async fn still_handle_keyed(
+        pool: &MySqlPool,
+        handle: &str,
+        badge: &str,
+    ) -> Result<bool, MemoryError> {
+        if handle == badge {
+            return Ok(false);
+        }
+        for (table, column) in [
+            ("fact", "entity"),
+            ("fact", "derived_from"),
+            ("field_write", "entity"),
+            ("fact_write", "entity"),
+            ("fact_write", "derived_from"),
+            ("fact_event_metadata", "fact_home"),
+            ("fact_event_ref", "fact_home"),
+        ] {
+            let hit: Option<i64> =
+                sqlx::query_scalar(&format!("SELECT 1 FROM {table} WHERE {column} = ? LIMIT 1"))
+                    .bind(handle)
+                    .fetch_optional(pool)
+                    .await
+                    .map_err(store)?;
+            if hit.is_some() {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// Every entity, whole — what the write guard screens against.
     ///
     /// **The whole roster, because the guard's answer is a function of all of

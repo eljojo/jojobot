@@ -339,6 +339,150 @@ async fn the_fill_badges_rows_written_before_the_column_and_repeats_nothing() {
     store.stop().await;
 }
 
+/// 🚨 **The bug the boot order makes possible: a badge fill that runs, and a
+/// row that stays filed under the handle it wore before.**
+///
+/// `badge_the_unbadged` gives an unbadged entity a badge. Nothing else moves —
+/// `fact`, `fact_write` and `field_write` still hold that entity's OLD handle
+/// in every badge-keyed column. `recall` and every other read resolve the
+/// handle to the NEW badge before querying, so from the moment the fill runs
+/// until the backfill does, the row is filed under one key and read under
+/// another: unreachable, not merely stale.
+///
+/// **The pre-upgrade state is built with the port, not with raw SQL**, unlike
+/// its neighbour above: an entity inserted with `badge` NULL and then written
+/// through `capture` is exactly what every row here looked like before
+/// `ccc926f` — `capture`'s own resolve step keys a row by the handle whenever
+/// the subject wears no badge, so this is the real shape rather than an
+/// invented one.
+///
+/// **Watched failing first.** The middle read, taken after the fill and
+/// before the backfill, is the assertion that reproduces the bug: it must
+/// come back empty. A backfill that ran too early, or a fill that changed
+/// nothing, would both make this pass by accident, so the case would say
+/// nothing about the fix if this read were left out.
+#[tokio::test]
+async fn the_backfill_rekeys_rows_a_badge_reached_after_they_were_written() {
+    let scratch = Scratch::new("rekey");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("rekey")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool.clone());
+
+    let handle = "person:rekey-alpha";
+    sqlx::query(
+        "INSERT INTO entity (id, kind, name, source, crm, parent, boot, prose, badge)
+         VALUES (?, 'person', 'Rekey Alpha', 'contract-fixture', NULL, NULL, 'on-demand', '', \
+         NULL)",
+    )
+    .bind(handle)
+    .execute(&pool)
+    .await
+    .expect("a row from before the badge column");
+    let subject = EntityId::person(handle);
+
+    // Written through the port, while the subject still wears no badge — so
+    // this lands exactly where a pre-`ccc926f` capture would have: keyed by
+    // the plain handle, because `capture`'s own resolve step falls back to it
+    // when there is no badge to prefer.
+    let source = memory
+        .capture(NewFact::about(
+            subject.clone(),
+            "the first claim",
+            date(2026, 3, 1),
+        ))
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("the guard waves it through");
+    let claim = memory
+        .capture(NewFact {
+            details: Some("a nuance worth keeping".into()),
+            derived_from: Some(source.address()),
+            fields: [("note".to_string(), "kept".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(subject.clone(), "the second claim", date(2026, 3, 2))
+        })
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("the guard waves it through");
+
+    // **The fill runs, and nothing else does yet.** This is the exact window
+    // the boot order opens: a badge exists, and every row naming this subject
+    // still names the handle.
+    assert_eq!(
+        memory.badge_the_unbadged().await.expect("the fill runs"),
+        1,
+        "the waiting row was not given a badge",
+    );
+
+    // **Watched failing first.** Unreachable, not merely stale: the handle
+    // now resolves to a badge nothing was rekeyed onto.
+    let stranded = memory.recall(&subject).await.expect("a plain read");
+    assert!(
+        stranded.is_empty(),
+        "the claims read back after the fill and before the backfill, so the bug the backfill \
+         exists to fix does not reproduce here: {stranded:?}",
+    );
+
+    assert_eq!(
+        memory
+            .backfill_handle_keyed_rows()
+            .await
+            .expect("the backfill runs"),
+        1,
+        "the one entity with stranded rows was not rekeyed",
+    );
+
+    let found = memory.recall(&subject).await.expect("a plain read");
+    let source_read = found
+        .iter()
+        .find(|f| f.id == source.id)
+        .expect("the source claim reads back after the rekey");
+    assert_eq!(source_read.content, "the first claim");
+    let claim_read = found
+        .iter()
+        .find(|f| f.id == claim.id)
+        .expect("the derived claim reads back after the rekey");
+    assert_eq!(claim_read.content, "the second claim");
+    assert_eq!(
+        claim_read.details.as_deref(),
+        Some("a nuance worth keeping"),
+        "the nuance did not survive the rekey",
+    );
+    assert_eq!(
+        claim_read.derived_from,
+        Some(source.address()),
+        "the lineage did not survive the rekey",
+    );
+    assert_eq!(
+        claim_read.fields.get("note").map(String::as_str),
+        Some("kept"),
+        "a field write did not survive the rekey",
+    );
+
+    // **Paired: a store already converted is untouched.**
+    assert_eq!(
+        memory
+            .backfill_handle_keyed_rows()
+            .await
+            .expect("the backfill runs again"),
+        0,
+        "the backfill rekeyed a row a second time, so running it at every startup would not be \
+         safe",
+    );
+
+    store.stop().await;
+}
+
 /// 🚨 **A correction is kept: the substrate holds what the claim used to say,
 /// and a claim nobody corrected has one write and no more.**
 ///
