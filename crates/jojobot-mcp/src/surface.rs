@@ -1768,6 +1768,133 @@ fn no_agent_facing_text_promises_a_permanent_handle() {
     );
 }
 
+/// **The second, independent half: a description of the capability must name
+/// a limit on it, rather than merely avoiding [`OVERPROMISED`]'s known lies.**
+///
+/// [`OVERPROMISED`] forbids specific ways to over-claim — the ones somebody
+/// thought to write down. **A phrase list is beaten by a sixth phrasing
+/// nobody listed**, the same objection this build already has about a
+/// denylist elsewhere. This is the positive form instead: rather than
+/// forbidding ways to overclaim, it requires the description to say
+/// something true. There is one way to satisfy "name a limit" and many ways
+/// to avoid saying one, so this does not expire the way a phrase list does —
+/// it stays true as more things start following a rename, because the
+/// sentence has to be re-earned each time the set of what follows changes.
+///
+/// 🚨 **Presence is not correctness, and this checks presence only.** A
+/// description could pair "rename" with a sentence naming a limit that is
+/// honest-sounding, incomplete, or stale, and this would still pass —
+/// nothing here reads a sentence for whether the limit it names is the real
+/// one. That is why [`OVERPROMISED`] is not retired in its favour: it
+/// catches specific known lies this cannot see past, and this catches
+/// silence that a phrase list cannot require against.
+///
+/// ⚠️ **Scoped to text that actually describes the capability, and today
+/// nothing does — no served text pairs "rename" with "handle" yet, which is
+/// the pairing [`no_agent_facing_text_promises_a_permanent_handle`] stopped
+/// forbidding.** So this assertion has zero sentences to check right now: a
+/// green here answers an empty question, not a real one, until a rename
+/// verb's own description exists. It was written this way — checked once
+/// the scope is non-empty, rather than skipped outright — so the day that
+/// description ships, this starts asking a real question without anybody
+/// having to remember to come back and re-arm it.
+#[test]
+fn a_description_of_renaming_names_what_does_not_follow_it() {
+    let served = everything_served();
+    let unlimited = descriptions_missing_a_named_limit(&served);
+    assert!(
+        unlimited.is_empty(),
+        "this describes renaming a handle and names no limit on what follows it — pair the \
+         description with a sentence naming something that does not move: {unlimited:?}",
+    );
+}
+
+/// **A sentence naming a limit**: something that stays where it was, or a
+/// copy no mechanism reaches. Deliberately not the same list as
+/// [`OVERPROMISED`] — that list names lies; this one names the true
+/// sentence a description needs somewhere in it, and the two are checked
+/// independently on purpose.
+const NAMES_A_LIMIT: &[&str] = &[
+    "does not",
+    "is not",
+    "are not",
+    "elsewhere",
+    "already written",
+    "outside a mention",
+];
+
+/// The sources that describe renaming a handle but name no limit on it —
+/// split out so [`a_description_of_renaming_names_what_does_not_follow_it`]
+/// can be pinned against sources written for a test, for the reason
+/// [`handle_promise_problem`] was split out: the real corpus has nothing to
+/// check this against yet.
+fn descriptions_missing_a_named_limit(served: &[(String, String)]) -> Vec<&str> {
+    let mut describing: Vec<&str> = Vec::new();
+    let mut limited: Vec<&str> = Vec::new();
+    for (what, text) in served {
+        for sentence in sentences(text) {
+            if mentions(&sentence, "handle") && says(&sentence, "rename") {
+                describing.push(what);
+            }
+            if NAMES_A_LIMIT.iter().any(|marker| says(&sentence, marker)) {
+                limited.push(what);
+            }
+        }
+    }
+    describing
+        .into_iter()
+        .filter(|what| !limited.contains(what))
+        .collect()
+}
+
+/// 🚨 **A description that pairs "rename" with "handle" and says nothing
+/// about a limit is exactly what this is supposed to catch.**
+#[test]
+fn an_unlimited_rename_description_is_caught() {
+    let served = [(
+        "a hypothetical rename tool".to_string(),
+        "this tool lets you rename the handle an entity answers to.".to_string(),
+    )];
+    let unlimited = descriptions_missing_a_named_limit(&served);
+    assert_eq!(
+        unlimited,
+        vec!["a hypothetical rename tool"],
+        "a description with no named limit was not caught",
+    );
+}
+
+/// 🚨 **The same description, with a limit named somewhere in it, must read
+/// clean** — this is the positive the check exists to require, not merely
+/// the negative it exists to catch.
+#[test]
+fn a_limited_rename_description_reads_clean() {
+    let served = [(
+        "a hypothetical rename tool".to_string(),
+        "this tool lets you rename the handle an entity answers to. text written before the \
+         rename, outside a mention, is not rewritten."
+            .to_string(),
+    )];
+    let unlimited = descriptions_missing_a_named_limit(&served);
+    assert!(
+        unlimited.is_empty(),
+        "a description naming a real limit was still flagged: {unlimited:?}",
+    );
+}
+
+/// 🚨 **Nothing describes renaming yet, so the real corpus must not trip
+/// this** — the vacuous-scope case the doc comment above promises, pinned
+/// rather than left as an assertion nobody watches.
+#[test]
+fn the_real_corpus_names_no_rename_and_so_has_nothing_to_check_yet() {
+    let served = everything_served();
+    let unlimited = descriptions_missing_a_named_limit(&served);
+    assert!(
+        unlimited.is_empty(),
+        "the corpus should describe no rename yet, so this scope should be empty — either a \
+         rename shipped without a check noticing, or this test is stale: {unlimited:?}",
+    );
+}
+
 /// **One sentence's verdict, split out so it can be pinned against a sentence
 /// written for a test rather than only against whatever the corpus holds
 /// today.**
