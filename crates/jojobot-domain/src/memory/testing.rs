@@ -314,6 +314,78 @@ impl InMemoryMemory {
         known
     }
 
+    /// Every rename event, synchronously — the sibling `known()` already is,
+    /// for the same reason: the callers that need this are themselves
+    /// synchronous helpers taking and releasing the same locks.
+    fn former(&self) -> Vec<FormerHandle> {
+        self.former_handles
+            .lock()
+            .expect("fake mutex poisoned")
+            .clone()
+    }
+
+    /// **What a handle is stored as, and what it is called today, together**
+    /// — the pair every write and every miss-report needs. A thing wearing a
+    /// badge is stored under it — permanent, so a claim addressed or homed
+    /// there survives whatever the thing is renamed to next. A
+    /// build-supplied record wears no badge and needs none: there is no row
+    /// to rename, so its handle is already as permanent as anything here
+    /// (mirrors `mention::resolved`'s same fallback for the same reason).
+    ///
+    /// `None` only when the handle resolves to nothing at all — not now, not
+    /// ever — which is the caller's cue to refuse rather than store.
+    fn resolve(&self, id: &EntityId) -> Option<(EntityId, EntityId)> {
+        let known = self.known();
+        let former = self.former();
+        let entity = super::resolve_handle(id, &known, &former)?;
+        let key = match &entity.badge {
+            Some(badge) => EntityId(badge.clone()),
+            None => entity.id.clone(),
+        };
+        Some((key, entity.id.clone()))
+    }
+
+    /// The storage key alone, for a caller that has no use for the handle.
+    fn storage_key(&self, id: &EntityId) -> Option<EntityId> {
+        self.resolve(id).map(|(key, _)| key)
+    }
+
+    /// **A fact's address, under the handle its home answers to today** —
+    /// never the raw `f.home`, which is the storage key and would print as a
+    /// badge.
+    fn address_under(&self, f: &Fact, handle: &EntityId) -> String {
+        FactAddress::new(handle.clone(), f.id.clone()).to_string()
+    }
+
+    /// **The other direction**: a stored key — a badge, or an unrenamed
+    /// handle stored as itself — read back as whatever handle it answers to
+    /// today. A stored value wearing nobody's badge is kept as written: it
+    /// predates this mechanism, or it was never a badge to begin with, and
+    /// guessing at it would be inventing a resolution nobody asked for.
+    fn current_handle(&self, stored: &EntityId) -> EntityId {
+        let known = self.known();
+        match super::entity_wearing(stored.as_str(), &known) {
+            Some(entity) => entity.id.clone(),
+            None => stored.clone(),
+        }
+    }
+
+    /// **Every stored key on a fact, served under the handle it answers to
+    /// today** — `home`, `subject`, and a lineage pointer's own `home`, which
+    /// is a `FactAddress` like any other and goes stale the same way. Applied
+    /// once, right before a fact reaches whoever asked for it.
+    fn served(&self, mut f: Fact, handle: &EntityId) -> Fact {
+        f.home = handle.clone();
+        f.subject = handle.clone();
+        if let Some(source) = &f.derived_from {
+            f.derived_from = Some(FactAddress::new(
+                self.current_handle(&source.home),
+                source.local.clone(),
+            ));
+        }
+        f
+    }
+
     /// **Keep this write of the claim**, beside the row it just rewrote — the
     /// same act the real store takes in `write_fact`, so every verb that
     /// produces a claim leaves a write behind here too.
@@ -572,7 +644,15 @@ impl Memory for InMemoryMemory {
         //
         // **What EXISTS**, which is the rows plus what the build supplies.
         let index = self.known();
-        if let Decision::Block(candidates) = guard::decide_existing(&fact.subject, &index) {
+        let former = self.former();
+        // **A stale-but-renamed subject exists too.** The direct check is
+        // what the guard already asks; a miss on it is checked again through
+        // the thing's own rename history before it is called unknown. Kept,
+        // rather than re-resolved, for its kind and its storage key below.
+        let subject_entity = super::resolve_handle(&fact.subject, &index, &former).cloned();
+        if subject_entity.is_none()
+            && let Decision::Block(candidates) = guard::decide_existing(&fact.subject, &index)
+        {
             return Ok(Guarded::Blocked {
                 attempted: fact.subject,
                 candidates,
@@ -626,37 +706,54 @@ impl Memory for InMemoryMemory {
         // (rule 51): an unknown home is an entity miss, and a home holding no
         // such row is a fact miss with the addresses that do exist.
         if let Some(source) = &fact.derived_from {
-            if !index.iter().any(|e| e.id == source.home) {
+            let Some((source_key, source_handle)) = self.resolve(&source.home) else {
                 return Err(MemoryError::UnknownEntity {
                     attempted: source.home.to_string(),
                     nearest: guard::screen(&source.home, &[], &index),
                 });
-            }
+            };
             if !facts
                 .iter()
-                .any(|f| f.home == source.home && f.id == source.local)
+                .any(|f| f.home == source_key && f.id == source.local)
             {
                 return Err(MemoryError::UnknownFact {
                     attempted: source.to_string(),
                     nearest: facts
                         .iter()
-                        .filter(|f| f.home == source.home)
-                        .map(|f| f.address().to_string())
+                        .filter(|f| f.home == source_key)
+                        .map(|f| self.address_under(f, &source_handle))
                         .collect(),
                 });
             }
         }
+        // **Stored under its source's storage key, exactly as `home` is** — a
+        // lineage pointer is a `FactAddress` like any other, and it goes
+        // stale the same way if the entity it names is ever renamed.
+        let derived_from = fact.derived_from.as_ref().map(|source| {
+            let key = self
+                .storage_key(&source.home)
+                .expect("checked to exist just above");
+            FactAddress::new(key, source.local.clone())
+        });
         // A withdrawn claim is still there, and it is no longer evidence.
         if let Some(source) = &fact.derived_from
+            && let Some(source_key) = self.storage_key(&source.home)
             && facts.iter().any(|f| {
-                f.home == source.home && f.id == source.local && f.status == FactStatus::Retracted
+                f.home == source_key && f.id == source.local && f.status == FactStatus::Retracted
             })
         {
             return Err(MemoryError::SourceRetracted {
                 attempted: source.to_string(),
             });
         }
-        let home = fact.subject.clone();
+        // **What the subject is stored as** — the badge it wears, or its own
+        // handle when it wears none. Already resolved above, direct or
+        // through its rename history.
+        let subject_entity = subject_entity.expect("checked to exist just above");
+        let home = match &subject_entity.badge {
+            Some(badge) => EntityId(badge.clone()),
+            None => subject_entity.id.clone(),
+        };
         let existing: Vec<&Fact> = facts.iter().filter(|f| f.home == home).collect();
         let id = FactId(format!("f{}", existing.len() + 1));
         let wrote: Vec<(String, Option<String>)> = fact
@@ -666,8 +763,10 @@ impl Memory for InMemoryMemory {
             .collect();
         let stored = Fact {
             id,
-            home,
-            subject: fact.subject,
+            home: home.clone(),
+            // One column, stored into both fields — the real store reads
+            // the same value into each and this fake must not drift from it.
+            subject: home,
             // Edge whitespace doesn't survive a table cell, so it isn't significant.
             content: normalize_content(&fact.content),
             details: normalize_details(fact.details.as_deref()),
@@ -679,7 +778,7 @@ impl Memory for InMemoryMemory {
             edge: fact.edge,
             fields: fact.fields,
             refs: fact.refs,
-            derived_from: fact.derived_from,
+            derived_from,
             // **A store stamps this, so the double does too.** A fake that left
             // it empty would let every case above it pass on a build where the
             // real store's stamp never happens.
@@ -693,11 +792,13 @@ impl Memory for InMemoryMemory {
         let writes = self.writes_on(&stored.home, &facts);
         let declared = self.types.lock().expect("fake mutex poisoned").clone();
         // **The fold reads both halves and the guard reads one.** How a key
-        // folds is declared by whoever declared it; what governs a thing is its
-        // own kind, and nothing else.
-        let governs = self.kind_keys_of(stored.home.kind_token());
+        // folds is declared by whoever declared it; what governs a thing is
+        // its own kind, and nothing else. **Read off the subject entity
+        // itself, never off `stored.home`** — that is a badge now, and a
+        // badge carries no kind token to parse.
+        let governs = self.kind_keys_of(subject_entity.kind.as_token());
         super::guard_fit(
-            stored.home.kind_token(),
+            subject_entity.kind.as_token(),
             &super::folded_fields(&writes, &declared),
             &super::stood_after_capture(&writes, &stored, &declared),
             &governs,
@@ -712,7 +813,12 @@ impl Memory for InMemoryMemory {
         // keeps it, so a claim nobody has corrected answers with one write.
         self.append_claim_write(&stored);
         self.append_writes(&stored.home, &stored.id, wrote);
-        Ok(Guarded::Written(stored))
+        // **Stored under the storage key; served under the handle.** The row
+        // just pushed keeps the badge, exactly as every other row does; the
+        // caller that just wrote it reads back the handle it wrote with,
+        // never the internal key — the same rule an edge and a mention
+        // already answer to.
+        Ok(Guarded::Written(self.served(stored, &subject_entity.id)))
     }
 
     /// Home-doc membership counts alongside the subject, as it does in the real
@@ -722,21 +828,36 @@ impl Memory for InMemoryMemory {
     async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
         // An unknown entity is a miss with its near candidates — never an
         // empty page. Empty-but-real and nonexistent are different answers.
+        // A stale-but-renamed handle is not this miss: it resolves through
+        // its own history to the one storage key its claims were ever filed
+        // under, so this is one lookup rather than a walk of every handle it
+        // has worn.
         let index = self.known();
-        if !index.iter().any(|e| &e.id == subject) {
+        let former = self.former();
+        let Some(entity) = super::resolve_handle(subject, &index, &former) else {
             return Err(MemoryError::UnknownEntity {
                 attempted: subject.to_string(),
                 nearest: guard::screen(subject, &[], &index),
             });
-        }
+        };
+        let key = match &entity.badge {
+            Some(badge) => EntityId(badge.clone()),
+            None => entity.id.clone(),
+        };
         let facts = self.facts.lock().expect("fake mutex poisoned");
         let mine: Vec<Fact> = facts
             .iter()
-            .filter(|f| &f.subject == subject || &f.home == subject)
+            .filter(|f| f.subject == key || f.home == key)
             .cloned()
             .collect();
         drop(facts);
-        Ok(mine.iter().map(|f| self.projected(f)).collect())
+        // **Resolved to the current handle last**, after the fold above has
+        // used the storage key it actually needs. A reader gets the handle
+        // this thing wears today, whatever it wore when the claim was filed.
+        Ok(mine
+            .iter()
+            .map(|f| self.served(self.projected(f), &entity.id))
+            .collect())
     }
 
     async fn fields(
@@ -744,34 +865,36 @@ impl Memory for InMemoryMemory {
         entity: &EntityId,
     ) -> Result<std::collections::BTreeMap<String, String>, MemoryError> {
         let index = self.known();
-        if !index.iter().any(|e| &e.id == entity) {
+        let Some(key) = self.resolve(entity).map(|(key, _)| key) else {
             return Err(MemoryError::UnknownEntity {
                 attempted: entity.to_string(),
                 nearest: guard::screen(entity, &[], &index),
             });
-        }
-        Ok(self.held(entity))
+        };
+        Ok(self.held(&key))
     }
 
     async fn claim_history(&self, address: &FactAddress) -> Result<Vec<ClaimWrite>, MemoryError> {
         let index = self.known();
-        if !index.iter().any(|e| e.id == address.home) {
+        let former = self.former();
+        let Some(entity) = super::resolve_handle(&address.home, &index, &former) else {
             return Err(MemoryError::UnknownEntity {
                 attempted: address.home.to_string(),
                 nearest: guard::screen(&address.home, &[], &index),
             });
-        }
+        };
+        let key = match &entity.badge {
+            Some(badge) => EntityId(badge.clone()),
+            None => entity.id.clone(),
+        };
         let facts = self.facts.lock().expect("fake mutex poisoned");
-        if !facts
-            .iter()
-            .any(|f| f.home == address.home && f.id == address.local)
-        {
+        if !facts.iter().any(|f| f.home == key && f.id == address.local) {
             return Err(MemoryError::UnknownFact {
                 attempted: address.to_string(),
                 nearest: facts
                     .iter()
-                    .filter(|f| f.home == address.home)
-                    .map(|f| f.address().to_string())
+                    .filter(|f| f.home == key)
+                    .map(|f| self.address_under(f, &entity.id))
                     .collect(),
             });
         }
@@ -779,28 +902,44 @@ impl Memory for InMemoryMemory {
         let writes = self.claim_writes.lock().expect("fake mutex poisoned");
         let mut mine: Vec<ClaimWrite> = writes
             .iter()
-            .filter(|(home, id, _)| home == &address.home && id == &address.local)
+            .filter(|(home, id, _)| home == &key && id == &address.local)
             .map(|(_, _, write)| write.clone())
             .collect();
         mine.sort_by_key(|write| write.ordinal);
+        // **A lineage pointer in the chain is a `FactAddress` like any
+        // other** — stored under its source's storage key, served under the
+        // handle that key answers to today.
+        for write in &mut mine {
+            if let Some(source) = &write.derived_from {
+                write.derived_from = Some(FactAddress::new(
+                    self.current_handle(&source.home),
+                    source.local.clone(),
+                ));
+            }
+        }
         Ok(mine)
     }
 
     async fn history(&self, entity: &EntityId, key: &str) -> Result<Vec<FieldWrite>, MemoryError> {
         let index = self.known();
-        if !index.iter().any(|e| &e.id == entity) {
+        let former = self.former();
+        let Some(resolved) = super::resolve_handle(entity, &index, &former) else {
             return Err(MemoryError::UnknownEntity {
                 attempted: entity.to_string(),
                 nearest: guard::screen(entity, &[], &index),
             });
-        }
+        };
+        let storage_key = match &resolved.badge {
+            Some(badge) => EntityId(badge.clone()),
+            None => resolved.id.clone(),
+        };
         // The record each write arrived in says when it happened and what
         // became of it, so the two are read together.
         let facts = self.facts.lock().expect("fake mutex poisoned").clone();
         let writes = self.writes.lock().expect("fake mutex poisoned");
         let mut mine: Vec<&StoredWrite> = writes
             .iter()
-            .filter(|w| &w.entity == entity && w.key == key)
+            .filter(|w| w.entity == storage_key && w.key == key)
             .collect();
         mine.sort_by_key(|w| w.ordinal);
         Ok(mine
@@ -811,7 +950,7 @@ impl Memory for InMemoryMemory {
                     .find(|f| f.home == write.entity && f.id == write.fact)?;
                 Some(FieldWrite {
                     value: write.value.clone(),
-                    fact: carried.address(),
+                    fact: FactAddress::new(resolved.id.clone(), carried.id.clone()),
                     recorded_at: carried.recorded_at,
                     status: carried.status,
                     provenance: carried.provenance,
@@ -855,24 +994,34 @@ impl Memory for InMemoryMemory {
             }
         }
         // A miss on the HANDLE is an entity miss, with the near candidates that
-        // explain it — not a fact miss trailing an empty address list.
-        let index = self.index();
-        if !index.iter().any(|e| e.id == address.home) {
+        // explain it — not a fact miss trailing an empty address list. A
+        // stale-but-renamed handle is not this miss: it resolves through its
+        // own history to the one storage key its claims were ever filed
+        // under, so an address minted before a rename still finds its claim.
+        let index = self.known();
+        let former = self.former();
+        let Some(entity) = super::resolve_handle(&address.home, &index, &former) else {
             return Err(MemoryError::UnknownEntity {
                 attempted: address.home.to_string(),
                 nearest: guard::screen(&address.home, &[], &index),
             });
-        }
+        };
+        let key = match &entity.badge {
+            Some(badge) => EntityId(badge.clone()),
+            None => entity.id.clone(),
+        };
+        let handle = entity.id.clone();
+        let kind = entity.kind;
 
         let mut facts = self.facts.lock().expect("fake mutex poisoned");
         let nearest: Vec<String> = facts
             .iter()
-            .filter(|f| f.home == address.home)
-            .map(|f| f.address().to_string())
+            .filter(|f| f.home == key)
+            .map(|f| self.address_under(f, &handle))
             .collect();
         let Some(found) = facts
             .iter()
-            .find(|f| f.home == address.home && f.id == address.local)
+            .find(|f| f.home == key && f.id == address.local)
             .cloned()
         else {
             return Err(MemoryError::UnknownFact {
@@ -905,19 +1054,24 @@ impl Memory for InMemoryMemory {
         let carried = edited.fields.clone();
         // A source named by an edit faces the capture rule: a link at a claim
         // nobody wrote reads as evidence and leads nowhere.
-        if let Some(source) = &patch.derived_from
-            && !facts
-                .iter()
-                .any(|f| f.home == source.home && f.id == source.local)
-        {
-            return Err(MemoryError::UnknownFact {
-                attempted: source.to_string(),
-                nearest: facts
-                    .iter()
-                    .filter(|f| f.home == source.home)
-                    .map(|f| f.address().to_string())
-                    .collect(),
+        if let Some(source) = &patch.derived_from {
+            let resolved = self.resolve(&source.home);
+            let found = resolved.as_ref().is_some_and(|(key, _)| {
+                facts.iter().any(|f| f.home == *key && f.id == source.local)
             });
+            if !found {
+                return Err(MemoryError::UnknownFact {
+                    attempted: source.to_string(),
+                    nearest: match &resolved {
+                        Some((key, handle)) => facts
+                            .iter()
+                            .filter(|f| &f.home == key)
+                            .map(|f| self.address_under(f, handle))
+                            .collect(),
+                        None => Vec::new(),
+                    },
+                });
+            }
         }
         // **And the withdrawn-source rule, for the same reason.** An edit that
         // points a claim at a claim somebody took back leaves the store in the
@@ -925,8 +1079,9 @@ impl Memory for InMemoryMemory {
         // is a rule with a way around it — and the edit is the way a session
         // records where a claim came from after writing it.
         if let Some(source) = &patch.derived_from
+            && let Some(source_key) = self.storage_key(&source.home)
             && facts.iter().any(|f| {
-                f.home == source.home && f.id == source.local && f.status == FactStatus::Retracted
+                f.home == source_key && f.id == source.local && f.status == FactStatus::Retracted
             })
         {
             return Err(MemoryError::SourceRetracted {
@@ -934,6 +1089,18 @@ impl Memory for InMemoryMemory {
             });
         }
         apply_fact_patch(&mut edited, &patch)?;
+        // **Stored under its source's storage key, exactly as a capture's
+        // does.** `apply_fact_patch` only carries the patch's address
+        // through; it does not know a fake's homes are badges, so this
+        // corrects it here rather than teaching a shared function about one
+        // adapter's storage.
+        if let Some(source) = &patch.derived_from {
+            edited.derived_from = Some(FactAddress::new(
+                self.storage_key(&source.home)
+                    .expect("checked to exist just above"),
+                source.local.clone(),
+            ));
+        }
         // **The thing's fields as they will stand, against the thing's fields
         // as they stand now** — the same guard the real store runs, so the two
         // cannot come to disagree about what a write may cost.
@@ -942,8 +1109,10 @@ impl Memory for InMemoryMemory {
         let declared = self.declarations();
         let before = super::folded_fields(&writes, &declared);
         let after = super::stood_after(&writes, &edited, &patch, &carried, &declared);
-        let governs = self.kind_keys_of(home.kind_token());
-        super::guard_fit(home.kind_token(), &before, &after, &governs)?;
+        // **Off the entity resolved above, never off `home`** — that is a
+        // badge now, and a badge carries no kind token to parse.
+        let governs = self.kind_keys_of(kind.as_token());
+        super::guard_fit(kind.as_token(), &before, &after, &governs)?;
         let id = fact.id.clone();
         for held in facts.iter_mut() {
             if held.home == home && held.id == id {
@@ -963,7 +1132,9 @@ impl Memory for InMemoryMemory {
             .iter()
             .find(|f| f.home == home && f.id == id)
             .expect("the record was just edited in place");
-        Ok(Guarded::Written(self.projected(stored)))
+        Ok(Guarded::Written(
+            self.served(self.projected(stored), &handle),
+        ))
     }
 
     async fn merge(
@@ -1007,6 +1178,15 @@ impl Memory for InMemoryMemory {
         let account = merge_account(folded, survivor, reason, date)?;
         let standing = standing_of(&account);
 
+        // **Both sides resolved to their storage keys once, up front.** Every
+        // comparison below is against these — never against the raw handles a
+        // caller sent — because a claim's home is the badge now, not the
+        // handle, and comparing against the handle would silently move
+        // nothing.
+        let (folded_key, _) = self.resolve(folded).expect("checked present above");
+        let (survivor_key, survivor_handle) =
+            self.resolve(survivor).expect("checked present above");
+
         let mut entities = self.entities.lock().expect("fake mutex poisoned");
         let mut facts = self.facts.lock().expect("fake mutex poisoned");
 
@@ -1018,25 +1198,28 @@ impl Memory for InMemoryMemory {
         //
         // ⚠️ Moving a row therefore CHANGES ITS ADDRESS, and what points at
         // that address moves with it.
-        let mut next = facts.iter().filter(|f| &f.home == survivor).count();
+        let mut next = facts.iter().filter(|f| f.home == survivor_key).count();
         let mut moved: Vec<(FactId, FactId)> = Vec::new();
         for fact in facts.iter_mut() {
-            if &fact.home == folded {
+            if fact.home == folded_key {
                 next += 1;
                 let now = FactId(format!("f{next}"));
                 moved.push((fact.id.clone(), now.clone()));
-                fact.home = survivor.clone();
+                fact.home = survivor_key.clone();
                 fact.id = now;
             }
-            if &fact.subject == folded {
-                fact.subject = survivor.clone();
+            if fact.subject == folded_key {
+                fact.subject = survivor_key.clone();
             }
-            // An edge drawn AT the folded thing is re-pointed too, or the graph
-            // goes on naming a handle that is no longer a thing.
-            if let Some(edge) = &mut fact.edge {
-                if &edge.object == folded {
-                    edge.object = survivor.clone();
-                }
+            // An edge drawn AT the folded thing is re-pointed too, or the
+            // graph goes on naming a handle that is no longer a thing. An
+            // edge's object is stored as the handle it was drawn with, not a
+            // badge (step 3 resolves it on the way OUT; nothing resolves it
+            // in), so this compares against the raw handles merge was given.
+            if let Some(edge) = &mut fact.edge
+                && &edge.object == folded
+            {
+                edge.object = survivor.clone();
             }
             for target in fact.refs.iter_mut() {
                 if target == folded {
@@ -1047,11 +1230,11 @@ impl Memory for InMemoryMemory {
         // A lineage pointer at a moved row follows it to its new address.
         for fact in facts.iter_mut() {
             if let Some(source) = &mut fact.derived_from {
-                if &source.home == folded {
+                if source.home == folded_key {
                     if let Some((_, now)) = moved.iter().find(|(was, _)| was == &source.local) {
                         source.local = now.clone();
                     }
-                    source.home = survivor.clone();
+                    source.home = survivor_key.clone();
                 }
             }
         }
@@ -1060,8 +1243,8 @@ impl Memory for InMemoryMemory {
         {
             let mut writes = self.writes.lock().expect("fake mutex poisoned");
             for write in writes.iter_mut() {
-                if &write.entity == folded {
-                    write.entity = survivor.clone();
+                if write.entity == folded_key {
+                    write.entity = survivor_key.clone();
                     if let Some((_, now)) = moved.iter().find(|(was, _)| was == &write.fact) {
                         write.fact = now.clone();
                     }
@@ -1070,14 +1253,12 @@ impl Memory for InMemoryMemory {
         }
         // **And the claim substrate moves with the claim**, for the same
         // reason: a claim whose row moved and whose writes did not is a claim
-        // the projection cannot find, which is the claim gone. An edge drawn at
-        // the folded thing is re-pointed in the writes as well as on the rows,
-        // so a chain does not go on naming a handle that is no longer a thing.
+        // the projection cannot find, which is the claim gone.
         {
             let mut writes = self.claim_writes.lock().expect("fake mutex poisoned");
             for (home, id, write) in writes.iter_mut() {
-                if home == folded {
-                    *home = survivor.clone();
+                if *home == folded_key {
+                    *home = survivor_key.clone();
                     if let Some((_, now)) = moved.iter().find(|(was, _)| was == id) {
                         *id = now.clone();
                     }
@@ -1093,22 +1274,22 @@ impl Memory for InMemoryMemory {
                 // row and not the write would answer a question the real one
                 // gets wrong — and the chain is a reader of lineage either way.
                 if let Some(source) = &mut write.derived_from
-                    && &source.home == folded
+                    && source.home == folded_key
                 {
                     if let Some((_, now)) = moved.iter().find(|(was, _)| was == &source.local) {
                         source.local = now.clone();
                     }
-                    source.home = survivor.clone();
+                    source.home = survivor_key.clone();
                 }
             }
         }
         let rehomed = moved.len();
 
-        let existing = facts.iter().filter(|f| &f.home == survivor).count();
+        let existing = facts.iter().filter(|f| f.home == survivor_key).count();
         let record = Fact {
             id: FactId(format!("f{}", existing + 1)),
-            home: survivor.clone(),
-            subject: account.subject,
+            home: survivor_key.clone(),
+            subject: survivor_key.clone(),
             content: account.content,
             details: account.details,
             provenance: account.provenance,
@@ -1132,7 +1313,7 @@ impl Memory for InMemoryMemory {
         // **The folded row stays and starts forwarding.** It is not deleted and
         // it is not left looking like a thing.
         for entity in entities.iter_mut() {
-            if &entity.id == folded {
+            if entity.id == *folded {
                 entity.merged_into = Some(survivor.clone());
             }
         }
@@ -1155,7 +1336,7 @@ impl Memory for InMemoryMemory {
         Ok(Merge {
             survivor: survived,
             folded: folded.clone(),
-            record,
+            record: self.served(record, &survivor_handle),
             rehomed,
         })
     }
@@ -1166,25 +1347,36 @@ impl Memory for InMemoryMemory {
         reason: Option<&str>,
         date: Date,
     ) -> Result<Retraction, MemoryError> {
-        let index = self.index();
-        if !index.iter().any(|e| e.id == address.home) {
+        let index = self.known();
+        let former = self.former();
+        let Some((key, handle)) =
+            super::resolve_handle(&address.home, &index, &former).map(|entity| {
+                (
+                    match &entity.badge {
+                        Some(badge) => EntityId(badge.clone()),
+                        None => entity.id.clone(),
+                    },
+                    entity.id.clone(),
+                )
+            })
+        else {
             return Err(MemoryError::UnknownEntity {
                 attempted: address.home.to_string(),
                 nearest: guard::screen(&address.home, &[], &index),
             });
-        }
+        };
 
         // Everything is decided before anything moves, so a refusal leaves the
         // row exactly as it was — the same shape `apply_fact_patch` has.
         let mut facts = self.facts.lock().expect("fake mutex poisoned");
         let nearest: Vec<String> = facts
             .iter()
-            .filter(|f| f.home == address.home)
-            .map(|f| f.address().to_string())
+            .filter(|f| f.home == key)
+            .map(|f| self.address_under(f, &handle))
             .collect();
         let Some(target) = facts
             .iter()
-            .find(|f| f.home == address.home && f.id == address.local)
+            .find(|f| f.home == key && f.id == address.local)
             .cloned()
         else {
             return Err(MemoryError::UnknownFact {
@@ -1196,15 +1388,18 @@ impl Memory for InMemoryMemory {
         // it carries, so a target read without its fields would read as an
         // ordinary claim — and a retraction would become retractable.
         let target = self.projected(&target);
-        let account = retraction_of(&target, reason, date)?;
+        // **`retraction_of` addresses the claim it takes back in a field
+        // value, as free text** — served under the handle, exactly as any
+        // other address a reader is given, never under the storage key.
+        let account = retraction_of(&self.served(target.clone(), &handle), reason, date)?;
         let standing = standing_of(&account);
 
         let home = target.home.clone();
         let existing = facts.iter().filter(|f| f.home == home).count();
         let record = Fact {
             id: FactId(format!("f{}", existing + 1)),
-            home,
-            subject: account.subject,
+            home: home.clone(),
+            subject: home,
             content: account.content,
             details: account.details,
             provenance: account.provenance,
@@ -1224,7 +1419,7 @@ impl Memory for InMemoryMemory {
             ..target
         };
         for fact in facts.iter_mut() {
-            if fact.home == address.home && fact.id == address.local {
+            if fact.home == key && fact.id == address.local {
                 *fact = Fact {
                     fields: Default::default(),
                     ..retracted.clone()
@@ -1249,11 +1444,13 @@ impl Memory for InMemoryMemory {
             record
                 .fields
                 .iter()
-                .map(|(key, value)| (key.clone(), Some(value.clone()))),
+                .map(|(field, value)| (field.clone(), Some(value.clone()))),
         );
+        // **Served under the handle, stored under the key** — the same rule
+        // capture and update_fact answer to.
         Ok(Retraction {
-            retracted: self.projected(&retracted),
-            record,
+            retracted: self.served(self.projected(&retracted), &handle),
+            record: self.served(record, &handle),
         })
     }
 
@@ -1293,6 +1490,14 @@ impl Memory for InMemoryMemory {
         // scan here.
         Ok(std::iter::empty()
             .chain(self.index().into_iter().map(|entity| {
+                // **The storage key this entity's own rows are filed under**
+                // — its badge, or its own handle when it wears none. `home`
+                // and `writes_on` both read the key; `facts` served back
+                // carry the handle, exactly as any other read does.
+                let key = match &entity.badge {
+                    Some(badge) => EntityId(badge.clone()),
+                    None => entity.id.clone(),
+                };
                 search::DocScan {
                     doc_id: badges
                         .get(&entity.id)
@@ -1302,12 +1507,12 @@ impl Memory for InMemoryMemory {
                     prose: prose.get(&entity.id).cloned().unwrap_or_default(),
                     facts: facts
                         .iter()
-                        .filter(|f| f.home == entity.id)
-                        .map(|f| self.projected(f))
+                        .filter(|f| f.home == key)
+                        .map(|f| self.served(self.projected(f), &entity.id))
                         .collect(),
                     // The scan carries what the thing IS, because the records
                     // it also carries cannot be folded back into it.
-                    fields: super::folded_fields(&self.writes_on(&entity.id, &facts), &declared),
+                    fields: super::folded_fields(&self.writes_on(&key, &facts), &declared),
                     entity: Some(entity),
                     // A stored row is the whole instance's, exactly as it was.
                     owner: None,
@@ -11231,6 +11436,100 @@ pub mod contract {
         );
     }
 
+    /// 🚨 **A stale address resolves to the SAME claim after a rename, even
+    /// once new claims exist under the new handle.**
+    ///
+    /// **The trap this closes**: a local id is minted per storage key. If
+    /// that key were the handle, a renamed thing's new handle would start
+    /// minting at `f1` again, and an address built before the rename would
+    /// silently resolve to whatever new claim now sits at that number — a
+    /// confident wrong answer, not a miss. Storing the badge is what keeps
+    /// minting scoped to the one thing across every name it has worn, so
+    /// this never happens.
+    ///
+    /// **Paired in the same read**: a handle that never held this local id
+    /// still misses, so the claim above is that resolution works and not
+    /// that every address is accepted.
+    pub async fn a_stale_address_resolves_to_the_same_claim_after_a_rename<M: Memory + ?Sized>(
+        store: &M,
+        rehandles: &dyn Rehandles,
+    ) {
+        let was = EntityId("person:contract-address-restart-was".into());
+        let now = EntityId("work:contract-address-restart-now".into());
+        match store
+            .add_entity(NewEntity::new(
+                was.clone(),
+                "The Numbered One",
+                "the roster",
+            ))
+            .await
+            .expect("the fixture is written")
+        {
+            Guarded::Written(_) => {}
+            blocked => panic!("nothing collides with it: {blocked:?}"),
+        }
+        let badge = store
+            .list_entities(None)
+            .await
+            .expect("the store answers")
+            .into_iter()
+            .find(|e| e.id == was)
+            .expect("the fixture is there")
+            .badge
+            .expect("a written row wears a badge");
+
+        let first = capture(
+            store,
+            NewFact::about(
+                was.clone(),
+                "the first claim under the old name",
+                date(2026, 5, 1),
+            ),
+        )
+        .await;
+        let stale_address = first.address();
+
+        rehandles.rehandle(&was, &now).await;
+        rehandles
+            .note_former_handle(FormerHandle {
+                former: was.clone(),
+                badge,
+                changed_at: date(2026, 5, 2),
+            })
+            .await;
+
+        // A claim written under the new handle, after the rename — minted at
+        // whatever local id comes next for this thing's own history, which
+        // is exactly what proves the scope did not restart.
+        capture(
+            store,
+            NewFact::about(
+                now.clone(),
+                "a claim written after the rename",
+                date(2026, 5, 3),
+            ),
+        )
+        .await;
+
+        let chain = store
+            .claim_history(&stale_address)
+            .await
+            .unwrap_or_else(|e| {
+                panic!("the address minted before the rename must still resolve: {e}")
+            });
+        assert_eq!(
+            chain.last().map(|w| w.content.as_str()),
+            Some("the first claim under the old name"),
+            "a stale address resolved to some other claim than the one it always named",
+        );
+
+        let never = FactAddress::new(was, FactId("f99".into()));
+        assert!(
+            store.claim_history(&never).await.is_err(),
+            "a local id this thing never held must still miss, whichever of its handles is asked",
+        );
+    }
+
     /// 🚨 **A link that leads nowhere and text that was never a link render
     /// differently, and neither renders bare.**
     ///
@@ -11735,6 +12034,7 @@ pub mod contract {
         an_account_written_from_a_reason_stores_its_mentions(mentioning, bare).await;
         a_stale_handle_resolves_through_its_rename_history(bare, rehandles).await;
         an_edge_follows_a_thing_that_is_rehandled(mentioning, bare, rehandles).await;
+        a_stale_address_resolves_to_the_same_claim_after_a_rename(bare, rehandles).await;
     }
 
     pub async fn run_all<M: Memory>(store: &M) {

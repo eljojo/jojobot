@@ -435,6 +435,13 @@ pub fn resolve_handle<'a>(
     known.iter().find(|e| e.badge.as_ref() == Some(badge))
 }
 
+/// **The other direction of the same fact**: the entity currently wearing a
+/// badge, for a store whose own key IS the badge — so a claim's home is one
+/// lookup, never a walk, whatever a thing has been renamed to since.
+pub fn entity_wearing<'a>(badge: &str, known: &'a [Entity]) -> Option<&'a Entity> {
+    known.iter().find(|e| e.badge.as_deref() == Some(badge))
+}
+
 impl Entity {
     /// Every name this entity answers to: its display name first, then its
     /// aliases, blanks dropped.

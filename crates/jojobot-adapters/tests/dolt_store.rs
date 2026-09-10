@@ -74,6 +74,19 @@ async fn booted(pool: &sqlx::MySqlPool) {
         .expect("the kinds are seeded");
 }
 
+/// **What a handle's row is stored under**, for a case that reads the
+/// substrate directly. `fact`/`fact_write` key on the badge now, never the
+/// handle, so a raw query against them binds this rather than the handle a
+/// fixture was created with.
+async fn badge_of(pool: &sqlx::MySqlPool, handle: &str) -> String {
+    sqlx::query_scalar::<_, Option<String>>("SELECT badge FROM entity WHERE id = ?")
+        .bind(handle)
+        .fetch_one(pool)
+        .await
+        .expect("the entity row is readable")
+        .expect("a created entity is given a badge")
+}
+
 /// **The contract's cases, each against a store of its own.**
 ///
 /// `fresh` is synchronous and opening a store is not, so the stores are opened
@@ -408,7 +421,7 @@ async fn the_substrate_keeps_what_a_correction_overwrote() {
     let kept: Vec<String> = sqlx::query_scalar(
         "SELECT content FROM fact_write WHERE entity = ? AND fact_id = ? ORDER BY ordinal",
     )
-    .bind(subject.as_str())
+    .bind(badge_of(&pool, subject.as_str()).await)
     .bind(claim.id.as_str())
     .fetch_all(&pool)
     .await
@@ -424,7 +437,7 @@ async fn the_substrate_keeps_what_a_correction_overwrote() {
 
     // **The negative.** A claim nobody corrected carries one write.
     let alone: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM fact_write WHERE entity = ?")
-        .bind(untouched.as_str())
+        .bind(badge_of(&pool, untouched.as_str()).await)
         .fetch_one(&pool)
         .await
         .expect("the substrate is readable");
@@ -1074,17 +1087,18 @@ async fn an_edit_does_not_re_stamp_the_claims_own_column() {
         .written()
         .expect("the guard waves it through");
 
-    let stamped_at = |pool: sqlx::MySqlPool, id: String| async move {
+    let badge = badge_of(&pool, "person:kept-alpha").await;
+    let stamped_at = |pool: sqlx::MySqlPool, badge: String, id: String| async move {
         sqlx::query_scalar::<_, Option<String>>(
             "SELECT inserted_at FROM fact WHERE entity = ? AND id = ?",
         )
-        .bind("person:kept-alpha")
+        .bind(badge)
         .bind(id)
         .fetch_one(&pool)
         .await
         .expect("the row is readable")
     };
-    let taken_in = stamped_at(pool.clone(), claim.id.as_str().to_string()).await;
+    let taken_in = stamped_at(pool.clone(), badge.clone(), claim.id.as_str().to_string()).await;
     assert!(
         taken_in.is_some(),
         "the store did not stamp when it took the record in, so this case pins nothing",
@@ -1104,7 +1118,7 @@ async fn an_edit_does_not_re_stamp_the_claims_own_column() {
         .expect("the guard waves it through");
 
     assert_eq!(
-        stamped_at(pool.clone(), claim.id.as_str().to_string()).await,
+        stamped_at(pool.clone(), badge.clone(), claim.id.as_str().to_string()).await,
         taken_in,
         "an edit re-stamped the column that says when jojobot took the record in, which the \
          backfill copies from",
@@ -1245,9 +1259,10 @@ async fn a_store_acting_out_a_day_stamps_that_day() {
         .written()
         .expect("the guard waves it through");
 
+    let badge = badge_of(&pool, subject.as_str()).await;
     let taken_in: Option<String> =
         sqlx::query_scalar("SELECT inserted_at FROM fact WHERE entity = ? AND id = ?")
-            .bind(subject.as_str())
+            .bind(&badge)
             .bind(claim.id.as_str())
             .fetch_one(&pool)
             .await
@@ -1261,7 +1276,7 @@ async fn a_store_acting_out_a_day_stamps_that_day() {
     let written_at: Option<String> = sqlx::query_scalar(
         "SELECT written_at FROM fact_write WHERE entity = ? AND fact_id = ? ORDER BY ordinal",
     )
-    .bind(subject.as_str())
+    .bind(&badge)
     .bind(claim.id.as_str())
     .fetch_one(&pool)
     .await
@@ -1355,14 +1370,15 @@ async fn the_backfill_is_what_makes_a_claim_older_than_the_substrate_readable() 
 
     // **The state every claim written before the substrate is in**: a row with
     // no write behind it.
+    let badge = badge_of(&pool, subject.as_str()).await;
     sqlx::query("DELETE FROM fact_write WHERE entity = ? AND fact_id = ?")
-        .bind(subject.as_str())
+        .bind(&badge)
         .bind(claim.id.as_str())
         .execute(&pool)
         .await
         .expect("the substrate is writable");
     let row: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM fact WHERE entity = ? AND id = ?")
-        .bind(subject.as_str())
+        .bind(&badge)
         .bind(claim.id.as_str())
         .fetch_one(&pool)
         .await

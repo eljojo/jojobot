@@ -191,6 +191,73 @@ impl DoltMemory {
         Ok(self.extend_with_supplied(rows))
     }
 
+    /// Every rename event, inside the transaction a caller is already in.
+    async fn former_handles_in(
+        tx: &mut Transaction<'_, MySql>,
+    ) -> Result<Vec<FormerHandle>, MemoryError> {
+        let rows = sqlx::query(
+            "SELECT former_handle, badge, changed_at FROM entity_former_handle ORDER BY former_handle",
+        )
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(store)?;
+        let mut out = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let former = EntityId(row.try_get::<String, _>("former_handle").map_err(store)?);
+            let badge = row.try_get::<String, _>("badge").map_err(store)?;
+            let changed_at: Date = row
+                .try_get::<String, _>("changed_at")
+                .map_err(store)?
+                .parse()
+                .map_err(|_| {
+                    unreadable("a former handle's changed-on day cannot be read as a date")
+                })?;
+            out.push(FormerHandle {
+                former,
+                badge,
+                changed_at,
+            });
+        }
+        Ok(out)
+    }
+
+    /// **What a handle is stored as, and what it is called today, together**
+    /// — the pair every write and every miss-report needs. Mirrors the fake's
+    /// `resolve`, over a real store's own rows and its own rename history.
+    async fn resolve(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        id: &EntityId,
+    ) -> Result<Option<(EntityId, EntityId)>, MemoryError> {
+        let known = self.known(tx).await?;
+        let former = Self::former_handles_in(tx).await?;
+        Ok(
+            jojobot_domain::memory::resolve_handle(id, &known, &former).map(|entity| {
+                let key = match &entity.badge {
+                    Some(badge) => EntityId(badge.clone()),
+                    None => entity.id.clone(),
+                };
+                (key, entity.id.clone())
+            }),
+        )
+    }
+
+    /// **The other direction**: a stored key read back as whatever handle it
+    /// answers to today, or kept as written when it wears nobody's badge.
+    async fn current_handle(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        stored: &EntityId,
+    ) -> Result<EntityId, MemoryError> {
+        let known = self.known(tx).await?;
+        Ok(
+            match jojobot_domain::memory::entity_wearing(stored.as_str(), &known) {
+                Some(entity) => entity.id.clone(),
+                None => stored.clone(),
+            },
+        )
+    }
+
     /// **Rows plus what the build supplies, over rows already read.** Split out
     /// of [`Self::known`] so a caller that needs the rows on their own — to
     /// find the one row a write targets, never a supplied record that is not
@@ -240,10 +307,11 @@ impl DoltMemory {
     /// "filed here" and "about this" are the same query rather than two that
     /// have to be kept in step.
     async fn facts_of(
+        &self,
         tx: &mut Transaction<'_, MySql>,
         entity: &EntityId,
     ) -> Result<Vec<Fact>, MemoryError> {
-        Self::facts_projected(tx, entity).await
+        self.facts_projected(tx, entity).await
     }
 
     /// **The same claims, projected from the substrate rather than read off
@@ -262,7 +330,12 @@ impl DoltMemory {
     /// The write table names its key `fact_id`, so it is aliased to what
     /// [`Self::assemble`] reads. **One row shape, one assembler**, rather than
     /// a second one that could drift from it.
+    /// **`entity` must already be a storage key** — a badge, or an unrenamed
+    /// handle stored as itself — never a raw handle a caller sent. A caller
+    /// resolves it once, at the top of its own write or read, exactly as
+    /// every other lookup here does.
     async fn facts_projected(
+        &self,
         tx: &mut Transaction<'_, MySql>,
         entity: &EntityId,
     ) -> Result<Vec<Fact>, MemoryError> {
@@ -277,11 +350,14 @@ impl DoltMemory {
         .fetch_all(&mut **tx)
         .await
         .map_err(store)?;
-        Self::assemble(tx, &rows).await
+        self.assemble(tx, &rows).await
     }
 
-    /// One addressed claim, projected from the substrate.
+    /// One addressed claim, projected from the substrate. **`address.home`
+    /// must already be a storage key**, for the same reason `facts_projected`
+    /// needs one.
     async fn fact_projected(
+        &self,
         tx: &mut Transaction<'_, MySql>,
         address: &FactAddress,
     ) -> Result<Option<Fact>, MemoryError> {
@@ -296,15 +372,17 @@ impl DoltMemory {
         .fetch_all(&mut **tx)
         .await
         .map_err(store)?;
-        Ok(Self::assemble(tx, &rows).await?.pop())
+        Ok(self.assemble(tx, &rows).await?.pop())
     }
 
-    /// One addressed fact, or nothing.
+    /// One addressed fact, or nothing. **`address.home` must already be a
+    /// storage key.**
     async fn read_fact(
+        &self,
         tx: &mut Transaction<'_, MySql>,
         address: &FactAddress,
     ) -> Result<Option<Fact>, MemoryError> {
-        Self::fact_projected(tx, address).await
+        self.fact_projected(tx, address).await
     }
 
     /// Rows into facts, each with its fields and references read back beside
@@ -314,6 +392,7 @@ impl DoltMemory {
     /// no field must come back with an empty bag rather than with a row of
     /// NULLs a join invents for it.
     async fn assemble(
+        &self,
         tx: &mut Transaction<'_, MySql>,
         rows: &[sqlx::mysql::MySqlRow],
     ) -> Result<Vec<Fact>, MemoryError> {
@@ -334,7 +413,19 @@ impl DoltMemory {
             .iter()
             .map(|r| EntityId(r.get::<String, _>("entity")))
             .collect();
-            facts.push(fact_from(row, entity, id, fields, refs)?);
+            // **Served under the handle this storage key answers to today**
+            // — `entity` here is the badge (or an unrenamed handle stored as
+            // itself), never what a reader is shown.
+            let handle = self.current_handle(tx, &entity).await?;
+            let raw = fact_from(row, entity, id, fields, refs)?;
+            let mut served = raw;
+            served.home = handle.clone();
+            served.subject = handle;
+            if let Some(source) = &served.derived_from {
+                let resolved = self.current_handle(tx, &source.home).await?;
+                served.derived_from = Some(FactAddress::new(resolved, source.local.clone()));
+            }
+            facts.push(served);
         }
         Ok(facts)
     }
@@ -694,10 +785,12 @@ impl DoltMemory {
     /// The addresses a page already holds, which is what a fact miss carries so
     /// a caller can see what it might have meant.
     async fn addresses_in(
+        &self,
         tx: &mut Transaction<'_, MySql>,
         home: &EntityId,
     ) -> Result<Vec<String>, MemoryError> {
-        Ok(Self::facts_of(tx, home)
+        Ok(self
+            .facts_of(tx, home)
             .await?
             .iter()
             .map(|f| f.address().to_string())
@@ -959,29 +1052,9 @@ impl Memory for DoltMemory {
     }
 
     async fn former_handles(&self) -> Result<Vec<FormerHandle>, MemoryError> {
-        let rows = sqlx::query(
-            "SELECT former_handle, badge, changed_at FROM entity_former_handle ORDER BY former_handle",
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(store)?;
-        let mut out = Vec::with_capacity(rows.len());
-        for row in &rows {
-            let former = EntityId(row.try_get::<String, _>("former_handle").map_err(store)?);
-            let badge = row.try_get::<String, _>("badge").map_err(store)?;
-            let changed_at: Date = row
-                .try_get::<String, _>("changed_at")
-                .map_err(store)?
-                .parse()
-                .map_err(|_| {
-                    unreadable("a former handle's changed-on day cannot be read as a date")
-                })?;
-            out.push(FormerHandle {
-                former,
-                badge,
-                changed_at,
-            });
-        }
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        let out = Self::former_handles_in(&mut tx).await?;
+        tx.commit().await.map_err(store)?;
         Ok(out)
     }
 
@@ -1040,10 +1113,15 @@ impl Memory for DoltMemory {
         // **What EXISTS**, which is the rows plus what the build supplies —
         // the same set the creation screen reads (rule 234).
         let index = self.known(&mut tx).await?;
-        // Every entity this write names must already exist — the subject first,
-        // then the edge's object, then anything the record points at. Nothing
-        // here provisions.
-        if let guard::Decision::Block(candidates) = guard::decide_existing(&fact.subject, &index) {
+        // **A stale-but-renamed subject exists too.** The direct check is
+        // what the guard already asks; a miss on it is checked again through
+        // the thing's own rename history before it is called unknown. Kept,
+        // rather than re-resolved, for its storage key below.
+        let subject_resolved = self.resolve(&mut tx, &fact.subject).await?;
+        if subject_resolved.is_none()
+            && let guard::Decision::Block(candidates) =
+                guard::decide_existing(&fact.subject, &index)
+        {
             return Ok(Guarded::Blocked {
                 attempted: fact.subject,
                 candidates,
@@ -1081,18 +1159,19 @@ impl Memory for DoltMemory {
         // A claim this one is derived from is named, so it must already exist —
         // an unknown home is an entity miss and a home holding no such row is a
         // fact miss, which are the two shapes this rail already has.
-        if let Some(source) = &fact.derived_from {
-            if !index.iter().any(|e| e.id == source.home) {
+        let derived_from = if let Some(source) = &fact.derived_from {
+            let Some((source_key, _)) = self.resolve(&mut tx, &source.home).await? else {
                 return Err(MemoryError::UnknownEntity {
                     attempted: source.home.to_string(),
                     nearest: guard::screen(&source.home, &[], &index),
                 });
-            }
-            match Self::read_fact(&mut tx, source).await? {
+            };
+            let resolved_source = FactAddress::new(source_key, source.local.clone());
+            match self.read_fact(&mut tx, &resolved_source).await? {
                 None => {
                     return Err(MemoryError::UnknownFact {
                         attempted: source.to_string(),
-                        nearest: Self::addresses_in(&mut tx, &source.home).await?,
+                        nearest: self.addresses_in(&mut tx, &resolved_source.home).await?,
                     });
                 }
                 // A withdrawn claim is still there and is no longer evidence.
@@ -1103,14 +1182,22 @@ impl Memory for DoltMemory {
                 }
                 Some(_) => {}
             }
-        }
+            Some(resolved_source)
+        } else {
+            None
+        };
 
-        let home = fact.subject.clone();
+        // **What the subject is stored as** — the badge it wears, or its own
+        // handle when it wears none. Already resolved above, direct or
+        // through its rename history.
+        let (home, subject_handle) = subject_resolved.expect("checked to exist just above");
         let id = Self::mint(&mut tx, &home).await?;
         let stored = Fact {
             id,
-            home,
-            subject: fact.subject,
+            home: home.clone(),
+            // One column, stored into both fields — read back into both the
+            // same way on every fact this store serves.
+            subject: home,
             content: normalize_content(&fact.content),
             details: normalize_details(fact.details.as_deref()),
             provenance: fact.provenance,
@@ -1121,7 +1208,7 @@ impl Memory for DoltMemory {
             edge: fact.edge,
             fields: fact.fields,
             refs: fact.refs,
-            derived_from: fact.derived_from,
+            derived_from,
             // **The store stamps it, so nothing above can.** The moment a
             // record is taken in is this one, and a caller that could name it
             // could claim jojobot knew something before it did.
@@ -1136,11 +1223,18 @@ impl Memory for DoltMemory {
         let held = Self::writes_on(&mut tx, &stored.home).await?;
         let declared = Self::types_in(&mut tx).await?;
         // **The fold reads both halves and the guard reads one.** How a key
-        // folds is declared by whoever declared it; what governs a thing is its
-        // own kind, and nothing else.
-        let governs = Self::kind_keys_in(&mut tx, stored.home.kind_token()).await?;
+        // folds is declared by whoever declared it; what governs a thing is
+        // its own kind, and nothing else. **Off the subject's own kind, never
+        // off `stored.home`** — that is a badge now, and a badge carries no
+        // kind token to parse.
+        let subject_kind = index
+            .iter()
+            .find(|e| e.id == subject_handle)
+            .expect("resolved above")
+            .kind;
+        let governs = Self::kind_keys_in(&mut tx, subject_kind.as_token()).await?;
         guard_fit(
-            stored.home.kind_token(),
+            subject_kind.as_token(),
             &folded_fields(&held, &declared),
             &stood_after_capture(&held, &stored, &declared),
             &governs,
@@ -1149,22 +1243,40 @@ impl Memory for DoltMemory {
         // Every key this record carries is a write of its own, appended to the
         // history of that key on this thing.
         Self::append_writes(&mut tx, &stored.home, &stored.id, written_keys(&stored)).await?;
+        // **Served under the handle, stored under the key** — resolved
+        // before the commit closes the transaction this needs to do it in.
+        let served_derived_from = match &stored.derived_from {
+            Some(source) => Some(FactAddress::new(
+                self.current_handle(&mut tx, &source.home).await?,
+                source.local.clone(),
+            )),
+            None => None,
+        };
         tx.commit().await.map_err(store)?;
-        Ok(Guarded::Written(stored))
+        Ok(Guarded::Written(Fact {
+            home: subject_handle.clone(),
+            subject: subject_handle,
+            derived_from: served_derived_from,
+            ..stored
+        }))
     }
 
     async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
         let index = self.known(&mut tx).await?;
-        // An unknown entity is a miss with its near candidates — never an empty
-        // page. Empty-but-real and nonexistent are different answers.
-        if !index.iter().any(|e| &e.id == subject) {
+        // An unknown entity is a miss with its near candidates — never an
+        // empty page. Empty-but-real and nonexistent are different answers.
+        // A stale-but-renamed handle is not this miss: it resolves through
+        // its own history to the one storage key its claims were ever filed
+        // under, so this is one lookup rather than a walk of every handle it
+        // has worn.
+        let Some((key, _)) = self.resolve(&mut tx, subject).await? else {
             return Err(MemoryError::UnknownEntity {
                 attempted: subject.to_string(),
                 nearest: guard::screen(subject, &[], &index),
             });
-        }
-        let facts = Self::facts_of(&mut tx, subject).await?;
+        };
+        let facts = self.facts_of(&mut tx, &key).await?;
         tx.commit().await.map_err(store)?;
         Ok(facts)
     }
@@ -1177,14 +1289,16 @@ impl Memory for DoltMemory {
         let index = self.known(&mut tx).await?;
         // An unknown entity is a miss with its near candidates, exactly as a
         // recall of one is: a thing nobody has written a key on and a handle
-        // nobody created are different answers with different repairs.
-        if !index.iter().any(|e| &e.id == entity) {
+        // nobody created are different answers with different repairs. A
+        // stale-but-renamed handle resolves through its own history, same as
+        // every other lookup here.
+        let Some((key, _)) = self.resolve(&mut tx, entity).await? else {
             return Err(MemoryError::UnknownEntity {
                 attempted: entity.to_string(),
                 nearest: guard::screen(entity, &[], &index),
             });
-        }
-        let held = Self::held_by(&mut tx, entity).await?;
+        };
+        let held = Self::held_by(&mut tx, &key).await?;
         tx.commit().await.map_err(store)?;
         Ok(held)
     }
@@ -1193,13 +1307,14 @@ impl Memory for DoltMemory {
         let mut tx = self.pool.begin().await.map_err(store)?;
         let index = self.known(&mut tx).await?;
         // A miss on the HANDLE is an entity miss, exactly as every other
-        // addressed read answers one.
-        if !index.iter().any(|e| e.id == address.home) {
+        // addressed read answers one. A stale-but-renamed handle resolves
+        // through its own history, same as every other lookup here.
+        let Some((key, _)) = self.resolve(&mut tx, &address.home).await? else {
             return Err(MemoryError::UnknownEntity {
                 attempted: address.home.to_string(),
                 nearest: guard::screen(&address.home, &[], &index),
             });
-        }
+        };
         // **The whole chain, through the same assembler every other claim read
         // uses.** One row shape and one reader: a second would be a second
         // place for the columns to drift.
@@ -1207,7 +1322,7 @@ impl Memory for DoltMemory {
             "SELECT w.ordinal, w.written_at, {FACT_WRITE_COLUMNS} FROM fact_write w
              WHERE w.entity = ? AND w.fact_id = ? ORDER BY w.ordinal"
         ))
-        .bind(address.home.as_str())
+        .bind(key.as_str())
         .bind(address.local.as_str())
         .fetch_all(&mut *tx)
         .await
@@ -1218,13 +1333,12 @@ impl Memory for DoltMemory {
             // with nothing behind it is a miss here for the same reason it is a
             // miss everywhere else, rather than an empty chain that would read
             // as a record saying nothing.
-            let nearest = Self::addresses_in(&mut tx, &address.home).await?;
+            let nearest = self.addresses_in(&mut tx, &key).await?;
             return Err(MemoryError::UnknownFact {
                 attempted: address.to_string(),
                 nearest,
             });
         }
-        tx.commit().await.map_err(store)?;
 
         let mut history = Vec::with_capacity(rows.len());
         for row in &rows {
@@ -1239,15 +1353,23 @@ impl Memory for DoltMemory {
             // are versioned by their own substrate and by nothing here, so
             // reading today's keys onto a write from a year ago would report
             // them as what that write said. `ClaimWrite` carries neither.
-            let fact = fact_from(
+            let mut fact = fact_from(
                 row,
-                address.home.clone(),
+                key.clone(),
                 address.local.clone(),
                 Default::default(),
                 Vec::new(),
             )?;
+            // **A lineage pointer in the chain is a `FactAddress` like any
+            // other** — stored under its source's key, served under the
+            // handle that key answers to today.
+            if let Some(source) = &fact.derived_from {
+                let resolved = self.current_handle(&mut tx, &source.home).await?;
+                fact.derived_from = Some(FactAddress::new(resolved, source.local.clone()));
+            }
             history.push(ClaimWrite::of(&fact, ordinal.max(0) as usize, written_at));
         }
+        tx.commit().await.map_err(store)?;
         Ok(history)
     }
 
@@ -1257,12 +1379,12 @@ impl Memory for DoltMemory {
     ) -> Result<std::collections::HashMap<FactId, Vec<ClaimWrite>>, MemoryError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
         let index = self.known(&mut tx).await?;
-        if !index.iter().any(|e| &e.id == entity) {
+        let Some((key, _)) = self.resolve(&mut tx, entity).await? else {
             return Err(MemoryError::UnknownEntity {
                 attempted: entity.to_string(),
                 nearest: guard::screen(entity, &[], &index),
             });
-        }
+        };
         // **One query for the whole entity**, the batched sibling of
         // claim_history's per-record read: every write of every claim this
         // entity holds, ordered so each claim's own writes stay oldest-first
@@ -1271,11 +1393,10 @@ impl Memory for DoltMemory {
             "SELECT w.ordinal, w.written_at, {FACT_WRITE_COLUMNS} FROM fact_write w
              WHERE w.entity = ? ORDER BY w.fact_id, w.ordinal"
         ))
-        .bind(entity.as_str())
+        .bind(key.as_str())
         .fetch_all(&mut *tx)
         .await
         .map_err(store)?;
-        tx.commit().await.map_err(store)?;
 
         let mut histories: std::collections::HashMap<FactId, Vec<ClaimWrite>> =
             std::collections::HashMap::new();
@@ -1286,19 +1407,18 @@ impl Memory for DoltMemory {
                 .try_get::<Option<String>, _>("written_at")
                 .map_err(store)?
                 .and_then(|at| at.parse::<jiff::Timestamp>().ok());
-            let fact = fact_from(
-                row,
-                entity.clone(),
-                id.clone(),
-                Default::default(),
-                Vec::new(),
-            )?;
+            let mut fact = fact_from(row, key.clone(), id.clone(), Default::default(), Vec::new())?;
+            if let Some(source) = &fact.derived_from {
+                let resolved = self.current_handle(&mut tx, &source.home).await?;
+                fact.derived_from = Some(FactAddress::new(resolved, source.local.clone()));
+            }
             histories.entry(id).or_default().push(ClaimWrite::of(
                 &fact,
                 ordinal.max(0) as usize,
                 written_at,
             ));
         }
+        tx.commit().await.map_err(store)?;
         Ok(histories)
     }
 
@@ -1307,25 +1427,27 @@ impl Memory for DoltMemory {
         let index = self.known(&mut tx).await?;
         // An unknown entity is a miss with its near candidates, exactly as a
         // recall of one is: a key nobody wrote and a handle nobody created are
-        // different answers with different repairs.
-        if !index.iter().any(|e| &e.id == entity) {
+        // different answers with different repairs. A stale-but-renamed
+        // handle resolves through its own history, same as every other
+        // lookup here.
+        let Some((storage_key, _)) = self.resolve(&mut tx, entity).await? else {
             return Err(MemoryError::UnknownEntity {
                 attempted: entity.to_string(),
                 nearest: guard::screen(entity, &[], &index),
             });
-        }
+        };
         let rows = sqlx::query(
             "SELECT value, fact_id FROM field_write
              WHERE entity = ? AND `key` = ? ORDER BY ordinal",
         )
-        .bind(entity.as_str())
+        .bind(storage_key.as_str())
         .bind(key)
         .fetch_all(&mut *tx)
         .await
         .map_err(store)?;
         // The record a write arrived in says when it happened and what became
         // of it, so the claims are read alongside.
-        let facts = Self::facts_of(&mut tx, entity).await?;
+        let facts = self.facts_of(&mut tx, &storage_key).await?;
         tx.commit().await.map_err(store)?;
 
         let mut history = Vec::with_capacity(rows.len());
@@ -1381,19 +1503,34 @@ impl Memory for DoltMemory {
             }
         }
         // A miss on the HANDLE is an entity miss, with the near candidates that
-        // explain it — not a fact miss trailing an empty address list.
-        if !index.iter().any(|e| e.id == address.home) {
+        // explain it — not a fact miss trailing an empty address list. A
+        // stale-but-renamed handle resolves through its own history, same as
+        // every other lookup here.
+        let Some((key, handle)) = self.resolve(&mut tx, &address.home).await? else {
             return Err(MemoryError::UnknownEntity {
                 attempted: address.home.to_string(),
                 nearest: guard::screen(&address.home, &[], &index),
             });
-        }
-        let Some(mut fact) = Self::read_fact(&mut tx, address).await? else {
+        };
+        let resolved_address = FactAddress::new(key.clone(), address.local.clone());
+        let Some(mut fact) = self.read_fact(&mut tx, &resolved_address).await? else {
             return Err(MemoryError::UnknownFact {
                 attempted: address.to_string(),
-                nearest: Self::addresses_in(&mut tx, &address.home).await?,
+                nearest: self.addresses_in(&mut tx, &key).await?,
             });
         };
+        // **`read_fact` serves the handle form, for the readers it usually
+        // answers.** This one writes the row back, so it is lowered to the
+        // storage key it was read under before anything touches it — writing
+        // the handle would file the edit under a different primary key and
+        // strand it there, unread by anything keyed on the badge.
+        fact.home = key.clone();
+        fact.subject = key.clone();
+        if let Some(source) = &fact.derived_from
+            && let Some((source_key, _)) = self.resolve(&mut tx, &source.home).await?
+        {
+            fact.derived_from = Some(FactAddress::new(source_key, source.local.clone()));
+        }
         // A retracted row is out of reach of an ordinary edit — one-way is
         // enforced here rather than intended elsewhere.
         if fact.status == FactStatus::Retracted {
@@ -1414,17 +1551,18 @@ impl Memory for DoltMemory {
         // evidence and leads nowhere.
         if let Some(source) = &patch.derived_from {
             let index = Self::index(&mut tx).await?;
-            if !index.iter().any(|e| e.id == source.home) {
+            let Some((source_key, _)) = self.resolve(&mut tx, &source.home).await? else {
                 return Err(MemoryError::UnknownEntity {
                     attempted: source.home.to_string(),
                     nearest: guard::screen(&source.home, &[], &index),
                 });
-            }
-            match Self::read_fact(&mut tx, source).await? {
+            };
+            let resolved_source = FactAddress::new(source_key, source.local.clone());
+            match self.read_fact(&mut tx, &resolved_source).await? {
                 None => {
                     return Err(MemoryError::UnknownFact {
                         attempted: source.to_string(),
-                        nearest: Self::addresses_in(&mut tx, &source.home).await?,
+                        nearest: self.addresses_in(&mut tx, &source.home).await?,
                     });
                 }
                 Some(held) if held.status == FactStatus::Retracted => {
@@ -1434,17 +1572,31 @@ impl Memory for DoltMemory {
                 }
                 Some(_) => {}
             }
+            // **Stored under its source's storage key, exactly as `home`
+            // is.** `apply_fact_patch` only carries the patch's address
+            // through as given; this corrects it to what the fake and the
+            // real store both key by.
+            apply_fact_patch(&mut fact, &patch)?;
+            fact.derived_from = Some(resolved_source);
+        } else {
+            apply_fact_patch(&mut fact, &patch)?;
         }
-        apply_fact_patch(&mut fact, &patch)?;
         // **The thing's fields as they will stand, against the thing's fields
         // as they stand now.** A write may not drop a thing below a type it
         // already fits; a thing that fits nothing has nothing to protect, so
         // its records stay repairable. One function, called from both stores.
         let held = Self::writes_on(&mut tx, &fact.home).await?;
         let declared = Self::types_in(&mut tx).await?;
-        let governs = Self::kind_keys_in(&mut tx, fact.home.kind_token()).await?;
+        // **Off the entity's own kind, never off `fact.home`** — that is a
+        // badge now, and a badge carries no kind token to parse.
+        let kind = index
+            .iter()
+            .find(|e| e.id == handle)
+            .expect("resolved above")
+            .kind;
+        let governs = Self::kind_keys_in(&mut tx, kind.as_token()).await?;
         guard_fit(
-            fact.home.kind_token(),
+            kind.as_token(),
             &folded_fields(&held, &declared),
             &stood_after(&held, &fact, &patch, &carried, &declared),
             &governs,
@@ -1456,8 +1608,22 @@ impl Memory for DoltMemory {
         // Read back from the substrate rather than from what the patch
         // believed, so the answer is the projection a later read will give.
         let fields = Self::fields_of(&mut tx, &fact.home, &fact.id).await?;
+        // **Served under the handle, stored under the key.**
+        let served_derived_from = match &fact.derived_from {
+            Some(source) => Some(FactAddress::new(
+                self.current_handle(&mut tx, &source.home).await?,
+                source.local.clone(),
+            )),
+            None => None,
+        };
         tx.commit().await.map_err(store)?;
-        Ok(Guarded::Written(Fact { fields, ..fact }))
+        Ok(Guarded::Written(Fact {
+            fields,
+            home: handle.clone(),
+            subject: handle,
+            derived_from: served_derived_from,
+            ..fact
+        }))
     }
 
     async fn merge(
@@ -1494,7 +1660,18 @@ impl Memory for DoltMemory {
         let account = merge_account(folded, survivor, reason, date)?;
         let standing = standing_of(&account);
 
-        // **Every column that holds this handle, in one transaction.** A fold
+        // **Both sides resolved to their storage keys once, up front.** Every
+        // statement below that touches `entity` or `fact_home` moves the KEY,
+        // never the raw handle — a claim's home is the badge now, not the
+        // handle, and updating rows by the handle would silently move
+        // nothing.
+        let (folded_key, _) = self.resolve(&mut tx, folded).await?.expect("checked above");
+        let (survivor_key, survivor_handle) = self
+            .resolve(&mut tx, survivor)
+            .await?
+            .expect("checked above");
+
+        // **Every column that holds this key, in one transaction.** A fold
         // that moved the claims and not the writes under them would leave a
         // thing whose fields disagree with its records.
         // 🚨 **A row is renumbered as it moves, never bulk-updated.** A fact id
@@ -1509,13 +1686,13 @@ impl Memory for DoltMemory {
         let moving: Vec<String> = sqlx::query_scalar(
             "SELECT id FROM fact WHERE entity = ? ORDER BY CAST(SUBSTRING(id, 2) AS UNSIGNED)",
         )
-        .bind(folded.as_str())
+        .bind(folded_key.as_str())
         .fetch_all(&mut *tx)
         .await
         .map_err(store)?;
         let rehomed = moving.len();
         for was in moving {
-            let now = Self::mint(&mut tx, survivor).await?;
+            let now = Self::mint(&mut tx, &survivor_key).await?;
             for statement in [
                 "UPDATE fact SET entity = ?, id = ? WHERE entity = ? AND id = ?",
                 "UPDATE fact SET derived_from = ?, derived_from_id = ? \
@@ -1539,9 +1716,9 @@ impl Memory for DoltMemory {
                  WHERE fact_home = ? AND fact_id = ?",
             ] {
                 sqlx::query(statement)
-                    .bind(survivor.as_str())
+                    .bind(survivor_key.as_str())
                     .bind(now.as_str())
-                    .bind(folded.as_str())
+                    .bind(folded_key.as_str())
                     .bind(&was)
                     .execute(&mut *tx)
                     .await
@@ -1549,6 +1726,10 @@ impl Memory for DoltMemory {
             }
         }
         // What names the handle rather than a row inside it moves wholesale.
+        // An edge's object and a ref's entity are stored as the plain handle
+        // merge was given, never a badge (step 3 resolves an edge on the way
+        // OUT; nothing resolves one in) — so these compare against the raw
+        // handles, exactly as they always have.
         for statement in [
             "UPDATE fact SET edge_object = ? WHERE edge_object = ?",
             "UPDATE fact_write SET edge_object = ? WHERE edge_object = ?",
@@ -1563,11 +1744,10 @@ impl Memory for DoltMemory {
                 .map_err(store)?;
         }
 
-        let home = survivor.clone();
         let record = Fact {
-            id: Self::mint(&mut tx, &home).await?,
-            home,
-            subject: account.subject,
+            id: Self::mint(&mut tx, &survivor_key).await?,
+            home: survivor_key.clone(),
+            subject: survivor_key.clone(),
             content: account.content,
             details: account.details,
             provenance: account.provenance,
@@ -1606,11 +1786,17 @@ impl Memory for DoltMemory {
                 attempted: survivor.to_string(),
                 nearest: Vec::new(),
             })?;
+        // **Served under the handle, stored under the key.**
+        let served_record = Fact {
+            home: survivor_handle.clone(),
+            subject: survivor_handle,
+            ..record
+        };
         tx.commit().await.map_err(store)?;
         Ok(Merge {
             survivor: survived,
             folded: folded.clone(),
-            record,
+            record: served_record,
             rehomed,
         })
     }
@@ -1623,27 +1809,44 @@ impl Memory for DoltMemory {
     ) -> Result<Retraction, MemoryError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
         let index = Self::index(&mut tx).await?;
-        if !index.iter().any(|e| e.id == address.home) {
+        let Some((key, handle)) = self.resolve(&mut tx, &address.home).await? else {
             return Err(MemoryError::UnknownEntity {
                 attempted: address.home.to_string(),
                 nearest: guard::screen(&address.home, &[], &index),
             });
-        }
+        };
+        let resolved_address = FactAddress::new(key.clone(), address.local.clone());
         // Everything is decided before anything moves, so a refusal leaves the
         // row exactly as it was.
-        let Some(target) = Self::read_fact(&mut tx, address).await? else {
+        let Some(mut target) = self.read_fact(&mut tx, &resolved_address).await? else {
             return Err(MemoryError::UnknownFact {
                 attempted: address.to_string(),
-                nearest: Self::addresses_in(&mut tx, &address.home).await?,
+                nearest: self.addresses_in(&mut tx, &key).await?,
             });
         };
-        let account = retraction_of(&target, reason, date)?;
+        // **Lowered back to the storage key it was read under** — this row is
+        // about to be written again, under the address it actually lives at.
+        target.home = key.clone();
+        target.subject = key.clone();
+        if let Some(source) = &target.derived_from
+            && let Some((source_key, _)) = self.resolve(&mut tx, &source.home).await?
+        {
+            target.derived_from = Some(FactAddress::new(source_key, source.local.clone()));
+        }
+        // **`retraction_of` addresses the claim it takes back in a field
+        // value, as free text** — served under the handle, exactly as any
+        // other address a reader is given, never under the storage key.
+        let served_target = Fact {
+            home: handle.clone(),
+            subject: handle.clone(),
+            ..target.clone()
+        };
+        let account = retraction_of(&served_target, reason, date)?;
         let standing = standing_of(&account);
-        let home = target.home.clone();
         let record = Fact {
-            id: Self::mint(&mut tx, &home).await?,
-            home,
-            subject: account.subject,
+            id: Self::mint(&mut tx, &key).await?,
+            home: key.clone(),
+            subject: key,
             content: account.content,
             details: account.details,
             provenance: account.provenance,
@@ -1669,8 +1872,22 @@ impl Memory for DoltMemory {
         // takes back is a write of its own. The record being taken back writes
         // no key: what changed there is its status.
         Self::append_writes(&mut tx, &record.home, &record.id, written_keys(&record)).await?;
+        // **Served under the handle, stored under the key.**
+        let served_retracted = Fact {
+            home: handle.clone(),
+            subject: handle.clone(),
+            ..retracted
+        };
+        let served_record = Fact {
+            home: handle.clone(),
+            subject: handle,
+            ..record
+        };
         tx.commit().await.map_err(store)?;
-        Ok(Retraction { retracted, record })
+        Ok(Retraction {
+            retracted: served_retracted,
+            record: served_record,
+        })
     }
 
     /// **One read of the writes, folded by the domain's own rule.** The default
@@ -1691,13 +1908,13 @@ impl Memory for DoltMemory {
         // nobody has written a key here, which is a different answer from
         // there is no such thing and has a different repair.
         let index = self.known(&mut tx).await?;
-        if !index.iter().any(|e| &e.id == entity) {
+        let Some((key, _)) = self.resolve(&mut tx, entity).await? else {
             return Err(MemoryError::UnknownEntity {
                 attempted: entity.to_string(),
                 nearest: guard::screen(entity, &[], &index),
             });
-        }
-        let writes = Self::writes_on(&mut tx, entity).await?;
+        };
+        let writes = Self::writes_on(&mut tx, &key).await?;
         let declared = Self::types_in(&mut tx).await?;
         tx.commit().await.map_err(store)?;
         Ok(jojobot_domain::memory::folded_backing(&writes, &declared))
@@ -1710,18 +1927,26 @@ impl Memory for DoltMemory {
     async fn built_on(&self, source: &FactAddress) -> Result<Vec<Fact>, MemoryError> {
         validate_subject(&source.home)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
+        // **The column holds the badge, and a caller's address names a
+        // handle.** Resolved here for the same reason every other addressed
+        // lookup resolves one first — a stale-but-renamed handle still finds
+        // what was built on it.
+        let key = match self.resolve(&mut tx, &source.home).await? {
+            Some((key, _)) => key,
+            None => source.home.clone(),
+        };
         let rows = sqlx::query(&format!(
             "SELECT {FACT_COLUMNS} FROM fact WHERE derived_from = ? AND derived_from_id = ? \
              ORDER BY entity, id"
         ))
-        .bind(source.home.as_str())
+        .bind(key.as_str())
         .bind(source.local.as_str())
         .fetch_all(&mut *tx)
         .await
         .map_err(store)?;
         // **Assembled by the one reader every other read here uses**, so a
         // claim reached through its lineage is the same record a recall gives.
-        let standing_on = Self::assemble(&mut tx, &rows).await?;
+        let standing_on = self.assemble(&mut tx, &rows).await?;
         tx.commit().await.map_err(store)?;
         Ok(standing_on)
     }
@@ -1746,7 +1971,7 @@ impl Memory for DoltMemory {
         let mut pointing = Vec::new();
         for row in rows {
             let holder = EntityId(row.try_get::<String, _>("entity").map_err(store)?);
-            for fact in Self::facts_of(&mut tx, &holder).await? {
+            for fact in self.facts_of(&mut tx, &holder).await? {
                 if fact
                     .fields
                     .values()
@@ -1816,14 +2041,19 @@ impl Memory for DoltMemory {
                     entity.id
                 )));
             };
+            // **The storage key this entity's own rows are filed under** —
+            // its badge, read just above. `facts_of` and `held_by` both read
+            // by this key; the facts they return already carry the handle,
+            // resolved on the way out exactly as every other read is.
+            let key = EntityId(badge.clone());
             scanned.push(search::DocScan {
                 doc_id: badge,
                 title: entity.name.clone(),
                 prose,
-                facts: Self::facts_of(&mut tx, &entity.id).await?,
+                facts: self.facts_of(&mut tx, &key).await?,
                 // What the thing IS travels with the doc: the records beside it
                 // cannot be folded back into it.
-                fields: Self::held_by(&mut tx, &entity.id).await?,
+                fields: Self::held_by(&mut tx, &key).await?,
                 entity: Some(entity),
                 owner: None,
             });
@@ -2260,10 +2490,17 @@ mod tests {
         }
 
         let mut tx = pool.begin().await.expect("a transaction");
-        let off_the_row = DoltMemory::facts_of(&mut tx, &subject)
+        // **Both these low-level readers want the storage key**, not the
+        // handle a caller sees — resolved here for the same reason every
+        // other lookup at this level resolves one first.
+        let (key, _) = memory
+            .resolve(&mut tx, &subject)
             .await
-            .expect("the rows read");
-        let projected = DoltMemory::facts_projected(&mut tx, &subject)
+            .expect("resolve ok")
+            .expect("the subject exists");
+        let off_the_row = memory.facts_of(&mut tx, &key).await.expect("the rows read");
+        let projected = memory
+            .facts_projected(&mut tx, &key)
             .await
             .expect("the substrate projects");
         assert_eq!(
@@ -2271,7 +2508,8 @@ mod tests {
             "the substrate and the row disagree, so moving the reads would change answers",
         );
 
-        let one = DoltMemory::fact_projected(&mut tx, &once.address())
+        let one = memory
+            .fact_projected(&mut tx, &FactAddress::new(key.clone(), once.id.clone()))
             .await
             .expect("the substrate projects one");
         assert_eq!(
@@ -2279,7 +2517,11 @@ mod tests {
             Some("written once and left alone"),
             "a claim with one write did not project as itself",
         );
-        let many = DoltMemory::fact_projected(&mut tx, &corrected.address())
+        let many = memory
+            .fact_projected(
+                &mut tx,
+                &FactAddress::new(key.clone(), corrected.id.clone()),
+            )
             .await
             .expect("the substrate projects one");
         assert_eq!(
