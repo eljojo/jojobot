@@ -1602,6 +1602,99 @@ fn no_agent_facing_text_folds_the_records() {
     );
 }
 
+/// What a sentence about a handle says when it promises rather than
+/// describes, and what an agent does with it.
+///
+/// **No half of this retires once a rename verb ships.** A handle never
+/// becomes permanent — that half of the claim is false on the day the verb
+/// lands exactly as it is false today, so a sentence saying "permanent" or
+/// "forever" of a handle is still wrong afterwards and stays checked here
+/// unconditionally.
+const FOREVER: &[(&str, &str)] = &[
+    (
+        "permanent",
+        "a handle is what a thing is called, and nothing holds it still",
+    ),
+    (
+        "permanently",
+        "a handle is what a thing is called, and nothing holds it still",
+    ),
+    (
+        "never change",
+        "nothing about a handle is guaranteed to outlive the record it names",
+    ),
+    (
+        "cannot change",
+        "nothing about a handle is guaranteed to outlive the record it names",
+    ),
+    (
+        "forever",
+        "a caller told this writes handles into append-only text that nothing can repair",
+    ),
+    (
+        "in a year",
+        "advice to pick a handle that outlasts the year is the promise as an instruction, and \
+         a caller acts on an instruction",
+    ),
+];
+
+/// **What a rename verb's OWN description must not claim.**
+///
+/// Pairing "rename" with "handle" used to be forbidden outright, because no
+/// verb existed and text that ran ahead of the code was the failure this
+/// build had already paid for once. **That ban does not survive the verb
+/// shipping**: the day a rename is real, "renaming changes the handle" is a
+/// true sentence, and forbidding the pairing would forbid describing the
+/// capability at all.
+///
+/// **What replaces it is narrower and does not expire.** A rename mechanism
+/// this build actually ships follows a mention and an edge (rule 243) —
+/// nothing else: free prose that never used `@kind:slug`, a merge's own
+/// redirect, and every system outside jojobot are untouched by it. A
+/// description claiming the move is free, automatic in full, or leaves
+/// nothing for the caller to do is false regardless of which verb ships,
+/// because *some* of what named the old handle is never rewritten — that is
+/// the whole reason a rename needed this protection in the first place.
+const OVERPROMISED: &[(&str, &str)] = &[
+    (
+        "at no cost",
+        "a rename leaves every copy outside a mention or an edge unrepaired, which is a cost \
+         a caller pays",
+    ),
+    (
+        "no cost",
+        "a rename leaves every copy outside a mention or an edge unrepaired, which is a cost \
+         a caller pays",
+    ),
+    (
+        "automatically update",
+        "only a mention and an edge follow a rename; free prose, a merge's redirect, and every \
+         system outside jojobot do not",
+    ),
+    (
+        "updates everything",
+        "only a mention and an edge follow a rename; free prose, a merge's redirect, and every \
+         system outside jojobot do not",
+    ),
+    (
+        "nothing to update",
+        "a caller who wrote a handle outside a mention has something to update, and this \
+         claims otherwise",
+    ),
+    (
+        "nothing further",
+        "the same overclaim as \"nothing to update\", in the words a checklist reads",
+    ),
+    (
+        "no further action",
+        "the same overclaim as \"nothing to update\", in the words a checklist reads",
+    ),
+    (
+        "renaming is free",
+        "a caller pays for it in the copies a rename cannot repair",
+    ),
+];
+
 /// **A handle is described, never promised.**
 ///
 /// The operator settled it: a thing is referenced by an opaque id underneath,
@@ -1619,58 +1712,15 @@ fn no_agent_facing_text_folds_the_records() {
 /// design. Each day the promise stands, more unrepairable copies of a handle
 /// are made and the rename that is coming gets bigger.
 ///
-/// **The reversal is asserted too, and the two are not symmetric.** No text
-/// may say a handle CAN be renamed: no rename exists, and text that runs
-/// ahead of the code is the failure this build has already paid for. So the
-/// sweep forbids the promise AND its reversal, and then requires the
-/// description that replaces them — a caller who comes away thinking a handle
-/// is disposable has been told a third wrong thing.
+/// **The reversal is asserted too, and it is not the same shape as the
+/// promise.** [`OVERPROMISED`] is what a rename verb's own description must
+/// not claim — the promise it replaces once the verb ships, rather than a
+/// ban on the verb existing at all. The sweep forbids [`FOREVER`] and
+/// [`OVERPROMISED`], and then requires the description that replaces the
+/// original promise — a caller who comes away thinking a handle is disposable
+/// has been told a third wrong thing.
 #[test]
 fn no_agent_facing_text_promises_a_permanent_handle() {
-    // What a sentence about a handle says when it promises rather than
-    // describes, and what an agent does with it.
-    const FOREVER: &[(&str, &str)] = &[
-        (
-            "permanent",
-            "a handle is what a thing is called, and nothing holds it still",
-        ),
-        (
-            "permanently",
-            "a handle is what a thing is called, and nothing holds it still",
-        ),
-        (
-            "never change",
-            "nothing about a handle is guaranteed to outlive the record it names",
-        ),
-        (
-            "cannot change",
-            "nothing about a handle is guaranteed to outlive the record it names",
-        ),
-        (
-            "forever",
-            "a caller told this writes handles into append-only text that nothing can repair",
-        ),
-        (
-            "in a year",
-            "advice to pick a handle that outlasts the year is the promise as an instruction, \
-             and a caller acts on an instruction",
-        ),
-    ];
-    // The reversal, checked as phrases rather than as the word "rename".
-    // **Renaming is real on this surface** — `update_entity` edits what an
-    // entity is CALLED, and the resemblance gate describes exactly that — so
-    // forbidding the word would forbid true sentences. What is forbidden is
-    // pairing the verb with the handle, which is the capability nothing
-    // implements.
-    const RENAMEABLE: &[&str] = &[
-        "rename a handle",
-        "rename the handle",
-        "renaming a handle",
-        "renaming the handle",
-        "handle can be renamed",
-        "handle can change",
-        "renameable",
-    ];
     // Where a session learns what a handle IS: the essay a fresh one reads,
     // the instructions a client gets on connect, and the argument that asks a
     // caller to choose one.
@@ -1691,25 +1741,12 @@ fn no_agent_facing_text_promises_a_permanent_handle() {
     let mut taught: Vec<&str> = Vec::new();
     for (what, text) in &served {
         for sentence in sentences(text) {
-            if !mentions(&sentence, "handle") {
-                continue;
-            }
-            for (marker, why) in FOREVER {
-                if says(&sentence, marker) {
-                    promising.push(format!("{what} says {marker:?} of a handle — {why}"));
-                }
-            }
-            for marker in RENAMEABLE {
-                if says(&sentence, marker) {
-                    promising.push(format!(
-                        "{what} says {marker:?} — no rename exists, and text that ships a \
-                         capability before the code does sends a caller to call for it"
-                    ));
-                }
+            if let Some(problem) = handle_promise_problem(&sentence) {
+                promising.push(format!("{what} {problem}"));
             }
             // The description that replaces the promise: a handle is what the
             // thing is addressed by.
-            if says(&sentence, "addressed") {
+            if mentions(&sentence, "handle") && says(&sentence, "addressed") {
                 taught.push(what);
             }
         }
@@ -1729,6 +1766,71 @@ fn no_agent_facing_text_promises_a_permanent_handle() {
          session the model, so each must say the handle is what an entity is addressed by: \
          {missing:?}"
     );
+}
+
+/// **One sentence's verdict, split out so it can be pinned against a sentence
+/// written for a test rather than only against whatever the corpus holds
+/// today.**
+///
+/// The corpus holds nothing about a rename yet — no verb exists — so a case
+/// that only swept the real corpus would prove this logic works on an empty
+/// question. The two tests below, over sentences written for this file
+/// rather than gathered from it, are what actually prove the shape a future
+/// verb's own description needs to pass.
+fn handle_promise_problem(sentence: &str) -> Option<String> {
+    if !mentions(sentence, "handle") {
+        return None;
+    }
+    for (marker, why) in FOREVER {
+        if says(sentence, marker) {
+            return Some(format!("says {marker:?} of a handle — {why}"));
+        }
+    }
+    for (marker, why) in OVERPROMISED {
+        if says(sentence, marker) {
+            return Some(format!("says {marker:?} — {why}"));
+        }
+    }
+    None
+}
+
+/// 🚨 **The capability a rename verb ships is no longer forbidden to
+/// describe.** An honest sentence pairing "rename" with "handle" — the
+/// pairing the old, retired ban forbade outright — must read clean, or this
+/// guard would refuse the very verb it exists to let ship truthfully.
+#[test]
+fn a_capable_descriptions_pairing_is_not_the_overpromise_it_replaced() {
+    for honest in [
+        "renaming a thing changes the handle it answers to.",
+        "the handle can be renamed; a mention written as @kind:slug keeps finding it.",
+        "this verb lets you rename the handle an entity answers to.",
+    ] {
+        assert_eq!(
+            handle_promise_problem(honest),
+            None,
+            "an honest description of the rename capability was refused: {honest:?}",
+        );
+    }
+}
+
+/// 🚨 **What the honest description above must not slide into.** The verb is
+/// real; what it does not do — repair a copy that sits outside a mention or
+/// an edge — is exactly what these claim it does, and the claim is false
+/// whichever verb ships it.
+#[test]
+fn an_overpromised_rename_is_still_forbidden() {
+    for overpromised in [
+        "renaming a handle updates everything at no cost.",
+        "renaming the handle automatically updates every reference.",
+        "once you rename a handle there is nothing further to do.",
+        "a handle's renaming is free and needs no further action from the caller.",
+    ] {
+        assert!(
+            handle_promise_problem(overpromised).is_some(),
+            "an over-promised description of the rename capability was not refused: \
+             {overpromised:?}",
+        );
+    }
 }
 
 /// **The fields are what a thing HOLDS. The kind is what it IS.**
