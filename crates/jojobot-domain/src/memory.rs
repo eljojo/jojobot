@@ -442,6 +442,24 @@ pub fn entity_wearing<'a>(badge: &str, known: &'a [Entity]) -> Option<&'a Entity
     known.iter().find(|e| e.badge.as_deref() == Some(badge))
 }
 
+/// **A resolved home that is itself a forwarding row is `AlreadyMerged`,
+/// never a bare miss on whatever it no longer holds.** A fact address
+/// minted before a fold still resolves its handle — the row is real, and
+/// stays real, per [`Entity::merged_into`] — but every claim that was ever
+/// filed under it moved to the survivor and was renumbered getting there,
+/// so no local id under this row answers the address anymore. Checked once,
+/// wherever a resolved home's own row is what a caller is about to be told
+/// is missing, rather than repeated at each such call.
+pub fn already_merged(attempted: &EntityId, entity: &Entity) -> Option<MemoryError> {
+    entity
+        .merged_into
+        .as_ref()
+        .map(|into| MemoryError::AlreadyMerged {
+            attempted: attempted.to_string(),
+            into: into.to_string(),
+        })
+}
+
 impl Entity {
     /// Every name this entity answers to: its display name first, then its
     /// aliases, blanks dropped.
@@ -3964,6 +3982,14 @@ mod tests {
             &fake_knowing_a_supplied_view(),
         )
         .await;
+    }
+
+    /// **On its own instance, not the shared `run_all` mount** — a fold's
+    /// renumbering is exactly the kind of state a case sharing a database
+    /// with dozens of others should not have to reason about.
+    #[tokio::test]
+    async fn a_stale_address_after_a_fold_says_where_it_went_against_the_fake() {
+        contract::a_stale_address_after_a_fold_says_where_it_went(&InMemoryMemory::booted()).await;
     }
 
     #[test]

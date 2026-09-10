@@ -392,6 +392,8 @@ const ROSTER: &[&str] = &[
     "person:contract-ref-guarded",
     "person:contract-refutable",
     "person:contract-relation-owner",
+    "person:contract-relic-forwarded",
+    "person:contract-relic-survivor",
     "person:contract-renamed-onto",
     "person:contract-renamer",
     "person:contract-reopening",

@@ -1576,7 +1576,7 @@ impl Memory for DoltMemory {
         // A miss on the HANDLE is an entity miss, exactly as every other
         // addressed read answers one. A stale-but-renamed handle resolves
         // through its own history, same as every other lookup here.
-        let Some((key, _)) = self.resolve(&mut tx, &address.home).await? else {
+        let Some((key, handle)) = self.resolve(&mut tx, &address.home).await? else {
             return Err(MemoryError::UnknownEntity {
                 attempted: address.home.to_string(),
                 nearest: guard::screen(&address.home, &[], &index),
@@ -1600,6 +1600,11 @@ impl Memory for DoltMemory {
             // with nothing behind it is a miss here for the same reason it is a
             // miss everywhere else, rather than an empty chain that would read
             // as a record saying nothing.
+            if let Some(resolved) = index.iter().find(|e| e.id == handle)
+                && let Some(err) = jojobot_domain::memory::already_merged(&address.home, resolved)
+            {
+                return Err(err);
+            }
             let nearest = self.addresses_in(&mut tx, &key).await?;
             return Err(MemoryError::UnknownFact {
                 attempted: address.to_string(),
@@ -1781,6 +1786,11 @@ impl Memory for DoltMemory {
         };
         let resolved_address = FactAddress::new(key.clone(), address.local.clone());
         let Some(mut fact) = self.read_fact(&mut tx, &resolved_address).await? else {
+            if let Some(resolved) = index.iter().find(|e| e.id == handle)
+                && let Some(err) = jojobot_domain::memory::already_merged(&address.home, resolved)
+            {
+                return Err(err);
+            }
             return Err(MemoryError::UnknownFact {
                 attempted: address.to_string(),
                 nearest: self.addresses_in(&mut tx, &key).await?,
@@ -2086,6 +2096,11 @@ impl Memory for DoltMemory {
         // Everything is decided before anything moves, so a refusal leaves the
         // row exactly as it was.
         let Some(mut target) = self.read_fact(&mut tx, &resolved_address).await? else {
+            if let Some(resolved) = index.iter().find(|e| e.id == handle)
+                && let Some(err) = jojobot_domain::memory::already_merged(&address.home, resolved)
+            {
+                return Err(err);
+            }
             return Err(MemoryError::UnknownFact {
                 attempted: address.to_string(),
                 nearest: self.addresses_in(&mut tx, &key).await?,

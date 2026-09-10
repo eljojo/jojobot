@@ -1022,6 +1022,9 @@ impl Memory for InMemoryMemory {
         };
         let facts = self.facts.lock().expect("fake mutex poisoned");
         if !facts.iter().any(|f| f.home == key && f.id == address.local) {
+            if let Some(err) = super::already_merged(&address.home, entity) {
+                return Err(err);
+            }
             return Err(MemoryError::UnknownFact {
                 attempted: address.to_string(),
                 nearest: facts
@@ -1157,6 +1160,9 @@ impl Memory for InMemoryMemory {
             .find(|f| f.home == key && f.id == address.local)
             .cloned()
         else {
+            if let Some(err) = super::already_merged(&address.home, entity) {
+                return Err(err);
+            }
             return Err(MemoryError::UnknownFact {
                 attempted: address.to_string(),
                 nearest,
@@ -1482,22 +1488,17 @@ impl Memory for InMemoryMemory {
     ) -> Result<Retraction, MemoryError> {
         let index = self.known();
         let former = self.former();
-        let Some((key, handle)) =
-            super::resolve_handle(&address.home, &index, &former).map(|entity| {
-                (
-                    match &entity.badge {
-                        Some(badge) => EntityId(badge.clone()),
-                        None => entity.id.clone(),
-                    },
-                    entity.id.clone(),
-                )
-            })
-        else {
+        let Some(entity) = super::resolve_handle(&address.home, &index, &former) else {
             return Err(MemoryError::UnknownEntity {
                 attempted: address.home.to_string(),
                 nearest: guard::screen(&address.home, &[], &index),
             });
         };
+        let key = match &entity.badge {
+            Some(badge) => EntityId(badge.clone()),
+            None => entity.id.clone(),
+        };
+        let handle = entity.id.clone();
 
         // Everything is decided before anything moves, so a refusal leaves the
         // row exactly as it was — the same shape `apply_fact_patch` has.
@@ -1512,6 +1513,9 @@ impl Memory for InMemoryMemory {
             .find(|f| f.home == key && f.id == address.local)
             .cloned()
         else {
+            if let Some(err) = super::already_merged(&address.home, entity) {
+                return Err(err);
+            }
             return Err(MemoryError::UnknownFact {
                 attempted: address.to_string(),
                 nearest,
@@ -11127,6 +11131,88 @@ pub mod contract {
         assert!(
             matches!(itself, MemoryError::NothingToMerge { .. }),
             "folding a thing into itself was not refused as such: {itself:?}",
+        );
+    }
+
+    /// **A fact address minted before a fold still resolves its handle, and
+    /// now says where the claim went** — never a bare miss indistinguishable
+    /// from an address that never existed.
+    ///
+    /// The fold moves every claim off the folded row and renumbers it landing
+    /// on the survivor, so the pre-fold local id answers nothing under the
+    /// folded row anymore. The folded row is still real — `Entity::merged_into`
+    /// says so — so the honest refusal is `AlreadyMerged`, naming the
+    /// survivor, on every verb that resolves a `FactAddress` down to one claim.
+    ///
+    /// **Paired with a genuinely unknown address**, so this case cannot be
+    /// told apart from a miss that was never anything else — those must read
+    /// differently, or the new sentence is really the old one wearing new
+    /// prose.
+    pub async fn a_stale_address_after_a_fold_says_where_it_went<M: Memory>(store: &M) {
+        let kept = EntityId::person("person:contract-relic-survivor");
+        let spare = EntityId::person("person:contract-relic-forwarded");
+        add(
+            store,
+            NewEntity::new(kept.clone(), "Relic Survivor", "contract-fixture"),
+        )
+        .await;
+        add(
+            store,
+            NewEntity::new(spare.clone(), "Relic Forwarded", "contract-fixture"),
+        )
+        .await;
+
+        let written = capture(
+            store,
+            NewFact::about(spare.clone(), "minted before the fold", date(2026, 5, 10)),
+        )
+        .await;
+        let stale = written.address();
+
+        store
+            .merge(&spare, &kept, None, date(2026, 5, 11))
+            .await
+            .expect("the fold lands");
+
+        let edit = store
+            .update_fact(&stale, FactPatch::default())
+            .await
+            .expect_err("a stale address must not silently succeed or silently miss");
+        assert!(
+            matches!(&edit, MemoryError::AlreadyMerged { attempted, into }
+                if attempted == &spare.to_string() && into == &kept.to_string()),
+            "update_fact's refusal must name the survivor: {edit:?}",
+        );
+
+        let history = store
+            .claim_history(&stale)
+            .await
+            .expect_err("claim_history must answer the same way update_fact does");
+        assert!(
+            matches!(&history, MemoryError::AlreadyMerged { .. }),
+            "claim_history did not recognise the same fold: {history:?}",
+        );
+
+        let retracted = store
+            .retract(&stale, None, date(2026, 5, 11))
+            .await
+            .expect_err("retract must answer the same way");
+        assert!(
+            matches!(&retracted, MemoryError::AlreadyMerged { .. }),
+            "retract did not recognise the same fold: {retracted:?}",
+        );
+
+        // **Paired: a genuinely unknown address still misses, and misses
+        // differently** — an address under a live entity that never held
+        // this local id.
+        let never = FactAddress::new(kept.clone(), FactId("f999".into()));
+        let miss = store
+            .update_fact(&never, FactPatch::default())
+            .await
+            .expect_err("an address nobody ever wrote must still miss");
+        assert!(
+            matches!(&miss, MemoryError::UnknownFact { .. }),
+            "a genuinely unknown address must not read as a fold: {miss:?}",
         );
     }
 

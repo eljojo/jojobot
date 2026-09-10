@@ -1013,6 +1013,28 @@ async fn dolt_answers_every_entity_read_for_a_supplied_record() {
     store.stop().await;
 }
 
+/// **…and a fact address minted before a fold, over the real store's own
+/// renumbering** — a database of its own, not the shared `run_all` mount,
+/// because the fold's renumbering is exactly the state a case sharing a
+/// database with dozens of others should not have to reason about.
+#[tokio::test]
+async fn dolt_names_the_survivor_for_an_address_stale_after_a_fold() {
+    let scratch = Scratch::new("stale-after-fold");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("staleafterfold")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+
+    memory::a_stale_address_after_a_fold_says_where_it_went(&DoltMemory::open(pool)).await;
+
+    store.stop().await;
+}
+
 /// **…and the same contract including retrieval**, with the search projection
 /// over this store.
 ///
