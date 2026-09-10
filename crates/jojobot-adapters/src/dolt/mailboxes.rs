@@ -284,6 +284,50 @@ impl Mailboxes for DoltMailboxes {
         }))
     }
 
+    async fn repoint_owner(
+        &self,
+        from: &EntityId,
+        to: &EntityId,
+    ) -> Result<Option<Mailbox>, MailboxError> {
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        let old_name: Option<String> =
+            sqlx::query_scalar("SELECT name FROM mailbox WHERE owner = ?")
+                .bind(from.as_str())
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(store)?;
+        let Some(old_name) = old_name else {
+            return Ok(None);
+        };
+        let new_name = to.slug().to_string();
+        sqlx::query("UPDATE mailbox SET name = ?, owner = ? WHERE name = ?")
+            .bind(&new_name)
+            .bind(to.as_str())
+            .bind(&old_name)
+            .execute(&mut *tx)
+            .await
+            .map_err(store)?;
+        // **The slug alone renamed the box; a retype under the same slug did
+        // not.** Every message — quarantined ones included, since quarantine
+        // is a state on this same row rather than a table of its own — is
+        // filed by the box's own name, so it follows only when that changed.
+        if old_name != new_name {
+            sqlx::query("UPDATE message SET mailbox = ? WHERE mailbox = ?")
+                .bind(&new_name)
+                .bind(&old_name)
+                .execute(&mut *tx)
+                .await
+                .map_err(store)?;
+        }
+        tx.commit().await.map_err(store)?;
+        // Read back through the normal path, so the answer carries the same
+        // counts and quarantine list any other caller would see.
+        let boxes = self.list_mailboxes().await?;
+        Ok(boxes
+            .into_iter()
+            .find(|m| m.name == MailboxName(new_name.clone())))
+    }
+
     async fn list_mailboxes(&self) -> Result<Vec<Mailbox>, MailboxError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
         let rows = sqlx::query("SELECT name, owner FROM mailbox ORDER BY name")

@@ -666,6 +666,33 @@ pub trait Mailboxes: Send + Sync {
         override_token: Option<&str>,
     ) -> Result<Guarded<Mailbox>, MailboxError>;
 
+    /// **Repoint an existing mailbox onto the handle its owner now answers
+    /// to** — the mail world's half of a rename, called after the entity
+    /// world's own rename has already landed.
+    ///
+    /// Nothing here shares a key with the entity world: `owner` holds the
+    /// bot's handle as plain text, and `name` holds its slug alone, so both
+    /// drift the moment a rename moves either — this is what keeps a
+    /// renamed bot finding its existing box on its next boot, rather than a
+    /// boot that finds no box owned by the new handle and heals a second,
+    /// empty one beside the first (see rule 236's own boot-repair path).
+    ///
+    /// **Not a guarded write.** The collision that matters — does the
+    /// destination handle collide with anything — was already checked and
+    /// committed on the entity side; there is nothing left here to screen.
+    /// If the SLUG changed, the box's own name moves with it, since a
+    /// mailbox's name IS its owner's slug and nothing else; every message
+    /// and quarantine card filed under the old name follows.
+    ///
+    /// **`None` if the bot owned no box.** A mailbox is opened with the bot
+    /// that owns it (M4), so an owner with none is a boot that has not
+    /// healed it yet, not a condition this call should raise as an error.
+    async fn repoint_owner(
+        &self,
+        from: &EntityId,
+        to: &EntityId,
+    ) -> Result<Option<Mailbox>, MailboxError>;
+
     /// Every mailbox jojobot manages, with per-state counts.
     async fn list_mailboxes(&self) -> Result<Vec<Mailbox>, MailboxError>;
 

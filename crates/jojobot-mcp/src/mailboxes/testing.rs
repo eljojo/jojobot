@@ -226,6 +226,15 @@ impl mailbox::Mailboxes for DownMailboxes {
             "the mailbox world is down".into(),
         ))
     }
+    async fn repoint_owner(
+        &self,
+        _: &EntityId,
+        _: &EntityId,
+    ) -> Result<Option<mailbox::Mailbox>, mailbox::MailboxError> {
+        Err(mailbox::MailboxError::Store(
+            "the mailbox world is down".into(),
+        ))
+    }
     async fn list_mailboxes(&self) -> Result<Vec<mailbox::Mailbox>, mailbox::MailboxError> {
         Err(mailbox::MailboxError::Store(
             "the mailbox world is down".into(),
@@ -284,6 +293,13 @@ impl mailbox::Mailboxes for UnopenableMailboxes {
             "the board refuses writes".into(),
         ))
     }
+    async fn repoint_owner(
+        &self,
+        from: &EntityId,
+        to: &EntityId,
+    ) -> Result<Option<mailbox::Mailbox>, mailbox::MailboxError> {
+        self.0.repoint_owner(from, to).await
+    }
     async fn list_mailboxes(&self) -> Result<Vec<mailbox::Mailbox>, mailbox::MailboxError> {
         self.0.list_mailboxes().await
     }
@@ -327,6 +343,13 @@ impl mailbox::Mailboxes for CountingMailboxes {
         note: Option<&str>,
     ) -> Result<mailbox::Guarded<mailbox::Mailbox>, mailbox::MailboxError> {
         self.inner.create_mailbox(name, owner, note).await
+    }
+    async fn repoint_owner(
+        &self,
+        from: &EntityId,
+        to: &EntityId,
+    ) -> Result<Option<mailbox::Mailbox>, mailbox::MailboxError> {
+        self.inner.repoint_owner(from, to).await
     }
     async fn list_mailboxes(&self) -> Result<Vec<mailbox::Mailbox>, mailbox::MailboxError> {
         self.listings

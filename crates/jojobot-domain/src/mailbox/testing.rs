@@ -239,6 +239,57 @@ impl Mailboxes for InMemoryMailboxes {
         }))
     }
 
+    async fn repoint_owner(
+        &self,
+        from: &EntityId,
+        to: &EntityId,
+    ) -> Result<Option<Mailbox>, MailboxError> {
+        let old_name = {
+            let owners = self.owners.lock().expect("owner lock");
+            owners
+                .iter()
+                .find(|(_, owner)| owner == from)
+                .map(|(name, _)| name.clone())
+        };
+        let Some(old_name) = old_name else {
+            return Ok(None);
+        };
+        let new_name = MailboxName(to.slug().to_string());
+        {
+            let mut owners = self.owners.lock().expect("owner lock");
+            for entry in owners.iter_mut() {
+                if entry.0 == old_name {
+                    entry.0 = new_name.clone();
+                    entry.1 = to.clone();
+                }
+            }
+        }
+        if old_name != new_name {
+            let mut boxes = self.boxes.lock().expect("mailbox lock");
+            for b in boxes.iter_mut() {
+                if *b == old_name {
+                    *b = new_name.clone();
+                }
+            }
+            drop(boxes);
+            let mut messages = self.messages.lock().expect("message lock");
+            for m in messages.iter_mut() {
+                if m.mailbox == old_name {
+                    m.mailbox = new_name.clone();
+                }
+            }
+            drop(messages);
+            let mut quarantined = self.quarantined.lock().expect("quarantine lock");
+            for q in quarantined.iter_mut() {
+                if q.0 == old_name {
+                    q.0 = new_name.clone();
+                }
+            }
+        }
+        let mailboxes = self.list_mailboxes().await?;
+        Ok(mailboxes.into_iter().find(|m| m.name == new_name))
+    }
+
     async fn list_mailboxes(&self) -> Result<Vec<Mailbox>, MailboxError> {
         let messages = self.messages.lock().expect("message lock");
         let quarantined = self.quarantined.lock().expect("quarantine lock");
@@ -595,6 +646,67 @@ pub mod contract {
         let mut names: Vec<&str> = listed.iter().map(|m| m.name.as_str()).collect();
         names.sort();
         assert_eq!(names, vec!["errands", "inbox"]);
+    }
+
+    /// 🚨 **A mailbox follows its owner to a new handle — the shape a
+    /// rename produces: the box's own name moves with a changed slug, and
+    /// every message already filed is still there under the new one.**
+    ///
+    /// **What this closes**: a box is named for its owner's slug and owned
+    /// by its owner's handle, neither of which shares a key with the entity
+    /// world. Left alone, a renamed bot's next boot finds no box under its
+    /// new handle and heals a second, empty one beside the first — the mail
+    /// already there becomes unreachable through any normal path. Proven by
+    /// what survives, not by a name matching.
+    ///
+    /// **Paired with the defensive no-op**: an owner with no box has nothing
+    /// to repoint, and that is `None` rather than an error — a rename does
+    /// not know in advance whether its subject ever had one.
+    pub async fn repoint_owner_moves_the_box_and_its_mail(store: &dyn Mailboxes) {
+        let was = EntityId(OWNERS[0].to_string());
+        let now = EntityId("bot:contract-repointed".to_string());
+        let box_name = was.slug().to_string();
+        create(store, &box_name).await;
+        let posted = post(store, &box_name, "someone", "mail before the move", 0).await;
+
+        let repointed = store
+            .repoint_owner(&was, &now)
+            .await
+            .expect("repoint_owner should succeed")
+            .expect("the box existed and was found");
+        assert_eq!(repointed.owner, now, "{repointed:?}");
+        assert_eq!(repointed.name.as_str(), now.slug(), "{repointed:?}");
+
+        // The old box is gone outright, not left standing beside a new one.
+        let boxes = store.list_mailboxes().await.expect("list ok");
+        assert_eq!(
+            boxes.len(),
+            1,
+            "the old box must not survive beside the repointed one: {boxes:?}",
+        );
+        assert_eq!(boxes[0].name.as_str(), now.slug());
+        assert_eq!(boxes[0].owner, now);
+
+        let delivered = read(store, now.slug()).await;
+        let ids: Vec<&MessageId> = delivered.messages.iter().map(|d| &d.message.id).collect();
+        assert_eq!(
+            ids,
+            vec![&posted.id],
+            "the message posted before the repoint did not survive it: {delivered:?}",
+        );
+
+        // An owner with no box: a defensive no-op, not an error.
+        let nothing = store
+            .repoint_owner(
+                &EntityId("bot:contract-no-box-owner".to_string()),
+                &EntityId("bot:contract-still-no-box".to_string()),
+            )
+            .await
+            .expect("repoint_owner should succeed");
+        assert!(
+            nothing.is_none(),
+            "an owner with no box has nothing to repoint: {nothing:?}",
+        );
     }
 
     /// **A box states its one owner, and the board reports it.**
@@ -1756,6 +1868,7 @@ pub mod contract {
         Fut: std::future::Future<Output = S>,
     {
         create_then_list(&fresh().await).await;
+        repoint_owner_moves_the_box_and_its_mail(&fresh().await).await;
         a_box_carries_its_owner_onto_the_board(&fresh().await).await;
         a_box_for_an_owner_nobody_knows_is_refused(&fresh().await).await;
         creating_a_near_miss_is_blocked_and_writes_nothing(&fresh().await).await;
