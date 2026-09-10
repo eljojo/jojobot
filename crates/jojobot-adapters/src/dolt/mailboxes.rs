@@ -34,7 +34,7 @@ use jojobot_domain::mailbox::{
     normalize_body, normalize_notes, normalize_subject, validate_body, validate_mailbox_name,
     validate_message_id, validate_notes, validate_sender, validate_subject,
 };
-use jojobot_domain::memory::EntityId;
+use jojobot_domain::memory::{Entity, EntityId, mention};
 use sqlx::{MySql, MySqlPool, Row, Transaction};
 
 use super::ids::{self, Draw};
@@ -63,6 +63,41 @@ impl DoltMailboxes {
             owners,
             draw: ids::drawing(),
         }
+    }
+
+    /// **Rewrite a handle written into a message's body, subject or notes
+    /// before mention resolution reached this port, onto the permanent id it
+    /// names** (rule 260) — the mailbox sibling of
+    /// [`crate::dolt::sessions::DoltSessions::migrate_mentions`], which
+    /// carries the reasoning this shares in full.
+    ///
+    /// Returns how many rows were rewritten, across all three columns
+    /// together.
+    pub async fn migrate_mentions(&self, known: &[Entity]) -> Result<usize, MailboxError> {
+        let mut rewritten = 0;
+        let rows: Vec<(String, String, Option<String>, Option<String>)> =
+            sqlx::query_as("SELECT id, body, subject, notes FROM message")
+                .fetch_all(&self.pool)
+                .await
+                .map_err(store)?;
+        for (id, body, subject, notes) in rows {
+            let updated_body = mention::resolved(&body, known);
+            let updated_subject = subject.as_deref().map(|s| mention::resolved(s, known));
+            let updated_notes = notes.as_deref().map(|n| mention::resolved(n, known));
+            if updated_body == body && updated_subject == subject && updated_notes == notes {
+                continue;
+            }
+            sqlx::query("UPDATE message SET body = ?, subject = ?, notes = ? WHERE id = ?")
+                .bind(&updated_body)
+                .bind(&updated_subject)
+                .bind(&updated_notes)
+                .bind(&id)
+                .execute(&self.pool)
+                .await
+                .map_err(store)?;
+            rewritten += 1;
+        }
+        Ok(rewritten)
     }
 
     /// The same store over a supplied draw, **so the collision path can be
@@ -978,6 +1013,129 @@ mod tests {
             ),
             "an id that names nothing is a miss"
         );
+
+        store.stop().await;
+    }
+
+    /// **The one-time migration, against text stored the old way** — written
+    /// through the bare adapter, which resolves nothing itself, exactly as
+    /// every row written before this port had a `Mentioning` in front of it
+    /// did.
+    #[tokio::test]
+    async fn migrate_mentions_rewrites_a_handle_stored_before_resolution_existed() {
+        use jojobot_domain::memory::{Memory, NewEntity};
+
+        let scratch = Scratch::new("migrate-mentions-mailbox");
+        let path = scratch.0.clone();
+        std::mem::forget(scratch);
+        let mut store = Dolt::start(&path, free_port())
+            .await
+            .expect("the store comes up");
+        migrate::run(store.pool()).await.expect("the schema");
+        migrate::seed_kinds(store.pool())
+            .await
+            .expect("the kinds are seeded");
+
+        let memory = crate::dolt::memory::DoltMemory::open(store.pool().clone());
+        memory
+            .add_entity(NewEntity::new(
+                EntityId("thing:contract-migrate-mentions-was".to_string()),
+                "was",
+                "contract-fixture",
+            ))
+            .await
+            .expect("add_entity should succeed")
+            .written()
+            .expect("the guard must not block a fresh handle");
+        memory.badge_the_unbadged().await.expect("badges are drawn");
+        let known = memory
+            .list_entities(None)
+            .await
+            .expect("list_entities should succeed");
+
+        let mail = DoltMailboxes::open(store.pool().clone(), Arc::new(AnyOwner));
+        mail.create_mailbox(
+            &MailboxName("inbox".into()),
+            &EntityId("bot:gamma".into()),
+            None,
+        )
+        .await
+        .expect("create ok")
+        .written()
+        .expect("not blocked");
+        let posted = mail
+            .post_message(NewMessage {
+                mailbox: MailboxName("inbox".into()),
+                body: "about @thing:contract-migrate-mentions-was".into(),
+                subject: Some("re @thing:contract-migrate-mentions-was".into()),
+                sender: "gamma".into(),
+                sent_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
+                in_reply_to: None,
+            })
+            .await
+            .expect("post ok")
+            .written()
+            .expect("not blocked");
+        mail.mark_processed(
+            &posted.id,
+            Some("handled, see @thing:contract-migrate-mentions-was"),
+        )
+        .await
+        .expect("mark_processed should succeed");
+
+        let rewritten = mail
+            .migrate_mentions(&known)
+            .await
+            .expect("migrate_mentions should succeed");
+        assert_eq!(
+            rewritten, 1,
+            "one message row changed, across all its columns"
+        );
+
+        let scanned = mail
+            .scan_messages()
+            .await
+            .expect("scan_messages should succeed");
+        let after = scanned
+            .iter()
+            .find(|m| m.id == posted.id)
+            .expect("the message is still there");
+        assert!(!after.body.contains("thing:contract-migrate-mentions-was"));
+        assert!(after.body.contains(mention::MARK));
+        assert!(
+            !after
+                .subject
+                .as_deref()
+                .unwrap_or_default()
+                .contains("thing:contract-migrate-mentions-was")
+        );
+        assert!(
+            after
+                .subject
+                .as_deref()
+                .unwrap_or_default()
+                .contains(mention::MARK)
+        );
+        assert!(
+            !after
+                .notes
+                .as_deref()
+                .unwrap_or_default()
+                .contains("thing:contract-migrate-mentions-was")
+        );
+        assert!(
+            after
+                .notes
+                .as_deref()
+                .unwrap_or_default()
+                .contains(mention::MARK)
+        );
+
+        let second_pass = mail
+            .migrate_mentions(&known)
+            .await
+            .expect("a second run should succeed");
+        assert_eq!(second_pass, 0, "nothing left to rewrite touches nothing");
 
         store.stop().await;
     }

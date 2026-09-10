@@ -482,6 +482,7 @@ const ROSTER: &[&str] = &[
     "thing:contract-rename-never-existed",
     "thing:contract-mention-cart",
     "thing:contract-mention-was",
+    "thing:contract-migrate-mentions-was",
     "thing:contract-mailbox-mention-was",
     "thing:contract-mailbox-mention-now",
     "thing:contract-mailbox-mention-never-existed",

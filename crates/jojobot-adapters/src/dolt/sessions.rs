@@ -19,7 +19,7 @@
 
 use async_trait::async_trait;
 use jiff::Timestamp;
-use jojobot_domain::memory::EntityId;
+use jojobot_domain::memory::{Entity, EntityId, mention};
 use jojobot_domain::session::{
     EntryId, JournalEntry, NewEntry, NewSession, Session, SessionError, SessionId, SessionState,
     Sessions, Sid, normalize_entry, validate_entry, validate_focus, validate_session_id,
@@ -57,6 +57,66 @@ impl DoltSessions {
             pool,
             draw: ids::drawing(),
         }
+    }
+
+    /// **Rewrite a handle written into a focus line or a journal beat before
+    /// mention resolution reached this port, onto the permanent id it
+    /// names** (rule 260) — the text-column sibling of
+    /// [`crate::dolt::memory::DoltMemory::backfill_handle_keyed_rows`].
+    ///
+    /// **Not a migration**, for the same reason that one is not: it needs the
+    /// badged entity list, which exists only once the memory store has run
+    /// its own boot steps, and a SQL migration runs before any of them.
+    ///
+    /// **The completion gate is [`mention::resolved`] itself, not a ledger.**
+    /// It is a pure, idempotent rewrite: text already holding a stored mark
+    /// is never read back as a handle to resolve (see
+    /// [`mention`][jojobot_domain::memory::mention]'s own doc), so recomputing
+    /// it a second time reproduces exactly what is stored, a row is written
+    /// only when the recomputed text actually differs, and a second call
+    /// touches none.
+    ///
+    /// Returns how many rows were rewritten, across the focus column and the
+    /// chronology together.
+    pub async fn migrate_mentions(&self, known: &[Entity]) -> Result<usize, SessionError> {
+        let mut rewritten = 0;
+        let focuses: Vec<(String, String)> = sqlx::query_as("SELECT id, focus FROM session")
+            .fetch_all(&self.pool)
+            .await
+            .map_err(store)?;
+        for (id, focus) in focuses {
+            let updated = mention::resolved(&focus, known);
+            if updated == focus {
+                continue;
+            }
+            sqlx::query("UPDATE session SET focus = ? WHERE id = ?")
+                .bind(&updated)
+                .bind(&id)
+                .execute(&self.pool)
+                .await
+                .map_err(store)?;
+            rewritten += 1;
+        }
+        let entries: Vec<(String, String, String)> =
+            sqlx::query_as("SELECT session, id, text FROM journal_entry")
+                .fetch_all(&self.pool)
+                .await
+                .map_err(store)?;
+        for (session, id, text) in entries {
+            let updated = mention::resolved(&text, known);
+            if updated == text {
+                continue;
+            }
+            sqlx::query("UPDATE journal_entry SET text = ? WHERE session = ? AND id = ?")
+                .bind(&updated)
+                .bind(&session)
+                .bind(&id)
+                .execute(&self.pool)
+                .await
+                .map_err(store)?;
+            rewritten += 1;
+        }
+        Ok(rewritten)
     }
 
     /// The same store over a supplied draw, **so the collision path can be
@@ -973,6 +1033,100 @@ mod tests {
                 .any(|m| m == "a mark from a pool that works"),
             "the store takes a mark from a pool that works"
         );
+
+        store.stop().await;
+    }
+
+    /// **The one-time migration, against text stored the old way** — written
+    /// through the bare adapter, which resolves nothing itself, exactly as
+    /// every row written before this port had a `Mentioning` in front of it
+    /// did.
+    #[tokio::test]
+    async fn migrate_mentions_rewrites_a_handle_stored_before_resolution_existed() {
+        use jojobot_domain::memory::{Memory, NewEntity};
+
+        let scratch = Scratch::new("migrate-mentions-sessions");
+        let path = scratch.0.clone();
+        std::mem::forget(scratch);
+        let mut store = Dolt::start(&path, free_port())
+            .await
+            .expect("the store comes up");
+        migrate::run(store.pool()).await.expect("the schema");
+        migrate::seed_kinds(store.pool())
+            .await
+            .expect("the kinds are seeded");
+
+        let memory = crate::dolt::memory::DoltMemory::open(store.pool().clone());
+        memory
+            .add_entity(NewEntity::new(
+                EntityId("thing:contract-migrate-mentions-was".to_string()),
+                "was",
+                "contract-fixture",
+            ))
+            .await
+            .expect("add_entity should succeed")
+            .written()
+            .expect("the guard must not block a fresh handle");
+        memory.badge_the_unbadged().await.expect("badges are drawn");
+        let known = memory
+            .list_entities(None)
+            .await
+            .expect("list_entities should succeed");
+
+        let sessions = DoltSessions::open(store.pool().clone());
+        let session = sessions
+            .begin(NewSession {
+                bot: EntityId("bot:gamma".to_string()),
+                sid: Sid("sid-migrate".to_string()),
+                focus: "about @thing:contract-migrate-mentions-was".to_string(),
+                started_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
+                timezone: None,
+                started_on: None,
+            })
+            .await
+            .expect("begin should succeed");
+        sessions
+            .append(
+                &session.id,
+                NewEntry::manual(
+                    "found @thing:contract-migrate-mentions-was",
+                    "2026-01-01T00:01:00Z".parse().expect("a fixed instant"),
+                    None,
+                ),
+            )
+            .await
+            .expect("append should succeed");
+
+        let rewritten = sessions
+            .migrate_mentions(&known)
+            .await
+            .expect("migrate_mentions should succeed");
+        assert_eq!(rewritten, 2, "the focus row and the entry row both changed");
+
+        let after = sessions
+            .read_session(&session.id)
+            .await
+            .expect("read_session should succeed");
+        assert!(
+            !after.focus.contains("thing:contract-migrate-mentions-was"),
+            "the bare handle must not survive the migration: {}",
+            after.focus
+        );
+        assert!(after.focus.contains(mention::MARK));
+        assert!(
+            !after.entries[0]
+                .text
+                .contains("thing:contract-migrate-mentions-was"),
+            "the bare handle must not survive the migration: {}",
+            after.entries[0].text
+        );
+        assert!(after.entries[0].text.contains(mention::MARK));
+
+        let second_pass = sessions
+            .migrate_mentions(&known)
+            .await
+            .expect("a second run should succeed");
+        assert_eq!(second_pass, 0, "nothing left to rewrite touches nothing");
 
         store.stop().await;
     }

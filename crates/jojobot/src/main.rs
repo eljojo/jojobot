@@ -257,16 +257,50 @@ async fn main() -> anyhow::Result<()> {
     // this handle resolve" is the whole of what crosses. It reads through the
     // projection so a bot created this session is an owner this session.
     let owners: Arc<dyn OwnerIndex> = Arc::new(MemoryOwners::new(indexed.clone()));
+    let bare_mail_store = Arc::new(DoltMailboxes::open(store.pool().clone(), owners));
+    let bare_sessions = Arc::new(DoltSessions::open(store.pool().clone()));
+
+    // **The one-time text migration (rule 260).** A journal beat or a
+    // mailbox message written before mention resolution reached these ports
+    // may still hold a bare `@kind:slug`; this rewrites it onto the badge,
+    // once, against the bare stores — before either is wrapped in its own
+    // `Mentioning` below. It is not a migration proper, for the same reason
+    // `DoltMemory::backfill_handle_keyed_rows` is not one: it needs the
+    // badged entity list, which exists only now that the memory store has
+    // run its own boot steps. Idempotent by construction — see
+    // `DoltSessions::migrate_mentions`'s own doc — so a failed half is not
+    // lost progress and a retried boot converges rather than repeating work.
+    let known = indexed.list_entities(None).await.unwrap_or_default();
+    match bare_mail_store.migrate_mentions(&known).await {
+        Ok(n) => tracing::info!(rewritten = n, "mail: mentions migrated onto permanent ids"),
+        Err(e) => tracing::warn!(
+            error = %e,
+            "MAIL MENTION MIGRATION FAILED — old text may still hold a bare handle; a \
+             restart retries, and nothing already migrated is undone."
+        ),
+    }
+    match bare_sessions.migrate_mentions(&known).await {
+        Ok(n) => tracing::info!(
+            rewritten = n,
+            "sessions: mentions migrated onto permanent ids"
+        ),
+        Err(e) => tracing::warn!(
+            error = %e,
+            "SESSION MENTION MIGRATION FAILED — old text may still hold a bare handle; a \
+             restart retries, and nothing already migrated is undone."
+        ),
+    }
+
     // **Mentions resolve above the raw store and below the index here too** —
     // the same placement as `memory`'s own `Mentioning`, and for the same
     // reason: a mention in a message or a journal beat has to see the full
     // entity list, and what search holds must be what a reader sees.
     let mail_store: Arc<dyn Mailboxes> = Arc::new(mailbox_mention::Mentioning::new(
-        Arc::new(DoltMailboxes::open(store.pool().clone(), owners)),
+        bare_mail_store,
         indexed.clone(),
     ));
     let sessions: Arc<dyn Sessions> = Arc::new(session_mention::Mentioning::new(
-        Arc::new(DoltSessions::open(store.pool().clone())),
+        bare_sessions,
         indexed.clone(),
     ));
     let teachings: Arc<dyn Teachings> = Arc::new(DoltTeachings::open(store.pool().clone()));
