@@ -11627,6 +11627,189 @@ pub mod contract {
         );
     }
 
+    /// 🚨 **An edit through a stale address lands on the record it always
+    /// named — it does not fork it onto a second key.**
+    ///
+    /// **The hazard this closes**: an edit reads the addressed row through
+    /// the assembler that resolves a badge to today's handle, then writes it
+    /// back. If that write used the resolved HANDLE rather than the storage
+    /// key it was read under, the row would be filed under a plain string
+    /// nothing else looks up — the edit silently lost, the original content
+    /// standing untouched under the key every other read still resolves to.
+    /// **That is why the read here is the content, not merely success**: a
+    /// build with this hazard answers `Written` and changes nothing a reader
+    /// ever sees.
+    ///
+    /// **Paired in one read**: a local id this thing never held still misses,
+    /// under either handle it has worn — the claim above is that resolution
+    /// works, not that every address is accepted.
+    pub async fn an_edit_through_a_stale_address_reaches_the_record_it_always_named<
+        M: Memory + ?Sized,
+    >(
+        store: &M,
+        rehandles: &dyn Rehandles,
+    ) {
+        let was = EntityId("person:contract-stale-edit-was".into());
+        let now = EntityId("work:contract-stale-edit-now".into());
+        store
+            .add_entity(NewEntity::new(was.clone(), "Before The Edit", "the roster"))
+            .await
+            .expect("the fixture is written")
+            .written()
+            .expect("nothing collides with it");
+        let badge = store
+            .list_entities(None)
+            .await
+            .expect("the store answers")
+            .into_iter()
+            .find(|e| e.id == was)
+            .expect("the fixture is there")
+            .badge
+            .expect("a written row wears a badge");
+
+        let written = capture(
+            store,
+            NewFact::about(was.clone(), "before the rename", date(2026, 5, 10)),
+        )
+        .await;
+        let stale_address = written.address();
+
+        rehandles.rehandle(&was, &now).await;
+        rehandles
+            .note_former_handle(FormerHandle {
+                former: was.clone(),
+                badge,
+                changed_at: date(2026, 5, 11),
+            })
+            .await;
+
+        store
+            .update_fact(
+                &stale_address,
+                FactPatch {
+                    content: Some("edited through the stale address".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("the edit lands")
+            .written()
+            .expect("nothing blocks it");
+
+        let held = store
+            .recall(&now)
+            .await
+            .expect("the store answers under the current handle");
+        assert_eq!(
+            held.len(),
+            1,
+            "the edit through a stale address left more or fewer than the one claim this thing \
+             has: {held:?}",
+        );
+        assert_eq!(
+            held[0].content, "edited through the stale address",
+            "the edit did not reach the record its stale address named — it is lost rather \
+             than merely late",
+        );
+
+        let never = FactAddress::new(now, FactId("f99".into()));
+        assert!(
+            store
+                .update_fact(
+                    &never,
+                    FactPatch {
+                        content: Some("must not land".into()),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .is_err(),
+            "a local id this thing never held must still miss, whichever of its handles is asked",
+        );
+    }
+
+    /// 🚨 **A retraction through a stale address retracts the record it
+    /// always named — it does not fork it onto a second key.**
+    ///
+    /// The same hazard [`an_edit_through_a_stale_address_reaches_the_record_it_always_named`]
+    /// closes for `update_fact`, over `retract` instead: a write-back under
+    /// the resolved handle rather than the storage key would file the
+    /// retraction under a row nothing resolves to, leaving the original
+    /// standing as if nothing had been taken back.
+    pub async fn a_retraction_through_a_stale_address_reaches_the_record_it_always_named<
+        M: Memory + ?Sized,
+    >(
+        store: &M,
+        rehandles: &dyn Rehandles,
+    ) {
+        let was = EntityId("person:contract-stale-retract-was".into());
+        let now = EntityId("work:contract-stale-retract-now".into());
+        store
+            .add_entity(NewEntity::new(
+                was.clone(),
+                "Before The Retraction",
+                "the roster",
+            ))
+            .await
+            .expect("the fixture is written")
+            .written()
+            .expect("nothing collides with it");
+        let badge = store
+            .list_entities(None)
+            .await
+            .expect("the store answers")
+            .into_iter()
+            .find(|e| e.id == was)
+            .expect("the fixture is there")
+            .badge
+            .expect("a written row wears a badge");
+
+        let written = capture(
+            store,
+            NewFact::about(was.clone(), "stands until retracted", date(2026, 5, 12)),
+        )
+        .await;
+        let stale_address = written.address();
+
+        rehandles.rehandle(&was, &now).await;
+        rehandles
+            .note_former_handle(FormerHandle {
+                former: was.clone(),
+                badge,
+                changed_at: date(2026, 5, 13),
+            })
+            .await;
+
+        store
+            .retract(&stale_address, Some("no longer so"), date(2026, 5, 14))
+            .await
+            .expect("the retraction lands");
+
+        let held = store
+            .recall(&now)
+            .await
+            .expect("the store answers under the current handle");
+        let original = held
+            .iter()
+            .find(|f| f.id == written.id)
+            .expect("the original claim is still there, retracted or not");
+        assert_eq!(
+            original.status,
+            FactStatus::Retracted,
+            "the retraction through a stale address did not reach the record it always named — \
+             it still stands: {original:?}",
+        );
+
+        let never = FactAddress::new(now, FactId("f99".into()));
+        assert!(
+            store
+                .retract(&never, None, date(2026, 5, 14))
+                .await
+                .is_err(),
+            "a local id this thing never held must still miss, whichever of its handles is asked",
+        );
+    }
+
     /// 🚨 **A link that leads nowhere and text that was never a link render
     /// differently, and neither renders bare.**
     ///
@@ -12133,6 +12316,9 @@ pub mod contract {
         an_edge_follows_a_thing_that_is_rehandled(mentioning, bare, rehandles).await;
         a_ref_follows_a_thing_that_is_rehandled(mentioning, bare, rehandles).await;
         a_stale_address_resolves_to_the_same_claim_after_a_rename(bare, rehandles).await;
+        an_edit_through_a_stale_address_reaches_the_record_it_always_named(bare, rehandles).await;
+        a_retraction_through_a_stale_address_reaches_the_record_it_always_named(bare, rehandles)
+            .await;
     }
 
     pub async fn run_all<M: Memory>(store: &M) {
