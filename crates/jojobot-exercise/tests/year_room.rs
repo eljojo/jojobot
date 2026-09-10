@@ -1797,6 +1797,46 @@ async fn the_years_turns_are_checked_in_rather_than_set_by_hand() {
     );
 }
 
+/// 🚨 **The derivations lock is scoped to January's own loop, and a second
+/// loop cannot drag it down.**
+///
+/// A universal that named no loop would fail the moment ANY rhythm anywhere
+/// carried a hand-set turn — including one January never opened and this
+/// year's story never asked about. **This is what gives that scoping
+/// something to be wrong about**: January's loop is left entirely clean here,
+/// and a second, unrelated loop carries the only bad turn in the store.
+///
+/// ⭐ **This case is the fixture half of the proof, and it is not the whole
+/// proof.** It passes today whether the lock is scoped correctly or not,
+/// because nothing in this suite widens the measurement back to every
+/// rhythm — that half is watched with `scripts/sabotage` against
+/// `the_years_turns_are_on_file_as_derivations` in `src/checks.rs`, which
+/// must turn this case red.
+#[tokio::test]
+async fn the_derivations_lock_is_scoped_to_januarys_loop_and_not_dragged_down_by_a_second() {
+    let (_room, surface) = furnished().await;
+    let boundaries = work_the_year(
+        &surface,
+        &room_document(),
+        &WORKED,
+        &[LATE_NOVEMBER_STANDS_UP_A_SECOND_LOOP],
+    )
+    .await;
+    let judged = judge_all(&surface, &boundaries).await;
+    assert!(
+        judged[LATE_NOVEMBER[0]].held,
+        "January's loop is untouched and entirely clean, and the derivations lock failed \
+         anyway — a second loop's hand-set turn is reaching a check that names one loop: {}",
+        saying(&judged),
+    );
+    assert!(
+        !judged[LATE_NOVEMBER[1]].held,
+        "a second loop stood up beside the first and the lock built for exactly this case did \
+         not catch it: {}",
+        saying(&judged),
+    );
+}
+
 /// ⚠️ **The locks that read the rhythm still DISCRIMINATE now the play changed.**
 ///
 /// A check-in writes more than the key it replaces, so a lock that was
