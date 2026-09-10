@@ -367,6 +367,7 @@ impl Mailboxes for InMemoryMailboxes {
             notes: None,
             in_reply_to: message.in_reply_to,
             taken_by: None,
+            sender_mail_waiting_at_send: message.sender_mail_waiting_at_send,
         };
         self.messages
             .lock()
@@ -607,6 +608,7 @@ pub mod contract {
                 sender: sender.to_string(),
                 sent_at: at(at_offset),
                 in_reply_to: None,
+                sender_mail_waiting_at_send: None,
             })
             .await
             .expect("post_message should succeed")
@@ -971,6 +973,81 @@ pub mod contract {
         );
     }
 
+    /// **What was waiting for the sender at send time survives storage,
+    /// including zero.**
+    ///
+    /// The caller supplies this — the domain never reads a board to compute it
+    /// — so the store's whole job is to carry it verbatim. A store that stored
+    /// `Some(0)` as absent, or that only carried a non-zero value, would pass
+    /// every other case in this suite; this is the one that pins the value
+    /// rather than just its presence.
+    pub async fn senders_mail_waiting_at_send_survives_the_round_trip(store: &dyn Mailboxes) {
+        create(store, "inbox").await;
+
+        let with_mail = store
+            .post_message(NewMessage {
+                mailbox: name("inbox"),
+                body: "reporting in".to_string(),
+                subject: None,
+                sender: "alpha".to_string(),
+                sent_at: at(0),
+                in_reply_to: None,
+                sender_mail_waiting_at_send: Some(3),
+            })
+            .await
+            .expect("post_message should succeed")
+            .written()
+            .expect("the guard must not block posting to 'inbox'");
+        assert_eq!(with_mail.sender_mail_waiting_at_send, Some(3));
+
+        let empty_handed = store
+            .post_message(NewMessage {
+                mailbox: name("inbox"),
+                body: "nothing was waiting for me".to_string(),
+                subject: None,
+                sender: "alpha".to_string(),
+                sent_at: at(1),
+                in_reply_to: None,
+                sender_mail_waiting_at_send: Some(0),
+            })
+            .await
+            .expect("post_message should succeed")
+            .written()
+            .expect("the guard must not block posting to 'inbox'");
+        assert_eq!(
+            empty_handed.sender_mail_waiting_at_send,
+            Some(0),
+            "zero waiting is a real answer, not the absence a plain post gives"
+        );
+
+        // The ordinary post carries none, exactly as every message posted
+        // before this field existed does.
+        let ordinary = post(store, "inbox", "alpha", "the old shape", 2).await;
+        assert_eq!(ordinary.sender_mail_waiting_at_send, None);
+
+        let delivered = read(store, "inbox").await;
+        let by_id = |id: &MessageId| {
+            delivered
+                .messages
+                .iter()
+                .find(|d| &d.message.id == id)
+                .unwrap_or_else(|| panic!("{id:?} was delivered"))
+        };
+        assert_eq!(
+            by_id(&with_mail.id).message.sender_mail_waiting_at_send,
+            Some(3),
+            "…and on the way back out, through the delivery a reader actually sees"
+        );
+        assert_eq!(
+            by_id(&empty_handed.id).message.sender_mail_waiting_at_send,
+            Some(0)
+        );
+        assert_eq!(
+            by_id(&ordinary.id).message.sender_mail_waiting_at_send,
+            None
+        );
+    }
+
     /// **A subject the store rewrites still posts.**
     ///
     /// The message this is written from was refused three times in
@@ -1081,6 +1158,7 @@ pub mod contract {
                 sender: "alpha".into(),
                 sent_at: at(30),
                 in_reply_to: None,
+                sender_mail_waiting_at_send: None,
             })
             .await;
         assert!(broken.is_err(), "a subject is one plain line");
@@ -1254,6 +1332,7 @@ pub mod contract {
                 sender: "alpha".into(),
                 sent_at: at(0),
                 in_reply_to: None,
+                sender_mail_waiting_at_send: None,
             })
             .await
             .expect("a blocked post is a result, not a failure")
@@ -1336,6 +1415,7 @@ pub mod contract {
                     sender: "alpha".into(),
                     sent_at: within(nanos),
                     in_reply_to: None,
+                    sender_mail_waiting_at_send: None,
                 })
                 .await
                 .expect("post ok")
@@ -1460,6 +1540,7 @@ pub mod contract {
                 sender: "beta".into(),
                 sent_at: at(1),
                 in_reply_to: Some(original.id.clone()),
+                sender_mail_waiting_at_send: None,
             })
             .await
             .expect("post ok")
@@ -1500,6 +1581,7 @@ pub mod contract {
                 sender: "implementer".into(),
                 sent_at: at(1),
                 in_reply_to: Some(handoff.id.clone()),
+                sender_mail_waiting_at_send: None,
             })
             .await
             .expect("post ok")
@@ -1536,6 +1618,7 @@ pub mod contract {
                 sender: "beta".into(),
                 sent_at: at(0),
                 in_reply_to: Some(MessageId("9999".into())),
+                sender_mail_waiting_at_send: None,
             })
             .await;
         assert!(
@@ -1555,6 +1638,7 @@ pub mod contract {
                 sender: "beta".into(),
                 sent_at: at(0),
                 in_reply_to: Some(MessageId("../42".into())),
+                sender_mail_waiting_at_send: None,
             })
             .await;
         assert!(
@@ -1724,6 +1808,7 @@ pub mod contract {
                 sender: "alpha".into(),
                 sent_at: at(0),
                 in_reply_to: None,
+                sender_mail_waiting_at_send: None,
             })
             .await;
         assert!(bad_body.is_err(), "an empty body is not a message");
@@ -1736,6 +1821,7 @@ pub mod contract {
                 sender: "  ".into(),
                 sent_at: at(0),
                 in_reply_to: None,
+                sender_mail_waiting_at_send: None,
             })
             .await;
         assert!(
@@ -1884,6 +1970,7 @@ pub mod contract {
         a_body_survives_the_round_trip(&fresh().await).await;
         a_crlf_body_normalizes_to_plain_newlines(&fresh().await).await;
         a_body_of_markup_and_a_loose_fence_survives(&fresh().await).await;
+        senders_mail_waiting_at_send_survives_the_round_trip(&fresh().await).await;
         posting_into_an_unknown_mailbox_is_blocked(&fresh().await).await;
         a_read_delivers_everything_new_and_moves_the_column(&fresh().await).await;
         a_delivery_orders_inside_one_second(&fresh().await).await;

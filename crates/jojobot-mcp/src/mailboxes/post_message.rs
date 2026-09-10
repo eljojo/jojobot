@@ -246,6 +246,13 @@ impl Jojobot {
             OwnBox::The(name) => name,
             elsewhere => return Ok(self.no_such_addressee(&addressee, elsewhere).await),
         };
+        // **Read before the write, and before delivered_with_the_post drains
+        // it.** This is the true count for the sender right now — the same
+        // number the status bar would show them — captured so it can travel
+        // with the message to a reader, rather than living only in the
+        // sender's own answer where it never reaches anybody who did not send
+        // this.
+        let sender_mail_waiting_at_send = self.own_new_count(&caller.bot).await;
         let new = NewMessage {
             mailbox: destination,
             body: args.body,
@@ -261,6 +268,7 @@ impl Jojobot {
                 .map(str::trim)
                 .filter(|id| !id.is_empty())
                 .map(|id| MessageId(id.to_string())),
+            sender_mail_waiting_at_send,
         };
         // Declined rather than errored: a reply naming a message jojobot does
         // not hold is a bad reference, and every other bad reference on this
@@ -405,6 +413,70 @@ mod tests {
         assert!(
             line.contains('1'),
             "the line has to say how much became the caller's to finish: {collected}",
+        );
+    }
+
+    /// **What was genuinely waiting in the sender's own box at send time
+    /// travels to the READER, not only to the sender's own receipt.**
+    ///
+    /// The number has to be a real count the code computed, not a stub: two
+    /// specific messages land in otto's box before otto ever posts anywhere,
+    /// so `sender_mail_waiting_at_send` has to read `2` — a build that always
+    /// writes `None`, or that always writes `Some(0)`, fails this the same way
+    /// a build that genuinely counts does not.
+    #[tokio::test]
+    async fn the_senders_own_waiting_count_travels_to_the_reader() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "otto").await;
+        make_box(&jojobot, "epsilon").await;
+
+        // Two things land for otto before otto posts anywhere else.
+        send(&jojobot, "otto", "epsilon", "first thing waiting").await;
+        send(&jojobot, "otto", "epsilon", "second thing waiting").await;
+
+        let posted = send(&jojobot, "epsilon", "otto", "reporting in").await;
+        assert_eq!(
+            posted["sender_mail_waiting_at_send"], 2,
+            "the sender's own receipt already carries the true count: {posted}"
+        );
+
+        // The point of the slice: a reader who never sent anything sees the
+        // same number, on the very read that hands them the message.
+        let delivered = json_of(
+            &jojobot
+                .read_mailbox(Parameters(ReadMailboxArgs {
+                    counts_only: None,
+                    new_only: None,
+                    sid: Some(as_bot(&jojobot, "epsilon")),
+                }))
+                .await
+                .expect("read ok"),
+        );
+        assert_eq!(
+            delivered["messages"][0]["sender_mail_waiting_at_send"], 2,
+            "the reader sees the sender's true count, not just the sender: {delivered}"
+        );
+    }
+
+    /// **A sender who genuinely had nothing waiting reads back as zero, never
+    /// as the same absence an old message wears.** The two must not collapse:
+    /// "nothing was waiting" and "this message predates the field" are
+    /// different claims, and a reader who cannot tell them apart cannot use
+    /// either one.
+    #[tokio::test]
+    async fn a_sender_with_nothing_waiting_reads_back_as_zero_not_absent() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "otto").await;
+        make_box(&jojobot, "epsilon").await;
+
+        let posted = send(&jojobot, "epsilon", "otto", "nothing was waiting for me").await;
+        assert_eq!(
+            posted["sender_mail_waiting_at_send"], 0,
+            "zero waiting is a real, computed answer: {posted}"
+        );
+        assert!(
+            !posted["sender_mail_waiting_at_send"].is_null(),
+            "zero must not render as the absence an old message wears: {posted}"
         );
     }
 

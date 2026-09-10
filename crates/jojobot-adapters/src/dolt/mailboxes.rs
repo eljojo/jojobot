@@ -128,7 +128,7 @@ impl DoltMailboxes {
             // no row over there** — and that absence is a fact about the
             // message rather than a reason to leave it out.
             "SELECT m.id, m.mailbox, m.ordinal, m.body, m.subject, m.sender, m.sent_at, m.state,
-                    m.notes, m.in_reply_to, d.taken_by
+                    m.notes, m.in_reply_to, m.sender_mail_waiting_at_send, d.taken_by
              FROM message m
              LEFT JOIN message_delivery d ON d.message_id = m.id",
         )
@@ -245,6 +245,10 @@ fn card_from(row: &sqlx::mysql::MySqlRow) -> Result<Card, MailboxError> {
                 .map_err(store)?
                 .as_deref()
                 .and_then(TakenBy::of_token),
+            sender_mail_waiting_at_send: row
+                .try_get::<Option<i64>, _>("sender_mail_waiting_at_send")
+                .map_err(store)?
+                .map(|n| n as usize),
         }),
         ordinal,
     ))
@@ -449,11 +453,13 @@ impl Mailboxes for DoltMailboxes {
             notes: None,
             in_reply_to: message.in_reply_to,
             taken_by: None,
+            sender_mail_waiting_at_send: message.sender_mail_waiting_at_send,
         };
         sqlx::query(
             "INSERT INTO message
-               (id, mailbox, ordinal, body, subject, sender, sent_at, state, notes, in_reply_to)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)",
+               (id, mailbox, ordinal, body, subject, sender, sent_at, state, notes, in_reply_to,
+                sender_mail_waiting_at_send)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)",
         )
         .bind(stored.id.as_str())
         .bind(stored.mailbox.as_str())
@@ -464,6 +470,7 @@ impl Mailboxes for DoltMailboxes {
         .bind(stored.sent_at.to_string())
         .bind(stored.state.as_token())
         .bind(stored.in_reply_to.as_ref().map(MessageId::as_str))
+        .bind(stored.sender_mail_waiting_at_send.map(|n| n as i64))
         .execute(&mut *tx)
         .await
         .map_err(store)?;
@@ -685,6 +692,7 @@ mod tests {
                 sender: "gamma".into(),
                 sent_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
                 in_reply_to: None,
+                sender_mail_waiting_at_send: None,
             })
             .await
             .expect("post ok")
@@ -759,6 +767,7 @@ mod tests {
                 sender: "gamma".into(),
                 sent_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
                 in_reply_to: None,
+                sender_mail_waiting_at_send: None,
             })
             .await
             .expect("post ok")
@@ -815,6 +824,7 @@ mod tests {
                 sender: "gamma".into(),
                 sent_at: "2026-01-01T00:00:01Z".parse().expect("a fixed instant"),
                 in_reply_to: None,
+                sender_mail_waiting_at_send: None,
             })
             .await
             .expect("post ok")
@@ -1071,6 +1081,7 @@ mod tests {
                 sender: "gamma".into(),
                 sent_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
                 in_reply_to: None,
+                sender_mail_waiting_at_send: None,
             })
             .await
             .expect("post ok")

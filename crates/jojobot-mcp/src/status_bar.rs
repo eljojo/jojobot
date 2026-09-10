@@ -127,6 +127,29 @@ impl Jojobot {
             .map(|held| held.counts.new)?;
         (waiting > 0).then_some(waiting)
     }
+
+    /// **What is genuinely waiting for a bot in its own box, right now** — the
+    /// same figure [`Jojobot::mail_waiting`] reports, but for a bot named
+    /// directly rather than for whoever is asking, and with zero kept as a real
+    /// answer rather than folded into "nothing to report".
+    ///
+    /// **Zero has to survive here.** This is what travels with a message so a
+    /// later reader can check a claim about the sender's own mail against what
+    /// was actually true when they sent it — and a sender who truly had
+    /// nothing waiting is a fact worth keeping, not silence.
+    ///
+    /// `None` only when jojobot could not tell: no box, or a board it could not
+    /// read.
+    pub(crate) async fn own_new_count(&self, bot: &EntityId) -> Option<usize> {
+        let boxes = self.mailboxes.list_mailboxes().await.ok()?;
+        let OwnBox::The(own) = owned_box(&boxes, bot) else {
+            return None;
+        };
+        boxes
+            .iter()
+            .find(|held| held.name == own)
+            .map(|held| held.counts.new)
+    }
 }
 
 /// **The ownership question, over a board already read.** Apart from the fetch

@@ -219,6 +219,13 @@ pub(crate) fn message_json(message: &Message) -> serde_json::Value {
         // looked"** — null says nothing was recorded, never that nothing
         // happened.
         "taken_by": message.taken_by.map(|taken| taken.as_token()),
+        // **What was genuinely waiting in the SENDER's own box when they sent
+        // this** — read at send time, before this message could be read by
+        // anyone, so a claim in the body about the sender's own mail is
+        // checkable against a number nobody transcribed from memory. Null for
+        // every message posted before this field existed, and for one jojobot
+        // could not determine at send time — neither is "zero were waiting".
+        "sender_mail_waiting_at_send": message.sender_mail_waiting_at_send,
     })
 }
 

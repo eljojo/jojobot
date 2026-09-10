@@ -230,6 +230,7 @@ mod tests {
                 sender: "bot:epsilon".to_string(),
                 sent_at: epoch(),
                 in_reply_to: None,
+                sender_mail_waiting_at_send: None,
             })
             .await
             .expect("post_message should succeed")
@@ -307,6 +308,7 @@ mod tests {
                 sender: "bot:epsilon".to_string(),
                 sent_at: epoch(),
                 in_reply_to: None,
+                sender_mail_waiting_at_send: None,
             })
             .await
             .expect("post_message should succeed")

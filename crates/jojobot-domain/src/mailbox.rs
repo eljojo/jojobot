@@ -416,6 +416,18 @@ pub struct NewMessage {
     /// anybody. It says these two messages are one exchange, which is the thing
     /// prose conventions ("report = message 935") could not survive.
     pub in_reply_to: Option<MessageId>,
+    /// **What was genuinely waiting in the SENDER's own box at the moment they
+    /// sent this** — the same number the status bar would have shown them, read
+    /// before this post could touch it. `None` when jojobot could not tell (no
+    /// session, no box, an unreadable board); `Some(0)` is a real answer, not a
+    /// gap.
+    ///
+    /// Stamped at the edge, like `sent_at`: the domain stays free of the board
+    /// read this needs, so the caller supplies what it already asked the board
+    /// for. It travels with the message so a reader — never the sender, who
+    /// wrote the prose from memory — can check a claim about the sender's own
+    /// mail against what was actually true when they hit send.
+    pub sender_mail_waiting_at_send: Option<usize>,
 }
 
 /// A message on the board.
@@ -458,6 +470,12 @@ pub struct Message {
     /// "nobody looked".
     #[serde(default)]
     pub taken_by: Option<TakenBy>,
+    /// **What was genuinely waiting in the sender's own box when they sent
+    /// this.** See [`NewMessage::sender_mail_waiting_at_send`] — carried
+    /// verbatim into storage. `None` for every message posted before this field
+    /// existed, and none of them is broken.
+    #[serde(default)]
+    pub sender_mail_waiting_at_send: Option<usize>,
 }
 
 /// **How a message left `new`.**
