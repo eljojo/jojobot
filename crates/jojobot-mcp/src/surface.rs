@@ -1708,10 +1708,13 @@ const OVERPROMISED: &[(&str, &str)] = &[
 /// the promise.
 ///
 /// **The act it produces is the damage.** A caller that reads a handle as
-/// safe forever writes it into places nothing can repair — a message body, a
-/// journal beat, a chronology entry — every one of them append-only by
-/// design. Each day the promise stands, more unrepairable copies of a handle
-/// are made and the rename that is coming gets bigger.
+/// safe forever writes it as free prose that never used `@kind:slug` — the
+/// one shape a rename genuinely cannot reach, since nothing marks it as a
+/// link to follow. A message body, a journal beat and a chronology entry are
+/// not that shape any more (rule 260): each resolves a mention the same way
+/// a claim's content does, and text written before that was true was
+/// migrated once. Each day the promise stands, more of a handle is written
+/// as bare prose instead of a mention, which is the copy that stays behind.
 ///
 /// **The reversal is asserted too, and it is not the same shape as the
 /// promise.** [`OVERPROMISED`] is what a rename verb's own description must

@@ -11,11 +11,10 @@ pub struct RenameEntityArgs {
     /// The entity's current handle — what it answers to now, or what it
     /// used to answer to before an earlier move already changed it. A stale
     /// handle still resolves here, and through a mention, an edge, a
-    /// reference-typed field value or a claim's home; it does not resolve in
-    /// a journal beat or a mailbox message already written, which keep
-    /// naming whatever handle was current when they were. A stale `handle`
-    /// given here is refused with the name it moved to, rather than a bare
-    /// miss.
+    /// reference-typed field value, a claim's home, a journal beat and a
+    /// mailbox message — all of them stay current after a move. A stale
+    /// `handle` given here is refused with the name it moved to, rather
+    /// than a bare miss.
     pub(crate) handle: String,
     /// The destination, as `kind:slug`. Always fully qualified — unlike a
     /// capture's subject, a bare slug is never read as a kind by default
@@ -88,14 +87,16 @@ impl Jojobot {
                        two together in one call, since the handle is one string and a retype is \
                        a rename. What follows automatically, with nothing rewritten anywhere: a \
                        mention written as @kind:slug, an edge, a reference-typed field value, \
-                       and every claim's own home all keep resolving under the new handle — the \
-                       path renders on the way out. Every entity naming this one as its parent \
-                       is repointed in the same write, and a bot's mailbox follows to its new \
-                       name. What does NOT follow, ever: a handle already written into a journal \
-                       beat, a mailbox message, or the store's own commit history — those are \
-                       append-only and keep naming the old handle. And a thing renamed and later \
-                       folded into another resolves one hop short of the survivor, through the \
-                       folded thing, rather than composing the two. `to` is always `kind:slug`, \
+                       every claim's own home, a journal beat and a mailbox message all keep \
+                       resolving under the new handle — the path renders on the way out, and \
+                       text stored before any of that was true was migrated once, so it is not \
+                       an exception. Every entity naming this one as its parent is repointed in \
+                       the same write, and a bot's mailbox follows to its new name. What does \
+                       NOT follow, ever: a handle written as free prose that never used \
+                       @kind:slug — nothing marked it as a link, so nothing resolves it. And a \
+                       thing renamed and later folded into another resolves one hop short of \
+                       the survivor, through the folded thing, rather than composing the two. \
+                       `to` is always `kind:slug`, \
                        fully qualified — a bare slug is refused rather than guessed at, because \
                        guessing one would be guessing whether this call is a reslug or a retype. \
                        `parent` reparents when given and leaves the current parent alone when \

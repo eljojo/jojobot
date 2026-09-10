@@ -3314,15 +3314,20 @@ pub trait Memory: Send + Sync {
     /// would**: every entity naming `from` as its parent is repointed to
     /// `to`, in the same write.
     ///
-    /// **What does not follow, and never will**: a handle written into a
-    /// journal beat, a mailbox message, or the store's own commit history is
-    /// append-only text this verb cannot reach — those keep naming the old
-    /// handle forever, exactly as a fact's own stored words would if a
-    /// caller had typed the handle instead of writing an `@kind:slug`
-    /// mention. And a thing renamed and later folded into another resolves
-    /// through its rename history to the folded row, one hop short of the
-    /// survivor — a second, composing lookup this verb does not perform (a
-    /// separate card owns that gap).
+    /// **A journal beat and a mailbox message follow too (rule 260)**, on the
+    /// same terms a mention does: [`crate::session::mention`] and
+    /// [`crate::mailbox::mention`] resolve and render them exactly as this
+    /// module's own [`mention`] does for a claim's words, and text stored
+    /// before either existed was migrated once onto a badge, so this reaches
+    /// it as well. The store's own commit history carries no caller text at
+    /// all, so there is nothing in it for a rename to reach or fail to reach.
+    ///
+    /// **What does not follow, and never will**: a handle written as free
+    /// prose that never used `@kind:slug` — nothing marks it as a link, so
+    /// nothing resolves it. And a thing renamed and later folded into
+    /// another resolves through its rename history to the folded row, one
+    /// hop short of the survivor — a second, composing lookup this verb does
+    /// not perform (a separate card owns that gap).
     ///
     /// `parent`: `None` leaves the current parent alone; `Some(handle)`
     /// reparents to it. There is no way to clear a parent through this verb —

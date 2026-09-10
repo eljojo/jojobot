@@ -101,6 +101,13 @@ impl Mailboxes for Mentioning {
     /// **Resolved on the way in.** The handle an author wrote becomes the
     /// badge its row wears, so the message keeps a pointer rather than a
     /// spelling.
+    ///
+    /// **Never screened, on purpose — do not add it.** A message is not a
+    /// claim about the thing it names, so an unknown handle is not this
+    /// verb's write to refuse: refusing to deliver mail over a mention
+    /// jojobot has not met would make the mailbox worse than serving it
+    /// marked. `post_message`'s own guard is the mailbox name's, never the
+    /// body's.
     async fn post_message(
         &self,
         message: NewMessage,
