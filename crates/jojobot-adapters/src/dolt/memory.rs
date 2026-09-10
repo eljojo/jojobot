@@ -191,9 +191,15 @@ impl DoltMemory {
     /// `fact_home` are what [`Self::merge`] already treats as holding a
     /// storage key rather than a plain handle — the same list, because a fold
     /// and a backfill are rekeying the same columns for different reasons.
+    /// `entity_alias.entity` joins the list here: it is an alias row's own
+    /// foreign key back to the entity it belongs to, the same shape
+    /// `fact.entity` was, so a rename that left it on the handle would sever
+    /// a thing from its own nicknames — and from every search hit that came
+    /// through one — the moment the row moved.
     /// `fact_event_ref.entity` and `entity.parent`, the columns that name a
-    /// handle rather than a row, are untouched — they are not badge-keyed at
-    /// all yet, a separate gap.
+    /// DIFFERENT entity rather than the row's own, are untouched — they
+    /// resolve on the way out instead, in the mention layer, not badge-keyed
+    /// at all.
     ///
     /// Returns how many entities had rows rekeyed. **Idempotent**: a second
     /// run touches none.
@@ -217,6 +223,7 @@ impl DoltMemory {
                 "UPDATE fact_write SET derived_from = ? WHERE derived_from = ?",
                 "UPDATE fact_event_metadata SET fact_home = ? WHERE fact_home = ?",
                 "UPDATE fact_event_ref SET fact_home = ? WHERE fact_home = ?",
+                "UPDATE entity_alias SET entity = ? WHERE entity = ?",
             ] {
                 sqlx::query(statement)
                     .bind(&badge)
@@ -252,6 +259,7 @@ impl DoltMemory {
             ("fact_write", "derived_from"),
             ("fact_event_metadata", "fact_home"),
             ("fact_event_ref", "fact_home"),
+            ("entity_alias", "entity"),
         ] {
             let hit: Option<i64> =
                 sqlx::query_scalar(&format!("SELECT 1 FROM {table} WHERE {column} = ? LIMIT 1"))
@@ -387,9 +395,19 @@ impl DoltMemory {
         let mut entities = Vec::with_capacity(rows.len());
         for row in &rows {
             let id = EntityId(row.try_get::<String, _>("id").map_err(store)?);
+            // **Joined on the badge, falling back to the handle for a row this
+            // build has not badged yet** — the same tolerant join every other
+            // badge-keyed lookup here makes, so an entity still waiting on
+            // `badge_the_unbadged` reads its aliases exactly as it always
+            // did, and one already badged reads them by the key its rows
+            // actually carry.
+            let key = row
+                .try_get::<Option<String>, _>("badge")
+                .map_err(store)?
+                .unwrap_or_else(|| id.0.clone());
             let mine = aliases
                 .iter()
-                .filter(|a| a.get::<String, _>("entity") == id.0)
+                .filter(|a| a.get::<String, _>("entity") == key)
                 .map(|a| a.get::<String, _>("alias"))
                 .collect();
             entities.push(entity_from(row, mine)?);
@@ -2486,14 +2504,19 @@ async fn write_entity(
     .execute(&mut **tx)
     .await
     .map_err(store)?;
+    // **Keyed on the badge, not the handle.** An alias row is the same shape
+    // `fact.entity` was before `ccc926f`: its own foreign key back to the
+    // thing it belongs to, so a rename that left it on the handle would sever
+    // it the moment the row it names moves — silently, since nothing else
+    // here would refuse the write.
     sqlx::query("DELETE FROM entity_alias WHERE entity = ?")
-        .bind(entity.id.as_str())
+        .bind(&badge)
         .execute(&mut **tx)
         .await
         .map_err(store)?;
     for (ordinal, alias) in entity.aliases.iter().enumerate() {
         sqlx::query("INSERT INTO entity_alias (entity, ordinal, alias) VALUES (?, ?, ?)")
-            .bind(entity.id.as_str())
+            .bind(&badge)
             .bind(ordinal as i64 + 1)
             .bind(alias)
             .execute(&mut **tx)

@@ -29,6 +29,7 @@ use jojobot_domain::memory::EntityId;
 use jojobot_domain::memory::FormerHandle;
 use jojobot_domain::memory::Memory;
 use jojobot_domain::memory::owned::{Provision, Provisions};
+use jojobot_domain::memory::search::{Hit, Search, SearchQuery};
 use jojobot_domain::memory::testing::contract as memory;
 use jojobot_domain::memory::{EntityPatch, FactPatch, NewEntity, NewFact};
 use jojobot_domain::session::testing::contract as sessions;
@@ -478,6 +479,179 @@ async fn the_backfill_rekeys_rows_a_badge_reached_after_they_were_written() {
         0,
         "the backfill rekeyed a row a second time, so running it at every startup would not be \
          safe",
+    );
+
+    store.stop().await;
+}
+
+/// 🚨 **An alias row is its own entity's foreign key, and a rename must not
+/// sever it.**
+///
+/// `entity_alias.entity` names the row it belongs to — the same shape
+/// `fact.entity` was before the badge conversion, not an edge's object. A
+/// rename here is the real store's own way of moving a handle: the row is
+/// rewritten in place, exactly as [`DoltRehandles`] does it, because no
+/// production verb exists yet.
+///
+/// **The consequence that matters is search, not the join alone**: a
+/// nickname the index cannot resolve to the entity's current handle is a
+/// nickname that finds nothing, silently. `Retrieval::search` refreshes from
+/// the store before it answers, so this reaches the path a caller actually
+/// uses rather than stopping at `list_entities`.
+#[tokio::test]
+async fn an_alias_survives_a_rename_and_a_search_still_finds_it_by_nickname() {
+    let scratch = Scratch::new("alias-rename");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("aliasrename")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+
+    let indexed = Arc::new(
+        IndexedMemory::new(Arc::new(DoltMemory::open(pool.clone())))
+            .expect("the search index opens"),
+    );
+    let retrieval = Retrieval::new(indexed.index(), vec![indexed.clone()]);
+
+    let was = EntityId::person("person:alias-rename-was");
+    indexed
+        .add_entity(NewEntity {
+            aliases: vec!["Nicky".into()],
+            ..NewEntity::new(was.clone(), "Alias Rename Was", "contract-fixture")
+        })
+        .await
+        .expect("add_entity ok")
+        .written()
+        .expect("the guard waves it through");
+
+    let before = retrieval
+        .search(&SearchQuery::text("Nicky"))
+        .await
+        .expect("search ok");
+    assert!(
+        before
+            .iter()
+            .any(|h| matches!(h, Hit::Entity { entity, .. } if entity.id == was)),
+        "the nickname does not find the entity before any rename: {before:?}",
+    );
+
+    let now = EntityId("work:alias-rename-now".into());
+    sqlx::query("UPDATE entity SET id = ?, kind = ? WHERE id = ?")
+        .bind(now.as_str())
+        .bind(now.kind_token())
+        .bind(was.as_str())
+        .execute(&pool)
+        .await
+        .expect("the row moves");
+
+    let entities = indexed.list_entities(None).await.expect("list_entities ok");
+    let renamed = entities
+        .iter()
+        .find(|e| e.id == now)
+        .expect("the renamed row is there");
+    assert_eq!(
+        renamed.aliases,
+        vec!["Nicky".to_string()],
+        "the alias did not follow the rename: {renamed:?}",
+    );
+
+    let after = retrieval
+        .search(&SearchQuery::text("Nicky"))
+        .await
+        .expect("search ok");
+    assert!(
+        after
+            .iter()
+            .any(|h| matches!(h, Hit::Entity { entity, .. } if entity.id == now)),
+        "the nickname does not find the renamed entity: {after:?}",
+    );
+
+    store.stop().await;
+}
+
+/// 🚨 **The bug the boot order makes possible, over an alias row: a badge
+/// fill that runs, and an alias that stays filed under the handle it wore
+/// before.**
+///
+/// The same window `the_backfill_rekeys_rows_a_badge_reached_after_they_were_written`
+/// proves for a claim, over `entity_alias` instead: the join in
+/// `DoltMemory::index` prefers the badge, so once the fill hands out one, an
+/// alias row still under the old handle stops joining — the entity reads
+/// back with no aliases at all, and a search on its nickname finds nothing.
+#[tokio::test]
+async fn the_backfill_rekeys_an_alias_row_a_badge_reached_after_it_was_written() {
+    let scratch = Scratch::new("alias-rekey");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("aliasrekey")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool.clone());
+
+    let handle = "person:alias-rekey-alpha";
+    sqlx::query(
+        "INSERT INTO entity (id, kind, name, source, crm, parent, boot, prose, badge)
+         VALUES (?, 'person', 'Alias Rekey Alpha', 'contract-fixture', NULL, NULL, \
+         'on-demand', '', NULL)",
+    )
+    .bind(handle)
+    .execute(&pool)
+    .await
+    .expect("a row from before the badge column");
+    sqlx::query("INSERT INTO entity_alias (entity, ordinal, alias) VALUES (?, 1, 'Rekeyed')")
+        .bind(handle)
+        .execute(&pool)
+        .await
+        .expect("an alias row from before the badge column");
+
+    assert_eq!(
+        memory.badge_the_unbadged().await.expect("the fill runs"),
+        1,
+        "the waiting row was not given a badge",
+    );
+
+    let subject = EntityId::person(handle);
+    let stranded = memory
+        .list_entities(None)
+        .await
+        .expect("list_entities ok")
+        .into_iter()
+        .find(|e| e.id == subject)
+        .expect("the entity itself still reads back");
+    assert!(
+        stranded.aliases.is_empty(),
+        "the alias read back after the fill and before the backfill, so the bug the backfill \
+         exists to fix does not reproduce here: {stranded:?}",
+    );
+
+    assert_eq!(
+        memory
+            .backfill_handle_keyed_rows()
+            .await
+            .expect("the backfill runs"),
+        1,
+        "the one entity with a stranded alias was not rekeyed",
+    );
+
+    let found = memory
+        .list_entities(None)
+        .await
+        .expect("list_entities ok")
+        .into_iter()
+        .find(|e| e.id == subject)
+        .expect("the entity reads back");
+    assert_eq!(
+        found.aliases,
+        vec!["Rekeyed".to_string()],
+        "the alias did not survive the rekey",
     );
 
     store.stop().await;
