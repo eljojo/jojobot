@@ -991,8 +991,8 @@ impl Expectation for DayClaimed {
                 false,
                 false,
                 format!(
-                    "{}: this sitting created and changed no record, so there is nothing that \
-                     could carry {}",
+                    "{}: no record this sitting touched carries a different day than before, so \
+                     nothing can carry {}",
                     self.phase, self.day,
                 ),
             );

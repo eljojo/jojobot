@@ -227,6 +227,82 @@ async fn a_sitting_that_wrote_nothing_is_not_applicable_rather_than_failed() {
     );
 }
 
+/// 🚨 **The not-applicable sentence must say what was measured, not what was
+/// guessed.**
+///
+/// The check can only ask whether any record's DAY moved between the two
+/// readings — `dated_records` carries nothing else. A sitting that edits a
+/// field on an existing claim without moving its day is structurally
+/// identical, to this check, to a sitting that wrote nothing at all: both
+/// leave `touched` empty. **A paid run had exactly the first case** — an edit
+/// verb correctly left a claim's own day untouched — and the old sentence,
+/// "this sitting created and changed no record", told a reader the sitting
+/// wrote nothing, which was false. The sentence must speak only to what the
+/// check actually saw: no record's day moved.
+#[tokio::test]
+async fn the_not_applicable_sentence_speaks_to_the_day_never_to_whether_anything_was_written() {
+    let (_room, surface) = a_room().await;
+    let made = days_claimed(&read());
+
+    // A field-only edit: the same address carries the same day both sides.
+    // The check cannot see that a field other than the day changed — that is
+    // exactly the ambiguity the sentence must not paper over.
+    let field_edit = vec![
+        at(
+            "Phase 1 — the spring sitting",
+            &world(&[("thing:kettle#f1", "2026-01-01")]),
+        ),
+        at(
+            "Phase 2 — a sitting with no day",
+            &world(&[("thing:kettle#f1", "2026-01-01")]),
+        ),
+    ];
+    let edited = made[0]
+        .check(&Observed {
+            room: &surface,
+            boundaries: &field_edit,
+        })
+        .await;
+    assert!(
+        !edited.applies && !edited.held,
+        "a sitting whose write did not move a day was graded rather than left not applicable: {}",
+        edited.saying,
+    );
+    assert!(
+        !edited.saying.contains("created and changed"),
+        "the sentence claims the sitting wrote nothing, which the check cannot know: {}",
+        edited.saying,
+    );
+    assert!(
+        edited.saying.contains("day"),
+        "the sentence does not speak to what was actually measured — a day moving: {}",
+        edited.saying,
+    );
+
+    // The genuinely-untouched case must read the same way, for the same
+    // reason: the check cannot tell the two apart, so neither can its words.
+    let untouched = vec![
+        at("Phase 1 — the spring sitting", &world(&[])),
+        at("Phase 2 — a sitting with no day", &world(&[])),
+    ];
+    let nothing = made[0]
+        .check(&Observed {
+            room: &surface,
+            boundaries: &untouched,
+        })
+        .await;
+    assert!(
+        !nothing.saying.contains("created and changed"),
+        "the genuinely-untouched sitting must read the same wording as the field-edit case: {}",
+        nothing.saying,
+    );
+    assert!(
+        nothing.saying.contains("day"),
+        "the genuinely-untouched sitting's sentence does not speak to a day: {}",
+        nothing.saying,
+    );
+}
+
 /// 🚨 **Typing the day into prose is not stamping a record with it.**
 ///
 /// The failure the old scan could not see: a sitting writes *"(recorded
