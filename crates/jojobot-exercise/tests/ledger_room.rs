@@ -445,6 +445,48 @@ async fn the_terminal_lock_fails_when_a_word_that_was_right_was_painted_over() {
     }
 }
 
+/// **The same sentence, caught the other way a record stops holding its
+/// value.** The lock above catches a job painted over by a new write.
+/// `retract` never leaves a replacement write behind, so the only thing
+/// between this case and a false pass is `folded_fields` in `jojobot-domain`
+/// dropping a write whose status is not `Active` before the newest-write-wins
+/// rule ever runs. This is the shape the pump lock missed: reading raw facts
+/// let a retracted record's own text still match. This room's locks read the
+/// fold instead, so the retraction has nothing to hide behind — and this
+/// case is what proves that rather than assuming it.
+#[tokio::test]
+async fn the_terminal_lock_fails_when_a_word_that_was_right_was_retracted() {
+    let (_room, surface, sid) = furnished().await;
+    worked_the_first_phase(&surface, &sid).await;
+    worked_the_cold_phase(&surface, &sid).await;
+
+    let read = surface
+        .call("recall", json!({"subject": "thing:jukebox", "facts": true}))
+        .await;
+    let parsed: Value = serde_json::from_str(&read).expect("the read is json");
+    let address = parsed["objects"][0]["facts"][0]["address"]
+        .as_str()
+        .expect("the job on the jukebox")
+        .to_string();
+    as_the_occupant(&surface, &sid, "retract", json!({"address": address})).await;
+
+    let outcomes = judge_all(&surface).await;
+    assert!(
+        !outcomes[THE_JUKEBOX_IS_UNTOUCHED].held,
+        "the jukebox's job was retracted and the lock on it held: {}",
+        saying(&outcomes),
+    );
+    // The half that stops the assertion above passing on a room where every
+    // lock fails: the jobs the cold phase was for were still put right.
+    for at in [THE_KETTLE_IS_PUT_RIGHT, THE_AIR_FILTER_IS_PUT_RIGHT] {
+        assert!(
+            outcomes[at].held,
+            "a retraction on the jukebox reddened a lock that has nothing to do with it: {}",
+            saying(&outcomes),
+        );
+    }
+}
+
 /// **The room a session that did everything in PROSE leaves.**
 ///
 /// Both new jobs are written down, in sentences, and nothing is declared. The

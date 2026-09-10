@@ -132,6 +132,14 @@ say     the air filter still carries the word nobody agreed to, or its job lost 
 
 # The positive the two above rest on. A session that painted every job the same
 # word leaves no word nobody agreed to and has answered nothing.
+#
+# ⚠️ **Checked, not assumed: a RETRACTED job cannot hide here the way it hid
+# from the pump lock in `year.md`.** That lock read raw facts, where a
+# retracted record's own text still matched. This lock reads the fold, and
+# the fold drops a retracted write before the newest-write-wins rule ever
+# runs — so a jukebox job taken back rather than overwritten still reddens
+# this line. Sabotage-proved in `ledger_room.rs` against the fold's own
+# exclusion, not reasoned about.
 recall {"subject": "thing:jukebox"}
 carries "settled":"paid"
 carries "cost":"180"
