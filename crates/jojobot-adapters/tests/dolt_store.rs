@@ -929,10 +929,12 @@ impl memory::Rehandles for DoltRehandles {
     }
 }
 
-/// **…and the creation guard's two supplied-record specs**, over a real store
-/// wired with the same shipped view [`memory::SUPPLIED_VIEW_FOR_THE_GUARD_SPECS`]
-/// names — a near-miss is caught and its own override lifts it, and an exact
-/// collision never clears, on the real store exactly as on the fake.
+/// **…and the supplied-record guard specs**, over a real store wired with
+/// the same shipped view [`memory::SUPPLIED_VIEW_FOR_THE_GUARD_SPECS`]
+/// names — a near-miss is caught and its own override lifts it, an exact
+/// collision never clears, a claim on it reads back, and a rename of it is
+/// refused rather than a silent no-op, on the real store exactly as on the
+/// fake.
 #[tokio::test]
 async fn dolt_satisfies_the_supplied_record_guard_contract() {
     let scratch = Scratch::new("supplied-guard");
@@ -966,6 +968,7 @@ async fn dolt_satisfies_the_supplied_record_guard_contract() {
     memory::a_near_miss_against_a_supplied_record_is_caught_and_its_override_lifts_it(&known).await;
     memory::an_exact_collision_with_a_supplied_handle_is_never_forceable(&known).await;
     memory::a_claim_on_a_supplied_record_reads_back(&known).await;
+    memory::a_rename_of_a_supplied_handle_is_refused_not_a_silent_no_op(&known).await;
 
     store.stop().await;
 }

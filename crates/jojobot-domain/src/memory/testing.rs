@@ -6896,6 +6896,77 @@ pub mod contract {
         );
     }
 
+    /// **Renaming a record the build supplies is refused, never a silent
+    /// no-op.** `rename_entity`'s existence check reads stored rows only,
+    /// deliberately excluding what the build supplies — a comment beside it
+    /// names why: resolving that check through `known()` would let a
+    /// supplied handle pass it and fall through every guard below, while
+    /// the mutation itself only ever touches stored rows. Nothing would
+    /// move, and the caller would still be told `Guarded::Written`.
+    ///
+    /// **Paired with a stored rename that still works**, or a store that
+    /// refuses every rename outright would pass this case identically to
+    /// the one it exists to catch.
+    pub async fn a_rename_of_a_supplied_handle_is_refused_not_a_silent_no_op<M: Memory>(store: &M) {
+        let shipped = EntityId(SUPPLIED_VIEW_FOR_THE_GUARD_SPECS.into());
+        let target = EntityId("view:contract-supplied-rename-target".into());
+
+        let err = store
+            .rename_entity(&shipped, &target, None, date(2026, 6, 10), None)
+            .await
+            .expect_err(
+                "a rename of a build-supplied handle must be refused, not silently accepted",
+            );
+        // **The family, not the exact shape.** A supplied handle has no row
+        // to rename, so either miss-shaped error is a genuine refusal:
+        // `UnknownEntity` if the store reports it as never having a row, or
+        // `HandleMoved` if the not-found branch's own former-handle check
+        // resolves it directly against the wider set first. Either rules
+        // out the one thing this case exists to catch — `Ok(Guarded::Written)`
+        // reporting a rename that never touched a row.
+        assert!(
+            matches!(
+                &err,
+                MemoryError::UnknownEntity { .. } | MemoryError::HandleMoved { .. }
+            ),
+            "a supplied handle's rename must be refused as a genuine miss, not some other class of error: {err:?}",
+        );
+        assert!(
+            store
+                .list_entities(None)
+                .await
+                .expect("list_entities should succeed")
+                .iter()
+                .all(|e| e.id != target),
+            "the destination handle must not exist: a refused rename wrote nothing",
+        );
+
+        // A genuinely stored thing still renames — the case this one must
+        // be told apart from is a store that refuses every rename outright.
+        let was = EntityId("thing:contract-supplied-rename-stored".into());
+        add(
+            store,
+            NewEntity::new(was.clone(), "Stored, Not Supplied", "contract-fixture"),
+        )
+        .await;
+        let now = EntityId("thing:contract-supplied-rename-stored-now".into());
+        store
+            .rename_entity(&was, &now, None, date(2026, 6, 10), None)
+            .await
+            .expect("a stored entity's rename should succeed")
+            .written()
+            .expect("nothing collides with the destination");
+        assert!(
+            store
+                .list_entities(None)
+                .await
+                .expect("list_entities should succeed")
+                .iter()
+                .any(|e| e.id == now),
+            "a genuinely stored rename must land",
+        );
+    }
+
     /// An entity write with a malformed field is refused outright — a name that
     /// could break out of its frontmatter line never reaches the store.
     pub async fn malformed_entity_fields_are_rejected<M: Memory>(store: &M) {

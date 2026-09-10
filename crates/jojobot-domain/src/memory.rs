@@ -3938,6 +3938,14 @@ mod tests {
         .await;
     }
 
+    #[tokio::test]
+    async fn a_rename_of_a_supplied_handle_is_refused_against_the_fake() {
+        contract::a_rename_of_a_supplied_handle_is_refused_not_a_silent_no_op(
+            &fake_knowing_a_supplied_view(),
+        )
+        .await;
+    }
+
     #[test]
     fn person_id_prefixes_a_bare_handle_but_respects_a_typed_one() {
         assert_eq!(EntityId::person("person:alpha").as_str(), "person:alpha");

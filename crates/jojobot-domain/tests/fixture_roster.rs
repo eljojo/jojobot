@@ -82,6 +82,7 @@ const ROSTER: &[&str] = &[
     // for the scan to find.
     "view:colleagues",
     "view:contract-no-such-view",
+    "view:contract-supplied-rename-target",
     "view:loop",
     "view:loops",
     "view:matches-nothing",
@@ -480,6 +481,8 @@ const ROSTER: &[&str] = &[
     "thing:contract-retype-was",
     "thing:contract-retype-child",
     "thing:contract-rename-never-existed",
+    "thing:contract-supplied-rename-stored",
+    "thing:contract-supplied-rename-stored-now",
     "thing:contract-mention-cart",
     "thing:contract-mention-was",
     "thing:contract-migrate-mentions-was",
