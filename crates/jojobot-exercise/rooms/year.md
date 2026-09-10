@@ -518,14 +518,19 @@ say     October (again): somebody who was never at the survey was put there by t
 # either sitting — the fault this room already removed from June's own
 # lock, five sittings up.
 #
-# 🚨 **Anchored to June's own RECORD, not to whichever claim currently
+# 🚨 **Anchored to June's own RECORDS, not to whichever claim currently
 # points at an event.** A sitting can reach the same end state two ways: it
 # can rename the survey, or it can retract June's claim and write a fresh
 # one naming a different event. Both leave a claim pointing at an event
 # under a handle June's own words never used, and only one of them is what
-# October's reason was given for. So this asks about June's own address
+# October's reason was given for. So this asks about June's own addresses
 # specifically, live and status-aware: a retracted address fails naming
 # that, rather than reporting an unrelated handle as unchanged.
+#
+# 🚨 **Every one of June's addresses, not the first that clears the bar.**
+# June may point at the survey from more than one record — an attendance
+# claim per person, as well as the club's own — and a rename that reached
+# some of them and not the rest is worse than one that reached none.
 check   junes_survey_mention_renders_under_the_current_handle
 say     October (again): June's own claim still renders the survey under the handle it wore before October's reason to rename it, so a stored mention is not resolving to what the thing is called now
 ```

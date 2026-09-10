@@ -1150,6 +1150,11 @@ fn event_mentions_by_address(world: &str) -> std::collections::HashMap<String, S
         .collect()
 }
 
+/// The subject half of a record's address — everything before the `#`.
+fn subject_of(address: &str) -> &str {
+    address.split('#').next().unwrap_or(address)
+}
+
 /// 🚨 **A stored mention renders under whichever handle its thing wears NOW,
 /// and this is where that is watched rather than assumed.**
 ///
@@ -1164,7 +1169,7 @@ fn event_mentions_by_address(world: &str) -> std::collections::HashMap<String, S
 /// render as at one time, against what it renders as at another* — `carries`
 /// is a claim about the answer as it stands, never about a change in it.
 ///
-/// 🚨 **Anchored to June's own RECORD, not to whichever claim currently
+/// 🚨 **Anchored to June's own RECORDS, not to whichever claim currently
 /// points at an event.** A sitting can reach the same end state two ways: it
 /// can rename the survey, or it can retract June's claim and write a fresh
 /// one naming a different event. Both leave a claim pointing at an event
@@ -1172,20 +1177,28 @@ fn event_mentions_by_address(world: &str) -> std::collections::HashMap<String, S
 /// rename, and only one is what October's reason was given for. **A
 /// retraction never appears in a boundary at all** — `search` serves active
 /// records only, [`both_accounts_of_the_pump_stand`] says why — so this
-/// finds June's own address by the same window-diff that check uses, and
-/// asks a LIVE, status-aware read whether that address is still active
+/// finds June's own addresses by the same window-diff that check uses, and
+/// asks a LIVE, status-aware read of each one whether it is still active
 /// before comparing what it renders now against what June's window first
 /// recorded. A retracted address fails naming that rather than reporting an
 /// unrelated handle as unchanged.
+///
+/// 🚨 **Plural, on purpose — a run 19 transcript wrote June's claim as more
+/// than one record**, an attendance claim per person as well as the club's
+/// own, each pointing at the survey by its own mention. **Every one of them
+/// must clear the bar, and a zero stays refused.** A pass on any single
+/// candidate would let a rename that reached half of June's claims and left
+/// the rest stale call itself done; a run where the count happens to be one
+/// is this at its smallest, not a different question.
 ///
 /// ⛔️ **No handle is named here, on either side.** January invents the
 /// survey's first one and October's reason invents its second, and a lock
 /// that spelled either would fail a run that chose different words for
 /// either sitting — the fault this room already removed from June's own
-/// lock. **What is locked is that June's own address, read live, renders a
-/// different handle than the one its own window first recorded**: a build
-/// that stores the word June typed shows the same handle either time; a
-/// build that stores the pointer does not.
+/// lock. **What is locked is that every one of June's own addresses, read
+/// live, renders a different handle than the one its own window first
+/// recorded**: a build that stores the word June typed shows the same
+/// handle either time; a build that stores the pointer does not.
 async fn junes_survey_mention_renders_under_the_current_handle(
     seen: &Observed<'_>,
 ) -> Result<(), String> {
@@ -1196,68 +1209,86 @@ async fn junes_survey_mention_renders_under_the_current_handle(
         ));
     };
     let earlier = event_mentions_by_address(&before.world);
-    let mut arrived: Vec<(String, String)> = event_mentions_by_address(&after.world)
+    // **Sorted rather than left in whatever order a HashMap gives them.** The
+    // rows this folds over carry no order of their own, and a verdict that
+    // could depend on which candidate happens to be visited first is a
+    // verdict that could hide a failing one behind a passing one.
+    let mut candidates: Vec<(String, String)> = event_mentions_by_address(&after.world)
         .into_iter()
         .filter(|(address, _)| !earlier.contains_key(address))
         .collect();
-    let (address, original) = match arrived.as_mut_slice() {
-        [one] => std::mem::take(one),
-        [] => {
-            return Err(format!(
-                "{JUNE}'s own window left no record newly pointing at an event, so there is no \
-                 claim here to watch get renamed",
-            ));
-        }
-        many => {
-            return Err(format!(
-                "{JUNE}'s own window left {} records newly pointing at an event rather than \
-                 one, so there is no single claim here to watch get renamed: {many:?}",
-                many.len(),
-            ));
-        }
-    };
-    let read = seen
-        .room
-        .call(
-            "recall",
-            json!({"subject": "org:north-trail-club", "facts": true}),
-        )
-        .await;
-    let parsed: Value = serde_json::from_str(&read).unwrap_or(Value::Null);
-    let Some(facts) = parsed["objects"][0]["facts"].as_array() else {
+    candidates.sort();
+    if candidates.is_empty() {
         return Err(format!(
-            "the club came back with no facts at all, so June's own claim cannot be read back: \
-             {read}"
-        ));
-    };
-    let Some(fact) = facts.iter().find(|fact| fact["address"] == address) else {
-        return Err(format!(
-            "{address} — June's own claim about the survey — is not on the club's record any \
-             more: {read}"
-        ));
-    };
-    if fact["status"] != "active" {
-        return Err(format!(
-            "{address} — June's own claim about the survey — is {} rather than active, so \
-             whatever satisfies a different mention is a fresh claim naming a different event \
-             rather than a rename of the one June pointed at: {read}",
-            fact["status"],
+            "{JUNE}'s own window left no record newly pointing at an event, so there is no \
+             claim here to watch get renamed",
         ));
     }
-    let now = fact["content"]
-        .as_str()
-        .and_then(|content| mention_of_kind(content, "event"));
-    match now {
-        Some(now) if now != original => Ok(()),
-        Some(now) => Err(format!(
-            "{address} still renders the survey under {now}, the handle {JUNE}'s own window \
-             recorded, so nothing here shows a stored mention resolving to a handle it did not \
-             wear when it was written"
-        )),
-        None => Err(format!(
-            "{address} no longer renders as pointing at an event at all: {read}"
-        )),
+    // **One live read per distinct subject, never per candidate.** June may
+    // point at the survey from more than one subject — the club's own claim,
+    // an attendance claim on a person — and a read is asked once of each.
+    let mut subjects: Vec<&str> = candidates
+        .iter()
+        .map(|(address, _)| subject_of(address))
+        .collect();
+    subjects.sort_unstable();
+    subjects.dedup();
+    let mut current: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
+    for subject in subjects {
+        let read = seen
+            .room
+            .call("recall", json!({"subject": subject, "facts": true}))
+            .await;
+        let parsed: Value = serde_json::from_str(&read).unwrap_or(Value::Null);
+        for fact in parsed["objects"][0]["facts"]
+            .as_array()
+            .into_iter()
+            .flatten()
+        {
+            if let Some(address) = fact["address"].as_str() {
+                current.insert(address.to_string(), fact.clone());
+            }
+        }
     }
+    // **Every candidate, not the first one that passes.** A rename that
+    // reached some of June's claims and not others is a worse result than
+    // one that reached none, and an answer satisfied by any single candidate
+    // would call that a pass.
+    for (address, original) in &candidates {
+        let Some(fact) = current.get(address) else {
+            return Err(format!(
+                "{address} — one of {JUNE}'s own claims pointing at the survey — is not on its \
+                 subject's record any more"
+            ));
+        };
+        if fact["status"] != "active" {
+            return Err(format!(
+                "{address} — one of {JUNE}'s own claims pointing at the survey — is {} rather \
+                 than active, so whatever satisfies a different mention there is a fresh claim \
+                 naming a different event rather than a rename of the one {JUNE} pointed at",
+                fact["status"],
+            ));
+        }
+        let now = fact["content"]
+            .as_str()
+            .and_then(|content| mention_of_kind(content, "event"));
+        match now {
+            Some(now) if now != *original => {}
+            Some(now) => {
+                return Err(format!(
+                    "{address} still renders the survey under {now}, the handle {JUNE}'s own \
+                     window recorded there, so nothing here shows that mention resolving to a \
+                     handle it did not wear when it was written"
+                ));
+            }
+            None => {
+                return Err(format!(
+                    "{address} no longer renders as pointing at an event at all"
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The other key a check-in writes in the same act as `last_check_in` —

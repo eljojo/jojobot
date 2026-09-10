@@ -432,6 +432,68 @@ async fn june(room: &Surface, sid: &str) {
     june_saying(room, sid, WHAT_JUNE_SAW).await;
 }
 
+/// **June, with attendance filed as a mention on each person too** — the
+/// shape a live paid run actually wrote, rather than the edge this room's
+/// default June uses for the same claim. Three records point at the survey
+/// afterward: the club's own and one per person, all by the same entity.
+async fn june_with_attendance_as_mentions(room: &Surface, sid: &str) {
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "org:north-trail-club",
+               "content": WHAT_JUNE_SAW,
+               "provenance": "testimony"}),
+    )
+    .await;
+    for who in ["person:milhouse", "person:nelson"] {
+        did(
+            room,
+            sid,
+            "capture",
+            json!({"subject": who, "content": "was at the trail survey, @event:trail-survey",
+                   "provenance": "testimony",
+                   "shape": "attendance", "object": "event:trail-survey"}),
+        )
+        .await;
+    }
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "rhythm:chain-check", "content": "did the bike chain this morning",
+               "provenance": "testimony",
+               "check_in": "ran"}),
+    )
+    .await;
+}
+
+/// **June, plus a second event nothing in October ever touches.**
+///
+/// The partial-rename shape: October renames the survey and this second
+/// event is never named in its reason, so a rename that reached every one
+/// of June's addresses would still leave this one exactly as written.
+async fn june_also_points_at_a_second_event(room: &Surface, sid: &str) {
+    june_saying(room, sid, WHAT_JUNE_SAW).await;
+    did(
+        room,
+        sid,
+        "add_entity",
+        json!({"kind": "event", "handle": "winter-fest", "name": "Winter Fest",
+               "source": "the operator"}),
+    )
+    .await;
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "org:north-trail-club",
+               "content": "already looking ahead to @event:winter-fest",
+               "provenance": "testimony"}),
+    )
+    .await;
+}
+
 /// **June, with the survey claim saying `said`.**
 ///
 /// One body for every June the suite drives, because the sittings differ in one
@@ -1029,6 +1091,17 @@ const OCTOBER_DOES_NOT_RENAME_THE_SURVEY: usize = 20;
 /// different event.
 const OCTOBER_RETRACTS_JUNES_CLAIM_INSTEAD_OF_RENAMING: usize = 21;
 
+/// **A different, honest June, named the same way as its guilty siblings.**
+/// Attendance filed as a mention per person rather than an edge — the shape
+/// a live run actually wrote — so more than one of June's own addresses
+/// points at the survey.
+const JUNE_ATTENDANCE_AS_MENTIONS: usize = 22;
+
+/// **A guilty June, named the same way.** A second event neither October nor
+/// its reason ever touches, so a rename that reached every address it was
+/// meant to still leaves this one exactly as written.
+const JUNE_ALSO_POINTS_AT_A_SECOND_EVENT: usize = 23;
+
 /// Where late November sits in the year, named for the reason `JUNE_AT` is.
 const LATE_NOVEMBER_AT: usize = 12;
 
@@ -1076,6 +1149,10 @@ async fn work_the_year(
             true => variant,
             false => None,
         };
+        let june_attendance_as_mentions =
+            at == JUNE_AT && guilty.contains(&JUNE_ATTENDANCE_AS_MENTIONS);
+        let june_second_event_variant =
+            at == JUNE_AT && guilty.contains(&JUNE_ALSO_POINTS_AT_A_SECOND_EVENT);
         let late_november_variant =
             at == LATE_NOVEMBER_AT && guilty.contains(&LATE_NOVEMBER_STANDS_UP_A_SECOND_LOOP);
         let october_variant =
@@ -1091,6 +1168,8 @@ async fn work_the_year(
         if !worked.contains(&at)
             && !guilty.contains(&at)
             && june_variant.is_none()
+            && !june_attendance_as_mentions
+            && !june_second_event_variant
             && !late_november_variant
             && !october_variant
             && !october_no_rename_variant
@@ -1112,6 +1191,10 @@ async fn work_the_year(
         // to disagree about which sittings write.
         if let Some(said) = june_variant {
             june_saying(room, sid, said).await;
+        } else if june_attendance_as_mentions {
+            june_with_attendance_as_mentions(room, sid).await;
+        } else if june_second_event_variant {
+            june_also_points_at_a_second_event(room, sid).await;
         } else if late_november_variant {
             late_november_stands_up_a_second_loop(room, sid).await;
         } else if october_variant {
@@ -1786,6 +1869,65 @@ async fn junes_mention_lock_is_not_satisfied_by_a_retraction_and_a_fresh_claim()
         judged[OCTOBER[1]].held,
         "the sitting that retracted June's claim failed a lock that has nothing to do with it: \
          {}",
+        saying(&judged),
+    );
+}
+
+/// **More than one of June's own addresses, all pointing at the survey, all
+/// renamed together — the shape a live paid run actually wrote.** The lock
+/// must hold on every one of them, not refuse for finding more than one.
+#[tokio::test]
+async fn junes_mention_lock_holds_when_every_one_of_junes_addresses_is_renamed_together() {
+    // **Late October left out on purpose.** Its own honest work retracts
+    // Nelson's June attendance for a reason that has nothing to do with a
+    // rename — he was never at the survey — and this case is about the
+    // rename alone. The lock itself does not read late October's boundary at
+    // all, so nothing here needs it to have run.
+    const WORKED_WITHOUT_LATE_OCTOBER: [usize; 12] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 12, 14];
+    let (_room, surface) = furnished().await;
+    let boundaries = work_the_year(
+        &surface,
+        &room_document(),
+        &WORKED_WITHOUT_LATE_OCTOBER,
+        &[JUNE_ATTENDANCE_AS_MENTIONS],
+    )
+    .await;
+    let judged = judge_all(&surface, &boundaries).await;
+    assert!(
+        judged[LATE_OCTOBER[3]].held,
+        "three of June's own addresses point at the survey and October renamed it, so all three \
+         render under the new handle — and the lock still failed: {}",
+        saying(&judged),
+    );
+}
+
+/// **A second event nothing in October's reason ever touches.** One of
+/// June's own addresses gets renamed along with the survey and the other
+/// never does, because it never pointed at the survey. A rename that reached
+/// only some of June's claims is worse than one that reached none, and the
+/// lock must redden on it rather than pass on the address that did move.
+#[tokio::test]
+async fn junes_mention_lock_reddens_when_only_some_of_junes_addresses_are_renamed() {
+    let (_room, surface) = furnished().await;
+    let guilty = work_the_year(
+        &surface,
+        &room_document(),
+        &WORKED,
+        &[JUNE_ALSO_POINTS_AT_A_SECOND_EVENT],
+    )
+    .await;
+    let judged = judge_all(&surface, &guilty).await;
+    assert!(
+        !judged[LATE_OCTOBER[3]].held,
+        "June pointed at a second event nothing in October ever renamed, and the lock held \
+         anyway — so it is satisfied by the address that moved rather than by all of them: {}",
+        saying(&judged),
+    );
+    // The half that stops the assertion above passing on a room where every
+    // lock fails: the survey itself was still renamed and found.
+    assert!(
+        judged[OCTOBER[1]].held,
+        "the sitting that added a second event failed a lock that has nothing to do with it: {}",
         saying(&judged),
     );
 }
