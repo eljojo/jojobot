@@ -21,6 +21,7 @@ pub mod list_entities;
 pub mod merge_entities;
 pub mod parse;
 pub mod recall;
+pub mod rename_entity;
 pub mod retract;
 pub mod search;
 pub mod set_charter;
@@ -39,6 +40,7 @@ pub use capture::CaptureArgs;
 pub use declare_type::{DeclareTypeArgs, FieldArgs};
 pub use list_entities::ListEntitiesArgs;
 pub use recall::RecallArgs;
+pub use rename_entity::RenameEntityArgs;
 pub use retract::RetractArgs;
 pub use search::{EdgeFilterArgs, SearchArgs};
 pub use set_charter::SetCharterArgs;
@@ -62,6 +64,7 @@ pub(crate) fn router() -> ToolRouter<Jojobot> {
         + Jojobot::list_entities_router()
         + Jojobot::merge_entities_router()
         + Jojobot::recall_router()
+        + Jojobot::rename_entity_router()
         + Jojobot::retract_router()
         + Jojobot::search_router()
         + Jojobot::set_charter_router()

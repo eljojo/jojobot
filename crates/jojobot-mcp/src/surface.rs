@@ -384,6 +384,7 @@ fn the_tool_surface_is_exactly_this_list() {
             "read_mailbox",
             "read_message",
             "recall",
+            "rename_entity",
             "retract",
             "search",
             "set_charter",
@@ -1789,15 +1790,15 @@ fn no_agent_facing_text_promises_a_permanent_handle() {
 /// catches specific known lies this cannot see past, and this catches
 /// silence that a phrase list cannot require against.
 ///
-/// ⚠️ **Scoped to text that actually describes the capability, and today
-/// nothing does — no served text pairs "rename" with "handle" yet, which is
-/// the pairing [`no_agent_facing_text_promises_a_permanent_handle`] stopped
-/// forbidding.** So this assertion has zero sentences to check right now: a
-/// green here answers an empty question, not a real one, until a rename
-/// verb's own description exists. It was written this way — checked once
-/// the scope is non-empty, rather than skipped outright — so the day that
-/// description ships, this starts asking a real question without anybody
-/// having to remember to come back and re-arm it.
+/// ⚠️ **Scoped to text that actually describes the capability.** Written
+/// while nothing did — no served text paired "rename" with "handle" yet,
+/// which is the pairing
+/// [`no_agent_facing_text_promises_a_permanent_handle`] stopped forbidding —
+/// checked once the scope became non-empty rather than skipped outright, so
+/// it started asking a real question the day `rename_entity`'s own
+/// description shipped without anybody having to remember to come back and
+/// re-arm it. It now sweeps that description and its argument schema, and
+/// stays armed for whatever served text describes the capability next.
 #[test]
 fn a_description_of_renaming_names_what_does_not_follow_it() {
     let served = everything_served();
@@ -1825,9 +1826,10 @@ const NAMES_A_LIMIT: &[&str] = &[
 
 /// The sources that describe renaming a handle but name no limit on it —
 /// split out so [`a_description_of_renaming_names_what_does_not_follow_it`]
-/// can be pinned against sources written for a test, for the reason
-/// [`handle_promise_problem`] was split out: the real corpus has nothing to
-/// check this against yet.
+/// can ALSO be pinned against sources written for a test, for the reason
+/// [`handle_promise_problem`] was split out: proving the logic against a
+/// sentence written for the test is what makes the case mean something
+/// beyond "the one real description I already wrote happens to pass."
 fn descriptions_missing_a_named_limit(served: &[(String, String)]) -> Vec<&str> {
     let mut describing: Vec<&str> = Vec::new();
     let mut limited: Vec<&str> = Vec::new();
@@ -1881,29 +1883,16 @@ fn a_limited_rename_description_reads_clean() {
     );
 }
 
-/// 🚨 **Nothing describes renaming yet, so the real corpus must not trip
-/// this** — the vacuous-scope case the doc comment above promises, pinned
-/// rather than left as an assertion nobody watches.
-#[test]
-fn the_real_corpus_names_no_rename_and_so_has_nothing_to_check_yet() {
-    let served = everything_served();
-    let unlimited = descriptions_missing_a_named_limit(&served);
-    assert!(
-        unlimited.is_empty(),
-        "the corpus should describe no rename yet, so this scope should be empty — either a \
-         rename shipped without a check noticing, or this test is stale: {unlimited:?}",
-    );
-}
-
 /// **One sentence's verdict, split out so it can be pinned against a sentence
 /// written for a test rather than only against whatever the corpus holds
 /// today.**
 ///
-/// The corpus holds nothing about a rename yet — no verb exists — so a case
-/// that only swept the real corpus would prove this logic works on an empty
-/// question. The two tests below, over sentences written for this file
-/// rather than gathered from it, are what actually prove the shape a future
-/// verb's own description needs to pass.
+/// Written while the corpus held nothing about a rename — no verb existed —
+/// so a case that only swept the real corpus would have proven this logic
+/// works on an empty question. The two tests below, over sentences written
+/// for this file rather than gathered from it, are what actually proved the
+/// shape `rename_entity`'s own description needed to pass, and what keep
+/// proving it as the description's wording changes.
 fn handle_promise_problem(sentence: &str) -> Option<String> {
     if !mentions(sentence, "handle") {
         return None;

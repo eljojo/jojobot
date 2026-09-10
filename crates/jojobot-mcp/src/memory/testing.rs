@@ -359,6 +359,18 @@ impl Memory for DownMemory {
     ) -> Result<Guarded<Entity>, MemoryError> {
         self.1.update_entity(id, patch).await
     }
+    async fn rename_entity(
+        &self,
+        from: &EntityId,
+        to: &EntityId,
+        parent: Option<EntityId>,
+        date: jiff::civil::Date,
+        override_token: Option<&str>,
+    ) -> Result<Guarded<Entity>, MemoryError> {
+        self.1
+            .rename_entity(from, to, parent, date, override_token)
+            .await
+    }
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
         self.1.capture(fact).await
     }

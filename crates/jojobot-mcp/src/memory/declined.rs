@@ -19,6 +19,11 @@ pub(crate) enum Blocked {
     /// A relabel — a change to a name or an alias. No handle is moving, so
     /// nothing here is unforgivable.
     Relabelling,
+    /// A rename's destination handle. Unlike [`Relabelling`](Self::Relabelling)
+    /// a handle IS moving here — that is the whole verb — so the advice must
+    /// not say otherwise; unlike [`Creating`](Self::Creating) the thing is
+    /// not new, it already answers to a different name.
+    Renaming,
     /// A write that only **names** an entity (a capture's subject, an edge's
     /// object). It cannot create one, so there is no token to hand back and no
     /// `override_token` on the verb.
@@ -82,6 +87,19 @@ pub(crate) fn blocked_result(
             "Nothing was written. '{attempted}' is not an entity jojobot knows. If one of the \
              handles above is what you meant, use that. Otherwise {verb} cannot create it for \
              you — call add_entity to create '{attempted}' first, then re-call {verb}.",
+        ),
+        Blocked::Renaming if exact => format!(
+            "Nothing was renamed. The handle '{attempted}' is already taken, and that cannot be \
+             forced — a handle has exactly one owner. Either this IS the entity above (nothing \
+             to do — it already has this name), or it is a different thing and the destination \
+             needs a more qualified slug.",
+        ),
+        Blocked::Renaming => format!(
+            "Nothing was renamed. If '{attempted}' IS one of the entities above, renaming onto \
+             it would collide with a thing that already exists there. If it is genuinely a \
+             different thing that happens to share a name, re-call rename_entity with \
+             override_token: \"{token}\". That token belongs to THIS refusal and lifts no other. \
+             Display names are not unique and never have to be; the handle is what has to be.",
         ),
     };
     blocked_body(attempted, candidates, how_to_proceed)
@@ -369,6 +387,8 @@ pub(crate) fn memory_error(e: MemoryError) -> McpError {
         | MemoryError::AlreadyRetracted { .. }
         | MemoryError::NothingToMerge { .. }
         | MemoryError::AlreadyMerged { .. }
+        | MemoryError::NothingToRename { .. }
+        | MemoryError::HandleMoved { .. }
         | MemoryError::UnconfirmedPromotion
         | MemoryError::UnconfirmedSettling => McpError::invalid_params(e.to_string(), None),
         MemoryError::Store(msg) => {
