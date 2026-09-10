@@ -261,6 +261,24 @@ mod tests {
             .expect("amend_last should succeed");
         assert_eq!(amended.text, format!("corrected: @{was}"));
 
+        let beat = sessions
+            .append(
+                &session.id,
+                NewEntry::beat("captured", format!("captured: @{was}"), epoch(), None),
+            )
+            .await
+            .expect("append of a beat should succeed");
+        let beat_amended = sessions
+            .amend_beat(
+                &session.id,
+                &beat.id,
+                &format!("captured twice: @{was}"),
+                epoch(),
+            )
+            .await
+            .expect("amend_beat should succeed");
+        assert_eq!(beat_amended.text, format!("captured twice: @{was}"));
+
         memory
             .rename_entity(&was, &now, None, date(2026, 6, 2), None)
             .await
@@ -273,8 +291,9 @@ mod tests {
             .await
             .expect("read_session should succeed");
         assert_eq!(read_back.focus, format!("still on @{now}"));
-        assert_eq!(read_back.entries.len(), 1);
+        assert_eq!(read_back.entries.len(), 2);
         assert_eq!(read_back.entries[0].text, format!("corrected: @{now}"));
+        assert_eq!(read_back.entries[1].text, format!("captured twice: @{now}"));
 
         // The bare store never held either spelling — only the badge.
         let raw = bare
@@ -284,6 +303,9 @@ mod tests {
         assert!(!raw.focus.contains(was.as_str()));
         assert!(!raw.focus.contains(now.as_str()));
         assert!(raw.focus.contains(mention::MARK));
+        assert!(!raw.entries[1].text.contains(was.as_str()));
+        assert!(!raw.entries[1].text.contains(now.as_str()));
+        assert!(raw.entries[1].text.contains(mention::MARK));
         assert!(!raw.entries[0].text.contains(was.as_str()));
         assert!(!raw.entries[0].text.contains(now.as_str()));
         assert!(raw.entries[0].text.contains(mention::MARK));
