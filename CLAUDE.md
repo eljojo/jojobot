@@ -174,15 +174,15 @@ Shipped and live:
   every past mention reads as, and no stored text is rewritten.** **A mention
   naming something absent is refused with candidates**, the rule an edge's
   object already faces — ⚠️ **except on a thing's prose, whose answer has no
-  blocked shape to give.** ⛔️ **Text written before this is not migrated**, and
-  the two unresolvable shapes are stored differently so a reader can tell a
-  pointer whose thing is gone from words that never named one. ✅ **`rename_entity`
-  moves a handle** — a slug, a kind or a parent — **and the id underneath does not
-  move**, so everything above is what makes the verb safe rather than a promise
-  waiting on one. ⚠️ **What does NOT follow: a handle already written into a
-  journal beat, a mailbox message, or the store's own commit history** — those are
-  append-only and keep naming the old handle — **and a thing renamed and later
-  folded resolves one hop short of the survivor.**
+  blocked shape to give.** The two unresolvable shapes are stored differently so
+  a reader can tell a pointer whose thing is gone from words that never named
+  one. ✅ **`rename_entity` moves a handle** — a slug, a kind or a parent — **and
+  the id underneath does not move**, so everything above is what makes the verb
+  safe rather than a promise waiting on one. 🚨 **EVERY surface that holds a
+  handle in text is a link, not only a claim's** — **a journal beat and a mailbox
+  message included** — **and text written before that was true is MIGRATED once
+  onto permanent ids, so a rename reaches it.** ⛔️ **A surface that keeps naming
+  the old handle is a defect to close, never a limit to document.**
 - **Fields, and what declaring a type buys** — **a record carries fields**: a
   flat bag of key/value pairs beside the claim, where a key the caller invents is
   kept as written and a key some type declared is held to what that type says.
