@@ -13,11 +13,13 @@ use jojobot_adapters::dolt::teaching::DoltTeachings;
 use jojobot_adapters::owners::MemoryOwners;
 use jojobot_adapters::provisioned::Provisioned;
 use jojobot_adapters::search::{IndexedMailboxes, IndexedMemory, IndexedSessions, Retrieval};
+use jojobot_domain::mailbox::mention as mailbox_mention;
 use jojobot_domain::mailbox::{Mailboxes, OwnerIndex};
 use jojobot_domain::memory::Memory;
 use jojobot_domain::memory::mention;
 use jojobot_domain::memory::search::Search;
 use jojobot_domain::session::Sessions;
+use jojobot_domain::session::mention as session_mention;
 use jojobot_domain::teaching::Teachings;
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -255,9 +257,18 @@ async fn main() -> anyhow::Result<()> {
     // this handle resolve" is the whole of what crosses. It reads through the
     // projection so a bot created this session is an owner this session.
     let owners: Arc<dyn OwnerIndex> = Arc::new(MemoryOwners::new(indexed.clone()));
-    let mail_store: Arc<dyn Mailboxes> =
-        Arc::new(DoltMailboxes::open(store.pool().clone(), owners));
-    let sessions: Arc<dyn Sessions> = Arc::new(DoltSessions::open(store.pool().clone()));
+    // **Mentions resolve above the raw store and below the index here too** —
+    // the same placement as `memory`'s own `Mentioning`, and for the same
+    // reason: a mention in a message or a journal beat has to see the full
+    // entity list, and what search holds must be what a reader sees.
+    let mail_store: Arc<dyn Mailboxes> = Arc::new(mailbox_mention::Mentioning::new(
+        Arc::new(DoltMailboxes::open(store.pool().clone(), owners)),
+        indexed.clone(),
+    ));
+    let sessions: Arc<dyn Sessions> = Arc::new(session_mention::Mentioning::new(
+        Arc::new(DoltSessions::open(store.pool().clone())),
+        indexed.clone(),
+    ));
     let teachings: Arc<dyn Teachings> = Arc::new(DoltTeachings::open(store.pool().clone()));
 
     // Mail goes into the SAME index — one front door, one ranked list — so the

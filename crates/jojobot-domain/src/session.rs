@@ -36,6 +36,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::memory::EntityId;
 
+pub mod mention;
+
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 

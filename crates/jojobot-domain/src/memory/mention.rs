@@ -23,14 +23,23 @@
 //!
 //! # What this does NOT do
 //!
-//! ⛔️ **It migrates nothing.** Prose written before this existed holds the
-//! spellings its authors typed, and it stays that way. Journal beats and the
-//! store's own commit messages are append-only history by design — reaching
-//! back into them would mean rewriting the record of what a session actually
-//! said, which is a worse thing than a stale link.
+//! ⛔️ **It migrates nothing.** A claim's content or a thing's prose written
+//! before this mechanism existed holds the spelling its author typed, and
+//! reading it back does not rewrite it — only a fresh write goes through
+//! [`resolved`]. **The store's own commit messages carry no caller text at
+//! all** (rule 260): jojobot marks a boundary in them with a fixed string,
+//! never a caller's words, so no handle ever needs migrating there.
 //!
 //! ⛔️ **It renames nothing.** This stores something permanent; it does not add
 //! the ability to change a handle.
+//!
+//! # What this is not the only user of
+//!
+//! **A journal beat and a mailbox message hold a handle in text on the same
+//! terms a claim's words do (rule 260)** — see
+//! [`crate::session::mention`] and [`crate::mailbox::mention`], which call
+//! [`resolved`] and [`rendered`] directly rather than duplicating the
+//! spelling of the stored form.
 
 use super::{Entity, EntityId, kinds};
 

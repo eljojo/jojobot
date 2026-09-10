@@ -28,6 +28,7 @@ use crate::memory::{EntityId, guard as memory_guard};
 use crate::text;
 
 pub mod guard;
+pub mod mention;
 
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
