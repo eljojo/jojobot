@@ -426,9 +426,15 @@ say     September: nothing on the pump carries the day it came back, so the ques
 # noticing that two claims contradict each other is a mind's job. Both claims
 # stand, both come back, and the reader is the mind. What is locked is exactly
 # that: neither quietly replaced the other.
-recall {"subject": "thing:floor-pump", "facts": true}
-carries person:ralph
-carries person:nelson
+#
+# 🚨 **A hatch, because `carries` cannot see a record's own STATUS.** A
+# retraction is marked rather than filtered, so a retracted account's edge
+# still reads back in the answer's text — `carries person:ralph` held on a
+# room where Ralph's account had been retracted, which is the paid run this
+# lock was originally written against. The correlation is between the edge
+# and the `status` key beside it on the SAME record, past what a substring
+# can say.
+check   both_accounts_of_the_pump_stand
 say     October: one of the two accounts of how the pump came back is gone, so a sitting picked a winner where the design says both stand
 
 # 🚨 **A write only a sitting that READ June's claim could have made.** The

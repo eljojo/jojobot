@@ -662,6 +662,46 @@ async fn october(room: &Surface, sid: &str) {
     .await;
 }
 
+/// **An October that picks a winner between the two accounts of how the pump
+/// came back, instead of leaving both to stand.**
+///
+/// The pump lock's own comment says what is locked is the WRITE: neither
+/// account quietly replacing the other. This is that replacement, played —
+/// September's account is retracted rather than left standing, in the same
+/// sitting that records Nelson's. The location note is still filed exactly as
+/// the honest October files it, so this targets one lock and not two.
+async fn october_removes_one_of_the_two_accounts(room: &Surface, sid: &str) {
+    let ralphs = address_of(room, "thing:floor-pump", "came back at the survey").await;
+    did(
+        room,
+        sid,
+        "retract",
+        json!({"address": ralphs,
+               "reason": "Nelson brought it back, not Ralph",
+               "recorded_at": "2026-10-11"}),
+    )
+    .await;
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "thing:floor-pump", "content": "brought round over the summer",
+               "provenance": "testimony",
+               "shape": "connection", "object": "person:nelson"}),
+    )
+    .await;
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "event:trail-survey",
+               "content": "the ground needs a look before next year",
+               "provenance": "testimony",
+               "shape": "location", "object": "place:north-trail"}),
+    )
+    .await;
+}
+
 /// **An October that writes the note and never says where.**
 ///
 /// The sitting does everything else it is asked and files the note on the event
@@ -892,6 +932,17 @@ const JUNE_VARIANTS: [(usize, &str); 3] = [
     (JUNE_POINTING_AT_ONE_KIND, PEOPLE_ONLY),
 ];
 
+/// Where October sits in the year, named for the reason `JUNE_AT` is.
+const OCTOBER_AT: usize = 9;
+
+/// **October's other guilt, named by an index no sitting has**, for the same
+/// reason June's variants are — the year holds fifteen sittings, so 19
+/// addresses none of them. Index 9 already carries a different wrong (the
+/// note filed on the event rather than the place); this is a second, about
+/// the pump's two accounts rather than the survey's location, and the two
+/// must stay apart for the reason June's own variants do.
+const OCTOBER_REMOVES_ONE_OF_THE_TWO_ACCOUNTS: usize = 19;
+
 /// Where late November sits in the year, named for the reason `JUNE_AT` is.
 const LATE_NOVEMBER_AT: usize = 12;
 
@@ -941,6 +992,8 @@ async fn work_the_year(
         };
         let late_november_variant =
             at == LATE_NOVEMBER_AT && guilty.contains(&LATE_NOVEMBER_STANDS_UP_A_SECOND_LOOP);
+        let october_variant =
+            at == OCTOBER_AT && guilty.contains(&OCTOBER_REMOVES_ONE_OF_THE_TWO_ACCOUNTS);
         // ⛔️ **Only a sitting that ACTS gets a run.** A boot mints nothing until
         // its first write, so a run for a sitting this drive skips is a run that
         // never happened — and it would sit in the day that sitting claims,
@@ -949,6 +1002,7 @@ async fn work_the_year(
             && !guilty.contains(&at)
             && june_variant.is_none()
             && !late_november_variant
+            && !october_variant
         {
             boundaries.push(boundary(room, &named[at + 1]).await);
             continue;
@@ -968,6 +1022,8 @@ async fn work_the_year(
             june_saying(room, sid, said).await;
         } else if late_november_variant {
             late_november_stands_up_a_second_loop(room, sid).await;
+        } else if october_variant {
+            october_removes_one_of_the_two_accounts(room, sid).await;
         } else if guilty.contains(&at) {
             match at {
                 9 => october_files_the_note_on_the_event(room, sid).await,
@@ -1875,6 +1931,39 @@ async fn the_rhythm_locks_still_fail_when_the_sitting_they_name_does_nothing() {
     );
 }
 
+/// 🚨 **A retracted account does not stand, and `carries` could not see that.**
+///
+/// A paid run had October retract September's account of the pump rather than
+/// leave it beside Nelson's — a sitting picking a winner, which is exactly the
+/// thing the lock beside it exists to catch. **The old lock held anyway**: a
+/// retraction is marked rather than filtered, so `recall` served the retracted
+/// record's own text back, edge and all, and a substring assertion cannot see
+/// the `status` key that would have told the two apart.
+#[tokio::test]
+async fn a_retracted_account_does_not_satisfy_the_pump_lock() {
+    let (_room, surface) = furnished().await;
+    let boundaries = work_the_year(
+        &surface,
+        &room_document(),
+        &WORKED,
+        &[OCTOBER_REMOVES_ONE_OF_THE_TWO_ACCOUNTS],
+    )
+    .await;
+    let judged = judge_all(&surface, &boundaries).await;
+    assert!(
+        !judged[OCTOBER[0]].held,
+        "October retracted Ralph's account instead of leaving it beside Nelson's, and the pump \
+         lock held anyway: {}",
+        saying(&judged),
+    );
+    assert!(
+        judged[OCTOBER[0]].saying.contains("picked a winner"),
+        "a retraction is a verified act, not an absence, and the failure text should say so \
+         rather than reading as though nothing was ever written: {}",
+        saying(&judged),
+    );
+}
+
 /// 🚨 **The trace locks, asked both ways.**
 ///
 /// **The first is a planted answer**: what the claim used to say is on no read
@@ -1999,7 +2088,7 @@ async fn no_lock_here_rests_on_a_needle_that_matches_somewhere_else() {
         summary.nowhere,
     );
     assert_eq!(
-        summary.ambiguous, 2,
+        summary.ambiguous, 1,
         "the walk sees a different number of ambiguous needles than the hand-check did, so it is \
          reading the answer differently",
     );

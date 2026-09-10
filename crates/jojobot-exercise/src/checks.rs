@@ -37,6 +37,13 @@
 //!   `outcome` beside `last_check_in` on the same record, and an assertion
 //!   cannot ask whether two keys landed together on one object out of a
 //!   folded answer.
+//! * **`both_accounts_of_the_pump_stand`** — say that an edge is on an ACTIVE
+//!   record rather than merely present in the answer. A retraction is marked
+//!   rather than filtered — `recall` serves a retracted record's own text
+//!   back, by design, so a reader can be told a link was taken back rather
+//!   than have it silently vanish. `carries person:ralph` cannot see the
+//!   `status` key beside the edge it found, so an active account and one
+//!   retracted the same day read identically to a substring.
 //! * **`one_record_points_at_two_kinds`** — say that handles of two different
 //!   kinds landed on ONE record. `carries` lines are claims about the whole
 //!   answer, so two of them hold on two records naming one thing each, which is
@@ -58,7 +65,7 @@ type Hatch = (&'static str, fn() -> Box<dyn Checks>);
 
 /// **Every named check this build ships.** A room adds one line here and one
 /// `check` line in its document, and both are visible in the count.
-pub const CHECKS: [Hatch; 15] = [
+pub const CHECKS: [Hatch; 16] = [
     ("the_brief_left_the_box", || {
         checked(|seen| Box::pin(the_brief_left_the_box(seen)))
     }),
@@ -92,6 +99,9 @@ pub const CHECKS: [Hatch; 15] = [
     }),
     ("the_club_was_corrected_in_place_in_july", || {
         checked(|seen| Box::pin(the_club_was_corrected_in_place_in_july(seen)))
+    }),
+    ("both_accounts_of_the_pump_stand", || {
+        checked(|seen| Box::pin(both_accounts_of_the_pump_stand(seen)))
     }),
     ("august_put_nobody_new_at_the_survey", || {
         checked(|seen| Box::pin(august_put_nobody_new_at_the_survey(seen)))
@@ -548,6 +558,127 @@ async fn the_pump_reached_its_holder_in_february(seen: &Observed<'_>) -> Result<
         false => Err(format!(
             "nothing came to point at the person holding the pump in {FEBRUARY}'s window, so who \
              had it is only in the prose of a sitting that is gone",
+        )),
+    }
+}
+
+/// The two sittings that each write one account of the pump's return, named
+/// by the phase whose window carries the write — not by content, which an
+/// occupant may word any way it likes.
+const SEPTEMBER: &str = "Phase 9";
+const OCTOBER: &str = "Phase 10";
+
+/// **Every address on the pump, either side of a phase's window.** Diffing
+/// the two tells which address that window wrote, without needing to know
+/// what the occupant said — the same reason the day assertion reads addresses
+/// rather than prose.
+fn floor_pump_addresses(world: &str) -> std::collections::HashSet<String> {
+    let mut found = std::collections::HashSet::new();
+    for line in world.lines() {
+        let Ok(parsed) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        let Some(hits) = parsed["results"].as_array() else {
+            continue;
+        };
+        for hit in hits {
+            if let Some(address) = hit["address"].as_str()
+                && address.starts_with("thing:floor-pump#")
+            {
+                found.insert(address.to_string());
+            }
+        }
+    }
+    found
+}
+
+/// 🚨 **Both accounts of how the pump came back must stand, ACTIVELY.**
+///
+/// The operator says nothing about September and takes nothing back; two
+/// sittings record who returned the pump and jojobot performs no inference of
+/// its own, so both claims must stand. **`carries person:ralph` on the
+/// finished room held even when Ralph's account was retracted**, because a
+/// retraction is marked rather than filtered — `recall` serves the retracted
+/// record's own text back, edge and all, so a later reader can be told a link
+/// was taken back rather than have it silently vanish. A substring assertion
+/// cannot see the `status` key beside the edge it matched.
+///
+/// ⛔️ **Naming the edge is not enough either.** February also draws a
+/// `connection` edge at Ralph — lending the pump, not returning it — and that
+/// edge outlives everything this lock is about. So this is scoped by WHICH
+/// WINDOW wrote the address, the same technique February's own neighbour lock
+/// uses for the identical ambiguity, and it reads the address's CURRENT status
+/// rather than trusting that the window it appeared in is still what it says.
+///
+/// ⛔️ **The two ways of not holding are worth telling apart.** An address
+/// written and then retracted is a sitting that picked a winner — a specific,
+/// verified act, since the retraction is what the read actually shows.
+/// Nothing written in a window at all is a claim this lock cannot make:
+/// nothing here was picked over, there was nothing to pick from.
+async fn both_accounts_of_the_pump_stand(seen: &Observed<'_>) -> Result<(), String> {
+    let Some((before_sep, after_sep)) = seen.across(SEPTEMBER) else {
+        return Err(format!(
+            "this run took no reading either side of {SEPTEMBER}, so nothing here can say which \
+             record is Ralph's account of the pump's return",
+        ));
+    };
+    let Some((before_oct, after_oct)) = seen.across(OCTOBER) else {
+        return Err(format!(
+            "this run took no reading either side of {OCTOBER}, so nothing here can say which \
+             record is Nelson's account of the pump's return",
+        ));
+    };
+    let ralphs: Vec<String> = floor_pump_addresses(&after_sep.world)
+        .difference(&floor_pump_addresses(&before_sep.world))
+        .cloned()
+        .collect();
+    let nelsons: Vec<String> = floor_pump_addresses(&after_oct.world)
+        .difference(&floor_pump_addresses(&before_oct.world))
+        .cloned()
+        .collect();
+    let read = seen
+        .room
+        .call(
+            "recall",
+            json!({"subject": "thing:floor-pump", "facts": true}),
+        )
+        .await;
+    let parsed: Value = serde_json::from_str(&read).unwrap_or(Value::Null);
+    let Some(facts) = parsed["objects"][0]["facts"].as_array() else {
+        return Err(format!(
+            "the pump came back with no facts at all, so nothing was measured: {read}"
+        ));
+    };
+    let status_of = |address: &str| -> Option<&str> {
+        facts
+            .iter()
+            .find(|fact| fact["address"] == address)
+            .and_then(|fact| fact["status"].as_str())
+    };
+    let active = |addresses: &[String]| addresses.iter().any(|a| status_of(a) == Some("active"));
+    let retracted =
+        |addresses: &[String]| addresses.iter().any(|a| status_of(a) == Some("retracted"));
+    if active(&ralphs) && active(&nelsons) {
+        return Ok(());
+    }
+    match (
+        active(&ralphs),
+        retracted(&ralphs),
+        active(&nelsons),
+        retracted(&nelsons),
+    ) {
+        (false, true, ..) => Err(format!(
+            "Ralph's account, recorded in {SEPTEMBER}'s window, was retracted rather than left \
+             standing, so a sitting picked a winner where the design says both stand: {read}"
+        )),
+        (.., false, true) => Err(format!(
+            "Nelson's account, recorded in {OCTOBER}'s window, was retracted rather than left \
+             standing, so a sitting picked a winner where the design says both stand: {read}"
+        )),
+        _ => Err(format!(
+            "not both accounts of the pump's return are active — {SEPTEMBER}'s window wrote \
+             {ralphs:?} and {OCTOBER}'s wrote {nelsons:?} — so this sitting or an earlier one \
+             wrote less than both: {read}"
         )),
     }
 }
