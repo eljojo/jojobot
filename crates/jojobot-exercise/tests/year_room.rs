@@ -505,6 +505,36 @@ async fn late_november_writes_the_turn_by_hand(room: &Surface, sid: &str) {
     .await;
 }
 
+/// **A late November that reaches for the operator's own words, finds
+/// nothing under January's handle, and stands up a second loop instead of
+/// the first.**
+///
+/// The room's own document names this failure at Phase 13: the store then
+/// holds two loops, each with half the history, and neither can say when the
+/// chain was last done. This one is also written by hand rather than checked
+/// in, so the second loop carries the same defect June and this sitting's
+/// other guilty variant do — a fixture giving the derivations lock's own
+/// scoping something to be wrong about, since January's loop is left
+/// untouched and entirely clean.
+async fn late_november_stands_up_a_second_loop(room: &Surface, sid: &str) {
+    did(
+        room,
+        sid,
+        "add_entity",
+        json!({"kind": "rhythm", "handle": "drivetrain-service", "name": "Drivetrain service",
+               "source": "the operator", "parent": "thing:gravel-bike"}),
+    )
+    .await;
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "rhythm:drivetrain-service", "content": "did the drivetrain again today",
+               "fields": {"last_check_in": "2026-11-22"}}),
+    )
+    .await;
+}
+
 async fn july(room: &Surface, sid: &str) {
     let wrong = address_of(room, "org:north-trail-club", "Tuesdays").await;
     did(
@@ -862,6 +892,19 @@ const JUNE_VARIANTS: [(usize, &str); 3] = [
     (JUNE_POINTING_AT_ONE_KIND, PEOPLE_ONLY),
 ];
 
+/// Where late November sits in the year, named for the reason `JUNE_AT` is.
+const LATE_NOVEMBER_AT: usize = 12;
+
+/// **Late November's other guilt, named by an index no sitting has**, for the
+/// same reason June's variants are — the year holds fifteen sittings, so 18
+/// addresses none of them.
+///
+/// This is the failure the room's own document reads out at Phase 13: a
+/// sitting that reaches for the operator's words, finds nothing under
+/// January's handle, and stands up a SECOND loop rather than the first —
+/// after which the store holds two, each with half the history.
+const LATE_NOVEMBER_STANDS_UP_A_SECOND_LOOP: usize = 18;
+
 /// **The sittings that record something**, named rather than counted: the two
 /// a person reads write nothing by design, and one of them sits between the
 /// sittings that do, so a range cannot say it.
@@ -896,11 +939,17 @@ async fn work_the_year(
             true => variant,
             false => None,
         };
+        let late_november_variant =
+            at == LATE_NOVEMBER_AT && guilty.contains(&LATE_NOVEMBER_STANDS_UP_A_SECOND_LOOP);
         // ⛔️ **Only a sitting that ACTS gets a run.** A boot mints nothing until
         // its first write, so a run for a sitting this drive skips is a run that
         // never happened — and it would sit in the day that sitting claims,
         // where the next drive of the same day meets it still working.
-        if !worked.contains(&at) && !guilty.contains(&at) && june_variant.is_none() {
+        if !worked.contains(&at)
+            && !guilty.contains(&at)
+            && june_variant.is_none()
+            && !late_november_variant
+        {
             boundaries.push(boundary(room, &named[at + 1]).await);
             continue;
         }
@@ -917,6 +966,8 @@ async fn work_the_year(
         // to disagree about which sittings write.
         if let Some(said) = june_variant {
             june_saying(room, sid, said).await;
+        } else if late_november_variant {
+            late_november_stands_up_a_second_loop(room, sid).await;
         } else if guilty.contains(&at) {
             match at {
                 9 => october_files_the_note_on_the_event(room, sid).await,
