@@ -287,8 +287,24 @@ impl InMemoryMemory {
 
     /// The rows this store holds — used where a supplied record has no place
     /// (`list_entities`, and as the base [`InMemoryMemory::known`] extends).
+    ///
+    /// **A parent pointer is resolved here, on the way out — like an edge or
+    /// a ref, never badge-keyed.** It names a DIFFERENT row, not this one's
+    /// own key, and nothing here queries by it — `children` reads every
+    /// entity and filters in memory — so a rename leaves nothing a stored
+    /// badge would protect.
     fn index(&self) -> Vec<Entity> {
-        self.entities.lock().expect("fake mutex poisoned").clone()
+        let mut entities = self.entities.lock().expect("fake mutex poisoned").clone();
+        let former = self.former();
+        let snapshot = entities.clone();
+        for entity in &mut entities {
+            if let Some(parent) = &entity.parent
+                && let Some(resolved) = super::resolve_handle(parent, &snapshot, &former)
+            {
+                entity.parent = Some(resolved.id.clone());
+            }
+        }
+        entities
     }
 
     /// **What EXISTS, as any guard that consults the store has to see it**: the
@@ -11336,6 +11352,89 @@ pub mod contract {
         );
     }
 
+    /// 🚨 **A child's parent pointer follows a rename, resolved on the way
+    /// out — the same shape an edge and a ref already get, not the shape a
+    /// claim's home or an alias got.**
+    ///
+    /// **`parent` is never a lookup key.** `children` reads every entity and
+    /// filters in memory rather than querying by the column, so nothing here
+    /// needs the storage stability a badge buys — only what a reader sees
+    /// needs to change, which is what resolving on read is for.
+    ///
+    /// **`children` itself is the proof that matters**, not just the field:
+    /// a fix that only patched `Entity::parent` and left the reverse lookup
+    /// reading the raw stored value would still lose a session asking "what
+    /// is under this thing now."
+    pub async fn a_childs_parent_pointer_follows_a_rename<M: Memory + ?Sized>(
+        store: &M,
+        rehandles: &dyn Rehandles,
+    ) {
+        let was = EntityId("person:contract-parent-was".into());
+        let now = EntityId("work:contract-parent-now".into());
+        store
+            .add_entity(NewEntity::new(
+                was.clone(),
+                "Contract Parent Was",
+                "the roster",
+            ))
+            .await
+            .expect("the fixture is written")
+            .written()
+            .expect("nothing collides with it");
+        let badge = store
+            .list_entities(None)
+            .await
+            .expect("the store answers")
+            .into_iter()
+            .find(|e| e.id == was)
+            .expect("the fixture is there")
+            .badge
+            .expect("a written row wears a badge");
+
+        let child = EntityId("person:contract-parent-child".into());
+        store
+            .add_entity(NewEntity {
+                parent: Some(was.clone()),
+                ..NewEntity::new(child.clone(), "Contract Parent Child", "the roster")
+            })
+            .await
+            .expect("the fixture is written")
+            .written()
+            .expect("nothing collides with it");
+
+        rehandles.rehandle(&was, &now).await;
+        rehandles
+            .note_former_handle(FormerHandle {
+                former: was.clone(),
+                badge,
+                changed_at: date(2026, 4, 19),
+            })
+            .await;
+
+        let held = store
+            .list_entities(None)
+            .await
+            .expect("the store answers")
+            .into_iter()
+            .find(|e| e.id == child)
+            .expect("the child is there");
+        assert_eq!(
+            held.parent.as_ref(),
+            Some(&now),
+            "the child's parent did not follow the rename: {held:?}",
+        );
+
+        let kids = store
+            .children(&now)
+            .await
+            .expect("children reads under the current handle");
+        assert_eq!(
+            kids,
+            vec![child],
+            "the reverse lookup did not find the child through the renamed parent: {kids:?}",
+        );
+    }
+
     /// 🚨 **An edge follows a rename too, and nothing rewrites the claim to do
     /// it.**
     ///
@@ -12313,6 +12412,7 @@ pub mod contract {
         no_read_serves_a_badge_and_every_one_serves_the_handle(mentioning).await;
         an_account_written_from_a_reason_stores_its_mentions(mentioning, bare).await;
         a_stale_handle_resolves_through_its_rename_history(bare, rehandles).await;
+        a_childs_parent_pointer_follows_a_rename(bare, rehandles).await;
         an_edge_follows_a_thing_that_is_rehandled(mentioning, bare, rehandles).await;
         a_ref_follows_a_thing_that_is_rehandled(mentioning, bare, rehandles).await;
         a_stale_address_resolves_to_the_same_claim_after_a_rename(bare, rehandles).await;

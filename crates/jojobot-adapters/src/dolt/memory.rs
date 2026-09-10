@@ -412,6 +412,23 @@ impl DoltMemory {
                 .collect();
             entities.push(entity_from(row, mine)?);
         }
+        // **A parent pointer is resolved on the way out, like an edge or a
+        // ref — never badge-keyed.** It names a DIFFERENT row, not this one's
+        // own key, and nothing here queries by it: `children` reads every
+        // entity and filters in memory, so a rename leaves nothing for a
+        // stored badge to protect. Resolved against a snapshot taken before
+        // the loop mutates, since `resolve_handle` needs the whole set to
+        // search and a row cannot lend itself out while it is being written.
+        let former = Self::former_handles_in(tx).await?;
+        let snapshot = entities.clone();
+        for entity in &mut entities {
+            if let Some(parent) = &entity.parent
+                && let Some(resolved) =
+                    jojobot_domain::memory::resolve_handle(parent, &snapshot, &former)
+            {
+                entity.parent = Some(resolved.id.clone());
+            }
+        }
         Ok(entities)
     }
 
