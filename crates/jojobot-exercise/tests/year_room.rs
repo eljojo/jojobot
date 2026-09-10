@@ -521,7 +521,7 @@ async fn late_november_stands_up_a_second_loop(room: &Surface, sid: &str) {
         room,
         sid,
         "add_entity",
-        json!({"kind": "rhythm", "handle": "drivetrain-service", "name": "Drivetrain service",
+        json!({"kind": "rhythm", "handle": "orphan", "name": "Drivetrain service",
                "source": "the operator", "parent": "thing:gravel-bike"}),
     )
     .await;
@@ -529,7 +529,7 @@ async fn late_november_stands_up_a_second_loop(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "rhythm:drivetrain-service", "content": "did the drivetrain again today",
+        json!({"subject": "rhythm:orphan", "content": "did the drivetrain again today",
                "fields": {"last_check_in": "2026-11-22"}}),
     )
     .await;
