@@ -37,10 +37,11 @@
 //!   `outcome` beside `last_check_in` on the same record, and an assertion
 //!   cannot ask whether two keys landed together on one object out of a
 //!   folded answer.
-//! * **`one_record_names_a_person_a_place_and_an_event`** — say that three
-//!   things landed on ONE record. Three `carries` lines are three claims about
-//!   the whole answer, so they hold on three records naming one thing each,
-//!   which is the easy case rather than the one being watched.
+//! * **`one_record_points_at_two_kinds`** — say that handles of two different
+//!   kinds landed on ONE record. `carries` lines are claims about the whole
+//!   answer, so two of them hold on two records naming one thing each, which is
+//!   the easy case rather than the one being watched. Naming the kinds is not a
+//!   way out either: the sitting chooses which things it points at.
 //! * **`a_colleague_exists_with_its_box`**, **`the_pile_is_in_the_colleagues_box`**
 //!   and **`what_became_of_the_pile_is_on_the_record`** — **name a thing the
 //!   OCCUPANT named.** A lock's query is text written before the run, and these
@@ -101,8 +102,8 @@ pub const CHECKS: [Hatch; 15] = [
     ("the_pump_reached_its_holder_in_february", || {
         checked(|seen| Box::pin(the_pump_reached_its_holder_in_february(seen)))
     }),
-    ("one_record_names_a_person_a_place_and_an_event", || {
-        checked(|seen| Box::pin(one_record_names_a_person_a_place_and_an_event(seen)))
+    ("one_record_points_at_two_kinds", || {
+        checked(|seen| Box::pin(one_record_points_at_two_kinds(seen)))
     }),
 ];
 
@@ -782,33 +783,97 @@ async fn the_service_landed_on_the_loop_that_already_existed(
     }
 }
 
-/// **The three handle kinds one record has to carry.**
+/// **How a handle reads when it is written into a sentence**, which is the
+/// spelling the surface teaches and the store serves back.
 ///
-/// ⛔️ **The KINDS are named and the slugs are not.** January invents the
-/// event's handle, so a check that spelled one would fail a run whose January
-/// chose a different word for the same thing — which is the fault this room
-/// removed from its late November lock.
-const NAMES_A_PERSON: &str = "@person:";
-const NAMES_A_PLACE: &str = "@place:";
-const NAMES_AN_EVENT: &str = "@event:";
+/// **The server declares it, not this crate**, so these are a reader of a
+/// spelling rather than a definition of one. The room's own fixtures write the
+/// mentions out in full, which is what holds this to what a caller really
+/// sends.
+const MENTION: char = '@';
+const KIND_ENDS: char = ':';
 
-/// 🚨 **One record names a person, a place and an event as HANDLES.**
+/// **How many kinds one record has to point at.**
 ///
-/// The operator names three things in one breath. A sitting that writes them as
-/// words leaves a sentence; a sitting that writes them as handles leaves
+/// **Two, because two is the least that is a LINK.** One mention is a tag: it
+/// says the claim is about a thing, which the claim's own subject and its edges
+/// already say. Two mentions of DIFFERENT kinds on one record is the smallest
+/// thing a later sitting can leave in two directions — from the claim to a
+/// thing of one kind, and from the same claim to a thing of another. That is
+/// the whole of what *a later sitting has something to follow* means, and it is
+/// what this room's October actually needs from June.
+///
+/// ⛔️ **Three is not a stronger version of the same claim.** It is a claim
+/// about what the year's story happens to contain. Nothing in the capability
+/// says a pointer-bearing claim names three kinds, and a sitting may file the
+/// operator's three nouns across two claims and still have done the thing.
+///
+/// ⛔️ **And no count above two, of kinds, records or mentions.** Any larger
+/// number is a measurement of one run rather than a statement about the
+/// capability — it would be read off whatever a sample produced, and it would
+/// go red again the first time a sitting wrote well and briefly.
+const TOGETHER: usize = 2;
+
+/// **The run of bytes a handle is drawn from**: lower case, digits, hyphen.
+fn handle_run(text: &str) -> &str {
+    let end = text
+        .find(|one: char| !(one.is_ascii_lowercase() || one.is_ascii_digit() || one == '-'))
+        .unwrap_or(text.len());
+    &text[..end]
+}
+
+/// **Every handle KIND this text points at**, each named once.
+///
+/// ⛔️ **No kind is named here and no slug is.** The kinds a sitting reaches for
+/// are its own choice, exactly as the slugs are: January invents the event's
+/// handle, and a sitting that pointed at the club and the trail rather than at
+/// a person and an event did the identical thing. A check that spelled either
+/// would fail a run for the word it chose rather than for what it wrote — the
+/// fault this room removed from its late November lock.
+fn kinds_pointed_at(text: &str) -> Vec<String> {
+    let mut found: Vec<String> = Vec::new();
+    for (at, _) in text.match_indices(MENTION) {
+        let rest = &text[at + MENTION.len_utf8()..];
+        let kind = handle_run(rest);
+        let after = &rest[kind.len()..];
+        if kind.is_empty() || !after.starts_with(KIND_ENDS) {
+            continue;
+        }
+        // **The slug has to be there.** `@place:` with nothing after it is a
+        // word that looks like a pointer and leads nowhere.
+        if handle_run(&after[KIND_ENDS.len_utf8()..]).is_empty() {
+            continue;
+        }
+        if !found.iter().any(|seen| seen == kind) {
+            found.push(kind.to_string());
+        }
+    }
+    found
+}
+
+/// 🚨 **One record points at two kinds of thing as HANDLES.**
+///
+/// The operator names several things in one breath. A sitting that writes them
+/// as words leaves a sentence; a sitting that writes them as handles leaves
 /// pointers, and a later sitting can go from the claim to the things it names.
 ///
 /// ⚠️ **A hatch, because an assertion is a substring of the WHOLE answer.**
-/// Three `carries` lines hold on three separate records naming one thing each,
-/// which is the easy case and not the one the operator asked for. **Whether the
-/// three landed on ONE record is a correlation inside one object**, and the
-/// lock format's three words do not branch — the same reason the loop's own
-/// lock is a hatch.
+/// Two `carries` lines hold on two separate records naming one thing each,
+/// which is the easy case and not the one being watched. **Whether two landed
+/// on ONE record is a correlation inside one object**, and the lock format's
+/// three words do not branch — the same reason the loop's own lock is a hatch.
+///
+/// ⛔️ **It used to demand a person, a place and an event together, and that
+/// could not be met.** The year's story never asks a sitting to name all three
+/// in one sentence, so a run that wrote pointers on half its claims failed a
+/// lock about pointers. **A red that survives the fix it asks for is a red
+/// nobody trusts the next time it fires**, so the floor is now what the
+/// capability is for rather than one combination of nouns: see [`TOGETHER`].
 ///
 /// ⛔️ **The empty board is a failure with its own words.** A store the run
-/// never wrote in holds no records, and reporting *no record names three
+/// never wrote in holds no records, and reporting *no record points at two
 /// things* about it would blame a sitting for a room nobody worked.
-async fn one_record_names_a_person_a_place_and_an_event(seen: &Observed<'_>) -> Result<(), String> {
+async fn one_record_points_at_two_kinds(seen: &Observed<'_>) -> Result<(), String> {
     let read = seen
         .room
         .call("search", json!({"query": "*", "limit": 200}))
@@ -830,22 +895,33 @@ async fn one_record_names_a_person_a_place_and_an_event(seen: &Observed<'_>) -> 
             .collect::<Vec<&str>>()
             .join(" ")
     };
-    let kinds = [NAMES_A_PERSON, NAMES_A_PLACE, NAMES_AN_EVENT];
-    if hits
+    let pointing: Vec<Vec<String>> = hits
         .iter()
-        .any(|hit| kinds.iter().all(|kind| written(hit).contains(kind)))
-    {
+        .map(|hit| kinds_pointed_at(&written(hit)))
+        .collect();
+    if pointing.iter().any(|kinds| kinds.len() >= TOGETHER) {
         return Ok(());
     }
-    let anywhere: Vec<&str> = kinds
-        .into_iter()
-        .filter(|kind| hits.iter().any(|hit| written(hit).contains(kind)))
-        .collect();
-    Err(format!(
-        "no one record names a person, a place and an event as handles. Across all {} records \
-         the board holds, the handle kinds written into a sentence anywhere are {anywhere:?}",
-        hits.len(),
-    ))
+    // **The two ways of not holding are worth telling apart.** No pointer at
+    // all is the sitting that wrote words; pointers that never share a record
+    // is a sitting that tagged things one at a time and linked nothing.
+    let mut anywhere: Vec<&str> = pointing.iter().flatten().map(String::as_str).collect();
+    anywhere.sort_unstable();
+    anywhere.dedup();
+    match anywhere.is_empty() {
+        true => Err(format!(
+            "not one of the {} records the board holds writes a handle into its words, so every \
+             thing the year names is spelled out rather than pointed at",
+            hits.len(),
+        )),
+        false => Err(format!(
+            "handles are written into sentences and the kinds they point at anywhere on the \
+             board are {anywhere:?}, but no ONE of the {} records names two of different kinds \
+             together — so every pointer stands alone and no claim leads from a thing of one \
+             kind to a thing of another",
+            hits.len(),
+        )),
+    }
 }
 
 /// The other key a check-in writes in the same act as `last_check_in` —

@@ -132,14 +132,35 @@ async fn sitting(room: &Surface, day: &str) -> String {
         .to_string()
 }
 
-/// **The operator's own sentence, written as handles rather than as words.**
+/// **What June's survey claim says, in the four shapes the year can be driven
+/// with.**
 ///
-/// ⚠️ **One line, and that is the point of it being a constant.** A wrapped
-/// literal whose continuation is lost stores runs of spaces mid-sentence, every
-/// check on it still passes, and the fault reaches a reader — five instances of
-/// it across three crates so far.
+/// They differ in one thing: what the claim's own words POINT AT. Everything
+/// else the sitting does is the same under all of them, so a case that moves
+/// the lock about handles is measuring the sentence rather than a sitting that
+/// did less.
+///
+/// ⚠️ **One line each, and that is the point of them being constants.** A
+/// wrapped literal whose continuation is lost stores runs of spaces
+/// mid-sentence, every check on it still passes, and the fault reaches a
+/// reader — five instances of it across three crates so far.
 const WHAT_JUNE_SAW: &str =
     "@event:trail-survey ran on @place:north-trail with @person:milhouse and @person:nelson";
+
+/// The three nouns as words, which is what a sitting that never reached for a
+/// mention leaves behind.
+const IN_WORDS: &str = "the trail survey ran on the north trail with Milhouse and Nelson";
+
+/// **Two kinds on one record and not the three the lock used to name.** The
+/// event is the claim's own topic and is spelled rather than pointed at; the
+/// place and the people are pointers, so the claim leads somewhere in two
+/// directions.
+const A_PLACE_AND_A_PERSON: &str =
+    "the survey ran on @place:north-trail with @person:milhouse and @person:nelson";
+
+/// **Pointers, all of one kind.** Every mention leads to a person, so no claim
+/// links a thing of one kind to a thing of another.
+const PEOPLE_ONLY: &str = "@person:milhouse and @person:nelson were both at the survey";
 
 /// A call an occupant would make.
 async fn did(room: &Surface, sid: &str, verb: &str, mut args: Value) -> String {
@@ -395,56 +416,28 @@ async fn may(room: &Surface, sid: &str) {
 }
 
 async fn june(room: &Surface, sid: &str) {
-    // **What the operator said, written as handles rather than as words.** The
-    // three things named in one breath land on ONE record, so a later sitting
-    // reading this claim can go from it to any of them. Filed on the club
-    // because the record names the event, and a claim cannot mention the thing
-    // it is already filed against.
-    did(
-        room,
-        sid,
-        "capture",
-        json!({"subject": "org:north-trail-club",
-               "content": WHAT_JUNE_SAW,
-               "provenance": "testimony"}),
-    )
-    .await;
-    for who in ["person:milhouse", "person:nelson"] {
-        did(
-            room,
-            sid,
-            "capture",
-            json!({"subject": who, "content": "was at the trail survey",
-                   "provenance": "testimony",
-                   "shape": "attendance", "object": "event:trail-survey"}),
-        )
-        .await;
-    }
-    did(
-        room,
-        sid,
-        "capture",
-        json!({"subject": "rhythm:chain-check", "content": "did the bike chain this morning",
-               "provenance": "testimony",
-               "check_in": "ran"}),
-    )
-    .await;
+    june_saying(room, sid, WHAT_JUNE_SAW).await;
 }
 
-/// **A June that records the same three things as WORDS.**
+/// **June, with the survey claim saying `said`.**
 ///
-/// Everything else this sitting does is unchanged: the attendance edges are
-/// drawn and the loop is checked in, so every other June lock holds. **Only the
-/// sentence changes** — the operator's three nouns are written as text rather
-/// than as handles, which is what a session that never reached for a mention
-/// leaves behind.
-async fn june_records_in_words(room: &Surface, sid: &str) {
+/// One body for every June the suite drives, because the sittings differ in one
+/// sentence and separate bodies for them are copies of the same twenty lines.
+/// The attendance
+/// edges are drawn and the loop is checked in whatever the claim says, so every
+/// other June lock holds under all of them — which is what makes a case over
+/// the lock about handles a case about the sentence rather than about a sitting
+/// that did less.
+///
+/// The claim is filed on the club because the good version of it names the
+/// event, and a claim cannot mention the thing it is already filed against.
+async fn june_saying(room: &Surface, sid: &str, said: &str) {
     did(
         room,
         sid,
         "capture",
         json!({"subject": "org:north-trail-club",
-               "content": "the trail survey ran on the north trail with Milhouse and Nelson",
+               "content": said,
                "provenance": "testimony"}),
     )
     .await;
@@ -846,17 +839,28 @@ async fn worked_the_year(room: &Surface) -> Vec<Boundary> {
 /// Where June sits in the year, named because two guilty plays share it.
 const JUNE_AT: usize = 5;
 
-/// **A second guilt for June, named by an index no sitting has.**
+/// **June's other guilts, named by indices no sitting has.**
 ///
 /// The guilty list is indexed by sitting and June already carries one wrong —
-/// setting the loop's key by hand. This is the other one, and the two must stay
-/// apart: a play carrying both would turn two locks red at once and no case
-/// could say which wrong it measured.
+/// setting the loop's key by hand. These are the ones about what its claim
+/// POINTS AT, and each must stay apart from the others: a play carrying two
+/// would turn two locks red at once and no case could say which wrong it
+/// measured.
 ///
-/// ⚠️ **The year holds fifteen sittings, so `15` addresses none of them.** It
-/// names a variant rather than a phase, which is why it is a constant with this
-/// paragraph beside it rather than a number in a call.
+/// ⚠️ **The year holds fifteen sittings, so 15 and above address none of
+/// them.** They name variants rather than phases, which is why they are
+/// constants with this paragraph beside them rather than numbers in a call.
 const JUNE_IN_WORDS: usize = 15;
+const JUNE_WITHOUT_THE_EVENT: usize = 16;
+const JUNE_POINTING_AT_ONE_KIND: usize = 17;
+
+/// What June's claim says under each of them. **The first one named wins**, so
+/// a caller naming two gets the first rather than a silent mixture.
+const JUNE_VARIANTS: [(usize, &str); 3] = [
+    (JUNE_IN_WORDS, IN_WORDS),
+    (JUNE_WITHOUT_THE_EVENT, A_PLACE_AND_A_PERSON),
+    (JUNE_POINTING_AT_ONE_KIND, PEOPLE_ONLY),
+];
 
 /// **The sittings that record something**, named rather than counted: the two
 /// a person reads write nothing by design, and one of them sits between the
@@ -881,13 +885,22 @@ async fn work_the_year(
     guilty: &[usize],
 ) -> Vec<Boundary> {
     let named = boundary_names(year);
+    // What June's claim says, when the guilty list names one of its variants.
+    let variant = JUNE_VARIANTS
+        .iter()
+        .find(|(which, _)| guilty.contains(which))
+        .map(|(_, said)| *said);
     let mut boundaries = vec![boundary(room, &named[0]).await];
     for (at, phase) in year.phases.iter().enumerate() {
+        let june_variant = match at == JUNE_AT {
+            true => variant,
+            false => None,
+        };
         // ⛔️ **Only a sitting that ACTS gets a run.** A boot mints nothing until
         // its first write, so a run for a sitting this drive skips is a run that
         // never happened — and it would sit in the day that sitting claims,
         // where the next drive of the same day meets it still working.
-        if !worked.contains(&at) && !guilty.contains(&at) {
+        if !worked.contains(&at) && !guilty.contains(&at) && june_variant.is_none() {
             boundaries.push(boundary(room, &named[at + 1]).await);
             continue;
         }
@@ -899,14 +912,13 @@ async fn work_the_year(
                 .unwrap_or_else(|| panic!("{} claims no day", phase.name)),
         )
         .await;
-        if guilty.contains(&at) || (at == JUNE_AT && guilty.contains(&JUNE_IN_WORDS)) {
-            // **The sitting does the wrong thing, in its own window.** Here
-            // rather than in a second driver: two copies of this order was how
-            // they came to disagree about which sittings write.
+        // **The sitting does the wrong thing, in its own window.** Here rather
+        // than in a second driver: two copies of this order was how they came
+        // to disagree about which sittings write.
+        if let Some(said) = june_variant {
+            june_saying(room, sid, said).await;
+        } else if guilty.contains(&at) {
             match at {
-                JUNE_AT if guilty.contains(&JUNE_IN_WORDS) => {
-                    june_records_in_words(room, sid).await
-                }
                 9 => october_files_the_note_on_the_event(room, sid).await,
                 6 => july_takes_the_claim_back(room, sid).await,
                 7 => august_puts_a_third_person_there(room, sid).await,
@@ -1545,6 +1557,70 @@ async fn a_june_that_wrote_words_leaves_a_later_sitting_nothing_to_follow() {
     assert!(
         judged[JUNE[2]].held,
         "the year wrote the operator's three nouns as handles and the lock still failed: {}",
+        saying(&judged),
+    );
+}
+
+/// 🚨 **The lock about handles reads TWO KINDS ON ONE RECORD rather than a
+/// named three.**
+///
+/// ⛔️ **It used to demand a person, a place and an event together.** Nothing in
+/// the year's own story asks a sitting to name all three in one sentence, so a
+/// June that wrote pointers everywhere and never that one combination failed a
+/// lock about pointers. **A red that survives the fix it is asking for is a red
+/// nobody trusts the next time it fires.**
+///
+/// **Two readings in one case**, over Junes that differ in nothing but what the
+/// survey claim points at:
+///
+/// * a claim pointing at a place and a person HOLDS — two kinds on one record
+///   is a link between two things, whichever two they are;
+/// * a claim pointing at people only FAILS — every pointer leads to the same
+///   kind of thing, so no claim links one kind to another and the floor is not
+///   simply *a handle was written somewhere*.
+///
+/// The third reading — a claim written in words — is the case above this one,
+/// which is where the failure this lock exists for is already watched.
+#[tokio::test]
+async fn the_handle_lock_reads_two_kinds_on_one_record_rather_than_a_named_three() {
+    let (_room, surface) = furnished().await;
+    let two_kinds = work_the_year(
+        &surface,
+        &room_document(),
+        &WORKED,
+        &[JUNE_WITHOUT_THE_EVENT],
+    )
+    .await;
+    let judged = judge_all(&surface, &two_kinds).await;
+    assert!(
+        judged[JUNE[2]].held,
+        "a June whose claim points at a place and a person failed the lock about handles, so it \
+         still asks for one combination of kinds the year never calls for: {}",
+        saying(&judged),
+    );
+
+    let (_room, surface) = furnished().await;
+    let one_kind = work_the_year(
+        &surface,
+        &room_document(),
+        &WORKED,
+        &[JUNE_POINTING_AT_ONE_KIND],
+    )
+    .await;
+    let judged = judge_all(&surface, &one_kind).await;
+    assert!(
+        !judged[JUNE[2]].held,
+        "a June whose claim points only at people held the lock, so it asks whether a handle was \
+         written anywhere rather than whether one record links two kinds of thing: {}",
+        saying(&judged),
+    );
+    // **The positive that says the guilty sitting is otherwise a good one.**
+    // Without it this passes on a June that did nothing at all, and the lock
+    // would be reporting an absent sitting rather than a one-sided one.
+    assert!(
+        judged[JUNE[0]].held && judged[JUNE[1]].held,
+        "the June that pointed at one kind failed a lock it was meant to hold, so the case above \
+         is measuring a sitting that did not happen: {}",
         saying(&judged),
     );
 }

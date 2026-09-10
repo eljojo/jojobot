@@ -276,23 +276,33 @@ carries "value":"2026-06-14"
 say     June: the chain check does not say it was done on the day this sitting claims, so it is either untouched or stamped with the day the run happened
 
 # 🚨 **A handle written INTO a sentence, which no sitting has ever done.** The
-# operator names a person, a place and an event in one breath, and a session
-# that writes them as words leaves text; a session that writes them as handles
-# leaves pointers a later sitting can follow.
+# operator names several things in one breath, and a session that writes them as
+# words leaves text; a session that writes them as handles leaves pointers a
+# later sitting can follow.
 #
-# ⚠️ **A hatch, because an assertion is a substring of the WHOLE answer.** Three
-# `carries` lines would hold on three separate records naming one thing each,
-# which is the easy case and not the one the operator asked for. Whether the
-# three landed on ONE record is a correlation inside one object, and this
-# format's three words do not branch — the same reason the loop's own lock two
-# sittings from here is a hatch.
+# ⚠️ **A hatch, because an assertion is a substring of the WHOLE answer.** Two
+# `carries` lines would hold on two separate records naming one thing each,
+# which is the easy case and not the one the operator asked for. Whether two
+# landed on ONE record is a correlation inside one object, and this format's
+# three words do not branch — the same reason the loop's own lock two sittings
+# from here is a hatch.
 #
-# ⛔️ **No handle is named here.** January invents the event's, so a lock that
-# spelled it would fail a run whose January called it something else. What is
-# asked is that one record names a person, a place and an event, whatever they
-# are called.
-check   one_record_names_a_person_a_place_and_an_event
-say     June: no single record names a person, a place and an event as handles, so the sitting wrote words where it could have written pointers and a later sitting has nothing to follow
+# ⛔️ **No handle is named here and no KIND is either.** January invents the
+# event's handle, so a lock that spelled it would fail a run whose January
+# called it something else — and naming the kinds is the same fault one level
+# up, because which things a sitting points at is the sitting's own choice. A
+# claim linking the club to the trail did the identical thing.
+#
+# 🚨 **The floor is TWO KINDS ON ONE RECORD, and it used to be a person, a place
+# and an event together.** No sitting in this year is asked to name all three in
+# one sentence, so a run that wrote pointers on half its claims failed a lock
+# about pointers — a red that survives the fix it asks for, which is a red
+# nobody trusts the next time it fires. Two mentions of DIFFERENT kinds on one
+# record is the least that is a link rather than a tag: a later sitting can
+# leave that claim in two directions, which is exactly what October needs from
+# this one.
+check   one_record_points_at_two_kinds
+say     June: no single record points at two different kinds of thing as handles, so the sitting wrote words where it could have written pointers and a later sitting has nothing to follow
 ```
 
 ## Phase 7 — July, a claim taken back
