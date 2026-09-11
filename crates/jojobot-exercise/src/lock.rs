@@ -1016,11 +1016,33 @@ pub fn standing_of(needle: &str) -> Standing {
     }
 }
 
-/// **A bare-handle needle with nothing in its own lock that only a standing
-/// record could satisfy.**
+/// **Which way a needle's shape lies to whoever reads it.**
+///
+/// Two different empirical mistakes, caught by the same walk over the same
+/// needles rather than two: a needle that proves the wrong THING (a
+/// retracted or superseded record can still satisfy it), and a needle that
+/// proves too LITTLE (its own text can be satisfied by a bigger value that
+/// was never the claim).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Risk {
+    /// **A bare handle with no companion pinning status.** Served with
+    /// status marked rather than filtered, so a retracted or superseded
+    /// record still carries it — a match proves the text exists, not that
+    /// the claim stands.
+    Retraction,
+    /// **A bare run of digits.** A needle naming no key and no delimiter
+    /// matches as a substring of any longer number that contains it —
+    /// `carries 35` holds against a cost of 350 exactly as it holds against
+    /// 35, and the match cannot tell the two apart.
+    Broad,
+}
+
+/// **A needle with nothing in its own lock that rules out the empirical
+/// mistake it risks.**
 pub struct StandingFinding {
     pub lock: String,
     pub needle: String,
+    pub risk: Risk,
 }
 
 /// **Classify every `carries` needle in every lock, without asking the room
@@ -1031,11 +1053,12 @@ pub struct StandingFinding {
 /// reaches for one — so it is skipped here rather than measured.
 ///
 /// A bare-handle needle is flagged unless its own lock also carries a
-/// **companion** — another `carries` needle pinning the same kind of record's
-/// status explicitly, `carries "status":"active"` — because that is the one
-/// thing a retracted or superseded record cannot also satisfy. No room this
-/// build ships writes that companion today, which is what a non-empty result
-/// here is finding rather than inventing.
+/// **companion** — another `carries` needle pinning the record's status
+/// explicitly, `carries "status":"<value>"` for ANY value — because naming
+/// the status at all is the one thing a retracted or superseded record
+/// cannot also satisfy by accident. Which value the companion names is
+/// irrelevant: a lock proving something was superseded is as pinned as one
+/// proving something stands.
 pub fn standing_findings(locks: &[Lock]) -> Vec<StandingFinding> {
     let mut findings = Vec::new();
     for lock in locks {
@@ -1050,22 +1073,46 @@ pub fn standing_findings(locks: &[Lock]) -> Vec<StandingFinding> {
                 Expect::Lacks(_) | Expect::AtLeast(..) => None,
             })
             .collect();
-        let paired = carried
-            .iter()
-            .any(|needle| needle.as_str() == "\"status\":\"active\"");
-        if paired {
-            continue;
-        }
+        let paired = carried.iter().any(|needle| pins_status(needle));
         for needle in carried {
-            if standing_of(needle) == Standing::BareHandle {
+            if !paired && standing_of(needle) == Standing::BareHandle {
                 findings.push(StandingFinding {
                     lock: lock.name.clone(),
                     needle: needle.clone(),
+                    risk: Risk::Retraction,
+                });
+            }
+            if is_broad(needle) {
+                findings.push(StandingFinding {
+                    lock: lock.name.clone(),
+                    needle: needle.clone(),
+                    risk: Risk::Broad,
                 });
             }
         }
     }
     findings
+}
+
+/// **Whether a needle is a bare run of digits with nothing else in it.**
+///
+/// A folded field closes on its own quote — `"cost":"35"` cannot be a prefix
+/// of a longer number, only of a longer STRING starting `35...`, which is a
+/// different and much rarer collision. A bare `35` has no closing character
+/// at all, so it matches inside `350`, `1350`, or any number that contains
+/// it, exactly as readily as it matches a real `35`.
+fn is_broad(needle: &str) -> bool {
+    !needle.is_empty() && needle.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+/// **Whether a needle pins a status explicitly**, at any value —
+/// `"status":"active"`, `"status":"superseded"`, and so on. The key must be
+/// exactly `status`: a needle naming a different key, such as
+/// `"status_note"`, makes no claim about standing and pins nothing.
+fn pins_status(needle: &str) -> bool {
+    needle
+        .strip_prefix("\"status\":\"")
+        .is_some_and(|rest| rest.ends_with('"'))
 }
 
 #[cfg(test)]
@@ -1141,6 +1188,106 @@ mod standing_tests {
             standing_findings(&locks)
                 .iter()
                 .map(|f| &f.needle)
+                .collect::<Vec<_>>(),
+        );
+    }
+
+    /// **The companion is any explicit status, not only `active`.** A lock
+    /// proving something was superseded is as pinned as one proving something
+    /// stands — what matters is that the lock NAMES the status it expects,
+    /// not which value it names. The real instance: April's Springfield lock
+    /// in `rooms/year.md` pins `"status":"superseded"`.
+    #[test]
+    fn a_bare_handle_paired_with_a_superseded_status_needle_is_not_flagged() {
+        let locks = read(
+            "```locks\n\
+             recall {\"subject\": \"person:milhouse\", \"facts\": true}\n\
+             carries place:springfield\n\
+             carries \"status\":\"superseded\"\n\
+             say     the old claim is marked as no longer true\n\
+             ```\n",
+        )
+        .expect("the lock reads");
+        assert!(
+            standing_findings(&locks).is_empty(),
+            "a bare handle pinned to an explicit non-active status was flagged anyway: {:?}",
+            standing_findings(&locks)
+                .iter()
+                .map(|f| &f.needle)
+                .collect::<Vec<_>>(),
+        );
+    }
+
+    /// **A needle that only mentions `status` does not pin anything.** The
+    /// companion is the exact shape `"status":"<value>"` — a key that merely
+    /// contains the word is not the same claim, and must not clear the flag
+    /// it did not actually make.
+    #[test]
+    fn a_needle_that_only_mentions_status_does_not_pin() {
+        let locks = read(
+            "```locks\n\
+             recall {\"subject\": \"thing:floor-pump\", \"facts\": true}\n\
+             carries person:ralph\n\
+             carries \"status_note\":\"checked\"\n\
+             say     ralph's account is not standing\n\
+             ```\n",
+        )
+        .expect("the lock reads");
+        let found = standing_findings(&locks);
+        assert!(
+            found.iter().any(|f| f.needle == "person:ralph"),
+            "a needle naming a different key was treated as a status companion: {:?}",
+            found.iter().map(|f| &f.needle).collect::<Vec<_>>(),
+        );
+    }
+
+    /// **A bare run of digits is flagged as broad**, whether or not its lock
+    /// carries a status companion — a status pin says the RECORD stands, and
+    /// says nothing about whether a longer number contains this one.
+    #[test]
+    fn a_bare_numeric_needle_is_flagged_as_broad() {
+        let locks = read(
+            "```locks\n\
+             recall {\"subject\": \"thing:gravel-bike\"}\n\
+             carries 35\n\
+             say     the bike's tally reads 35\n\
+             ```\n",
+        )
+        .expect("the lock reads");
+        let found = standing_findings(&locks);
+        assert!(
+            found
+                .iter()
+                .any(|f| f.needle == "35" && f.risk == Risk::Broad),
+            "a bare run of digits was not flagged as broad: {:?}",
+            found
+                .iter()
+                .map(|f| (&f.needle, f.risk))
+                .collect::<Vec<_>>(),
+        );
+    }
+
+    /// **The same value, key-scoped, is not flagged as broad.** Pairing it
+    /// with the digits case above proves the classifier reads the needle's
+    /// shape rather than reacting to any occurrence of "35" — a folded field
+    /// closes on its own quote and cannot be a prefix of a longer number.
+    #[test]
+    fn the_same_value_quoted_as_a_folded_field_is_not_flagged_as_broad() {
+        let locks = read(
+            "```locks\n\
+             recall {\"subject\": \"thing:gravel-bike\"}\n\
+             carries \"cost\":\"35\"\n\
+             say     the bike's cost is not settled\n\
+             ```\n",
+        )
+        .expect("the lock reads");
+        let found = standing_findings(&locks);
+        assert!(
+            !found.iter().any(|f| f.risk == Risk::Broad),
+            "a folded field needle was flagged as broad: {:?}",
+            found
+                .iter()
+                .map(|f| (&f.needle, f.risk))
                 .collect::<Vec<_>>(),
         );
     }
