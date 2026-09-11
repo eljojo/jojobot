@@ -293,6 +293,31 @@ impl SessionRegistry {
             handle.card = Some(card);
         }
     }
+
+    /// **Move every handle bound to `from` onto `to`, in place.**
+    ///
+    /// A rename that lands on the board does not touch this process's own
+    /// cache of who a handle answers to — nothing in the write path knows
+    /// this registry exists — so a handle minted before the rename kept
+    /// acting as the OLD identity for the rest of the process: every write
+    /// it made, every box it read, attributed to a bot that had just
+    /// stopped answering to that name. This is the other half of a rename,
+    /// called right after the entity write commits, so a caller who kept
+    /// the handle the door gave them is renamed too, without minting a new
+    /// one or losing the card it already carries.
+    ///
+    /// Returns how many handles moved, so a rename can say so.
+    pub fn rebind_bot(&self, from: &EntityId, to: &EntityId) -> usize {
+        let mut held = self.held.write().expect("the registry is poisoned");
+        let mut moved = 0;
+        for handle in held.values_mut() {
+            if &handle.bot == from {
+                handle.bot = to.clone();
+                moved += 1;
+            }
+        }
+        moved
+    }
 }
 
 #[cfg(test)]
@@ -383,6 +408,34 @@ mod tests {
             Some(SessionId("4212".into()))
         );
         assert_eq!(registry.addressing(&SessionId("4212".into())), Some(sid));
+    }
+
+    /// **A renamed bot's handles keep working, under the new name, for the
+    /// rest of the process** — not just the one that was renamed, and not
+    /// one belonging to somebody else.
+    #[test]
+    fn rebind_bot_moves_every_handle_of_the_renamed_bot_and_nobody_elses() {
+        let registry = SessionRegistry::new();
+        let first = registry.mint(&bot("gamma"), None).expect("minted");
+        let second = registry.mint(&bot("gamma"), None).expect("minted");
+        let unrelated = registry.mint(&bot("delta"), None).expect("minted");
+
+        let moved = registry.rebind_bot(&bot("gamma"), &bot("sigma"));
+
+        assert_eq!(moved, 2, "both of gamma's handles move, and only those");
+        assert_eq!(
+            registry.lookup(first.as_str()).expect("held").bot,
+            bot("sigma")
+        );
+        assert_eq!(
+            registry.lookup(second.as_str()).expect("held").bot,
+            bot("sigma")
+        );
+        assert_eq!(
+            registry.lookup(unrelated.as_str()).expect("held").bot,
+            bot("delta"),
+            "a handle of a different bot is untouched by somebody else's rename",
+        );
     }
 
     /// A handle this process never issued is simply not there — and it is the

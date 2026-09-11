@@ -15,7 +15,9 @@
 
 use std::sync::Arc;
 
-use crate::memory::{Entity, Memory, mention};
+use crate::memory::{
+    Entity, EntityId, FormerHandle, Memory, entity_wearing, mention, resolve_handle,
+};
 
 use super::{
     EntryId, JournalEntry, NewEntry, NewSession, Session, SessionError, SessionId, Sessions,
@@ -23,7 +25,13 @@ use super::{
 
 /// Wraps any [`Sessions`] so a handle written into a session's focus or its
 /// chronology is stored as the permanent id and served as the handle the
-/// thing wears today.
+/// thing wears today — **and so is `bot` itself**, the same rule applied to
+/// the one column that names an entity outright rather than through text.
+/// Without this, a session outlives the name it was born under and a rename
+/// strands every session already on the board: `sessions_of` stops finding
+/// them (it still queries the OLD handle) and every attribution through a
+/// live `sid` keeps reading as the identity that just stopped answering to
+/// that name.
 pub struct Mentioning {
     inner: Arc<dyn Sessions>,
     memory: Arc<dyn Memory>,
@@ -43,11 +51,50 @@ impl Mentioning {
             .map_err(|e| SessionError::Store(e.to_string()))
     }
 
+    /// Every rename this store still remembers — needed only to resolve a
+    /// `bot` handle that may itself be stale (a `sid` whose in-process
+    /// registry was not, for whatever reason, updated live). Rendering never
+    /// needs this: [`entity_wearing`] finds the current wearer of a badge
+    /// directly, whatever it used to be called.
+    async fn former(&self) -> Result<Vec<FormerHandle>, SessionError> {
+        self.memory
+            .former_handles()
+            .await
+            .map_err(|e| SessionError::Store(e.to_string()))
+    }
+
+    /// **The key `bot` is stored under**: the badge of whatever it resolves
+    /// to, or `bot` itself unchanged when it does not resolve at all, or
+    /// resolves to a row with no badge yet (a fake store, or a row from
+    /// before badges existed) — the same fallback the real store's own
+    /// pointer columns use, so a session is never blocked on this.
+    fn storage_key_for(bot: &EntityId, known: &[Entity], former: &[FormerHandle]) -> EntityId {
+        match resolve_handle(bot, known, former) {
+            Some(entity) => entity
+                .badge
+                .clone()
+                .map(EntityId)
+                .unwrap_or_else(|| entity.id.clone()),
+            None => bot.clone(),
+        }
+    }
+
+    /// **The handle `bot` renders as today**: whoever currently wears the
+    /// stored badge, or the stored value unchanged when nobody does — a
+    /// value stored before this existed, which is a plain handle rather
+    /// than a badge, and reads back exactly as it did before.
+    fn current_handle_for(stored: &EntityId, known: &[Entity]) -> EntityId {
+        entity_wearing(stored.as_str(), known)
+            .map(|e| e.id.clone())
+            .unwrap_or_else(|| stored.clone())
+    }
+
     fn render_entry(entry: &mut JournalEntry, known: &[Entity]) {
         entry.text = mention::rendered(&entry.text, known);
     }
 
     fn render_session(session: &mut Session, known: &[Entity]) {
+        session.bot = Self::current_handle_for(&session.bot, known);
         session.focus = mention::rendered(&session.focus, known);
         for entry in &mut session.entries {
             Self::render_entry(entry, known);
@@ -74,12 +121,14 @@ impl Mentioning {
 
 #[async_trait::async_trait]
 impl Sessions for Mentioning {
-    async fn sessions_of(
-        &self,
-        bot: &crate::memory::EntityId,
-    ) -> Result<Vec<Session>, SessionError> {
-        let mut sessions = self.inner.sessions_of(bot).await?;
-        self.render_many(&mut sessions).await?;
+    async fn sessions_of(&self, bot: &EntityId) -> Result<Vec<Session>, SessionError> {
+        let known = self.known().await?;
+        let former = self.former().await?;
+        let key = Self::storage_key_for(bot, &known, &former);
+        let mut sessions = self.inner.sessions_of(&key).await?;
+        for session in &mut sessions {
+            Self::render_session(session, &known);
+        }
         Ok(sessions)
     }
 
@@ -100,9 +149,12 @@ impl Sessions for Mentioning {
     /// pointer rather than a spelling.
     async fn begin(&self, new: NewSession) -> Result<Session, SessionError> {
         let known = self.known().await?;
+        let former = self.former().await?;
+        let bot = Self::storage_key_for(&new.bot, &known, &former);
         let mut session = self
             .inner
             .begin(NewSession {
+                bot,
                 focus: mention::resolved(&new.focus, &known),
                 ..new
             })
@@ -309,6 +361,104 @@ mod tests {
         assert!(!raw.entries[0].text.contains(was.as_str()));
         assert!(!raw.entries[0].text.contains(now.as_str()));
         assert!(raw.entries[0].text.contains(mention::MARK));
+    }
+
+    /// 🚨 **A renamed bot's OWN sessions stay found, under either name — and
+    /// a session begun after the rename lands under the SAME row as the ones
+    /// begun before it.**
+    ///
+    /// This is `bot` itself, not a mention written into free text: the
+    /// column `sessions_of`'s `WHERE bot = ?` reads directly. Without
+    /// resolving it through a badge, a rename leaves every existing session
+    /// row un-findable by the new handle (the row still says the old one)
+    /// and every later session begun under the new handle unable to be
+    /// grouped with them (a fresh badge chosen by chance would never match
+    /// the old handle's rows) — proven by both directions at once, since
+    /// either alone could pass by accident.
+    #[tokio::test]
+    async fn a_renamed_bots_sessions_are_found_under_either_name() {
+        let memory: Arc<dyn Memory> = Arc::new(InMemoryMemory::booted());
+        let was = crate::memory::EntityId("bot:gamma".into());
+        let now = crate::memory::EntityId("bot:sigma".into());
+        add(memory.as_ref(), &was).await;
+
+        let bare = Arc::new(InMemorySessions::new());
+        let sessions = Mentioning::new(bare.clone(), memory.clone());
+
+        let before = sessions
+            .begin(NewSession {
+                bot: was.clone(),
+                sid: super::super::Sid("sid-3".to_string()),
+                focus: "before the rename".into(),
+                started_at: epoch(),
+                timezone: None,
+                started_on: None,
+            })
+            .await
+            .expect("begin should succeed");
+
+        memory
+            .rename_entity(&was, &now, None, date(2026, 6, 2), None)
+            .await
+            .expect("rename_entity should succeed")
+            .written()
+            .expect("the guard must not block the rename");
+
+        let after = sessions
+            .begin(NewSession {
+                bot: now.clone(),
+                sid: super::super::Sid("sid-4".to_string()),
+                focus: "after the rename".into(),
+                started_at: epoch(),
+                timezone: None,
+                started_on: None,
+            })
+            .await
+            .expect("begin should succeed");
+
+        // Both directions: the OLD handle still finds them (a caller who has
+        // not yet learned of the rename), and the NEW handle finds them too
+        // (the ordinary case) — and it is the same two rows either way.
+        for bot in [&was, &now] {
+            let found = sessions
+                .sessions_of(bot)
+                .await
+                .unwrap_or_else(|e| panic!("sessions_of({bot}) should succeed: {e}"));
+            let ids: std::collections::BTreeSet<_> = found.iter().map(|s| s.id.clone()).collect();
+            assert_eq!(
+                ids,
+                [before.id.clone(), after.id.clone()].into_iter().collect(),
+                "sessions_of({bot}) must find both of this bot's runs: {found:?}",
+            );
+            assert!(
+                found.iter().all(|s| s.bot == now),
+                "every session renders bot as the CURRENT handle, whichever name found it: \
+                 {found:?}",
+            );
+        }
+
+        // The bare store never held either handle as a plain string — only
+        // the one badge, shared by both rows.
+        let raw_before = bare
+            .read_session(&before.id)
+            .await
+            .expect("read_session should succeed on the bare store");
+        let raw_after = bare
+            .read_session(&after.id)
+            .await
+            .expect("read_session should succeed on the bare store");
+        assert_eq!(
+            raw_before.bot, raw_after.bot,
+            "one badge for both rows of one bot, whichever name begat them",
+        );
+        assert_ne!(
+            raw_before.bot, was,
+            "the bare row must not hold the handle itself"
+        );
+        assert_ne!(
+            raw_before.bot, now,
+            "the bare row must not hold the handle itself"
+        );
     }
 
     #[tokio::test]

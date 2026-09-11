@@ -307,6 +307,19 @@ async fn main() -> anyhow::Result<()> {
              restart retries, and nothing already migrated is undone."
         ),
     }
+    let former = indexed.former_handles().await.unwrap_or_default();
+    match bare_sessions.migrate_bot_column(&known, &former).await {
+        Ok(n) => tracing::info!(
+            rewritten = n,
+            "sessions: bot column migrated onto permanent ids"
+        ),
+        Err(e) => tracing::warn!(
+            error = %e,
+            "SESSION BOT COLUMN MIGRATION FAILED — a session renamed since it last wrote may \
+             not be found by its current handle; a restart retries, and nothing already \
+             migrated is undone."
+        ),
+    }
 
     let teachings: Arc<dyn Teachings> = Arc::new(DoltTeachings::open(store.pool().clone()));
 

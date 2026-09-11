@@ -78,6 +78,50 @@ impl Jojobot {
             )],
         }
     }
+
+    /// **Refuse a rename before anything moves, when its destination mailbox
+    /// name is already worn by a different box.**
+    ///
+    /// `repoint_owner`'s own `UPDATE` collides on the mailbox table's own
+    /// primary key — the mailbox `name` — and by the time it runs the entity
+    /// rename has already committed, which is what makes that collision a
+    /// half-done rename rather than a clean refusal. This runs first, and this
+    /// one collision is predictable: the destination name is known before
+    /// anything moves, so it is checked before anything moves.
+    ///
+    /// `Ok(None)` when `from` owns no mailbox at all — nothing will be
+    /// repointed either way — or when the destination name is free.
+    async fn mailbox_rename_would_collide(
+        &self,
+        from: &EntityId,
+        to: &EntityId,
+    ) -> Result<Option<CallToolResult>, McpError> {
+        let boxes = self
+            .mailboxes
+            .list_mailboxes()
+            .await
+            .map_err(crate::mailboxes::mailbox_error)?;
+        if !boxes.iter().any(|b| &b.owner == from) {
+            return Ok(None);
+        }
+        let new_name = to.slug();
+        let Some(existing) = boxes
+            .iter()
+            .find(|b| b.name.as_str() == new_name && &b.owner != from)
+        else {
+            return Ok(None);
+        };
+        Ok(Some(blocked_body(
+            to,
+            &[],
+            format!(
+                "Nothing was renamed. The mailbox '{new_name}' already belongs to {}, so \
+                 renaming '{from}' to '{to}' would collide with it before the entity itself \
+                 moved. Choose a destination whose slug is not already a mailbox name.",
+                existing.owner.as_str(),
+            ),
+        )))
+    }
 }
 
 #[tool_router(router = rename_entity_router, vis = "pub(crate)")]
@@ -124,6 +168,9 @@ impl Jojobot {
         // guessing a kind would be guessing the caller's intent about the
         // one thing this call exists to let them state.
         let to = EntityId(args.to.trim().to_string());
+        if let Some(refused) = self.mailbox_rename_would_collide(&from, &to).await? {
+            return Ok(refused);
+        }
         let parent = args.parent.as_deref().map(EntityId::person);
         let date = self.dated(args.recorded_at.as_deref(), args.sid.as_deref())?;
         let renamed = match self
@@ -138,6 +185,14 @@ impl Jojobot {
             Guarded::Written(entity) => {
                 self.beat("rename_entity", entity.id.as_str(), args.sid.as_deref())
                     .await;
+                // **The other half of a rename**, beside the mailbox: every
+                // handle THIS PROCESS already holds for `from` has to move
+                // too, or it keeps attributing everything it does to the
+                // identity that just stopped answering to that name.
+                // Nothing on the write path knows this registry exists, so
+                // it is not something `Memory::rename_entity` could have
+                // done for us.
+                self.registry.rebind_bot(&from, &entity.id);
                 let mut body = entity_json(&entity);
                 if let Some(obj) = body.as_object_mut() {
                     for (key, value) in self.repoint_mailbox(&from, &entity.id).await {
@@ -318,6 +373,237 @@ mod tests {
         );
         assert_eq!(renamed["id"], "work:red-bike", "{renamed}");
         assert_eq!(renamed["name"], "Red Bike", "the metadata rides along");
+    }
+
+    /// 🚨 **A handle minted before a rename keeps working under the NEW
+    /// identity, for the rest of the process — not just on the next
+    /// restart.**
+    ///
+    /// Nothing in the write path touches this process's own cache of who a
+    /// handle answers to, so a `sid` the door handed out before the rename
+    /// used to go on attributing everything it did to the bot that had just
+    /// stopped answering to that name. Proven the same way the mailbox case
+    /// is: by what the OLD `sid` can still reach, never by inspecting the
+    /// registry directly. `read_mailbox` is the read that makes the drift
+    /// visible — it resolves the caller's OWN box by `caller.bot`, so a
+    /// stale identity reads as "no box" the moment the old name's box has
+    /// already moved.
+    #[tokio::test]
+    async fn a_renamed_bots_old_sid_keeps_working_as_the_new_identity() {
+        let jojobot = handler();
+        jojobot
+            .add_entity(Parameters(add_args("bot", "gamma", "Gamma")))
+            .await
+            .expect("add ok");
+        let writer = booted(&jojobot, "gamma").await;
+
+        let renamed = json_of(
+            &jojobot
+                .rename_entity(Parameters(args("bot:gamma", "bot:sigma", &writer)))
+                .await
+                .expect("rename ok"),
+        );
+        assert_eq!(renamed["id"], "bot:sigma", "{renamed}");
+
+        // Somebody else posts to the NEW handle, after the rename.
+        let other = writing_as(&jojobot);
+        jojobot
+            .post_message(Parameters(PostMessageArgs {
+                to: "sigma".into(),
+                body: "mail sent after the rename".into(),
+                sid: other,
+                subject: None,
+                in_reply_to: None,
+            }))
+            .await
+            .expect("post ok");
+
+        // The SAME handle the door gave out before the rename reads it —
+        // proof that this process now attributes it to sigma, not gamma.
+        let mail = json_of(
+            &jojobot
+                .read_mailbox(Parameters(ReadMailboxArgs {
+                    counts_only: Some(true),
+                    new_only: None,
+                    sid: Some(writer),
+                }))
+                .await
+                .expect("read_mailbox ok"),
+        );
+        assert_eq!(
+            mail["mailbox"], "sigma",
+            "the old handle must open sigma's box, not gamma's, which no longer exists: {mail}",
+        );
+        assert_eq!(
+            mail["counts"]["new"], 1,
+            "and it must be sigma's actual mail, not an empty or broken box: {mail}",
+        );
+    }
+
+    /// 🚨 **A rename survives a RESTART: the renamed bot's session is still
+    /// found and still resumable under its new name, on a fresh registry
+    /// that never saw the rename happen.**
+    ///
+    /// This is the one thing `a_renamed_bots_old_sid_keeps_working_as_the_
+    /// new_identity` cannot prove: that test's registry lives through the
+    /// rename in memory, which is exactly what a restart throws away. Here
+    /// the session store is wrapped in the real production decorator
+    /// (`session::mention::Mentioning`) instead of the bare fake `handler()`
+    /// uses, because the bare fake is what every other verb test wants —
+    /// isolated from mention/badge resolution — and this is the one case
+    /// that is ABOUT that resolution surviving the trip through a card.
+    #[tokio::test]
+    async fn a_renamed_bots_session_survives_a_restart() {
+        use crate::harness::seed_bot;
+        use crate::session::testing::journal_entry;
+        use jojobot_domain::mailbox::testing::InMemoryMailboxes;
+        use jojobot_domain::session::Sessions;
+        use jojobot_domain::session::mention::Mentioning;
+        use jojobot_domain::session::testing::InMemorySessions;
+
+        let memory = std::sync::Arc::new(jojobot_domain::memory::testing::InMemoryMemory::booted());
+        let bare_sessions = std::sync::Arc::new(InMemorySessions::new());
+        let sessions: std::sync::Arc<dyn Sessions> =
+            std::sync::Arc::new(Mentioning::new(bare_sessions.clone(), memory.clone()));
+        seed_bot(&memory, "gamma").await;
+        let registry = std::sync::Arc::new(sid::SessionRegistry::new());
+        let jojobot = Jojobot::new(
+            memory.clone(),
+            std::sync::Arc::new(SpySearch::default()),
+            std::sync::Arc::new(InMemoryMailboxes::knowing_any_owner()),
+            sessions.clone(),
+            std::sync::Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+            registry,
+        );
+
+        let writer = booted(&jojobot, "gamma").await;
+        journal_entry(&jojobot, &writer, "before the rename").await;
+
+        jojobot
+            .rename_entity(Parameters(args("bot:gamma", "bot:sigma", &writer)))
+            .await
+            .expect("rename ok");
+
+        // A restart: same underlying board, a FRESH registry that never
+        // observed the rename — exactly what the composition root builds
+        // after a process restart, per `sid::SessionRegistry::rebuild_from`.
+        // Read through `sessions` (the Mentioning-wrapped port), matching
+        // `main.rs` exactly: the board a restart rebuilds from is rendered,
+        // never the bare badge the row itself carries.
+        let board = sessions.all_sessions().await.expect("all_sessions ok");
+        let rebuilt = std::sync::Arc::new(sid::SessionRegistry::new());
+        assert_eq!(rebuilt.rebuild_from(&board), 1, "one handle recovered");
+        let restarted = Jojobot::new(
+            memory,
+            std::sync::Arc::new(SpySearch::default()),
+            std::sync::Arc::new(InMemoryMailboxes::knowing_any_owner()),
+            sessions,
+            std::sync::Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+            rebuilt,
+        );
+
+        // Booted under the NEW name, offered the OLD handle as the resume
+        // answer — and it resumes, with the OLD story intact.
+        let resumed = boot_answering(&restarted, "sigma", &writer).await;
+        assert_eq!(
+            sid_of(&resumed).as_deref(),
+            Some(writer.as_str()),
+            "the same handle, still addressing the same run after a restart: {resumed}",
+        );
+        assert_eq!(
+            resumed["session"]["session"]["chronology"][0]["text"], "before the rename",
+            "{resumed}",
+        );
+    }
+
+    /// 🚨 **A destination mailbox name already worn by a different box
+    /// refuses the WHOLE rename, before the entity itself moves — even when
+    /// the destination HANDLE collides with nothing.**
+    ///
+    /// The destination here is `person:milhouse` — no entity answers to it,
+    /// so the ordinary entity-handle guard has nothing to say and would let
+    /// this rename land. It is the MAILBOX slug alone that collides:
+    /// `bot:epsilon`'s box would have to become "milhouse", and `bot:milhouse`
+    /// already owns a box by that name. `repoint_owner`'s own collision — on
+    /// the mailbox table's primary key — lands after the entity write has
+    /// already committed, which used to leave a half-done rename with only
+    /// an informational note to show for it. This collision is predictable
+    /// ahead of time, so it is caught ahead of time: proven by what did NOT
+    /// move, not by the refusal shape alone.
+    #[tokio::test]
+    async fn a_mailbox_name_collision_refuses_the_whole_rename() {
+        let jojobot = handler();
+        jojobot
+            .add_entity(Parameters(add_args("bot", "epsilon", "Epsilon")))
+            .await
+            .expect("add ok");
+        jojobot
+            .add_entity(Parameters(add_args("bot", "milhouse", "Milhouse")))
+            .await
+            .expect("add ok");
+        let sid = writing_as(&jojobot);
+
+        // `person:milhouse` also happens to be a same-slug-other-kind near
+        // miss against the existing `bot:milhouse` — but the mailbox check
+        // runs BEFORE that guard is even reached, because it runs before
+        // any entity write is attempted at all. So this is the mailbox
+        // world's own refusal, not the entity guard's: proven below by its
+        // empty `candidates` and its own wording, neither of which the
+        // entity near-miss guard would produce.
+        let result = jojobot
+            .rename_entity(Parameters(args("bot:epsilon", "person:milhouse", &sid)))
+            .await
+            .expect("the call succeeds; the guard answers in the body");
+        let body = blocked(&result);
+        assert_eq!(body["attempted"], "person:milhouse", "{body}");
+        assert_eq!(body["wrote"], false, "{body}");
+        assert!(
+            body["candidates"].as_array().unwrap().is_empty(),
+            "this is the mailbox world's own refusal, not another entity near-miss: {body}"
+        );
+        assert!(
+            body["how_to_proceed"]
+                .as_str()
+                .unwrap()
+                .contains("mailbox 'milhouse'"),
+            "{body}"
+        );
+
+        // …and nothing moved: the source handle still answers, and neither
+        // box was touched.
+        let listed = json_of(
+            &jojobot
+                .list_entities(Parameters(ListEntitiesArgs {
+                    kind: Some("bot".into()),
+                    sid: None,
+                }))
+                .await
+                .expect("list ok"),
+        );
+        let ids: Vec<&str> = listed["entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["id"].as_str().unwrap())
+            .collect();
+        assert!(
+            ids.contains(&"bot:epsilon"),
+            "the source entity must not have moved: {listed}"
+        );
+        let boxes = jojobot
+            .mailboxes
+            .list_mailboxes()
+            .await
+            .expect("list_mailboxes ok");
+        assert_eq!(
+            boxes.len(),
+            2,
+            "no box may have been repointed or lost: {boxes:?}",
+        );
+        assert!(
+            boxes.iter().any(|b| b.owner.as_str() == "bot:epsilon"),
+            "epsilon's own box must still be its own: {boxes:?}",
+        );
     }
 
     /// A `handle` naming nothing jojobot ever held is a client error naming
