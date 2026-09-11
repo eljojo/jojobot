@@ -289,20 +289,21 @@ impl InMemoryMemory {
     /// The rows this store holds — used where a supplied record has no place
     /// (`list_entities`, and as the base [`InMemoryMemory::known`] extends).
     ///
-    /// **A parent pointer is resolved here, on the way out — like an edge or
-    /// a ref, never badge-keyed.** It names a DIFFERENT row, not this one's
-    /// own key, and nothing here queries by it — `children` reads every
-    /// entity and filters in memory — so a rename leaves nothing a stored
-    /// badge would protect.
+    /// **A parent pointer is badge-keyed exactly as `home` is** (rule 268),
+    /// resolved here on the way out. It names a DIFFERENT row, not this
+    /// one's own key, and nothing here queries by it — `children` reads
+    /// every entity and filters in memory — so nothing but this resolution
+    /// stands between the stored badge and a reader who wants the handle.
     fn index(&self) -> Vec<Entity> {
         let mut entities = self.entities.lock().expect("fake mutex poisoned").clone();
-        let former = self.former();
         let snapshot = entities.clone();
         for entity in &mut entities {
-            if let Some(parent) = &entity.parent
-                && let Some(resolved) = super::resolve_handle(parent, &snapshot, &former)
-            {
-                entity.parent = Some(resolved.id.clone());
+            if let Some(parent) = &entity.parent {
+                entity.parent = Some(
+                    super::entity_wearing(parent.as_str(), &snapshot)
+                        .map(|found| found.id.clone())
+                        .unwrap_or_else(|| parent.clone()),
+                );
             }
         }
         entities
@@ -599,10 +600,20 @@ impl Memory for InMemoryMemory {
                 candidates,
             });
         }
+        // **Stored as the badge the parent wears, never the handle it was
+        // named with** (rule 268). The check above already found it, so
+        // `storage_key` cannot miss here. Kept apart from `entity`, which
+        // still carries the handle the caller sent and is served back
+        // exactly as written — the same way `capture` never shows a caller
+        // the badge it stored an edge's object as.
+        let mut stored = entity.clone();
+        if let Some(parent) = &entity.parent {
+            stored.parent = Some(self.storage_key(parent).unwrap_or_else(|| parent.clone()));
+        }
         self.entities
             .lock()
             .expect("fake mutex poisoned")
-            .push(entity.clone());
+            .push(stored);
         self.badges.lock().expect("fake mutex poisoned").insert(
             entity.id.clone(),
             entity.badge.clone().expect("a row minted here wears one"),
@@ -652,7 +663,20 @@ impl Memory for InMemoryMemory {
             });
         }
         apply_entity_patch(entity, &patch)?;
-        Ok(Guarded::Written(entity.clone()))
+        // **Served under the handle, stored under the badge** — `parent`
+        // names a different row and never moved under this edit, so what it
+        // carries here is whatever was stored, resolved for the reader.
+        // `index`, read before this row's lock was taken, still answers: the
+        // patch this verb applies never touches another entity's badge.
+        let mut served = entity.clone();
+        if let Some(parent) = &served.parent {
+            served.parent = Some(
+                super::entity_wearing(parent.as_str(), &index)
+                    .map(|found| found.id.clone())
+                    .unwrap_or_else(|| parent.clone()),
+            );
+        }
+        Ok(Guarded::Written(served))
     }
 
     async fn rename_entity(
@@ -714,7 +738,18 @@ impl Memory for InMemoryMemory {
                 into: into.to_string(),
             });
         }
-        let effective_parent = parent.clone().or_else(|| entity.parent.clone());
+        // **`entity.parent` is stored as a badge** (rule 268), so it is
+        // resolved back to the handle it answers to today before it reaches
+        // validation or a caller — `validate_entity` checks handle grammar,
+        // which a bare badge does not have, and a caller was never shown a
+        // badge for this field to begin with.
+        let effective_parent = match &parent {
+            Some(new_parent) => Some(new_parent.clone()),
+            None => entity
+                .parent
+                .as_ref()
+                .map(|badge| self.current_handle(badge)),
+        };
         validate_entity(
             to,
             &entity.name,
@@ -749,15 +784,30 @@ impl Memory for InMemoryMemory {
                 candidates,
             });
         }
+        // **What actually gets written is the badge**: unchanged when this
+        // rename named no new parent (`entity.parent` already is one), or
+        // resolved fresh when it did — the guard just above already found
+        // it, so `storage_key` cannot miss.
+        let stored_parent = match &parent {
+            Some(new_parent) => Some(
+                self.storage_key(new_parent)
+                    .unwrap_or_else(|| new_parent.clone()),
+            ),
+            None => entity.parent.clone(),
+        };
 
+        // **Nothing else needs to move.** A parent pointer is a badge now
+        // (rule 268); the badge this row wears never changes across a
+        // rename, so a child naming it as `parent` needs no sweep — the
+        // former, handle-chasing version of this rename touched every other
+        // entity's `parent` field for exactly the reason this no longer
+        // does.
         let mut entities = self.entities.lock().expect("fake mutex poisoned");
         for held in entities.iter_mut() {
             if &held.id == from {
                 held.id = to.clone();
                 held.kind = renamed.kind;
-                held.parent = renamed.parent.clone();
-            } else if held.parent.as_ref() == Some(from) {
-                held.parent = Some(to.clone());
+                held.parent = stored_parent.clone();
             }
         }
         drop(entities);
@@ -1369,35 +1419,19 @@ impl Memory for InMemoryMemory {
         let (survivor_key, survivor_handle) =
             self.resolve(survivor).expect("checked present above");
 
-        // **Every handle the folded side has ever worn, not only the one it
-        // wears today.** A rename rewrites nothing (rule 243), so a pointer
-        // written before one keeps the old spelling forever unless something
-        // sweeps it — and a fold is the one place that has to, because the
-        // folded row keeps forwarding rather than disappearing: a pointer
-        // left on a former handle would resolve one hop short, at the folded
-        // row, rather than at the survivor it now answers for.
-        let former = self.former();
-        let folded_handles: Vec<EntityId> = std::iter::once(folded.clone())
-            .chain(
-                former
-                    .iter()
-                    .filter(|f| f.badge == folded_key.0)
-                    .map(|f| f.former.clone()),
-            )
-            .collect();
-
         let mut entities = self.entities.lock().expect("fake mutex poisoned");
         let mut facts = self.facts.lock().expect("fake mutex poisoned");
 
         // **`parent` re-points too, for the same reason `edge.object` and
-        // `refs` do below**: it names a different row, is never badge-keyed,
-        // and a rename left it wearing whatever handle was current when it
-        // was set.
+        // `refs` do below**: it names a different row, and it is stored as
+        // the badge that row wears (rule 268) — a fold is the one place that
+        // still has to sweep it, because the folded row keeps forwarding
+        // rather than disappearing, and its badge is not the survivor's.
         for entity in entities.iter_mut() {
             if let Some(parent) = &entity.parent
-                && folded_handles.contains(parent)
+                && *parent == folded_key
             {
-                entity.parent = Some(survivor.clone());
+                entity.parent = Some(survivor_key.clone());
             }
         }
 
@@ -1477,9 +1511,9 @@ impl Memory for InMemoryMemory {
                     }
                 }
                 if let Some(edge) = &mut write.edge
-                    && folded_handles.contains(&edge.object)
+                    && edge.object == folded_key
                 {
-                    edge.object = survivor.clone();
+                    edge.object = survivor_key.clone();
                 }
                 // 🚨 **A lineage pointer at a moved claim follows it here too,
                 // wherever the write itself lives.** The real store serves a
@@ -6579,6 +6613,57 @@ pub mod contract {
             after.edge.as_ref().map(|e| &e.object),
             Some(&renamed_to),
             "the edge followed the rename to {renamed_to}, or the newcomer hijacked it: {after:?}",
+        );
+    }
+
+    /// 🚨 **The same hijack case, on `entity.parent`.** A child is parented on
+    /// a handle; that handle is renamed away; a NEW entity is created at the
+    /// vacated handle. `entity.parent` is stored as the badge the parent
+    /// wears (rule 268), so the child keeps naming the renamed thing rather
+    /// than silently adopting the newcomer.
+    pub async fn a_rename_and_a_recreated_handle_does_not_hijack_a_parent<M: Memory>(store: &M) {
+        let original = EntityId("thing:contract-parented-vacancy".into());
+        add(
+            store,
+            NewEntity::new(original.clone(), "Quimby", "the roster"),
+        )
+        .await;
+        let child = EntityId("thing:contract-parented-dependent".into());
+        add(
+            store,
+            NewEntity {
+                parent: Some(original.clone()),
+                ..NewEntity::new(child.clone(), "Nelson", "the roster")
+            },
+        )
+        .await;
+
+        let renamed_to = EntityId("thing:contract-parented-departed".into());
+        store
+            .rename_entity(&original, &renamed_to, None, date(2026, 4, 21), None)
+            .await
+            .expect("rename should succeed")
+            .written()
+            .expect("nothing collides with it");
+
+        // A DIFFERENT entity now claims the vacated handle.
+        add(
+            store,
+            NewEntity::new(original.clone(), "Wiggum", "the roster"),
+        )
+        .await;
+
+        let held = store
+            .list_entities(None)
+            .await
+            .expect("the store answers")
+            .into_iter()
+            .find(|e| e.id == child)
+            .expect("the child is there");
+        assert_eq!(
+            held.parent.as_ref(),
+            Some(&renamed_to),
+            "the parent followed the rename to {renamed_to}, or the newcomer hijacked it: {held:?}",
         );
     }
 
@@ -13388,6 +13473,7 @@ pub mod contract {
         capture_requires_an_existing_edge_object(store).await;
         update_fact_requires_an_existing_edge_object(store).await;
         a_rename_and_a_recreated_handle_does_not_hijack_an_edge(store).await;
+        a_rename_and_a_recreated_handle_does_not_hijack_a_parent(store).await;
         malformed_entity_fields_are_rejected(store).await;
         a_cross_link_takes_the_task_layers_own_grammar(store).await;
         a_field_at_the_validators_limit_survives_storage(store).await;
