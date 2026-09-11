@@ -110,14 +110,15 @@ pub(crate) fn blocked_result(
 pub(crate) fn blocked_body(
     attempted: &EntityId,
     candidates: &[EntityMatch],
-    how_to_proceed: String,
+    how_to_proceed: impl Into<WayForward>,
 ) -> CallToolResult {
+    let how_to_proceed = how_to_proceed.into();
     let body = serde_json::json!({
         "status": "blocked",
         "attempted": attempted.as_str(),
         "wrote": false,
         "candidates": candidates.iter().map(candidate_json).collect::<Vec<_>>(),
-        "how_to_proceed": how_to_proceed,
+        "how_to_proceed": how_to_proceed.as_str(),
     });
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])
 }
@@ -403,6 +404,16 @@ mod tests {
     use super::*;
     use crate::harness::*;
     use crate::memory::testing::*;
+
+    /// **Wired to the mechanism, not merely beside it** (decision log 261,
+    /// 262). Every arm of `memory_declined` funnels through `blocked_body`,
+    /// so proving this one site panics on an empty way forward is proving it
+    /// for all of them at once.
+    #[test]
+    #[should_panic(expected = "way forward")]
+    fn blocked_body_cannot_be_built_with_an_empty_way_forward() {
+        blocked_body(&EntityId("person:homer".into()), &[], String::new());
+    }
 
     /// **A caller mistake never leaves this rail through the error channel**
     /// (rule 68). It comes back as a blocked answer carrying what is wrong and

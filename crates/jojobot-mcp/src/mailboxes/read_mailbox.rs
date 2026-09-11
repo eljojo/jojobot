@@ -97,11 +97,12 @@ fn no_box_for(attempted: &str, why: NoBox) -> CallToolResult {
                 .join(", "),
         ),
     };
+    let how_to_proceed: WayForward = how_to_proceed.into();
     let body = serde_json::json!({
         "status": "blocked",
         "attempted": attempted,
         "wrote": false,
-        "how_to_proceed": how_to_proceed,
+        "how_to_proceed": how_to_proceed.as_str(),
     });
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])
 }

@@ -18,20 +18,22 @@ use super::*;
 /// Writing INTO that box is the sanctioned shape, and it is the shape of a
 /// request rather than a taking.
 pub(crate) fn not_yours(id: &MessageId, theirs: &MailboxName) -> CallToolResult {
-    let body = serde_json::json!({
-        "status": "blocked",
-        "attempted": id.as_str(),
-        "wrote": false,
-        "mailbox": theirs.as_str(),
-        "how_to_proceed": format!(
-            "Nothing was delivered and nothing moved. Message '{id}' is in '{theirs}', which is \
+    let how_to_proceed: WayForward = format!(
+        "Nothing was delivered and nothing moved. Message '{id}' is in '{theirs}', which is \
              not your box — and reading IS taking delivery, so opening it would move somebody \
              else's mail out of `new` and it would never look fresh to the bot it was sent to \
              again. Ids are a plain counter, so the one beside yours is somebody else's; this is \
              not a permission you can be granted. To reach that box, post_message writes into it \
              without reading it, which is the shape of a request — ask its owner for what you \
              need. Your own mail is read_mailbox, which needs no id and no name."
-        ),
+    )
+    .into();
+    let body = serde_json::json!({
+        "status": "blocked",
+        "attempted": id.as_str(),
+        "wrote": false,
+        "mailbox": theirs.as_str(),
+        "how_to_proceed": how_to_proceed.as_str(),
     });
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])
 }
@@ -79,8 +81,9 @@ pub(crate) fn mailbox_blocked(
 pub(crate) fn mailbox_blocked_body(
     attempted: &str,
     candidates: Option<&[MailboxMatch]>,
-    how_to_proceed: String,
+    how_to_proceed: impl Into<WayForward>,
 ) -> CallToolResult {
+    let how_to_proceed = how_to_proceed.into();
     let body = serde_json::json!({
         "status": "blocked",
         "attempted": attempted,
@@ -90,7 +93,7 @@ pub(crate) fn mailbox_blocked_body(
             .iter()
             .map(mailbox_candidate_json)
             .collect::<Vec<_>>(),
-        "how_to_proceed": how_to_proceed,
+        "how_to_proceed": how_to_proceed.as_str(),
     });
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])
 }
@@ -136,18 +139,20 @@ pub(crate) fn subject_declined(attempted: &str, said: &MailboxError) -> CallTool
 /// [`crate::boundary`]. What an agent needs is that retrying will not help
 /// and that the message is unhandled.
 pub(crate) fn mailbox_quarantined(attempted: &str, reason: &str) -> CallToolResult {
+    let how_to_proceed: WayForward = format!(
+        "Nothing was written, and retrying will not help — this is not a missing message. \
+             jojobot can see {attempted} but cannot read it as a message, so no verb will act \
+             on it. Repairing it takes a person, and it is not something you can do from here: \
+             tell the operator. Until then, treat whatever it was carrying as unhandled and say \
+             so rather than reporting it delivered."
+    )
+    .into();
     let body = serde_json::json!({
         "status": "blocked",
         "attempted": attempted,
         "wrote": false,
         "reason": crate::boundary::unreadable(&format!("message {attempted}"), reason),
-        "how_to_proceed": format!(
-            "Nothing was written, and retrying will not help — this is not a missing message. \
-             jojobot can see {attempted} but cannot read it as a message, so no verb will act \
-             on it. Repairing it takes a person, and it is not something you can do from here: \
-             tell the operator. Until then, treat whatever it was carrying as unhandled and say \
-             so rather than reporting it delivered."
-        ),
+        "how_to_proceed": how_to_proceed.as_str(),
     });
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])
 }
@@ -233,6 +238,15 @@ mod tests {
     use super::*;
     use crate::harness::*;
     use crate::mailboxes::testing::*;
+
+    /// **Wired to the mechanism, not merely beside it** (decision log 261,
+    /// 262). `mailbox_declined`'s arms, `subject_declined` and
+    /// `mailbox_malformed` all funnel through this one site.
+    #[test]
+    #[should_panic(expected = "way forward")]
+    fn mailbox_blocked_body_cannot_be_built_with_an_empty_way_forward() {
+        mailbox_blocked_body("inbox", None, String::new());
+    }
 
     /// **A caller mistake never leaves this rail through the error channel**
     /// (rule 68). It comes back as a blocked answer carrying what is wrong and

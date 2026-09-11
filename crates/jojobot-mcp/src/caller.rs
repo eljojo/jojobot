@@ -59,10 +59,8 @@ impl Caller {
 /// A session verb reached on a connection that never booted. Not an error: the
 /// caller did nothing malformed, they just have no identity yet.
 pub(crate) fn session_unbound() -> CallToolResult {
-    let body = serde_json::json!({
-        "status": "blocked",
-        "wrote": false,
-        "how_to_proceed": "Nothing was written. This call carried no `sid`, and jojobot will not \
+    let how_to_proceed: WayForward =
+        "Nothing was written. This call carried no `sid`, and jojobot will not \
                            guess which session is writing. Call start_here with your bot name to \
                            get one, then pass it on every call — reads included. It is the only \
                            address, and it is what tells jojobot which bot is asking: most \
@@ -71,7 +69,12 @@ pub(crate) fn session_unbound() -> CallToolResult {
                            HANDLE, this is not a call you can fix: the session world is \
                            unreachable, so no identity can be issued and no write can be \
                            attributed until it is back. Tell the operator — nothing is lost and \
-                           nothing was written.",
+                           nothing was written."
+            .into();
+    let body = serde_json::json!({
+        "status": "blocked",
+        "wrote": false,
+        "how_to_proceed": how_to_proceed.as_str(),
     });
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])
 }
@@ -80,12 +83,16 @@ pub(crate) fn session_unbound() -> CallToolResult {
 /// caller branches on `status` here exactly as everywhere else — and `wrote:
 /// false` says the thing that matters most: a boot jojobot refused started no
 /// session, so nothing on the board moved.
-pub(crate) fn handle_declined(attempted: &str, how_to_proceed: String) -> CallToolResult {
+pub(crate) fn handle_declined(
+    attempted: &str,
+    how_to_proceed: impl Into<WayForward>,
+) -> CallToolResult {
+    let how_to_proceed = how_to_proceed.into();
     let body = serde_json::json!({
         "status": "blocked",
         "attempted": attempted,
         "wrote": false,
-        "how_to_proceed": how_to_proceed,
+        "how_to_proceed": how_to_proceed.as_str(),
     });
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])
 }
@@ -363,6 +370,14 @@ mod tests {
     use crate::memory::testing::*;
     use crate::session::testing::*;
     use rmcp::handler::server::wrapper::Parameters;
+
+    /// **Wired to the mechanism, not merely beside it** (decision log 261,
+    /// 262).
+    #[test]
+    #[should_panic(expected = "way forward")]
+    fn handle_declined_cannot_be_built_with_an_empty_way_forward() {
+        handle_declined("person:homer", String::new());
+    }
 
     /// **THE PRODUCTION SHAPE: identity does not survive to the next call.**
     /// Every session verb was addressed by a connection binding, and no real

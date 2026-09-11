@@ -37,7 +37,7 @@ pub(crate) fn booting_unknown(
         .filter(|e| e.kind == EntityKind::BOT)
         .map(|e| e.id.as_str())
         .collect();
-    let how_to_proceed = if roster.is_empty() {
+    let how_to_proceed: WayForward = if roster.is_empty() {
         format!(
             "Nothing was written and no session was started. '{attempted}' is not a bot jojobot \
              knows, and there are no bots on this server at all yet. Call start_here with no bot \
@@ -51,7 +51,8 @@ pub(crate) fn booting_unknown(
              '{attempted}' from inside that session — this door mints nothing.",
             roster.join(", "),
         )
-    };
+    }
+    .into();
     let body = serde_json::json!({
         "status": "blocked",
         "attempted": attempted.as_str(),
@@ -62,7 +63,7 @@ pub(crate) fn booting_unknown(
         // does exist.
         "bots": roster,
         "candidates": candidates.iter().map(candidate_json).collect::<Vec<_>>(),
-        "how_to_proceed": how_to_proceed,
+        "how_to_proceed": how_to_proceed.as_str(),
     });
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])
 }

@@ -9,21 +9,24 @@ use super::*;
 /// An amend on a session that has not begun. Refused rather than turned into a
 /// first entry.
 pub(crate) fn session_nothing_to_amend() -> CallToolResult {
-    let body = serde_json::json!({
-        "status": "blocked",
-        "wrote": false,
-        // True of both ways to get here: a bot with no session at all has
-        // nothing written yet; a bot whose last session was wrapped or swept
-        // has a record that is closed and no longer amendable. Never say "not
-        // even written to disk" — that sends a caller looking for entries
-        // that are sitting right there, closed.
-        "how_to_proceed": "Nothing was written. There is no OPEN session to amend: either this \
+    // True of both ways to get here: a bot with no session at all has
+    // nothing written yet; a bot whose last session was wrapped or swept
+    // has a record that is closed and no longer amendable. Never say "not
+    // even written to disk" — that sends a caller looking for entries
+    // that are sitting right there, closed.
+    let how_to_proceed: WayForward =
+        "Nothing was written. There is no OPEN session to amend: either this \
                            identity has not written anything yet — a session's record begins on \
                            its first beat — or its last session is closed, and closed is \
                            terminal both ways. Use journal to begin the next one; its first \
                            entry is what brings the record into being. To read a closed \
                            session's chronology, booting as this identity through start_here \
-                           reports its state.",
+                           reports its state."
+            .into();
+    let body = serde_json::json!({
+        "status": "blocked",
+        "wrote": false,
+        "how_to_proceed": how_to_proceed.as_str(),
     });
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])
 }
@@ -32,12 +35,12 @@ pub(crate) fn session_nothing_to_amend() -> CallToolResult {
 /// that names nothing, a session that is closed, and an amend with nothing to
 /// amend all come back in the guards' one shape.
 pub(crate) fn session_declined(e: SessionError) -> Result<CallToolResult, McpError> {
-    let blocked = |attempted: &str, how: String| {
+    let blocked = |attempted: &str, how: WayForward| {
         let body = serde_json::json!({
             "status": "blocked",
             "attempted": attempted,
             "wrote": false,
-            "how_to_proceed": how,
+            "how_to_proceed": how.as_str(),
         });
         Ok(CallToolResult::success(vec![ContentBlock::text(
             body.to_string(),
@@ -50,7 +53,8 @@ pub(crate) fn session_declined(e: SessionError) -> Result<CallToolResult, McpErr
                 "Nothing was written. jojobot holds no session with the id '{attempted}'. \
                  Ids are minted by jojobot and handed back by start_here when you boot as your \
                  identity — use the sid it gives you rather than composing one."
-            ),
+            )
+            .into(),
         ),
         // The two ends part company here, because the way forward does: the
         // message for an abandoned run must never tell its owner their work
@@ -67,7 +71,8 @@ pub(crate) fn session_declined(e: SessionError) -> Result<CallToolResult, McpErr
                  not the end of it: resume it. Call start_here with your bot name, and either \
                  take it from the offer or pass resume with its sid — it reopens where it left \
                  off and its chronology continues."
-            ),
+            )
+            .into(),
         ),
         SessionError::Closed { attempted, state } => blocked(
             &attempted.clone(),
@@ -76,14 +81,16 @@ pub(crate) fn session_declined(e: SessionError) -> Result<CallToolResult, McpErr
                  so this end is the last word. Its chronology stands as the record of what \
                  happened. If there is more to say, it belongs to a new session: boot again (or \
                  rotate) and start_here mints one."
-            ),
+            )
+            .into(),
         ),
         SessionError::NoEntries { attempted } => blocked(
             &attempted.clone(),
             format!(
                 "Nothing was written. Session '{attempted}' has no entries yet, so there is no \
                  most-recent one to amend — journal it instead."
-            ),
+            )
+            .into(),
         ),
         SessionError::NotABeat { attempted, session } => blocked(
             &attempted.clone(),
@@ -91,7 +98,8 @@ pub(crate) fn session_declined(e: SessionError) -> Result<CallToolResult, McpErr
                 "Nothing was written. Entry '{attempted}' on session '{session}' is one the \
                  session recorded itself, and those are append-only wherever they sit. Only the \
                  most recent entry can be amended, through amend_journal."
-            ),
+            )
+            .into(),
         ),
         // **A malformed id or entry is a caller mistake, so it is an answer**
         // (rule 68). The validator's own sentence says which fault it is and
@@ -104,7 +112,8 @@ pub(crate) fn session_declined(e: SessionError) -> Result<CallToolResult, McpErr
                 "Nothing was written: {e}. Nothing about this needs the operator and no session \
                  is missing — the call itself is what jojobot cannot carry out. Send it again \
                  with that fixed."
-            ),
+            )
+            .into(),
         ),
         other => Err(session_error(other)),
     }

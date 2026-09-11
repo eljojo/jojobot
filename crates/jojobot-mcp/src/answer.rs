@@ -8,6 +8,43 @@
 
 use super::*;
 
+/// **What a refusal unlocks — never a deficit to avoid** (decision log 261,
+/// 262). Every `status: "blocked"` body on this surface carries one, built
+/// through this type rather than a bare `String`, so a caller sees a next
+/// move and never a rejection with nothing behind it.
+///
+/// **The constructor is the only door, and it is the mechanism**: nothing
+/// converts an empty or blank string into a `WayForward`. A refusal built
+/// with no way forward is not a smaller answer — it is the exact failure
+/// this type exists to make impossible, so it panics at the moment somebody
+/// tries to build one rather than shipping it to a caller who has to notice
+/// on their own. A session that has never read decision log 261 still
+/// cannot write a bare rejection, because the type refuses to hold one.
+pub(crate) struct WayForward(String);
+
+impl WayForward {
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for WayForward {
+    fn from(text: String) -> Self {
+        assert!(
+            !text.trim().is_empty(),
+            "a refusal was built with no way forward — every blocked result must say what it \
+             unlocks (decision log 261, 262)",
+        );
+        WayForward(text)
+    }
+}
+
+impl From<&str> for WayForward {
+    fn from(text: &str) -> Self {
+        WayForward::from(text.to_string())
+    }
+}
+
 /// **A call whose arguments are each fine and wrong together.** Not a malformed
 /// call — every token parsed — so it is not a protocol error: it is a caller
 /// mistake, and those are answers here.
@@ -17,11 +54,12 @@ use super::*;
 /// is the other call to make. [`session_unbound`] is the precedent — the shape
 /// has always carried a candidate-free refusal, so this fits it rather than
 /// stretching it into something that reads like a near miss.
-pub(crate) fn misused(how_to_proceed: String) -> CallToolResult {
+pub(crate) fn misused(how_to_proceed: impl Into<WayForward>) -> CallToolResult {
+    let how_to_proceed = how_to_proceed.into();
     let body = serde_json::json!({
         "status": "blocked",
         "wrote": false,
-        "how_to_proceed": how_to_proceed,
+        "how_to_proceed": how_to_proceed.as_str(),
     });
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])
 }
@@ -283,6 +321,33 @@ pub(crate) fn note_teaching(body: &mut serde_json::Value, content: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 🚨 **An empty way forward cannot be built at all** (decision log 261,
+    /// 262) — the constructor is the one door, and it panics rather than
+    /// handing back a `WayForward` that says nothing. This is the mechanism
+    /// itself, independent of any one refusal that uses it.
+    #[test]
+    #[should_panic(expected = "way forward")]
+    fn a_blank_way_forward_cannot_be_built() {
+        let _: WayForward = "   ".into();
+    }
+
+    /// The ordinary case: real prose survives the constructor unchanged.
+    #[test]
+    fn a_real_way_forward_survives_construction() {
+        let built: WayForward = "call add_entity first".into();
+        assert_eq!(built.as_str(), "call add_entity first");
+    }
+
+    /// **`misused` is wired to the mechanism, not merely beside it.** A
+    /// refusal built through the actual verb-facing function — not the type
+    /// in isolation — must panic on an empty way forward, or the type is a
+    /// guarantee nobody is holding.
+    #[test]
+    #[should_panic(expected = "way forward")]
+    fn misused_cannot_be_built_with_an_empty_way_forward() {
+        misused(String::new());
+    }
 
     /// 🚨 **Two teachings on one body must both survive.** A single `"teaching"`
     /// key that a second call overwrites drops the first one silently — no
