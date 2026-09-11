@@ -1,0 +1,278 @@
+//! **The classifier as a gate, not a survey.**
+//!
+//! `lock::standing_findings` classifies every needle in every shipped lock
+//! without asking a room anything — but nothing ran it over the shipped
+//! rooms. A classifier nobody calls is a survey somebody ran by hand once; a
+//! gate is a standing case that walks `expectations::shipped_rooms()` the
+//! same way `reads_the_rooms.rs` does, and fails when a needle nobody has
+//! named appears.
+//!
+//! **The known exposures are a named allowlist, never a count.** A count
+//! says *eleven is fine*; a named list says *these eleven, for these
+//! reasons* — so a twelfth cannot pass without somebody writing a sentence,
+//! and that sentence is the review moment a pinned count would have snoozed
+//! through. An entry with no real reason is a defect in the allowlist, not
+//! an exemption — `every_allowlist_entry_has_a_substantive_reason` holds
+//! that floor mechanically, because a shrug is easy to write and easy to
+//! miss reading over eleven of them.
+//!
+//! **The list also has to stay honest the other direction.** An entry
+//! nobody's finding matches any more is a snoozed alarm for a lock that was
+//! fixed — the same rot a pinned count invites, just facing the other way —
+//! so `every_named_exposure_still_reproduces` holds that a listed entry is
+//! never allowed to go quiet on its own.
+
+use jojobot_exercise::lock::{self, Risk, StandingFinding};
+
+/// One needle this build already knows is exposed, and why it still is.
+struct Allowed<'a> {
+    room: &'a str,
+    lock: &'a str,
+    needle: &'a str,
+    risk: Risk,
+    reason: &'a str,
+}
+
+/// **Every exposure this build ships, named.** Add a lock's own companion
+/// instead of an entry here whenever that is the real fix — an entry is for
+/// the exposures that are staying, with the sentence that says why.
+const ALLOWED: &[Allowed<'static>] = &[
+    Allowed {
+        room: "rooms/year.md",
+        lock: "Phase 1 — January: nothing on Milhouse says where he lives, so April has \
+               nothing to change and November nothing to read",
+        needle: "place:springfield",
+        risk: Risk::Retraction,
+        reason: "reads the finished board, so April legitimately superseding this claim still \
+                 satisfies it on the marked-but-superseded text, which is by design — but \
+                 nothing here pins status, and a RETRACTION of the same claim would read \
+                 identically to the legitimate supersession this lock was never written to \
+                 tell apart",
+    },
+    Allowed {
+        room: "rooms/year.md",
+        lock: "Phase 2 — February: the pump the operator lent is not a thing jojobot knows, \
+               so September has nothing to ask about",
+        needle: "thing:floor-pump",
+        risk: Risk::Retraction,
+        reason: "names an ENTITY handle out of a `recall {\"kind\":\"thing\"}` listing, not a \
+                 fact's edge — entities carry no status of their own here, only facts do, so \
+                 the retraction this classifier is built to catch does not apply to this \
+                 needle, and the classifier cannot see that distinction from the needle's text \
+                 alone",
+    },
+    Allowed {
+        room: "rooms/year.md",
+        lock: "Phase 2 — February: the club cannot be walked to its members, so August's \
+               question has no answer but a guess",
+        needle: "person:nelson",
+        risk: Risk::Retraction,
+        reason: "a membership edge walk with no status companion; no sitting in this room ever \
+                 retracts Nelson's membership, so the gap is unexercised today, but the lock's \
+                 own shape carries it exactly like the pump lock that shipped broken",
+    },
+    Allowed {
+        room: "rooms/year.md",
+        lock: "Phase 2 — February: the club cannot be walked to its members, so August's \
+               question has no answer but a guess",
+        needle: "person:milhouse",
+        risk: Risk::Retraction,
+        reason: "the same membership walk, same missing companion, for Milhouse rather than \
+                 Nelson — his membership is never retracted in this room either, so this is \
+                 also unexercised rather than reproducing",
+    },
+    Allowed {
+        room: "rooms/year.md",
+        lock: "Phase 4 — April: nothing on Milhouse points at Shelbyville, so the move was \
+               recorded somewhere a later sitting will not look",
+        needle: "place:shelbyville",
+        risk: Risk::Retraction,
+        reason: "no sitting after April touches Milhouse's Shelbyville claim, so nothing in \
+                 this room retracts it — the gap is the same shape as the Springfield lock \
+                 three phases up, just never exercised because nobody corrects this one",
+    },
+    Allowed {
+        room: "rooms/year.md",
+        lock: "Phase 6 — June: the survey cannot be walked to who was at it, so August's \
+               question is answerable only by reading prose",
+        needle: "person:milhouse",
+        risk: Risk::Retraction,
+        reason: "Milhouse's own attendance is never retracted in this room, so this half of the \
+                 pair is unexercised even though Nelson's, right beside it, is not",
+    },
+    Allowed {
+        room: "rooms/year.md",
+        lock: "Phase 6 — June: the survey cannot be walked to who was at it, so August's \
+               question is answerable only by reading prose",
+        needle: "person:nelson",
+        risk: Risk::Retraction,
+        reason: "October legitimately retracts Nelson's own attendance at this exact survey — \
+                 the room's late-October play does it on purpose — and this Query lock reads \
+                 the FINISHED board with no status companion, so a retracted attendance record \
+                 still carrying person:nelson in its marked text is not distinguished here from \
+                 a standing one. This is the pump lock's own historical bug, on attendance \
+                 rather than on the pump",
+    },
+    Allowed {
+        room: "rooms/year.md",
+        lock: "Phase 9 — nothing on the pump currently carries the day it came back, so a \
+               reader is left with no day to find — whether it was never recorded, or a later, \
+               legitimate correction cleared the only trace of it",
+        needle: "person:ralph",
+        risk: Risk::Retraction,
+        reason: "the historical instance the classifier was built to catch. October corrects \
+                 this record in place rather than retracting it, so the honest play never trips \
+                 it — but the lock still carries a bare person:ralph with no companion, so a \
+                 future sitting that retracted Ralph's account instead of correcting it would \
+                 satisfy this lock on dead text exactly as the original bug did",
+    },
+    Allowed {
+        room: "rooms/year.md",
+        lock: "Phase 10 — October: the survey cannot be walked to the place it was held at, so \
+               where it happened is in one sitting's sentence and nowhere a later reader of the \
+               event will look",
+        needle: "place:north-trail",
+        risk: Risk::Retraction,
+        reason: "a location-edge walk with no status companion; nothing in this room ever \
+                 retracts where the survey was held, so the gap is structural and unexercised",
+    },
+    Allowed {
+        room: "rooms/year.md",
+        lock: "Phase 11 — October (again): Bart cannot be walked to the club, so he is a name \
+               in a transcript and nothing on the roster",
+        needle: "person:bart",
+        risk: Risk::Retraction,
+        reason: "the same membership-walk shape as February's, on the member this room adds \
+                 last — his membership is never retracted after this sitting, so the gap is \
+                 unexercised",
+    },
+    Allowed {
+        room: "rooms/year.md",
+        lock: "Phase 15 — later December: what the claim used to say is not on the record, so \
+               either the sitting never reached the correction's own history or it answered \
+               from the claim as it stands",
+        needle: "meets on Tuesdays",
+        risk: Risk::Retraction,
+        reason: "bare prose naming no key, read for whether it appears anywhere in the club's \
+                 trace history rather than pinned to one record's status — the phrase happens \
+                 to be safe against this room's own rewritten wording today, but nothing here \
+                 stops a differently-worded future correction from reintroducing exactly this \
+                 phrase somewhere the claim does not mean it",
+    },
+];
+
+/// The findings a room's shipped locks classify to.
+fn found_in(room: &str) -> Vec<StandingFinding> {
+    lock::standing_findings(&lock::locks_of(room))
+}
+
+/// **Whether a finding is named, against a given allowlist.** Taking the
+/// list as a parameter rather than reading the constant is what lets the
+/// mechanism be proven on its own, synthetic data — see the last test below.
+fn is_allowed(room: &str, finding: &StandingFinding, allowed: &[Allowed<'_>]) -> bool {
+    allowed.iter().any(|a| {
+        a.room == room
+            && a.lock == finding.lock
+            && a.needle == finding.needle
+            && a.risk == finding.risk
+    })
+}
+
+/// **Every needle the classifier flags in a shipped room must be named.** A
+/// finding nobody listed is a lock that got more satisfiable without anybody
+/// writing a sentence about it — the gate this file exists to be.
+#[test]
+fn every_standing_exposure_in_a_shipped_room_is_named() {
+    for room in jojobot_exercise::expectations::shipped_rooms() {
+        for finding in found_in(room) {
+            assert!(
+                is_allowed(room, &finding, ALLOWED),
+                "{room}: a standing exposure is not on the allowlist — {:?} / {:?} ({:?}). \
+                 Give the lock a status companion to close it, or add a named entry here with a \
+                 real reason.",
+                finding.lock,
+                finding.needle,
+                finding.risk,
+            );
+        }
+    }
+}
+
+/// **Every named entry must still reproduce.** An entry nobody's finding
+/// matches any more is a snoozed alarm for a lock that was fixed — the
+/// allowlist rotting the other direction from the one above.
+#[test]
+fn every_named_exposure_still_reproduces() {
+    for allowed in ALLOWED {
+        let found = found_in(allowed.room);
+        assert!(
+            found.iter().any(|f| f.lock == allowed.lock
+                && f.needle == allowed.needle
+                && f.risk == allowed.risk),
+            "{}: the allowlist names an exposure that no longer reproduces — {:?} / {:?} \
+             ({:?}). Remove the stale entry.",
+            allowed.room,
+            allowed.lock,
+            allowed.needle,
+            allowed.risk,
+        );
+    }
+}
+
+/// **A named entry needs a real reason, not a shrug.** The allowlist's whole
+/// point is that a caller has to write a sentence to add one; a threshold on
+/// length is a cheap floor under that, not a judge of quality.
+#[test]
+fn every_allowlist_entry_has_a_substantive_reason() {
+    for allowed in ALLOWED {
+        assert!(
+            allowed.reason.split_whitespace().count() >= 12,
+            "{}/{}: the reason is too thin to be a reason: {:?}",
+            allowed.lock,
+            allowed.needle,
+            allowed.reason,
+        );
+    }
+}
+
+/// **The gate itself, proven on a lock nothing shipped writes.** A bare
+/// handle with no matching allowlist entry must fail, and the identical
+/// finding with a matching entry must clear — proven against a synthetic
+/// lock and a synthetic allowlist rather than by editing a shipped room, so
+/// the mechanism is what is under test rather than today's eleven.
+#[test]
+fn an_unnamed_exposure_fails_the_gate_and_naming_it_clears_it() {
+    let locks = lock::read(
+        "```locks\n\
+         recall {\"kind\": \"person\"}\n\
+         carries person:homer\n\
+         say     homer is not on the roster\n\
+         ```\n",
+    )
+    .expect("the lock reads");
+    let found = lock::standing_findings(&locks);
+    assert_eq!(
+        found.len(),
+        1,
+        "the synthetic lock must classify to exactly one finding"
+    );
+
+    let planted_room = "not-a-shipped-room";
+    assert!(
+        !is_allowed(planted_room, &found[0], &[]),
+        "an exposure checked against an empty allowlist read as named — the gate would pass \
+         anything",
+    );
+
+    let named = [Allowed {
+        room: planted_room,
+        lock: &found[0].lock,
+        needle: &found[0].needle,
+        risk: found[0].risk,
+        reason: "planted for the gate's own proof, not a real exposure",
+    }];
+    assert!(
+        is_allowed(planted_room, &found[0], &named),
+        "naming the exact finding did not clear it against its own allowlist",
+    );
+}
