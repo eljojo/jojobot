@@ -804,14 +804,14 @@ async fn a_node_page_shows_the_facts_held_there_and_who_backs_them() {
 /// nothing) is unchanged in the same body — a page with no mentions on it is
 /// not something a passing linkifier gets to touch.
 ///
-/// ⛔️ **No rename case here.** The room this capability protects against is a
-/// thing's badge answering to a different handle later — but `merge` moves a
-/// folded entity's facts and marks it `merged_into` the survivor; it does not
-/// touch either side's badge. Read at the source in
-/// `jojobot-domain/src/memory/testing.rs`'s `merge`, confirmed by running this
-/// case against a merge and watching the link stay on the folded handle. So
-/// today, nothing a caller can do moves what a stored mention answers to —
-/// this is a finding for `pm`, not a gap this test can respect.
+/// **The rename case is here too.** `rename_entity` moves a thing's badge
+/// while a stored mention keeps pointing at the same row — proven below by
+/// renaming `thing:handcart` after the mention above is captured and reading
+/// the same page again: the link follows the new handle, and the anchor the
+/// old handle rendered is gone. `merge` is a different move and stays
+/// distinct: it folds a losing entity's facts into a survivor and marks it
+/// `merged_into`, without touching either side's badge. Read at the source in
+/// `jojobot-domain/src/memory/testing.rs`'s `merge`.
 #[tokio::test]
 async fn a_mention_in_served_text_becomes_a_followable_link() {
     let idp = support::TestIdp::new();
@@ -874,6 +874,34 @@ async fn a_mention_in_served_text_becomes_a_followable_link() {
     assert!(
         body.contains("The widget stall runs on Thursdays"),
         "a claim that mentions nothing is unchanged on the same page: {body}"
+    );
+
+    // **The rename case.** Nothing about the claim above is rewritten — what
+    // changes is what a read of its stored mention renders back.
+    board
+        .memory
+        .rename_entity(
+            &EntityId("thing:handcart".into()),
+            &EntityId("thing:handcart-2".into()),
+            None,
+            Date::constant(2026, 3, 10),
+            None,
+        )
+        .await
+        .expect("the rename is written");
+
+    let after = read(&client, addr, "/person:alpha/topic:widgets/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        after.contains("<a href=\"/thing:handcart-2/\">@thing:handcart-2</a>"),
+        "the mention did not follow the rename to the thing's new page: {after}"
+    );
+    assert!(
+        !after.contains("<a href=\"/thing:handcart/\">@thing:handcart</a>"),
+        "the mention still renders under the handle it wore before the rename: {after}"
     );
     ct.cancel();
 }
