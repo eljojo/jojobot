@@ -12,14 +12,8 @@ use jojobot_adapters::dolt::sessions::DoltSessions;
 use jojobot_adapters::dolt::teaching::DoltTeachings;
 use jojobot_adapters::owners::MemoryOwners;
 use jojobot_adapters::provisioned::Provisioned;
-use jojobot_adapters::search::{IndexedMailboxes, IndexedMemory, IndexedSessions, Retrieval};
-use jojobot_domain::mailbox::mention as mailbox_mention;
 use jojobot_domain::mailbox::{Mailboxes, OwnerIndex};
 use jojobot_domain::memory::Memory;
-use jojobot_domain::memory::mention;
-use jojobot_domain::memory::search::Search;
-use jojobot_domain::session::Sessions;
-use jojobot_domain::session::mention as session_mention;
 use jojobot_domain::teaching::Teachings;
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -239,19 +233,12 @@ async fn main() -> anyhow::Result<()> {
             .on_clock(config.clock),
         supplied,
     ));
-    // **Mentions resolve above the supplied layer and below the index.** Above,
-    // because a mention of a record the build supplies has to see that record;
-    // below, because the index scans through here and what search holds must be
-    // what a reader sees — a claim naming a thing is findable by that thing's
-    // handle rather than by a badge nobody types.
-    let memory: Arc<dyn Memory> = Arc::new(mention::Mentioning::new(resolved));
-
     // **The kinds, before anything reads a handle.** Every kind this instance
     // holds is written and then read back, and what comes back is the set this
     // process parses handles against. A store that cannot be reached leaves
     // that set empty, and an empty set refuses every handle in its own words
     // rather than pretending the ten are there.
-    match jojobot_mcp::seed::ensure_kinds(&memory).await {
+    match jojobot_mcp::seed::ensure_kinds(&resolved).await {
         Ok(kinds) => tracing::info!(kinds, "loaded the kinds this instance holds"),
         Err(e) => tracing::error!(
             error = %e,
@@ -261,12 +248,14 @@ async fn main() -> anyhow::Result<()> {
         ),
     }
 
-    // The search projection sits in FRONT of the store, so every write through
-    // the port keeps the index current. Boot is a plain full re-scan — and a
-    // failed scan is not fatal: the store is the truth, and refusing to start
-    // because a projection couldn't be built is worse than a thin `search`. It
-    // says so loudly instead.
-    let indexed = Arc::new(IndexedMemory::new(memory).context("opening the search index")?);
+    // **Wrapped in the decorators the story harness shares too** — see
+    // `jojobot::wiring`'s own doc for why this is two stages rather than
+    // one. The search projection sits in FRONT of the store, so every write
+    // through the port keeps the index current. Boot is a plain full
+    // re-scan — and a failed scan is not fatal: the store is the truth, and
+    // refusing to start because a projection couldn't be built is worse
+    // than a thin `search`. It says so loudly instead.
+    let indexed = jojobot::wiring::assemble_memory(resolved)?;
     match indexed.rebuild().await {
         Ok(docs) => tracing::info!(docs, "search: index built from a full scan"),
         Err(e) => tracing::warn!(
@@ -319,19 +308,12 @@ async fn main() -> anyhow::Result<()> {
         ),
     }
 
-    // **Mentions resolve above the raw store and below the index here too** —
-    // the same placement as `memory`'s own `Mentioning`, and for the same
-    // reason: a mention in a message or a journal beat has to see the full
-    // entity list, and what search holds must be what a reader sees.
-    let mail_store: Arc<dyn Mailboxes> = Arc::new(mailbox_mention::Mentioning::new(
-        bare_mail_store,
-        indexed.clone(),
-    ));
-    let sessions: Arc<dyn Sessions> = Arc::new(session_mention::Mentioning::new(
-        bare_sessions,
-        indexed.clone(),
-    ));
     let teachings: Arc<dyn Teachings> = Arc::new(DoltTeachings::open(store.pool().clone()));
+
+    // **Wrapped in the same decorators the story harness shares** — see
+    // `jojobot::wiring`'s own doc.
+    let wired = jojobot::wiring::assemble_ports(indexed.clone(), bare_mail_store, bare_sessions);
+    let sessions = wired.sessions.clone();
 
     // Mail goes into the SAME index — one front door, one ranked list — so the
     // mailbox store gets the same decorator treatment Memory's does: every verb
@@ -342,8 +324,7 @@ async fn main() -> anyhow::Result<()> {
     // gap in every answer rather than passing it off as "nothing matched".
     // Refusing to start over a projection is worse than a thin one that admits
     // what it is.
-    let mailboxes = Arc::new(IndexedMailboxes::new(mail_store, indexed.index()));
-    match mailboxes.rebuild().await {
+    match wired.mailboxes.rebuild().await {
         Ok(messages) => tracing::info!(messages, "search: mail indexed from a full board read"),
         Err(e) => tracing::warn!(
             error = %e,
@@ -355,6 +336,7 @@ async fn main() -> anyhow::Result<()> {
              get the whole store back."
         ),
     }
+    let mailboxes: Arc<dyn Mailboxes> = wired.mailboxes;
     // **The retrieval port holds both halves, because an answer spans both.**
     // Each half refreshes itself from its own store before a search answers, so
     // a record removed outside jojobot — the only way one leaves at all — stops
@@ -362,8 +344,7 @@ async fn main() -> anyhow::Result<()> {
     // the port is not on either of them.
     // **The third half: a bot's own runs.** Owner-scoped when a query asks, so
     // every bot's runs are indexed and each caller is served only its own.
-    let runs = Arc::new(IndexedSessions::new(sessions.clone(), indexed.index()));
-    match runs.rebuild().await {
+    match wired.sessions_indexed.rebuild().await {
         Ok(count) => tracing::info!(
             sessions = count,
             "search: sessions indexed from a full read"
@@ -375,11 +356,7 @@ async fn main() -> anyhow::Result<()> {
              the store reads to get the rest back."
         ),
     }
-    let search: Arc<dyn Search> = Arc::new(Retrieval::new(
-        indexed.index(),
-        vec![indexed.clone(), mailboxes.clone(), runs],
-    ));
-    let mailboxes: Arc<dyn Mailboxes> = mailboxes;
+    let search = wired.search;
 
     // **The handle registry, filled from the board before anything is served.**
     // Eagerly rather than on first miss: a lazy rebuild would hand the first

@@ -12,13 +12,8 @@ use std::sync::Arc;
 
 use jojobot::{AppState, build_app};
 use jojobot_adapters::provisioned::Provisioned;
-use jojobot_adapters::search::{IndexedMailboxes, IndexedMemory, IndexedSessions, Retrieval};
-use jojobot_domain::mailbox::Mailboxes;
-use jojobot_domain::mailbox::mention as mailbox_mention;
 use jojobot_domain::mailbox::testing::InMemoryMailboxes;
 use jojobot_domain::memory::testing::InMemoryMemory;
-use jojobot_domain::session::Sessions;
-use jojobot_domain::session::mention as session_mention;
 use jojobot_domain::session::testing::InMemorySessions;
 use rmcp::ServiceExt;
 use rmcp::model::{CallToolRequestParams, ClientCapabilities, ClientInfo, Implementation};
@@ -279,18 +274,15 @@ impl Story {
         Self::serve(bot, Self::wired(InMemoryMemory::booted())).await
     }
 
-    /// The store, plus what this build supplies over it.
+    /// The store, plus what this build supplies over it — everything short of
+    /// `jojobot::wiring::assemble_memory`'s own `Mentioning` wrap, which
+    /// `spawn` calls, exactly as `main.rs` does, so the two cannot drift.
     fn wired(store: InMemoryMemory) -> Arc<dyn jojobot_domain::memory::Memory> {
         // **Both halves are told the same set**, exactly as the binary wires
         // it: the layer above resolves supplied records into answers and the
         // store below sees them when its guard asks what exists.
         let supplied = jojobot_mcp::provisions();
-        let resolved: Arc<dyn jojobot_domain::memory::Memory> =
-            Arc::new(Provisioned::new(store.knowing(supplied.clone()), supplied));
-        // **And mentions above that, exactly where the binary puts them**: a
-        // mention may name a record the build supplies, so this layer has to
-        // see one.
-        Arc::new(jojobot_domain::memory::mention::Mentioning::new(resolved))
+        Arc::new(Provisioned::new(store.knowing(supplied.clone()), supplied))
     }
 
     /// **Serve a jojobot on an instance an older build left behind** — a store
@@ -392,43 +384,33 @@ impl Story {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let store_for_restart = store.clone();
-        let indexed = Arc::new(IndexedMemory::new(store).expect("index opens"));
+        // **Wrapped in the same two-stage decorator assembly `main.rs`
+        // calls** — `jojobot::wiring`'s own doc says why it is two stages
+        // and not one. A fixture that indexed the bare stores would serve a
+        // jojobot whose journal and mail no rename ever reached, poorer than
+        // the deployment this stands for and silently so; calling the same
+        // functions the binary calls is what stops that from being possible
+        // to write by accident.
+        let indexed = jojobot::wiring::assemble_memory(store).expect("index opens");
         if inherited {
             let _ = indexed.rebuild().await;
         }
         let indexed_for_seed = indexed.clone();
-        // **Mentions resolve above the raw store and below the index, exactly
-        // as the binary wires it (rule 260).** A mention in a message or a
-        // journal beat has to see the full entity list, and what search holds
-        // must be what a reader sees — a fixture that indexed the bare stores
-        // would serve a jojobot whose journal and mail no rename ever reached.
-        let mail_mentioned: Arc<dyn Mailboxes> = Arc::new(mailbox_mention::Mentioning::new(
-            mail_store.clone(),
-            indexed.clone(),
-        ));
-        let sessions_mentioned: Arc<dyn Sessions> = Arc::new(session_mention::Mentioning::new(
-            runs.clone(),
-            indexed.clone(),
-        ));
-        // **Mail goes through the search index, exactly as the binary wires
-        // it.** Both worlds sit behind one `search`, so a fixture holding the
-        // raw store would serve a jojobot whose mail no story could see —
-        // poorer than the deployment it stands for, and silently so.
-        let mail = Arc::new(IndexedMailboxes::new(mail_mentioned, indexed.index()));
-        // **The retrieval port over ALL THREE halves, exactly as the binary
-        // wires it.** A port over fewer answers without ever refreshing the
-        // rest, which is a poorer jojobot than the deployment this stands for —
-        // and a story would report the fixture's limits as the software's.
-        let indexed_runs = Arc::new(IndexedSessions::new(
-            sessions_mentioned.clone(),
-            indexed.index(),
-        ));
-        let search = Arc::new(Retrieval::new(
-            indexed.index(),
-            vec![indexed.clone(), mail.clone(), indexed_runs],
-        ));
-        let boxes: Arc<dyn jojobot_domain::mailbox::Mailboxes> = mail;
+        let wired =
+            jojobot::wiring::assemble_ports(indexed.clone(), mail_store.clone(), runs.clone());
+        let sessions_mentioned = wired.sessions.clone();
+        let search = wired.search;
+        let boxes: Arc<dyn jojobot_domain::mailbox::Mailboxes> = wired.mailboxes;
         let boxes_for_seed = boxes.clone();
+        // **The handle registry, filled from the board before anything is
+        // served — exactly as `main.rs` does.** A restart inherits a store
+        // that already holds runs from an earlier spawn; a registry built
+        // fresh and never filled would tell a resumed run its own `sid`
+        // addresses nothing, which is not what a real restart does.
+        let registry = Arc::new(jojobot_mcp::sid::SessionRegistry::new());
+        if let Ok(board) = sessions_mentioned.all_sessions().await {
+            registry.rebuild_from(&board);
+        }
         // **The operator's own window is served too, over the same state.**
         // A story that could not open a page could not tell whether what it
         // wrote is visible to the one reader who does not speak MCP — and every
@@ -455,7 +437,7 @@ impl Story {
             mailboxes: boxes,
             sessions: sessions_mentioned,
             teachings: Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
-            registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
+            registry,
             ui: Some(Arc::new(ui)),
             // The shape a story runs against is the one a fresh instance
             // serves: an operator who set nothing gets both lines.

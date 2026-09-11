@@ -5,6 +5,7 @@ pub mod auth;
 pub mod config;
 pub mod routes;
 pub mod ui;
+pub mod wiring;
 
 use std::sync::Arc;
 
