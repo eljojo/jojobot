@@ -2729,6 +2729,25 @@ async fn junes_attendee_lock_holds_despite_a_later_legitimate_retraction() {
     );
 }
 
+/// 🚨 **February's club-membership lock fails when February's own window
+/// drew nothing.**
+///
+/// The positive half of the pair the pattern needs: a year where February
+/// never ran drew no membership edges at all, and the lock must say so
+/// rather than holding over an empty record.
+#[tokio::test]
+async fn februarys_club_lock_fails_when_februarys_own_window_drew_nothing() {
+    let (_room, surface) = furnished().await;
+    let boundaries = work_the_year(&surface, &room_document(), &[0], &[]).await;
+    let judged = judge_all(&surface, &boundaries).await;
+    assert!(
+        !judged[FEBRUARY[2]].held,
+        "a year where February never ran held its club-membership lock, so it is satisfied by \
+         something other than that sitting: {}",
+        saying(&judged),
+    );
+}
+
 /// 🚨 **A retraction does not read as a supersession — the needle January's
 /// Springfield lock now pins.**
 ///

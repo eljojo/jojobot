@@ -177,9 +177,14 @@ check   the_pump_reached_its_holder_in_february
 say     February: nothing on the pump reaches Ralph, so who has it is only in the prose of a sitting that is gone
 
 # The walk August needs. A membership written as a sentence is not an edge.
-recall {"subject": "org:north-trail-club", "follow": {"shape": "membership", "direction": "in"}}
-carries person:nelson
-carries person:milhouse
+#
+# 🚨 **A hatch, scoped to February's own window.** Asked of the finished
+# board, `carries person:nelson` and `carries person:milhouse` hold on a
+# retracted membership exactly as they hold on a standing one — nothing here
+# retracts either today, but the gap is the same shape June's attendance walk
+# carried before its own fix, and a `carries` needle cannot correlate the
+# edge and a status key on the same record either way.
+check   februarys_club_drew_a_standing_member_for_each
 say     February: the club cannot be walked to its members, so August's question has no answer but a guess
 ```
 

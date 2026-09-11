@@ -51,26 +51,6 @@ const ALLOWED: &[Allowed<'static>] = &[
     },
     Allowed {
         room: "rooms/year.md",
-        lock: "Phase 2 — February: the club cannot be walked to its members, so August's \
-               question has no answer but a guess",
-        needle: "person:nelson",
-        risk: Risk::Retraction,
-        reason: "a membership edge walk with no status companion; no sitting in this room ever \
-                 retracts Nelson's membership, so the gap is unexercised today, but the lock's \
-                 own shape carries it exactly like the pump lock that shipped broken",
-    },
-    Allowed {
-        room: "rooms/year.md",
-        lock: "Phase 2 — February: the club cannot be walked to its members, so August's \
-               question has no answer but a guess",
-        needle: "person:milhouse",
-        risk: Risk::Retraction,
-        reason: "the same membership walk, same missing companion, for Milhouse rather than \
-                 Nelson — his membership is never retracted in this room either, so this is \
-                 also unexercised rather than reproducing",
-    },
-    Allowed {
-        room: "rooms/year.md",
         lock: "Phase 4 — April: nothing on Milhouse points at Shelbyville, so the move was \
                recorded somewhere a later sitting will not look",
         needle: "place:shelbyville",

@@ -56,6 +56,9 @@
 //!   found, and late October legitimately retracts Nelson's own attendance
 //!   at this same survey — the pump lock's own historical bug, on
 //!   attendance rather than the pump.
+//! * **`februarys_club_drew_a_standing_member_for_each`** — the same
+//!   correlation, on the club's membership edge rather than the survey's
+//!   attendee one, asked in February's own window.
 //! * **`one_record_points_at_two_kinds`** — say that handles of two different
 //!   kinds landed on ONE record. `carries` lines are claims about the whole
 //!   answer, so two of them hold on two records naming one thing each, which is
@@ -82,7 +85,7 @@ type Hatch = (&'static str, fn() -> Box<dyn Checks>);
 
 /// **Every named check this build ships.** A room adds one line here and one
 /// `check` line in its document, and both are visible in the count.
-pub const CHECKS: [Hatch; 18] = [
+pub const CHECKS: [Hatch; 19] = [
     ("the_brief_left_the_box", || {
         checked(|seen| Box::pin(the_brief_left_the_box(seen)))
     }),
@@ -139,6 +142,9 @@ pub const CHECKS: [Hatch; 18] = [
     ),
     ("junes_survey_drew_a_standing_attendee_for_each", || {
         checked(|seen| Box::pin(junes_survey_drew_a_standing_attendee_for_each(seen)))
+    }),
+    ("februarys_club_drew_a_standing_member_for_each", || {
+        checked(|seen| Box::pin(februarys_club_drew_a_standing_member_for_each(seen)))
     }),
 ];
 
@@ -1036,13 +1042,15 @@ fn kinds_pointed_at(text: &str) -> Vec<String> {
 /// asks to write a pointer at all.
 const JUNE: &str = "Phase 6";
 
-/// **Whether one subject's own record carries a standing attendee edge**,
-/// read off one boundary's world. Correlated on the record, not just present
-/// somewhere: `subject` and `edge.type` have to land on the SAME hit, which
-/// is the thing a `carries` needle cannot ask.
-fn attends_as(world: &str, subject: &str) -> bool {
+/// **Whether one subject's own record carries a standing edge of the named
+/// shape**, read off one boundary's world. Correlated on the record, not
+/// just present somewhere: `subject` and `edge.type` have to land on the
+/// SAME hit, which is the thing a `carries` needle cannot ask. One body for
+/// every edge-window check in this room, so a second shape is a call rather
+/// than a second copy of the walk.
+fn has_standing_edge(world: &str, subject: &str, shape: &str) -> bool {
     search_hits(world).into_iter().flatten().any(|hit| {
-        hit["subject"].as_str() == Some(subject) && hit["edge"]["type"].as_str() == Some("attendee")
+        hit["subject"].as_str() == Some(subject) && hit["edge"]["type"].as_str() == Some(shape)
     })
 }
 
@@ -1068,7 +1076,10 @@ async fn junes_survey_drew_a_standing_attendee_for_each(seen: &Observed<'_>) -> 
              sitting recorded. A check scoped to one sitting needs the run's own boundaries.",
         ));
     };
-    let gained = |who: &str| !attends_as(&before.world, who) && attends_as(&after.world, who);
+    let gained = |who: &str| {
+        !has_standing_edge(&before.world, who, "attendee")
+            && has_standing_edge(&after.world, who, "attendee")
+    };
     let (milhouse, nelson) = (gained("person:milhouse"), gained("person:nelson"));
     match (milhouse, nelson) {
         (true, true) => Ok(()),
@@ -1078,6 +1089,42 @@ async fn junes_survey_drew_a_standing_attendee_for_each(seen: &Observed<'_>) -> 
              only what {JUNE} itself left standing",
             if milhouse { "gained" } else { "not gained" },
             if nelson { "gained" } else { "not gained" },
+        )),
+    }
+}
+
+/// 🚨 **Nelson gained a standing membership edge in February's own window,
+/// and Milhouse's — drawn earlier, in January — still stands by its end.**
+///
+/// Asked of the finished board, `carries person:nelson` and
+/// `carries person:milhouse` hold on a retracted membership exactly as they
+/// hold on a standing one — nothing in this room's honest storyline ever
+/// retracts either, so the gap is structural rather than reproducing today,
+/// the same shape as June's own attendance walk carried before its fix.
+///
+/// ⚠️ **The two are not the same claim, and a single `gained` test across
+/// both is wrong for Milhouse.** He joined in January, a sitting before this
+/// window opens — a check that asked whether HIS edge is gained inside
+/// February's own window would fail the honest year, not catch a bug. What
+/// carries over both is standing by February's own end: Nelson's, newly
+/// drawn here, and Milhouse's, drawn earlier and undisturbed since — read at
+/// February's own boundary either way, never the finished board's.
+async fn februarys_club_drew_a_standing_member_for_each(seen: &Observed<'_>) -> Result<(), String> {
+    let Some((before, after)) = seen.across(FEBRUARY) else {
+        return Err(format!(
+            "this run took no reading either side of {FEBRUARY}, so nothing here can say what \
+             that sitting recorded. A check scoped to one sitting needs the run's own \
+             boundaries.",
+        ));
+    };
+    let nelson_gained = !has_standing_edge(&before.world, "person:nelson", "memberOf")
+        && has_standing_edge(&after.world, "person:nelson", "memberOf");
+    let milhouse_stands = has_standing_edge(&after.world, "person:milhouse", "memberOf");
+    match (milhouse_stands, nelson_gained) {
+        (true, true) => Ok(()),
+        _ => Err(format!(
+            "by the end of {FEBRUARY} the club does not carry a standing membership edge for \
+             both — milhouse standing: {milhouse_stands}, nelson gained here: {nelson_gained}",
         )),
     }
 }
