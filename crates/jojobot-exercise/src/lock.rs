@@ -983,3 +983,186 @@ pub fn locks_of(source: &str) -> Vec<Lock> {
         .unwrap_or_else(|e| panic!("the shipped room at {} must read: {e}", path.display()));
     read(&document).unwrap_or_else(|e| panic!("the room's locks must parse: {e:#}"))
 }
+
+/// **Whether a needle's own written form proves the claim it names still
+/// stands.**
+///
+/// A lock's assertion is a substring test — `Expect::Carries(text) if
+/// !answer.contains(text.as_str())` — so the only question that matters for
+/// any needle is: can this string appear in the answer while the thing it
+/// claims is not true? It splits exactly along how the needle is written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Standing {
+    /// **A quoted key and value** — `"settled":"paid"`. This is a FOLDED
+    /// FIELD: the fold drops every non-active write before it serialises, so
+    /// if the string is there, the claim stands. Safe by construction.
+    FoldedField,
+    /// **Anything else** — a bare handle (`person:ralph`) or bare prose
+    /// (`meets on Tuesdays`). This is an edge or a fact's own text, served
+    /// with its status MARKED rather than filtered, so a retracted record
+    /// still carries it: a match proves the TEXT EXISTS, not that the CLAIM
+    /// STANDS.
+    BareHandle,
+}
+
+/// **A needle's shape, read from the needle alone.** No room is asked: the
+/// question is how the needle is WRITTEN, not what it currently matches —
+/// [`needle_verdicts`] already asks the empirical question, and it is a
+/// different one.
+pub fn standing_of(needle: &str) -> Standing {
+    match needle.starts_with('"') {
+        true => Standing::FoldedField,
+        false => Standing::BareHandle,
+    }
+}
+
+/// **A bare-handle needle with nothing in its own lock that only a standing
+/// record could satisfy.**
+pub struct StandingFinding {
+    pub lock: String,
+    pub needle: String,
+}
+
+/// **Classify every `carries` needle in every lock, without asking the room
+/// anything.**
+///
+/// A lock naming a Rust check is scoped to a window by construction — it
+/// reads a record's own status server-side, which is the whole reason a room
+/// reaches for one — so it is skipped here rather than measured.
+///
+/// A bare-handle needle is flagged unless its own lock also carries a
+/// **companion** — another `carries` needle pinning the same kind of record's
+/// status explicitly, `carries "status":"active"` — because that is the one
+/// thing a retracted or superseded record cannot also satisfy. No room this
+/// build ships writes that companion today, which is what a non-empty result
+/// here is finding rather than inventing.
+pub fn standing_findings(locks: &[Lock]) -> Vec<StandingFinding> {
+    let mut findings = Vec::new();
+    for lock in locks {
+        if matches!(lock.asks, Asks::Check(_)) {
+            continue;
+        }
+        let carried: Vec<&String> = lock
+            .expects
+            .iter()
+            .filter_map(|expect| match expect {
+                Expect::Carries(needle) => Some(needle),
+                Expect::Lacks(_) | Expect::AtLeast(..) => None,
+            })
+            .collect();
+        let paired = carried
+            .iter()
+            .any(|needle| needle.as_str() == "\"status\":\"active\"");
+        if paired {
+            continue;
+        }
+        for needle in carried {
+            if standing_of(needle) == Standing::BareHandle {
+                findings.push(StandingFinding {
+                    lock: lock.name.clone(),
+                    needle: needle.clone(),
+                });
+            }
+        }
+    }
+    findings
+}
+
+#[cfg(test)]
+mod standing_tests {
+    use super::*;
+
+    /// **The known-bad instance, taken from history rather than invented.**
+    ///
+    /// This is the pump lock exactly as it stood before commit 18a4cfb: two
+    /// bare-handle needles, no companion, run against the finished room. A
+    /// paid run had Ralph's account retracted and this lock held anyway,
+    /// because a retraction is marked rather than filtered. **If the
+    /// classifier does not flag this shape, it measures nothing.**
+    #[test]
+    fn the_historical_pump_lock_is_flagged() {
+        let locks = read(
+            "```locks\n\
+             recall {\"subject\": \"thing:floor-pump\", \"facts\": true}\n\
+             carries person:ralph\n\
+             carries person:nelson\n\
+             say     one of the two accounts of how the pump came back is gone\n\
+             ```\n",
+        )
+        .expect("the historical lock reads");
+        let found = standing_findings(&locks);
+        let needles: Vec<&str> = found.iter().map(|f| f.needle.as_str()).collect();
+        assert!(
+            needles.contains(&"person:ralph") && needles.contains(&"person:nelson"),
+            "the classifier does not fire on the exact shape that shipped broken: {needles:?}",
+        );
+    }
+
+    /// **A fold-backed lock must not be flagged.** Otherwise the classifier
+    /// flags everything and says nothing.
+    #[test]
+    fn a_folded_field_needle_is_not_flagged() {
+        let locks = read(
+            "```locks\n\
+             recall {\"subject\": \"thing:gravel-bike\"}\n\
+             carries \"settled\":\"paid\"\n\
+             say     the bike's tally is not settled\n\
+             ```\n",
+        )
+        .expect("the lock reads");
+        assert!(
+            standing_findings(&locks).is_empty(),
+            "a folded field was flagged: {:?}",
+            standing_findings(&locks)
+                .iter()
+                .map(|f| &f.needle)
+                .collect::<Vec<_>>(),
+        );
+    }
+
+    /// **A bare handle paired with an explicit standing check is not
+    /// flagged.** No shipped room writes this pairing yet — this proves the
+    /// escape the classifier grants actually works, rather than being a rule
+    /// stated in prose and never exercised.
+    #[test]
+    fn a_bare_handle_paired_with_an_active_status_needle_is_not_flagged() {
+        let locks = read(
+            "```locks\n\
+             recall {\"subject\": \"thing:floor-pump\", \"facts\": true}\n\
+             carries person:ralph\n\
+             carries \"status\":\"active\"\n\
+             say     ralph's account is not standing\n\
+             ```\n",
+        )
+        .expect("the lock reads");
+        assert!(
+            standing_findings(&locks).is_empty(),
+            "a paired bare handle was flagged anyway: {:?}",
+            standing_findings(&locks)
+                .iter()
+                .map(|f| &f.needle)
+                .collect::<Vec<_>>(),
+        );
+    }
+
+    /// **A lock naming a Rust check is scoped to a window and is never
+    /// flagged**, whatever it happens to assert alongside the check.
+    ///
+    /// The parser allows a `carries` line beside a `check` line even though
+    /// no shipped room writes one — the format does not forbid it, so this
+    /// pins the bare handle IN THAT SHAPE to make sure the exemption is
+    /// doing real work rather than agreeing by accident with an empty
+    /// `expects` list.
+    #[test]
+    fn a_check_lock_is_never_flagged() {
+        let locks = read(
+            "```locks\n\
+             check   both_accounts_of_the_pump_stand\n\
+             carries person:ralph\n\
+             say     one of the two accounts of how the pump came back is gone\n\
+             ```\n",
+        )
+        .expect("the lock reads");
+        assert!(standing_findings(&locks).is_empty());
+    }
+}
