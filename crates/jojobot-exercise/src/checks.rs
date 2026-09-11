@@ -37,13 +37,18 @@
 //!   `outcome` beside `last_check_in` on the same record, and an assertion
 //!   cannot ask whether two keys landed together on one object out of a
 //!   folded answer.
-//! * **`both_accounts_of_the_pump_stand`** — say that an edge is on an ACTIVE
-//!   record rather than merely present in the answer. A retraction is marked
-//!   rather than filtered — `recall` serves a retracted record's own text
-//!   back, by design, so a reader can be told a link was taken back rather
-//!   than have it silently vanish. `carries person:ralph` cannot see the
-//!   `status` key beside the edge it found, so an active account and one
-//!   retracted the same day read identically to a substring.
+//! * **`septembers_account_of_the_pump_is_corrected_in_place`** — say that ONE
+//!   record now reads what October said, with what it said before still
+//!   reachable through that same record's own history. A retraction is
+//!   marked rather than filtered — `recall` serves a retracted record's own
+//!   text back, by design — so `carries person:ralph` cannot see the
+//!   `status` key beside an edge it found, and a retraction reads
+//!   identically to an active claim to a substring. And no query on this
+//!   surface correlates a record's CURRENT content against its own PAST
+//!   content: `facts` answers what it says now, `history_record` answers
+//!   what it said before, and only a caller that reads both can tell a
+//!   correction from a retraction, an untouched claim, or a second claim
+//!   filed beside the first.
 //! * **`one_record_points_at_two_kinds`** — say that handles of two different
 //!   kinds landed on ONE record. `carries` lines are claims about the whole
 //!   answer, so two of them hold on two records naming one thing each, which is
@@ -105,9 +110,10 @@ pub const CHECKS: [Hatch; 17] = [
     ("the_club_was_corrected_in_place_in_july", || {
         checked(|seen| Box::pin(the_club_was_corrected_in_place_in_july(seen)))
     }),
-    ("both_accounts_of_the_pump_stand", || {
-        checked(|seen| Box::pin(both_accounts_of_the_pump_stand(seen)))
-    }),
+    (
+        "septembers_account_of_the_pump_is_corrected_in_place",
+        || checked(|seen| Box::pin(septembers_account_of_the_pump_is_corrected_in_place(seen))),
+    ),
     ("august_put_nobody_new_at_the_survey", || {
         checked(|seen| Box::pin(august_put_nobody_new_at_the_survey(seen)))
     }),
@@ -601,93 +607,105 @@ fn floor_pump_addresses(world: &str) -> std::collections::HashSet<String> {
     found
 }
 
-/// 🚨 **Both accounts of how the pump came back must stand, ACTIVELY.**
+/// 🚨 **October corrects September's account of the pump, IN PLACE.**
 ///
-/// The operator says nothing about September and takes nothing back; two
-/// sittings record who returned the pump and jojobot performs no inference of
-/// its own, so both claims must stand. **`carries person:ralph` on the
-/// finished room held even when Ralph's account was retracted**, because a
-/// retraction is marked rather than filtered — `recall` serves the retracted
-/// record's own text back, edge and all, so a later reader can be told a link
-/// was taken back rather than have it silently vanish. A substring assertion
-/// cannot see the `status` key beside the edge it matched.
+/// The operator ruled 2026-09-10: a later statement is a correction whether
+/// or not it is worded as one. September's sentence about who returned the
+/// pump is not sealed against October's — October's account is the same
+/// claim, better informed, so the record after October must be September's
+/// own address, rewritten to say what October said, with what September said
+/// still reachable through that address's own history.
 ///
-/// ⛔️ **Naming the edge is not enough either.** February also draws a
-/// `connection` edge at Ralph — lending the pump, not returning it — and that
-/// edge outlives everything this lock is about. So this is scoped by WHICH
-/// WINDOW wrote the address, the same technique February's own neighbour lock
-/// uses for the identical ambiguity, and it reads the address's CURRENT status
-/// rather than trusting that the window it appeared in is still what it says.
+/// ⛔️ **The two ways of not correcting are worth telling apart, and both
+/// fail here.** A sitting that captures a fresh claim beside September's
+/// leaves September's own address still saying Ralph, unrevised — a
+/// correction that never reached the record. A sitting that retracts
+/// September's address rather than rewriting it picked a winner by deletion
+/// instead of by correction.
 ///
-/// ⛔️ **The two ways of not holding are worth telling apart.** An address
-/// written and then retracted is a sitting that picked a winner — a specific,
-/// verified act, since the retraction is what the read actually shows.
-/// Nothing written in a window at all is a claim this lock cannot make:
-/// nothing here was picked over, there was nothing to pick from.
-async fn both_accounts_of_the_pump_stand(seen: &Observed<'_>) -> Result<(), String> {
+/// ⛔️ **Naming the edge is not enough.** February also draws a `connection`
+/// edge at Ralph — lending the pump, not returning it — and that edge
+/// outlives everything this lock is about. So this is scoped by WHICH WINDOW
+/// wrote the address, the same technique February's own neighbour lock uses
+/// for the identical ambiguity.
+///
+/// ⛔️ **A hatch, and it needs two things a document assertion cannot give
+/// together.** A retraction is marked rather than filtered, so `carries
+/// person:ralph` cannot see the `status` key beside the edge it found, and a
+/// retracted account reads identically to an active one to a substring.
+/// Worse, nothing on this surface correlates a record's CURRENT content
+/// against its own PAST content in one query: `facts` answers what the
+/// record says now, `history_record` answers what it said before, and only a
+/// caller that reads both can tell a correction from a retraction, an
+/// untouched claim, or a second claim filed beside the first.
+async fn septembers_account_of_the_pump_is_corrected_in_place(
+    seen: &Observed<'_>,
+) -> Result<(), String> {
     let Some((before_sep, after_sep)) = seen.across(SEPTEMBER) else {
         return Err(format!(
             "this run took no reading either side of {SEPTEMBER}, so nothing here can say which \
-             record is Ralph's account of the pump's return",
+             address is Ralph's account of the pump's return",
         ));
     };
-    let Some((before_oct, after_oct)) = seen.across(OCTOBER) else {
+    if seen.across(OCTOBER).is_none() {
         return Err(format!(
-            "this run took no reading either side of {OCTOBER}, so nothing here can say which \
-             record is Nelson's account of the pump's return",
+            "this run took no reading either side of {OCTOBER}, so nothing here can say whether \
+             that sitting corrected Ralph's account",
         ));
-    };
+    }
     let ralphs: Vec<String> = floor_pump_addresses(&after_sep.world)
         .difference(&floor_pump_addresses(&before_sep.world))
         .cloned()
         .collect();
-    let nelsons: Vec<String> = floor_pump_addresses(&after_oct.world)
-        .difference(&floor_pump_addresses(&before_oct.world))
-        .cloned()
-        .collect();
+    let [address] = ralphs.as_slice() else {
+        return Err(format!(
+            "{SEPTEMBER}'s window wrote {} address(es) on the pump rather than one, so nothing \
+             here can say which is Ralph's account to watch get corrected: {ralphs:?}",
+            ralphs.len(),
+        ));
+    };
     let read = seen
         .room
         .call(
             "recall",
-            json!({"subject": "thing:floor-pump", "facts": true}),
+            json!({"subject": "thing:floor-pump", "facts": true, "history_record": address}),
         )
         .await;
     let parsed: Value = serde_json::from_str(&read).unwrap_or(Value::Null);
-    let Some(facts) = parsed["objects"][0]["facts"].as_array() else {
-        return Err(format!(
-            "the pump came back with no facts at all, so nothing was measured: {read}"
-        ));
-    };
-    let status_of = |address: &str| -> Option<&str> {
+    let Some(current) = parsed["objects"][0]["facts"].as_array().and_then(|facts| {
         facts
             .iter()
-            .find(|fact| fact["address"] == address)
-            .and_then(|fact| fact["status"].as_str())
+            .find(|fact| fact["address"] == address.as_str())
+    }) else {
+        return Err(format!(
+            "{address} is no longer on the pump's record at all, so nothing here can say it was \
+             corrected rather than something else: {read}"
+        ));
     };
-    let active = |addresses: &[String]| addresses.iter().any(|a| status_of(a) == Some("active"));
-    let retracted =
-        |addresses: &[String]| addresses.iter().any(|a| status_of(a) == Some("retracted"));
-    if active(&ralphs) && active(&nelsons) {
-        return Ok(());
+    if current["status"] != "active" {
+        return Err(format!(
+            "{address} is not active — September's account was retracted rather than corrected \
+             in place, a sitting picked a winner by deletion: {read}"
+        ));
     }
-    match (
-        active(&ralphs),
-        retracted(&ralphs),
-        active(&nelsons),
-        retracted(&nelsons),
-    ) {
-        (false, true, ..) => Err(format!(
-            "Ralph's account, recorded in {SEPTEMBER}'s window, was retracted rather than left \
-             standing, so a sitting picked a winner where the design says both stand: {read}"
-        )),
-        (.., false, true) => Err(format!(
-            "Nelson's account, recorded in {OCTOBER}'s window, was retracted rather than left \
-             standing, so a sitting picked a winner where the design says both stand: {read}"
-        )),
-        _ => Err(format!(
-            "not both accounts of the pump's return are active — {SEPTEMBER}'s window wrote \
-             {ralphs:?} and {OCTOBER}'s wrote {nelsons:?} — so this sitting or an earlier one \
-             wrote less than both: {read}"
+    if current["edge"]["object"] != "person:nelson" {
+        return Err(format!(
+            "{address} still carries Ralph's account, so October's statement about the pump \
+             either went nowhere or was filed as a second claim instead of a correction: {read}"
+        ));
+    }
+    let held_ralph = parsed["objects"][0]["record_history"]["writes"]
+        .as_array()
+        .is_some_and(|writes| {
+            writes
+                .iter()
+                .any(|write| write["edge"]["object"] == "person:ralph")
+        });
+    match held_ralph {
+        true => Ok(()),
+        false => Err(format!(
+            "{address}'s own history no longer carries Ralph's account, so the correction \
+             destroyed the earlier wording instead of superseding it: {read}"
         )),
     }
 }
@@ -1176,7 +1194,8 @@ fn subject_of(address: &str) -> &str {
 /// under a handle June's own words never used — but only one of them is a
 /// rename, and only one is what October's reason was given for. **A
 /// retraction never appears in a boundary at all** — `search` serves active
-/// records only, [`both_accounts_of_the_pump_stand`] says why — so this
+/// records only, [`septembers_account_of_the_pump_is_corrected_in_place`]
+/// says why — so this
 /// finds June's own addresses by the same window-diff that check uses, and
 /// asks a LIVE, status-aware read of each one whether it is still active
 /// before comparing what it renders now against what June's window first

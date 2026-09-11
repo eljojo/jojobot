@@ -218,6 +218,31 @@ async fn address_of(room: &Surface, subject: &str, needle: &str) -> String {
         .to_string()
 }
 
+/// **The same lookup as [`address_of`], and no such record is an answer
+/// rather than a panic.**
+///
+/// A play run against a year that skipped an earlier sitting meets a store
+/// that never wrote what this play would otherwise correct — `subject` may
+/// not even exist. `address_of` is for a case that already knows the record
+/// is there; this is for a play deciding whether to correct one or capture
+/// one fresh.
+async fn address_of_opt(room: &Surface, subject: &str, needle: &str) -> Option<String> {
+    let read = room
+        .call("recall", json!({"subject": subject, "facts": true}))
+        .await;
+    let parsed: Value = serde_json::from_str(&read).ok()?;
+    parsed["objects"][0]["facts"]
+        .as_array()?
+        .iter()
+        .find(|fact| {
+            fact["content"]
+                .as_str()
+                .is_some_and(|said| said.contains(needle))
+        })
+        .and_then(|fact| fact["address"].as_str())
+        .map(str::to_string)
+}
+
 /// **The one entity of `kind`'s current handle.** Looked up rather than
 /// hardcoded: October may have renamed it by the time this is asked, and a
 /// literal written here would go stale under exactly the rename this room
@@ -774,16 +799,43 @@ async fn october_retracts_junes_claim_instead_of_renaming(room: &Surface, sid: &
     .await;
 }
 
+/// **Correct September's account when there is one; capture Nelson's fresh
+/// when there is not.** The taught distinction, played: `update_fact` for a
+/// correction, `capture` only when nothing came before it to correct — the
+/// shape a year that skipped September actually meets.
+async fn corrects_or_captures_the_pump(room: &Surface, sid: &str) {
+    match address_of_opt(room, "thing:floor-pump", "came back at the survey").await {
+        Some(ralphs) => {
+            did(
+                room,
+                sid,
+                "update_fact",
+                json!({"address": ralphs, "content": "brought round over the summer",
+                       "shape": "connection", "object": "person:nelson",
+                       "recorded_at": "2026-10-11"}),
+            )
+            .await;
+        }
+        None => {
+            did(
+                room,
+                sid,
+                "capture",
+                json!({"subject": "thing:floor-pump", "content": "brought round over the summer",
+                       "provenance": "testimony",
+                       "shape": "connection", "object": "person:nelson"}),
+            )
+            .await;
+        }
+    }
+}
+
 async fn october_writes_the_pump_and_the_place(room: &Surface, sid: &str) {
-    did(
-        room,
-        sid,
-        "capture",
-        json!({"subject": "thing:floor-pump", "content": "brought round over the summer",
-               "provenance": "testimony",
-               "shape": "connection", "object": "person:nelson"}),
-    )
-    .await;
+    // **A correction, on September's own address.** The operator's ruling
+    // makes October's account a correction of September's, not a second
+    // thing that happened, so it rewrites the record IN PLACE rather than
+    // filing a fresh claim beside it.
+    corrects_or_captures_the_pump(room, sid).await;
     // **The note lands on the place, which this sitting had to find.** The
     // operator says where we held the survey and never says where that was;
     // June's claim is the one record that answers it.
@@ -846,6 +898,24 @@ async fn october_removes_one_of_the_two_accounts(room: &Surface, sid: &str) {
 /// never did is work out WHERE the survey was held** — the one thing only
 /// June's claim says, and the one thing the walk asks for.
 async fn october_files_the_note_on_the_event(room: &Surface, sid: &str) {
+    corrects_or_captures_the_pump(room, sid).await;
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "event:trail-survey",
+               "content": "the ground needs a look before next year",
+               "provenance": "testimony"}),
+    )
+    .await;
+}
+
+/// **October records Nelson's account as a SECOND claim instead of
+/// correcting September's.** The operator's ruling makes this a correction;
+/// filing a fresh claim beside September's own leaves that address exactly
+/// as it was — unrevised, still Ralph's. This is the play the room used to
+/// require and the ruling has since overturned.
+async fn october_captures_a_second_account_instead_of_correcting(room: &Surface, sid: &str) {
     did(
         room,
         sid,
@@ -861,7 +931,8 @@ async fn october_files_the_note_on_the_event(room: &Surface, sid: &str) {
         "capture",
         json!({"subject": "event:trail-survey",
                "content": "the ground needs a look before next year",
-               "provenance": "testimony"}),
+               "provenance": "testimony",
+               "shape": "location", "object": "place:north-trail"}),
     )
     .await;
 }
@@ -1102,6 +1173,12 @@ const JUNE_ATTENDANCE_AS_MENTIONS: usize = 22;
 /// meant to still leaves this one exactly as written.
 const JUNE_ALSO_POINTS_AT_A_SECOND_EVENT: usize = 23;
 
+/// **October's fifth guilt, named the same way.** Nelson's account is filed
+/// as a fresh claim instead of a correction, so September's own address is
+/// left exactly as it was — unrevised, still Ralph's. This is the play the
+/// pump lock used to require before the operator's ruling overturned it.
+const OCTOBER_CAPTURES_A_SECOND_ACCOUNT_INSTEAD_OF_CORRECTING: usize = 24;
+
 /// Where late November sits in the year, named for the reason `JUNE_AT` is.
 const LATE_NOVEMBER_AT: usize = 12;
 
@@ -1161,6 +1238,8 @@ async fn work_the_year(
             at == OCTOBER_AT && guilty.contains(&OCTOBER_DOES_NOT_RENAME_THE_SURVEY);
         let october_retracts_variant =
             at == OCTOBER_AT && guilty.contains(&OCTOBER_RETRACTS_JUNES_CLAIM_INSTEAD_OF_RENAMING);
+        let october_second_account_variant = at == OCTOBER_AT
+            && guilty.contains(&OCTOBER_CAPTURES_A_SECOND_ACCOUNT_INSTEAD_OF_CORRECTING);
         // ⛔️ **Only a sitting that ACTS gets a run.** A boot mints nothing until
         // its first write, so a run for a sitting this drive skips is a run that
         // never happened — and it would sit in the day that sitting claims,
@@ -1174,6 +1253,7 @@ async fn work_the_year(
             && !october_variant
             && !october_no_rename_variant
             && !october_retracts_variant
+            && !october_second_account_variant
         {
             boundaries.push(boundary(room, &named[at + 1]).await);
             continue;
@@ -1203,6 +1283,8 @@ async fn work_the_year(
             october_without_renaming_the_survey(room, sid).await;
         } else if october_retracts_variant {
             october_retracts_junes_claim_instead_of_renaming(room, sid).await;
+        } else if october_second_account_variant {
+            october_captures_a_second_account_instead_of_correcting(room, sid).await;
         } else if guilty.contains(&at) {
             match at {
                 9 => october_files_the_note_on_the_event(room, sid).await,
@@ -2273,6 +2355,59 @@ async fn a_retracted_account_does_not_satisfy_the_pump_lock() {
     );
 }
 
+/// 🚨 **A second claim beside September's does not correct it, and the
+/// operator's ruling is what makes this a failure now.**
+///
+/// Before the ruling, filing Nelson's account as a fresh claim was the right
+/// move — jojobot infers nothing, so two accounts that disagree were both
+/// left to stand. The ruling makes October's account a correction of
+/// September's, so a sitting that files it as a second claim leaves
+/// September's own address unrevised — exactly the record the lock now
+/// reads.
+#[tokio::test]
+async fn a_second_claim_beside_septembers_does_not_satisfy_the_pump_lock() {
+    let (_room, surface) = furnished().await;
+    let boundaries = work_the_year(
+        &surface,
+        &room_document(),
+        &WORKED,
+        &[OCTOBER_CAPTURES_A_SECOND_ACCOUNT_INSTEAD_OF_CORRECTING],
+    )
+    .await;
+    let judged = judge_all(&surface, &boundaries).await;
+    assert!(
+        !judged[OCTOBER[0]].held,
+        "October filed Nelson's account as a fresh claim instead of correcting September's, and \
+         the pump lock held anyway: {}",
+        saying(&judged),
+    );
+    assert!(
+        judged[OCTOBER[0]].saying.contains("second claim"),
+        "September's address was left unrevised, and the failure text should say a second claim \
+         was filed rather than a correction: {}",
+        saying(&judged),
+    );
+    // **The positive that says the guilty sitting is otherwise a good one.**
+    // The location note is filed exactly as the honest October files it, so
+    // the walk-to-place lock still holds and this case measures only the
+    // pump lock.
+    assert!(
+        judged[OCTOBER[1]].held,
+        "the guilty October failed the lock it was not meant to, so the case above is measuring \
+         a sitting that did not happen: {}",
+        saying(&judged),
+    );
+
+    let (_room, surface) = furnished().await;
+    let boundaries = worked_the_year(&surface).await;
+    let judged = judge_all(&surface, &boundaries).await;
+    assert!(
+        judged[OCTOBER[0]].held,
+        "the year corrected September's account in place and the pump lock still failed: {}",
+        saying(&judged),
+    );
+}
+
 /// 🚨 **The trace locks, asked both ways.**
 ///
 /// **The first is a planted answer**: what the claim used to say is on no read
@@ -2370,6 +2505,13 @@ async fn februarys_lock_cannot_be_satisfied_by_the_sitting_that_returns_the_pump
 /// that calibrates the walk.** A first version read every match twice, once at
 /// the key/value pair and once at the string under it, and reported fourteen
 /// where a hand-check found three.
+///
+/// **The count moved to zero once October stopped capturing a second, live
+/// `person:ralph` beside September's.** `carries person:ralph` used to match
+/// February's own record and September's both, because October's old play
+/// left September's account active beside Nelson's rather than correcting it.
+/// A correction in place folds September's address to Nelson's current
+/// account, so only February's own mention of Ralph remains.
 #[tokio::test]
 async fn no_lock_here_rests_on_a_needle_that_matches_somewhere_else() {
     let (_room, surface) = furnished().await;
@@ -2397,7 +2539,7 @@ async fn no_lock_here_rests_on_a_needle_that_matches_somewhere_else() {
         summary.nowhere,
     );
     assert_eq!(
-        summary.ambiguous, 1,
+        summary.ambiguous, 0,
         "the walk sees a different number of ambiguous needles than the hand-check did, so it is \
          reading the answer differently",
     );

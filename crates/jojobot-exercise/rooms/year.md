@@ -408,7 +408,7 @@ carries "happened_at":"2026-06-14"
 say     September: nothing on the pump carries the day it came back, so the question February left open is still open on the record
 ```
 
-## Phase 10 — October, two sittings that disagree
+## Phase 10 — October corrects what September said
 
 **Session: fresh.** **Day: 2026-10-11.**
 
@@ -419,23 +419,28 @@ say     September: nothing on the pump carries the day it came back, so the ques
 > start jojobot as assistant — it is 11 October 2026 and I should note that Nelson brought my floor pump back over the summer, and put down where we held the survey — the ground there needs a look before next year, and the trail association has renamed that survey — from now on it goes on record as the Erosion Review
 
 ```locks
-# 🚨 The operator says nothing about September and does not take anything back.
-# Two sittings have now recorded who returned the pump and they disagree.
+# 🚨 The operator ruled 2026-09-10: a later statement is a correction whether
+# or not it is worded as one. September recorded that Ralph returned the pump;
+# October's account of who brought it back is not a second thing that
+# happened, it is more information about the same one, so it corrects
+# September's record rather than sitting beside it.
 #
-# jojobot performs no inference of its own, so it cannot mark a conflict —
-# noticing that two claims contradict each other is a mind's job. Both claims
-# stand, both come back, and the reader is the mind. What is locked is exactly
-# that: neither quietly replaced the other.
+# What is locked is that the correction lands on September's own address, in
+# place — never a second record filed beside it, and never September's
+# address retracted rather than rewritten. September's account stays
+# reachable through that address's own history, because a correction
+# supersedes and never destroys.
 #
-# 🚨 **A hatch, because `carries` cannot see a record's own STATUS.** A
-# retraction is marked rather than filtered, so a retracted account's edge
-# still reads back in the answer's text — `carries person:ralph` held on a
-# room where Ralph's account had been retracted, which is the paid run this
-# lock was originally written against. The correlation is between the edge
-# and the `status` key beside it on the SAME record, past what a substring
-# can say.
-check   both_accounts_of_the_pump_stand
-say     October: one of the two accounts of how the pump came back is gone, so a sitting picked a winner where the design says both stand
+# 🚨 **A hatch, and it needs two things a document assertion cannot give
+# together.** A retraction is marked rather than filtered, so `carries
+# person:ralph` cannot see the `status` key beside an edge it found — a
+# retracted account reads identically to an active one to a substring, which
+# is the paid run this lock was originally written against. And nothing on
+# this surface correlates a record's CURRENT content against its own PAST
+# content in one query: telling a correction from a retraction, an untouched
+# claim, or a second claim filed beside the first needs both.
+check   septembers_account_of_the_pump_is_corrected_in_place
+say     October: September's account of the pump was not corrected in place — either it still stands unrevised, or it was retracted rather than rewritten
 
 # 🚨 **A write only a sitting that READ June's claim could have made.** The
 # operator asks where the survey was held and never says. **One record in the
@@ -763,12 +768,13 @@ say     later December: a record's trace does not agree with what the run actual
 and two routes to it, and the store looks the same afterwards. The transcript
 is where the method reads.
 
-**Whether October noticed the contradiction it was handed.** September recorded
-that Ralph returned the pump and October records that Nelson did, and the
-operator says nothing about the first. jojobot cannot mark a conflict —
-detecting that two claims disagree is inference, and inference is the one thing
-the software does not do. Both claims stand and the reader is the mind, so
-whether the sitting SAW it is a person's to read.
+**Whether October reads as a correction rather than a coincidence.** September
+recorded that Ralph returned the pump; October says Nelson brought it back. The
+lock only reads WHAT landed on the record — September's address, rewritten,
+with the earlier wording still reachable through it. Whether the sitting
+treated it as a correction ON PURPOSE, or arrived at the same record by
+accident, is in the transcript rather than in the store, and that is a
+person's to read.
 
 **Whether the year was written well or merely written.** Every lock here says a
 question is answerable. None of them says the answer was easy to find, and a
