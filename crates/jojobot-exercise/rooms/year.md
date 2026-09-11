@@ -497,8 +497,14 @@ say     October: September's account of the pump was not corrected in place — 
 # else — measuring nothing while reporting the walk itself as broken. June's
 # own lock reaches the event the same way, by kind and edge, and this one
 # follows suit.
-recall {"kind": "event", "follow": {"shape": "location", "direction": "out"}}
-carries place:north-trail
+# 🚨 **A hatch, scoped to October's own window.** Asked of the finished
+# board, `carries place:north-trail` holds on a retracted claim exactly as on
+# a standing one — nothing here retracts it today, but the gap is the same
+# shape June's attendance walk carried before its own fix. No subject is
+# pinned: this sitting renames the survey's own event in the same breath, and
+# a check pinning the old handle would miss its own record the moment the
+# rename runs first.
+check   octobers_note_drew_a_standing_location_edge_to_the_trail
 say     October: the survey cannot be walked to the place it was held at, so where it happened is in one sitting's sentence and nowhere a later reader of the event will look
 ```
 

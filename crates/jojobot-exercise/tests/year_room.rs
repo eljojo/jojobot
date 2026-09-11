@@ -2264,16 +2264,19 @@ async fn an_october_that_never_said_where_leaves_the_survey_unplaceable() {
 /// 🚨 **The walk to the place holds whatever the event is actually called.**
 ///
 /// A paid run named the event `event:trail-survey-2026` — a reasonable slug
-/// nothing in the year rules out. The lock used to name `event:trail-survey`
-/// literally, so that run's October was refused rather than measured: the
-/// walk never ran, and the tally read as a product failure that was really a
-/// mismatched string. The scripted sittings above always use the one slug
-/// this file's own `january` picks, so they cannot catch that — this test
-/// picks a different one on purpose.
+/// nothing in the year rules out. The scripted sittings above always use the
+/// one slug this file's own `january` picks, so they cannot catch a lock
+/// that secretly depends on it — this test picks a different one on purpose.
+///
+/// **No subject is pinned in the hatch this proves**, for the same reason:
+/// `has_standing_edge` is asked with `None`, so it is the object alone —
+/// `place:north-trail` — that has to carry the claim, whatever handle the
+/// event wears.
 #[tokio::test]
 async fn the_walk_to_the_place_holds_whatever_the_event_is_actually_called() {
     let (_room, surface) = furnished().await;
-    let sid = sitting(&surface, "2026-06-14").await;
+    let sid = sitting(&surface, "2026-10-11").await;
+    let before = boundary(&surface, "Phase 10 — a differently slugged event").await;
     did(
         &surface,
         &sid,
@@ -2292,14 +2295,9 @@ async fn the_walk_to_the_place_holds_whatever_the_event_is_actually_called() {
                "shape": "location", "object": "place:north-trail"}),
     )
     .await;
+    let after = boundary(&surface, "the end").await;
 
-    let judged = judge_all(&surface, &[]).await;
-    assert!(
-        !judged[OCTOBER[1]].refused,
-        "the walk to the place was refused rather than measured, so the lock still depends on \
-         January's exact slug: {}",
-        saying(&judged),
-    );
+    let judged = judge_all(&surface, &[before, after]).await;
     assert!(
         judged[OCTOBER[1]].held,
         "the walk to the place failed against an event named something other than \
@@ -2763,6 +2761,25 @@ async fn aprils_shelbyville_lock_fails_when_aprils_own_window_drew_nothing() {
         !judged[APRIL[0]].held,
         "a year where April never ran held its Shelbyville lock, so it is satisfied by something \
          other than that sitting: {}",
+        saying(&judged),
+    );
+}
+
+/// 🚨 **October's north-trail lock fails when October's own window drew
+/// nothing.**
+///
+/// The positive half of the pair the pattern needs: a year that never ran
+/// October drew no location edge to the trail at all, and the lock must say
+/// so rather than holding over an empty record.
+#[tokio::test]
+async fn octobers_north_trail_lock_fails_when_octobers_own_window_drew_nothing() {
+    let (_room, surface) = furnished().await;
+    let boundaries = work_the_year(&surface, &room_document(), &[0], &[]).await;
+    let judged = judge_all(&surface, &boundaries).await;
+    assert!(
+        !judged[OCTOBER[1]].held,
+        "a year where October never ran held its north-trail lock, so it is satisfied by \
+         something other than that sitting: {}",
         saying(&judged),
     );
 }

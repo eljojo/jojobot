@@ -63,6 +63,10 @@
 //!   correlation, on Milhouse's move to Shelbyville, asked in April's own
 //!   window. Also pins the OBJECT, not only the shape: Milhouse already
 //!   carries a `location` edge to Springfield when April opens.
+//! * **`octobers_note_drew_a_standing_location_edge_to_the_trail`** — the
+//!   same correlation again, on where the survey was held, asked in
+//!   October's own window. No subject is pinned: October renames the
+//!   survey's own event in the same sitting that writes this claim.
 //! * **`one_record_points_at_two_kinds`** — say that handles of two different
 //!   kinds landed on ONE record. `carries` lines are claims about the whole
 //!   answer, so two of them hold on two records naming one thing each, which is
@@ -89,7 +93,7 @@ type Hatch = (&'static str, fn() -> Box<dyn Checks>);
 
 /// **Every named check this build ships.** A room adds one line here and one
 /// `check` line in its document, and both are visible in the count.
-pub const CHECKS: [Hatch; 20] = [
+pub const CHECKS: [Hatch; 21] = [
     ("the_brief_left_the_box", || {
         checked(|seen| Box::pin(the_brief_left_the_box(seen)))
     }),
@@ -153,6 +157,16 @@ pub const CHECKS: [Hatch; 20] = [
     ("aprils_move_drew_a_standing_location_edge", || {
         checked(|seen| Box::pin(aprils_move_drew_a_standing_location_edge(seen)))
     }),
+    (
+        "octobers_note_drew_a_standing_location_edge_to_the_trail",
+        || {
+            checked(|seen| {
+                Box::pin(octobers_note_drew_a_standing_location_edge_to_the_trail(
+                    seen,
+                ))
+            })
+        },
+    ),
 ];
 
 /// The identity a fresh instance ships with, and the one every occupant wears.
@@ -1049,21 +1063,26 @@ fn kinds_pointed_at(text: &str) -> Vec<String> {
 /// asks to write a pointer at all.
 const JUNE: &str = "Phase 6";
 
-/// **Whether one subject's own record carries a standing edge of the named
-/// shape at the named object**, read off one boundary's world. Correlated on
-/// the record, not just present somewhere: `subject`, `edge.type`,
-/// `edge.object` and an ACTIVE `status` all have to land on the SAME hit,
-/// which is the thing a `carries` needle cannot ask. **The object matters
-/// whenever a subject can carry more than one edge of the same shape** — Milhouse
-/// carries two `location` edges over the year, one to each place he has ever
-/// lived, and a check that asked only about the SHAPE would read his
-/// standing Shelbyville edge as already present before April ever wrote it,
-/// because his Springfield one already was. One body for every edge-window
-/// check in this room, so a second shape is a call rather than a second copy
-/// of the walk.
-fn has_standing_edge(world: &str, subject: &str, shape: &str, object: &str) -> bool {
+/// **Whether a standing edge of the named shape at the named object exists**,
+/// read off one boundary's world — on ONE subject's own record when `subject`
+/// names one, or on any record at all when it does not. Correlated on the
+/// record, not just present somewhere: `edge.type`, `edge.object` and an
+/// ACTIVE `status` all have to land on the SAME hit, which is the thing a
+/// `carries` needle cannot ask. **The object matters whenever a subject can
+/// carry more than one edge of the same shape** — Milhouse carries two
+/// `location` edges over the year, one to each place he has ever lived, and a
+/// check that asked only about the SHAPE would read his standing Shelbyville
+/// edge as already present before April ever wrote it, because his
+/// Springfield one already was. **`subject` is `None` when the record it
+/// lands on can change its own handle inside the window being read** — a
+/// rename does not move the id underneath, but it does move which handle a
+/// read renders, so a check that pinned the OLD handle would miss its own
+/// record the moment the same sitting also renames it. One body for every
+/// edge-window check in this room, so a second shape is a call rather than a
+/// second copy of the walk.
+fn has_standing_edge(world: &str, subject: Option<&str>, shape: &str, object: &str) -> bool {
     search_hits(world).into_iter().flatten().any(|hit| {
-        hit["subject"].as_str() == Some(subject)
+        subject.is_none_or(|subject| hit["subject"].as_str() == Some(subject))
             && hit["status"].as_str() == Some("active")
             && hit["edge"]["type"].as_str() == Some(shape)
             && hit["edge"]["object"].as_str() == Some(object)
@@ -1096,8 +1115,8 @@ async fn junes_survey_drew_a_standing_attendee_for_each(seen: &Observed<'_>) -> 
     // survey is not renamed until October, four sittings after this window
     // closes, so within June's own before/after it is always this handle.
     let gained = |who: &str| {
-        !has_standing_edge(&before.world, who, "attendee", "event:trail-survey")
-            && has_standing_edge(&after.world, who, "attendee", "event:trail-survey")
+        !has_standing_edge(&before.world, Some(who), "attendee", "event:trail-survey")
+            && has_standing_edge(&after.world, Some(who), "attendee", "event:trail-survey")
     };
     let (milhouse, nelson) = (gained("person:milhouse"), gained("person:nelson"));
     match (milhouse, nelson) {
@@ -1137,9 +1156,10 @@ async fn februarys_club_drew_a_standing_member_for_each(seen: &Observed<'_>) -> 
         ));
     };
     let club = "org:north-trail-club";
-    let nelson_gained = !has_standing_edge(&before.world, "person:nelson", "memberOf", club)
-        && has_standing_edge(&after.world, "person:nelson", "memberOf", club);
-    let milhouse_stands = has_standing_edge(&after.world, "person:milhouse", "memberOf", club);
+    let nelson_gained = !has_standing_edge(&before.world, Some("person:nelson"), "memberOf", club)
+        && has_standing_edge(&after.world, Some("person:nelson"), "memberOf", club);
+    let milhouse_stands =
+        has_standing_edge(&after.world, Some("person:milhouse"), "memberOf", club);
     match (milhouse_stands, nelson_gained) {
         (true, true) => Ok(()),
         _ => Err(format!(
@@ -1175,12 +1195,12 @@ async fn aprils_move_drew_a_standing_location_edge(seen: &Observed<'_>) -> Resul
     };
     let gained = !has_standing_edge(
         &before.world,
-        "person:milhouse",
+        Some("person:milhouse"),
         "location",
         "place:shelbyville",
     ) && has_standing_edge(
         &after.world,
-        "person:milhouse",
+        Some("person:milhouse"),
         "location",
         "place:shelbyville",
     );
@@ -1189,6 +1209,43 @@ async fn aprils_move_drew_a_standing_location_edge(seen: &Observed<'_>) -> Resul
         false => Err(format!(
             "{APRIL}'s window did not draw a standing location edge to place:shelbyville, so the \
              move was not recorded where a later sitting would find it",
+        )),
+    }
+}
+
+/// 🚨 **October drew a standing location edge to the trail — asked in
+/// October's own window.**
+///
+/// Asked of the finished board, `carries place:north-trail` holds on a
+/// retracted claim exactly as on a standing one — nothing in this room's
+/// honest storyline ever retracts it, so the gap is structural rather than
+/// reproducing today, the same shape as June's attendance walk carried
+/// before its fix.
+///
+/// **No subject is pinned, unlike June's, February's or April's own
+/// checks.** October renames the survey's own event in the SAME sitting
+/// that writes this claim — the rename moves no id, but it does move which
+/// handle a read renders the record's subject under, so a check pinning
+/// `event:trail-survey` would miss its own record the moment the rename
+/// runs first. Only the event ever draws a `location` edge to this place, so
+/// the object alone is enough to correlate on.
+async fn octobers_note_drew_a_standing_location_edge_to_the_trail(
+    seen: &Observed<'_>,
+) -> Result<(), String> {
+    let Some((before, after)) = seen.across(OCTOBER) else {
+        return Err(format!(
+            "this run took no reading either side of {OCTOBER}, so nothing here can say what \
+             that sitting recorded. A check scoped to one sitting needs the run's own \
+             boundaries.",
+        ));
+    };
+    let gained = !has_standing_edge(&before.world, None, "location", "place:north-trail")
+        && has_standing_edge(&after.world, None, "location", "place:north-trail");
+    match gained {
+        true => Ok(()),
+        false => Err(format!(
+            "{OCTOBER}'s window did not draw a standing location edge to place:north-trail, so \
+             where the survey was held was not recorded where a later reader would find it",
         )),
     }
 }

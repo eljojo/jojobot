@@ -64,16 +64,6 @@ const ALLOWED: &[Allowed<'static>] = &[
     },
     Allowed {
         room: "rooms/year.md",
-        lock: "Phase 10 — October: the survey cannot be walked to the place it was held at, so \
-               where it happened is in one sitting's sentence and nowhere a later reader of the \
-               event will look",
-        needle: "place:north-trail",
-        risk: Risk::Retraction,
-        reason: "a location-edge walk with no status companion; nothing in this room ever \
-                 retracts where the survey was held, so the gap is structural and unexercised",
-    },
-    Allowed {
-        room: "rooms/year.md",
         lock: "Phase 11 — October (again): Bart cannot be walked to the club, so he is a name \
                in a transcript and nothing on the roster",
         needle: "person:bart",
