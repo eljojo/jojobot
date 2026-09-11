@@ -2685,6 +2685,50 @@ async fn februarys_lock_cannot_be_satisfied_by_the_sitting_that_returns_the_pump
     );
 }
 
+/// 🚨 **June's attendee lock fails when June's own window drew nothing.**
+///
+/// The positive half of the pair below: a year where June never ran has no
+/// attendee edges to have drawn, and the lock must say so rather than
+/// holding over an empty record.
+#[tokio::test]
+async fn junes_attendee_lock_fails_when_junes_own_window_drew_nothing() {
+    // ⚠️ **Late October is left out too, for the reason the rhythm case
+    // above already gives one lock over**: it retracts a claim June writes,
+    // so a year missing June cannot run it at all.
+    const WITHOUT_JUNE: [usize; 10] = [0, 1, 2, 3, 4, 6, 7, 8, 9, 12];
+    let (_room, surface) = furnished().await;
+    let boundaries = work_the_year(&surface, &room_document(), &WITHOUT_JUNE, &[]).await;
+    let judged = judge_all(&surface, &boundaries).await;
+    assert!(
+        !judged[JUNE[0]].held,
+        "a year where June never ran held June's attendee lock, so it is satisfied by something \
+         other than that sitting: {}",
+        saying(&judged),
+    );
+}
+
+/// 🚨 **A later, legitimate retraction does not sour June's own lock.**
+///
+/// Late October retracts Nelson's own attendance at the survey on purpose —
+/// the room's honest storyline does this every full run. The old lock held
+/// on the retracted record's own dead text, for the wrong reason: `recall`
+/// serves a retracted record's edge back and `carries person:nelson` cannot
+/// see the `status` key beside it. This proves the fix holds for the RIGHT
+/// reason — June's own window, read on its own, never touches what a later
+/// sitting does to the same claim.
+#[tokio::test]
+async fn junes_attendee_lock_holds_despite_a_later_legitimate_retraction() {
+    let (_room, surface) = furnished().await;
+    let boundaries = worked_the_year(&surface).await;
+    let judged = judge_all(&surface, &boundaries).await;
+    assert!(
+        judged[JUNE[0]].held,
+        "June's own window drew both attendees, and a later, legitimate retraction four \
+         sittings on must not sour it: {}",
+        saying(&judged),
+    );
+}
+
 /// 🚨 **No lock in this room rests on a needle that matches somewhere else.**
 ///
 /// A needle is a substring of the answer as text. **A lock satisfied by the

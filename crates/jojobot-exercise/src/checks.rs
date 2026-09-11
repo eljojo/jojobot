@@ -49,6 +49,13 @@
 //!   what it said before, and only a caller that reads both can tell a
 //!   correction from a retraction, an untouched claim, or a second claim
 //!   filed beside the first.
+//! * **`junes_survey_drew_a_standing_attendee_for_each`** — say that a
+//!   record's own edge and its own status are the SAME record's, asked in
+//!   June's own window. A retraction is marked rather than filtered, so
+//!   `carries person:nelson` cannot see the `status` key beside the edge it
+//!   found, and late October legitimately retracts Nelson's own attendance
+//!   at this same survey — the pump lock's own historical bug, on
+//!   attendance rather than the pump.
 //! * **`one_record_points_at_two_kinds`** — say that handles of two different
 //!   kinds landed on ONE record. `carries` lines are claims about the whole
 //!   answer, so two of them hold on two records naming one thing each, which is
@@ -75,7 +82,7 @@ type Hatch = (&'static str, fn() -> Box<dyn Checks>);
 
 /// **Every named check this build ships.** A room adds one line here and one
 /// `check` line in its document, and both are visible in the count.
-pub const CHECKS: [Hatch; 17] = [
+pub const CHECKS: [Hatch; 18] = [
     ("the_brief_left_the_box", || {
         checked(|seen| Box::pin(the_brief_left_the_box(seen)))
     }),
@@ -130,6 +137,9 @@ pub const CHECKS: [Hatch; 17] = [
         "junes_survey_mention_renders_under_the_current_handle",
         || checked(|seen| Box::pin(junes_survey_mention_renders_under_the_current_handle(seen))),
     ),
+    ("junes_survey_drew_a_standing_attendee_for_each", || {
+        checked(|seen| Box::pin(junes_survey_drew_a_standing_attendee_for_each(seen)))
+    }),
 ];
 
 /// The identity a fresh instance ships with, and the one every occupant wears.
@@ -1025,6 +1035,52 @@ fn kinds_pointed_at(text: &str) -> Vec<String> {
 /// The sitting whose window this reads — the only sitting the year's story
 /// asks to write a pointer at all.
 const JUNE: &str = "Phase 6";
+
+/// **Whether one subject's own record carries a standing attendee edge**,
+/// read off one boundary's world. Correlated on the record, not just present
+/// somewhere: `subject` and `edge.type` have to land on the SAME hit, which
+/// is the thing a `carries` needle cannot ask.
+fn attends_as(world: &str, subject: &str) -> bool {
+    search_hits(world).into_iter().flatten().any(|hit| {
+        hit["subject"].as_str() == Some(subject) && hit["edge"]["type"].as_str() == Some("attendee")
+    })
+}
+
+/// 🚨 **June drew a standing attendee edge for each of the two people it
+/// names — asked in June's own window.**
+///
+/// The finished board is the wrong place to ask this: late October
+/// legitimately retracts Nelson's own attendance at this same survey, and a
+/// retraction is marked rather than filtered — `recall` serves the retracted
+/// record's own edge back, so `carries person:nelson` could not see the
+/// `status` key beside it. The old lock held on that dead text exactly as
+/// the pump lock once held on Ralph's, before its own fix.
+///
+/// **Scoped to June's own window rather than corrected in place**, unlike
+/// the pump: nothing here is ever corrected, and a later retraction of
+/// Nelson's attendance is legitimate rather than a mistake to catch — the
+/// question this asks is only what June itself left standing, the same
+/// question July's own lock asks about the club's schedule.
+async fn junes_survey_drew_a_standing_attendee_for_each(seen: &Observed<'_>) -> Result<(), String> {
+    let Some((before, after)) = seen.across(JUNE) else {
+        return Err(format!(
+            "this run took no reading either side of {JUNE}, so nothing here can say what that \
+             sitting recorded. A check scoped to one sitting needs the run's own boundaries.",
+        ));
+    };
+    let gained = |who: &str| !attends_as(&before.world, who) && attends_as(&after.world, who);
+    let (milhouse, nelson) = (gained("person:milhouse"), gained("person:nelson"));
+    match (milhouse, nelson) {
+        (true, true) => Ok(()),
+        _ => Err(format!(
+            "{JUNE}'s window did not draw a standing attendee edge for both — milhouse: {}, \
+             nelson: {}. A later, legitimate retraction is not this check's business; it asks \
+             only what {JUNE} itself left standing",
+            if milhouse { "gained" } else { "not gained" },
+            if nelson { "gained" } else { "not gained" },
+        )),
+    }
+}
 
 /// 🚨 **One record points at two kinds of thing as HANDLES, asked in June's own
 /// window.**

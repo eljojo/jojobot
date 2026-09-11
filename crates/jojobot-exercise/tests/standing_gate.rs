@@ -93,28 +93,6 @@ const ALLOWED: &[Allowed<'static>] = &[
     },
     Allowed {
         room: "rooms/year.md",
-        lock: "Phase 6 — June: the survey cannot be walked to who was at it, so August's \
-               question is answerable only by reading prose",
-        needle: "person:milhouse",
-        risk: Risk::Retraction,
-        reason: "Milhouse's own attendance is never retracted in this room, so this half of the \
-                 pair is unexercised even though Nelson's, right beside it, is not",
-    },
-    Allowed {
-        room: "rooms/year.md",
-        lock: "Phase 6 — June: the survey cannot be walked to who was at it, so August's \
-               question is answerable only by reading prose",
-        needle: "person:nelson",
-        risk: Risk::Retraction,
-        reason: "October legitimately retracts Nelson's own attendance at this exact survey — \
-                 the room's late-October play does it on purpose — and this Query lock reads \
-                 the FINISHED board with no status companion, so a retracted attendance record \
-                 still carrying person:nelson in its marked text is not distinguished here from \
-                 a standing one. This is the pump lock's own historical bug, on attendance \
-                 rather than on the pump",
-    },
-    Allowed {
-        room: "rooms/year.md",
         lock: "Phase 9 — nothing on the pump currently carries the day it came back, so a \
                reader is left with no day to find — whether it was never recorded, or a later, \
                legitimate correction cleared the only trace of it",

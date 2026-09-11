@@ -258,9 +258,14 @@ say     May: the washout was not filed against the trail that already existed �
 
 ```locks
 # Attendance is an edge. August walks it.
-recall {"kind": "event", "follow": {"shape": "attendance", "direction": "in"}}
-carries person:milhouse
-carries person:nelson
+#
+# 🚨 **A hatch, scoped to June's own window.** Late October legitimately
+# retracts Nelson's own attendance at this same survey, and a retraction is
+# marked rather than filtered — `recall` serves the retracted record's own
+# edge back, so `carries person:nelson` could not see the `status` key
+# beside it. Asked of the finished board this held on that dead text; asked
+# of June's own window it asks only what June itself left standing.
+check   junes_survey_drew_a_standing_attendee_for_each
 say     June: the survey cannot be walked to who was at it, so August's question is answerable only by reading prose
 
 # The loop moved, and it moved to today rather than to whenever the run
