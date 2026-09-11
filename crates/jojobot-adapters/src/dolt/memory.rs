@@ -412,21 +412,20 @@ impl DoltMemory {
                 .collect();
             entities.push(entity_from(row, mine)?);
         }
-        // **A parent pointer is resolved on the way out, like an edge or a
-        // ref — never badge-keyed.** It names a DIFFERENT row, not this one's
-        // own key, and nothing here queries by it: `children` reads every
-        // entity and filters in memory, so a rename leaves nothing for a
-        // stored badge to protect. Resolved against a snapshot taken before
-        // the loop mutates, since `resolve_handle` needs the whole set to
-        // search and a row cannot lend itself out while it is being written.
-        let former = Self::former_handles_in(tx).await?;
+        // **A parent pointer is badge-keyed exactly as `home` is** (rule
+        // 268), resolved here on the way out. It names a DIFFERENT row, not
+        // this one's own key, and nothing here queries by it: `children`
+        // reads every entity and filters in memory. Resolved against a
+        // snapshot taken before the loop mutates, since a row cannot lend
+        // itself out while it is being written.
         let snapshot = entities.clone();
         for entity in &mut entities {
-            if let Some(parent) = &entity.parent
-                && let Some(resolved) =
-                    jojobot_domain::memory::resolve_handle(parent, &snapshot, &former)
-            {
-                entity.parent = Some(resolved.id.clone());
+            if let Some(parent) = &entity.parent {
+                entity.parent = Some(
+                    jojobot_domain::memory::entity_wearing(parent.as_str(), &snapshot)
+                        .map(|found| found.id.clone())
+                        .unwrap_or_else(|| parent.clone()),
+                );
             }
         }
         Ok(entities)
@@ -1182,7 +1181,25 @@ impl Memory for DoltMemory {
                 candidates,
             });
         }
-        let badge = write_entity(&mut tx, &self.draw, &entity).await?;
+        // **Stored as the badge the parent wears, never the handle it was
+        // named with** (rule 268). The check above already found it, so
+        // `resolve` cannot miss here. Kept apart from `entity`, which still
+        // carries the handle the caller sent and is served back exactly as
+        // written.
+        let stored = if let Some(parent) = &entity.parent {
+            let stored_parent = self
+                .resolve(&mut tx, parent)
+                .await?
+                .map(|(key, _)| key)
+                .unwrap_or_else(|| parent.clone());
+            Entity {
+                parent: Some(stored_parent),
+                ..entity.clone()
+            }
+        } else {
+            entity.clone()
+        };
+        let badge = write_entity(&mut tx, &self.draw, &stored).await?;
         tx.commit().await.map_err(store)?;
         Ok(Guarded::Written(Entity {
             badge: Some(badge),
@@ -1242,7 +1259,26 @@ impl Memory for DoltMemory {
         // **The badge rides on the record this edit was read from**, and
         // `write_entity` carries the row's own across — so the answer already
         // says what the row says and nothing has to put it back.
-        write_entity(&mut tx, &self.draw, &entity).await?;
+        //
+        // **`entity.parent` came off `index`, which serves the handle**
+        // (rule 268). `EntityPatch` carries no field that could have changed
+        // it, so it is resolved back to the badge here before the row is
+        // written — or every metadata edit would quietly turn a badge-keyed
+        // parent back into a handle.
+        let stored = if let Some(parent) = &entity.parent {
+            let stored_parent = self
+                .resolve(&mut tx, parent)
+                .await?
+                .map(|(key, _)| key)
+                .unwrap_or_else(|| parent.clone());
+            Entity {
+                parent: Some(stored_parent),
+                ..entity.clone()
+            }
+        } else {
+            entity.clone()
+        };
+        write_entity(&mut tx, &self.draw, &stored).await?;
         tx.commit().await.map_err(store)?;
         Ok(Guarded::Written(entity))
     }
@@ -1338,6 +1374,20 @@ impl Memory for DoltMemory {
             });
         }
 
+        // **What is actually written is the badge** (rule 268): unchanged
+        // when this rename named no new parent (`effective_parent` came off
+        // `entity.parent`, already served through it once, so it is
+        // resolved back), or resolved fresh when it did — the guard just
+        // above already found it, so `resolve` cannot miss here.
+        let stored_parent = match &renamed.parent {
+            Some(parent) => Some(
+                self.resolve(&mut tx, parent)
+                    .await?
+                    .map(|(key, _)| key)
+                    .unwrap_or_else(|| parent.clone()),
+            ),
+            None => None,
+        };
         // **A straight primary-key rewrite, never delete-then-insert.**
         // Every other column — the badge above all — rides along untouched:
         // nothing here asks "what was this row's badge" the way
@@ -1347,20 +1397,17 @@ impl Memory for DoltMemory {
         sqlx::query("UPDATE entity SET id = ?, kind = ?, parent = ? WHERE id = ?")
             .bind(to.as_str())
             .bind(to.kind_token())
-            .bind(renamed.parent.as_ref().map(EntityId::as_str))
+            .bind(stored_parent.as_ref().map(EntityId::as_str))
             .bind(from.as_str())
             .execute(&mut *tx)
             .await
             .map_err(store)?;
-        // Every entity naming the OLD handle as its parent follows to the
-        // new one — the same statement shape `merge` already uses on this
-        // column.
-        sqlx::query("UPDATE entity SET parent = ? WHERE parent = ?")
-            .bind(to.as_str())
-            .bind(from.as_str())
-            .execute(&mut *tx)
-            .await
-            .map_err(store)?;
+        // **Nothing else needs to move.** A parent pointer is a badge now;
+        // the badge this row wears never changes across a rename, so a
+        // child naming it as `parent` needs no sweep — the former,
+        // handle-rewriting version of this statement touched every other
+        // entity's `parent` column for exactly the reason this no longer
+        // does.
         sqlx::query(
             "INSERT INTO entity_former_handle (former_handle, badge, changed_at) VALUES \
              (?, ?, ?)",
@@ -2113,34 +2160,18 @@ impl Memory for DoltMemory {
                 .map_err(store)?;
         }
 
-        // **`entity.parent` names a different row and is still handle-keyed**
-        // — this column has not moved to a badge yet, so it still compares
-        // against every handle the folded side has ever worn.
-        //
-        // **Every handle the folded side has ever worn, not only the one it
-        // wears today.** A rename rewrites nothing, so a pointer written
-        // before one keeps the old spelling forever unless something sweeps
-        // it — and a fold is the one place that has to, because the folded
-        // row keeps forwarding rather than disappearing: a pointer left on a
-        // former handle would resolve one hop short, at the folded row,
-        // rather than at the survivor it now answers for.
-        let former_folded: Vec<String> =
-            sqlx::query_scalar("SELECT former_handle FROM entity_former_handle WHERE badge = ?")
-                .bind(folded_key.as_str())
-                .fetch_all(&mut *tx)
-                .await
-                .map_err(store)?;
-        let mut folded_handles: Vec<&str> = vec![folded.as_str()];
-        folded_handles.extend(former_folded.iter().map(String::as_str));
-
-        for handle in &folded_handles {
-            sqlx::query("UPDATE entity SET parent = ? WHERE parent = ?")
-                .bind(survivor.as_str())
-                .bind(*handle)
-                .execute(&mut *tx)
-                .await
-                .map_err(store)?;
-        }
+        // **`entity.parent` names a different row and is stored as the
+        // badge it wears** (rule 268), so this compares against the folded
+        // side's own badge alone and rewrites to the survivor's — the same
+        // shape the edge and ref sweeps above use, and for the same reason:
+        // nothing but the entity's own current badge was ever written into
+        // this column.
+        sqlx::query("UPDATE entity SET parent = ? WHERE parent = ?")
+            .bind(survivor_key.as_str())
+            .bind(folded_key.as_str())
+            .execute(&mut *tx)
+            .await
+            .map_err(store)?;
 
         let record = Fact {
             id: Self::mint(&mut tx, &survivor_key).await?,
