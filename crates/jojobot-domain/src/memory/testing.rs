@@ -16,9 +16,10 @@ use std::sync::Mutex;
 use jiff::civil::Date;
 
 use super::{
-    ClaimWrite, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactId, FactPatch,
-    FactStatus, FieldWrite, FormerHandle, Guarded, MAX_KEY_CHARS, MERGED_FROM, Memory, MemoryError,
-    Merge, NewEntity, NewFact, Retraction, Standing, apply_entity_patch, apply_fact_patch,
+    ClaimWrite, Edge, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactId,
+    FactPatch, FactStatus, FieldWrite, FormerHandle, Guarded, MAX_KEY_CHARS, MERGED_FROM, Memory,
+    MemoryError, Merge, NewEntity, NewFact, Retraction, Standing, apply_entity_patch,
+    apply_fact_patch,
     guard::{self, Decision},
     merge_account, normalize_content, normalize_details, normalize_prose, resolve_handle,
     retraction_of, screen_entity_patch, search, standing_of, validate_content, validate_details,
@@ -399,6 +400,17 @@ impl InMemoryMemory {
                 source.local.clone(),
             ));
         }
+        // **An edge and a ref are badge-keyed exactly as `home` is** (rule
+        // 268), so they are resolved the same way, here, once, rather than a
+        // reader chasing a handle's rename history on every use.
+        if let Some(edge) = &f.edge {
+            f.edge = Some(Edge::new(edge.shape, self.current_handle(&edge.object)));
+        }
+        f.refs = f
+            .refs
+            .iter()
+            .map(|object| self.current_handle(object))
+            .collect();
         f
     }
 
@@ -827,6 +839,23 @@ impl Memory for InMemoryMemory {
                 });
             }
         }
+        // **Stored as the badge the object wears, never the handle it was
+        // named with** (rule 268). Both checks above already found it, so
+        // `storage_key` cannot miss here. Storing the badge is what makes a
+        // later handle collision harmless: there is no plain handle left in
+        // the row for a newcomer to inherit.
+        let edge = fact.edge.as_ref().map(|edge| {
+            Edge::new(
+                edge.shape,
+                self.storage_key(&edge.object)
+                    .unwrap_or_else(|| edge.object.clone()),
+            )
+        });
+        let refs: Vec<EntityId> = fact
+            .refs
+            .iter()
+            .map(|object| self.storage_key(object).unwrap_or_else(|| object.clone()))
+            .collect();
 
         let mut facts = self.facts.lock().expect("fake mutex poisoned");
         // **A claim this one is derived from is named, so it must already
@@ -908,9 +937,9 @@ impl Memory for InMemoryMemory {
             status: fact.status,
             recorded_at: fact.recorded_at,
             happened_at: fact.happened_at,
-            edge: fact.edge,
+            edge,
             fields: fact.fields,
-            refs: fact.refs,
+            refs,
             derived_from,
             // **A store stamps this, so the double does too.** A fake that left
             // it empty would let every case above it pass on a build where the
@@ -1233,6 +1262,20 @@ impl Memory for InMemoryMemory {
         // through; it does not know a fake's homes are badges, so this
         // corrects it here rather than teaching a shared function about one
         // adapter's storage.
+        // **An edge attached by this patch is stored as a badge too**, for
+        // the same reason a captured one is (rule 268). `apply_fact_patch`
+        // carried the handle the patch named; this is where a fake's own
+        // storage rule corrects it, exactly as it does for `derived_from`
+        // just below.
+        if patch.edge.is_some()
+            && let Some(edge) = &edited.edge
+        {
+            edited.edge = Some(Edge::new(
+                edge.shape,
+                self.storage_key(&edge.object)
+                    .unwrap_or_else(|| edge.object.clone()),
+            ));
+        }
         if let Some(source) = &patch.derived_from {
             edited.derived_from = Some(FactAddress::new(
                 self.storage_key(&source.home)
@@ -1380,19 +1423,20 @@ impl Memory for InMemoryMemory {
                 fact.subject = survivor_key.clone();
             }
             // An edge drawn AT the folded thing is re-pointed too, or the
-            // graph goes on naming a handle that is no longer a thing. An
-            // edge's object is stored as the handle it was drawn with, not a
-            // badge (step 3 resolves it on the way OUT; nothing resolves it
-            // in), so this compares against every raw handle the folded side
-            // has ever worn, current and former alike.
+            // graph goes on naming a badge nobody answers to. An edge's
+            // object is stored as the badge the entity wears (rule 268), so
+            // this compares against the folded side's own badge alone —
+            // never a handle, and never a former handle, because nothing but
+            // the entity's own current badge was ever written into this
+            // column. Rewritten to the SURVIVOR'S BADGE, for the same reason.
             if let Some(edge) = &mut fact.edge
-                && folded_handles.contains(&edge.object)
+                && edge.object == folded_key
             {
-                edge.object = survivor.clone();
+                edge.object = survivor_key.clone();
             }
             for target in fact.refs.iter_mut() {
-                if folded_handles.contains(target) {
-                    *target = survivor.clone();
+                if *target == folded_key {
+                    *target = survivor_key.clone();
                 }
             }
         }
@@ -6476,6 +6520,66 @@ pub mod contract {
         )
         .await;
         assert_eq!(landed.edge.map(|e| e.object), Some(stranger));
+    }
+
+    /// 🚨 **The handle-hijack case, decision log 268.** An edge is written at a
+    /// handle; that handle is renamed away; a NEW entity is created at the
+    /// vacated handle. Before this slice, an edge's object was stored as the
+    /// plain handle it was drawn with, so it silently re-resolved to the
+    /// newcomer the moment one existed — a pointer written at one thing
+    /// serving a claim about a different one, with no error and no warning.
+    /// Storing the badge instead removes the handle from the row entirely:
+    /// there is nothing left in it for a newcomer to inherit.
+    pub async fn a_rename_and_a_recreated_handle_does_not_hijack_an_edge<M: Memory>(store: &M) {
+        let subject = EntityId::person("person:contract-hijack-subject");
+        let original = EntityId("thing:contract-hijack-target".into());
+        ensure(store, &subject).await;
+        add(
+            store,
+            NewEntity::new(original.clone(), "The Original", "the roster"),
+        )
+        .await;
+
+        let fact = capture(
+            store,
+            NewFact {
+                edge: Some(Edge::new(EdgeShape::About, original.clone())),
+                ..NewFact::about(
+                    subject.clone(),
+                    "drew an edge at the original",
+                    date(2026, 4, 20),
+                )
+            },
+        )
+        .await;
+
+        let renamed_to = EntityId("thing:contract-hijack-elsewhere".into());
+        store
+            .rename_entity(&original, &renamed_to, None, date(2026, 4, 21), None)
+            .await
+            .expect("rename should succeed")
+            .written()
+            .expect("nothing collides with it");
+
+        // A DIFFERENT entity now claims the vacated handle.
+        add(
+            store,
+            NewEntity::new(original.clone(), "The Newcomer", "the roster"),
+        )
+        .await;
+
+        let after = store
+            .recall(&subject)
+            .await
+            .expect("the store answers")
+            .into_iter()
+            .find(|f| f.id == fact.id)
+            .expect("the claim is there");
+        assert_eq!(
+            after.edge.as_ref().map(|e| &e.object),
+            Some(&renamed_to),
+            "the edge followed the rename to {renamed_to}, or the newcomer hijacked it: {after:?}",
+        );
     }
 
     /// **An entity keeps the other names it answers to**, through the store and
@@ -11935,17 +12039,15 @@ pub mod contract {
         );
     }
 
-    /// 🚨 **An edge follows a rename too, and nothing rewrites the claim to do
-    /// it.**
+    /// 🚨 **An edge follows a rename, and nothing rewrites the claim to do
+    /// it** (rule 268). An edge's object is stored as the badge the entity
+    /// wears rather than the handle it was drawn with, so the row never goes
+    /// stale — the same handle-to-badge resolution `bare` already gives a
+    /// capture's subject.
     ///
-    /// **An edge carries no badge** — unlike a mention it is a plain handle,
-    /// validated to exist at write time and never touched again, so a rename
-    /// after the edge was drawn is the one way it goes stale. Read back
-    /// through `mentioning`, which is the layer that resolves it on the way
-    /// out, exactly as it resolves text.
-    ///
-    /// **Paired with the stored form**, because a build that rewrote the edge
-    /// in place would pass the first half and fail the second.
+    /// **Paired against `bare`, with no `mentioning` involved**, because the
+    /// resolution now lives in the store itself: a build that only fixed the
+    /// decorator would pass `mentioning` and fail `bare`.
     pub async fn an_edge_follows_a_thing_that_is_rehandled<
         M: Memory + ?Sized,
         B: Memory + ?Sized,
@@ -12020,7 +12122,8 @@ pub mod contract {
             "the edge did not follow the thing to its new handle: {after:?}",
         );
 
-        // Nothing was rewritten to do it.
+        // The bare store follows the rename too — the fix is in storage, not
+        // only in the layer that renders for a reader.
         let stored = bare
             .recall(&subject)
             .await
@@ -12029,23 +12132,18 @@ pub mod contract {
             .find(|f| f.id == written.id)
             .expect("the claim is there");
         assert_eq!(
-            stored.edge.map(|e| e.object),
-            Some(was),
-            "the stored edge was rewritten, so this is find-and-replace rather than a pointer",
+            stored.edge.as_ref().map(|e| &e.object),
+            Some(&now),
+            "the bare store did not follow the rename, so the fix is still only in the decorator: \
+             {stored:?}",
         );
     }
 
-    /// 🚨 **A ref follows a rehandled thing exactly as an edge does.**
+    /// 🚨 **A ref follows a rehandled thing exactly as an edge does**, for
+    /// the same reason: it is stored as the badge, not the handle (rule 268).
     ///
-    /// **A ref carries no badge either** — the same shape as an edge's
-    /// object: a plain handle, validated to exist at write time and never
-    /// touched again, so a rename after the record was written is the one
-    /// way it goes stale. Read back through `mentioning`, the layer that
-    /// resolves both on the way out.
-    ///
-    /// **Paired with the stored form**, for the reason the edge case is: a
-    /// build that rewrote the ref in place would pass the first half and
-    /// fail the second.
+    /// **Paired against `bare`, for the reason the edge case is**: the fix
+    /// lives in the store, not the decorator.
     pub async fn a_ref_follows_a_thing_that_is_rehandled<M: Memory + ?Sized, B: Memory + ?Sized>(
         mentioning: &M,
         bare: &B,
@@ -12113,11 +12211,11 @@ pub mod contract {
             .expect("the claim is there");
         assert_eq!(
             after.refs,
-            vec![now],
+            vec![now.clone()],
             "the ref did not follow the thing to its new handle: {after:?}",
         );
 
-        // Nothing was rewritten to do it.
+        // The bare store follows the rename too.
         let stored = bare
             .recall(&subject)
             .await
@@ -12127,8 +12225,9 @@ pub mod contract {
             .expect("the claim is there");
         assert_eq!(
             stored.refs,
-            vec![was],
-            "the stored ref was rewritten, so this is find-and-replace rather than a pointer",
+            vec![now],
+            "the bare store did not follow the rename, so the fix is still only in the decorator: \
+             {stored:?}",
         );
     }
 
@@ -13288,6 +13387,7 @@ pub mod contract {
         capture_requires_an_existing_subject(store).await;
         capture_requires_an_existing_edge_object(store).await;
         update_fact_requires_an_existing_edge_object(store).await;
+        a_rename_and_a_recreated_handle_does_not_hijack_an_edge(store).await;
         malformed_entity_fields_are_rejected(store).await;
         a_cross_link_takes_the_task_layers_own_grammar(store).await;
         a_field_at_the_validators_limit_survives_storage(store).await;
