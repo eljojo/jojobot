@@ -8,7 +8,7 @@
 //!   no network, milliseconds.
 //! * the **contract** — one behavioural spec (`contract::*`) that every adapter
 //!   of the port must satisfy. It runs against the fake (proving the fake
-//!   faithful) and against the real Outline adapter (proving it conforms), so
+//!   faithful) and against the real Dolt adapter (proving it conforms), so
 //!   the two can't drift.
 
 use super::{
@@ -29,7 +29,7 @@ pub use fake::InMemoryMemory;
 /// The behavioural contract every [`Memory`] adapter must satisfy. Each function
 /// is a self-contained spec run against a live store. Assertions are
 /// **subset-based** — they check that what was captured comes back, never exact
-/// totals — so a shared/pre-populated store (real Outline) passes without a
+/// totals — so a shared/pre-populated store (real Dolt) passes without a
 /// reset, and cross-doc local-id reuse never trips them.
 ///
 /// Handles here are deliberately far apart (≥3 edits): the write guard is on the
