@@ -33,10 +33,24 @@ async fn a_session_asks_a_shipped_view_and_its_own_by_name_through_one_read() {
     let colleagues = s.call("recall", json!({"view": "colleagues"})).await;
     colleagues.says("bot:gamma");
     colleagues.says("bot:assistant");
-    // …and it carries what each identity is FOR, because that is what the view
-    // says to show. Without this the case passes on a build that answered with
-    // bare handles.
-    colleagues.says("THEIR WORD IS GROUND TRUTH");
+    // **The small list by default.** A charter can run to thousands of
+    // characters, so the view stops short of shipping every one of them
+    // unasked — the caller's own `charter: true` is what reaches it. Without
+    // this half the case passes on a build that ships every charter whether
+    // anybody asked or not.
+    assert!(
+        !colleagues.raw().contains("THEIR WORD IS GROUND TRUTH"),
+        "the default answer does not carry a charter: {}",
+        colleagues.raw(),
+    );
+
+    // The positive the assertion above rests on: asking for the charter still
+    // reaches it, because the caller's own arguments win over what the view
+    // fills in.
+    let with_charters = s
+        .call("recall", json!({"view": "colleagues", "charter": true}))
+        .await;
+    with_charters.says("THEIR WORD IS GROUND TRUTH");
 
     // ── a view the operator declares, through the ordinary surface ──────────
     //
