@@ -391,6 +391,13 @@ mod tests {
     /// **Both doors in one case.** `entity_json` is hand-built and could simply
     /// omit it; `Entity` also derives `Serialize`, and a field added without
     /// `skip` would ride out through any path that serialises the struct.
+    ///
+    /// **Each negative is paired with the positive it depends on.** Asserting
+    /// only the badge's absence passes identically if serialisation broke and
+    /// produced nothing at all — it cannot tell *correctly withheld* from
+    /// *nothing came out*. Asserting first that the handle and name ARE there
+    /// closes that gap: an answer empty enough to hide the badge is now also
+    /// empty enough to fail the positive.
     #[test]
     fn an_entitys_badge_reaches_no_caller() {
         let entity = Entity {
@@ -407,10 +414,18 @@ mod tests {
         };
         let served = entity_json(&entity).to_string();
         assert!(
+            served.contains("person:alpha") && served.contains("Alpha"),
+            "the wire answer carries the entity it is about: {served}",
+        );
+        assert!(
             !served.contains("zzzzzz") && !served.contains("badge"),
             "the wire answer carries the badge: {served}",
         );
         let serialised = serde_json::to_string(&entity).expect("an entity serialises");
+        assert!(
+            serialised.contains("person:alpha") && serialised.contains("Alpha"),
+            "serde carries the entity it is about: {serialised}",
+        );
         assert!(
             !serialised.contains("zzzzzz") && !serialised.contains("badge"),
             "serde carries the badge out: {serialised}",
