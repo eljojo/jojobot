@@ -262,10 +262,11 @@ impl Mentioning {
         self.inner.list_entities(None).await
     }
 
-    /// **Every rename event, for the one thing that reads it going out**: an
-    /// edge stores a plain handle rather than a badge, so a rename after the
-    /// edge was drawn leaves it stale in a way text mentions are not — this is
-    /// what lets [`render_fact`](Self::render_fact) follow it anyway.
+    /// **Every rename event, for the reference-typed field values
+    /// [`render_fact`](Self::render_fact) still resolves by hand**: those
+    /// store a plain handle rather than a badge, so a rename after one was
+    /// written leaves it stale in a way an edge or a ref no longer does
+    /// (rule 268).
     async fn former(&self) -> Result<Vec<super::FormerHandle>, super::MemoryError> {
         self.inner.former_handles().await
     }
@@ -278,15 +279,17 @@ impl Mentioning {
         self.inner.declared_types().await
     }
 
-    /// Rewrite a claim's text for a reader, and follow an edge, a ref or a
-    /// reference-typed field value to wherever what it names answers to now.
+    /// Rewrite a claim's text for a reader, and follow a reference-typed
+    /// field value to wherever what it names answers to now.
     ///
-    /// **None of the three is a mention and none carries a badge** — each is
-    /// validated to exist at write time and stored as a plain handle, so a
-    /// rename after the record was written is the one way any of them goes
-    /// stale. `resolve_handle` is the same fallback a stale handle gets
-    /// anywhere: a direct match first, a handle's own history next, and a
-    /// genuinely unknown one is left as written rather than guessed at.
+    /// **An edge's object and a ref need no resolution here** (rule 268):
+    /// both stores now store the badge the object wears and serve the
+    /// current handle back on every read, so a fact handed to this
+    /// function already carries the right one. A reference-typed field is
+    /// the one case still a plain handle — `resolve_handle` is the same
+    /// fallback a stale one gets anywhere: a direct match first, a handle's
+    /// own history next, and a genuinely unknown one left as written rather
+    /// than guessed at.
     fn render_fact(
         &self,
         fact: &mut super::Fact,
@@ -297,16 +300,6 @@ impl Mentioning {
         fact.content = rendered(&fact.content, known);
         if let Some(details) = &fact.details {
             fact.details = Some(rendered(details, known));
-        }
-        if let Some(edge) = &mut fact.edge
-            && let Some(current) = super::resolve_handle(&edge.object, known, former)
-        {
-            edge.object = current.id.clone();
-        }
-        for object in &mut fact.refs {
-            if let Some(current) = super::resolve_handle(object, known, former) {
-                *object = current.id.clone();
-            }
         }
         for (key, value) in fact.fields.iter_mut() {
             let Some(field) = declared
