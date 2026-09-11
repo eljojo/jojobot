@@ -36,46 +36,19 @@ struct Allowed<'a> {
 /// **Every exposure this build ships, named.** Add a lock's own companion
 /// instead of an entry here whenever that is the real fix — an entry is for
 /// the exposures that are staying, with the sentence that says why.
-const ALLOWED: &[Allowed<'static>] = &[
-    Allowed {
-        room: "rooms/year.md",
-        lock: "Phase 2 — February: the pump the operator lent is not a thing jojobot knows, \
-               so September has nothing to ask about",
-        needle: "thing:floor-pump",
-        risk: Risk::Retraction,
-        reason: "names an ENTITY handle out of a `recall {\"kind\":\"thing\"}` listing, not a \
-                 fact's edge — entities carry no status of their own here, only facts do, so \
-                 the retraction this classifier is built to catch does not apply to this \
-                 needle, and the classifier cannot see that distinction from the needle's text \
-                 alone",
-    },
-    Allowed {
-        room: "rooms/year.md",
-        lock: "Phase 9 — nothing on the pump currently carries the day it came back, so a \
+const ALLOWED: &[Allowed<'static>] = &[Allowed {
+    room: "rooms/year.md",
+    lock: "Phase 9 — nothing on the pump currently carries the day it came back, so a \
                reader is left with no day to find — whether it was never recorded, or a later, \
                legitimate correction cleared the only trace of it",
-        needle: "person:ralph",
-        risk: Risk::Retraction,
-        reason: "the historical instance the classifier was built to catch. October corrects \
+    needle: "person:ralph",
+    risk: Risk::Retraction,
+    reason: "the historical instance the classifier was built to catch. October corrects \
                  this record in place rather than retracting it, so the honest play never trips \
                  it — but the lock still carries a bare person:ralph with no companion, so a \
                  future sitting that retracted Ralph's account instead of correcting it would \
                  satisfy this lock on dead text exactly as the original bug did",
-    },
-    Allowed {
-        room: "rooms/year.md",
-        lock: "Phase 15 — later December: what the claim used to say is not on the record, so \
-               either the sitting never reached the correction's own history or it answered \
-               from the claim as it stands",
-        needle: "meets on Tuesdays",
-        risk: Risk::Retraction,
-        reason: "bare prose naming no key, read for whether it appears anywhere in the club's \
-                 trace history rather than pinned to one record's status — the phrase happens \
-                 to be safe against this room's own rewritten wording today, but nothing here \
-                 stops a differently-worded future correction from reintroducing exactly this \
-                 phrase somewhere the claim does not mean it",
-    },
-];
+}];
 
 /// The findings a room's shipped locks classify to.
 fn found_in(room: &str) -> Vec<StandingFinding> {
@@ -160,7 +133,7 @@ fn every_allowlist_entry_has_a_substantive_reason() {
 fn an_unnamed_exposure_fails_the_gate_and_naming_it_clears_it() {
     let locks = lock::read(
         "```locks\n\
-         recall {\"kind\": \"person\"}\n\
+         recall {\"subject\": \"person:homer\", \"facts\": true}\n\
          carries person:homer\n\
          say     homer is not on the roster\n\
          ```\n",

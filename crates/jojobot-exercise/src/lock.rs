@@ -1059,12 +1059,25 @@ pub struct StandingFinding {
 /// cannot also satisfy by accident. Which value the companion names is
 /// irrelevant: a lock proving something was superseded is as pinned as one
 /// proving something stands.
+///
+/// **A query whose own arguments cannot put a retracted record in its
+/// answer is skipped too, and this is structural rather than a per-lock
+/// exemption.** Retraction is a property of a FACT or an EDGE: neither rides
+/// on a query that asks for no `facts` and follows no edge, because there is
+/// no such content anywhere in what comes back — a bare entity listing
+/// carries only handles, names and kinds, none of which is ever marked
+/// retracted. Unparsable arguments are read as exposed, because a needle
+/// this classifier cannot read the shape of is the case it exists to find.
 pub fn standing_findings(locks: &[Lock]) -> Vec<StandingFinding> {
     let mut findings = Vec::new();
     for lock in locks {
         if matches!(lock.asks, Asks::Check(_)) {
             continue;
         }
+        let Some((_, args)) = lock.asked() else {
+            continue;
+        };
+        let exposed = query_can_carry_a_retracted_record(args);
         let carried: Vec<&String> = lock
             .expects
             .iter()
@@ -1075,7 +1088,7 @@ pub fn standing_findings(locks: &[Lock]) -> Vec<StandingFinding> {
             .collect();
         let paired = carried.iter().any(|needle| pins_status(needle));
         for needle in carried {
-            if !paired && standing_of(needle) == Standing::BareHandle {
+            if exposed && !paired && standing_of(needle) == Standing::BareHandle {
                 findings.push(StandingFinding {
                     lock: lock.name.clone(),
                     needle: needle.clone(),
@@ -1113,6 +1126,25 @@ fn pins_status(needle: &str) -> bool {
     needle
         .strip_prefix("\"status\":\"")
         .is_some_and(|rest| rest.ends_with('"'))
+}
+
+/// **Does this query's own shape make a retracted record reachable at
+/// all?** Asked with `facts: true`, the FACTS of a record ride the answer,
+/// and a retraction is marked rather than filtered off them. Asked with a
+/// `follow`, an edge's own object rides the answer the same way. Neither key
+/// present means the answer is entity metadata only — a handle, a name, a
+/// kind — and none of that is ever marked retracted, so there is nothing
+/// here for a bare-handle needle to be fooled by.
+///
+/// Text that does not parse as the object a `recall`/`search` call takes is
+/// read as exposed rather than exempted: a shape this cannot classify is
+/// what the classifier exists to catch, not a reason to wave it through.
+fn query_can_carry_a_retracted_record(args: &str) -> bool {
+    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(args) else {
+        return true;
+    };
+    parsed.get("facts").and_then(serde_json::Value::as_bool) == Some(true)
+        || parsed.get("follow").is_some()
 }
 
 #[cfg(test)]
@@ -1311,5 +1343,101 @@ mod standing_tests {
         )
         .expect("the lock reads");
         assert!(standing_findings(&locks).is_empty());
+    }
+
+    /// **A bare handle out of a query that asks for no facts and follows no
+    /// edge is not flagged.** Retraction lives on a fact's or an edge's own
+    /// status, and neither rides on a bare `{"kind": "thing"}` listing — the
+    /// real instance is Phase 2's `thing:floor-pump` needle, which no longer
+    /// needs its own allowlist entry once the classifier reads this.
+    #[test]
+    fn a_bare_handle_out_of_a_kind_listing_is_not_flagged() {
+        let locks = read(
+            "```locks\n\
+             recall {\"kind\": \"thing\"}\n\
+             carries thing:floor-pump\n\
+             say     the pump the operator lent is not a thing jojobot knows\n\
+             ```\n",
+        )
+        .expect("the lock reads");
+        assert!(
+            standing_findings(&locks).is_empty(),
+            "a bare-listing needle was flagged anyway: {:?}",
+            standing_findings(&locks)
+                .iter()
+                .map(|f| &f.needle)
+                .collect::<Vec<_>>(),
+        );
+    }
+
+    /// **The same needle, asked with `facts: true`, IS flagged.** The
+    /// listing-only exemption is scoped to what the query can actually
+    /// expose — proving the negative above needs this positive beside it, or
+    /// a classifier that stopped flagging everything would pass it too.
+    #[test]
+    fn the_same_needle_asked_with_facts_is_still_flagged() {
+        let locks = read(
+            "```locks\n\
+             recall {\"subject\": \"thing:floor-pump\", \"facts\": true}\n\
+             carries thing:floor-pump\n\
+             say     the pump is not on the record\n\
+             ```\n",
+        )
+        .expect("the lock reads");
+        let found = standing_findings(&locks);
+        assert!(
+            found
+                .iter()
+                .any(|f| f.needle == "thing:floor-pump" && f.risk == Risk::Retraction),
+            "a needle out of a facts-bearing query was not flagged: {:?}",
+            found.iter().map(|f| &f.needle).collect::<Vec<_>>(),
+        );
+    }
+
+    /// **A bare listing that also follows an edge IS flagged.** `follow`
+    /// walks to another object's own record, which can carry a retracted
+    /// status exactly as `facts` can — the exemption is about what the query
+    /// can reach, not about which top-level key happens to be missing.
+    #[test]
+    fn a_kind_listing_that_follows_an_edge_is_still_flagged() {
+        let locks = read(
+            "```locks\n\
+             recall {\"kind\": \"person\", \"follow\": {\"shape\": \"membership\"}}\n\
+             carries org:north-trail-club\n\
+             say     nothing walks to the club\n\
+             ```\n",
+        )
+        .expect("the lock reads");
+        let found = standing_findings(&locks);
+        assert!(
+            found
+                .iter()
+                .any(|f| f.needle == "org:north-trail-club" && f.risk == Risk::Retraction),
+            "a needle out of a query that follows an edge was not flagged: {:?}",
+            found.iter().map(|f| &f.needle).collect::<Vec<_>>(),
+        );
+    }
+
+    /// **Arguments this classifier cannot parse are read as exposed.** A
+    /// shape it cannot classify is the case it exists to find, not a reason
+    /// to exempt it.
+    #[test]
+    fn unparsable_arguments_are_not_exempted() {
+        let locks = read(
+            "```locks\n\
+             recall not-json-at-all\n\
+             carries thing:floor-pump\n\
+             say     the pump is not on the record\n\
+             ```\n",
+        )
+        .expect("the lock reads");
+        let found = standing_findings(&locks);
+        assert!(
+            found
+                .iter()
+                .any(|f| f.needle == "thing:floor-pump" && f.risk == Risk::Retraction),
+            "unparsable arguments were exempted rather than flagged: {:?}",
+            found.iter().map(|f| &f.needle).collect::<Vec<_>>(),
+        );
     }
 }
