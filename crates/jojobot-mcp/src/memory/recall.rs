@@ -3432,13 +3432,12 @@ mod tests {
     }
 
     /// **A view shaped like the shipped `view:colleagues`** — `selects: bot`
-    /// and nothing else — declared the way an operator's own view is. This
-    /// crate's test harness never wires up what the build supplies (that
-    /// happens once, in the binary that assembles a real store), so the
-    /// shipped provision itself is unreachable from here; what IS reachable,
-    /// and what this proves, is the one mechanism both paths share
-    /// (`asked_by_name` / `graph::asked_by_view`) — the same code the shipped
-    /// view runs through (rule 106).
+    /// and nothing else — declared the way an operator's own view is, against
+    /// [`handler`]'s bare store. That proves the one mechanism both paths
+    /// share (`asked_by_name` / `graph::asked_by_view` — rule 106) without
+    /// needing the real shipped data; `handler_shipped` plus
+    /// `the_shipped_colleagues_view_answers_with_the_small_list_by_default`
+    /// below is what proves the SHIPPED provision itself is this shape.
     async fn declared_view(jojobot: &Jojobot, slug: &str, keys: &[(&str, &str)]) {
         let added = jojobot
             .add_entity(Parameters(add_args("view", slug, slug)))
@@ -3595,6 +3594,44 @@ mod tests {
         assert!(
             delta["fields"].get("one_liner").is_none(),
             "a bot with none written carries no key at all, rather than a derived one: {body}",
+        );
+    }
+
+    /// **The SHIPPED `view:colleagues`, resolved through this crate's own
+    /// `provisions()` — not a declared stand-in of the same shape.**
+    ///
+    /// Every other case here proves the mechanism a shipped view runs
+    /// through; this one proves the shipped DATA is what it should be. A
+    /// typo in `views.rs`'s handle, or a `shows` key nobody meant to ship,
+    /// would pass every case built on `handler()` and only reddens here.
+    #[tokio::test]
+    async fn the_shipped_colleagues_view_answers_with_the_small_list_by_default() {
+        let jojobot = handler_shipped();
+        make_bot(&jojobot, "gamma").await;
+        make_bot(&jojobot, "delta").await;
+        let expensive = "X".repeat(5_000);
+        jojobot
+            .set_charter(Parameters(SetCharterArgs {
+                bot: "gamma".into(),
+                prose: expensive.clone(),
+                sid: Some(crate::harness::TEST_SID.into()),
+            }))
+            .await
+            .expect("set_charter ok");
+
+        let body = json_of(
+            &jojobot
+                .recall(Parameters(by_view("colleagues")))
+                .await
+                .expect("recall ok"),
+        );
+        assert!(
+            body["count"].as_u64().unwrap_or(0) >= 2,
+            "the shipped view selects bots: {body}",
+        );
+        assert!(
+            !body.to_string().contains(&expensive),
+            "the shipped view does not carry a charter unasked: {body}",
         );
     }
 

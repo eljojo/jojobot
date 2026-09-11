@@ -65,6 +65,36 @@ pub(crate) fn handler() -> Jojobot {
     )
 }
 
+/// **A handler wrapped in what this crate's OWN `provisions()` ships**, the
+/// same decorator `main.rs` wraps the real store in.
+///
+/// [`handler`] never sees a shipped provision at all — its store is bare, so
+/// a shipped view or a shipped charter is a stand-in the test declares for
+/// itself. That proves the mechanism a shipped provision runs through, never
+/// the shipped data itself: a typo in `views.rs`'s handle, or a shipped
+/// `shows` key nobody meant to ship, would still pass every case built on
+/// [`handler`]. This is the one seam that can go red on the data.
+pub(crate) fn handler_shipped() -> Jojobot {
+    let supplied = crate::provisions();
+    // **The inner store is told what the build supplies too.** Its own
+    // existence gate is what `Provisioned::fields()` leans on for a record
+    // it holds no row for — a plain `InMemoryMemory` errors `UnknownEntity`
+    // on a handle it has never seen, `?`-propagating straight past the
+    // supplied-record fallback beneath it. `.knowing` is the same call the
+    // adapter's own tests make for this exact shape.
+    Jojobot::new(
+        Arc::new(jojobot_adapters::provisioned::Provisioned::new(
+            InMemoryMemory::booted().knowing(supplied.clone()),
+            supplied,
+        )),
+        Arc::new(SpySearch::default()),
+        Arc::new(InMemoryMailboxes::knowing_any_owner()),
+        Arc::new(InMemorySessions::new()),
+        Arc::new(InMemoryTeachings::new()),
+        seeded_registry(),
+    )
+}
+
 /// **A handler told which carriers answer for a due moment** — how a test puts
 /// a carrier the read has never seen in front of it.
 pub(crate) fn handler_carrying(
