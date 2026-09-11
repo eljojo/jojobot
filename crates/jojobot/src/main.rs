@@ -200,6 +200,34 @@ async fn main() -> anyhow::Result<()> {
         ),
     }
 
+    // **`fact.edge_object` (and its `fact_write` mirror), `fact_event_ref.entity`
+    // and `entity.parent` onto the badge each names, for a row written before
+    // this build resolved them at write time** (rule 268). Runs after the two
+    // passes above for the same reason: it reads the badge and the rename
+    // history they just made current.
+    //
+    // **Louder than its two neighbours, on purpose.** Those two leave a row
+    // merely unreachable until the next restart. This one, left unresolved,
+    // leaves a stale handle sitting in a row a later handle collision could
+    // still hijack — the exact defect this rule exists to make unrepresentable
+    // — so an operator reading the log has to see it as a problem to repair,
+    // not a routine retry. It is still not fatal to boot: refusing to serve a
+    // live instance over historical rows would be a worse outcome than
+    // reporting on itself loudly and continuing.
+    match badging.resolve_stale_pointer_columns().await {
+        Ok(0) => {}
+        Ok(rewritten) => tracing::info!(
+            rewritten,
+            "store: resolved stale pointer columns onto the badges they name"
+        ),
+        Err(e) => tracing::error!(
+            error = %e,
+            "POINTERS NOT RESOLVED — the values named above still hold a stale handle rather than \
+             a badge, and a person has to repair them. Nothing already resolved was undone; a \
+             restart repeats the scan and finds less to do."
+        ),
+    }
+
     // **One set, read by both halves.** The layer above resolves what the
     // build supplies into an answer; the store below has to see the same set
     // when its guard decides whether a handle names anything, or a claim

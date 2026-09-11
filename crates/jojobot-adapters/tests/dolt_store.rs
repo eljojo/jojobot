@@ -31,7 +31,7 @@ use jojobot_domain::memory::Memory;
 use jojobot_domain::memory::owned::{Provision, Provisions};
 use jojobot_domain::memory::search::{Hit, Search, SearchQuery};
 use jojobot_domain::memory::testing::contract as memory;
-use jojobot_domain::memory::{EntityPatch, FactPatch, NewEntity, NewFact};
+use jojobot_domain::memory::{Edge, EdgeShape, EntityPatch, FactPatch, NewEntity, NewFact};
 use jojobot_domain::session::testing::contract as sessions;
 use jojobot_domain::teaching::testing::contract as teachings;
 
@@ -480,6 +480,241 @@ async fn the_backfill_rekeys_rows_a_badge_reached_after_they_were_written() {
         "the backfill rekeyed a row a second time, so running it at every startup would not be \
          safe",
     );
+
+    store.stop().await;
+}
+
+/// 🚨 **The pointer migration, rule 268: a row written before this build
+/// stored the badge at write time still holds whatever handle it was
+/// given, in all four columns at once.**
+///
+/// **The pre-upgrade state is built with the port and then reverted with raw
+/// SQL**, because the port itself now always writes the badge — there is no
+/// window left to catch it in, unlike the badge fill above. Rewriting the
+/// column back to the plain handle after a normal write is what a row from
+/// before this slice actually looked like.
+///
+/// **Paired with the unresolvable case below**: this one must migrate clean,
+/// rewriting every stale value and reporting zero left to fix on a second
+/// run.
+#[tokio::test]
+async fn resolve_stale_pointer_columns_rewrites_every_stale_value() {
+    let scratch = Scratch::new("pointer-migration-clean");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("pointer_migration_clean")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool.clone());
+
+    let object = EntityId("thing:pointer-migration-object".into());
+    memory
+        .add_entity(NewEntity::new(object.clone(), "Object", "contract-fixture"))
+        .await
+        .expect("add_entity ok")
+        .written()
+        .expect("nothing collides with it");
+    let child = EntityId("thing:pointer-migration-child".into());
+    memory
+        .add_entity(NewEntity {
+            parent: Some(object.clone()),
+            ..NewEntity::new(child.clone(), "Child", "contract-fixture")
+        })
+        .await
+        .expect("add_entity ok")
+        .written()
+        .expect("nothing collides with it");
+    let subject = EntityId::person("person:pointer-migration-subject");
+    memory
+        .add_entity(NewEntity::new(
+            subject.clone(),
+            "Subject",
+            "contract-fixture",
+        ))
+        .await
+        .expect("add_entity ok")
+        .written()
+        .expect("nothing collides with it");
+    let written = memory
+        .capture(NewFact {
+            edge: Some(Edge::new(EdgeShape::About, object.clone())),
+            refs: vec![object.clone()],
+            ..NewFact::about(subject.clone(), "drew an edge", date(2026, 5, 1))
+        })
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("nothing collides with it");
+
+    // **Reverted to the plain handle** — what every one of these columns
+    // held before this build resolved them at write time.
+    for statement in [
+        "UPDATE fact SET edge_object = ? WHERE edge_object != ?",
+        "UPDATE fact_write SET edge_object = ? WHERE edge_object != ?",
+        "UPDATE fact_event_ref SET entity = ? WHERE entity != ?",
+        "UPDATE entity SET parent = ? WHERE parent != ?",
+    ] {
+        sqlx::query(statement)
+            .bind(object.as_str())
+            .bind(object.as_str())
+            .execute(&pool)
+            .await
+            .expect("the pre-upgrade shape is written");
+    }
+
+    // **Watched failing first.** Read bare, off the raw columns: still the
+    // handle, not the badge, because nothing has resolved it yet.
+    let stale: Option<String> = sqlx::query_scalar("SELECT edge_object FROM fact WHERE id = ?")
+        .bind(written.id.as_str())
+        .fetch_one(&pool)
+        .await
+        .expect("the row reads");
+    assert_eq!(
+        stale.as_deref(),
+        Some(object.as_str()),
+        "the fixture was not reverted to the pre-upgrade shape",
+    );
+
+    let rewritten = memory
+        .resolve_stale_pointer_columns()
+        .await
+        .expect("nothing is unresolvable here");
+    assert_eq!(
+        rewritten, 4,
+        "one stale value in each of the four columns should have been rewritten",
+    );
+
+    let badge: String = sqlx::query_scalar("SELECT badge FROM entity WHERE id = ?")
+        .bind(object.as_str())
+        .fetch_one(&pool)
+        .await
+        .expect("the object wears a badge");
+    for (table, column) in [
+        ("fact", "edge_object"),
+        ("fact_write", "edge_object"),
+        ("fact_event_ref", "entity"),
+        ("entity", "parent"),
+    ] {
+        let now: String = sqlx::query_scalar(&format!(
+            "SELECT {column} FROM {table} WHERE {column} IS NOT NULL LIMIT 1"
+        ))
+        .fetch_one(&pool)
+        .await
+        .expect("a rewritten row is there");
+        assert_eq!(now, badge, "{table}.{column} still holds the plain handle");
+    }
+
+    // Served under the handle, exactly as before the fixture reverted it.
+    let held = memory.recall(&subject).await.expect("recall reads");
+    let fact = held
+        .iter()
+        .find(|f| f.id == written.id)
+        .expect("the claim is there");
+    assert_eq!(fact.edge.as_ref().map(|e| &e.object), Some(&object));
+    assert_eq!(fact.refs, vec![object.clone()]);
+    let kids = memory
+        .list_entities(None)
+        .await
+        .expect("list_entities reads")
+        .into_iter()
+        .find(|e| e.id == child)
+        .expect("the child is there");
+    assert_eq!(kids.parent.as_ref(), Some(&object));
+
+    assert_eq!(
+        memory
+            .resolve_stale_pointer_columns()
+            .await
+            .expect("nothing left to fix"),
+        0,
+        "the migration rewrote a value a second time, so running it at every startup would not \
+         be safe",
+    );
+
+    store.stop().await;
+}
+
+/// 🚨 **The pointer migration refuses to guess.** A stored value that
+/// resolves through no current handle and no former one is not silently
+/// dropped and not silently kept — the whole call comes back an error
+/// naming the count and the row, and nothing for that value is rewritten.
+///
+/// **Paired with the clean case above**: a fixture built the same way, with
+/// one value nothing has ever answered to mixed in.
+#[tokio::test]
+async fn resolve_stale_pointer_columns_refuses_to_guess_at_an_unresolvable_row() {
+    let scratch = Scratch::new("pointer-migration-blocked");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("pointer_migration_blocked")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool.clone());
+
+    let subject = EntityId::person("person:pointer-migration-blocked-subject");
+    memory
+        .add_entity(NewEntity::new(
+            subject.clone(),
+            "Subject",
+            "contract-fixture",
+        ))
+        .await
+        .expect("add_entity ok")
+        .written()
+        .expect("nothing collides with it");
+    memory
+        .capture(NewFact::about(
+            subject.clone(),
+            "names nothing that ever existed",
+            date(2026, 5, 1),
+        ))
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("nothing collides with it");
+    let never_existed = "thing:pointer-migration-never-existed";
+    sqlx::query(
+        "UPDATE fact SET edge_shape = 'connection', edge_object = ? WHERE entity IN \
+                 (SELECT badge FROM entity WHERE id = ?)",
+    )
+    .bind(never_existed)
+    .bind(subject.as_str())
+    .execute(&pool)
+    .await
+    .expect("a dangling edge is written directly");
+
+    let err = memory
+        .resolve_stale_pointer_columns()
+        .await
+        .expect_err("an unresolvable value must refuse rather than guess");
+    let message = err.to_string();
+    assert!(
+        message.contains(never_existed),
+        "the refusal does not name the row it could not resolve: {message}",
+    );
+    assert!(
+        message.contains('1'),
+        "the refusal does not carry the count: {message}",
+    );
+
+    // Nothing was silently dropped: the dangling value is exactly where it
+    // was, not blanked and not guessed at.
+    let still_there: String = sqlx::query_scalar(
+        "SELECT edge_object FROM fact WHERE entity IN (SELECT badge FROM entity WHERE id = ?)",
+    )
+    .bind(subject.as_str())
+    .fetch_one(&pool)
+    .await
+    .expect("the row reads");
+    assert_eq!(still_there, never_existed);
 
     store.stop().await;
 }

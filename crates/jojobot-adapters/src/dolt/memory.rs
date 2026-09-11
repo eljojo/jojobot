@@ -274,6 +274,110 @@ impl DoltMemory {
         Ok(false)
     }
 
+    /// **Rekey `fact.edge_object` (and its `fact_write` mirror),
+    /// `fact_event_ref.entity` and `entity.parent` onto the badge each row's
+    /// handle answers to now** (rule 268). A row written before this build
+    /// stored the badge at write time still holds whatever handle it was
+    /// given; this reaches those, once, at startup, beside the badge fill
+    /// and the handle-keyed rekey above — for the same reason neither of
+    /// those is a migration: it reads the badge and the rename history the
+    /// fill and the rekey just made current.
+    ///
+    /// **Unlike the two migrations beside it, an unresolvable row is not a
+    /// warning.** The operator's ruling is that a pointer at nothing should
+    /// never have been writable, and a migration that quietly drops or
+    /// quietly keeps one is the same silent damage that ruling exists to
+    /// end. So every row this CAN resolve — through the entity's current
+    /// handle or any handle it has ever worn — is rewritten, and if any
+    /// stored value resolves through none of those, nothing for THAT value
+    /// is written and the whole call comes back an error naming the count
+    /// and the rows. What this call already resolved for other values stays
+    /// resolved: a restart does not undo progress, it repeats the same scan
+    /// and finds less to do.
+    ///
+    /// Returns how many distinct stored values it rewrote.
+    pub async fn resolve_stale_pointer_columns(&self) -> Result<usize, MemoryError> {
+        let known: Vec<(String, String)> =
+            sqlx::query_as("SELECT id, badge FROM entity WHERE badge IS NOT NULL")
+                .fetch_all(&self.pool)
+                .await
+                .map_err(store)?;
+        let badges: std::collections::HashSet<&str> =
+            known.iter().map(|(_, badge)| badge.as_str()).collect();
+        let mut resolve: std::collections::HashMap<&str, &str> = known
+            .iter()
+            .map(|(handle, badge)| (handle.as_str(), badge.as_str()))
+            .collect();
+        let former: Vec<(String, String)> =
+            sqlx::query_as("SELECT former_handle, badge FROM entity_former_handle")
+                .fetch_all(&self.pool)
+                .await
+                .map_err(store)?;
+        for (handle, badge) in &former {
+            resolve.entry(handle.as_str()).or_insert(badge.as_str());
+        }
+
+        let mut rewritten = 0;
+        let mut unresolved: Vec<String> = Vec::new();
+        for (table, column) in [
+            ("fact", "edge_object"),
+            ("fact_write", "edge_object"),
+            ("fact_event_ref", "entity"),
+            ("entity", "parent"),
+        ] {
+            let stored: Vec<String> = sqlx::query_scalar(&format!(
+                "SELECT DISTINCT {column} FROM {table} WHERE {column} IS NOT NULL"
+            ))
+            .fetch_all(&self.pool)
+            .await
+            .map_err(store)?;
+            for value in stored {
+                if badges.contains(value.as_str()) {
+                    continue;
+                }
+                match resolve.get(value.as_str()) {
+                    Some(badge) => {
+                        sqlx::query(&format!(
+                            "UPDATE {table} SET {column} = ? WHERE {column} = ?"
+                        ))
+                        .bind(*badge)
+                        .bind(&value)
+                        .execute(&self.pool)
+                        .await
+                        .map_err(store)?;
+                        rewritten += 1;
+                    }
+                    None => {
+                        let count: i64 = sqlx::query_scalar(&format!(
+                            "SELECT COUNT(*) FROM {table} WHERE {column} = ?"
+                        ))
+                        .bind(&value)
+                        .fetch_one(&self.pool)
+                        .await
+                        .map_err(store)?;
+                        unresolved.push(format!(
+                            "{table}.{column} = '{value}' ({count} row{})",
+                            if count == 1 { "" } else { "s" }
+                        ));
+                    }
+                }
+            }
+        }
+
+        if unresolved.is_empty() {
+            Ok(rewritten)
+        } else {
+            Err(MemoryError::Store(format!(
+                "{} stored pointer{} cannot be resolved to anything this store has ever named, \
+                 through a current handle or a former one — a person has to repair these before \
+                 the migration can finish: {}",
+                unresolved.len(),
+                if unresolved.len() == 1 { "" } else { "s" },
+                unresolved.join("; "),
+            )))
+        }
+    }
+
     /// Every entity, whole — what the write guard screens against.
     ///
     /// **The whole roster, because the guard's answer is a function of all of
