@@ -798,12 +798,27 @@ fn charter_json(
     want_charter: bool,
     asked_prose: bool,
 ) {
-    if object.entity.id.kind() != Some(EntityKind::BOT) || !want_charter {
+    if object.entity.id.kind() != Some(EntityKind::BOT) {
         return;
     }
     let Some(fields) = rendered.as_object_mut() else {
         return;
     };
+    // **Eliding is never silent, and charter was the exception.** A charter
+    // can run to thousands of characters, so a reader who did not ask for one
+    // needs to be told there was something left out, and how to reach it —
+    // the same house style as `records`, `older` and `fields_backing_note`.
+    if !want_charter {
+        fields.insert("charter_elided".into(), true.into());
+        fields.insert(
+            "charter_note".into(),
+            "the charter is not here — recall again naming this handle with charter: true to \
+             read it"
+                .into(),
+        );
+        return;
+    }
+    fields.insert("charter_elided".into(), false.into());
     fields.insert(
         "charter".into(),
         match object
@@ -3332,6 +3347,266 @@ mod tests {
             page["objects"][0]["charter"].is_null(),
             "the caller asked for the page, so the charter key is not shipped beside it: {page}",
         );
+    }
+
+    /// **A bot recalled without its charter says so, rather than leaving a
+    /// reader to guess whether there is nothing to read or nobody asked.**
+    ///
+    /// House style everywhere else this project elides something: the answer
+    /// names what it left out and which call returns it (`records`, `older`,
+    /// `fields_backing_note`). Charter had no such marker, which is what let
+    /// `view:colleagues` ship every charter unasked — nothing told a caller
+    /// there was a cheaper answer available.
+    #[tokio::test]
+    async fn a_bot_recalled_without_charter_says_so_and_names_the_way_back() {
+        let jojobot = handler();
+        make_bot(&jojobot, "hass").await;
+        jojobot
+            .set_charter(Parameters(SetCharterArgs {
+                bot: "hass".into(),
+                prose: "Keeps the kitchen running.".into(),
+                sid: Some(crate::harness::TEST_SID.into()),
+            }))
+            .await
+            .expect("set_charter ok");
+
+        let body = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    facts: Some(false),
+                    ..of("bot:hass")
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        let object = &body["objects"][0];
+        assert!(
+            object["charter"].is_null(),
+            "the charter text does not ship when nobody asked for it: {body}",
+        );
+        assert_eq!(
+            object["charter_elided"], true,
+            "the answer says the charter was left out: {body}",
+        );
+        let note = object["charter_note"]
+            .as_str()
+            .unwrap_or_else(|| panic!("the elision names the way back: {body}"));
+        assert!(
+            note.contains("charter: true"),
+            "the note names the call that returns it: {note}",
+        );
+    }
+
+    /// **Asking for the charter still gets the whole of it**, and the
+    /// elision flag says so.
+    #[tokio::test]
+    async fn asking_for_the_charter_lifts_the_elision() {
+        let jojobot = handler();
+        make_bot(&jojobot, "hass").await;
+        let own = "Keeps the kitchen running.";
+        jojobot
+            .set_charter(Parameters(SetCharterArgs {
+                bot: "hass".into(),
+                prose: own.into(),
+                sid: Some(crate::harness::TEST_SID.into()),
+            }))
+            .await
+            .expect("set_charter ok");
+
+        let body = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    charter: Some(true),
+                    facts: Some(false),
+                    ..of("bot:hass")
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        let object = &body["objects"][0];
+        assert_eq!(object["charter"], own, "{body}");
+        assert_eq!(
+            object["charter_elided"], false,
+            "nothing was left out this time: {body}",
+        );
+    }
+
+    /// **A view shaped like the shipped `view:colleagues`** — `selects: bot`
+    /// and nothing else — declared the way an operator's own view is. This
+    /// crate's test harness never wires up what the build supplies (that
+    /// happens once, in the binary that assembles a real store), so the
+    /// shipped provision itself is unreachable from here; what IS reachable,
+    /// and what this proves, is the one mechanism both paths share
+    /// (`asked_by_name` / `graph::asked_by_view`) — the same code the shipped
+    /// view runs through (rule 106).
+    async fn declared_view(jojobot: &Jojobot, slug: &str, keys: &[(&str, &str)]) {
+        let added = jojobot
+            .add_entity(Parameters(add_args("view", slug, slug)))
+            .await
+            .expect("add_entity call ok");
+        assert_ne!(
+            json_of(&added)["status"],
+            "blocked",
+            "the fixture view {slug:?} was not created",
+        );
+        capture_ok(
+            jojobot,
+            CaptureArgs {
+                fields: Some(
+                    keys.iter()
+                        .map(|(k, v)| (k.to_string(), v.to_string()))
+                        .collect(),
+                ),
+                ..capture_args(&format!("view:{slug}"), "declared for a test")
+            },
+        )
+        .await;
+    }
+
+    /// **A view that selects `bot` answers with the small list by default**:
+    /// every charter elided, none of their text anywhere in the answer.
+    ///
+    /// This is the shape of the bug the operator found using `view:colleagues`:
+    /// six charters, tens of thousands of characters, for a question whose
+    /// useful answer is six lines. The shipped view no longer supplies
+    /// `shows: charter` (see `views.rs`), so it now takes this same default.
+    #[tokio::test]
+    async fn a_bot_selecting_view_answers_with_the_small_list_by_default() {
+        let jojobot = handler();
+        declared_view(&jojobot, "colleagues", &[("selects", "bot")]).await;
+        make_bot(&jojobot, "hass").await;
+        make_bot(&jojobot, "lisa").await;
+        let expensive = "X".repeat(5_000);
+        for bot in ["hass", "lisa"] {
+            jojobot
+                .set_charter(Parameters(SetCharterArgs {
+                    bot: bot.into(),
+                    prose: expensive.clone(),
+                    sid: Some(crate::harness::TEST_SID.into()),
+                }))
+                .await
+                .expect("set_charter ok");
+        }
+
+        let body = json_of(
+            &jojobot
+                .recall(Parameters(by_view("colleagues")))
+                .await
+                .expect("recall ok"),
+        );
+        assert!(
+            body["count"].as_u64().unwrap_or(0) >= 2,
+            "both colleagues come back: {body}",
+        );
+        assert!(
+            !body.to_string().contains(&expensive),
+            "no charter text rides along unasked: {body}",
+        );
+        for object in body["objects"].as_array().expect("objects is a list") {
+            assert_eq!(
+                object["charter_elided"], true,
+                "the small list elides every charter: {object}",
+            );
+        }
+    }
+
+    /// **The opt-in still works from inside a view**: a caller who names a
+    /// view that selects `bot` and also asks for `charter: true` gets it,
+    /// because the caller's own arguments win over what the view fills in.
+    #[tokio::test]
+    async fn a_bot_selecting_view_still_hands_over_a_charter_when_asked() {
+        let jojobot = handler();
+        declared_view(&jojobot, "colleagues", &[("selects", "bot")]).await;
+        make_bot(&jojobot, "hass").await;
+        let own = "Keeps the kitchen running.";
+        jojobot
+            .set_charter(Parameters(SetCharterArgs {
+                bot: "hass".into(),
+                prose: own.into(),
+                sid: Some(crate::harness::TEST_SID.into()),
+            }))
+            .await
+            .expect("set_charter ok");
+
+        let body = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    charter: Some(true),
+                    ..by_view("colleagues")
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        let hass = body["objects"]
+            .as_array()
+            .expect("objects is a list")
+            .iter()
+            .find(|o| o["id"] == "bot:hass")
+            .unwrap_or_else(|| panic!("hass is in the answer: {body}"));
+        assert_eq!(hass["charter"], own, "{body}");
+    }
+
+    /// **A one-liner rides in the small list as an ordinary field** — no new
+    /// mechanism, and no fallback to the charter. A bot that never had one
+    /// written simply carries no `one_liner` key, exactly as any other
+    /// unwritten field reads: this is what "reads back as having none" means,
+    /// as opposed to deriving one from the charter's first line.
+    #[tokio::test]
+    async fn a_colleagues_one_liner_rides_in_the_small_list_and_absence_is_plain() {
+        let jojobot = handler();
+        declared_view(&jojobot, "colleagues", &[("selects", "bot")]).await;
+        make_bot(&jojobot, "hass").await;
+        make_bot(&jojobot, "lisa").await;
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                fields: Some(
+                    [(
+                        crate::orientation::charter::ONE_LINER_KEY.to_string(),
+                        "Keeps the kitchen running.".to_string(),
+                    )]
+                    .into_iter()
+                    .collect(),
+                ),
+                ..capture_args("bot:hass", "wrote its own one-liner")
+            },
+        )
+        .await;
+
+        let body = json_of(
+            &jojobot
+                .recall(Parameters(by_view("colleagues")))
+                .await
+                .expect("recall ok"),
+        );
+        let objects = body["objects"].as_array().expect("objects is a list");
+        let hass = objects
+            .iter()
+            .find(|o| o["id"] == "bot:hass")
+            .unwrap_or_else(|| panic!("hass is in the answer: {body}"));
+        assert_eq!(
+            hass["fields"]["one_liner"], "Keeps the kitchen running.",
+            "{body}",
+        );
+        let lisa = objects
+            .iter()
+            .find(|o| o["id"] == "bot:lisa")
+            .unwrap_or_else(|| panic!("lisa is in the answer: {body}"));
+        assert!(
+            lisa["fields"].get("one_liner").is_none(),
+            "a bot with none written carries no key at all, rather than a derived one: {body}",
+        );
+    }
+
+    /// The whole-page query for a `view`, spelled once: no subject, no facts —
+    /// the view supplies what the call asks for a query of its own.
+    fn by_view(name: &str) -> RecallArgs {
+        RecallArgs {
+            view: Some(name.into()),
+            subject: None,
+            facts: None,
+            ..of("unused")
+        }
     }
 
     /// **A key's value selects, and the walk nests** — the two halves this

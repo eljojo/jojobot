@@ -28,6 +28,7 @@
 //! that can say what it is for.
 
 use jojobot_domain::memory::owned::{Provision, Provisions};
+use jojobot_domain::memory::{Entity, EntityKind};
 
 /// **What this build supplies, and where.**
 ///
@@ -38,11 +39,41 @@ use jojobot_domain::memory::owned::{Provision, Provisions};
 /// A caller's own bots are theirs entirely: an address nothing supplies reads
 /// back exactly what somebody wrote.
 pub fn provisions() -> Provisions {
-    Provisions::new(vec![Provision::prose(
-        crate::seed::default_bot(),
-        ASSISTANT,
-    )])
+    Provisions::new(vec![
+        Provision::prose(crate::seed::default_bot(), ASSISTANT),
+        // **The one-liner ships the same way the charter does, and for the
+        // same reason.** It sits under the entity the store already holds, so
+        // the operator's own wording — written through the same route as
+        // every other field — narrows it rather than being lost under it
+        // (rule 254).
+        Provision::record(
+            Entity {
+                id: crate::seed::default_bot(),
+                kind: EntityKind::BOT,
+                name: "Assistant".to_string(),
+                aliases: Vec::new(),
+                source: "jojobot".to_string(),
+                crm: None,
+                parent: None,
+                boot: Default::default(),
+                merged_into: None,
+                badge: None,
+            },
+            [(ONE_LINER_KEY.to_string(), ONE_LINER.to_string())]
+                .into_iter()
+                .collect(),
+        ),
+    ])
 }
+
+/// **The key a colleague's short description is written under.** Named once,
+/// here, so the view that reads it and the shipped default that supplies it
+/// cannot drift apart on the spelling.
+pub const ONE_LINER_KEY: &str = "one_liner";
+
+/// The shipped one-liner for the assistant — a short, written description of
+/// what this identity is for, never derived or truncated from its charter.
+pub(crate) const ONE_LINER: &str = "The operator's assistant and planning partner.";
 
 /// The shipped charter for the assistant.
 ///
@@ -73,3 +104,34 @@ INSIDE jojobot YOU ACT. Its mail, its records and its colleagues are your workpl
 WRITE IN THEIR REGISTER. Anything they will read later sounds like them rather than like an assistant. Getting that right is the work rather than a finish on it.
 
 A BLOCKED OR FAILED CALL IS A FAILED TASK, NOT A FOOTNOTE. It stays open until it is done another way or handed back as the one thing you need.";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jojobot_domain::memory::EntityId;
+
+    /// **The assistant ships a one-liner at its own address, under the key
+    /// the colleagues view reads.** This is what a real store's `fields()`
+    /// merges under the operator's own writing (proven generically in
+    /// `jojobot-adapters`); what belongs here is that this crate's data is
+    /// addressed and spelled right, which a typo in either would silently
+    /// break.
+    #[test]
+    fn the_assistant_ships_a_one_liner_at_its_own_address() {
+        let supplied = provisions();
+        let (entity, fields) = supplied
+            .record_for(&EntityId(crate::seed::DEFAULT_BOT.to_string()))
+            .expect("the assistant's one-liner is supplied at its own handle");
+        assert_eq!(entity.kind, EntityKind::BOT, "{entity:?}");
+        // **Pinned on the literal spelling, not on `ONE_LINER_KEY`.** The key
+        // is served on the wire and read by name from outside this process
+        // (`view:colleagues`'s caller reads `fields.one_liner`), so a rename
+        // of the constant that a caller's expectation did not follow has to
+        // fail here rather than pass by asserting itself.
+        assert_eq!(
+            fields.get("one_liner").map(String::as_str),
+            Some(ONE_LINER),
+            "{fields:?}",
+        );
+    }
+}

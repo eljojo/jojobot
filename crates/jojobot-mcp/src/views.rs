@@ -61,13 +61,12 @@ pub fn provisions() -> Vec<Provision> {
             "The Loops",
             &[("selects", "rhythm"), ("shows", "facts")],
         ),
-        // **Who your colleagues are.** The identities on this server with what
-        // each is for, which is the charter — so a bot asking who else is here
-        // reads it as a question rather than as a verb of its own (rule 139).
-        view(
-            "view:colleagues",
-            "The Colleagues",
-            &[("selects", "bot"), ("shows", "charter")],
-        ),
+        // **Who your colleagues are.** The identities on this server, each
+        // with its one-liner — the short written line saying what it is for
+        // (rule 139). **Charters are not shown by default**: a charter can run
+        // to thousands of characters, so asking for six of them at once is the
+        // most expensive answer this server has. A caller who wants one asks
+        // `recall` for it directly, with `charter: true`.
+        view("view:colleagues", "The Colleagues", &[("selects", "bot")]),
     ]
 }
