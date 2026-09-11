@@ -183,6 +183,19 @@ Shipped and live:
   message included** — **and text written before that was true is MIGRATED once
   onto permanent ids, so a rename reaches it.** ⛔️ **A surface that keeps naming
   the old handle is a defect to close, never a limit to document.**
+- **Everything that points at a thing stores its permanent id.** Not only a
+  handle written into text: an edge's object, the entries in a record's
+  reference list, and a child's parent all hold the id rather than the name.
+  **The store resolves a handle to an id before the row lands, and renders the
+  handle again on the way out**, so a caller still writes and reads names.
+  ⭐ **This is what makes a rename safe everywhere rather than in text alone.**
+  **It also removes a whole class: a name that a rename frees can be taken by a
+  new thing, and no pointer follows it**, because no pointer holds a name.
+  🚨 **A pointer at a thing that does not exist is REFUSED, never stored.** The
+  refusal names the way forward, which is the verb that creates the thing first.
+  **Rows written before this are migrated once, at startup; a value that
+  resolves through neither a current handle nor a former one stops the migration
+  and is named rather than guessed at.**
 - **Fields, and what declaring a type buys** — **a record carries fields**: a
   flat bag of key/value pairs beside the claim, where a key the caller invents is
   kept as written and a key some type declared is held to what that type says.
