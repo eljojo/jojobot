@@ -1721,14 +1721,37 @@ where
     // that names nothing is screened against.
     let entities = store.list_entities(None).await?;
     let select = &query.select;
-    if let Some(subject) = &select.subject
-        && !entities.iter().any(|e| &e.id == subject)
-    {
-        return Err(MemoryError::UnknownEntity {
-            attempted: subject.to_string(),
-            nearest: guard::screen(subject, &[], &entities),
-        });
-    }
+    // **Three tiers (decision log 272): a current handle answers directly, a
+    // handle the subject used to wear resolves to what it is called now, and
+    // only a handle nothing has ever answered to is a near-miss screen.** A
+    // rename rewrites nothing (rule 243), so a subject reached by an old name
+    // is not absent — `Memory::recall` on the trait already resolves this;
+    // this walk gates on the current index alone and refuses it, which is
+    // the bug this rule closes.
+    let resolved_subject = match &select.subject {
+        Some(subject) => {
+            let former = store.former_handles().await?;
+            match super::resolve_handle(subject, &entities, &former) {
+                Some(current) => Some(current.id.clone()),
+                None => {
+                    return Err(MemoryError::UnknownEntity {
+                        attempted: subject.to_string(),
+                        nearest: guard::screen(subject, &[], &entities),
+                    });
+                }
+            }
+        }
+        None => None,
+    };
+    // **Every read below, and `resolve` itself, has to see the CURRENT
+    // handle** — `scanned` is built from `entities`, which never carries a
+    // stale one, so a query still holding the handle the caller sent would
+    // find no root to start from. Owned rather than a second borrow, since
+    // the original `query` is still read for `follow`/`include`/`history`.
+    let mut query = query.clone();
+    query.select.subject = resolved_subject.clone();
+    let query = &query;
+    let select = &query.select;
 
     // **Whose records are needed.** A walk cannot know where it will go, and a
     // filter over records cannot choose objects without reading theirs — both
@@ -1738,8 +1761,8 @@ where
         .iter()
         .filter(|e| {
             everyones
-                || select.subject.as_ref() == Some(&e.id)
-                || (select.subject.is_none() && select.kind.is_none_or(|k| e.kind == k))
+                || resolved_subject.as_ref() == Some(&e.id)
+                || (resolved_subject.is_none() && select.kind.is_none_or(|k| e.kind == k))
         })
         .collect();
 

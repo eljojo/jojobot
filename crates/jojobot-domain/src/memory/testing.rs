@@ -6616,6 +6616,63 @@ pub mod contract {
         );
     }
 
+    /// 🚨 **The same hijack case, on a record's refs.** All three of the
+    /// permanent-id columns hold an id rather than a name; proving it for
+    /// `edge.object` and leaving `refs` to rest on "the same mechanism"
+    /// would leave one of the three proven by argument while the other two
+    /// are proven by a run.
+    pub async fn a_rename_and_a_recreated_handle_does_not_hijack_a_ref<M: Memory>(store: &M) {
+        let subject = EntityId::person("person:contract-ref-vacancy-onlooker");
+        let original = EntityId("thing:contract-ref-vacancy".into());
+        ensure(store, &subject).await;
+        add(
+            store,
+            NewEntity::new(original.clone(), "Krusty", "the roster"),
+        )
+        .await;
+
+        let fact = capture(
+            store,
+            NewFact {
+                refs: vec![original.clone()],
+                ..NewFact::about(
+                    subject.clone(),
+                    "pointed a ref at the original",
+                    date(2026, 4, 20),
+                )
+            },
+        )
+        .await;
+
+        let renamed_to = EntityId("thing:contract-ref-departed".into());
+        store
+            .rename_entity(&original, &renamed_to, None, date(2026, 4, 21), None)
+            .await
+            .expect("rename should succeed")
+            .written()
+            .expect("nothing collides with it");
+
+        // A DIFFERENT entity now claims the vacated handle.
+        add(
+            store,
+            NewEntity::new(original.clone(), "Skinner", "the roster"),
+        )
+        .await;
+
+        let after = store
+            .recall(&subject)
+            .await
+            .expect("the store answers")
+            .into_iter()
+            .find(|f| f.id == fact.id)
+            .expect("the claim is there");
+        assert_eq!(
+            after.refs,
+            vec![renamed_to.clone()],
+            "the ref followed the rename to {renamed_to}, or the newcomer hijacked it: {after:?}",
+        );
+    }
+
     /// 🚨 **The same hijack case, on `entity.parent`.** A child is parented on
     /// a handle; that handle is renamed away; a NEW entity is created at the
     /// vacated handle. `entity.parent` is stored as the badge the parent
@@ -12460,6 +12517,55 @@ pub mod contract {
             "a handle nothing ever answered to must still miss",
         );
 
+        // 🚨 **The same three tiers, through `graph::walk` rather than the
+        // trait method directly** (decision log 272) — `recall`'s served
+        // handler and `capture`'s held-check both reach a subject through
+        // `walk`, never through `Memory::recall`, so a case proving the
+        // trait method resolves an old handle says nothing about what a real
+        // caller sees.
+        let walked_by_old_name = graph::walk(
+            bare,
+            &graph::GraphQuery {
+                select: graph::Selection {
+                    subject: Some(was.clone()),
+                    ..graph::Selection::default()
+                },
+                include: graph::Include {
+                    facts: true,
+                    prose: false,
+                },
+                follow: None,
+                history: None,
+            },
+        )
+        .await
+        .expect("a walk from a stale-but-renamed handle must still resolve");
+        assert_eq!(
+            walked_by_old_name.objects.first().map(|o| &o.entity.id),
+            Some(&now),
+            "the walk resolved the old handle to the wrong thing, or not at all",
+        );
+        let walked_never = graph::walk(
+            bare,
+            &graph::GraphQuery {
+                select: graph::Selection {
+                    subject: Some(never.clone()),
+                    ..graph::Selection::default()
+                },
+                include: graph::Include {
+                    facts: false,
+                    prose: false,
+                },
+                follow: None,
+                history: None,
+            },
+        )
+        .await;
+        assert!(
+            walked_never.is_err(),
+            "a walk from a handle nothing ever answered to must still miss: {walked_never:?}",
+        );
+
         // Nothing was rewritten to do it: the stored form is byte-identical
         // to what it was before the rename.
         let stored_after = bare
@@ -12578,11 +12684,17 @@ pub mod contract {
             "a thing parented on the renamed entity did not follow it: {grandkids:?}",
         );
 
-        // The old handle is gone outright, not merely relabelled — nothing
-        // answers to it, so asking what is under it is asking about nothing.
-        assert!(
-            store.children(&was).await.is_err(),
-            "the old handle must not still name an entity to ask children() of",
+        // 🚨 **The old handle is a real answer, not a miss** (decision log
+        // 272): `was` still names the thing it always did, just under a
+        // handle it no longer wears, so asking what is under it answers
+        // exactly as asking under `now` does.
+        let kids_by_old_name = store
+            .children(&was)
+            .await
+            .expect("a stale-but-renamed handle must still resolve");
+        assert_eq!(
+            kids_by_old_name, grandkids,
+            "children() under the old handle did not match children() under the new one",
         );
     }
 
@@ -13473,6 +13585,7 @@ pub mod contract {
         capture_requires_an_existing_edge_object(store).await;
         update_fact_requires_an_existing_edge_object(store).await;
         a_rename_and_a_recreated_handle_does_not_hijack_an_edge(store).await;
+        a_rename_and_a_recreated_handle_does_not_hijack_a_ref(store).await;
         a_rename_and_a_recreated_handle_does_not_hijack_a_parent(store).await;
         malformed_entity_fields_are_rejected(store).await;
         a_cross_link_takes_the_task_layers_own_grammar(store).await;

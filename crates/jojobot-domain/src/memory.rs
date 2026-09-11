@@ -3308,15 +3308,23 @@ pub trait Memory: Send + Sync {
     async fn children(&self, parent: &EntityId) -> Result<Vec<EntityId>, MemoryError> {
         validate_subject(parent)?;
         let all = self.list_entities(None).await?;
-        if !all.iter().any(|e| &e.id == parent) {
-            return Err(MemoryError::UnknownEntity {
-                attempted: parent.to_string(),
-                nearest: guard::screen(parent, &[], &all),
-            });
-        }
+        // **Three tiers (decision log 272), the same ones `graph::walk`
+        // answers with**: a current handle names the parent directly, a
+        // handle it used to wear resolves to what it is called now, and
+        // only a handle nothing has ever answered to is a near-miss screen.
+        let former = self.former_handles().await?;
+        let resolved = match resolve_handle(parent, &all, &former) {
+            Some(entity) => entity.id.clone(),
+            None => {
+                return Err(MemoryError::UnknownEntity {
+                    attempted: parent.to_string(),
+                    nearest: guard::screen(parent, &[], &all),
+                });
+            }
+        };
         let mut handles: Vec<EntityId> = all
             .into_iter()
-            .filter(|e| e.parent.as_ref() == Some(parent))
+            .filter(|e| e.parent.as_ref() == Some(&resolved))
             .map(|e| e.id)
             .collect();
         handles.sort();
