@@ -2007,18 +2007,37 @@ impl Memory for DoltMemory {
         // merge was given, never a badge (step 3 resolves an edge on the way
         // OUT; nothing resolves one in) — so these compare against the raw
         // handles, exactly as they always have.
-        for statement in [
-            "UPDATE fact SET edge_object = ? WHERE edge_object = ?",
-            "UPDATE fact_write SET edge_object = ? WHERE edge_object = ?",
-            "UPDATE fact_event_ref SET entity = ? WHERE entity = ?",
-            "UPDATE entity SET parent = ? WHERE parent = ?",
-        ] {
-            sqlx::query(statement)
-                .bind(survivor.as_str())
-                .bind(folded.as_str())
-                .execute(&mut *tx)
+        //
+        // **Every handle the folded side has ever worn, not only the one it
+        // wears today.** A rename rewrites nothing, so a pointer written
+        // before one keeps the old spelling forever unless something sweeps
+        // it — and a fold is the one place that has to, because the folded
+        // row keeps forwarding rather than disappearing: a pointer left on a
+        // former handle would resolve one hop short, at the folded row,
+        // rather than at the survivor it now answers for.
+        let former_folded: Vec<String> =
+            sqlx::query_scalar("SELECT former_handle FROM entity_former_handle WHERE badge = ?")
+                .bind(folded_key.as_str())
+                .fetch_all(&mut *tx)
                 .await
                 .map_err(store)?;
+        let mut folded_handles: Vec<&str> = vec![folded.as_str()];
+        folded_handles.extend(former_folded.iter().map(String::as_str));
+
+        for handle in &folded_handles {
+            for statement in [
+                "UPDATE fact SET edge_object = ? WHERE edge_object = ?",
+                "UPDATE fact_write SET edge_object = ? WHERE edge_object = ?",
+                "UPDATE fact_event_ref SET entity = ? WHERE entity = ?",
+                "UPDATE entity SET parent = ? WHERE parent = ?",
+            ] {
+                sqlx::query(statement)
+                    .bind(survivor.as_str())
+                    .bind(*handle)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(store)?;
+            }
         }
 
         let record = Fact {

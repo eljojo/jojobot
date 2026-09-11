@@ -1326,8 +1326,37 @@ impl Memory for InMemoryMemory {
         let (survivor_key, survivor_handle) =
             self.resolve(survivor).expect("checked present above");
 
+        // **Every handle the folded side has ever worn, not only the one it
+        // wears today.** A rename rewrites nothing (rule 243), so a pointer
+        // written before one keeps the old spelling forever unless something
+        // sweeps it — and a fold is the one place that has to, because the
+        // folded row keeps forwarding rather than disappearing: a pointer
+        // left on a former handle would resolve one hop short, at the folded
+        // row, rather than at the survivor it now answers for.
+        let former = self.former();
+        let folded_handles: Vec<EntityId> = std::iter::once(folded.clone())
+            .chain(
+                former
+                    .iter()
+                    .filter(|f| f.badge == folded_key.0)
+                    .map(|f| f.former.clone()),
+            )
+            .collect();
+
         let mut entities = self.entities.lock().expect("fake mutex poisoned");
         let mut facts = self.facts.lock().expect("fake mutex poisoned");
+
+        // **`parent` re-points too, for the same reason `edge.object` and
+        // `refs` do below**: it names a different row, is never badge-keyed,
+        // and a rename left it wearing whatever handle was current when it
+        // was set.
+        for entity in entities.iter_mut() {
+            if let Some(parent) = &entity.parent
+                && folded_handles.contains(parent)
+            {
+                entity.parent = Some(survivor.clone());
+            }
+        }
 
         // **The claims move home, and each is RENUMBERED as it goes.** A fact
         // id is local to the doc that holds it, so both sides own an `f1` and
@@ -1354,14 +1383,15 @@ impl Memory for InMemoryMemory {
             // graph goes on naming a handle that is no longer a thing. An
             // edge's object is stored as the handle it was drawn with, not a
             // badge (step 3 resolves it on the way OUT; nothing resolves it
-            // in), so this compares against the raw handles merge was given.
+            // in), so this compares against every raw handle the folded side
+            // has ever worn, current and former alike.
             if let Some(edge) = &mut fact.edge
-                && &edge.object == folded
+                && folded_handles.contains(&edge.object)
             {
                 edge.object = survivor.clone();
             }
             for target in fact.refs.iter_mut() {
-                if target == folded {
+                if folded_handles.contains(target) {
                     *target = survivor.clone();
                 }
             }
@@ -1403,7 +1433,7 @@ impl Memory for InMemoryMemory {
                     }
                 }
                 if let Some(edge) = &mut write.edge
-                    && &edge.object == folded
+                    && folded_handles.contains(&edge.object)
                 {
                     edge.object = survivor.clone();
                 }
@@ -11389,6 +11419,164 @@ pub mod contract {
         );
     }
 
+    /// 🚨 **A fold's raw-handle sweep matches the folded side's CURRENT handle
+    /// only — it never chases a handle the folded side answered to before a
+    /// rename — so a pointer written under an earlier spelling stays one hop
+    /// short of the survivor.**
+    ///
+    /// A rename rewrites nothing (rule 243): a child's `parent`, an edge's
+    /// `object` and a record's `refs` entry keep whatever handle was current
+    /// when they were written. `merge` already repoints these for the handle
+    /// it was given — this proves it also repoints a pointer wearing a FORMER
+    /// handle of the folded side.
+    ///
+    /// **Paired, and not optional**: the same three pointers, drawn again
+    /// after the rename so they already wear the current handle. A fix that
+    /// only chased former handles and stopped sweeping the direct case would
+    /// pass the first half of this case and fail the second.
+    pub async fn a_fold_repoints_a_pointer_wearing_a_former_handle_of_the_folded_side<M: Memory>(
+        store: &M,
+    ) {
+        let before = EntityId::person("person:contract-fold-rename-before");
+        let after = EntityId::person("person:contract-fold-rename-after");
+        let survivor = EntityId::person("person:contract-fold-rename-survivor");
+        let onlooker = EntityId::person("person:contract-fold-rename-onlooker");
+        add(
+            store,
+            NewEntity::new(before.clone(), "Fold Rename Before", "contract-fixture"),
+        )
+        .await;
+        add(
+            store,
+            NewEntity::new(survivor.clone(), "Fold Rename Survivor", "contract-fixture"),
+        )
+        .await;
+        add(
+            store,
+            NewEntity::new(onlooker.clone(), "Fold Rename Onlooker", "contract-fixture"),
+        )
+        .await;
+
+        // A child parented, and an edge and a ref drawn, all at the folded
+        // side's handle BEFORE it is renamed — the pointer this case is about.
+        let child_former = EntityId("thing:contract-fold-rename-child-former".into());
+        add(
+            store,
+            NewEntity {
+                parent: Some(before.clone()),
+                ..NewEntity::new(
+                    child_former.clone(),
+                    "Fold Rename Child Former",
+                    "contract-fixture",
+                )
+            },
+        )
+        .await;
+        let edge_former = capture(
+            store,
+            NewFact {
+                edge: Some(Edge::new(EdgeShape::Connection, before.clone())),
+                refs: vec![before.clone()],
+                ..NewFact::about(
+                    onlooker.clone(),
+                    "drawn before the rename",
+                    date(2026, 7, 1),
+                )
+            },
+        )
+        .await;
+
+        store
+            .rename_entity(&before, &after, None, date(2026, 7, 2), None)
+            .await
+            .expect("the rename lands")
+            .written()
+            .expect("nothing collides with the destination");
+
+        // The paired half: the same three pointers, drawn AFTER the rename,
+        // already wearing the current handle.
+        let child_current = EntityId("thing:contract-fold-rename-child-current".into());
+        add(
+            store,
+            NewEntity {
+                parent: Some(after.clone()),
+                ..NewEntity::new(
+                    child_current.clone(),
+                    "Fold Rename Child Current",
+                    "contract-fixture",
+                )
+            },
+        )
+        .await;
+        let edge_current = capture(
+            store,
+            NewFact {
+                edge: Some(Edge::new(EdgeShape::Connection, after.clone())),
+                refs: vec![after.clone()],
+                ..NewFact::about(onlooker.clone(), "drawn after the rename", date(2026, 7, 3))
+            },
+        )
+        .await;
+
+        store
+            .merge(&after, &survivor, None, date(2026, 7, 4))
+            .await
+            .expect("the fold lands");
+
+        // **`parent`**: both children are under the survivor, whichever
+        // handle their pointer was written under.
+        let kids = store
+            .children(&survivor)
+            .await
+            .expect("children reads under the survivor");
+        assert!(
+            kids.contains(&child_former),
+            "a child parented on a FORMER handle of the folded side did not follow the \
+             fold: {kids:?}",
+        );
+        assert!(
+            kids.contains(&child_current),
+            "a child parented on the folded side's CURRENT handle did not follow the \
+             fold: {kids:?}",
+        );
+
+        // **`edge.object` and `refs`**: read back off the onlooker, both must
+        // now name the survivor directly.
+        let held = store
+            .recall(&onlooker)
+            .await
+            .expect("the onlooker still reads");
+        let fact = |id: &FactId| {
+            held.iter()
+                .find(|f| &f.id == id)
+                .unwrap_or_else(|| panic!("the fold lost a claim it never touched (id {id})"))
+        };
+        let former_fact = fact(&edge_former.id);
+        assert_eq!(
+            former_fact.edge.as_ref().map(|e| &e.object),
+            Some(&survivor),
+            "an edge drawn at a FORMER handle of the folded side did not follow the fold: \
+             {former_fact:?}",
+        );
+        assert!(
+            former_fact.refs.contains(&survivor),
+            "a ref naming a FORMER handle of the folded side did not follow the fold: \
+             {former_fact:?}",
+        );
+        let current_fact = fact(&edge_current.id);
+        assert_eq!(
+            current_fact.edge.as_ref().map(|e| &e.object),
+            Some(&survivor),
+            "an edge drawn at the folded side's CURRENT handle did not follow the fold: \
+             {current_fact:?}",
+        );
+        assert!(
+            current_fact.refs.contains(&survivor),
+            "a ref naming the folded side's CURRENT handle did not follow the fold: \
+             {current_fact:?}",
+        );
+    }
+
     /// **A store this suite can rename a handle in.**
     ///
     /// There is no rename verb and this slice does not add one, so the only way
@@ -13025,6 +13213,7 @@ pub mod contract {
         a_claim_carries_when_it_was_taken_in(store).await;
         folding_a_duplicate_makes_the_split_answer_whole(store).await;
         a_fold_carries_the_lineage_that_points_at_what_it_moved(store).await;
+        a_fold_repoints_a_pointer_wearing_a_former_handle_of_the_folded_side(store).await;
         a_claims_lineage_is_walkable_from_its_source(store).await;
         a_folded_value_says_who_backs_it(store).await;
         a_summed_key_has_no_backing_to_report(store).await;
