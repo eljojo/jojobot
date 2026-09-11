@@ -51,16 +51,6 @@ const ALLOWED: &[Allowed<'static>] = &[
     },
     Allowed {
         room: "rooms/year.md",
-        lock: "Phase 4 — April: nothing on Milhouse points at Shelbyville, so the move was \
-               recorded somewhere a later sitting will not look",
-        needle: "place:shelbyville",
-        risk: Risk::Retraction,
-        reason: "no sitting after April touches Milhouse's Shelbyville claim, so nothing in \
-                 this room retracts it — the gap is the same shape as the Springfield lock \
-                 three phases up, just never exercised because nobody corrects this one",
-    },
-    Allowed {
-        room: "rooms/year.md",
         lock: "Phase 9 — nothing on the pump currently carries the day it came back, so a \
                reader is left with no day to find — whether it was never recorded, or a later, \
                legitimate correction cleared the only trace of it",

@@ -223,8 +223,11 @@ say     March: nothing says the club meets on Tuesdays, so July has nothing to t
 > start jojobot as assistant — it is 19 April 2026 and Milhouse has moved to Shelbyville
 
 ```locks
-recall {"subject": "person:milhouse", "facts": true}
-carries place:shelbyville
+# 🚨 **A hatch, scoped to April's own window.** Asked of the finished board,
+# `carries place:shelbyville` holds on a retracted claim exactly as on a
+# standing one — nothing here retracts it today, but the gap is the same
+# shape June's attendance walk carried before its own fix.
+check   aprils_move_drew_a_standing_location_edge
 say     April: nothing on Milhouse points at Shelbyville, so the move was recorded somewhere a later sitting will not look
 
 # The old claim was true in its day. Taking it out loses that he ever lived

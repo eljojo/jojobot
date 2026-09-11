@@ -2748,6 +2748,25 @@ async fn februarys_club_lock_fails_when_februarys_own_window_drew_nothing() {
     );
 }
 
+/// 🚨 **April's Shelbyville lock fails when April's own window drew
+/// nothing.**
+///
+/// The positive half of the pair the pattern needs: a year that never ran
+/// April drew no location edge to Shelbyville at all, and the lock must say
+/// so rather than holding over an empty record.
+#[tokio::test]
+async fn aprils_shelbyville_lock_fails_when_aprils_own_window_drew_nothing() {
+    let (_room, surface) = furnished().await;
+    let boundaries = work_the_year(&surface, &room_document(), &[0], &[]).await;
+    let judged = judge_all(&surface, &boundaries).await;
+    assert!(
+        !judged[APRIL[0]].held,
+        "a year where April never ran held its Shelbyville lock, so it is satisfied by something \
+         other than that sitting: {}",
+        saying(&judged),
+    );
+}
+
 /// 🚨 **A retraction does not read as a supersession — the needle January's
 /// Springfield lock now pins.**
 ///
