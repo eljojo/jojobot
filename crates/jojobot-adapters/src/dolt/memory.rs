@@ -559,6 +559,21 @@ impl DoltMemory {
                 let resolved = self.current_handle(tx, &source.home).await?;
                 served.derived_from = Some(FactAddress::new(resolved, source.local.clone()));
             }
+            // **An edge and a ref are badge-keyed exactly as `home` is**
+            // (rule 268), resolved here the same way, once, rather than a
+            // reader chasing a handle's rename history on every use.
+            if let Some(edge) = &served.edge {
+                let resolved = self.current_handle(tx, &edge.object).await?;
+                served.edge = Some(Edge {
+                    shape: edge.shape,
+                    object: resolved,
+                });
+            }
+            let mut resolved_refs = Vec::with_capacity(served.refs.len());
+            for object in &served.refs {
+                resolved_refs.push(self.current_handle(tx, object).await?);
+            }
+            served.refs = resolved_refs;
             facts.push(served);
         }
         Ok(facts)
@@ -1458,6 +1473,32 @@ impl Memory for DoltMemory {
         // handle when it wears none. Already resolved above, direct or
         // through its rename history.
         let (home, subject_handle) = subject_resolved.expect("checked to exist just above");
+        // **An edge's object and a ref are stored as the badge they wear,
+        // never the handle they were named with** (rule 268). The existence
+        // check above already found each one in `index`, so `resolve` cannot
+        // miss here. Storing the badge is what makes a later handle
+        // collision harmless: there is nothing left in the row for a
+        // newcomer to inherit.
+        let edge = match &fact.edge {
+            Some(edge) => Some(Edge {
+                shape: edge.shape,
+                object: self
+                    .resolve(&mut tx, &edge.object)
+                    .await?
+                    .map(|(key, _)| key)
+                    .unwrap_or_else(|| edge.object.clone()),
+            }),
+            None => None,
+        };
+        let mut refs = Vec::with_capacity(fact.refs.len());
+        for object in &fact.refs {
+            refs.push(
+                self.resolve(&mut tx, object)
+                    .await?
+                    .map(|(key, _)| key)
+                    .unwrap_or_else(|| object.clone()),
+            );
+        }
         let id = Self::mint(&mut tx, &home).await?;
         let stored = Fact {
             id,
@@ -1472,9 +1513,9 @@ impl Memory for DoltMemory {
             status: fact.status,
             recorded_at: fact.recorded_at,
             happened_at: fact.happened_at,
-            edge: fact.edge,
+            edge,
             fields: fact.fields,
-            refs: fact.refs,
+            refs,
             derived_from,
             // **The store stamps it, so nothing above can.** The moment a
             // record is taken in is this one, and a caller that could name it
@@ -1519,11 +1560,24 @@ impl Memory for DoltMemory {
             )),
             None => None,
         };
+        let served_edge = match &stored.edge {
+            Some(edge) => Some(Edge {
+                shape: edge.shape,
+                object: self.current_handle(&mut tx, &edge.object).await?,
+            }),
+            None => None,
+        };
+        let mut served_refs = Vec::with_capacity(stored.refs.len());
+        for object in &stored.refs {
+            served_refs.push(self.current_handle(&mut tx, object).await?);
+        }
         tx.commit().await.map_err(store)?;
         Ok(Guarded::Written(Fact {
             home: subject_handle.clone(),
             subject: subject_handle,
             derived_from: served_derived_from,
+            edge: served_edge,
+            refs: served_refs,
             ..stored
         }))
     }
@@ -1639,6 +1693,13 @@ impl Memory for DoltMemory {
                 let resolved = self.current_handle(&mut tx, &source.home).await?;
                 fact.derived_from = Some(FactAddress::new(resolved, source.local.clone()));
             }
+            if let Some(edge) = &fact.edge {
+                let resolved = self.current_handle(&mut tx, &edge.object).await?;
+                fact.edge = Some(Edge {
+                    shape: edge.shape,
+                    object: resolved,
+                });
+            }
             history.push(ClaimWrite::of(&fact, ordinal.max(0) as usize, written_at));
         }
         tx.commit().await.map_err(store)?;
@@ -1683,6 +1744,13 @@ impl Memory for DoltMemory {
             if let Some(source) = &fact.derived_from {
                 let resolved = self.current_handle(&mut tx, &source.home).await?;
                 fact.derived_from = Some(FactAddress::new(resolved, source.local.clone()));
+            }
+            if let Some(edge) = &fact.edge {
+                let resolved = self.current_handle(&mut tx, &edge.object).await?;
+                fact.edge = Some(Edge {
+                    shape: edge.shape,
+                    object: resolved,
+                });
             }
             histories.entry(id).or_default().push(ClaimWrite::of(
                 &fact,
@@ -1858,6 +1926,23 @@ impl Memory for DoltMemory {
         } else {
             apply_fact_patch(&mut fact, &patch)?;
         }
+        // **An edge attached by this patch is stored as a badge too**
+        // (rule 268). `apply_fact_patch` carried the handle the patch named;
+        // the existence check above already found it, so `resolve` cannot
+        // miss here — the same correction `derived_from` gets just above.
+        if patch.edge.is_some()
+            && let Some(edge) = &fact.edge
+        {
+            let resolved = self
+                .resolve(&mut tx, &edge.object)
+                .await?
+                .map(|(key, _)| key)
+                .unwrap_or_else(|| edge.object.clone());
+            fact.edge = Some(Edge {
+                shape: edge.shape,
+                object: resolved,
+            });
+        }
         // **The thing's fields as they will stand, against the thing's fields
         // as they stand now.** A write may not drop a thing below a type it
         // already fits; a thing that fits nothing has nothing to protect, so
@@ -1893,12 +1978,20 @@ impl Memory for DoltMemory {
             )),
             None => None,
         };
+        let served_edge = match &fact.edge {
+            Some(edge) => Some(Edge {
+                shape: edge.shape,
+                object: self.current_handle(&mut tx, &edge.object).await?,
+            }),
+            None => None,
+        };
         tx.commit().await.map_err(store)?;
         Ok(Guarded::Written(Fact {
             fields,
             home: handle.clone(),
             subject: handle,
             derived_from: served_derived_from,
+            edge: served_edge,
             ..fact
         }))
     }
@@ -2002,11 +2095,27 @@ impl Memory for DoltMemory {
                     .map_err(store)?;
             }
         }
-        // What names the handle rather than a row inside it moves wholesale.
-        // An edge's object and a ref's entity are stored as the plain handle
-        // merge was given, never a badge (step 3 resolves an edge on the way
-        // OUT; nothing resolves one in) — so these compare against the raw
-        // handles, exactly as they always have.
+        // **An edge's object and a ref's entity are stored as the badge the
+        // folded side wears** (rule 268), so these compare against that
+        // badge alone and rewrite to the survivor's — never a handle, and
+        // never a former handle, because nothing but the entity's own
+        // current badge was ever written into either column.
+        for statement in [
+            "UPDATE fact SET edge_object = ? WHERE edge_object = ?",
+            "UPDATE fact_write SET edge_object = ? WHERE edge_object = ?",
+            "UPDATE fact_event_ref SET entity = ? WHERE entity = ?",
+        ] {
+            sqlx::query(statement)
+                .bind(survivor_key.as_str())
+                .bind(folded_key.as_str())
+                .execute(&mut *tx)
+                .await
+                .map_err(store)?;
+        }
+
+        // **`entity.parent` names a different row and is still handle-keyed**
+        // — this column has not moved to a badge yet, so it still compares
+        // against every handle the folded side has ever worn.
         //
         // **Every handle the folded side has ever worn, not only the one it
         // wears today.** A rename rewrites nothing, so a pointer written
@@ -2025,19 +2134,12 @@ impl Memory for DoltMemory {
         folded_handles.extend(former_folded.iter().map(String::as_str));
 
         for handle in &folded_handles {
-            for statement in [
-                "UPDATE fact SET edge_object = ? WHERE edge_object = ?",
-                "UPDATE fact_write SET edge_object = ? WHERE edge_object = ?",
-                "UPDATE fact_event_ref SET entity = ? WHERE entity = ?",
-                "UPDATE entity SET parent = ? WHERE parent = ?",
-            ] {
-                sqlx::query(statement)
-                    .bind(survivor.as_str())
-                    .bind(*handle)
-                    .execute(&mut *tx)
-                    .await
-                    .map_err(store)?;
-            }
+            sqlx::query("UPDATE entity SET parent = ? WHERE parent = ?")
+                .bind(survivor.as_str())
+                .bind(*handle)
+                .execute(&mut *tx)
+                .await
+                .map_err(store)?;
         }
 
         let record = Fact {
