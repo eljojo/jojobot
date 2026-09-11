@@ -2729,6 +2729,59 @@ async fn junes_attendee_lock_holds_despite_a_later_legitimate_retraction() {
     );
 }
 
+/// 🚨 **A retraction does not read as a supersession — the needle January's
+/// Springfield lock now pins.**
+///
+/// Nothing in this room's honest storyline ever retracts Milhouse's
+/// Springfield claim; April supersedes it instead, legitimately, so the
+/// companion the lock gained is never exercised by a guilty play in the year
+/// itself. This proves the needle directly: a record retracted rather than
+/// superseded does not carry `"status":"superseded"`, so the companion would
+/// have caught the bug the old bare `carries place:springfield` could not —
+/// a retraction reading identically to the legitimate supersession on that
+/// needle alone.
+#[tokio::test]
+async fn a_retracted_claim_does_not_read_as_superseded() {
+    let (_room, surface) = furnished().await;
+    let sid = sitting(&surface, "2026-01-12").await;
+    did(
+        &surface,
+        &sid,
+        "capture",
+        json!({"subject": "person:milhouse", "content": "lives in Springfield",
+               "provenance": "testimony",
+               "shape": "location", "object": "place:springfield"}),
+    )
+    .await;
+    let address = address_of(&surface, "person:milhouse", "Springfield").await;
+    did(
+        &surface,
+        &sid,
+        "retract",
+        json!({"address": address, "reason": "test probe", "recorded_at": "2026-01-12"}),
+    )
+    .await;
+    let read = surface
+        .call(
+            "recall",
+            json!({"subject": "person:milhouse", "facts": true}),
+        )
+        .await;
+    assert!(
+        read.contains("place:springfield"),
+        "a retracted record still carries its own edge, marked rather than filtered: {read}",
+    );
+    assert!(
+        !read.contains("\"status\":\"superseded\""),
+        "a RETRACTED record must not also read as SUPERSEDED, or the companion on January's \
+         lock could not tell the two apart either: {read}",
+    );
+    assert!(
+        read.contains("\"status\":\"retracted\""),
+        "…and it has to say what it actually is: {read}",
+    );
+}
+
 /// 🚨 **No lock in this room rests on a needle that matches somewhere else.**
 ///
 /// A needle is a substring of the answer as text. **A lock satisfied by the

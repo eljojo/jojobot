@@ -39,18 +39,6 @@ struct Allowed<'a> {
 const ALLOWED: &[Allowed<'static>] = &[
     Allowed {
         room: "rooms/year.md",
-        lock: "Phase 1 — January: nothing on Milhouse says where he lives, so April has \
-               nothing to change and November nothing to read",
-        needle: "place:springfield",
-        risk: Risk::Retraction,
-        reason: "reads the finished board, so April legitimately superseding this claim still \
-                 satisfies it on the marked-but-superseded text, which is by design — but \
-                 nothing here pins status, and a RETRACTION of the same claim would read \
-                 identically to the legitimate supersession this lock was never written to \
-                 tell apart",
-    },
-    Allowed {
-        room: "rooms/year.md",
         lock: "Phase 2 — February: the pump the operator lent is not a thing jojobot knows, \
                so September has nothing to ask about",
         needle: "thing:floor-pump",

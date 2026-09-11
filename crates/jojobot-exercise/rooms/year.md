@@ -137,8 +137,16 @@ say     January: no loop carries the ninety days and the day it was last done, s
 
 # Recorded early, needed late: where Milhouse lives. April moves him and
 # November asks.
+#
+# ⚠️ **A companion pins the status, for the reason April's own Springfield
+# lock four sittings down already carries one.** April legitimately
+# supersedes this claim, and a retraction would read identically to that on
+# the marked-but-not-filtered text alone — the companion is what tells a
+# retraction from the legitimate supersession this lock was never written to
+# catch.
 recall {"subject": "person:milhouse", "facts": true}
 carries place:springfield
+carries "status":"superseded"
 say     January: nothing on Milhouse says where he lives, so April has nothing to change and November nothing to read
 ```
 
