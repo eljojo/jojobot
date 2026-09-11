@@ -638,6 +638,16 @@ fn floor_pump_addresses(world: &str) -> std::collections::HashSet<String> {
 /// record says now, `history_record` answers what it said before, and only a
 /// caller that reads both can tell a correction from a retraction, an
 /// untouched claim, or a second claim filed beside the first.
+///
+/// 🚨 **September's own wording survives EITHER as an edge or as a mention in
+/// content, and this reads both.** A paid run named Ralph by drawing a
+/// `connection` edge at him; a later one drew an `attendance` edge at the
+/// event instead and named Ralph inside the sentence — both are reasonable
+/// accounts of who returned the pump, and a check that recognised only the
+/// first read the second's history as destroyed rather than superseded. The
+/// claim being tested is that the WORDING survives, not that it survives in
+/// one structural place, so this is not a widening: an account that named
+/// nobody at all, by either route, still fails.
 async fn septembers_account_of_the_pump_is_corrected_in_place(
     seen: &Observed<'_>,
 ) -> Result<(), String> {
@@ -697,9 +707,12 @@ async fn septembers_account_of_the_pump_is_corrected_in_place(
     let held_ralph = parsed["objects"][0]["record_history"]["writes"]
         .as_array()
         .is_some_and(|writes| {
-            writes
-                .iter()
-                .any(|write| write["edge"]["object"] == "person:ralph")
+            writes.iter().any(|write| {
+                write["edge"]["object"] == "person:ralph"
+                    || write["content"]
+                        .as_str()
+                        .is_some_and(|content| content.contains("person:ralph"))
+            })
         });
     match held_ralph {
         true => Ok(()),

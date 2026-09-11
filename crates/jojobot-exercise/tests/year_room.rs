@@ -218,31 +218,6 @@ async fn address_of(room: &Surface, subject: &str, needle: &str) -> String {
         .to_string()
 }
 
-/// **The same lookup as [`address_of`], and no such record is an answer
-/// rather than a panic.**
-///
-/// A play run against a year that skipped an earlier sitting meets a store
-/// that never wrote what this play would otherwise correct — `subject` may
-/// not even exist. `address_of` is for a case that already knows the record
-/// is there; this is for a play deciding whether to correct one or capture
-/// one fresh.
-async fn address_of_opt(room: &Surface, subject: &str, needle: &str) -> Option<String> {
-    let read = room
-        .call("recall", json!({"subject": subject, "facts": true}))
-        .await;
-    let parsed: Value = serde_json::from_str(&read).ok()?;
-    parsed["objects"][0]["facts"]
-        .as_array()?
-        .iter()
-        .find(|fact| {
-            fact["content"]
-                .as_str()
-                .is_some_and(|said| said.contains(needle))
-        })
-        .and_then(|fact| fact["address"].as_str())
-        .map(str::to_string)
-}
-
 /// **The one entity of `kind`'s current handle.** Looked up rather than
 /// hardcoded: October may have renamed it by the time this is asked, and a
 /// literal written here would go stale under exactly the rename this room
@@ -713,6 +688,38 @@ async fn september(room: &Surface, sid: &str) {
     .await;
 }
 
+/// **A different, equally honest September, naming Ralph in prose rather than
+/// by edge.** Run 20's own model wrote the account this way: an `attendance`
+/// edge at the event, with Ralph named inside the sentence — a reasonable
+/// account of who returned the pump that the pump lock's history check must
+/// recognise exactly as it recognises the edge-shaped one.
+async fn september_names_ralph_in_prose(room: &Surface, sid: &str) {
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "thing:floor-pump",
+               "content": "@person:ralph gave the floor pump back at @event:trail-survey",
+               "provenance": "testimony", "happened_at": "2026-06-14",
+               "shape": "attendance", "object": "event:trail-survey"}),
+    )
+    .await;
+}
+
+/// **A guilty September: the pump came back and nobody is named at all.** No
+/// edge, no mention — so the account behind October's later correction
+/// genuinely carries nothing about who returned it.
+async fn september_names_nobody(room: &Surface, sid: &str) {
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "thing:floor-pump", "content": "came back at the survey",
+               "provenance": "testimony", "happened_at": "2026-06-14"}),
+    )
+    .await;
+}
+
 /// **A September that thinks it is June.**
 ///
 /// The fault the day assertion exists for, and the one the exemption used to
@@ -799,12 +806,38 @@ async fn october_retracts_junes_claim_instead_of_renaming(room: &Surface, sid: &
     .await;
 }
 
+/// **September's own address on the pump, whatever it said.** Excludes
+/// February's fixed wording rather than matching September's, because
+/// September's own wording is what varies between plays here — a prose
+/// account and an edge-shaped one say nothing alike, and finding "the record
+/// to correct" by a phrase only one of them uses is how a play meant to work
+/// for either ends up silently capturing a second claim instead.
+async fn septembers_pump_address(room: &Surface) -> Option<String> {
+    let read = room
+        .call(
+            "recall",
+            json!({"subject": "thing:floor-pump", "facts": true}),
+        )
+        .await;
+    let parsed: Value = serde_json::from_str(&read).ok()?;
+    parsed["objects"][0]["facts"]
+        .as_array()?
+        .iter()
+        .find(|fact| {
+            fact["content"]
+                .as_str()
+                .is_some_and(|content| !content.contains("lent out, wanted back before the survey"))
+        })
+        .and_then(|fact| fact["address"].as_str())
+        .map(str::to_string)
+}
+
 /// **Correct September's account when there is one; capture Nelson's fresh
 /// when there is not.** The taught distinction, played: `update_fact` for a
 /// correction, `capture` only when nothing came before it to correct — the
 /// shape a year that skipped September actually meets.
 async fn corrects_or_captures_the_pump(room: &Surface, sid: &str) {
-    match address_of_opt(room, "thing:floor-pump", "came back at the survey").await {
+    match septembers_pump_address(room).await {
         Some(ralphs) => {
             did(
                 room,
@@ -1141,6 +1174,21 @@ const JUNE_VARIANTS: [(usize, &str); 3] = [
     (JUNE_POINTING_AT_ONE_KIND, PEOPLE_ONLY),
 ];
 
+/// Where September sits in the year, named for the reason `JUNE_AT` is.
+const SEPTEMBER_AT: usize = 8;
+
+/// **A different, honest September, named the same way as June's variants.**
+/// Run 20's own model named Ralph in prose, with an `attendance` edge at the
+/// event rather than a `connection` edge at Ralph — the pump lock's history
+/// check must recognise this shape exactly as it recognises the other.
+const SEPTEMBER_NAMES_RALPH_IN_PROSE: usize = 26;
+
+/// **A guilty September, named the same way.** Nobody is named at all — no
+/// edge, no mention — so the account behind October's correction genuinely
+/// carries nothing about who returned the pump. This is the one shape the
+/// pump lock's history check must still redden on.
+const SEPTEMBER_NAMES_NOBODY: usize = 27;
+
 /// Where October sits in the year, named for the reason `JUNE_AT` is.
 const OCTOBER_AT: usize = 9;
 
@@ -1240,6 +1288,10 @@ async fn work_the_year(
             at == OCTOBER_AT && guilty.contains(&OCTOBER_RETRACTS_JUNES_CLAIM_INSTEAD_OF_RENAMING);
         let october_second_account_variant = at == OCTOBER_AT
             && guilty.contains(&OCTOBER_CAPTURES_A_SECOND_ACCOUNT_INSTEAD_OF_CORRECTING);
+        let september_prose_variant =
+            at == SEPTEMBER_AT && guilty.contains(&SEPTEMBER_NAMES_RALPH_IN_PROSE);
+        let september_nobody_variant =
+            at == SEPTEMBER_AT && guilty.contains(&SEPTEMBER_NAMES_NOBODY);
         // ⛔️ **Only a sitting that ACTS gets a run.** A boot mints nothing until
         // its first write, so a run for a sitting this drive skips is a run that
         // never happened — and it would sit in the day that sitting claims,
@@ -1254,6 +1306,8 @@ async fn work_the_year(
             && !october_no_rename_variant
             && !october_retracts_variant
             && !october_second_account_variant
+            && !september_prose_variant
+            && !september_nobody_variant
         {
             boundaries.push(boundary(room, &named[at + 1]).await);
             continue;
@@ -1285,6 +1339,10 @@ async fn work_the_year(
             october_retracts_junes_claim_instead_of_renaming(room, sid).await;
         } else if october_second_account_variant {
             october_captures_a_second_account_instead_of_correcting(room, sid).await;
+        } else if september_prose_variant {
+            september_names_ralph_in_prose(room, sid).await;
+        } else if september_nobody_variant {
+            september_names_nobody(room, sid).await;
         } else if guilty.contains(&at) {
             match at {
                 9 => october_files_the_note_on_the_event(room, sid).await,
@@ -2404,6 +2462,58 @@ async fn a_second_claim_beside_septembers_does_not_satisfy_the_pump_lock() {
     assert!(
         judged[OCTOBER[0]].held,
         "the year corrected September's account in place and the pump lock still failed: {}",
+        saying(&judged),
+    );
+}
+
+/// 🚨 **September's account naming Ralph in prose, not by edge, still counts
+/// as corrected.**
+///
+/// A paid run (run 20) wrote September this way: an `attendance` edge at the
+/// event, Ralph named inside the sentence. The pump lock's history check used
+/// to look only at the edge, so it read the earlier wording as destroyed
+/// rather than superseded — the model behaved exactly as ruled and the lock
+/// convicted it anyway.
+#[tokio::test]
+async fn septembers_prose_account_of_ralph_still_satisfies_the_pump_lock() {
+    let (_room, surface) = furnished().await;
+    let boundaries = work_the_year(
+        &surface,
+        &room_document(),
+        &WORKED,
+        &[SEPTEMBER_NAMES_RALPH_IN_PROSE],
+    )
+    .await;
+    let judged = judge_all(&surface, &boundaries).await;
+    assert!(
+        judged[OCTOBER[0]].held,
+        "September named Ralph in prose rather than by edge, and October corrected the record \
+         exactly as it does for the edge-shaped account, yet the pump lock still failed: {}",
+        saying(&judged),
+    );
+}
+
+/// 🚨 **September naming nobody at all is the one shape the pump lock must
+/// still redden on.**
+///
+/// The fix for the prose-shaped account above must not become "accept
+/// anything": a correction whose earlier wording genuinely never named Ralph
+/// has nothing for history to carry, and the lock has to say so.
+#[tokio::test]
+async fn septembers_account_that_names_nobody_still_fails_the_pump_lock() {
+    let (_room, surface) = furnished().await;
+    let boundaries = work_the_year(
+        &surface,
+        &room_document(),
+        &WORKED,
+        &[SEPTEMBER_NAMES_NOBODY],
+    )
+    .await;
+    let judged = judge_all(&surface, &boundaries).await;
+    assert!(
+        !judged[OCTOBER[0]].held,
+        "September named nobody at all, so nothing behind October's correction ever said Ralph, \
+         and the pump lock held anyway: {}",
         saying(&judged),
     );
 }
