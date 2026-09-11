@@ -536,8 +536,12 @@ say     October (again): Nelson's survey attendance is not marked taken back, so
 
 # The second shape, folded in: Bart, walked rather than read off a sentence,
 # the same device February used for Nelson.
-recall {"subject": "org:north-trail-club", "follow": {"shape": "membership", "direction": "in"}}
-carries person:bart
+#
+# 🚨 **A hatch, scoped to this sitting's own window, the same fix February's
+# own club walk carries.** Asked of the finished board, `carries person:bart`
+# holds on a retracted membership exactly as on a standing one — nothing here
+# retracts it today, but the gap is structural.
+check   late_octobers_club_drew_a_standing_member_for_bart
 say     October (again): Bart cannot be walked to the club, so he is a name in a transcript and nothing on the roster
 
 # ⚠️ **The mistake this sitting is the first one able to make.** It is handed a

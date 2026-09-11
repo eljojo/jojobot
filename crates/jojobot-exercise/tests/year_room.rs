@@ -2784,6 +2784,25 @@ async fn octobers_north_trail_lock_fails_when_octobers_own_window_drew_nothing()
     );
 }
 
+/// 🚨 **Late October's Bart lock fails when late October's own window drew
+/// nothing.**
+///
+/// The positive half of the pair the pattern needs: a year that never ran
+/// late October drew no membership edge for Bart at all, and the lock must
+/// say so rather than holding over an empty record.
+#[tokio::test]
+async fn late_octobers_bart_lock_fails_when_late_octobers_own_window_drew_nothing() {
+    let (_room, surface) = furnished().await;
+    let boundaries = work_the_year(&surface, &room_document(), &[0], &[]).await;
+    let judged = judge_all(&surface, &boundaries).await;
+    assert!(
+        !judged[LATE_OCTOBER[1]].held,
+        "a year where late October never ran held its Bart club lock, so it is satisfied by \
+         something other than that sitting: {}",
+        saying(&judged),
+    );
+}
+
 /// 🚨 **A retraction does not read as a supersession — the needle January's
 /// Springfield lock now pins.**
 ///

@@ -64,16 +64,6 @@ const ALLOWED: &[Allowed<'static>] = &[
     },
     Allowed {
         room: "rooms/year.md",
-        lock: "Phase 11 — October (again): Bart cannot be walked to the club, so he is a name \
-               in a transcript and nothing on the roster",
-        needle: "person:bart",
-        risk: Risk::Retraction,
-        reason: "the same membership-walk shape as February's, on the member this room adds \
-                 last — his membership is never retracted after this sitting, so the gap is \
-                 unexercised",
-    },
-    Allowed {
-        room: "rooms/year.md",
         lock: "Phase 15 — later December: what the claim used to say is not on the record, so \
                either the sitting never reached the correction's own history or it answered \
                from the claim as it stands",

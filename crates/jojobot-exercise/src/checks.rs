@@ -67,6 +67,9 @@
 //!   same correlation again, on where the survey was held, asked in
 //!   October's own window. No subject is pinned: October renames the
 //!   survey's own event in the same sitting that writes this claim.
+//! * **`late_octobers_club_drew_a_standing_member_for_bart`** — the same
+//!   correlation again, on Bart's membership, asked in late October's own
+//!   window.
 //! * **`one_record_points_at_two_kinds`** — say that handles of two different
 //!   kinds landed on ONE record. `carries` lines are claims about the whole
 //!   answer, so two of them hold on two records naming one thing each, which is
@@ -93,7 +96,7 @@ type Hatch = (&'static str, fn() -> Box<dyn Checks>);
 
 /// **Every named check this build ships.** A room adds one line here and one
 /// `check` line in its document, and both are visible in the count.
-pub const CHECKS: [Hatch; 21] = [
+pub const CHECKS: [Hatch; 22] = [
     ("the_brief_left_the_box", || {
         checked(|seen| Box::pin(the_brief_left_the_box(seen)))
     }),
@@ -167,6 +170,9 @@ pub const CHECKS: [Hatch; 21] = [
             })
         },
     ),
+    ("late_octobers_club_drew_a_standing_member_for_bart", || {
+        checked(|seen| Box::pin(late_octobers_club_drew_a_standing_member_for_bart(seen)))
+    }),
 ];
 
 /// The identity a fresh instance ships with, and the one every occupant wears.
@@ -1246,6 +1252,36 @@ async fn octobers_note_drew_a_standing_location_edge_to_the_trail(
         false => Err(format!(
             "{OCTOBER}'s window did not draw a standing location edge to place:north-trail, so \
              where the survey was held was not recorded where a later reader would find it",
+        )),
+    }
+}
+
+/// 🚨 **Late October drew a standing membership edge for Bart — asked in
+/// late October's own window.**
+///
+/// Asked of the finished board, `carries person:bart` holds on a retracted
+/// membership exactly as on a standing one — nothing in this room's honest
+/// storyline ever retracts it, so the gap is structural rather than
+/// reproducing today, the same shape February's own club walk carried
+/// before its fix.
+async fn late_octobers_club_drew_a_standing_member_for_bart(
+    seen: &Observed<'_>,
+) -> Result<(), String> {
+    let Some((before, after)) = seen.across(LATE_OCTOBER) else {
+        return Err(format!(
+            "this run took no reading either side of {LATE_OCTOBER}, so nothing here can say \
+             what that sitting recorded. A check scoped to one sitting needs the run's own \
+             boundaries.",
+        ));
+    };
+    let club = "org:north-trail-club";
+    let gained = !has_standing_edge(&before.world, Some("person:bart"), "memberOf", club)
+        && has_standing_edge(&after.world, Some("person:bart"), "memberOf", club);
+    match gained {
+        true => Ok(()),
+        false => Err(format!(
+            "{LATE_OCTOBER}'s window did not draw a standing membership edge for Bart, so he is \
+             not on the roster where a later reader would find him",
         )),
     }
 }
