@@ -206,7 +206,10 @@ impl Jojobot {
                        opening line) — because you were handed those bodies once already. Pass \
                        new_only: false to get them back, which is the read for a consumer \
                        recovering from a crash that no longer holds what it was given. Either \
-                       way it changes what is SHIPPED, never what is owed."
+                       way it changes what is SHIPPED, never what is owed. Each message may also \
+                       carry `sender_mail_waiting_at_send`, stamped once when it was posted — see \
+                       `post_message`'s own description for what it means; `null` there is unknown, \
+                       never zero."
     )]
     pub(crate) async fn read_mailbox(
         &self,

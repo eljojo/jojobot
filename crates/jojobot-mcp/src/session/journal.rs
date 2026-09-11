@@ -10,9 +10,14 @@ use super::*;
 pub struct JournalArgs {
     /// One high-level beat: what you set out to do, what you found, what you
     /// decided, what went wrong. Prose — paragraphs are fine.
+    ///
+    /// Write `@kind:slug` to link to something that already exists, e.g.
+    /// `@person:milhouse` — stored as the name that does not move, served as
+    /// the handle that thing wears today, even after a rename.
     pub(crate) entry: String,
     /// What you are working on NOW, in one line. Optional, and it **replaces**
-    /// the session's current focus rather than adding to it.
+    /// the session's current focus rather than adding to it. Carries
+    /// `@kind:slug` mentions exactly as `entry` does.
     #[serde(default)]
     pub(crate) focus: Option<String>,
     /// **Your session id**, exactly as the boot door returned it. A session is

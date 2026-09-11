@@ -11,6 +11,10 @@ pub struct MarkProcessedArgs {
     /// The message's id, exactly as `read_mailbox` returned it.
     pub(crate) message_id: String,
     /// What happened — including a failure. Optional, one plain line.
+    ///
+    /// Write `@kind:slug` to link to something that already exists, e.g.
+    /// `@person:milhouse` — stored as the name that does not move, served as
+    /// the handle that thing wears today, even after a rename.
     #[serde(default)]
     pub(crate) notes: Option<String>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on

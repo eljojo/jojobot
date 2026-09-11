@@ -314,6 +314,13 @@ fn the_mention_spelling_is_taught_on_every_argument_that_resolves_one() {
         ("update_fact", "content"),
         ("update_fact", "details"),
         ("set_charter", "prose"),
+        ("journal", "entry"),
+        ("journal", "focus"),
+        ("amend_journal", "entry"),
+        ("wrap_session", "story"),
+        ("post_message", "body"),
+        ("post_message", "subject"),
+        ("mark_processed", "notes"),
     ] {
         let found = tools
             .iter()

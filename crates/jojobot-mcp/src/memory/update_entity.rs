@@ -46,7 +46,8 @@ pub struct UpdateEntityArgs {
 impl Jojobot {
     #[tool(
         description = "Edit what an entity is called and where it came from (name/aliases/source/\
-                       crm), in place. This verb does not edit the handle. THIS VERB \
+                       crm), in place. This verb does not edit the handle — its slug, kind or \
+                       parent — use `rename_entity` for that. THIS VERB \
                        DOES NOT TOUCH MAILBOXES: a box is not a property of an entity that can \
                        be edited or reassigned — it belongs to the bot it is named for and opens \
                        with it, in add_entity, so there is nothing here to point at a different \

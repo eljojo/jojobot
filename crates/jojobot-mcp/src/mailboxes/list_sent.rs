@@ -67,7 +67,10 @@ impl Jojobot {
                        your own mail — your `sid` already says who that is. Pass one to ask after \
                        somebody else's outgoing mail: it is matched exactly against the bot \
                        handle recorded on each message (`bot:gamma`), which is allowed, because \
-                       where a message got to is not private to its sender."
+                       where a message got to is not private to its sender. Each message may also \
+                       carry `sender_mail_waiting_at_send`, stamped once when it was posted — see \
+                       `post_message`'s own description for what it means; `null` there is unknown, \
+                       never zero."
     )]
     pub(crate) async fn list_sent(
         &self,

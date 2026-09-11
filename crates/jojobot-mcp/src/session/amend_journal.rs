@@ -10,6 +10,10 @@ use super::*;
 pub struct AmendJournalArgs {
     /// What the most recent entry should say instead. It replaces that entry
     /// whole.
+    ///
+    /// Write `@kind:slug` to link to something that already exists, e.g.
+    /// `@person:milhouse` — stored as the name that does not move, served as
+    /// the handle that thing wears today, even after a rename.
     pub(crate) entry: String,
     /// Your session id — the session whose newest entry to rewrite.
     pub(crate) sid: String,

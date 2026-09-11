@@ -11,6 +11,10 @@ pub struct WrapSessionArgs {
     /// The story of this session, for somebody with none of your context: what
     /// it was for, what happened, what is left. It becomes the final entry in
     /// this session's own chronology, and goes nowhere else.
+    ///
+    /// Write `@kind:slug` to link to something that already exists, e.g.
+    /// `@person:milhouse` — stored as the name that does not move, served as
+    /// the handle that thing wears today, even after a rename.
     pub(crate) story: String,
     /// Your session id — the session to wrap.
     pub(crate) sid: String,

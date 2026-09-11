@@ -17,6 +17,10 @@ pub struct PostMessageArgs {
     /// candidates and nothing is written.
     pub(crate) to: String,
     /// The message itself. Prose: paragraphs are fine.
+    ///
+    /// Write `@kind:slug` to link to something that already exists, e.g.
+    /// `@person:milhouse` — stored as the name that does not move, served as
+    /// the handle that thing wears today, even after a rename.
     pub(crate) body: String,
     /// **Your session id.** Required here, because it is what jojobot records
     /// as the sender: a message from nobody is a message nobody can reply to,
@@ -32,7 +36,8 @@ pub struct PostMessageArgs {
     /// any other control character is refused and nothing is written — name a
     /// tool or a field in plain words, even though every other prose surface
     /// here takes markdown. A title over 120 characters is refused rather than
-    /// cut, because shortening your own title is yours to do.
+    /// cut, because shortening your own title is yours to do. Carries
+    /// `@kind:slug` mentions exactly as `body` does.
     #[serde(default)]
     pub(crate) subject: Option<String>,
 
@@ -190,7 +195,15 @@ impl Jojobot {
                        with this answer under your_mail — out of `new` and yours to finish, \
                        exactly as read_mailbox would have handed it over — so read it rather than \
                        treating this as a write. Posting into your own box delivers nothing, and a \
-                       post that had nothing to hand over still succeeded. The sender is not yours \
+                       post that had nothing to hand over still succeeded. THE MESSAGE ALSO CARRIES \
+                       `sender_mail_waiting_at_send`: what was genuinely waiting in YOUR OWN box at \
+                       the moment you sent it, the same count your_mail's delivery would have shown, \
+                       read before this post could touch it. `null` means jojobot could not tell \
+                       (no session, no box, an unreadable board) — NEVER read it as \"zero waiting\"; \
+                       `0` is a real answer and a different one. It is stamped once, here, and \
+                       carried unchanged on this same message wherever `read_mailbox` or `list_sent` \
+                       returns it later, so a reader can check a claim about your own mail against \
+                       what was actually true when you hit send. The sender is not yours \
                        to declare: jojobot records the bot behind the `sid` you pass, so a reply \
                        can always find you and nothing can be posted under somebody else's name. A \
                        `sid` jojobot is not holding comes back status: blocked and nothing is \
