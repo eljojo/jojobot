@@ -863,6 +863,29 @@ async fn corrects_or_captures_the_pump(room: &Surface, sid: &str) {
     }
 }
 
+/// **October corrects the pump exactly as usual, and ALSO clears the day it
+/// came back** — the shape run 20's own model actually wrote. "Over the
+/// summer" borrows no precision from "at the survey", so the exact day
+/// Ralph's account carried is no longer accurate and a correction is
+/// entitled to remove it. Kept apart from [`corrects_or_captures_the_pump`]:
+/// clearing the day is what exposes September's own lock to a legitimate
+/// edit from a later sitting, and the canonical play every other case in
+/// this file builds on does not need to carry that.
+async fn october_corrects_the_pump_and_clears_its_day(room: &Surface, sid: &str) {
+    let Some(ralphs) = septembers_pump_address(room).await else {
+        panic!("september wrote nothing on the pump for october to correct");
+    };
+    did(
+        room,
+        sid,
+        "update_fact",
+        json!({"address": ralphs, "content": "brought round over the summer",
+               "shape": "connection", "object": "person:nelson",
+               "clear_happened_at": true, "recorded_at": "2026-10-11"}),
+    )
+    .await;
+}
+
 async fn october_writes_the_pump_and_the_place(room: &Surface, sid: &str) {
     // **A correction, on September's own address.** The operator's ruling
     // makes October's account a correction of September's, not a second
@@ -1192,6 +1215,15 @@ const SEPTEMBER_NAMES_NOBODY: usize = 27;
 /// Where October sits in the year, named for the reason `JUNE_AT` is.
 const OCTOBER_AT: usize = 9;
 
+/// **A different October, named the same way, that also clears the pump's
+/// day.** Run 20's own model wrote it this way: a vaguer later account is
+/// entitled to remove the exact day it inherited from a more precise earlier
+/// one. Kept apart from every other October variant, because clearing the
+/// day is the one thing that exposes September's own lock to this class of
+/// bug, and it must not silently ride along with a variant testing something
+/// else.
+const OCTOBER_ALSO_CLEARS_THE_DAY: usize = 28;
+
 /// **October's other guilt, named by an index no sitting has**, for the same
 /// reason June's variants are — the year holds fifteen sittings, so 19
 /// addresses none of them. Index 9 already carries a different wrong (the
@@ -1288,6 +1320,8 @@ async fn work_the_year(
             at == OCTOBER_AT && guilty.contains(&OCTOBER_RETRACTS_JUNES_CLAIM_INSTEAD_OF_RENAMING);
         let october_second_account_variant = at == OCTOBER_AT
             && guilty.contains(&OCTOBER_CAPTURES_A_SECOND_ACCOUNT_INSTEAD_OF_CORRECTING);
+        let october_clears_the_day_variant =
+            at == OCTOBER_AT && guilty.contains(&OCTOBER_ALSO_CLEARS_THE_DAY);
         let september_prose_variant =
             at == SEPTEMBER_AT && guilty.contains(&SEPTEMBER_NAMES_RALPH_IN_PROSE);
         let september_nobody_variant =
@@ -1306,6 +1340,7 @@ async fn work_the_year(
             && !october_no_rename_variant
             && !october_retracts_variant
             && !october_second_account_variant
+            && !october_clears_the_day_variant
             && !september_prose_variant
             && !september_nobody_variant
         {
@@ -1339,6 +1374,8 @@ async fn work_the_year(
             october_retracts_junes_claim_instead_of_renaming(room, sid).await;
         } else if october_second_account_variant {
             october_captures_a_second_account_instead_of_correcting(room, sid).await;
+        } else if october_clears_the_day_variant {
+            october_corrects_the_pump_and_clears_its_day(room, sid).await;
         } else if september_prose_variant {
             september_names_ralph_in_prose(room, sid).await;
         } else if september_nobody_variant {
@@ -2514,6 +2551,54 @@ async fn septembers_account_that_names_nobody_still_fails_the_pump_lock() {
         !judged[OCTOBER[0]].held,
         "September named nobody at all, so nothing behind October's correction ever said Ralph, \
          and the pump lock held anyway: {}",
+        saying(&judged),
+    );
+}
+
+/// 🚨 **September's own lock stops speaking as though it watched September,
+/// because it cannot: a Query lock reads the finished board.**
+///
+/// Run 20 had October legitimately clear the pump's day — "over the summer"
+/// borrows no precision from "at the survey" — and September's own lock
+/// convicted September for it, saying the question was "still open" when it
+/// had been answered and then correctly revised. The lock's assertions are
+/// unchanged: a year where October clears the day still fails this lock,
+/// because nothing on the pump currently carries it. What changed is that the
+/// sentence no longer names a month or claims a question was never answered.
+#[tokio::test]
+async fn septembers_lock_does_not_blame_september_for_octobers_legitimate_edit() {
+    let (_room, surface) = furnished().await;
+    let boundaries = work_the_year(
+        &surface,
+        &room_document(),
+        &WORKED,
+        &[OCTOBER_ALSO_CLEARS_THE_DAY],
+    )
+    .await;
+    let judged = judge_all(&surface, &boundaries).await;
+    assert!(
+        !judged[SEPTEMBER[0]].held,
+        "October cleared the pump's day, so nothing on the pump currently carries it — the lock \
+         should still fail: {}",
+        saying(&judged),
+    );
+    assert!(
+        !judged[SEPTEMBER[0]].saying.contains("September:")
+            && !judged[SEPTEMBER[0]].saying.contains("still open"),
+        "the sentence still reads as though it watched September and found nothing, when \
+         September wrote the day and a later, legitimate correction removed it: {}",
+        saying(&judged),
+    );
+
+    // **The positive this rests on.** Without it the case above could be
+    // passing on an October that never touched the pump at all.
+    let (_room, surface) = furnished().await;
+    let boundaries = worked_the_year(&surface).await;
+    let judged = judge_all(&surface, &boundaries).await;
+    assert!(
+        judged[SEPTEMBER[0]].held,
+        "the year worked properly, with nothing clearing the pump's day, and September's own \
+         lock still failed: {}",
         saying(&judged),
     );
 }

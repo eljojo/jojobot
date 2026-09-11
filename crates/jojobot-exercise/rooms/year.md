@@ -402,10 +402,21 @@ generates no day assertion here and the lock below names the day instead.
 # it, so a return that happened at the survey is dated the survey. Nothing else
 # on the pump carries that day — February's record is dated February and
 # October's is dated October — so only this sitting can satisfy it.
+#
+# 🚨 **A Query lock reads the FINISHED board and cannot window, so its
+# sentence must not speak as though it watched September itself.** October may
+# legitimately correct this record — the operator's ruling makes that a
+# correction rather than a second claim — and a correction that finds the
+# borrowed precision of "the survey day" no longer accurate for a vaguer later
+# account is entitled to clear it. Run 20's own model did exactly that: it
+# named no exact day for Nelson's account and correctly removed the one it had
+# inherited from Ralph's, and this lock's sentence used to convict September
+# for it. So the sentence below says only what is observably true of the
+# finished room — never who is to blame.
 recall {"subject": "thing:floor-pump", "facts": true}
 carries person:ralph
 carries "happened_at":"2026-06-14"
-say     September: nothing on the pump carries the day it came back, so the question February left open is still open on the record
+say     nothing on the pump currently carries the day it came back, so a reader is left with no day to find — whether it was never recorded, or a later, legitimate correction cleared the only trace of it
 ```
 
 ## Phase 10 — October corrects what September said
