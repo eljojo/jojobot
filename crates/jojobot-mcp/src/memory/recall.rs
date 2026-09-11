@@ -3360,10 +3360,10 @@ mod tests {
     #[tokio::test]
     async fn a_bot_recalled_without_charter_says_so_and_names_the_way_back() {
         let jojobot = handler();
-        make_bot(&jojobot, "hass").await;
+        make_bot(&jojobot, "gamma").await;
         jojobot
             .set_charter(Parameters(SetCharterArgs {
-                bot: "hass".into(),
+                bot: "gamma".into(),
                 prose: "Keeps the kitchen running.".into(),
                 sid: Some(crate::harness::TEST_SID.into()),
             }))
@@ -3374,7 +3374,7 @@ mod tests {
             &jojobot
                 .recall(Parameters(RecallArgs {
                     facts: Some(false),
-                    ..of("bot:hass")
+                    ..of("bot:gamma")
                 }))
                 .await
                 .expect("recall ok"),
@@ -3402,11 +3402,11 @@ mod tests {
     #[tokio::test]
     async fn asking_for_the_charter_lifts_the_elision() {
         let jojobot = handler();
-        make_bot(&jojobot, "hass").await;
+        make_bot(&jojobot, "gamma").await;
         let own = "Keeps the kitchen running.";
         jojobot
             .set_charter(Parameters(SetCharterArgs {
-                bot: "hass".into(),
+                bot: "gamma".into(),
                 prose: own.into(),
                 sid: Some(crate::harness::TEST_SID.into()),
             }))
@@ -3418,7 +3418,7 @@ mod tests {
                 .recall(Parameters(RecallArgs {
                     charter: Some(true),
                     facts: Some(false),
-                    ..of("bot:hass")
+                    ..of("bot:gamma")
                 }))
                 .await
                 .expect("recall ok"),
@@ -3474,10 +3474,10 @@ mod tests {
     async fn a_bot_selecting_view_answers_with_the_small_list_by_default() {
         let jojobot = handler();
         declared_view(&jojobot, "colleagues", &[("selects", "bot")]).await;
-        make_bot(&jojobot, "hass").await;
-        make_bot(&jojobot, "lisa").await;
+        make_bot(&jojobot, "gamma").await;
+        make_bot(&jojobot, "delta").await;
         let expensive = "X".repeat(5_000);
-        for bot in ["hass", "lisa"] {
+        for bot in ["gamma", "delta"] {
             jojobot
                 .set_charter(Parameters(SetCharterArgs {
                     bot: bot.into(),
@@ -3517,11 +3517,11 @@ mod tests {
     async fn a_bot_selecting_view_still_hands_over_a_charter_when_asked() {
         let jojobot = handler();
         declared_view(&jojobot, "colleagues", &[("selects", "bot")]).await;
-        make_bot(&jojobot, "hass").await;
+        make_bot(&jojobot, "gamma").await;
         let own = "Keeps the kitchen running.";
         jojobot
             .set_charter(Parameters(SetCharterArgs {
-                bot: "hass".into(),
+                bot: "gamma".into(),
                 prose: own.into(),
                 sid: Some(crate::harness::TEST_SID.into()),
             }))
@@ -3537,13 +3537,13 @@ mod tests {
                 .await
                 .expect("recall ok"),
         );
-        let hass = body["objects"]
+        let gamma = body["objects"]
             .as_array()
             .expect("objects is a list")
             .iter()
-            .find(|o| o["id"] == "bot:hass")
-            .unwrap_or_else(|| panic!("hass is in the answer: {body}"));
-        assert_eq!(hass["charter"], own, "{body}");
+            .find(|o| o["id"] == "bot:gamma")
+            .unwrap_or_else(|| panic!("gamma is in the answer: {body}"));
+        assert_eq!(gamma["charter"], own, "{body}");
     }
 
     /// **A one-liner rides in the small list as an ordinary field** — no new
@@ -3555,8 +3555,8 @@ mod tests {
     async fn a_colleagues_one_liner_rides_in_the_small_list_and_absence_is_plain() {
         let jojobot = handler();
         declared_view(&jojobot, "colleagues", &[("selects", "bot")]).await;
-        make_bot(&jojobot, "hass").await;
-        make_bot(&jojobot, "lisa").await;
+        make_bot(&jojobot, "gamma").await;
+        make_bot(&jojobot, "delta").await;
         capture_ok(
             &jojobot,
             CaptureArgs {
@@ -3568,7 +3568,7 @@ mod tests {
                     .into_iter()
                     .collect(),
                 ),
-                ..capture_args("bot:hass", "wrote its own one-liner")
+                ..capture_args("bot:gamma", "wrote its own one-liner")
             },
         )
         .await;
@@ -3580,20 +3580,20 @@ mod tests {
                 .expect("recall ok"),
         );
         let objects = body["objects"].as_array().expect("objects is a list");
-        let hass = objects
+        let gamma = objects
             .iter()
-            .find(|o| o["id"] == "bot:hass")
-            .unwrap_or_else(|| panic!("hass is in the answer: {body}"));
+            .find(|o| o["id"] == "bot:gamma")
+            .unwrap_or_else(|| panic!("gamma is in the answer: {body}"));
         assert_eq!(
-            hass["fields"]["one_liner"], "Keeps the kitchen running.",
+            gamma["fields"]["one_liner"], "Keeps the kitchen running.",
             "{body}",
         );
-        let lisa = objects
+        let delta = objects
             .iter()
-            .find(|o| o["id"] == "bot:lisa")
-            .unwrap_or_else(|| panic!("lisa is in the answer: {body}"));
+            .find(|o| o["id"] == "bot:delta")
+            .unwrap_or_else(|| panic!("delta is in the answer: {body}"));
         assert!(
-            lisa["fields"].get("one_liner").is_none(),
+            delta["fields"].get("one_liner").is_none(),
             "a bot with none written carries no key at all, rather than a derived one: {body}",
         );
     }
