@@ -13,8 +13,12 @@ use std::sync::Arc;
 use jojobot::{AppState, build_app};
 use jojobot_adapters::provisioned::Provisioned;
 use jojobot_adapters::search::{IndexedMailboxes, IndexedMemory, IndexedSessions, Retrieval};
+use jojobot_domain::mailbox::Mailboxes;
+use jojobot_domain::mailbox::mention as mailbox_mention;
 use jojobot_domain::mailbox::testing::InMemoryMailboxes;
 use jojobot_domain::memory::testing::InMemoryMemory;
+use jojobot_domain::session::Sessions;
+use jojobot_domain::session::mention as session_mention;
 use jojobot_domain::session::testing::InMemorySessions;
 use rmcp::ServiceExt;
 use rmcp::model::{CallToolRequestParams, ClientCapabilities, ClientInfo, Implementation};
@@ -393,16 +397,32 @@ impl Story {
             let _ = indexed.rebuild().await;
         }
         let indexed_for_seed = indexed.clone();
+        // **Mentions resolve above the raw store and below the index, exactly
+        // as the binary wires it (rule 260).** A mention in a message or a
+        // journal beat has to see the full entity list, and what search holds
+        // must be what a reader sees — a fixture that indexed the bare stores
+        // would serve a jojobot whose journal and mail no rename ever reached.
+        let mail_mentioned: Arc<dyn Mailboxes> = Arc::new(mailbox_mention::Mentioning::new(
+            mail_store.clone(),
+            indexed.clone(),
+        ));
+        let sessions_mentioned: Arc<dyn Sessions> = Arc::new(session_mention::Mentioning::new(
+            runs.clone(),
+            indexed.clone(),
+        ));
         // **Mail goes through the search index, exactly as the binary wires
         // it.** Both worlds sit behind one `search`, so a fixture holding the
         // raw store would serve a jojobot whose mail no story could see —
         // poorer than the deployment it stands for, and silently so.
-        let mail = Arc::new(IndexedMailboxes::new(mail_store.clone(), indexed.index()));
+        let mail = Arc::new(IndexedMailboxes::new(mail_mentioned, indexed.index()));
         // **The retrieval port over ALL THREE halves, exactly as the binary
         // wires it.** A port over fewer answers without ever refreshing the
         // rest, which is a poorer jojobot than the deployment this stands for —
         // and a story would report the fixture's limits as the software's.
-        let indexed_runs = Arc::new(IndexedSessions::new(runs.clone(), indexed.index()));
+        let indexed_runs = Arc::new(IndexedSessions::new(
+            sessions_mentioned.clone(),
+            indexed.index(),
+        ));
         let search = Arc::new(Retrieval::new(
             indexed.index(),
             vec![indexed.clone(), mail.clone(), indexed_runs],
@@ -433,7 +453,7 @@ impl Story {
             memory: indexed.clone(),
             search,
             mailboxes: boxes,
-            sessions: runs.clone(),
+            sessions: sessions_mentioned,
             teachings: Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
             registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
             ui: Some(Arc::new(ui)),
