@@ -110,7 +110,105 @@ async fn one_thing_filed_twice_can_be_put_back_together() {
     // the old handle finds out by searching for it, not by being forwarded.
     //   s.recall("person:nelson-2").await.says("now_resolves_to");
 
+    // ⭐ **The gap the NOTE above draws a line around does not include this.**
+    // A caller holding the stale ADDRESS itself — the second claim's own
+    // `person:nelson-2#…`, not just the spare handle — is told where it went,
+    // never left with an address that reads as a bare miss: the row behind it
+    // is real and stays real, so it is not "unknown," it is "moved."
+    s.refused(
+        "update_fact",
+        json!({"address": second, "content": "trying to correct a claim that already moved"}),
+    )
+    .await
+    .says("name 'person:nelson' instead");
+    s.refused(
+        "retract",
+        json!({"address": second, "reason": "trying to retract a claim that already moved"}),
+    )
+    .await
+    .says("name 'person:nelson' instead");
+
     s.wrap("one person again, and the repair is on the record")
+        .await;
+
+    story.finish().await;
+}
+
+/// **A merge reaches a pointer wearing a rename's OLD name too.** A rename
+/// rewrites nothing: an edge drawn at a handle keeps that handle, whichever
+/// one was current the day it was drawn. `merge` already follows an edge
+/// drawn at the folded side's CURRENT name; this proves it also follows one
+/// drawn at a name that stopped being current before the fold ever happened —
+/// otherwise the pointer dead-ends one hop short, at a row that only forwards.
+///
+/// **Paired, and not optional**: the second claim below is drawn AFTER the
+/// typo is corrected, already at the current name. A fix that only chased
+/// the former handle and stopped sweeping the direct case would pass the
+/// first claim and lose this one.
+#[tokio::test]
+async fn a_merge_follows_a_pointer_drawn_before_the_folded_sides_own_rename() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+
+    s.add("person:ned-flander", "Ned Flanders").await;
+    s.add("person:homer", "Homer").await;
+
+    // Homer's own claim, drawn at the typo — before anybody caught it.
+    s.fact_about(
+        "person:homer",
+        "borrowed a ladder from the neighbor",
+        "connection",
+        "person:ned-flander",
+    )
+    .await;
+
+    // The typo is corrected.
+    s.call(
+        "rename_entity",
+        json!({"handle": "person:ned-flander", "to": "person:ned-flanders"}),
+    )
+    .await;
+
+    // A second claim, drawn after the correction — already at the current
+    // name.
+    s.fact_about(
+        "person:homer",
+        "returned the ladder to the neighbor",
+        "connection",
+        "person:ned-flanders",
+    )
+    .await;
+
+    // Ned turns out to have been filed once before, independently, months
+    // earlier — the guard catches the same name and is overridden, the same
+    // way the first duplicate above got past it.
+    s.add_over_the_screen("person:flanders-original", "Ned Flanders")
+        .await;
+    s.merge_entities(
+        "person:ned-flanders",
+        "person:flanders-original",
+        "one neighbor, filed under the typo and again months earlier",
+    )
+    .await;
+
+    // Both of Homer's claims — one drawn before the rename, one after — now
+    // point at the survivor. Counted, not merely present: a fix that
+    // repointed only one would still say "person:flanders-original" once.
+    let homer = s.recall("person:homer").await;
+    assert_eq!(
+        homer
+            .raw()
+            .matches("\"object\":\"person:flanders-original\"")
+            .count(),
+        2,
+        "not both of Homer's claims followed the fold to the survivor: {}",
+        homer.raw(),
+    );
+    homer
+        .never_says("\"object\":\"person:ned-flander\"")
+        .never_says("\"object\":\"person:ned-flanders\"");
+
+    s.wrap("found the neighbor was filed three times over, and put it right")
         .await;
 
     story.finish().await;
