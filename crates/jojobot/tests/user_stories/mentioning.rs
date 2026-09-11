@@ -206,3 +206,73 @@ async fn a_rename_reaches_months_of_mentions_written_under_the_old_name() {
     s.wrap("corrected a four-month-old typo; everything written under it still finds the place")
         .await;
 }
+
+/// **The payoff reaches a session's own chronology too.** A journal beat is
+/// prose exactly like a claim's content, and rule 260 resolves a mention in
+/// it the same way — proven here by writing one across a rename rather than
+/// reading it back unchanged. `wrap_session`'s own answer is what a story
+/// reads: it carries the whole chronology, so the beat comes back rendered
+/// without a second call.
+///
+/// **Paired, in the same beat**: a second mention, on an entity the rename
+/// never touches, so a beat rewritten wholesale cannot pass this by accident.
+#[tokio::test]
+async fn a_journal_beat_written_before_a_rename_renders_it_on_the_way_out() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+
+    s.add("place:shelbyvile", "Shelbyville").await;
+    s.add("thing:handcart", "The Handcart").await;
+
+    s.journal("looking into a claim near @place:shelbyvile, using notes off @thing:handcart")
+        .await;
+
+    s.call(
+        "rename_entity",
+        json!({"handle": "place:shelbyvile", "to": "place:shelbyville"}),
+    )
+    .await;
+
+    // **The mention, not the record of the add.** The automatic `add_entity`
+    // beat two entries up legitimately names `place:shelbyvile` forever — that
+    // was its handle at the moment the beat happened, a historical fact rather
+    // than a stored pointer. The `@` marks the difference: only a rendered
+    // mention carries it.
+    s.call(
+        "wrap_session",
+        json!({"story": "closed out the trip notes"}),
+    )
+    .await
+    .says("@place:shelbyville")
+    .never_says("@place:shelbyvile")
+    .says("@thing:handcart");
+}
+
+/// **And a mailbox message.** Rule 260 covers a message's body the same way,
+/// so a note filed before a rename still names the thing correctly once read
+/// back — through `search`, the one door onto anybody's mail.
+#[tokio::test]
+async fn a_posted_message_written_before_a_rename_renders_it_on_the_way_out() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+
+    s.add("place:shelbyvile", "Shelbyville").await;
+
+    s.post(
+        "assistant",
+        "a note about the trip",
+        "left the receipts near @place:shelbyvile for whoever picks this up",
+    )
+    .await;
+
+    s.call(
+        "rename_entity",
+        json!({"handle": "place:shelbyvile", "to": "place:shelbyville"}),
+    )
+    .await;
+
+    s.call("search", json!({"query": "receipts", "include_mail": true}))
+        .await
+        .says("place:shelbyville")
+        .never_says("place:shelbyvile");
+}
