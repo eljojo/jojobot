@@ -826,15 +826,17 @@ pub struct Via {
     pub link: Link,
     /// Which way it was walked to get here.
     pub direction: Direction,
-    /// **Every claim drawing this link was taken back.**
+    /// **Every claim drawing this link is archived** — taken back, or
+    /// replaced by a later one; a walk marks either the same way, because a
+    /// reader deciding whether to act on a link does not need to know which.
     ///
-    /// A retracted claim keeps its link rather than losing it, for the reason
-    /// a fact read keeps the claim: dropping it would make a claim somebody
-    /// withdrew and a claim nobody ever made the same answer, and those are
-    /// different things a reader acts on differently.
+    /// An archived claim keeps its link rather than losing it, for the reason
+    /// a fact read keeps the claim: dropping it would make an archived claim
+    /// and a claim nobody ever made the same answer, and those are different
+    /// things a reader acts on differently.
     ///
     /// **A live claim wins.** Two records can draw the same link between the
-    /// same pair, and the link is only taken back when none of them stands.
+    /// same pair, and the link is only marked when none of them stands.
     pub retracted: bool,
 }
 
@@ -1225,7 +1227,7 @@ impl<'a> Ctx<'a> {
                     inbound.entry(object.clone()).or_default().push((
                         *shape,
                         fact.subject.clone(),
-                        fact.status == FactStatus::Retracted,
+                        fact.status == FactStatus::Archived,
                     ));
                 }
             }
@@ -1575,7 +1577,7 @@ impl<'a> Ctx<'a> {
                                 Via {
                                     link: Link::Edge(e.shape),
                                     direction,
-                                    retracted: f.status == FactStatus::Retracted,
+                                    retracted: f.status == FactStatus::Archived,
                                 },
                                 e.object.clone(),
                             )
@@ -1658,7 +1660,7 @@ impl<'a> Ctx<'a> {
                 .iter()
                 .filter_map(|f| f.fields.get(key).map(|cell| (*f, cell)))
                 .flat_map(|(f, cell)| {
-                    let retracted = f.status == FactStatus::Retracted;
+                    let retracted = f.status == FactStatus::Archived;
                     field
                         .items(cell)
                         .into_iter()
@@ -1688,7 +1690,7 @@ impl<'a> Ctx<'a> {
                         Via {
                             link: link(),
                             direction,
-                            retracted: f.status == FactStatus::Retracted,
+                            retracted: f.status == FactStatus::Archived,
                         },
                         f.subject.clone(),
                     )
@@ -3027,7 +3029,7 @@ mod tests {
             .iter_mut()
             .find(|d| d.doc_id == "person:barney-gumble")
             .expect("the store holds Barney");
-        barney.facts[0].status = FactStatus::Retracted;
+        barney.facts[0].status = FactStatus::Archived;
 
         let guests = resolved(
             &scanned,
@@ -3137,7 +3139,7 @@ mod tests {
             .iter_mut()
             .find(|d| d.doc_id == "person:barney-gumble")
             .expect("the store holds Barney");
-        barney.facts[0].status = FactStatus::Retracted;
+        barney.facts[0].status = FactStatus::Archived;
         barney.facts.push(Fact {
             edge: Some(Edge {
                 shape: EdgeShape::Attendance,

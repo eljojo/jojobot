@@ -176,7 +176,7 @@ async fn nothing_on_the_surface_goes_unexercised() {
         .fact("person:homer", "worked nights until the spring")
         .await;
     s.supersede(&moved_past).await;
-    s.call("search", json!({"status": "superseded"}))
+    s.call("search", json!({"status": "archived"}))
         .await
         .says(&moved_past)
         .never_says(&told);

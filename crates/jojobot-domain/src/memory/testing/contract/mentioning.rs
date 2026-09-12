@@ -881,7 +881,7 @@ pub async fn a_retraction_still_follows_a_later_rename<M: Memory + ?Sized>(store
         .expect("the retracted claim is still there");
     assert_eq!(
         after.status,
-        FactStatus::Retracted,
+        FactStatus::Archived,
         "the retraction did not land: {after:?}",
     );
     assert_eq!(
@@ -1338,7 +1338,7 @@ pub async fn a_retraction_through_a_stale_address_reaches_the_record_it_always_n
         .expect("the original claim is still there, retracted or not");
     assert_eq!(
         original.status,
-        FactStatus::Retracted,
+        FactStatus::Archived,
         "the retraction through a stale address did not reach the record it always named — \
          it still stands: {original:?}",
     );

@@ -436,20 +436,20 @@ async fn moving_abroad() {
     s.recall("project:atlas")
         .await
         .claim(&first_date)
-        .says("superseded");
+        .says("archived");
     s.find("embassy appointment")
         .await
         .says("rebooked to the ninth")
         .never_says("appointment is on the first");
 
-    // GAP — and nothing says WHICH claim replaced it. A superseded claim knows
+    // GAP — and nothing says WHICH claim replaced it. An archived claim knows
     // it was moved past and not what moved past it, so a reader reconstructing
     // the sequence matches the wording by hand.
     //   s.superseded_by("project:atlas#f3", &rebooked).await;
     s.recall("project:atlas")
         .await
         .claim(&first_date)
-        .says("superseded")
+        .says("archived")
         .never_says("superseded_by");
 
     s.wrap("still in progress").await;

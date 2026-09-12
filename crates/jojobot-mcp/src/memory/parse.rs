@@ -182,24 +182,33 @@ pub(crate) fn parse_edge(shape: Option<&str>, object: Option<&str>) -> ParsedEdg
 /// fallback to active — a mistyped status that quietly became `active` would
 /// hide the state the caller was reaching for.
 ///
-/// **`negated` is refused by name.** The reader still maps a legacy `negated`
-/// cell to superseded (rows carrying it are on disk), but the input grammar
-/// does not: a caller reaching for it is reaching for behaviour that is gone,
-/// and silently aliasing it to superseded would file a refutation where nobody
-/// would look for it. The error says what to do instead.
+/// **`negated` and `superseded`/`retracted` are refused by name.** The reader
+/// still maps all of them to `archived` (rows carrying any are on disk), but
+/// the input grammar does not: a caller reaching for one is reaching for a
+/// spelling this build retired, and silently aliasing it would teach the old
+/// model back to whoever sent it. The error says what to do instead.
 pub(crate) fn parse_status(raw: &str) -> Result<FactStatus, McpError> {
     match raw.trim() {
         "active" => Ok(FactStatus::Active),
-        "superseded" => Ok(FactStatus::Superseded),
+        "archived" => Ok(FactStatus::Archived),
         "negated" => Err(McpError::invalid_params(
             "there is no 'negated' status: to record that something is NOT so, rewrite the \
              fact's content to state the negative truth — it stays 'active', because that is \
-             the current truth. Use 'superseded' only for a claim a later fact replaced."
+             the current truth. Use 'archived' only for a claim that stopped being current."
                 .to_string(),
             None,
         )),
+        "superseded" | "retracted" => Err(McpError::invalid_params(
+            format!(
+                "there is no '{}' status: it is 'archived' now, whether the claim changed or \
+                 was never true. A note on the record says which, and a replacement, if there \
+                 is one, is an ordinary new fact naming this one as derived_from.",
+                raw.trim(),
+            ),
+            None,
+        )),
         other => Err(McpError::invalid_params(
-            format!("status must be 'active' or 'superseded', got '{other}'"),
+            format!("status must be 'active' or 'archived', got '{other}'"),
             None,
         )),
     }

@@ -486,9 +486,9 @@ mod tests {
             "blocked",
             // The norms the box-minting review added (2026-07-26): a mailbox is
             // a channel someone drains, never minted mid-errand; changed claims
-            // supersede rather than overwrite; ambiguity goes to the operator.
+            // archive rather than overwrite; ambiguity goes to the operator.
             "drain",
-            "superseded",
+            "archived",
             "ask the operator",
             // M4: an identity is a thing a session can be, and the orientation
             // has to say what one is made of before the door hands one over.

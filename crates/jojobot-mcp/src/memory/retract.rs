@@ -40,9 +40,9 @@ impl Jojobot {
     #[tool(
         description = "Take back a record — one way, never reversed, and a deliberate act rather \
                        than a flag on an edit. Nothing is removed: the record keeps its address, \
-                       its words and its place, and is marked retracted; beside it lands a dated \
+                       its words and its place, and is marked archived; beside it lands a dated \
                        record of the retraction itself, naming what it takes back and the reason \
-                       if you give one. The two then read as one story. A retracted record is \
+                       if you give one. The two then read as one story. An archived record is \
                        out of every default read and out of \
                        every later edit, INCLUDING a status flip back — there is no un-retract, \
                        so if you are unsure, capture what is so now instead. THIS IS THE MOVE FOR \
@@ -51,8 +51,8 @@ impl Jojobot {
                        active, because the negative truth is the truth, and it leaves one current \
                        record where this leaves two. Retracting a retraction comes back status: \
                        blocked: it is the last word on what it takes back. Retracting something \
-                       ALREADY retracted comes back blocked as well, and reads differently on \
-                       purpose: it says the record is retracted, because it is — that answer \
+                       ALREADY archived comes back blocked as well, and reads differently on \
+                       purpose: it says the record is archived, because it is — that answer \
                        tells you the state you asked for is the state jojobot holds, not that \
                        nothing happened. An address that names no record comes back blocked too, \
                        with the addresses that do exist."
@@ -158,7 +158,7 @@ mod tests {
     ///
     /// ⚠️ **The model an agent arrives with is that a retraction removes the
     /// claim. It does not.** The record stays in the store, comes back from a
-    /// plain `recall` marked `retracted`, and an edge on it still reaches
+    /// plain `recall` marked `archived`, and an edge on it still reaches
     /// whatever it pointed at — now saying so, which
     /// [`a_walk_says_the_claim_behind_a_link_was_taken_back`] is about.
     ///
@@ -340,7 +340,7 @@ mod tests {
             .find(|f| f["address"] == address.as_str())
             .unwrap_or_else(|| panic!("a plain recall still returns it: {read_back}"));
         assert_eq!(
-            kept["status"], "retracted",
+            kept["status"], "archived",
             "it comes back marked rather than gone: {read_back}",
         );
         assert!(
@@ -509,7 +509,7 @@ mod tests {
                 .expect("retract ok"),
         );
         assert_eq!(body["retracted"]["address"], address.as_str());
-        assert_eq!(body["retracted"]["status"], "retracted");
+        assert_eq!(body["retracted"]["status"], "archived");
         assert_eq!(
             body["retracted"]["content"], "moved to the 14th",
             "marked, not edited"
@@ -551,7 +551,7 @@ mod tests {
         );
         assert_ne!(body["status"], "blocked", "{body}");
         assert_eq!(body["retracted"]["address"], address.as_str());
-        assert_eq!(body["retracted"]["status"], "retracted");
+        assert_eq!(body["retracted"]["status"], "archived");
 
         // …and the mark is on the record a later reader takes.
         let recalled = json_of(
@@ -564,7 +564,7 @@ mod tests {
                 .expect("recall ok"),
         );
         assert_eq!(
-            recalled["objects"][0]["facts"][0]["status"], "retracted",
+            recalled["objects"][0]["facts"][0]["status"], "archived",
             "{recalled}"
         );
     }
@@ -650,7 +650,7 @@ mod tests {
                 .expect("recall ok"),
         );
         assert_eq!(
-            recalled["objects"][0]["facts"][0]["status"], "retracted",
+            recalled["objects"][0]["facts"][0]["status"], "archived",
             "neither one moved it: {recalled}"
         );
     }

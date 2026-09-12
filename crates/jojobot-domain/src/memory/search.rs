@@ -448,8 +448,9 @@ impl EntityRef {
 /// **What became of the claim a derivation was worked out from.**
 ///
 /// A derivation is a reading of another claim, and a reading stops being good
-/// when what it read is withdrawn. Nothing on a hit said so, so a gloss went on
-/// being served as an answer long after the claim under it was taken back.
+/// when what it read is archived. Nothing on a hit said so, so a gloss went on
+/// being served as an answer long after the claim under it stopped being
+/// current.
 ///
 /// **Three states, because "the source stands" and "jojobot cannot see the
 /// source" are different claims** and a reader acts on each of them
@@ -457,23 +458,18 @@ impl EntityRef {
 /// the corpus, drawn here over one link.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SourceStanding {
-    /// The source is in the index, and neither taken back nor replaced.
+    /// The source is in the index, and still current.
     Stands,
-    /// **A later claim replaced the source after this was worked out from it.**
+    /// **The source stopped being current after this was worked out from
+    /// it** — replaced by a later claim, or taken back outright.
     ///
-    /// ⛔️ Not [`Stands`](Self::Stands): the source did not stand, it moved,
-    /// which is the case this marker exists for. ⛔️ And not
-    /// [`Retracted`](Self::Retracted) either — a reader wants those apart. One
-    /// says *your source was withdrawn*; this one says *your source has a
-    /// successor you have not seen*.
-    Superseded,
-    /// **The source was taken back AFTER this claim was worked out from it.**
-    ///
-    /// It can only have got this way afterwards: a write naming a retracted
-    /// claim as its source is refused, at capture and at edit alike. So this is
-    /// never a citation that was bad when it was written — it is one that
-    /// stopped being good.
-    Retracted,
+    /// ⛔️ Not [`Stands`](Self::Stands): the source did not stand, whichever
+    /// of the two it was, which is the case this marker exists for. One
+    /// status covers both on the source's own row ([`FactStatus::Archived`]),
+    /// so a reader here gets the same one answer: *your source is no longer
+    /// current, and a replacement, if there is one, is an ordinary claim
+    /// naming this one as [`Fact::derived_from`]*.
+    Archived,
     /// **The index does not hold the source, so nothing can be said about it.**
     ///
     /// ⛔️ Never collapse this into [`Stands`](Self::Stands). A reader told a
@@ -488,8 +484,7 @@ impl SourceStanding {
     pub fn as_token(self) -> &'static str {
         match self {
             SourceStanding::Stands => "stands",
-            SourceStanding::Superseded => "superseded",
-            SourceStanding::Retracted => "retracted",
+            SourceStanding::Archived => "archived",
             SourceStanding::Unreadable => "unreadable",
         }
     }
@@ -724,7 +719,7 @@ mod tests {
         assert!(SearchQuery::text("   ").validate().is_err());
     }
 
-    /// A structural filter is enough on its own: "every superseded fact" and
+    /// A structural filter is enough on its own: "every archived fact" and
     /// "which people are in Shelbyville" carry no keyword.
     #[test]
     fn a_structural_filter_alone_is_a_valid_query() {
@@ -732,11 +727,11 @@ mod tests {
         // about something else, so the set is setup — and setup comes from
         // standing a store up, filled from what that store holds.
         let _booted = crate::memory::testing::InMemoryMemory::booted();
-        let superseded = SearchQuery {
-            status: Some(FactStatus::Superseded),
+        let archived = SearchQuery {
+            status: Some(FactStatus::Archived),
             ..Default::default()
         };
-        assert!(superseded.validate().is_ok());
+        assert!(archived.validate().is_ok());
         let edged = SearchQuery {
             kind: Some(EntityKind::PERSON),
             edge: Some(EdgeFilter {
@@ -762,7 +757,7 @@ mod tests {
         );
         for scoped in [
             SearchQuery {
-                status: Some(FactStatus::Superseded),
+                status: Some(FactStatus::Archived),
                 ..Default::default()
             },
             SearchQuery {

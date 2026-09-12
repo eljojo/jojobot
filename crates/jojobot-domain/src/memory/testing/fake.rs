@@ -935,17 +935,6 @@ impl Memory for InMemoryMemory {
                 .expect("checked to exist just above");
             FactAddress::new(key, source.local.clone())
         });
-        // A withdrawn claim is still there, and it is no longer evidence.
-        if let Some(source) = &fact.derived_from
-            && let Some(source_key) = self.storage_key(&source.home)
-            && facts.iter().any(|f| {
-                f.home == source_key && f.id == source.local && f.status == FactStatus::Retracted
-            })
-        {
-            return Err(MemoryError::SourceRetracted {
-                attempted: source.to_string(),
-            });
-        }
         // **What the subject is stored as** — the badge it wears, or its own
         // handle when it wears none. Already resolved above, direct or
         // through its rename history.
@@ -1239,16 +1228,13 @@ impl Memory for InMemoryMemory {
             });
         };
         let fact = &found;
-        // A retracted row is out of reach of an ordinary edit — checked here,
+        // An archived row is out of reach of an ordinary edit — checked here,
         // beside the real store's copy, because one-way that holds in only one
         // adapter holds until somebody switches adapters.
-        // A retracted row is out of reach of an ordinary edit — checked here,
-        // beside the real store's copy, because one-way that holds in only one
-        // adapter holds until somebody switches adapters.
-        if fact.status == FactStatus::Retracted {
+        if fact.status == FactStatus::Archived {
             return Err(MemoryError::NotRetractable {
                 attempted: address.to_string(),
-                why: "it is retracted, and a retracted record is not editable — retraction is \
+                why: "it is archived, and an archived record is not editable — archiving is \
                       one-way. Capture what is so now as a new record"
                     .to_string(),
             });
@@ -1281,21 +1267,6 @@ impl Memory for InMemoryMemory {
                     },
                 });
             }
-        }
-        // **And the withdrawn-source rule, for the same reason.** An edit that
-        // points a claim at a claim somebody took back leaves the store in the
-        // state a capture is refused for, so a check on the capture path alone
-        // is a rule with a way around it — and the edit is the way a session
-        // records where a claim came from after writing it.
-        if let Some(source) = &patch.derived_from
-            && let Some(source_key) = self.storage_key(&source.home)
-            && facts.iter().any(|f| {
-                f.home == source_key && f.id == source.local && f.status == FactStatus::Retracted
-            })
-        {
-            return Err(MemoryError::SourceRetracted {
-                attempted: source.to_string(),
-            });
         }
         // **Every claim a mark names faces the same existence rule a source
         // does** — a mark is a set of citations, and a citation to nothing
@@ -1721,7 +1692,7 @@ impl Memory for InMemoryMemory {
             stale_after: None,
         };
         let retracted = Fact {
-            status: FactStatus::Retracted,
+            status: FactStatus::Archived,
             ..target
         };
         for fact in facts.iter_mut() {

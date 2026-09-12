@@ -1185,8 +1185,8 @@ impl FullTextIndex {
         let f = &self.fields;
         let mut clauses = self.text_clauses(query);
         clauses.push(self.must_term(f.class, CLASS_FACT));
-        // The default is the whole point of the field: a superseded fact stays
-        // out of an ordinary search, and `status: superseded` is how it is
+        // The default is the whole point of the field: an archived fact stays
+        // out of an ordinary search, and `status: archived` is how it is
         // reached deliberately.
         clauses.push(self.must_term(f.status, query.status.unwrap_or_default().as_token()));
         if let Some(kind) = query.kind {
@@ -1429,13 +1429,10 @@ fn standing_of(mirror: &[DocMirror], source: Option<&FactAddress>) -> Option<Sou
             .flat_map(|doc| doc.scanned.facts.iter())
             .find(|held| &held.address() == source)
             .map_or(SourceStanding::Unreadable, |held| match held.status {
-                FactStatus::Retracted => SourceStanding::Retracted,
-                // **Superseded is not taken back, and it is not standing
-                // either.** A later claim replaced this one and the row is kept
-                // so references survive. A reader of a derivation wants the two
-                // apart: one says the source was withdrawn, the other says it
-                // has a successor they have not seen.
-                FactStatus::Superseded => SourceStanding::Superseded,
+                // **Archived is not standing**, whether the row was taken
+                // back or replaced by a later claim — the row is kept so
+                // references survive, but it is no longer current.
+                FactStatus::Archived => SourceStanding::Archived,
                 FactStatus::Active => SourceStanding::Stands,
             }),
     )
@@ -3325,7 +3322,7 @@ mod tests {
         }
     }
 
-    /// A fact-only filter narrows to facts. Asking for "superseded" and getting an
+    /// A fact-only filter narrows to facts. Asking for "archived" and getting an
     /// entity back — entities have no lifecycle — would be noise dressed as a hit.
     #[tokio::test]
     async fn a_fact_only_filter_returns_facts_alone() {
@@ -3922,9 +3919,9 @@ mod tests {
     /// it stops being served, so the state has to survive the journey out to the
     /// store and back rather than only the write that set it.
     ///
-    /// Both of the states that leave a row standing are driven here, because
-    /// they are set by different verbs: `retract` marks an event, and an
-    /// ordinary edit is what moves a fact to superseded.
+    /// Both roads to archived are driven here, because they are set by
+    /// different verbs: `retract` marks an event, and an ordinary edit is
+    /// what moves a fact there directly.
     #[tokio::test]
     async fn a_claim_taken_back_before_the_scan_is_not_served_after_it() {
         let inner = Arc::new(InMemoryMemory::booted());
@@ -3980,7 +3977,7 @@ mod tests {
             .update_fact(
                 &moved_past.address(),
                 FactPatch {
-                    status: Some(FactStatus::Superseded),
+                    status: Some(FactStatus::Archived),
                     ..Default::default()
                 },
             )
@@ -4880,18 +4877,19 @@ mod tests {
         );
     }
 
-    /// 🚨 **A derivation says when the claim under it was taken back.**
+    /// 🚨 **A derivation says when the claim under it was archived.**
     ///
     /// The ranking demotion is not enough on its own: a gloss that still ranks
     /// is still served, and a reader has no way to tell one whose source
-    /// stands from one whose source was withdrawn. **The store holds the
+    /// stands from one whose source was archived. **The store holds the
     /// answer and no hit carried it.**
     ///
-    /// ⭐ **The signal is the source's own status, and it is honest because a
-    /// write may not NAME a retracted claim as its source** — refused at
-    /// capture and at edit alike. So a derivation can only reach this state by
-    /// the source being taken back afterwards, which is exactly *the source
-    /// moved and this did not*.
+    /// ⭐ **The signal is the source's own status.** One value now covers a
+    /// source taken back with no replacement and a source a later claim
+    /// replaced — two fixtures below reach `Archived` by different roads
+    /// (one directly, one through a claim that then names it as
+    /// [`Fact::derived_from`]) and both report the same standing, which is
+    /// the point: nothing downstream needs to tell them apart.
     ///
     /// ⚠️ **A stale one and a fresh one in the SAME read**, because a marker
     /// that always fires is noise and one that never fires is not measuring.
@@ -4909,7 +4907,7 @@ mod tests {
         };
         let stands = fact("person:milhouse", "f1", "the committee meets", day);
         let withdrawn = Fact {
-            status: FactStatus::Retracted,
+            status: FactStatus::Archived,
             ..fact("person:milhouse", "f2", "the committee is disbanded", day)
         };
         let on_solid_ground = Fact {
@@ -4926,10 +4924,11 @@ mod tests {
             derived_from: Some(at("person:ralph", "f9")),
             ..fact("person:milhouse", "f5", "the committee moved rooms", day)
         };
-        // **Replaced, not withdrawn.** A later claim took over, so the source
-        // did not stand — and it was not taken back either.
+        // **Archived by replacement, not by being taken back.** A later
+        // claim named this one as its source, so the source did not stand —
+        // reaching `Archived` the other road from `withdrawn` above.
         let replaced = Fact {
-            status: FactStatus::Superseded,
+            status: FactStatus::Archived,
             ..fact("person:milhouse", "f7", "the committee met monthly", day)
         };
         let read_off_it = Fact {
@@ -4985,7 +4984,7 @@ mod tests {
         );
         assert_eq!(
             standing_of("f4"),
-            Some(SourceStanding::Retracted),
+            Some(SourceStanding::Archived),
             "a derivation outlived the claim it was worked out from and said nothing",
         );
         assert_eq!(
@@ -4995,7 +4994,7 @@ mod tests {
         );
         assert_eq!(
             standing_of("f8"),
-            Some(SourceStanding::Superseded),
+            Some(SourceStanding::Archived),
             "a derivation whose source was replaced was reported as resting on one that stands",
         );
         assert_eq!(

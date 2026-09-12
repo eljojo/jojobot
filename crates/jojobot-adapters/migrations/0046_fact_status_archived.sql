@@ -1,0 +1,14 @@
+-- Every claim carrying the retired `superseded`, `retracted` or `negated`
+-- status becomes `archived`.
+--
+-- The two marks this collapses were always the same shape from a reader's
+-- side — a row kept so references survive, excluded from a default search —
+-- and the one place that tried to tell them apart got it wrong for exactly
+-- one of the two, silently: a link from a replaced claim came back unflagged
+-- where a link from a retracted one did not.
+--
+-- `FactStatus::from_token` already reads all three retired tokens as
+-- archived on the way in, so this backfill is not required for a read to be
+-- correct. It is required for the spelling on disk to say what the store
+-- now means, rather than leaning on a lazy read forever.
+UPDATE fact SET status = 'archived' WHERE status IN ('superseded', 'retracted', 'negated');

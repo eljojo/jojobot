@@ -30,7 +30,7 @@ pub struct SearchArgs {
     /// or the kind of the entity whose prose matched.
     #[serde(default)]
     pub(crate) kind: Option<String>,
-    /// `active` (the default) or `superseded`. A superseded fact is **excluded
+    /// `active` (the default) or `archived`. An archived fact is **excluded
     /// unless asked for by name** — a claim already moved past must not come
     /// back as current truth.
     #[serde(default)]
@@ -504,7 +504,7 @@ impl Jojobot {
                        exact handle or address. One ranked list over entities, facts, free \
                        prose AND the messages in mailboxes at once. `query` is free text (ALL \
                        words must match) and is optional when a filter narrows it: kind · status \
-                       (default active; superseded is excluded unless named) · provenance · \
+                       (default active; archived is excluded unless named) · provenance · \
                        standing (`open` is how you ask which claims are still in doubt) · \
                        subject · edge {shape, object} · answers_type · fits_type; a call with \
                        neither query nor one of those filters is refused, and include_mail is not \
@@ -764,7 +764,7 @@ mod tests {
     fn the_fact_scoped_note_names_every_filter_that_reaches_it() {
         let served = mail_coverage(
             &SearchQuery {
-                status: Some(FactStatus::Superseded),
+                status: Some(FactStatus::Archived),
                 ..asking_for_mail()
             },
             Coverage::Loaded,
@@ -864,7 +864,7 @@ mod tests {
                 answers_type: None,
                 query: Some("winter".into()),
                 kind: Some("person".into()),
-                status: Some("superseded".into()),
+                status: Some("archived".into()),
                 provenance: Some("testimony".into()),
                 standing: Some("open".into()),
                 subject: Some("person:alpha".into()),
@@ -888,7 +888,7 @@ mod tests {
             "the caller's exclusion must reach the port"
         );
         assert_eq!(query.kind, Some(EntityKind::PERSON));
-        assert_eq!(query.status, Some(FactStatus::Superseded));
+        assert_eq!(query.status, Some(FactStatus::Archived));
         assert_eq!(query.provenance, Some(Provenance::Testimony));
         assert_eq!(query.standing, Some(Standing::Open));
         assert_eq!(
@@ -943,7 +943,7 @@ mod tests {
     }
 
     /// Bad tokens are client errors, not silent fallbacks: a mistyped `status`
-    /// that quietly became `active` would answer a question about superseded
+    /// that quietly became `active` would answer a question about archived
     /// rows with the live ones and look like a straight answer.
     ///
     /// **Every case carries query text**, so the refusal can only be the bad
@@ -1760,7 +1760,7 @@ mod tests {
             (
                 "status",
                 SearchQuery {
-                    status: Some(FactStatus::Superseded),
+                    status: Some(FactStatus::Archived),
                     ..SearchQuery::default()
                 },
             ),

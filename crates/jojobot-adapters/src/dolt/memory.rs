@@ -1782,20 +1782,16 @@ impl Memory for DoltMemory {
                 });
             };
             let resolved_source = FactAddress::new(source_key, source.local.clone());
-            match self.read_fact(&mut tx, &resolved_source).await? {
-                None => {
-                    return Err(MemoryError::UnknownFact {
-                        attempted: source.to_string(),
-                        nearest: self.addresses_in(&mut tx, &resolved_source.home).await?,
-                    });
-                }
-                // A withdrawn claim is still there and is no longer evidence.
-                Some(held) if held.status == FactStatus::Retracted => {
-                    return Err(MemoryError::SourceRetracted {
-                        attempted: source.to_string(),
-                    });
-                }
-                Some(_) => {}
+            // **Archive is a visibility switch, not a validity gate** — a
+            // source that is archived may still be cited. The claim must
+            // exist; whether it still stands is the reader's judgment, and
+            // the MCP layer names an archived source in the write's own
+            // receipt so the judgment has something to work from.
+            if self.read_fact(&mut tx, &resolved_source).await?.is_none() {
+                return Err(MemoryError::UnknownFact {
+                    attempted: source.to_string(),
+                    nearest: self.addresses_in(&mut tx, &resolved_source.home).await?,
+                });
             }
             Some(resolved_source)
         } else {
@@ -2219,12 +2215,12 @@ impl Memory for DoltMemory {
         // rewrite any of them.
         fact.home = key.clone();
         fact.subject = key.clone();
-        // A retracted row is out of reach of an ordinary edit — one-way is
+        // An archived row is out of reach of an ordinary edit — one-way is
         // enforced here rather than intended elsewhere.
-        if fact.status == FactStatus::Retracted {
+        if fact.status == FactStatus::Archived {
             return Err(MemoryError::NotRetractable {
                 attempted: address.to_string(),
-                why: "it is retracted, and a retracted record is not editable — retraction is \
+                why: "it is archived, and an archived record is not editable — archiving is \
                       one-way. Capture what is so now as a new record"
                     .to_string(),
             });
@@ -2280,22 +2276,18 @@ impl Memory for DoltMemory {
                     nearest: guard::screen(&source.home, &[], &index),
                 });
             };
-            match self
+            // **Archive is a visibility switch, not a validity gate** — a
+            // source that is archived may still be cited; see the same note
+            // in `capture`.
+            if self
                 .read_fact(&mut tx, &FactAddress::new(source_key, source.local.clone()))
                 .await?
+                .is_none()
             {
-                None => {
-                    return Err(MemoryError::UnknownFact {
-                        attempted: source.to_string(),
-                        nearest: self.addresses_in(&mut tx, &source.home).await?,
-                    });
-                }
-                Some(held) if held.status == FactStatus::Retracted => {
-                    return Err(MemoryError::SourceRetracted {
-                        attempted: source.to_string(),
-                    });
-                }
-                Some(_) => {}
+                return Err(MemoryError::UnknownFact {
+                    attempted: source.to_string(),
+                    nearest: self.addresses_in(&mut tx, &source.home).await?,
+                });
             }
         }
         apply_fact_patch(&mut fact, &patch)?;
@@ -2627,7 +2619,7 @@ impl Memory for DoltMemory {
             stale_after: None,
         };
         let retracted = Fact {
-            status: FactStatus::Retracted,
+            status: FactStatus::Archived,
             ..target
         };
         Self::write_fact(&mut tx, &retracted, &self.clock).await?;

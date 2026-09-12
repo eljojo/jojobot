@@ -332,9 +332,31 @@ impl Jojobot {
         } else {
             String::new()
         };
+        // **Archive is a visibility switch, not a validity gate** — citing an
+        // archived claim as derived_from is permitted, so the caller has to
+        // be told rather than left to notice on a later read. Silence here
+        // would be the refusal this slice removed, arriving anyway as an
+        // omission.
+        let source_note = match &fact.derived_from {
+            Some(source) => self
+                .memory
+                .recall(&source.home)
+                .await
+                .ok()
+                .and_then(|facts| facts.into_iter().find(|f| f.id == source.local))
+                .filter(|f| f.status == FactStatus::Archived)
+                .map(|_| {
+                    format!(
+                        " The claim this was derived from, {source}, is archived — read it to \
+                         judge whether the citation still holds."
+                    )
+                })
+                .unwrap_or_default(),
+            None => String::new(),
+        };
         format!(
             "Recorded as an additional claim.{standing} No record was edited and none was \
-             removed.{keys}{basis}"
+             removed.{keys}{basis}{source_note}"
         )
     }
 
@@ -2082,6 +2104,51 @@ mod tests {
                 .len(),
             2,
             "a refused capture wrote nothing: {recalled}"
+        );
+    }
+
+    /// **Citing an archived claim as `derived_from` is permitted, and the
+    /// caller is told rather than left to notice on a later read.**
+    ///
+    /// Archive is a visibility switch, not a validity gate: refusing the
+    /// citation would make archiving decide what may be worked from, which
+    /// is the thing this slice removed. The write must still go through, and
+    /// the postcondition — the one place a caller reads what a write did —
+    /// has to name the archived source, or the caller cannot tell without a
+    /// second call.
+    #[tokio::test]
+    async fn citing_an_archived_source_is_allowed_and_named_on_the_receipt() {
+        let jojobot = handler();
+        let source = capture_ok(&jojobot, capture_args("alpha", "said the ferry moved")).await;
+        let address = source["address"].as_str().expect("an address").to_string();
+
+        jojobot
+            .retract(Parameters(crate::memory::retract::RetractArgs {
+                address: address.clone(),
+                reason: Some("misread the notice".into()),
+                recorded_at: None,
+                sid: Some(crate::harness::TEST_SID.into()),
+            }))
+            .await
+            .expect("retract answers");
+
+        let linked = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                derived_from: Some(address.clone()),
+                ..capture_args("alpha", "so the crossing is longer")
+            },
+        )
+        .await;
+        assert_eq!(
+            linked["derived_from"], address,
+            "a claim citing an archived source must still be written: {linked}"
+        );
+        assert!(
+            linked["postcondition"]
+                .as_str()
+                .is_some_and(|note| note.contains(&address) && note.contains("archived")),
+            "the receipt did not name the archived source the claim rests on: {linked}"
         );
     }
 

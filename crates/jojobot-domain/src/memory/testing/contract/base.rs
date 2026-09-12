@@ -1304,10 +1304,11 @@ pub async fn a_claims_lineage_is_walkable_from_its_source<M: Memory>(store: &M) 
         "…and it is not found under the source it now names",
     );
 
-    // **A claim that was taken back cannot be what another claim rests
-    // on.** It is still there — retraction is a state, not a deletion — so
-    // this is not the missing-source refusal: it is the same claim, no
-    // longer able to serve as evidence.
+    // **Archive is a visibility switch, not a validity gate.** A claim that
+    // was taken back is still there — retraction is a state, not a
+    // deletion — and it may still be what another claim rests on. Refusing
+    // it would make archiving decide what may be cited, which is the
+    // validity gate this store just stopped being.
     let withdrawn = capture(
         store,
         NewFact::about(subject.clone(), "the pier is open again", date(2026, 4, 3)),
@@ -1321,48 +1322,50 @@ pub async fn a_claims_lineage_is_walkable_from_its_source<M: Memory>(store: &M) 
         )
         .await
         .expect("the retraction lands");
-    let refused = store
-        .capture(NewFact {
+    let resting_on_archived = capture(
+        store,
+        NewFact {
             derived_from: Some(withdrawn.address()),
             ..NewFact::about(
                 subject.clone(),
                 "so the crossing is short again",
                 date(2026, 4, 5),
             )
-        })
-        .await
-        .expect_err("a claim resting on a withdrawn one is refused");
-    assert!(
-        matches!(refused, MemoryError::SourceRetracted { .. }),
-        "a claim was allowed to rest on one that had been taken back: {refused:?}",
+        },
+    )
+    .await;
+    assert_eq!(
+        resting_on_archived.derived_from.map(|a| a.to_string()),
+        Some(withdrawn.address().to_string()),
+        "a claim citing an archived source must still be allowed to name it",
     );
 
-    // **The same rule reached by an EDIT.** A pointer set on a claim that
-    // already exists lands the store in the identical state a capture
+    // **The same permission reached by an EDIT.** A pointer set on a claim
+    // that already exists lands the store in the identical state a capture
     // would, so a check on one path alone leaves the other one open — and
     // the edit is the path a session takes when it works out where a claim
     // came from after writing it.
-    let refused = store
-        .update_fact(
-            &built.address(),
-            FactPatch {
-                derived_from: Some(withdrawn.address()),
-                ..Default::default()
-            },
-        )
-        .await
-        .expect_err("an edit may not point a claim at a withdrawn one either");
-    assert!(
-        matches!(refused, MemoryError::SourceRetracted { .. }),
-        "an edit was allowed to rest a claim on one that had been taken back: {refused:?}",
+    let repointed = edit(
+        store,
+        &built.address(),
+        FactPatch {
+            derived_from: Some(withdrawn.address()),
+            ..Default::default()
+        },
+    )
+    .await;
+    assert_eq!(
+        repointed.derived_from.map(|a| a.to_string()),
+        Some(withdrawn.address().to_string()),
+        "an edit citing an archived source must still be allowed to name it",
     );
     assert_eq!(
         read_back(store, &subject, &built.id)
             .await
             .derived_from
             .map(|a| a.to_string()),
-        Some(other.address().to_string()),
-        "…and the refused edit left the pointer where it was",
+        Some(withdrawn.address().to_string()),
+        "…and the pointer the edit set is what a later read sees",
     );
 
     // **The positive it depends on**: the same claim goes through when it
@@ -1485,7 +1488,7 @@ pub async fn referring_to_answers_from_the_far_end<M: Memory>(store: &M) {
         .unwrap_or_else(|| panic!("the withdrawn record is not in the answer: {after:?}"));
     assert_eq!(
         taken_back.status,
-        FactStatus::Retracted,
+        FactStatus::Archived,
         "the answer hides what state a record is in, so no reader above can filter on it",
     );
 }
@@ -3923,7 +3926,7 @@ pub async fn retracting_a_record_marks_it_and_records_why<M: Memory>(store: &M) 
     assert_eq!(taken_back.retracted.fields, event.fields);
     assert_eq!(
         taken_back.retracted.status,
-        FactStatus::Retracted,
+        FactStatus::Archived,
         "the row is marked rather than removed"
     );
 
@@ -3938,7 +3941,7 @@ pub async fn retracting_a_record_marks_it_and_records_why<M: Memory>(store: &M) 
 
     // Both are on the read path, which is what makes any of it durable.
     let seen = read_back(store, &subject, &event.id).await;
-    assert_eq!(seen.status, FactStatus::Retracted);
+    assert_eq!(seen.status, FactStatus::Archived);
     assert_eq!(
         seen.content, event.content,
         "the words are untouched: it is marked, not edited"
@@ -3970,7 +3973,7 @@ pub async fn a_retraction_needs_no_reason<M: Memory>(store: &M) {
 
     // The act landed in full: the row is marked and the account is a real
     // record, linked, dated, and on the read path like any other.
-    assert_eq!(taken_back.retracted.status, FactStatus::Retracted);
+    assert_eq!(taken_back.retracted.status, FactStatus::Archived);
     assert_eq!(
         taken_back.record.retracts(),
         Some(event.address().to_string().as_str()),
@@ -4051,7 +4054,7 @@ pub async fn a_retraction_is_one_way<M: Memory>(store: &M) {
     );
     assert_eq!(
         read_back(store, &subject, &event.id).await.status,
-        FactStatus::Retracted,
+        FactStatus::Archived,
         "and none of the three moved it"
     );
 }
@@ -7512,7 +7515,7 @@ pub async fn a_supersede_that_breaks_a_fit_is_refused_and_a_retraction_is_not<M:
         .update_fact(
             &seasonal.address(),
             FactPatch {
-                status: Some(FactStatus::Superseded),
+                status: Some(FactStatus::Archived),
                 ..Default::default()
             },
         )
@@ -7539,11 +7542,99 @@ pub async fn a_supersede_that_breaks_a_fit_is_refused_and_a_retraction_is_not<M:
         )
         .await
         .expect("a retraction is not refused by the fit guard");
-    assert_eq!(taken.retracted.status, FactStatus::Retracted);
+    assert_eq!(taken.retracted.status, FactStatus::Archived);
     assert_eq!(
         read_back(store, &held, &seasonal.id).await.status,
-        FactStatus::Retracted,
+        FactStatus::Archived,
         "…and the store kept it"
+    );
+}
+
+/// 🚨 **A walk flags a link drawn by an archived claim, whichever way the
+/// claim reached archived.**
+///
+/// Two roads to the same status: `retract` takes a claim back with no
+/// replacement, and an ordinary `update_fact` marks a claim archived when a
+/// later one replaces it. Before the two statuses collapsed, the walk's
+/// marker only ever checked for the first — a link drawn by a claim archived
+/// the second way came back unflagged, silently, which is the asymmetry the
+/// collapse removes: one status, one check, both roads covered.
+///
+/// **Paired against a live claim in the same read**, because a marker that
+/// fires on the archived attendee and stays off the live one is the only
+/// shape that proves the check is reading the status rather than firing on
+/// everything.
+pub async fn a_walk_flags_a_link_drawn_by_a_claim_archived_through_an_ordinary_edit<M: Memory>(
+    store: &M,
+) {
+    let party = EntityId("event:contract-archived-link-party".into());
+    let moved_on = EntityId::person("person:contract-archived-link-moved-on");
+    let still_going = EntityId::person("person:contract-archived-link-still-going");
+    add(
+        store,
+        NewEntity::new(party.clone(), "The Archived Link Party", "the roster"),
+    )
+    .await;
+
+    let mut attended = NewFact::about(moved_on.clone(), "went to the party", date(2026, 5, 1));
+    attended.edge = Some(Edge::new(EdgeShape::Attendance, party.clone()));
+    let archived_by_edit = capture(store, attended).await;
+    edit(
+        store,
+        &archived_by_edit.address(),
+        FactPatch {
+            status: Some(FactStatus::Archived),
+            ..Default::default()
+        },
+    )
+    .await;
+
+    let mut still_attends = NewFact::about(
+        still_going.clone(),
+        "is still going to the party",
+        date(2026, 5, 1),
+    );
+    still_attends.edge = Some(Edge::new(EdgeShape::Attendance, party.clone()));
+    capture(store, still_attends).await;
+
+    let guests = graph::walk(
+        store,
+        &graph::GraphQuery {
+            select: graph::Selection {
+                subject: Some(party.clone()),
+                ..graph::Selection::default()
+            },
+            follow: Some(graph::Follow {
+                along: graph::Along::Edge(EdgeShape::Attendance),
+                direction: Some(graph::Direction::In),
+                ..graph::Follow::hop()
+            }),
+            ..graph::GraphQuery::default()
+        },
+    )
+    .await
+    .expect("a subject with a walk")
+    .objects[0]
+        .connected
+        .clone();
+
+    let via = |who: &EntityId| {
+        guests
+            .iter()
+            .find(|o| &o.entity.id == who)
+            .unwrap_or_else(|| panic!("{who} was not reached: {guests:?}"))
+            .via
+            .as_ref()
+            .expect("a reached object says how the walk got to it")
+    };
+    assert!(
+        via(&moved_on).retracted,
+        "a link drawn by a claim archived through an ordinary edit was not flagged: {guests:?}",
+    );
+    assert!(
+        !via(&still_going).retracted,
+        "the live claim's link was flagged too, so the marker is not reading the status: \
+         {guests:?}",
     );
 }
 
@@ -8963,6 +9054,7 @@ pub async fn run_all<M: Memory>(store: &M) {
     a_reference_must_name_an_entity_that_exists(store).await;
     a_write_cannot_break_a_fit_that_already_exists(store).await;
     a_supersede_that_breaks_a_fit_is_refused_and_a_retraction_is_not(store).await;
+    a_walk_flags_a_link_drawn_by_a_claim_archived_through_an_ordinary_edit(store).await;
     a_declared_type_governs_no_write(store).await;
     a_long_history_is_cut_to_its_newest_and_says_how_many(store).await;
     a_read_of_facts_says_how_many_times_each_was_written(store).await;

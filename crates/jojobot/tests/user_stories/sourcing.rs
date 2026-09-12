@@ -175,9 +175,10 @@ async fn a_claim_names_where_it_came_from() {
     // ── session 6 · the claim under a derivation is taken back ──────────────
     let s = story.session().await;
 
-    // A jotting that should never have been filed. Taken back rather than
-    // superseded: nothing replaces it, and that is the difference the marker
-    // turns on.
+    // A jotting that should never have been filed. Taken back, with nothing
+    // to replace it — archiving covers this the same way it would a claim a
+    // later one replaced, because a derivation resting on either reads the
+    // same marker.
     s.add("event:the-jotting", "The Jotting").await;
     let jotted = s
         .fact("event:the-jotting", "counted forty walkers on a Sunday")
@@ -203,7 +204,7 @@ async fn a_claim_names_where_it_came_from() {
     s.find("busiest at weekends")
         .await
         .says("the loop is busiest at weekends")
-        .says("\"source_standing\":\"retracted\"");
+        .says("\"source_standing\":\"archived\"");
 
     s.wrap("a claim outlived the one under it, and says so")
         .await;

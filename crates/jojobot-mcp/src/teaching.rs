@@ -32,7 +32,17 @@ pub(crate) const CLAIMS_TEACHING: &str = "A further claim does not destroy the o
     that it is the true one, and deciding between them was never the job. Reach for capture when \
     a new thing happened; reach for update_fact only to correct what the record already says — \
     it rewrites a claim in place, and recall with a history argument reads the earlier wording \
-    back.";
+    back.\n\n\
+    Three corrections, three different moves. Mistyped it just now? update_fact in place — the \
+    record becomes what it should have said, and the wrong wording stays readable through \
+    history. It changed, or it was never true at all? Archive the old claim with update_fact \
+    (status: archived, details saying why) and capture the new one, naming the archived claim as \
+    the new one's derived_from when there is a direct replacement. Archive it, never negate it: \
+    rewriting a claim into its own denial — 'the club does NOT meet on Tuesdays' replacing 'the \
+    club meets on Tuesdays' — leaves a sentence about what is not so where a claim about what is \
+    true belongs, and the archived claim already says it stopped standing. A negative is \
+    still an ordinary fact when it is not correcting anything: 'he did not attend' stands on its \
+    own.";
 
 /// **The second domain — a convention, not a rule about claims themselves.**
 /// A different string from [`CLAIMS_DOMAIN`], so a session already taught one

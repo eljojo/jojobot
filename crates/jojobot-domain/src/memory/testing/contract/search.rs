@@ -294,7 +294,7 @@ pub async fn search_excludes_a_retracted_record_by_default<M: Memory, S: Search>
     let asked = found(
         search,
         SearchQuery {
-            status: Some(FactStatus::Retracted),
+            status: Some(FactStatus::Archived),
             ..SearchQuery::text("rehearsed")
         },
     )
@@ -328,7 +328,7 @@ pub async fn search_excludes_superseded_by_default_and_lists_it_on_request<M: Me
         store,
         &retired.address(),
         FactPatch {
-            status: Some(FactStatus::Superseded),
+            status: Some(FactStatus::Archived),
             ..Default::default()
         },
     )
@@ -351,7 +351,7 @@ pub async fn search_excludes_superseded_by_default_and_lists_it_on_request<M: Me
     let asked = found(
         search,
         SearchQuery {
-            status: Some(FactStatus::Superseded),
+            status: Some(FactStatus::Archived),
             ..SearchQuery::text("theremin")
         },
     )

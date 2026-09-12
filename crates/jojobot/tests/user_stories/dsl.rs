@@ -1182,9 +1182,9 @@ impl Session {
     /// right, and from a retraction, which is for chronology.
     pub async fn supersede(&self, address: &str) {
         self.write(
-            &format!("superseding {address}"),
+            &format!("archiving {address}"),
             "update_fact",
-            json!({"address": address, "status": "superseded"}),
+            json!({"address": address, "status": "archived"}),
         )
         .await;
     }

@@ -1010,7 +1010,7 @@ async fn a_key_on_a_node_page_opens_to_the_writes_behind_it() {
 
 /// **One word, one axis — across both tables on the page.**
 ///
-/// A record's status (active · superseded · retracted) and a claim's standing
+/// A record's status (active · archived) and a claim's standing
 /// (settled · open) are two different questions, and the facts table asks both
 /// of them in columns of their own. The writes table carries the first and no
 /// second, so whichever word it heads that column with is read against the

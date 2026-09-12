@@ -1003,23 +1003,33 @@ pub enum FactStatus {
     /// The current truth.
     #[default]
     Active,
-    /// Replaced by a later fact; kept so references survive.
-    Superseded,
-    /// **Taken back — one way, and only ever an event.**
+    /// **Out of the default read, reachable by pointer — one switch for
+    /// every reason a claim stops being current.**
     ///
-    /// Not a third flavour of superseded. Superseded says a later claim
-    /// replaced this one and the row is kept so references survive; this says
-    /// the thing recorded here should not have been, and there is no
-    /// replacement. It arrives only through [`Memory::retract`], never through
-    /// an ordinary edit, and nothing takes a row back out of it — see
-    /// [`check_retractable`] for why one-way has to be enforced rather than
-    /// merely intended.
+    /// One value where there used to be two: a claim a later one replaced,
+    /// and a claim taken back because it should never have stood. Both are
+    /// the same shape from a reader's side — a row kept so references
+    /// survive, marked so a default search does not surface it — and
+    /// nothing downstream needed to tell them apart. The one place that
+    /// tried, [`graph::walk`](crate::memory::graph::walk)'s taken-back flag,
+    /// got it wrong for exactly one of the two, silently: a link from a
+    /// replaced claim came back unflagged. That asymmetry was the defect;
+    /// one switch removes it rather than fixing it in one more place.
     ///
-    /// A retracted row is still a row: the record stays, marked, exactly as
-    /// the no-delete rule requires. What it loses is its standing as
-    /// something a reader should act on, which is what keeping it out of a
-    /// default search buys.
-    Retracted,
+    /// **Why it stopped being current is a note, in words.** [`Fact::details`]
+    /// carries it, exactly as it carries any other nuance, and never as a
+    /// negative rewrite of the claim itself — a negative is sayable as an
+    /// ordinary fact about the world, never as the shape a correction takes.
+    /// A replacement, when there is one, is an ordinary new record whose
+    /// [`Fact::derived_from`] names this one: no new pointer, the one this
+    /// store already walks both ways.
+    ///
+    /// **Arrives two ways.** An ordinary [`update_fact`](Memory::update_fact)
+    /// sets it when a claim changed or was never true and something says so
+    /// now; [`Memory::retract`] sets it one-way, through its own dedicated
+    /// account (see [`check_retractable`]), for a claim with no replacement.
+    /// Either way, nothing takes a row back out of it.
+    Archived,
 }
 
 impl FactStatus {
@@ -1027,25 +1037,26 @@ impl FactStatus {
     pub fn as_token(self) -> &'static str {
         match self {
             FactStatus::Active => "active",
-            FactStatus::Superseded => "superseded",
-            FactStatus::Retracted => "retracted",
+            FactStatus::Archived => "archived",
         }
     }
 
     /// Parse a `status` cell. Lenient in one direction only: a blank or garbled
     /// cell reads as active rather than dropping the fact — but a fact is never
-    /// *promoted* out of superseded by a bad cell, because that token is matched
+    /// *promoted* out of archived by a bad cell, because that token is matched
     /// exactly.
     ///
-    /// The retired **`negated`** token maps to superseded. Rows carrying it are
-    /// on disk, and removing a variant must not hard-fail a read any more than
-    /// adding one may: the behaviour that mattered — excluded from a default
-    /// search — is the same, and the row is rewritten in the current spelling on
-    /// its next touch (lazy migration, no sweep).
+    /// The retired **`superseded`**, **`retracted`** and **`negated`** tokens
+    /// all map to archived. Rows carrying any of them are on disk — a real
+    /// store's own migration backfills them too, but a read must not depend
+    /// on a backfill having run — and removing a variant must not hard-fail a
+    /// read any more than adding one may: the behaviour that mattered —
+    /// excluded from a default search — is the same, and the row is
+    /// rewritten in the current spelling on its next touch (lazy migration,
+    /// no sweep).
     pub fn from_token(cell: &str) -> Self {
         match cell.trim() {
-            "superseded" | "negated" => FactStatus::Superseded,
-            "retracted" => FactStatus::Retracted,
+            "archived" | "superseded" | "retracted" | "negated" => FactStatus::Archived,
             _ => FactStatus::Active,
         }
     }
@@ -2571,8 +2582,8 @@ impl Total {
 /// that holds until somebody switches stores.
 ///
 /// **One-way is enforced here rather than intended elsewhere.** Nothing takes
-/// a row out of [`FactStatus::Retracted`] — not this verb, which refuses a
-/// second pass, and not an ordinary edit, which refuses a retracted row
+/// a row out of [`FactStatus::Archived`] — not this verb, which refuses a
+/// second pass, and not an ordinary edit, which refuses an archived row
 /// outright. A rule that only lives in a tool description is a rule until the
 /// first caller who did not read it.
 pub fn check_retractable(fact: &Fact) -> Result<(), MemoryError> {
@@ -2583,9 +2594,11 @@ pub fn check_retractable(fact: &Fact) -> Result<(), MemoryError> {
         })
     };
     // **Its own variant, because it is not the same refusal.** The other two
-    // say the act cannot be performed on this row; this one says it has been,
-    // and the caller is asking for a state jojobot is already holding.
-    if fact.status == FactStatus::Retracted {
+    // say the act cannot be performed on this row; this one says it has been
+    // — archived already, whether by this verb or by an ordinary edit that
+    // marked it so — and the caller is asking for a state jojobot is already
+    // holding.
+    if fact.status == FactStatus::Archived {
         return Err(MemoryError::AlreadyRetracted {
             attempted: fact.address().to_string(),
         });
@@ -2710,9 +2723,9 @@ pub struct FieldWrite {
     /// **The day the record this write arrived in was made** — see
     /// [`Fact::recorded_at`].
     pub recorded_at: Date,
-    /// That record's status. A write inside a record somebody took back still
-    /// happened, so it is reported rather than dropped — and reported as
-    /// retracted, so a count can leave it out.
+    /// That record's status. A write inside a record that is now archived
+    /// still happened, so it is reported rather than dropped — and reported
+    /// as archived, so a count can leave it out.
     pub status: FactStatus,
     /// **Who backs the record it came from**, so a reader of a key's history
     /// can tell a value somebody stated from one somebody guessed.
@@ -2771,8 +2784,8 @@ pub struct ClaimWrite {
     pub provenance: Provenance,
     /// How sure anybody was then.
     pub standing: Standing,
-    /// Whether it stood then. A retraction is a write like any other, so the
-    /// write that took a claim back is in the chain rather than beside it.
+    /// Whether it stood then. Archiving is a write like any other, so the
+    /// write that archived a claim is in the chain rather than beside it.
     pub status: FactStatus,
     /// The day the claim was made, as this write had it.
     pub recorded_at: Date,
@@ -3105,27 +3118,7 @@ pub enum MemoryError {
         /// The build-supplied handle that was named.
         attempted: String,
     },
-    /// **The claim this one would rest on was taken back.**
-    ///
-    /// Not a missing source — the claim is there, and it is there precisely
-    /// because a retraction is a state rather than a deletion. **What it cannot
-    /// be is evidence.** A lineage pointer reads as *this is what I worked it
-    /// out from*, and pointing it at a claim the store has withdrawn writes a
-    /// citation nobody can act on: a later reader sees a claim resting on
-    /// something that was disowned before it was written.
-    ///
-    /// **The way forward keeps the claim and drops the citation** (rule 68):
-    /// capture it with no source, or name the claim that replaced the
-    /// withdrawn one. Nothing about the claim itself is refused.
-    #[error(
-        "'{attempted}' was taken back, so it cannot be what a claim was worked out from: write \
-         the claim with no source, or name the claim that replaced it"
-    )]
-    SourceRetracted {
-        /// The address of the withdrawn claim that was named.
-        attempted: String,
-    },
-    /// **The addressed row is already retracted, and that is the state the
+    /// **The addressed row is already archived, and that is the state the
     /// caller was asking for.**
     ///
     /// Apart from [`NotRetractable`](Self::NotRetractable) because the two
@@ -3136,11 +3129,16 @@ pub enum MemoryError {
     /// it: the record they wanted taken back is taken back, and they are told
     /// to treat it as live.
     ///
-    /// **Retract only.** A row refused an ordinary EDIT because it is retracted
-    /// is a different answer and keeps the other variant: there the caller
-    /// asked for something else and the retracted state is what stands in the
-    /// way, not what they wanted.
-    #[error("'{attempted}' is already retracted")]
+    /// **The row may have reached this state through an ordinary edit** — one
+    /// that marked it archived rather than through `retract` — and that does
+    /// not change the answer: whichever way it got here, retracting it again
+    /// writes nothing.
+    ///
+    /// **Retract only.** A row refused an ordinary EDIT because it is
+    /// archived is a different answer and keeps the other variant: there the
+    /// caller asked for something else and the archived state is what stands
+    /// in the way, not what they wanted.
+    #[error("'{attempted}' is already archived")]
     AlreadyRetracted {
         /// The address that was aimed at.
         attempted: String,
@@ -3982,7 +3980,7 @@ mod tests {
             &[
                 wrote("donuts", 1, Some("1")),
                 KeyWrite {
-                    status: FactStatus::Retracted,
+                    status: FactStatus::Archived,
                     ..wrote("donuts", 2, Some("40"))
                 },
                 wrote("donuts", 3, Some("1")),
@@ -4302,21 +4300,26 @@ mod tests {
     /// Both lifecycle states have tokens; an unknown or blank cell degrades to
     /// active (the tolerant-read rule: never drop a fact over a bad cell).
     ///
-    /// And the **legacy `negated` token reads as superseded**. Negation-as-status
-    /// is gone — a refutation is an ordinary content edit now — but rows written
-    /// under it are on disk, and a schema removal must never hard-fail a read
-    /// any more than a schema addition may. Superseded is the honest landing
-    /// spot: the behaviour that mattered, excluded-by-default, is identical.
+    /// And every **legacy token reads as archived**. `superseded` and
+    /// `retracted` were once two variants and are now one; `negated` is
+    /// older still, from before negation was a status at all. Rows written
+    /// under any of the three are on disk, and a schema removal must never
+    /// hard-fail a read any more than a schema addition may. Archived is the
+    /// honest landing spot for all three: the behaviour that mattered,
+    /// excluded-by-default, is identical.
     #[test]
-    fn fact_status_tokens_round_trip_and_a_legacy_negated_reads_as_superseded() {
-        for status in [FactStatus::Active, FactStatus::Superseded] {
+    fn fact_status_tokens_round_trip_and_every_legacy_token_reads_as_archived() {
+        for status in [FactStatus::Active, FactStatus::Archived] {
             assert_eq!(FactStatus::from_token(status.as_token()), status);
         }
-        assert_eq!(
-            FactStatus::from_token("negated"),
-            FactStatus::Superseded,
-            "a row from before negation was removed still reads, and stays out of a default search"
-        );
+        for legacy in ["superseded", "retracted", "negated"] {
+            assert_eq!(
+                FactStatus::from_token(legacy),
+                FactStatus::Archived,
+                "a row from before the two statuses merged still reads, and stays out of a \
+                 default search: {legacy}"
+            );
+        }
         assert_eq!(FactStatus::from_token(""), FactStatus::Active);
         assert_eq!(FactStatus::from_token("garbled"), FactStatus::Active);
     }

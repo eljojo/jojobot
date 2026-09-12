@@ -300,12 +300,13 @@ mod tests {
         );
     }
 
-    /// **A claim that was taken back does not get anybody in.**
+    /// **A claim that was archived does not get anybody in**, whether it was
+    /// taken back or replaced — the two read the same status now.
     ///
     /// The read this ranking is fed answers with records of every status,
-    /// superseded included, because it serves history as often as current
-    /// truth. **So the filtering is this function's job**, and a claim somebody
-    /// retracted arriving as an entitlement they hold is the one failure that
+    /// archived included, because it serves history as often as current
+    /// truth. **So the filtering is this function's job**, and an archived
+    /// claim arriving as an entitlement they hold is the one failure that
     /// costs more than saying nothing: a reader told they are covered acts on
     /// it.
     ///
@@ -313,7 +314,7 @@ mod tests {
     /// Without it the case passes against a ranking that returns nothing at
     /// all.
     #[test]
-    fn a_retracted_or_superseded_claim_is_not_something_anybody_holds() {
+    fn an_archived_claim_is_not_something_anybody_holds() {
         let target = EntityId("event:winter-fest".into());
         let with_status = |id: &str, holder: &str, status: FactStatus| Fact {
             status,
@@ -327,8 +328,8 @@ mod tests {
             )
         };
         let facts = vec![
-            with_status("f1", "person:milhouse", FactStatus::Retracted),
-            with_status("f2", "person:otto", FactStatus::Superseded),
+            with_status("f1", "person:milhouse", FactStatus::Archived),
+            with_status("f2", "person:otto", FactStatus::Archived),
             with_status("f3", "person:bart", FactStatus::Active),
         ];
 
@@ -344,7 +345,7 @@ mod tests {
             .map(|held| (held.fact.id.0.as_str(), held.standing))
             .collect::<Vec<_>>(),
             vec![("f3", Standing::Live)],
-            "a claim nobody took back is what somebody holds, and the other two are not",
+            "a claim nobody archived is what somebody holds, and the other two are not",
         );
     }
 

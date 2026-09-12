@@ -54,9 +54,16 @@ pub struct UpdateFactArgs {
     /// guess comes off rather than being replaced by another guess.
     #[serde(default)]
     pub clear_happened_at: Option<bool>,
-    /// `active` or `superseded`. **A refutation is not a status** — to record
-    /// that something is not so, rewrite `content` to state the negative truth;
-    /// it stays `active`, because that IS the current truth.
+    /// `active` or `archived`. **Archive a claim that changed or was never
+    /// true — do not negate it.** Rewriting `content` into its own denial
+    /// ("the club does NOT meet on Tuesdays" replacing "the club meets on
+    /// Tuesdays") leaves a sentence about what is not so where a claim about
+    /// what is true belongs. Set `status: archived` and give `details`
+    /// saying why, then capture the true claim as a new record — name this
+    /// one as its `derived_from` when there is a direct replacement. A
+    /// negative is still an ordinary fact when it is not correcting
+    /// anything: "he did not attend" stands on its own, written with
+    /// `capture` like any other claim.
     #[serde(default)]
     pub(crate) status: Option<String>,
     /// `testimony`, `observation` or `inference`. Moving a claim TO `testimony`
@@ -436,19 +443,44 @@ impl Jojobot {
         );
         // **The other path, named at the moment somebody is already reading.**
         let instead = self.the_other_path(fact).await;
+        // **Archive is a visibility switch, not a validity gate** — citing an
+        // archived claim as derived_from is permitted, so the caller has to
+        // be told rather than left to notice on a later read.
+        let source_note = match &fact.derived_from {
+            Some(source) => self
+                .memory
+                .recall(&source.home)
+                .await
+                .ok()
+                .and_then(|facts| facts.into_iter().find(|f| f.id == source.local))
+                .filter(|f| f.status == FactStatus::Archived)
+                .map(|_| {
+                    format!(
+                        " The claim this was derived from, {source}, is archived — read it to \
+                         judge whether the citation still holds."
+                    )
+                })
+                .unwrap_or_default(),
+            None => String::new(),
+        };
         format!(
             "{address} now states what this call sent, in place of what it said before.{kept}\
-             {beside}{removed}{instead}"
+             {beside}{removed}{instead}{source_note}"
         )
     }
 
-    /// **When a rewrite is probably the wrong verb, say which is the right one
-    /// — once, on the receipt, and never as a refusal.**
+    /// **When a rewrite was probably the wrong move, say what the right one
+    /// is — once, on the receipt, and never as a refusal.**
     ///
-    /// A rewrite says the claim CHANGED; a record that was never true is what
-    /// `retract` says, with the account of why beside it. Two paid runs were
-    /// told somebody had never been at an event and reached for the edit both
-    /// times.
+    /// Neither reason a past-event claim turns into its negation is a
+    /// rewrite. A record that was never true is archived, with a note
+    /// saying why — `retract` does the same and keeps a dated account
+    /// beside it. A record that was true and changed is archived too, and
+    /// the new claim is a fresh capture, not this row overwritten: rule 58,
+    /// which told an agent to rewrite a disproved fact into its own denial,
+    /// is gone, and an in-place negation is the shape it took. Two paid runs
+    /// were told somebody had never been at an event and reached for the
+    /// edit both times.
     ///
     /// ⚠️ **It names the FORK and never a diagnosis.** Nothing on the wire says
     /// which of the two acts a caller means — a guest who was never there and
@@ -461,10 +493,10 @@ impl Jojobot {
     /// month's party captured today carries today's date, so a past-only test
     /// would miss exactly the case this was built for.
     ///
-    /// ⛔️ **Not a gate.** Rule 58 says disproving a fact rewrites it to the
-    /// negative truth, and refusing the ordinary case would be worse than the
-    /// defect this addresses. **Empty everywhere else**, because a line on
-    /// every receipt is a line nobody reads.
+    /// ⛔️ **Not a gate, because the heuristic is a guess.** A word search for a
+    /// negation can be wrong in both directions, and refusing on a guess costs
+    /// more than the defect it would catch. **Empty everywhere else**, because
+    /// a line on every receipt is a line nobody reads.
     ///
     /// **The previous wording comes from the claim's own writes**, which is
     /// also why the edge is read from the write BEFORE this one: a caller
@@ -492,10 +524,11 @@ impl Jojobot {
             return String::new();
         }
         String::from(
-            " This turns a claim about an event into its negation, and there are two different \
-             acts behind that. If the record was never true, retract says so and keeps the \
-             account of why. If it was true and has changed, this rewrite is the right verb and \
-             nothing more is needed.",
+            " This turns a claim about an event into its negation, and neither reason for that \
+             is a rewrite. If the record was never true, archive it instead — status: archived, \
+             details saying why — or retract, which does the same and keeps a dated account \
+             beside it. If it was true and has changed, archive it and capture the new claim; \
+             overwriting it here loses the day it stopped being true.",
         )
     }
 }
@@ -568,15 +601,15 @@ mod tests {
     /// other path, at the moment somebody is reading a receipt.**
     ///
     /// A run told that somebody was never at an event rewrote the claim in
-    /// place, twice, in two paid runs. A rewrite says the claim CHANGED; a
-    /// record that was never true is what `retract` is for, and it leaves the
-    /// account of why. **The past does not change**, so a claim about a past
-    /// event turning into its own negation is the one shape where the edit is
-    /// usually the wrong verb.
+    /// place, twice, in two paid runs — the shape rule 58 taught before it
+    /// was killed. **The past does not change**, so a claim about a past
+    /// event turning into its own negation is the one shape where the edit
+    /// is usually the wrong verb: archive, with retract or an ordinary edit
+    /// setting the status, is what either reason for it calls for now.
     ///
-    /// ⛔️ **It is a line, never a gate.** Rule 58 says disproving a fact
-    /// rewrites it to the negative truth, so refusing would be worse than the
-    /// defect.
+    /// ⛔️ **It is a line, never a gate.** A word search for a negation can be
+    /// wrong in either direction, so refusing on it would be worse than the
+    /// defect it catches.
     ///
     /// ⚠️ **The paired negative is what keeps the line worth reading**: an
     /// ordinary rewrite, and a negation of a claim that is not about a past

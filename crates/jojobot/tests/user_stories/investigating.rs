@@ -202,11 +202,11 @@ async fn an_investigation_keeps_what_it_ruled_out() {
     // way it was written down, so the reading stands as something that was
     // said and is marked withdrawn, where a rewrite would leave one claim
     // reading as current truth with the account of why nowhere. Nothing is
-    // removed — the record keeps its address and reads as retracted.
+    // removed — the record keeps its address and reads as archived.
     //
     // ⚠️ **A rewrite would keep the old wording**, in the claim's own writes,
     // so the choice here is no longer about whether anything survives. It is
-    // about what the record SAYS: retracted marks the reading as withdrawn and
+    // about what the record SAYS: archived marks the reading as withdrawn and
     // carries the reason, where a corrected one would read as a measurement
     // somebody stands behind.
     s.retract(&reading, "the status word was read off a different host")
@@ -214,7 +214,7 @@ async fn an_investigation_keeps_what_it_ruled_out() {
     s.recall("machine:sigma")
         .await
         .says("stopped responding")
-        .says("retracted");
+        .says("archived");
 
     // GAP — a retraction reaches the record and nothing that was built on it.
     // Anything derived from the measurement still stands, still reads as

@@ -407,6 +407,19 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0045_entity_former_handle_ordinal.sql"),
         leaves: Leaves::Column("entity_former_handle", "ordinal"),
     },
+    Migration {
+        version: "0046_fact_status_archived",
+        sql: include_str!("../../migrations/0046_fact_status_archived.sql"),
+        leaves: Leaves::NoRows("fact", "status IN ('superseded', 'retracted', 'negated')"),
+    },
+    Migration {
+        version: "0047_fact_write_status_archived",
+        sql: include_str!("../../migrations/0047_fact_write_status_archived.sql"),
+        leaves: Leaves::NoRows(
+            "fact_write",
+            "status IN ('superseded', 'retracted', 'negated')",
+        ),
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a
@@ -819,6 +832,8 @@ mod tests {
         "0043_message_sender_mail_waiting",
         "0044_fact_stands_for",
         "0045_entity_former_handle_ordinal",
+        "0046_fact_status_archived",
+        "0047_fact_write_status_archived",
     ];
 
     /// **A migration set of this test's own, carrying the shape no shipped

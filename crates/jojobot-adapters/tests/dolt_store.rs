@@ -2241,3 +2241,115 @@ async fn the_backfill_is_what_makes_a_claim_older_than_the_substrate_readable() 
 
     store.stop().await;
 }
+
+/// 🚨 **A row carrying a retired status is rewritten to `archived` on disk**,
+/// not only read that way.
+///
+/// `FactStatus::from_token` already maps `superseded`, `retracted` and
+/// `negated` to `archived` on the way in, so a read is correct without this.
+/// The backfill is what makes the SPELLING on disk say what the store now
+/// means, over both tables that carry a status: `fact`, the current
+/// snapshot, and `fact_write`, which keeps its own copy per write.
+#[tokio::test]
+async fn the_backfill_rewrites_every_retired_status_to_archived() {
+    let scratch = Scratch::new("status-archived");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("statusarchived")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool.clone());
+
+    let subject = EntityId::person("person:status-archived-alpha");
+    memory
+        .add_entity(NewEntity::new(
+            subject.clone(),
+            "Status Archived Alpha",
+            "fixture",
+        ))
+        .await
+        .expect("add_entity ok")
+        .written()
+        .expect("the guard waves it through");
+    let claim = memory
+        .capture(NewFact::about(
+            subject.clone(),
+            "was a member",
+            date(2026, 8, 10),
+        ))
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("the guard waves it through");
+
+    // **The badge, because the fact tables key on it, not on the handle.**
+    let badge: (String,) = sqlx::query_as("SELECT badge FROM entity WHERE id = ?")
+        .bind(subject.as_str())
+        .fetch_one(&pool)
+        .await
+        .expect("the entity is readable");
+
+    // **A row from before the two marks collapsed**, staged past the domain
+    // layer exactly as the rename-replay case above stages a schema from
+    // before a rename — this is what a real pre-migration row looks like.
+    sqlx::query("UPDATE fact SET status = 'superseded' WHERE entity = ? AND id = ?")
+        .bind(&badge.0)
+        .bind(claim.id.as_str())
+        .execute(&pool)
+        .await
+        .expect("the row is writable");
+    sqlx::query("UPDATE fact_write SET status = 'superseded' WHERE entity = ? AND fact_id = ?")
+        .bind(&badge.0)
+        .bind(claim.id.as_str())
+        .execute(&pool)
+        .await
+        .expect("the row is writable");
+
+    for version in [
+        "0046_fact_status_archived",
+        "0047_fact_write_status_archived",
+    ] {
+        for table in ["schema_migration", "schema_migration_begun"] {
+            sqlx::query(&format!("DELETE FROM {table} WHERE version = ?"))
+                .bind(version)
+                .execute(&pool)
+                .await
+                .expect("the ledger is writable");
+        }
+    }
+    let applied = migrate::run(&pool).await.expect("the backfill runs again");
+    assert!(
+        applied.contains(&"0046_fact_status_archived".to_string())
+            && applied.contains(&"0047_fact_write_status_archived".to_string()),
+        "the backfill did not run, so what follows says nothing about it: {applied:?}",
+    );
+
+    let fact_status: (String,) =
+        sqlx::query_as("SELECT status FROM fact WHERE entity = ? AND id = ?")
+            .bind(&badge.0)
+            .bind(claim.id.as_str())
+            .fetch_one(&pool)
+            .await
+            .expect("the row is readable");
+    assert_eq!(
+        fact_status.0, "archived",
+        "fact still carries the retired spelling on disk",
+    );
+    let write_status: (String,) =
+        sqlx::query_as("SELECT status FROM fact_write WHERE entity = ? AND fact_id = ?")
+            .bind(&badge.0)
+            .bind(claim.id.as_str())
+            .fetch_one(&pool)
+            .await
+            .expect("the row is readable");
+    assert_eq!(
+        write_status.0, "archived",
+        "fact_write still carries the retired spelling on disk",
+    );
+
+    store.stop().await;
+}

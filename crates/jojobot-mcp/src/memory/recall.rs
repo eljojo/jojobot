@@ -1072,7 +1072,7 @@ impl Jojobot {
                        type buys you — reach — and nothing is gated by it: an undeclared record \
                        is still found by the keys it carries. That nesting is what a flat list cannot express: one call answers \
                        'these objects, and what each of them is connected to' instead of one call \
-                       per object. Unlike search this returns claims of EVERY status, superseded \
+                       per object. Unlike search this returns claims of EVERY status, archived \
                        included. A named subject always comes back, even when the filters keep \
                        none of its records — naming a handle asks for that object, a filter asks \
                        which objects — while a handle that names nothing comes back blocked with \

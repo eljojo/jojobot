@@ -177,24 +177,22 @@ pub(crate) fn memory_declined(
         // rather than re-worded here, where it would drift from the rule it
         // describes.
         // **Already done is not the same answer as cannot be done.** The
-        // record the caller asked to take back is taken back; what this call
-        // wrote is nothing, because there was nothing left to write. Saying
-        // "cannot be retracted" here denies a state the store is holding, and
-        // a caller who believes it treats a retracted record as live.
+        // record the caller asked to take back is archived already, whether
+        // by this verb or by an ordinary edit; what this call wrote is
+        // nothing, because there was nothing left to write. Saying "cannot
+        // be retracted" here denies a state the store is holding, and a
+        // caller who believes it treats an archived record as live.
         MemoryError::AlreadyRetracted { attempted } => Ok(blocked_body(
             &EntityId(attempted.clone()),
             &[],
             format!(
-                "'{attempted}' is already retracted — the record jojobot holds is the one you \
+                "'{attempted}' is already archived — the record jojobot holds is the one you \
                  asked for. This call wrote nothing because there was nothing left to write, and \
-                 a further attempt would say the same. Retraction is one-way: nothing takes a \
-                 record back out of it. If the retraction was itself a mistake, capture what is \
-                 so now as a new record."
+                 a further attempt would say the same. Archiving is one-way: nothing takes a \
+                 record back out of it. If that was itself a mistake, capture what is so now as \
+                 a new record."
             ),
         )),
-        // **The claim is real and it is withdrawn**, so this is neither a
-        // missing source nor a malformed call: the way forward keeps the claim
-        // and drops the citation (rule 68).
         // **Half an attribution is what is missing, and the caller has both
         // ways out** (rule 68): name where it was read, or file it as the
         // derivation it would otherwise be.
@@ -204,14 +202,6 @@ pub(crate) fn memory_declined(
             format!(
                 "Nothing was written: {e}. The claim itself is fine — send it again with \
                  read_from naming the system, or with provenance inference."
-            ),
-        )),
-        MemoryError::SourceRetracted { .. } => Ok(blocked_body(
-            &EntityId(String::new()),
-            &[],
-            format!(
-                "Nothing was written: {e}. The claim you meant to write is fine — send it again \
-                 with no source, or naming the claim that replaced the withdrawn one."
             ),
         )),
         MemoryError::NotRetractable { attempted, why } => Ok(blocked_body(
@@ -429,7 +419,6 @@ pub(crate) fn memory_error(e: MemoryError) -> McpError {
         | MemoryError::UnknownEntity { .. }
         | MemoryError::NotYours { .. }
         | MemoryError::NotRetractable { .. }
-        | MemoryError::SourceRetracted { .. }
         | MemoryError::UnsourcedObservation
         | MemoryError::AlreadyRetracted { .. }
         | MemoryError::NothingToMerge { .. }
