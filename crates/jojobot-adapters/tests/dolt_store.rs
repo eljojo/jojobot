@@ -31,7 +31,9 @@ use jojobot_domain::memory::Memory;
 use jojobot_domain::memory::owned::{Provision, Provisions};
 use jojobot_domain::memory::search::{Hit, Search, SearchQuery};
 use jojobot_domain::memory::testing::contract as memory;
-use jojobot_domain::memory::{Edge, EdgeShape, EntityPatch, FactPatch, NewEntity, NewFact};
+use jojobot_domain::memory::{
+    Edge, EdgeShape, EntityPatch, FactPatch, MemoryError, NewEntity, NewFact,
+};
 use jojobot_domain::session::testing::contract as sessions;
 use jojobot_domain::teaching::testing::contract as teachings;
 
@@ -803,6 +805,123 @@ async fn an_alias_survives_a_rename_and_a_search_still_finds_it_by_nickname() {
             .iter()
             .any(|h| matches!(h, Hit::Entity { entity, .. } if entity.id == now)),
         "the nickname does not find the renamed entity: {after:?}",
+    );
+
+    store.stop().await;
+}
+
+/// 🚨 **Renaming a row from before the badge column exists is a readable
+/// error, never a panic.**
+///
+/// `rename_entity` writes a forwarding row keyed on the badge the renamed
+/// entity wears — but a row from before that column existed, or one the
+/// startup fill has not reached yet, wears none. `scan` and `scan_entity`
+/// already answer this exact condition without crashing; this is the same
+/// condition on the write side of a rename.
+#[tokio::test]
+async fn renaming_a_row_with_no_badge_is_a_readable_error_not_a_panic() {
+    let scratch = Scratch::new("rename-no-badge");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("renamenobadge")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool.clone());
+
+    let was = EntityId::person("person:rename-no-badge-was");
+    sqlx::query(
+        "INSERT INTO entity (id, kind, name, source, crm, parent, boot, prose, badge)
+         VALUES (?, 'person', 'No Badge Yet', 'contract-fixture', NULL, NULL, 'on-demand', '', \
+         NULL)",
+    )
+    .bind(was.as_str())
+    .execute(&pool)
+    .await
+    .expect("a row from before the column");
+
+    let now = EntityId("work:rename-no-badge-now".into());
+    let result = memory
+        .rename_entity(&was, &now, None, date(2026, 1, 1), None)
+        .await;
+    assert!(
+        matches!(result, Err(MemoryError::Store(_))),
+        "renaming a badgeless row did not come back a readable store error: {result:?}",
+    );
+
+    let unchanged: (String,) = sqlx::query_as("SELECT id FROM entity WHERE id = ?")
+        .bind(was.as_str())
+        .fetch_one(&pool)
+        .await
+        .expect("the row is still there, untouched");
+    assert_eq!(
+        unchanged.0,
+        was.to_string(),
+        "the refused rename moved the row anyway",
+    );
+
+    store.stop().await;
+}
+
+/// 🚨 **A rename to or from a handle near the domain's own limit does not
+/// fail on the forwarding row's account.**
+///
+/// The domain accepts a handle up to 128 characters
+/// ([`jojobot_domain::memory::validate_subject`]). `entity_former_handle`
+/// used to hold `former_handle` at `VARCHAR(64)` — half that — so a rename
+/// past 64 characters failed outright under the store's strict mode,
+/// naming no cause a caller could act on.
+#[tokio::test]
+async fn a_rename_near_the_handle_length_limit_still_lands() {
+    let scratch = Scratch::new("rename-long-handle");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("renamelonghandle")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool.clone());
+
+    // "person:" is 7 characters, so 115 of these keeps the whole handle at
+    // 122 — under the domain's 128-character limit and well past the
+    // forwarding row's former 64-character one.
+    let long_slug = "x".repeat(115);
+    let was = EntityId(format!("person:{long_slug}"));
+    memory
+        .add_entity(NewEntity::new(
+            was.clone(),
+            "Long Handle",
+            "contract-fixture",
+        ))
+        .await
+        .expect("add_entity ok")
+        .written()
+        .expect("the guard waves it through");
+
+    let now = EntityId(format!("work:{}", "y".repeat(115)));
+    memory
+        .rename_entity(&was, &now, None, date(2026, 1, 1), None)
+        .await
+        .expect("a rename past 64 characters must not fail on the forwarding row")
+        .written()
+        .expect("nothing collides with the destination");
+
+    let stored: (String,) =
+        sqlx::query_as("SELECT former_handle FROM entity_former_handle WHERE former_handle = ?")
+            .bind(was.as_str())
+            .fetch_one(&pool)
+            .await
+            .expect("the forwarding row was written whole, not truncated");
+    assert_eq!(
+        stored.0,
+        was.to_string(),
+        "the forwarding row does not hold the handle it was given",
     );
 
     store.stop().await;

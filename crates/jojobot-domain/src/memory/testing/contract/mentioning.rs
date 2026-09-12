@@ -896,6 +896,72 @@ pub async fn a_retraction_still_follows_a_later_rename<M: Memory + ?Sized>(store
     );
 }
 
+/// 🚨 **A former handle carries more than one event, and a lookup on it
+/// resolves to the newest.**
+///
+/// Nothing reserves a handle a rename vacates: a second thing can claim it
+/// immediately, and renaming THAT thing away writes a second event under
+/// the same former handle. That is not a contrived sequence — it is what
+/// ordinary use produces the moment a vacated handle is reused, since
+/// nothing stops it.
+pub async fn a_former_handle_reused_after_a_rename_resolves_to_the_newest_event<
+    M: Memory + ?Sized,
+    B: Memory + ?Sized,
+>(
+    store: &M,
+    bare: &B,
+) {
+    let shared = EntityId("thing:contract-reused-former-handle".into());
+    add(
+        store,
+        NewEntity::new(shared.clone(), "The First Claim", "the roster"),
+    )
+    .await;
+    let first_gone = EntityId("work:contract-reused-former-first-gone".into());
+    store
+        .rename_entity(&shared, &first_gone, None, date(2026, 6, 20), None)
+        .await
+        .expect("the first rename lands")
+        .written()
+        .expect("nothing collides with the destination");
+
+    add(
+        store,
+        NewEntity::new(shared.clone(), "The Second Claim", "the roster"),
+    )
+    .await;
+    let second_gone = EntityId("work:contract-reused-former-second-gone".into());
+    store
+        .rename_entity(&shared, &second_gone, None, date(2026, 6, 21), None)
+        .await
+        .expect("the second rename of the reused handle lands")
+        .written()
+        .expect("nothing collides with the destination");
+
+    let walked = graph::walk(
+        bare,
+        &graph::GraphQuery {
+            select: graph::Selection {
+                subject: Some(shared.clone()),
+                ..graph::Selection::default()
+            },
+            include: graph::Include {
+                facts: false,
+                prose: false,
+            },
+            follow: None,
+            history: None,
+        },
+    )
+    .await
+    .expect("a walk from a former handle carrying two events must still resolve");
+    assert_eq!(
+        walked.objects.first().map(|o| &o.entity.id),
+        Some(&second_gone),
+        "the former handle resolved to the first thing that ever wore it, not the newest",
+    );
+}
+
 /// 🚨 **A retype and a reparent are each their own case, not a slug
 /// change in disguise.**
 ///
@@ -1794,6 +1860,7 @@ pub async fn run_all_mentioning<M: Memory + ?Sized, B: Memory + ?Sized>(
     a_rename_moves_the_handle_and_every_reference_still_resolves(mentioning, bare).await;
     an_edit_that_touches_only_the_content_still_follows_a_later_rename(mentioning).await;
     a_retraction_still_follows_a_later_rename(mentioning).await;
+    a_former_handle_reused_after_a_rename_resolves_to_the_newest_event(mentioning, bare).await;
     a_retype_and_a_reparent_are_each_a_rename(bare).await;
     a_stale_address_resolves_to_the_same_claim_after_a_rename(bare, rehandles).await;
     an_edit_through_a_stale_address_reaches_the_record_it_always_named(bare, rehandles).await;

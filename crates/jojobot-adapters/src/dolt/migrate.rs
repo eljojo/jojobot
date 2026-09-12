@@ -402,6 +402,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0044_fact_stands_for.sql"),
         leaves: Leaves::Table("fact_stands_for"),
     },
+    Migration {
+        version: "0045_entity_former_handle_ordinal",
+        sql: include_str!("../../migrations/0045_entity_former_handle_ordinal.sql"),
+        leaves: Leaves::Column("entity_former_handle", "ordinal"),
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a
@@ -813,6 +818,7 @@ mod tests {
         "0042_entity_former_handle",
         "0043_message_sender_mail_waiting",
         "0044_fact_stands_for",
+        "0045_entity_former_handle_ordinal",
     ];
 
     /// **A migration set of this test's own, carrying the shape no shipped

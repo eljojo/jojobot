@@ -1,8 +1,7 @@
 -- One row per rename event: a handle a thing used to answer to, and the
 -- badge it still answers to under whatever handle it wears now.
 --
--- No verb writes here yet. Nothing renames a handle in this build, so this
--- table stays empty in production until the day something does.
+-- `rename_entity` is the one verb that writes here, one row per call.
 --
 -- Kept forever, one row per event, never only the newest: a reference
 -- written under the FIRST handle a thing ever wore has to keep resolving,

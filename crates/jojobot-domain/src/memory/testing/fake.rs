@@ -312,11 +312,21 @@ impl InMemoryMemory {
     /// Every rename event, synchronously — the sibling `known()` already is,
     /// for the same reason: the callers that need this are themselves
     /// synchronous helpers taking and releasing the same locks.
+    ///
+    /// **Newest event first.** A former handle may carry more than one event
+    /// — reused after a rename vacated it, or renamed away and back — and
+    /// [`super::resolve_handle`] takes the first match in this list.
+    /// `former_handles` is pushed to in chronological order, so reversing it
+    /// here is what makes the first match the newest one, exactly as the
+    /// real store's `ORDER BY ordinal DESC` does.
     fn former(&self) -> Vec<FormerHandle> {
-        self.former_handles
+        let mut events = self
+            .former_handles
             .lock()
             .expect("fake mutex poisoned")
-            .clone()
+            .clone();
+        events.reverse();
+        events
     }
 
     /// **What a handle is stored as, and what it is called today, together**
@@ -612,11 +622,7 @@ impl Memory for InMemoryMemory {
     }
 
     async fn former_handles(&self) -> Result<Vec<FormerHandle>, MemoryError> {
-        Ok(self
-            .former_handles
-            .lock()
-            .expect("fake mutex poisoned")
-            .clone())
+        Ok(self.former())
     }
 
     async fn update_entity(

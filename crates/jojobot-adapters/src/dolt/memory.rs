@@ -317,11 +317,17 @@ impl DoltMemory {
             .iter()
             .map(|(handle, badge)| (handle.as_str(), badge.as_str()))
             .collect();
-        let former: Vec<(String, String)> =
-            sqlx::query_as("SELECT former_handle, badge FROM entity_former_handle")
-                .fetch_all(&self.pool)
-                .await
-                .map_err(store)?;
+        // **Newest event first**, the same order [`Self::former_handles_in`]
+        // reads in — a former handle may carry more than one event, and
+        // `or_insert` below keeps only the first one it sees for a given
+        // handle.
+        let former: Vec<(String, String)> = sqlx::query_as(
+            "SELECT former_handle, badge FROM entity_former_handle \
+             ORDER BY former_handle, ordinal DESC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(store)?;
         for (handle, badge) in &former {
             resolve.entry(handle.as_str()).or_insert(badge.as_str());
         }
@@ -412,11 +418,19 @@ impl DoltMemory {
     }
 
     /// Every rename event, inside the transaction a caller is already in.
+    ///
+    /// **Newest event first, within a former handle.** A former handle may
+    /// carry more than one event — reused after a rename vacated it, or
+    /// renamed away and back — and [`jojobot_domain::memory::resolve_handle`]
+    /// takes the first match in this list. Ordering by `ordinal DESC` here is
+    /// what makes that the newest one, the same newest-write-wins rule every
+    /// other repeated write in this store follows.
     async fn former_handles_in(
         tx: &mut Transaction<'_, MySql>,
     ) -> Result<Vec<FormerHandle>, MemoryError> {
         let rows = sqlx::query(
-            "SELECT former_handle, badge, changed_at FROM entity_former_handle ORDER BY former_handle",
+            "SELECT former_handle, badge, changed_at FROM entity_former_handle \
+             ORDER BY former_handle, ordinal DESC",
         )
         .fetch_all(&mut **tx)
         .await
@@ -1623,6 +1637,19 @@ impl Memory for DoltMemory {
             });
         }
 
+        // **A row without a badge cannot leave a forwarding row behind, and
+        // that is a readable error rather than a panic** — the same
+        // condition, and the same sentence, [`Self::scan`] and
+        // [`Self::scan_entity`] already answer: a row predating the badge
+        // column, or a fill that has not reached it yet. Checked before
+        // anything moves, so a doomed rename never half-executes.
+        let Some(badge) = entity.badge.clone() else {
+            return Err(MemoryError::Store(format!(
+                "{} carries no badge, so its document has no id — the startup fill did not \
+                 reach it",
+                entity.id
+            )));
+        };
         // **What is actually written is the badge** (rule 268): unchanged
         // when this rename named no new parent (`effective_parent` came off
         // `entity.parent`, already served through it once, so it is
@@ -1657,18 +1684,28 @@ impl Memory for DoltMemory {
         // handle-rewriting version of this statement touched every other
         // entity's `parent` column for exactly the reason this no longer
         // does.
-        sqlx::query(
-            "INSERT INTO entity_former_handle (former_handle, badge, changed_at) VALUES \
-             (?, ?, ?)",
+        //
+        // **This former handle may already carry an event** — nothing
+        // reserves a handle a rename vacates, so it may have been claimed by
+        // something else and renamed away in turn, and a rename may return
+        // a handle to one it already left — so the ordinal is this former
+        // handle's own next one, the same [`Self::append_writes`] pattern,
+        // never an assumption that this is its first.
+        let highest: Option<i64> = sqlx::query_scalar(
+            "SELECT MAX(ordinal) FROM entity_former_handle WHERE former_handle = ?",
         )
         .bind(from.as_str())
-        .bind(
-            entity
-                .badge
-                .as_deref()
-                .expect("a written row wears a badge"),
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(store)?;
+        sqlx::query(
+            "INSERT INTO entity_former_handle (former_handle, badge, changed_at, ordinal) \
+             VALUES (?, ?, ?, ?)",
         )
+        .bind(from.as_str())
+        .bind(&badge)
         .bind(date.to_string())
+        .bind(highest.unwrap_or(0) + 1)
         .execute(&mut *tx)
         .await
         .map_err(store)?;
