@@ -494,6 +494,72 @@ impl DoltMemory {
         Ok(stored.clone())
     }
 
+    /// **Every pointer-bearing field on a fact, lowered from served (handle)
+    /// form to stored (badge) form, in one pass, unconditionally.**
+    ///
+    /// `read_fact` serves a record under today's handles — `home`,
+    /// `subject`, `derived_from`, `edge`, `refs` and `stands_for` all come
+    /// back resolved. A verb about to write that record back has to reverse
+    /// every one of them before it does, or a field the write did not
+    /// happen to touch is stored as the handle it was served under —
+    /// correct until the pointed-to thing is renamed, and silently wrong
+    /// after. `home` and `subject` are lowered by the caller, from the
+    /// storage key it already resolved; this lowers the rest, the same way,
+    /// from whatever `apply_fact_patch` left in place.
+    ///
+    /// Called unconditionally, right before the row is written, from both
+    /// `update_fact` and `retract` (rule 268) — never behind a check on
+    /// which field a patch touched, because that check is the defect.
+    async fn lower_pointers(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        fact: &mut Fact,
+        key: &EntityId,
+    ) -> Result<(), MemoryError> {
+        fact.home = key.clone();
+        fact.subject = key.clone();
+        if let Some(source) = &fact.derived_from {
+            let resolved = self
+                .resolve(tx, &source.home)
+                .await?
+                .map(|(key, _)| key)
+                .unwrap_or_else(|| source.home.clone());
+            fact.derived_from = Some(FactAddress::new(resolved, source.local.clone()));
+        }
+        if let Some(edge) = &fact.edge {
+            let resolved = self
+                .resolve(tx, &edge.object)
+                .await?
+                .map(|(key, _)| key)
+                .unwrap_or_else(|| edge.object.clone());
+            fact.edge = Some(Edge {
+                shape: edge.shape,
+                object: resolved,
+            });
+        }
+        let mut lowered_refs = Vec::with_capacity(fact.refs.len());
+        for object in &fact.refs {
+            lowered_refs.push(
+                self.resolve(tx, object)
+                    .await?
+                    .map(|(key, _)| key)
+                    .unwrap_or_else(|| object.clone()),
+            );
+        }
+        fact.refs = lowered_refs;
+        let mut lowered_stands_for = Vec::with_capacity(fact.stands_for.len());
+        for named in &fact.stands_for {
+            let resolved = self
+                .resolve(tx, &named.home)
+                .await?
+                .map(|(key, _)| key)
+                .unwrap_or_else(|| named.home.clone());
+            lowered_stands_for.push(FactAddress::new(resolved, named.local.clone()));
+        }
+        fact.stands_for = lowered_stands_for;
+        Ok(())
+    }
+
     /// **Rows plus what the build supplies, over rows already read.** Split out
     /// of [`Self::known`] so a caller that needs the rows on their own — to
     /// find the one row a write targets, never a supplied record that is not
@@ -2106,17 +2172,16 @@ impl Memory for DoltMemory {
             });
         };
         // **`read_fact` serves the handle form, for the readers it usually
-        // answers.** This one writes the row back, so it is lowered to the
-        // storage key it was read under before anything touches it — writing
-        // the handle would file the edit under a different primary key and
-        // strand it there, unread by anything keyed on the badge.
+        // answers.** This one writes the row back, so `home` and `subject`
+        // are lowered to the storage key it was read under before anything
+        // touches it — writing the handle would file the edit under a
+        // different primary key and strand it there, unread by anything
+        // keyed on the badge. The other pointer fields are lowered once,
+        // unconditionally, in [`Self::lower_pointers`], right before the
+        // row is written — not here, because the patch below may still
+        // rewrite any of them.
         fact.home = key.clone();
         fact.subject = key.clone();
-        if let Some(source) = &fact.derived_from
-            && let Some((source_key, _)) = self.resolve(&mut tx, &source.home).await?
-        {
-            fact.derived_from = Some(FactAddress::new(source_key, source.local.clone()));
-        }
         // A retracted row is out of reach of an ordinary edit — one-way is
         // enforced here rather than intended elsewhere.
         if fact.status == FactStatus::Retracted {
@@ -2135,7 +2200,6 @@ impl Memory for DoltMemory {
         // does** — a mark is a set of citations, and a citation to nothing
         // is exactly the failure `derived_from` is screened against below,
         // just plural.
-        let mut resolved_stands_for = Vec::new();
         if let Some(stands_for) = &patch.stands_for {
             let index = Self::index(&mut tx).await?;
             for named in stands_for {
@@ -2163,13 +2227,14 @@ impl Memory for DoltMemory {
                          address"
                     )));
                 }
-                resolved_stands_for.push(resolved_named);
             }
         }
         // **A source named by an EDIT faces the rule a source named at capture
-        // faces.** Lineage is learned late, so it is set here too — and a
+        // faces.** Lineage is learned late, so it is checked here too — and a
         // pointer at a claim nobody wrote would be a link that reads as
-        // evidence and leads nowhere.
+        // evidence and leads nowhere. The resolved form is not kept here —
+        // [`Self::lower_pointers`], below, lowers whatever `apply_fact_patch`
+        // leaves in `fact.derived_from`, touched by this patch or not.
         if let Some(source) = &patch.derived_from {
             let index = Self::index(&mut tx).await?;
             let Some((source_key, _)) = self.resolve(&mut tx, &source.home).await? else {
@@ -2178,8 +2243,10 @@ impl Memory for DoltMemory {
                     nearest: guard::screen(&source.home, &[], &index),
                 });
             };
-            let resolved_source = FactAddress::new(source_key, source.local.clone());
-            match self.read_fact(&mut tx, &resolved_source).await? {
+            match self
+                .read_fact(&mut tx, &FactAddress::new(source_key, source.local.clone()))
+                .await?
+            {
                 None => {
                     return Err(MemoryError::UnknownFact {
                         attempted: source.to_string(),
@@ -2193,39 +2260,14 @@ impl Memory for DoltMemory {
                 }
                 Some(_) => {}
             }
-            // **Stored under its source's storage key, exactly as `home`
-            // is.** `apply_fact_patch` only carries the patch's address
-            // through as given; this corrects it to what the fake and the
-            // real store both key by.
-            apply_fact_patch(&mut fact, &patch)?;
-            fact.derived_from = Some(resolved_source);
-        } else {
-            apply_fact_patch(&mut fact, &patch)?;
         }
-        // **An edge attached by this patch is stored as a badge too**
-        // (rule 268). `apply_fact_patch` carried the handle the patch named;
-        // the existence check above already found it, so `resolve` cannot
-        // miss here — the same correction `derived_from` gets just above.
-        if patch.edge.is_some()
-            && let Some(edge) = &fact.edge
-        {
-            let resolved = self
-                .resolve(&mut tx, &edge.object)
-                .await?
-                .map(|(key, _)| key)
-                .unwrap_or_else(|| edge.object.clone());
-            fact.edge = Some(Edge {
-                shape: edge.shape,
-                object: resolved,
-            });
-        }
-        // **Stored under each source's storage key, exactly as `derived_from`
-        // above.** Resolved once, above, before the patch was applied — a
-        // mark's addresses go stale the same way if the entity they name is
-        // ever renamed.
-        if patch.stands_for.is_some() {
-            fact.stands_for = resolved_stands_for;
-        }
+        apply_fact_patch(&mut fact, &patch)?;
+        // **Every pointer-bearing field, lowered in one pass, unconditionally**
+        // (rule 268) — `apply_fact_patch` carries whatever the patch named, or
+        // whatever `read_fact` served, and both are handle form. Not three
+        // more conditionals on which field the patch happened to touch: that
+        // is the defect, not a workaround for it.
+        self.lower_pointers(&mut tx, &mut fact, &key).await?;
         // **The thing's fields as they will stand, against the thing's fields
         // as they stand now.** A write may not drop a thing below a type it
         // already fits; a thing that fits nothing has nothing to protect, so
@@ -2511,15 +2553,12 @@ impl Memory for DoltMemory {
                 nearest: self.addresses_in(&mut tx, &key).await?,
             });
         };
-        // **Lowered back to the storage key it was read under** — this row is
-        // about to be written again, under the address it actually lives at.
-        target.home = key.clone();
-        target.subject = key.clone();
-        if let Some(source) = &target.derived_from
-            && let Some((source_key, _)) = self.resolve(&mut tx, &source.home).await?
-        {
-            target.derived_from = Some(FactAddress::new(source_key, source.local.clone()));
-        }
+        // **Lowered back to the storage form it was read under, every
+        // pointer-bearing field at once** (rule 268) — this row is about to
+        // be written again, twice: once retracted, once as the account
+        // built from it. Neither write-back may leave a served handle
+        // behind in a column that answers to the badge.
+        self.lower_pointers(&mut tx, &mut target, &key).await?;
         // **`retraction_of` addresses the claim it takes back in a field
         // value, as free text** — served under the handle, exactly as any
         // other address a reader is given, never under the storage key.

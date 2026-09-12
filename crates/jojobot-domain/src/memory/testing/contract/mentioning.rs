@@ -1,4 +1,4 @@
-use super::support::{capture, ensure};
+use super::support::{add, capture, ensure};
 use super::*;
 
 /// **A store this suite can rename a handle in.**
@@ -749,6 +749,150 @@ pub async fn a_rename_moves_the_handle_and_every_reference_still_resolves<
     assert_eq!(
         stored_after, stored_before,
         "the stored mention changed, so this is find-and-replace rather than a pointer",
+    );
+}
+
+/// 🚨 **An edit that touches only the content still leaves every pointer
+/// resolvable after a later rename.**
+///
+/// `update_fact` reads a record already served under today's handles, so
+/// its edge, its ref and the claim it derives from all arrive in handle
+/// form before the patch ever runs. Writing that same record back without
+/// lowering them first stores the handle where the badge belongs — a
+/// defect invisible right now, because the handle still resolves, and only
+/// surfaces the day the pointed-to thing is renamed and nothing points at
+/// it any more.
+///
+/// **The edit is the whole point of this case**: [`a_rename_moves_the_handle_and_every_reference_still_resolves`]
+/// already proves a rename is followed by a record nothing has written
+/// since capture. This proves the same thing survives an edit landing in
+/// between, which a write-back that lowers conditionally does not.
+pub async fn an_edit_that_touches_only_the_content_still_follows_a_later_rename<
+    M: Memory + ?Sized,
+>(
+    store: &M,
+) {
+    let author = EntityId::person("person:contract-edit-pointer-author");
+    ensure(store, &author).await;
+    let was = EntityId("thing:contract-edit-pointer-was".into());
+    add(
+        store,
+        NewEntity::new(was.clone(), "The Pointer Edit Target", "the roster"),
+    )
+    .await;
+
+    let mut linking = NewFact::about(
+        author.clone(),
+        "mentions the pointer target before any edit",
+        date(2026, 6, 10),
+    );
+    linking.edge = Some(Edge::new(EdgeShape::About, was.clone()));
+    linking.refs = vec![was.clone()];
+    let written = capture(store, linking).await;
+
+    store
+        .update_fact(
+            &written.address(),
+            FactPatch {
+                content: Some("only the words changed".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("update_fact should succeed")
+        .written()
+        .expect("nothing blocks a content-only edit");
+
+    let now = EntityId("work:contract-edit-pointer-now".into());
+    store
+        .rename_entity(&was, &now, None, date(2026, 6, 11), None)
+        .await
+        .expect("the rename lands")
+        .written()
+        .expect("nothing collides with the destination");
+
+    let after = store
+        .recall(&author)
+        .await
+        .expect("the store answers")
+        .into_iter()
+        .find(|f| f.id == written.id)
+        .expect("the claim is there");
+    assert_eq!(
+        after.edge.as_ref().map(|e| &e.object),
+        Some(&now),
+        "the edge did not follow the rename after a content-only edit: {after:?}",
+    );
+    assert_eq!(
+        after.refs,
+        vec![now],
+        "the ref did not follow the rename after a content-only edit: {after:?}",
+    );
+}
+
+/// 🚨 **A retraction still leaves every pointer resolvable after a later
+/// rename.**
+///
+/// The same hazard as
+/// [`an_edit_that_touches_only_the_content_still_follows_a_later_rename`],
+/// over `retract` instead of `update_fact`: a retraction reads the served
+/// record too, and rewrites the row it retracts from the rest of it. A
+/// write-back that lowers only `home`, `subject` and `derived_from` leaves
+/// the retracted row's own edge and ref in handle form, where they stand
+/// until the pointed-to thing is renamed.
+pub async fn a_retraction_still_follows_a_later_rename<M: Memory + ?Sized>(store: &M) {
+    let author = EntityId::person("person:contract-retract-pointer-author");
+    ensure(store, &author).await;
+    let was = EntityId("thing:contract-retract-pointer-was".into());
+    add(
+        store,
+        NewEntity::new(was.clone(), "The Pointer Retraction Target", "the roster"),
+    )
+    .await;
+
+    let mut linking = NewFact::about(
+        author.clone(),
+        "mentions the pointer target before any retraction",
+        date(2026, 6, 12),
+    );
+    linking.edge = Some(Edge::new(EdgeShape::About, was.clone()));
+    linking.refs = vec![was.clone()];
+    let written = capture(store, linking).await;
+
+    store
+        .retract(&written.address(), Some("no longer so"), date(2026, 6, 13))
+        .await
+        .expect("the retraction lands");
+
+    let now = EntityId("work:contract-retract-pointer-now".into());
+    store
+        .rename_entity(&was, &now, None, date(2026, 6, 14), None)
+        .await
+        .expect("the rename lands")
+        .written()
+        .expect("nothing collides with the destination");
+
+    let after = store
+        .recall(&author)
+        .await
+        .expect("the store answers")
+        .into_iter()
+        .find(|f| f.id == written.id)
+        .expect("the retracted claim is still there");
+    assert_eq!(
+        after.status,
+        FactStatus::Retracted,
+        "the retraction did not land: {after:?}",
+    );
+    assert_eq!(
+        after.edge.as_ref().map(|e| &e.object),
+        Some(&now),
+        "the retracted row's edge did not follow the rename: {after:?}",
+    );
+    assert_eq!(
+        after.refs,
+        vec![now],
+        "the retracted row's ref did not follow the rename: {after:?}",
     );
 }
 
@@ -1648,6 +1792,8 @@ pub async fn run_all_mentioning<M: Memory + ?Sized, B: Memory + ?Sized>(
     an_edge_follows_a_thing_that_is_rehandled(mentioning, bare, rehandles).await;
     a_ref_follows_a_thing_that_is_rehandled(mentioning, bare, rehandles).await;
     a_rename_moves_the_handle_and_every_reference_still_resolves(mentioning, bare).await;
+    an_edit_that_touches_only_the_content_still_follows_a_later_rename(mentioning).await;
+    a_retraction_still_follows_a_later_rename(mentioning).await;
     a_retype_and_a_reparent_are_each_a_rename(bare).await;
     a_stale_address_resolves_to_the_same_claim_after_a_rename(bare, rehandles).await;
     an_edit_through_a_stale_address_reaches_the_record_it_always_named(bare, rehandles).await;
