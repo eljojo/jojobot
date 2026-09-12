@@ -1465,6 +1465,40 @@ async fn later_december_folds_with_an_invented_date(room: &Surface, sid: &str) {
     .await;
 }
 
+/// **A fold that invents a date in its own PROSE rather than in a structured
+/// field.** The check's own comment calls prose the place an invented date
+/// most naturally lands, since a fold summarizing a year in words is more
+/// likely to say a day than to carry one as a value nobody asked for — and
+/// until this, nothing planted one there.
+async fn later_december_folds_with_an_invented_date_in_prose(room: &Surface, sid: &str) {
+    later_december_never_folds_the_canoe(room, sid).await;
+    let sources: Vec<String> = canoe_facts(room)
+        .await
+        .iter()
+        .filter_map(|fact| fact["address"].as_str().map(str::to_string))
+        .collect();
+    let captured = did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "thing:canoe",
+               "content": "the canoe needed a handful of small repairs this year, wrapping up on 2026-04-01 — the details are on the records this stands for",
+               "provenance": "inference"}),
+    )
+    .await;
+    let address = serde_json::from_str::<Value>(&captured)
+        .ok()
+        .and_then(|v| v["address"].as_str().map(str::to_string))
+        .unwrap_or_else(|| panic!("the fold's own capture answers with its address: {captured}"));
+    did(
+        room,
+        sid,
+        "update_fact",
+        json!({"address": address, "stands_for": sources}),
+    )
+    .await;
+}
+
 /// **A fold that names its own write day in its own prose.** Naming the day
 /// a record was itself written is not invention — a review found the
 /// fabrication check once excluded the fold's own date from what it treated
@@ -3902,6 +3936,45 @@ async fn the_canoes_fabrication_lock_reddens_when_the_fold_invents_a_date() {
         !judged[LATE_DECEMBER[4]].held,
         "a fold that invented a day none of the five repairs gave held the lock that exists to \
          catch exactly that: {}",
+        saying(&judged),
+    );
+}
+
+/// 🚨 **The fabrication lock reddens on an invented date in the fold's own
+/// PROSE, not only in a structured field.**
+///
+/// The case above plants its invented date under `happened_at`, a value
+/// nobody reads for its own sake. A fold summarizing a year in words is at
+/// least as likely to state a day in the sentence itself — the check's own
+/// comment names prose as where a fabrication most naturally lands — and
+/// until this case, nothing had ever driven that branch of the scanner.
+/// Replacing the scanner's body with an empty list must still turn this red.
+#[tokio::test]
+async fn the_fabrication_lock_reddens_on_an_invented_date_in_the_folds_own_prose() {
+    let (_room, surface) = furnished().await;
+    let mut boundaries =
+        work_the_year(&surface, &room_document(), &WITHOUT_LATER_DECEMBER, &[]).await;
+    let sid = sitting(&surface, "2026-12-20").await;
+    later_december_folds_with_an_invented_date_in_prose(&surface, &sid).await;
+    *boundaries.last_mut().expect("the year has a last boundary") =
+        boundary(&surface, "the end").await;
+    let judged = judge_all(&surface, &boundaries).await;
+    assert!(
+        judged[LATE_DECEMBER[2]].held,
+        "a fold that genuinely happened, in the window, failed the timing lock instead of the \
+         fabrication lock: {}",
+        saying(&judged),
+    );
+    assert!(
+        judged[LATE_DECEMBER[3]].held,
+        "a fold naming every source intact failed the sources lock instead of the fabrication \
+         lock: {}",
+        saying(&judged),
+    );
+    assert!(
+        !judged[LATE_DECEMBER[4]].held,
+        "a fold that invented a day none of the five repairs gave, in its own prose, held the \
+         lock that exists to catch exactly that: {}",
         saying(&judged),
     );
 }
