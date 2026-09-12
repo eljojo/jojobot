@@ -2243,12 +2243,12 @@ impl Memory for DoltMemory {
                     });
                 };
                 let resolved_named = FactAddress::new(named_key.clone(), named.local.clone());
-                if self.read_fact(&mut tx, &resolved_named).await?.is_none() {
+                let Some(named_fact) = self.read_fact(&mut tx, &resolved_named).await? else {
                     return Err(MemoryError::UnknownFact {
                         attempted: named.to_string(),
                         nearest: self.addresses_in(&mut tx, &named_key).await?,
                     });
-                }
+                };
                 // **Self-reference is checked on the same storage key the
                 // record being edited already resolved to** — never on the
                 // name the patch sent, which is not yet in that key space
@@ -2258,6 +2258,19 @@ impl Memory for DoltMemory {
                     return Err(MemoryError::InvalidFact(format!(
                         "a record cannot be marked as standing for itself: {named} is its own \
                          address"
+                    )));
+                }
+                // **One layer, so the pile is always one step away.** A
+                // record already marked as standing for others is itself a
+                // shape, and a shape cannot be folded into another mark: that
+                // would let a walk that unfolded a shape find a second shape
+                // underneath, and a read one layer deep would leave the
+                // pile's bottom permanently out of reach.
+                if !named_fact.stands_for.is_empty() {
+                    return Err(MemoryError::InvalidFact(format!(
+                        "{named} already stands for its own sources, so it cannot be folded into \
+                         another mark: a shape may only name sources that are not themselves \
+                         shapes"
                     )));
                 }
             }

@@ -231,6 +231,67 @@ pub async fn a_record_cannot_stand_for_itself<M: Memory>(store: &M) {
     );
 }
 
+/// **One layer, so the pile is always one step away.** A record already
+/// marked as standing for others is itself a shape, and a shape cannot be
+/// folded into another mark — checked from the naming side, which is the same
+/// property stated the other way: a shape may not name a source that is
+/// itself a shape.
+pub async fn a_shape_cannot_name_a_source_that_is_itself_a_shape<M: Memory>(store: &M) {
+    let subject = EntityId::person("person:contract-stands-for-stack");
+    let leaf_one = capture(
+        store,
+        NewFact::about(subject.clone(), "the first leaf", date(2026, 5, 17)),
+    )
+    .await;
+    let leaf_two = capture(
+        store,
+        NewFact::about(subject.clone(), "the second leaf", date(2026, 5, 18)),
+    )
+    .await;
+
+    // leaf_one now stands for leaf_two: leaf_one is a shape.
+    edit(
+        store,
+        &leaf_one.address(),
+        FactPatch {
+            stands_for: Some(vec![leaf_two.address()]),
+            ..FactPatch::default()
+        },
+    )
+    .await;
+
+    // A third record tries to fold the shape into its own mark.
+    let outer = capture(
+        store,
+        NewFact::about(subject.clone(), "the outer claim", date(2026, 5, 19)),
+    )
+    .await;
+    let refused = store
+        .update_fact(
+            &outer.address(),
+            FactPatch {
+                stands_for: Some(vec![leaf_one.address()]),
+                ..FactPatch::default()
+            },
+        )
+        .await;
+    assert!(
+        matches!(refused, Err(MemoryError::InvalidFact(_))),
+        "naming a record that is already a shape must be refused: {refused:?}"
+    );
+
+    // Nothing was written: the outer record still stands for nothing.
+    let facts = store.recall(&subject).await.expect("recall should succeed");
+    let still = facts
+        .iter()
+        .find(|f| f.id == outer.id)
+        .expect("the outer record is still there");
+    assert!(
+        still.stands_for.is_empty(),
+        "a refused edit leaves the mark as it was: {still:?}"
+    );
+}
+
 /// **A mark may not name the same source twice.** The count is the number of
 /// distinct sources, so a repeat would overstate it — the same property
 /// [`a_mark_standing_for_nothing_is_refused`] guards from the other side.
@@ -432,6 +493,7 @@ pub async fn run_all_stands_for<M: Memory>(store: &M) {
     an_ordinary_field_of_the_same_name_is_not_a_mark(store).await;
     a_mark_standing_for_nothing_is_refused(store).await;
     a_record_cannot_stand_for_itself(store).await;
+    a_shape_cannot_name_a_source_that_is_itself_a_shape(store).await;
     a_mark_cannot_repeat_the_same_source(store).await;
     clear_stands_for_takes_the_mark_off(store).await;
     stands_for_replaces_rather_than_merges(store).await;
