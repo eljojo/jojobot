@@ -329,16 +329,47 @@ impl Mailboxes for DoltMailboxes {
         to: &EntityId,
     ) -> Result<Option<Mailbox>, MailboxError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
-        let old_name: Option<String> =
-            sqlx::query_scalar("SELECT name FROM mailbox WHERE owner = ?")
-                .bind(from.as_str())
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(store)?;
-        let Some(old_name) = old_name else {
-            return Ok(None);
+        // **Every row this owner holds, not the first one the engine
+        // yields.** `owner` carries no uniqueness of its own — the create
+        // guard screens the box NAME, never the owner — so more than one row
+        // for the same owner is representable, and picking one silently
+        // would repoint it and orphan the rest.
+        let held: Vec<String> = sqlx::query_scalar("SELECT name FROM mailbox WHERE owner = ?")
+            .bind(from.as_str())
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(store)?;
+        let old_name = match held.as_slice() {
+            [] => return Ok(None),
+            [one] => one.clone(),
+            many => {
+                return Err(MailboxError::OwnerHasMultipleBoxes {
+                    owner: from.to_string(),
+                    names: many.to_vec(),
+                });
+            }
         };
         let new_name = to.slug().to_string();
+        // **Screened before the write, inside the same transaction the write
+        // is in.** The mailbox `name` is its own primary key and the box key
+        // is the slug alone — a different key from the entity handle the
+        // rename already screened, so a collision here is real and unguarded
+        // until this check. Checked only when the name is actually moving:
+        // a retype under the same slug touches no key this could collide on.
+        if old_name != new_name {
+            let held_by: Option<String> =
+                sqlx::query_scalar("SELECT owner FROM mailbox WHERE name = ?")
+                    .bind(&new_name)
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(store)?;
+            if let Some(held_by) = held_by {
+                return Err(MailboxError::NameTaken {
+                    attempted: new_name,
+                    held_by,
+                });
+            }
+        }
         sqlx::query("UPDATE mailbox SET name = ?, owner = ? WHERE name = ?")
             .bind(&new_name)
             .bind(to.as_str())

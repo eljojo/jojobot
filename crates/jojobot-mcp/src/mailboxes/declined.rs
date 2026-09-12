@@ -223,7 +223,9 @@ pub(crate) fn mailbox_error(e: MailboxError) -> McpError {
         | MailboxError::InvalidMessageId(_)
         | MailboxError::InvalidMessage(_)
         | MailboxError::UnknownMessage { .. }
-        | MailboxError::Quarantined { .. } => McpError::invalid_params(e.to_string(), None),
+        | MailboxError::Quarantined { .. }
+        | MailboxError::OwnerHasMultipleBoxes { .. }
+        | MailboxError::NameTaken { .. } => McpError::invalid_params(e.to_string(), None),
         // Not a caller mistake, and not something a caller can fix by calling
         // differently: the store failed, which is a condition on the server
         // side.

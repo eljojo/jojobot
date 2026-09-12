@@ -650,6 +650,39 @@ pub enum MailboxError {
     /// its answers.
     #[error("store error: {0}")]
     Store(String),
+    /// **An owner holds more than one mailbox**, so a rename cannot tell
+    /// which one to follow. A box is opened once, with the bot that owns it
+    /// (M4); more than one for the same owner is damage from before this
+    /// guard existed, not a state this call can resolve by picking one.
+    #[error(
+        "{owner} owns {} mailboxes, not one, so a rename cannot tell which one to follow: {}. \
+         This is damage from before this guard existed — a person has to decide which box is \
+         the real one before the rename can proceed",
+        names.len(),
+        names.join(", ")
+    )]
+    OwnerHasMultipleBoxes {
+        /// The owner more than one box answers to.
+        owner: String,
+        /// Every name found for it.
+        names: Vec<String>,
+    },
+    /// **The destination name is already worn by a different box.** A
+    /// mailbox's name is its owner's slug, and two different owners cannot
+    /// share one — the same rule [`Mailboxes::create_mailbox`] screens for,
+    /// reached here from the write a rename makes: a name already taken,
+    /// discovered before anything moves rather than as a duplicate-key
+    /// failure after it does.
+    #[error(
+        "the mailbox name '{attempted}' already belongs to {held_by}, so this rename would \
+         collide with it. Choose a destination whose slug is not already a mailbox name"
+    )]
+    NameTaken {
+        /// The name the rename tried to take.
+        attempted: String,
+        /// Who already holds it.
+        held_by: String,
+    },
 }
 
 /// The Mailboxes port — five verbs over boxes and the messages in them. A
@@ -696,12 +729,20 @@ pub trait Mailboxes: Send + Sync {
     /// boot that finds no box owned by the new handle and heals a second,
     /// empty one beside the first (see rule 236's own boot-repair path).
     ///
-    /// **Not a guarded write.** The collision that matters — does the
-    /// destination handle collide with anything — was already checked and
-    /// committed on the entity side; there is nothing left here to screen.
-    /// If the SLUG changed, the box's own name moves with it, since a
+    /// **A guarded write, on a key of its own.** The entity side already
+    /// screened the destination HANDLE; the mailbox `name` is the slug
+    /// alone, a different key nothing else checks, and a rename onto a slug
+    /// a different box already wears is refused here —
+    /// [`MailboxError::NameTaken`] — rather than reaching the table's own
+    /// primary key as a duplicate-key failure after the entity has already
+    /// moved. If the SLUG changed, the box's own name moves with it, since a
     /// mailbox's name IS its owner's slug and nothing else; every message
     /// and quarantine card filed under the old name follows.
+    ///
+    /// **Also guarded against an owner holding more than one box** — nothing
+    /// makes `owner` unique, so more than one row can answer to it, and this
+    /// refuses ([`MailboxError::OwnerHasMultipleBoxes`]) rather than
+    /// repointing one silently and orphaning the rest.
     ///
     /// **`None` if the bot owned no box.** A mailbox is opened with the bot
     /// that owns it (M4), so an owner with none is a boot that has not

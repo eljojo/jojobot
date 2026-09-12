@@ -244,17 +244,49 @@ impl Mailboxes for InMemoryMailboxes {
         from: &EntityId,
         to: &EntityId,
     ) -> Result<Option<Mailbox>, MailboxError> {
-        let old_name = {
+        // **Every row this owner holds, not the first one the loop meets.**
+        // Nothing here makes an owner unique — the create guard screens the
+        // box name, never the owner — so more than one row for the same
+        // owner is representable, and picking one silently would repoint it
+        // and orphan the rest.
+        let held: Vec<MailboxName> = {
             let owners = self.owners.lock().expect("owner lock");
             owners
                 .iter()
-                .find(|(_, owner)| owner == from)
+                .filter(|(_, owner)| owner == from)
                 .map(|(name, _)| name.clone())
+                .collect()
         };
-        let Some(old_name) = old_name else {
-            return Ok(None);
+        let old_name = match held.as_slice() {
+            [] => return Ok(None),
+            [one] => one.clone(),
+            many => {
+                return Err(MailboxError::OwnerHasMultipleBoxes {
+                    owner: from.to_string(),
+                    names: many.iter().map(|n| n.as_str().to_string()).collect(),
+                });
+            }
         };
         let new_name = MailboxName(to.slug().to_string());
+        // **Screened before anything moves**, on the box's own key rather
+        // than the entity handle the rename already screened: a different
+        // owner already wearing the destination name is a real collision,
+        // caught here rather than reached as damage.
+        if old_name != new_name {
+            let held_by = {
+                let owners = self.owners.lock().expect("owner lock");
+                owners
+                    .iter()
+                    .find(|(name, owner)| name == &new_name && owner != from)
+                    .map(|(_, owner)| owner.to_string())
+            };
+            if let Some(held_by) = held_by {
+                return Err(MailboxError::NameTaken {
+                    attempted: new_name.as_str().to_string(),
+                    held_by,
+                });
+            }
+        }
         {
             let mut owners = self.owners.lock().expect("owner lock");
             for entry in owners.iter_mut() {
@@ -709,6 +741,101 @@ pub mod contract {
             nothing.is_none(),
             "an owner with no box has nothing to repoint: {nothing:?}",
         );
+    }
+
+    /// 🚨 **An owner holding more than one box refuses a repoint rather than
+    /// picking one silently.**
+    ///
+    /// Nothing makes `owner` unique on a mailbox — the create guard screens
+    /// the box NAME, never the owner — so more than one row can answer to
+    /// one owner, and a repoint that picked one anyway would move it and
+    /// orphan the rest: the exact failure a boot's own healing exists to
+    /// prevent, reached instead by this call. **Paired against the ordinary
+    /// case**, which [`repoint_owner_moves_the_box_and_its_mail`] already
+    /// proves: an owner with exactly one box still moves normally, so this
+    /// case is about the second box, not about repointing breaking outright.
+    pub async fn a_repoint_refuses_when_the_owner_holds_more_than_one_box(store: &dyn Mailboxes) {
+        let owner = EntityId(OWNERS[0].to_string());
+        create(store, "contract-two-boxes-first").await;
+        store
+            .create_mailbox(&name("contract-two-boxes-second"), &owner, None)
+            .await
+            .expect("create ok")
+            .written()
+            .expect("nothing collides with it");
+
+        let now = EntityId("bot:contract-two-boxes-now".to_string());
+        let refused = store
+            .repoint_owner(&owner, &now)
+            .await
+            .expect_err("an owner holding two boxes must refuse rather than pick one");
+        assert!(
+            matches!(refused, MailboxError::OwnerHasMultipleBoxes { .. }),
+            "the wrong reason was given: {refused:?}",
+        );
+
+        // Neither box moved: the refusal left the board exactly as it was.
+        let boxes = store.list_mailboxes().await.expect("list ok");
+        let names: Vec<&str> = boxes.iter().map(|m| m.name.as_str()).collect();
+        assert!(
+            names.contains(&"contract-two-boxes-first")
+                && names.contains(&"contract-two-boxes-second"),
+            "a refused repoint must not move either box: {boxes:?}",
+        );
+        assert!(
+            boxes.iter().all(|m| m.owner == owner),
+            "a refused repoint must not touch either box's owner: {boxes:?}",
+        );
+    }
+
+    /// 🚨 **A repoint refuses a destination name a different owner already
+    /// holds, rather than reaching the table's own primary key as a
+    /// duplicate-key failure.**
+    ///
+    /// The box key is the slug alone, a different key from the entity handle
+    /// a rename's own guard already screened — so a rename onto a handle
+    /// whose slug a different box already wears is a real, unguarded
+    /// collision until this check exists. **Paired against the ordinary
+    /// case** the same way: this box's own repoint, onto a free name, is
+    /// what [`repoint_owner_moves_the_box_and_its_mail`] already proves
+    /// works: this case is about the collision, not about repointing
+    /// breaking outright.
+    pub async fn a_repoint_refuses_a_destination_name_a_different_owner_already_holds(
+        store: &dyn Mailboxes,
+    ) {
+        let moving = EntityId(OWNERS[0].to_string());
+        let staying = EntityId(OWNERS[1].to_string());
+        create(store, "contract-name-taken-moving").await;
+        store
+            .create_mailbox(&name("contract-name-taken-target"), &staying, None)
+            .await
+            .expect("create ok")
+            .written()
+            .expect("nothing collides with it");
+
+        let now = EntityId("bot:contract-name-taken-target".to_string());
+        let refused = store
+            .repoint_owner(&moving, &now)
+            .await
+            .expect_err("a rename onto a name a different owner holds must refuse");
+        assert!(
+            matches!(refused, MailboxError::NameTaken { .. }),
+            "the wrong reason was given: {refused:?}",
+        );
+
+        // Neither box moved: the refused rename left the board exactly as
+        // it was, and the collision was caught before either row changed.
+        let boxes = store.list_mailboxes().await.expect("list ok");
+        let moving_box = boxes
+            .iter()
+            .find(|m| m.name.as_str() == "contract-name-taken-moving")
+            .unwrap_or_else(|| panic!("the box that was refused a move stayed put: {boxes:?}"));
+        assert_eq!(moving_box.owner, moving);
+        let staying_box = boxes
+            .iter()
+            .find(|m| m.name.as_str() == "contract-name-taken-target")
+            .unwrap_or_else(|| panic!("the box already holding the name is untouched: {boxes:?}"));
+        assert_eq!(staying_box.owner, staying);
     }
 
     /// **A box states its one owner, and the board reports it.**
@@ -1955,6 +2082,8 @@ pub mod contract {
     {
         create_then_list(&fresh().await).await;
         repoint_owner_moves_the_box_and_its_mail(&fresh().await).await;
+        a_repoint_refuses_when_the_owner_holds_more_than_one_box(&fresh().await).await;
+        a_repoint_refuses_a_destination_name_a_different_owner_already_holds(&fresh().await).await;
         a_box_carries_its_owner_onto_the_board(&fresh().await).await;
         a_box_for_an_owner_nobody_knows_is_refused(&fresh().await).await;
         creating_a_near_miss_is_blocked_and_writes_nothing(&fresh().await).await;
