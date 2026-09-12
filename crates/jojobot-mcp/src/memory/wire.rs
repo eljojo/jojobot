@@ -74,6 +74,10 @@ pub(crate) fn fact_json(
         // Same rule: most claims are not derived from another claim, and a
         // reader must not have to branch on a missing key to learn that.
         "derived_from": fact.derived_from.as_ref().map(|a| a.to_string()),
+        // The synthesis mark: which claims this record stands for. Always
+        // present, empty when the record carries no mark — same convention
+        // as `refs`, because most records are not a synthesis of others.
+        "stands_for": fact.stands_for.iter().map(|a| a.to_string()).collect::<Vec<_>>(),
     });
     // **Only when the day has passed, and only when somebody set one.** A key
     // that said `false` on every ordinary claim would spend a reader's

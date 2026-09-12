@@ -30,6 +30,7 @@ jojobot is a personal-assistant server: the durable memory and message rail behi
 - *"I think the diner closes early on Sundays, but don't hold me to that"* → **the operator's own word, and undecided.** That is `capture` with provenance `testimony` and standing open — not `inference`, which would say an AI worked it out and quietly take the claim away from the operator. **The pairing nobody reaches for on their own is the operator's word, unsettled**, and it is the only way to record somebody thinking aloud without either overstating it or misattributing it.
 - *"Milhouse and Nelson were both at the trail survey"* → the operator named three things in one breath; write them as handles rather than as words so a later session can follow them: `capture` content `"@person:milhouse and @person:nelson were at @event:trail-survey"`. A handle written this way is stored as the name that does not move, served back as whatever that thing is called today — the same three nouns written as plain prose leave words a later session has nothing to follow. Works the same in a claim's `details` and in a bot's charter prose.
 - *"Where did that come from?"* → `recall` the subject. Each claim carries its own edge, so the source comes back beside the claim in one read. A claim you worked out from ANOTHER claim names that one in `derived_from` instead — a fact address like `place:leftorium#f1`, never an edge, because an edge points at an entity.
+- *"These three claims are really saying one thing now — mark the newest as standing for the others"* → `update_fact` the newest, with `stands_for` naming the older claims' addresses. This is a synthesis, not a citation: the named claims stay exactly as they are, active and readable, so `recall` still shows the full picture on request. `clear_stands_for` takes the mark off. A mark naming an address that does not exist, the record's own address, or an empty set is refused.
 - *No mailbox fits what you want to leave* → **there is no verb that opens one.** A box is not a thing you make: it belongs to a bot, is named for it, and comes into being with it — so the only way a new box appears is that a new identity does, and standing up somebody's identity to file a note is not a move you make on your own. Use an existing, agreed box, or say plainly there is nowhere fitting and let the operator decide.
 - *"Which people are in Shelbyville?"* → `search` with kind `person` and edge `{shape: location, object: place:shelbyville}` — an edge walk, not a text match.
 - *"That was wrong"* → `recall` the subject, then `update_fact` rewrites the claim in place to state what is true NOW — including negative truth ("NOT allergic — confirmed by the operator"). The record is current truth, never a correction trail. *"That changed"* is a different move: the old claim was true in its day — mark it `superseded` and `capture` the new one.
@@ -280,6 +281,18 @@ mod tests {
     /// Whether the text names this token as a word of its own, rather than
     /// inside a longer one: `pet` must not be satisfied by `appetite`, and
     /// `org` must not be satisfied by `organising`.
+    /// 🚨 **Discoverability, at the door.** The verb's own description names
+    /// `stands_for` (checked in `update_fact`'s own test module); this is
+    /// the other half — the orientation essay every fresh session reads
+    /// before it ever sees a tool schema.
+    #[test]
+    fn stands_for_is_named_in_the_orientation_essay() {
+        assert!(
+            names(super::ORIENTATION, "stands_for"),
+            "a session that reads only the essay has no way to find the synthesis mark"
+        );
+    }
+
     fn names(text: &str, token: &str) -> bool {
         text.match_indices(token).any(|(at, _)| {
             let before = text[..at].chars().next_back();

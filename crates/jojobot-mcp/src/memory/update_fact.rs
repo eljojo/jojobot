@@ -128,6 +128,22 @@ pub struct UpdateFactArgs {
     /// and removing it are two different edits.
     #[serde(default)]
     pub(crate) clear_derived_from: Option<bool>,
+    /// **Mark this record as standing for the claims named here**, each as
+    /// its address `kind:slug#local-id`. A synthesis, not a citation: the
+    /// named claims stay exactly as they are — active, readable, untouched —
+    /// so the full picture is still there for anyone who reads them. A write
+    /// replaces the whole set. Every named address must already exist;
+    /// naming this record's own address, or the same address twice, is
+    /// refused — and so is an empty set, because a mark with no sources
+    /// would read back as an ordinary record, indistinguishable from one a
+    /// session never finished marking.
+    #[serde(default)]
+    pub(crate) stands_for: Option<Vec<String>>,
+    /// **Take the mark off**, leaving an ordinary record that stands for
+    /// nothing. Its own flag, because leaving it alone and removing it are
+    /// two different edits.
+    #[serde(default)]
+    pub(crate) clear_stands_for: Option<bool>,
     /// **Take the edge off**, leaving a claim that points at nothing. Its own
     /// flag for the reason the others are: an edit that names neither `shape`
     /// nor `object` says nothing about edges and leaves the one already there
@@ -193,6 +209,12 @@ impl Jojobot {
                        A PAST EVENT THAT TURNED OUT NEVER TO HAVE HAPPENED IS RETRACT'S CASE, \
                        NOT THIS ONE: retracting marks the record rather than rewriting it, and \
                        there is no un-retract. \
+                       stands_for MARKS THIS RECORD AS STANDING FOR THE CLAIMS NAMED HERE, each \
+                       as its address: a synthesis, never a citation — the named claims stay \
+                       active and readable exactly as they were, so recall still shows the full \
+                       picture. clear_stands_for takes the mark off. A write replaces the whole \
+                       set; naming an address that does not exist, this record's own address, \
+                       the same address twice, or an empty set is refused. \
                        An address that \
                        names no fact comes back status: blocked with the addresses that do \
                        exist — it never creates. IT ANSWERS WITH A RECEIPT, NOT THE RECORD: the \
@@ -243,10 +265,17 @@ impl Jojobot {
                 .map(|address| FactAddress::parse(address).map_err(memory_error))
                 .transpose()?,
             clear_derived_from: args.clear_derived_from.unwrap_or(false),
-            // Not on this verb's surface yet — the mark is domain-and-adapter
-            // plumbing so far, with no served argument to carry it.
-            stands_for: None,
-            clear_stands_for: false,
+            stands_for: args
+                .stands_for
+                .as_ref()
+                .map(|addresses| {
+                    addresses
+                        .iter()
+                        .map(|address| FactAddress::parse(address).map_err(memory_error))
+                        .collect::<Result<Vec<_>, _>>()
+                })
+                .transpose()?,
+            clear_stands_for: args.clear_stands_for.unwrap_or(false),
             clear_edge: args.clear_edge.unwrap_or(false),
             edge: match parse_edge(args.shape.as_deref(), args.object.as_deref())? {
                 Ok(edge) => edge,
@@ -1431,6 +1460,225 @@ mod tests {
                 .expect("a list")
                 .contains(&serde_json::json!(CLAIM_SUBJECT_TEACHING)),
             "a session that only edits never learns the subject/purpose convention: {edited}"
+        );
+    }
+
+    /// 🚨 **A mark set through `update_fact` reads back through `recall`, and
+    /// an ordinary field wearing the same name does not become one.**
+    ///
+    /// Paired in the same case, per the dispatch: without the second half, a
+    /// build where any key named `stands_for` counted as the mark would pass
+    /// the first half alone.
+    #[tokio::test]
+    async fn a_mark_set_through_update_fact_reads_back_and_an_ordinary_field_is_not_it() {
+        let jojobot = handler();
+        let first = capture_ok(&jojobot, capture_args("alpha", "said the kiln was lit")).await;
+        let second = capture_ok(&jojobot, capture_args("alpha", "and the flue was blocked")).await;
+        let synthesis = capture_ok(
+            &jojobot,
+            capture_args("alpha", "the kiln trouble is resolved now"),
+        )
+        .await;
+        let first_address = address_of(&first);
+        let second_address = address_of(&second);
+        let synthesis_address = address_of(&synthesis);
+
+        let written = json_of(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    stands_for: Some(vec![first_address.clone(), second_address.clone()]),
+                    ..update_args(&synthesis_address)
+                }))
+                .await
+                .expect("update ok"),
+        );
+        assert_eq!(
+            written["stands_for"],
+            serde_json::json!([first_address, second_address]),
+            "the receipt does not show the mark it was just given: {written}"
+        );
+
+        let recalled = json_of(
+            &jojobot
+                .recall(Parameters(recall_args("person:alpha")))
+                .await
+                .expect("recall ok"),
+        );
+        let facts = recalled["objects"][0]["facts"].as_array().expect("facts");
+        let synthesis_read = facts
+            .iter()
+            .find(|f| f["address"] == synthesis_address)
+            .expect("the synthesis record is still there");
+        assert_eq!(
+            synthesis_read["stands_for"],
+            serde_json::json!([first_address, second_address]),
+            "a plain recall does not show the mark that was set: {synthesis_read}"
+        );
+
+        // An ordinary field of the same name, on a record that never got the
+        // mark: it stays a field, and the dedicated line stays empty.
+        let plain = capture_ok(&jojobot, capture_args("alpha", "an unrelated claim")).await;
+        let plain_address = address_of(&plain);
+        let with_field = json_of(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    fields: Some(
+                        [("stands_for".to_string(), "not a mark".to_string())]
+                            .into_iter()
+                            .collect(),
+                    ),
+                    ..update_args(&plain_address)
+                }))
+                .await
+                .expect("update ok"),
+        );
+        assert_eq!(
+            with_field["stands_for"],
+            serde_json::json!([]),
+            "an ordinary field named stands_for was read as the mark: {with_field}"
+        );
+    }
+
+    /// **A mark must name claims that exist**, exactly as `derived_from` does
+    /// — refused with the addresses that do exist, never a new fact.
+    #[tokio::test]
+    async fn a_stands_for_must_name_claims_that_exist() {
+        let jojobot = handler();
+        let source = capture_ok(&jojobot, capture_args("alpha", "said the ferry moved")).await;
+        let source_address = address_of(&source);
+        let synthesis =
+            capture_ok(&jojobot, capture_args("alpha", "so the crossing is longer")).await;
+
+        let refused = blocked(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    stands_for: Some(vec!["person:alpha#f99".into()]),
+                    ..update_args(&address_of(&synthesis))
+                }))
+                .await
+                .expect("a miss is an answer, not a protocol failure"),
+        );
+        assert_eq!(refused["wrote"], false, "{refused}");
+        assert!(
+            refused["how_to_proceed"]
+                .as_str()
+                .is_some_and(|advice| advice.contains(&source_address)),
+            "the addresses that DO exist are what makes it repairable: {refused}"
+        );
+    }
+
+    /// ⭐ **An empty set is refused rather than stored** — a mark with no
+    /// sources would read back as an ordinary record, indistinguishable from
+    /// one that never got a mark at all.
+    #[tokio::test]
+    async fn stands_for_refuses_an_empty_set() {
+        let jojobot = handler();
+        let synthesis = capture_ok(&jojobot, capture_args("alpha", "a record on its own")).await;
+
+        let refused = blocked(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    stands_for: Some(vec![]),
+                    ..update_args(&address_of(&synthesis))
+                }))
+                .await
+                .expect("an empty set is an answer, not a protocol failure"),
+        );
+        assert_eq!(refused["wrote"], false, "{refused}");
+    }
+
+    /// A mark naming its own record's address is refused.
+    #[tokio::test]
+    async fn stands_for_refuses_its_own_address() {
+        let jojobot = handler();
+        let synthesis = capture_ok(&jojobot, capture_args("alpha", "a record on its own")).await;
+        let address = address_of(&synthesis);
+
+        let refused = blocked(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    stands_for: Some(vec![address.clone()]),
+                    ..update_args(&address)
+                }))
+                .await
+                .expect("self-reference is an answer, not a protocol failure"),
+        );
+        assert_eq!(refused["wrote"], false, "{refused}");
+    }
+
+    /// `clear_stands_for` takes the mark off, and the sources it named stay
+    /// exactly as they were — active, and readable on their own address.
+    #[tokio::test]
+    async fn clear_stands_for_takes_the_mark_off_and_leaves_the_sources_alone() {
+        let jojobot = handler();
+        let source = capture_ok(&jojobot, capture_args("alpha", "said the kiln was lit")).await;
+        let source_address = address_of(&source);
+        let synthesis = capture_ok(&jojobot, capture_args("alpha", "resolved now")).await;
+        let synthesis_address = address_of(&synthesis);
+
+        update_ok(
+            &jojobot,
+            UpdateFactArgs {
+                stands_for: Some(vec![source_address.clone()]),
+                ..update_args(&synthesis_address)
+            },
+        )
+        .await;
+
+        let cleared = update_ok(
+            &jojobot,
+            UpdateFactArgs {
+                clear_stands_for: Some(true),
+                ..update_args(&synthesis_address)
+            },
+        )
+        .await;
+        assert_eq!(
+            cleared["stands_for"],
+            serde_json::json!([]),
+            "the mark is still there after clear_stands_for: {cleared}"
+        );
+
+        let recalled = json_of(
+            &jojobot
+                .recall(Parameters(recall_args("person:alpha")))
+                .await
+                .expect("recall ok"),
+        );
+        let source_read = recalled["objects"][0]["facts"]
+            .as_array()
+            .expect("facts")
+            .iter()
+            .find(|f| f["address"] == source_address)
+            .expect("the source record is still there");
+        assert_eq!(
+            source_read["status"], "active",
+            "the source is untouched by the mark being cleared: {source_read}"
+        );
+    }
+
+    /// 🚨 **Discoverability: the verb's own description names the
+    /// argument.** A capability whose only path is that somebody read the
+    /// diff has no path.
+    #[test]
+    fn stands_for_is_named_on_the_verbs_own_description() {
+        let tools = Jojobot::tool_router().list_all();
+        let update_fact = tools
+            .iter()
+            .find(|t| t.name.as_ref() == "update_fact")
+            .expect("update_fact is a tool");
+        let tool_description = update_fact.description.as_deref().unwrap_or_default();
+        assert!(
+            tool_description.contains("stands_for"),
+            "the tool-level description does not name the argument: {tool_description}"
+        );
+        let schema =
+            serde_json::to_value(&update_fact.input_schema).expect("the schema serializes");
+        assert!(
+            schema["properties"]["stands_for"]["description"]
+                .as_str()
+                .is_some_and(|d| !d.is_empty()),
+            "stands_for carries no schema description of its own: {schema}"
         );
     }
 }
