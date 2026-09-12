@@ -735,25 +735,13 @@ pub fn server_binary() -> Result<PathBuf> {
         }
         let candidate = here.join("jojobot");
         if candidate.is_file() {
-            refuse_a_stale_server(&candidate, &crates_dir(), MY_CRATE)?;
+            refuse_a_stale_server(&candidate)?;
             return Ok(candidate);
         }
     }
     anyhow::bail!(
         "no jojobot binary found beside this one — build the workspace, or name it in JOJOBOT_BIN"
     )
-}
-
-/// This crate's directory name, which is the one the staleness guard leaves
-/// out: the rooms are not what the server is built from.
-const MY_CRATE: &str = "jojobot-exercise";
-
-/// **Where the workspace's crates are**, from where this crate was compiled.
-fn crates_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_default()
 }
 
 /// 🚨 **Refuse a server binary older than the sources it is built from.**
@@ -769,77 +757,76 @@ fn crates_dir() -> PathBuf {
 /// it does not run. **Refusing is the half taken here**, because building from
 /// inside a test would be cargo calling cargo.
 ///
-/// ⛔️ **This crate's own sources are left out, and that is not a convenience.**
-/// Editing a room, a lock or a case does not stale the server, and a guard that
-/// said it did would refuse the honest workspace build that runs right after
-/// the edit.
+/// ⛔️ **This asks the build system rather than walking the filesystem and
+/// guessing.** A directory denylist — leave out `tests`, `benches`,
+/// `examples`, this crate's own sources — cannot see a feature-gated source
+/// file: `jojobot-domain`'s shared contract fixture sits in an ordinary `src`
+/// directory behind a cargo feature the server binary does not enable, so it
+/// is compiled into nothing, and a denylist has no name for that shape. It
+/// refused a build every time that fixture was touched, on the most-edited
+/// test surface in the repository.
+///
+/// **Cargo already knows the answer and writes it down.** Every binary
+/// rustc links carries a depfile beside it — `<binary>.d`, a Makefile rule
+/// naming every source that actually went into that build — because cargo's
+/// own incremental rebuilds are decided from it. A file behind a feature the
+/// binary does not enable was never compiled, so it is not on the list,
+/// however it sits in the workspace tree; a file that changes what to
+/// compile (`Cargo.toml`, `build.rs`) rides the same list because rustc's own
+/// dependency tracking already has to know about it.
 ///
 /// **A workspace it cannot find judges nothing.** A binary named through
 /// `JOJOBOT_BIN` never reaches here, and that is the way to drive a server
-/// built somewhere else on purpose.
-pub(crate) fn refuse_a_stale_server(binary: &Path, crates: &Path, mine: &str) -> Result<()> {
+/// built somewhere else on purpose. A missing or unreadable depfile is the
+/// same case as a missing binary: nothing here can tell staleness from
+/// health, so it says nothing rather than guessing.
+pub(crate) fn refuse_a_stale_server(binary: &Path) -> Result<()> {
     let Ok(built) = std::fs::metadata(binary).and_then(|m| m.modified()) else {
         return Ok(());
     };
-    let Ok(entries) = std::fs::read_dir(crates) else {
+    let Some(sources) = depfile_sources(binary) else {
         return Ok(());
     };
-    for crate_dir in entries.flatten() {
-        if crate_dir.file_name() == *mine {
-            continue;
-        }
-        if let Some(newer) = newest_change_under(&crate_dir.path(), built) {
+    for source in sources {
+        if std::fs::metadata(&source)
+            .and_then(|m| m.modified())
+            .is_ok_and(|changed| changed > built)
+        {
             anyhow::bail!(
                 "the jojobot binary at {} is older than {} — this crate does not depend on the \
                  `jojobot` crate, so a scoped run does not rebuild the server it drives. Run \
                  `cargo build --workspace` first, or name a binary in JOJOBOT_BIN.",
                 binary.display(),
-                newer.display(),
+                source.display(),
             );
         }
     }
     Ok(())
 }
 
-/// **Cargo target directories the server binary is never built from.**
-///
-/// The guard already leaves this crate's own sources out, on the ground that
-/// editing a room does not stale the server. **A test, a bench or an example in
-/// any crate is the same category**: cargo does not link them into a binary, so
-/// adding one cannot change the server and cargo has nothing to relink.
-///
-/// 🚨 **Without this the guard is a tripwire on writing tests.** The binary
-/// stays older than the new file for ever, and the bar goes red the moment
-/// anybody adds a case — in a repository whose whole method is adding cases.
-const NOT_LINKED: [&str; 3] = ["tests", "benches", "examples"];
-
-/// The first file under `at` modified after `built`, if any. **The first rather
-/// than the newest**: the answer is one name for a person to read, and finding
-/// one is already the whole verdict.
-fn newest_change_under(at: &Path, built: std::time::SystemTime) -> Option<PathBuf> {
-    let entries = std::fs::read_dir(at).ok()?;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let Ok(kind) = entry.file_type() else {
+/// **Every file cargo says this binary was actually built from**, read from
+/// the depfile rustc writes beside it rather than walked from the workspace
+/// tree. `None` when the depfile is missing or unreadable — an older
+/// toolchain, a binary built some other way — which the caller reads as
+/// "cannot judge" rather than "stale", the same as an unreadable binary.
+fn depfile_sources(binary: &Path) -> Option<Vec<PathBuf>> {
+    let text = std::fs::read_to_string(binary.with_extension("d")).ok()?;
+    // **A continuation line joins into the rule it wraps.** A depfile is
+    // free to spread one rule across lines with a trailing backslash; joined
+    // first, every rule reads as the single line it always logically was.
+    let joined = text.replace("\\\n", " ");
+    let mut sources = Vec::new();
+    for line in joined.lines() {
+        // **The target is everything before the first colon; the colon
+        // itself never appears in a path this workspace produces.** Only the
+        // dependencies after it are read — the target is the binary itself,
+        // which this function is already given.
+        let Some((_, rest)) = line.split_once(':') else {
             continue;
         };
-        if kind.is_dir() && NOT_LINKED.contains(&entry.file_name().to_string_lossy().as_ref()) {
-            continue;
-        }
-        if kind.is_dir() {
-            if let Some(found) = newest_change_under(&path, built) {
-                return Some(found);
-            }
-            continue;
-        }
-        if std::fs::metadata(&path)
-            .and_then(|m| m.modified())
-            .is_ok_and(|changed| changed > built)
-        {
-            return Some(path);
-        }
+        sources.extend(rest.split_whitespace().map(PathBuf::from));
     }
-    None
+    Some(sources)
 }
 
 #[cfg(test)]
@@ -881,14 +868,37 @@ mod tests {
     }
 
     /// A workspace shape: one crate the server is built from, and the crate
-    /// the rooms live in.
+    /// the rooms live in. **The depfile beside the binary names only
+    /// `alpha/src/lib.rs`** — the same list a real `cargo build` writes,
+    /// since `jojobot-exercise` is never in the graph of the binary it
+    /// drives, and this fixture's own `room.rs` is a stand-in for it.
     fn a_workspace(named: &str) -> std::path::PathBuf {
         let root =
             std::env::temp_dir().join(format!("jojobot-stale-{named}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         put(&root.join("crates/alpha/src/lib.rs"));
         put(&root.join("crates/jojobot-exercise/src/room.rs"));
+        write_depfile(
+            &root.join("jojobot"),
+            &[root.join("crates/alpha/src/lib.rs")],
+        );
         root
+    }
+
+    /// Write a depfile beside `binary` naming exactly `sources` — the shape
+    /// rustc writes for real, one Makefile rule with the target and its
+    /// dependencies.
+    fn write_depfile(binary: &std::path::Path, sources: &[std::path::PathBuf]) {
+        let rule = format!(
+            "{}: {}\n",
+            binary.display(),
+            sources
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(" "),
+        );
+        std::fs::write(binary.with_extension("d"), rule).expect("the depfile");
     }
 
     /// 🚨 **The contract with the server: it announces the address it serves,
@@ -1054,11 +1064,11 @@ mod tests {
         let crates = root.join("crates");
         let binary = root.join("jojobot");
         put_newer_than(&binary, &crates.join("alpha/src/lib.rs"));
-        refuse_a_stale_server(&binary, &crates, "jojobot-exercise")
+        refuse_a_stale_server(&binary)
             .expect("a binary newer than every server source is the honest case");
 
         put_newer_than(&crates.join("alpha/src/lib.rs"), &binary);
-        let refused = refuse_a_stale_server(&binary, &crates, "jojobot-exercise")
+        let refused = refuse_a_stale_server(&binary)
             .expect_err("a binary older than a server source is a stale instrument")
             .to_string();
         assert!(
@@ -1069,7 +1079,7 @@ mod tests {
 
         put_newer_than(&binary, &crates.join("alpha/src/lib.rs"));
         put_newer_than(&crates.join("jojobot-exercise/src/room.rs"), &binary);
-        refuse_a_stale_server(&binary, &crates, "jojobot-exercise").expect(
+        refuse_a_stale_server(&binary).expect(
             "this crate's own sources are not the server's — editing a room test must not \
              refuse the run that tests the edit",
         );
@@ -1108,7 +1118,7 @@ mod tests {
         ] {
             put_newer_than(&crates.join("alpha").join(target), &binary);
         }
-        refuse_a_stale_server(&binary, &crates, "jojobot-exercise").expect(
+        refuse_a_stale_server(&binary).expect(
             "adding a test to another crate refused the run, so the bar goes red the moment \
              anybody writes a test",
         );
@@ -1116,8 +1126,49 @@ mod tests {
         // The case the guard exists for, unchanged: a source the server really
         // is built from.
         put_newer_than(&crates.join("alpha/src/lib.rs"), &binary);
-        let refused = refuse_a_stale_server(&binary, &crates, "jojobot-exercise")
+        let refused = refuse_a_stale_server(&binary)
             .expect_err("a binary older than a server source is still a stale instrument")
+            .to_string();
+        assert!(
+            refused.contains("lib.rs"),
+            "the refusal does not name the source that outran the binary: {refused}",
+        );
+    }
+
+    /// 🚨 **The defect this depfile-based guard exists to fix.**
+    ///
+    /// `jojobot-domain`'s shared contract fixture sits behind a cargo feature
+    /// the server binary does not enable — in an ordinary `src` directory,
+    /// not under `tests`, `benches` or `examples`. A directory denylist has
+    /// no name for that shape and refuses every build the fixture is edited
+    /// in, on the most-edited test surface in the repository. Reading the
+    /// depfile instead asks cargo what actually compiled: a file behind a
+    /// feature this binary does not enable is not on that list, however it
+    /// sits in the tree.
+    ///
+    /// **Both directions, because either alone passes against a build with
+    /// the other wrong.** A guard that stopped reading the depfile at all
+    /// would pass the first half and refuse nothing, ever.
+    #[test]
+    fn a_feature_gated_source_does_not_stale_the_server_and_a_compiled_one_still_does() {
+        let root = a_workspace("features");
+        let crates = root.join("crates");
+        let binary = root.join("jojobot");
+        put_newer_than(&binary, &crates.join("alpha/src/lib.rs"));
+
+        // An ordinary `src` file, behind a feature this binary does not
+        // enable — `a_workspace`'s depfile names only `alpha/src/lib.rs`,
+        // so this one was never in the binary's graph.
+        put_newer_than(&crates.join("alpha/src/testing.rs"), &binary);
+        refuse_a_stale_server(&binary).expect(
+            "a feature-gated source outran the binary and still refused it — the guard is a \
+             tripwire on a fixture that was never compiled in",
+        );
+
+        // The compiled source, unchanged: this is what the guard exists for.
+        put_newer_than(&crates.join("alpha/src/lib.rs"), &binary);
+        let refused = refuse_a_stale_server(&binary)
+            .expect_err("a binary older than a compiled source is still a stale instrument")
             .to_string();
         assert!(
             refused.contains("lib.rs"),
