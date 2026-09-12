@@ -797,6 +797,7 @@ fn charter_json(
     object: &graph::Object,
     want_charter: bool,
     asked_prose: bool,
+    elided_bot_has_charter: bool,
 ) {
     if object.entity.id.kind() != Some(EntityKind::BOT) {
         return;
@@ -808,14 +809,23 @@ fn charter_json(
     // can run to thousands of characters, so a reader who did not ask for one
     // needs to be told there was something left out, and how to reach it —
     // the same house style as `records`, `older` and `fields_backing_note`.
+    //
+    // **But only when there is something behind the note.** A bot with no
+    // charter set has nothing to elide, and telling it to "ask again" would
+    // send a reader back for an answer that is still empty. `object.prose`
+    // cannot answer this here: it is only populated when the caller asked for
+    // it, which is exactly the branch this is not — the caller's answer for
+    // this comes in as `elided_bot_has_charter`, looked up separately.
     if !want_charter {
-        fields.insert("charter_elided".into(), true.into());
-        fields.insert(
-            "charter_note".into(),
-            "the charter is not here — recall again naming this handle with charter: true to \
-             read it"
-                .into(),
-        );
+        fields.insert("charter_elided".into(), elided_bot_has_charter.into());
+        if elided_bot_has_charter {
+            fields.insert(
+                "charter_note".into(),
+                "the charter is not here — recall again naming this handle with charter: true \
+                 to read it"
+                    .into(),
+            );
+        }
         return;
     }
     fields.insert("charter_elided".into(), false.into());
@@ -1398,6 +1408,28 @@ impl Jojobot {
             )),
             _ => None,
         };
+        // **Whether an elided bot actually has a charter, looked up
+        // separately.** The walk above never read prose for this call —
+        // `include.prose` is false whenever nobody asked for it — so
+        // `object.prose` carries nothing here to answer from, on any object.
+        // A bot's own charter is small enough (unlike the store as a whole)
+        // that reading it once per bot in this read is worth the honesty: the
+        // alternative is a note that cannot tell "there is more" from "there
+        // is nothing".
+        let mut elided_bot_charters: std::collections::HashMap<EntityId, bool> =
+            std::collections::HashMap::new();
+        if !want_charter {
+            for object in &found {
+                if object.entity.id.kind() != Some(EntityKind::BOT) {
+                    continue;
+                }
+                let has_charter = matches!(
+                    self.memory.scan_entity(&object.entity.id).await,
+                    Ok(Some(doc)) if !doc.prose.trim().is_empty()
+                );
+                elided_bot_charters.insert(object.entity.id.clone(), has_charter);
+            }
+        }
         // **A claim reached this session** — computed before `found` is
         // consumed below, the same trigger `search` uses: a read that asked
         // for facts and got none never touched the domain.
@@ -1450,7 +1482,17 @@ impl Jojobot {
                 .zip(backing.into_iter().chain(std::iter::repeat(None)))
                 .map(|((o, held), backing)| {
                     let mut rendered = object_json(o, include, today);
-                    charter_json(&mut rendered, o, want_charter, asked_prose);
+                    let elided_bot_has_charter = elided_bot_charters
+                        .get(&o.entity.id)
+                        .copied()
+                        .unwrap_or(false);
+                    charter_json(
+                        &mut rendered,
+                        o,
+                        want_charter,
+                        asked_prose,
+                        elided_bot_has_charter,
+                    );
                     rendered["held"] = held;
                     match backing {
                         Some(backing) => {
@@ -3394,6 +3436,43 @@ mod tests {
         assert!(
             note.contains("charter: true"),
             "the note names the call that returns it: {note}",
+        );
+    }
+
+    /// 🚨 **A bot with no charter is not "elided" — there is nothing behind
+    /// the note to ask again for.**
+    ///
+    /// The branch above proves the note appears when a charter is really
+    /// being withheld. This proves the OTHER half: a bot that never had one
+    /// set must not get the same "ask again" advice, because asking again
+    /// would return nothing — a caller who took the advice would spend a
+    /// call to learn what this answer already knew.
+    #[tokio::test]
+    async fn a_bot_with_no_charter_is_not_told_to_ask_again_for_one() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+
+        let body = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    facts: Some(false),
+                    ..of("bot:gamma")
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        let object = &body["objects"][0];
+        assert!(
+            object["charter"].is_null(),
+            "still not shipped unasked: {body}",
+        );
+        assert_eq!(
+            object["charter_elided"], false,
+            "nothing was left out — there is no charter to elide: {body}",
+        );
+        assert!(
+            object.get("charter_note").is_none(),
+            "a bot with no charter must not be sent to ask again for one: {body}",
         );
     }
 
