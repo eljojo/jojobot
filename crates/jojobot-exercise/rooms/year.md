@@ -355,31 +355,20 @@ say     June: no single record points at two different kinds of thing as handles
 > start jojobot as assistant — it is 5 July 2026 and I was wrong in March, the club has never met on Tuesdays and I do not want that standing, and I replaced the canoe's rear foot brace, the old one had cracked
 
 ```locks
-# Rewritten in place, not retracted. The March claim is about what the club's
-# schedule IS — an ongoing state — and in July it did not stop being so, it
-# was never so. retract's own words are for something that HAPPENED and
-# turned out not to; update_fact's are for a claim about what is true now,
-# and they say plainly to rewrite the content to state the negative truth and
-# leave the record active. A retraction here would lose the one thing the
-# rewrite keeps: that this is the SAME claim, corrected, not two claims about
-# it.
+# Taken back, not rewritten. The operator ruled 2026-09-12 that the axis is
+# which SESSION wrote the claim, not whether the subject is an ongoing state
+# or a past event: a sitting correcting its own mistake in the same breath
+# rewrites in place, and a sitting correcting an EARLIER one's claim leaves
+# the correction visible instead. March and July are different sittings —
+# there is nothing to weigh, and no rewrite reaches this record.
 #
-# The day is asked for the reason the status is: a rewrite with no date given
-# keeps the ORIGINAL day forever, and a sitting in December reading that day
-# would think March corrected itself.
-#
-# ⚠️ **Neither half reads the sentence.** The occupant chooses the words of
-# the negative truth, and "never met on Tuesdays" and "does not meet on
-# Tuesdays" are both right. A needle in the occupant's own prose measures
-# whoever authored the needle, so what is locked is the day the correction
-# carries and that the record still stands.
-# ⚠️ **Scoped to this sitting's own window**, because the claim has a negative
-# in it. The club gains records after July — August writes on it — so *no
-# retraction stands on this subject*, asked of the finished year, is a sentence
-# that names July and reports whatever any later sitting did. Late October
-# retracts, legitimately, four sittings from here.
-check   the_club_was_corrected_in_place_in_july
-say     July: nothing on the club carries July's own day, or the correction was taken back instead of written in — either way the March claim was not corrected in place on the day it was corrected
+# ⚠️ **Scoped to this sitting's own window.** The club gains records after
+# July — August writes on it — so *a retraction stands on this subject*,
+# asked of the finished year, is a sentence that names July and reports
+# whatever any later sitting did. Late October retracts too, legitimately,
+# four sittings from here — on Nelson's attendance, not the club's schedule.
+check   julys_claim_is_withdrawn_rather_than_rewritten
+say     July: no retraction appeared on the club in this sitting's own window, so the March claim about Tuesdays was either left standing or rewritten in place instead of withdrawn
 
 # The fourth small repair, same reason as before.
 recall {"subject": "thing:canoe", "facts": true}
@@ -763,14 +752,17 @@ said I would do*, beyond the pump, which came back.
 >
 > Nobody will answer you, but your answer is being read. You must answer.
 >
-> start jojobot as assistant — it is 20 December 2026. The record says the club does not meet on Tuesdays. Has it always said that, or did we have it wrong at some point and fix it? Put down what it used to say, under `was`, so I do not have to ask again. And I am about to sell the canoe — could you pull together everything that has happened to it this year so I do not leave anything out for the buyer, though I do not want a stack of separate notes about it either.
+> start jojobot as assistant — it is 20 December 2026. The record says the club does not meet on Tuesdays. Has it always said that, or did we have it wrong at some point and fix it? Put down what it used to say, under `was`, so I do not have to ask again. And I am about to sell the canoe — could you pull together everything that has happened to it this year so I do not leave anything out for the buyer, though I do not want a stack of separate notes about it either. Oh, and I finally bought a lock for the bike — a U-lock — no, wait, sorry, I mean a cable lock, those are not the same thing at all.
 
 ```locks
 # 🚨 **THE QUESTION A CORRECTION MAKES ANSWERABLE, AND ONLY IF IT LEFT A
-# TRACE.** March recorded that the club meets on Tuesdays; July rewrote that
-# same claim in place under July's own day. **The claim reads as current truth
-# and says nothing about having been wrong** — which is right for every other
-# read and is exactly what this sitting is asking past.
+# TRACE.** The bike lock is caught wrong and corrected in the SAME breath, a
+# sitting up in this same entry — not the club's Tuesday claim, which March
+# and July's own rule keeps apart: different sittings correct by withdrawal,
+# which marks a record rather than rewriting it, and there is no rewritten
+# wording behind a withdrawal to ask this question of. **The claim reads as
+# current truth and says nothing about having been wrong** — which is right
+# for every other read and is exactly what this sitting is asking past.
 #
 # ⚠️ **Neither lock touches what the occupant SAID.** Whether the answer was
 # useful to a person is a person's reading, like December's before it. What is
@@ -786,10 +778,10 @@ said I would do*, beyond the pump, which came back.
 # old wording inside a fuller sentence as not having written it at all — and
 # this room already says a needle in anybody's prose measures whoever wrote the
 # needle. **So: the key is there, and the old wording is in what it holds.**
-recall {"subject": "org:north-trail-club"}
+recall {"subject": "thing:bike-lock"}
 carries "was":"
-carries meets on Tuesdays
-say     later December: what the claim used to say is not on the record, so either the sitting never reached the correction's own history or it answered from the claim as it stands
+carries U-lock
+say     later December: what the bike lock's claim used to say is not on the record, so either the sitting never reached the correction's own history or it answered from the claim as it stands
 
 # 🚨 **THE PAIRING, AND IT CARRIES THE WEIGHT.** A lock that only asks whether
 # a trace is THERE holds identically against a read that hands back a chain for
@@ -855,6 +847,17 @@ say     later December: the fold either lost one of the canoe's five repairs, le
 
 check   the_canoes_fold_invents_no_date_the_repairs_never_gave
 say     later December: the folded record states a date that appears in none of the five repairs it is supposed to be drawn from, which is the fabrication this mark exists to prevent
+
+# 🚨 **THE REWRITE ITSELF, WALKED AS A RELATION RATHER THAN READ FROM THE
+# "WAS" ANSWER ABOVE.** That lock only needs the old wording to be reachable
+# somehow — a sitting that answers by guessing a plausible history could pass
+# it without the record ever actually having been rewritten. This asks
+# whether the correction really landed as ONE record with more than one
+# write, active, rather than a retraction beside a fresh claim wearing a
+# rewrite's shape from a distance. Placed last rather than beside the "was"
+# lock so that adding it never renumbers a lock this room already had.
+check   the_bike_locks_mistake_is_rewritten_in_place
+say     later December: the bike lock's correction did not land as one record with two writes, so either this sitting never corrected it or it split the correction into a retraction and a fresh claim instead of a plain rewrite
 ```
 
 ## What this room cannot measure

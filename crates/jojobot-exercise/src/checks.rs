@@ -111,7 +111,7 @@ type Hatch = (&'static str, fn() -> Box<dyn Checks>);
 
 /// **Every named check this build ships.** A room adds one line here and one
 /// `check` line in its document, and both are visible in the count.
-pub const CHECKS: [Hatch; 25] = [
+pub const CHECKS: [Hatch; 26] = [
     ("the_brief_left_the_box", || {
         checked(|seen| Box::pin(the_brief_left_the_box(seen)))
     }),
@@ -143,8 +143,8 @@ pub const CHECKS: [Hatch; 25] = [
     ("a_records_trace_matches_the_writes_the_run_made", || {
         checked(|seen| Box::pin(a_records_trace_matches_the_writes_the_run_made(seen)))
     }),
-    ("the_club_was_corrected_in_place_in_july", || {
-        checked(|seen| Box::pin(the_club_was_corrected_in_place_in_july(seen)))
+    ("julys_claim_is_withdrawn_rather_than_rewritten", || {
+        checked(|seen| Box::pin(julys_claim_is_withdrawn_rather_than_rewritten(seen)))
     }),
     (
         "septembers_account_of_the_pump_is_corrected_in_place",
@@ -210,6 +210,9 @@ pub const CHECKS: [Hatch; 25] = [
         "the_canoes_fold_invents_no_date_the_repairs_never_gave",
         || checked(|seen| Box::pin(the_canoes_fold_invents_no_date_the_repairs_never_gave(seen))),
     ),
+    ("the_bike_locks_mistake_is_rewritten_in_place", || {
+        checked(|seen| Box::pin(the_bike_locks_mistake_is_rewritten_in_place(seen)))
+    }),
 ];
 
 /// The identity a fresh instance ships with, and the one every occupant wears.
@@ -803,9 +806,8 @@ async fn septembers_account_of_the_pump_is_corrected_in_place(
     }
 }
 
-/// The sitting that corrects the March claim, and the day it corrects it under.
+/// The sitting that takes the March claim back.
 const JULY: &str = "Phase 7";
-const JULYS_DAY: &str = "\"recorded_at\":\"2026-07-05\"";
 
 /// **The key the record that took a claim back carries**, naming what it
 /// retracted.
@@ -862,28 +864,30 @@ fn hits_naming_subject(world: &str, subject: &str) -> Vec<String> {
     found
 }
 
-/// 🚨 **The correction was written IN, not taken back — asked in July's own
+/// 🚨 **The claim was taken back, not rewritten — asked in July's own
 /// window.**
 ///
-/// A claim that was true and then changed is corrected in place. A claim that
-/// was never true is retracted. **March's claim is the first kind**, so July
-/// rewriting it under July's day is right and July retracting it is wrong, and
-/// the difference is the whole of what this sitting is for.
+/// The operator ruled 2026-09-12: the axis is not whether the subject is an
+/// ongoing state or a past event, and not whether anybody could have read the
+/// claim. **It is which session wrote it.** A sitting correcting its own
+/// mistake, in the same breath, rewrites in place — nothing else has had a
+/// chance to build on the wrong words yet. A sitting correcting an EARLIER
+/// one's claim leaves the correction visible instead: the record that held
+/// the wrong words is marked rather than rewritten, because a later sitting
+/// does not get to edit what an earlier one said and call it the same claim.
+/// **March and July are different sittings, full stop** — there is nothing
+/// here to weigh, unlike the reader-visibility question this used to ask.
 ///
-/// ⛔️ **Asked of the finished room, the negative half belongs to nobody.** The
-/// club gains records after July — August writes on it — and any later sitting
-/// that took a claim back would put a retraction on that subject with July's
-/// name on the failure. **A negative over a whole subject, graded at the end of
-/// the year, accuses whichever sitting the sentence happens to name.**
+/// ⛔️ **Asked of the finished room, the positive half belongs to nobody.** The
+/// club gains records after July — August writes on it — and any later
+/// sitting that took a claim back would put a retraction on that subject with
+/// July's name on the credit. **A count over a whole subject, graded at the
+/// end of the year, credits whichever sitting the sentence happens to name.**
 ///
-/// **So both halves are asked across July alone**: the club gained July's day
-/// in that window, and no retraction appeared in it. Late October retracts, and
-/// it is four sittings away.
-///
-/// ⚠️ **The positive is not decoration.** Without it a July that did nothing at
-/// all satisfies *no retraction appeared* perfectly, which is the failure this
-/// project repeats more than any other.
-async fn the_club_was_corrected_in_place_in_july(seen: &Observed<'_>) -> Result<(), String> {
+/// **So this is asked across July alone.** Late October also retracts, on
+/// Nelson's attendance rather than the club's schedule, and it is four
+/// sittings away.
+async fn julys_claim_is_withdrawn_rather_than_rewritten(seen: &Observed<'_>) -> Result<(), String> {
     let Some((before, after)) = seen.across(JULY) else {
         return Err(format!(
             "this run took no reading either side of {JULY}, so nothing here can say what that \
@@ -892,22 +896,16 @@ async fn the_club_was_corrected_in_place_in_july(seen: &Observed<'_>) -> Result<
     };
     // 🚨 **Scoped to the CLUB's own records, not the whole window.** July now
     // does other business too — every woven thread adds one more sitting that
-    // does — so counting either needle across the whole world is satisfied by
-    // ANY record dated July's day or ANY retraction anywhere, on any subject.
+    // does — so counting the needle across the whole world would be satisfied
+    // by a retraction anywhere, on any subject.
     let club_before = hits_naming_subject(&before.world, "org:north-trail-club");
     let club_after = hits_naming_subject(&after.world, "org:north-trail-club");
     let count = |hits: &[String], needle: &str| hits.iter().filter(|h| h.contains(needle)).count();
-    let dated = count(&club_after, JULYS_DAY) > count(&club_before, JULYS_DAY);
-    let took_back = count(&club_after, TAKEN_BACK) > count(&club_before, TAKEN_BACK);
-    match (dated, took_back) {
-        (true, false) => Ok(()),
-        (false, _) => Err(format!(
-            "nothing gained {JULYS_DAY} in {JULY}'s window, so the March claim was not corrected \
-             on the day the operator corrected it",
-        )),
-        (true, true) => Err(format!(
-            "a claim was taken back in {JULY}'s window, so the correction was retracted rather \
-             than written in — and March's claim was true in its day",
+    match count(&club_after, TAKEN_BACK) > count(&club_before, TAKEN_BACK) {
+        true => Ok(()),
+        false => Err(format!(
+            "no retraction appeared on the club in {JULY}'s window, so the March claim about \
+             Tuesdays was either left standing or rewritten in place instead of withdrawn",
         )),
     }
 }
@@ -2116,4 +2114,85 @@ fn iso_dates_in(text: &str) -> Vec<String> {
         }
     }
     found
+}
+
+/// The same-breath mistake December's own entry asks a sitting to make and
+/// catch, and the subject it lands on — invented for this alone, so nothing
+/// else in the year ever reads or writes it.
+const BIKE_LOCK: &str = "thing:bike-lock";
+
+/// 🚨 **The bike lock's mistake is rewritten in place, not withdrawn — because
+/// this sitting is the one that made it.**
+///
+/// The operator ruled 2026-09-12: the axis is which SESSION wrote a claim, not
+/// whether the subject is an ongoing state or whether anybody could have read
+/// it. March's Tuesday claim and July's correction are different sittings, so
+/// July withdraws — [`julys_claim_is_withdrawn_rather_than_rewritten`] is the
+/// other half of this same rule. **Here the mistake and its correction are the
+/// SAME sitting**, so nothing has had a chance to build on the wrong words
+/// yet, and a rewrite in place is right.
+///
+/// **Three things prove a rewrite happened rather than a retract-and-recapture
+/// wearing a rewrite's clothes**: one record, still active, whose own trace
+/// carries more than the one write. A retract-and-recapture leaves TWO records
+/// — one retracted, one fresh — where a rewrite leaves one. Checking only the
+/// trace's length would pass a record correction plus an unrelated second
+/// claim beside it; checking only "one active record" would pass a rewrite
+/// that never actually corrected anything.
+///
+/// **The entry's own `was` annotation is a second, legitimate record on this
+/// same subject, and it is not this claim.** [`the_bike_locks_mistake_is_rewritten_in_place`]'s
+/// neighbour lock asks the sitting to capture a note carrying a `was` field
+/// once it has read the trace; counting that note as a second account of the
+/// bike lock's own mistake would fail the honest year. It is told apart
+/// structurally, by the field the entry itself names, rather than by its
+/// prose.
+async fn the_bike_locks_mistake_is_rewritten_in_place(seen: &Observed<'_>) -> Result<(), String> {
+    let read = seen
+        .room
+        .call("recall", json!({"subject": BIKE_LOCK, "facts": true}))
+        .await;
+    let parsed: Value = serde_json::from_str(&read).unwrap_or(Value::Null);
+    let Some(facts) = parsed["objects"][0]["facts"].as_array() else {
+        return Err(format!(
+            "nothing is on file for {BIKE_LOCK} at all, so this sitting never made the mistake \
+             its own entry asks it to catch: {read}"
+        ));
+    };
+    let active: Vec<&Value> = facts
+        .iter()
+        .filter(|f| f["status"] == "active" && f["fields"]["was"].is_null())
+        .collect();
+    let [fact] = active.as_slice() else {
+        return Err(format!(
+            "{BIKE_LOCK} carries {} active record(s) of its own mistake rather than one, so the \
+             correction was filed as a fresh claim beside the first — or beside a retraction of \
+             it — instead of a rewrite of the one record: {read}",
+            active.len(),
+        ));
+    };
+    let Some(address) = fact["address"].as_str() else {
+        return Err(format!(
+            "the claim on {BIKE_LOCK} carries no address: {read}"
+        ));
+    };
+    let trace = seen
+        .room
+        .call(
+            "recall",
+            json!({"subject": BIKE_LOCK, "history_record": address}),
+        )
+        .await;
+    let parsed_trace: Value = serde_json::from_str(&trace).unwrap_or(Value::Null);
+    let writes = parsed_trace["objects"][0]["record_history"]["writes"]
+        .as_array()
+        .map(Vec::len)
+        .unwrap_or(0);
+    match writes >= 2 {
+        true => Ok(()),
+        false => Err(format!(
+            "{address}'s own trace carries {writes} write(s), so nothing here shows a mistake \
+             being caught and corrected in the same breath it was made: {trace}"
+        )),
+    }
 }
