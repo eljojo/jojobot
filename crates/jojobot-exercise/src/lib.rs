@@ -17,6 +17,14 @@
 //! invokes on purpose. What is testable without spending anything — the room,
 //! the reading of a playbook, the shape of a result — is tested the ordinary
 //! way, in this library, and `make check` runs those.
+//!
+//! ⚠️ **A bare `cargo test -p jojobot-exercise` does not rebuild the server
+//! binary the rooms spawn** — [`room::refuse_a_stale_server`] catches it, but
+//! it catches it PER TEST, so a stale binary reads as a wall of failures
+//! across seemingly unrelated cases rather than one clear error. That wall is
+//! one root cause, not dozens. `make check` and `make narrow` already build
+//! the workspace first; run one of those, or `cargo build --workspace`
+//! yourself, before reaching for `cargo test -p jojobot-exercise` directly.
 
 pub mod agent;
 pub mod calls;
