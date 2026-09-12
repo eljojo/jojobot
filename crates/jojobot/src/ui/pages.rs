@@ -540,6 +540,7 @@ async fn view_section(
         include: graph::Include {
             facts: false,
             prose: false,
+            stood_for: false,
         },
         follow: None,
         history: None,

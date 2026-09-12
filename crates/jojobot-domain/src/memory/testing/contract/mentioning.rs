@@ -703,6 +703,7 @@ pub async fn a_rename_moves_the_handle_and_every_reference_still_resolves<
             include: graph::Include {
                 facts: true,
                 prose: false,
+                stood_for: false,
             },
             follow: None,
             history: None,
@@ -725,6 +726,7 @@ pub async fn a_rename_moves_the_handle_and_every_reference_still_resolves<
             include: graph::Include {
                 facts: false,
                 prose: false,
+                stood_for: false,
             },
             follow: None,
             history: None,
@@ -948,6 +950,7 @@ pub async fn a_former_handle_reused_after_a_rename_resolves_to_the_newest_event<
             include: graph::Include {
                 facts: false,
                 prose: false,
+                stood_for: false,
             },
             follow: None,
             history: None,

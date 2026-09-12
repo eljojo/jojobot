@@ -189,6 +189,19 @@ pub struct RecallArgs {
     /// opening.
     #[serde(default)]
     pub(crate) facts: Option<bool>,
+    /// **Serve a shape's sources alongside it**, on the same listing of
+    /// `facts`. Off by default: a record marked with `stands_for` already
+    /// carries its sources' content in its own words, so the listing that
+    /// also carries the shape leaves the named sources out and says how many
+    /// and how to reach them. Ask for this when you need the sources
+    /// themselves — their own wording, provenance or address — rather than
+    /// the shape that already speaks for them.
+    ///
+    /// **Elision applies to the listing, never to a record asked for by
+    /// name.** `history_record` on a source's own address still serves it
+    /// whole, whatever this argument says.
+    #[serde(default)]
+    pub(crate) stood_for: Option<bool>,
     /// Whether each object's **prose** comes back — the human half of its page,
     /// whole. Off by default, because a page is bigger than a claim and shipping
     /// every one of them unasked is a cost the caller cannot decline.
@@ -886,6 +899,21 @@ fn object_json(
                 .map(|fact| fact_json(fact, as_of, object.fact_revisions.get(&fact.id).copied()))
                 .collect(),
         );
+        // **Eliding is never silent, here either.** A shape's sources stay out
+        // of the listing that also carries the shape — the shape already
+        // speaks for them — and the note says how many and how to reach them,
+        // the same idiom `records` above uses for the whole listing.
+        if object.facts_folded > 0 {
+            fields.insert(
+                "stood_for".into(),
+                format!(
+                    "{} records stand behind a shape above and are not here — ask again with \
+                     stood_for: true to read them",
+                    object.facts_folded
+                )
+                .into(),
+            );
+        }
     } else if object.facts_held > 0 {
         fields.insert(
             "records".into(),
@@ -1002,7 +1030,12 @@ impl Jojobot {
                        IS — and they answer most questions; the records behind them are bigger and say the same thing at \
                        length. Ask for facts when you need a claim's own wording, its \
                        provenance, or the address that edits it, and the answer says how many \
-                       records it left out when you did not. Then prose, off by default, which is the human half of the \
+                       records it left out when you did not. A RECORD MARKED stands_for ANOTHER \
+                       (a synthesis, over update_fact) is served, and the records it stands for \
+                       are left out of that same facts listing — the answer says how many and \
+                       names stood_for as the way to read them back; ask for stood_for: true when \
+                       you need those sources themselves rather than the shape that already \
+                       speaks for them. Then prose, off by default, which is the human half of the \
                        object's page, whole; charter, which is how you read a COLLEAGUE — a \
                        bot's charter whole, and no session is made and no handle comes back, \
                        because booting as another bot to read it is the one act the rules \
@@ -1222,6 +1255,7 @@ impl Jojobot {
         let include = graph::Include {
             facts: args.facts.unwrap_or(false),
             prose: asked_prose || want_charter,
+            stood_for: args.stood_for.unwrap_or(false),
         };
         // **The same one clock read as `overdue`, and only when asked.** The
         // domain is handed the day and reads none itself.
@@ -1566,6 +1600,7 @@ mod tests {
             answers_type: None,
             fields: None,
             facts: Some(true),
+            stood_for: None,
             prose: None,
             charter: None,
             follow: None,
@@ -2602,6 +2637,76 @@ mod tests {
         assert_eq!(
             object["fields"], dense["objects"][0]["fields"],
             "the row does not change with the records"
+        );
+    }
+
+    /// 🚨 **A shape's sources are left off the facts listing, and the answer
+    /// says how many and how to reach them.** Four halves, because each alone
+    /// passes on a build that answers nothing useful: the shape is served,
+    /// its source is not, the note names the count and the argument, and
+    /// `stood_for: true` serves both.
+    #[tokio::test]
+    async fn recall_folds_a_shapes_sources_out_of_the_facts_listing() {
+        let jojobot = handler();
+        let source = capture_ok(&jojobot, capture_args("alpha", "said the kiln was lit")).await;
+        let source_address = address_of(&source);
+        let shape = capture_ok(&jojobot, capture_args("alpha", "resolved now")).await;
+        let shape_address = address_of(&shape);
+
+        jojobot
+            .update_fact(Parameters(UpdateFactArgs {
+                stands_for: Some(vec![source_address.clone()]),
+                ..update_args(&shape_address)
+            }))
+            .await
+            .expect("update ok");
+
+        let folded = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    facts: Some(true),
+                    ..of("person:alpha")
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        let facts = folded["objects"][0]["facts"].as_array().expect("facts");
+        assert!(
+            facts.iter().any(|f| f["address"] == shape_address),
+            "the shape is served: {facts:?}"
+        );
+        assert!(
+            facts.iter().all(|f| f["address"] != source_address),
+            "its source is not, on the same listing: {facts:?}"
+        );
+        let note = folded["objects"][0]["stood_for"]
+            .as_str()
+            .expect("an answer that folded a source out says so");
+        assert!(
+            note.contains('1') && note.contains("stood_for"),
+            "…how many, and the argument that returns them: {note}"
+        );
+
+        // The other argument: asking for the sources back serves both.
+        let whole = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    facts: Some(true),
+                    stood_for: Some(true),
+                    ..of("person:alpha")
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        let facts = whole["objects"][0]["facts"].as_array().expect("facts");
+        assert!(
+            facts.iter().any(|f| f["address"] == source_address),
+            "stood_for: true serves the source beside the shape: {facts:?}"
+        );
+        assert!(
+            whole["objects"][0].get("stood_for").is_none(),
+            "…and nothing was left out, so nothing says it was: {}",
+            whole["objects"][0]
         );
     }
 
@@ -4223,6 +4328,7 @@ mod tests {
             answers_type: None,
             fields: None,
             facts: None,
+            stood_for: None,
             prose: None,
             charter: None,
             follow: None,
@@ -4237,5 +4343,29 @@ mod tests {
             built_on: None,
             backing: None,
         }
+    }
+
+    /// 🚨 **Discoverability: the verb's own description names the
+    /// argument.** A capability whose only path is that somebody read the
+    /// diff has no path.
+    #[test]
+    fn stood_for_is_named_on_the_verbs_own_description() {
+        let tools = Jojobot::tool_router().list_all();
+        let recall = tools
+            .iter()
+            .find(|t| t.name.as_ref() == "recall")
+            .expect("recall is a tool");
+        let tool_description = recall.description.as_deref().unwrap_or_default();
+        assert!(
+            tool_description.contains("stood_for"),
+            "the tool-level description does not name the argument: {tool_description}"
+        );
+        let schema = serde_json::to_value(&recall.input_schema).expect("the schema serializes");
+        assert!(
+            schema["properties"]["stood_for"]["description"]
+                .as_str()
+                .is_some_and(|d| !d.is_empty()),
+            "stood_for carries no schema description of its own: {schema}"
+        );
     }
 }

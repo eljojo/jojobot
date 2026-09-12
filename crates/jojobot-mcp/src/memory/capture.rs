@@ -426,6 +426,7 @@ impl Jojobot {
                 include: graph::Include {
                     facts: false,
                     prose: false,
+                    stood_for: false,
                 },
                 follow: None,
                 history: None,

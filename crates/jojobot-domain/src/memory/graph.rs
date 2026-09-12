@@ -385,6 +385,15 @@ pub struct Include {
     /// The object's prose — the human half of its page, **whole**. A charter is
     /// prose; so is a portrait. Nothing here knows which is which.
     pub prose: bool,
+    /// **Serve a shape's sources alongside it, on the same listing.**
+    ///
+    /// Off by default: a shape already carries its sources' content in its own
+    /// words, so the listing that also carries the shape leaves them out and
+    /// says how many and how to reach them. This only ever narrows
+    /// [`Object::facts`] — a record asked for by name (`history_record`, or a
+    /// mark's own address) is still served whole, because elision applies to
+    /// the listing rather than to the record.
+    pub stood_for: bool,
 }
 
 impl Default for Include {
@@ -395,6 +404,7 @@ impl Default for Include {
         Include {
             facts: true,
             prose: false,
+            stood_for: false,
         }
     }
 }
@@ -869,6 +879,15 @@ pub struct Object {
     /// much it left out — an empty [`Object::facts`] otherwise means both
     /// "nobody asked" and "nothing is recorded here".
     pub facts_held: usize,
+    /// **How many of [`Object::facts_held`] were left off [`Object::facts`]
+    /// because a shape in the listing already stands for them.**
+    ///
+    /// Zero whenever nothing was elided — nothing marked as a shape is in the
+    /// listing, [`Include::stood_for`] asked for the sources back, or facts
+    /// were not asked for at all, exactly as [`Object::facts`] is empty then
+    /// too. Computed from the marks on every read, never stored, so it cannot
+    /// drift from what the marks actually name.
+    pub facts_folded: usize,
     /// **How many times each of [`Object::facts`] has been written**, keyed by
     /// the fact's local id. Present, one entry per fact, whenever facts were
     /// asked for — empty otherwise, exactly as `facts` is.
@@ -1497,16 +1516,39 @@ impl<'a> Ctx<'a> {
             .is_none()
             .then(|| self.answers(id, &query.select))
             .flatten();
+        // **A shape's sources are folded out of the listing that also carries
+        // the shape** — the shape already speaks for them in its own words,
+        // so serving both would say the same thing twice. Computed from the
+        // mark on every read, never stored: a cached count could overstate or
+        // understate what a mark actually names. Off when the query asked for
+        // the sources back, and moot when facts were not asked for at all.
+        let folded: HashSet<(&EntityId, &FactId)> =
+            if query.include.facts && !query.include.stood_for {
+                kept.iter()
+                    .flat_map(|f| f.stands_for.iter())
+                    .map(|address| (&address.home, &address.local))
+                    .collect()
+            } else {
+                HashSet::new()
+            };
+        let facts_folded = kept
+            .iter()
+            .filter(|f| folded.contains(&(&f.home, &f.id)))
+            .count();
         Object {
             entity,
             via,
             fields: self.folded(id),
             facts_held: kept.len(),
             facts: if query.include.facts {
-                kept.into_iter().cloned().collect()
+                kept.iter()
+                    .filter(|f| !folded.contains(&(&f.home, &f.id)))
+                    .map(|f| (*f).clone())
+                    .collect()
             } else {
                 Vec::new()
             },
+            facts_folded,
             prose: query
                 .include
                 .prose
@@ -2036,6 +2078,7 @@ mod tests {
             include: Include {
                 facts: false,
                 prose: false,
+                stood_for: false,
             },
             follow: None,
             history: None,
@@ -2095,6 +2138,7 @@ mod tests {
             include: Include {
                 facts: false,
                 prose: false,
+                stood_for: false,
             },
             follow: None,
             history: None,
@@ -2143,6 +2187,7 @@ mod tests {
             include: Include {
                 facts: false,
                 prose: true,
+                stood_for: false,
             },
             follow: None,
             history: None,
@@ -2567,6 +2612,7 @@ mod tests {
             include: Include {
                 facts: false,
                 prose: true,
+                stood_for: false,
             },
             follow: None,
             history: None,
@@ -2606,6 +2652,112 @@ mod tests {
             unasked[1].prose, None,
             "prose that was not asked for is absent rather than empty: {:?}",
             unasked[1],
+        );
+    }
+
+    /// **A shape's sources are left off the listing that also carries the
+    /// shape.** The shape already speaks for them in its own words, so
+    /// serving both would say the same thing twice. Three cases in one,
+    /// because each alone passes on a build that answers nothing: the count
+    /// says how many were left out, clearing the mark serves everything
+    /// again (the sabotage this case is built to catch), and asking for the
+    /// sources back with `stood_for: true` serves them beside the shape.
+    #[test]
+    fn a_shapes_sources_are_folded_out_of_the_facts_listing() {
+        let leaf = fact("person:contract-graph-fold", "f1", "the first claim");
+        let shape = Fact {
+            stands_for: vec![FactAddress::new(
+                EntityId("person:contract-graph-fold".into()),
+                FactId("f1".into()),
+            )],
+            ..fact(
+                "person:contract-graph-fold",
+                "f2",
+                "the newest claim, standing for the first",
+            )
+        };
+        let query = GraphQuery {
+            select: Selection {
+                subject: Some(EntityId("person:contract-graph-fold".into())),
+                ..Selection::default()
+            },
+            include: Include {
+                facts: true,
+                prose: false,
+                stood_for: false,
+            },
+            follow: None,
+            history: None,
+        };
+        fn ids(object: &Object) -> Vec<&str> {
+            object.facts.iter().map(|f| f.id.as_str()).collect()
+        }
+
+        let marked = vec![doc(
+            entity("person:contract-graph-fold", "Fold Case"),
+            "The page.",
+            vec![leaf.clone(), shape.clone()],
+        )];
+        let found = resolved(&marked, &[], &query).expect("a named subject always comes back");
+        assert_eq!(
+            ids(&found[0]),
+            vec!["f2"],
+            "the shape is served and its source is not: {:?}",
+            found[0].facts,
+        );
+        assert_eq!(
+            found[0].facts_folded, 1,
+            "the count says how many were left out: {:?}",
+            found[0],
+        );
+        assert_eq!(
+            found[0].facts_held, 2,
+            "the held count is the true total, unaffected by elision: {:?}",
+            found[0],
+        );
+
+        // Sabotage: clear the mark and the same read must return everything —
+        // a case that stayed green with the mark gone was never about the mark.
+        let unmarked = vec![doc(
+            entity("person:contract-graph-fold", "Fold Case"),
+            "The page.",
+            vec![
+                leaf.clone(),
+                Fact {
+                    stands_for: Vec::new(),
+                    ..shape.clone()
+                },
+            ],
+        )];
+        let found = resolved(&unmarked, &[], &query).expect("a named subject always comes back");
+        assert_eq!(
+            ids(&found[0]),
+            vec!["f1", "f2"],
+            "with the mark gone, the same read returns everything: {:?}",
+            found[0].facts,
+        );
+        assert_eq!(found[0].facts_folded, 0);
+
+        // The other argument: asking for the sources back serves both.
+        let with_sources = GraphQuery {
+            include: Include {
+                stood_for: true,
+                ..query.include
+            },
+            ..query.clone()
+        };
+        let found =
+            resolved(&marked, &[], &with_sources).expect("a named subject always comes back");
+        assert_eq!(
+            ids(&found[0]),
+            vec!["f1", "f2"],
+            "stood_for: true serves the sources alongside the shape: {:?}",
+            found[0].facts,
+        );
+        assert_eq!(
+            found[0].facts_folded, 0,
+            "nothing was left out when the sources were asked for: {:?}",
+            found[0],
         );
     }
 
@@ -3202,6 +3354,7 @@ mod tests {
                     include: Include {
                         facts: false,
                         prose: false,
+                        stood_for: false,
                     },
                     follow: Some(Follow {
                         along: Along::Edge(EdgeShape::Attendance),
@@ -3334,6 +3487,7 @@ mod tests {
                     include: Include {
                         facts: false,
                         prose: false,
+                        stood_for: false,
                     },
                     follow: Some(Follow {
                         along: Along::AnyEdge,
@@ -3395,6 +3549,7 @@ mod tests {
                     include: Include {
                         facts: false,
                         prose: false,
+                        stood_for: false,
                     },
                     follow: Some(Follow {
                         along: Along::AnyEdge,
@@ -3454,6 +3609,7 @@ mod tests {
                 include: Include {
                     facts: false,
                     prose: false,
+                    stood_for: false,
                 },
                 follow: Some(Follow {
                     along: Along::AnyEdge,
@@ -3605,6 +3761,7 @@ mod tests {
                     include: Include {
                         facts: false,
                         prose: false,
+                        stood_for: false,
                     },
                     follow: Some(Follow {
                         along: Along::Relation("owner".into()),
@@ -3795,6 +3952,7 @@ mod tests {
                     include: Include {
                         facts: false,
                         prose: false,
+                        stood_for: false,
                     },
                     follow: Some(Follow {
                         along: Along::Relation("came_along".into()),
@@ -3841,6 +3999,7 @@ mod tests {
                     include: Include {
                         facts: false,
                         prose: false,
+                        stood_for: false,
                     },
                     follow: Some(Follow {
                         along: Along::Relation(relation.into()),
@@ -3898,6 +4057,7 @@ mod tests {
             include: Include {
                 facts: false,
                 prose: false,
+                stood_for: false,
             },
             follow: Some(Follow {
                 along: Along::Relation("owner".into()),
@@ -3950,6 +4110,7 @@ mod tests {
                     include: Include {
                         facts: false,
                         prose: false,
+                        stood_for: false,
                     },
                     follow: Some(Follow {
                         along: Along::Relation("owner".into()),
@@ -4012,6 +4173,7 @@ mod tests {
                     include: Include {
                         facts: false,
                         prose: false,
+                        stood_for: false,
                     },
                     follow: Some(Follow {
                         along: Along::Relation(relation.into()),
@@ -4075,6 +4237,7 @@ mod tests {
                     include: Include {
                         facts: false,
                         prose: false,
+                        stood_for: false,
                     },
                     follow: Some(Follow {
                         along: Along::Relation(relation.into()),
@@ -4179,6 +4342,7 @@ mod tests {
                     include: Include {
                         facts: false,
                         prose: false,
+                        stood_for: false,
                     },
                     follow: Some(Follow {
                         along,

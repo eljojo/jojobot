@@ -130,6 +130,7 @@ pub(crate) fn recall_args(subject: &str) -> RecallArgs {
         answers_type: None,
         fields: None,
         facts: Some(true),
+        stood_for: None,
         prose: None,
         charter: None,
         follow: None,

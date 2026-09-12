@@ -75,6 +75,7 @@ async fn thing_fields<M: Memory>(
             include: graph::Include {
                 facts: false,
                 prose: false,
+                stood_for: false,
             },
             follow: None,
             history: None,
@@ -5760,6 +5761,7 @@ pub async fn a_graph_query_selects_a_kind_and_returns_its_prose<M: Memory>(store
             include: graph::Include {
                 facts: false,
                 prose: true,
+                stood_for: false,
             },
             follow: None,
             history: None,
@@ -6530,6 +6532,7 @@ async fn walked_from<M: Memory>(
             include: graph::Include {
                 facts: false,
                 prose: false,
+                stood_for: false,
             },
             follow: Some(graph::Follow {
                 along: graph::Along::Edge(EdgeShape::Attendance),
@@ -6597,6 +6600,7 @@ pub async fn a_declared_reference_key_is_walkable_against_the_store<M: Memory>(s
                     include: graph::Include {
                         facts: false,
                         prose: false,
+                        stood_for: false,
                     },
                     follow: Some(graph::Follow {
                         along: graph::Along::Relation(relation),
@@ -7751,6 +7755,7 @@ pub async fn a_thing_reads_back_as_its_fields_folded<M: Memory>(store: &M) {
             include: graph::Include {
                 facts: false,
                 prose: false,
+                stood_for: false,
             },
             follow: None,
             history: None,
@@ -7789,6 +7794,7 @@ pub async fn a_thing_reads_back_as_its_fields_folded<M: Memory>(store: &M) {
             include: graph::Include {
                 facts: true,
                 prose: false,
+                stood_for: false,
             },
             follow: None,
             history: None,
@@ -8039,6 +8045,7 @@ pub async fn a_long_history_is_cut_to_its_newest_and_says_how_many<M: Memory>(st
                     include: graph::Include {
                         facts: false,
                         prose: false,
+                        stood_for: false,
                     },
                     follow: None,
                     history: Some(graph::History::of(&key)),
@@ -8105,6 +8112,7 @@ pub async fn a_long_history_is_cut_to_its_newest_and_says_how_many<M: Memory>(st
             include: graph::Include {
                 facts: false,
                 prose: false,
+                stood_for: false,
             },
             follow: None,
             history: Some(graph::History::of("cost")),
@@ -8160,6 +8168,7 @@ pub async fn a_read_of_facts_says_how_many_times_each_was_written<M: Memory>(sto
             include: graph::Include {
                 facts: true,
                 prose: false,
+                stood_for: false,
             },
             follow: None,
             history: None,
@@ -8204,6 +8213,7 @@ pub async fn a_walk_with_no_facts_carries_no_revision_counts<M: Memory>(store: &
             include: graph::Include {
                 facts: false,
                 prose: false,
+                stood_for: false,
             },
             follow: None,
             history: None,
