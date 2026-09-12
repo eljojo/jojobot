@@ -2734,6 +2734,81 @@ impl Memory for DoltMemory {
         Ok(scanned)
     }
 
+    /// **One entity's document, by id — never the whole table.**
+    ///
+    /// [`scan`](Self::scan) is defaulted here on top of by [`Memory::scan_entity`]'s
+    /// own default, which reads every document in the store and keeps one.
+    /// That is right for `scan`'s own job — a boot has nothing to look up by —
+    /// and wrong for a write's reindex, which already knows the one document it
+    /// wants: it paid a full-store read on every single mutating call, and the
+    /// cost grew with the store because the store is what a write's reindex
+    /// walked to find nothing new about anyone else.
+    ///
+    /// **Every field is built the same way [`scan`](Self::scan) builds it**,
+    /// scoped to one row instead of all of them: the same badge-or-id alias
+    /// key, the same single-column parent lookup [`index`](Self::index) does
+    /// with [`jojobot_domain::memory::entity_wearing`] against a full snapshot
+    /// — a single `WHERE badge = ?` finds the same row without reading the
+    /// rest — and the same `facts_of`/`held_by` this document's badge already
+    /// keys into for [`scan`](Self::scan).
+    async fn scan_entity(&self, entity: &EntityId) -> Result<Option<search::DocScan>, MemoryError> {
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        let row = sqlx::query(
+            "SELECT id, kind, name, source, crm, parent, boot, merged_into, badge, prose
+             FROM entity WHERE id = ?",
+        )
+        .bind(entity.as_str())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(store)?;
+        let Some(row) = row else {
+            tx.commit().await.map_err(store)?;
+            return Ok(None);
+        };
+        let prose: String = row.try_get("prose").map_err(store)?;
+        let key_for_aliases = row
+            .try_get::<Option<String>, _>("badge")
+            .map_err(store)?
+            .unwrap_or_else(|| entity.0.clone());
+        let aliases: Vec<String> =
+            sqlx::query_scalar("SELECT alias FROM entity_alias WHERE entity = ? ORDER BY ordinal")
+                .bind(&key_for_aliases)
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(store)?;
+        let mut resolved = entity_from(&row, aliases)?;
+        if let Some(parent) = &resolved.parent {
+            let wearing: Option<String> =
+                sqlx::query_scalar("SELECT id FROM entity WHERE badge = ? ORDER BY id LIMIT 1")
+                    .bind(parent.as_str())
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(store)?;
+            if let Some(current) = wearing {
+                resolved.parent = Some(EntityId(current));
+            }
+        }
+        let Some(badge) = resolved.badge.clone() else {
+            return Err(MemoryError::Store(format!(
+                "{} carries no badge, so its document has no id — the startup fill did not \
+                 reach it",
+                resolved.id
+            )));
+        };
+        let key = EntityId(badge.clone());
+        let doc = search::DocScan {
+            doc_id: badge,
+            title: resolved.name.clone(),
+            prose,
+            facts: self.facts_of(&mut tx, &key).await?,
+            fields: Self::held_by(&mut tx, &key).await?,
+            entity: Some(resolved),
+            owner: None,
+        };
+        tx.commit().await.map_err(store)?;
+        Ok(Some(doc))
+    }
+
     /// **A type is the set of rows sharing its name**, so declaring one is
     /// deleting those rows and writing the new set. One transaction, because a
     /// type that was half replaced would describe a record nobody declared.

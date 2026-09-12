@@ -1037,6 +1037,65 @@ async fn dolt_satisfies_the_memory_contract() {
     store.stop().await;
 }
 
+/// **`scan_entity` must answer exactly what `scan` would answer for the same
+/// row, over a real corpus rather than a hand-picked one.**
+///
+/// The contract's own run leaves behind entities with aliases, parents,
+/// merges, retractions and folded fields — every shape `scan`'s per-entity
+/// loop builds a document out of. Comparing `scan_entity`'s answer against
+/// `scan`'s own for every one of them, whole value against whole value, is
+/// what catches an override that gets the easy fields right and drops the
+/// harder ones — a per-field check would only catch what this case's author
+/// thought to name.
+#[tokio::test]
+async fn scan_entity_agrees_with_scan_for_every_document_the_real_store_holds() {
+    let scratch = Scratch::new("scan-entity");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("scanentity")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+
+    let memory = DoltMemory::open(pool);
+    memory::run_all(&memory).await;
+
+    let whole = memory.scan().await.expect("the full scan answers");
+    assert!(
+        whole.len() > 50,
+        "the contract should have left far more than {} documents behind",
+        whole.len()
+    );
+    for doc in &whole {
+        let Some(entity) = &doc.entity else { continue };
+        let by_id = memory
+            .scan_entity(&entity.id)
+            .await
+            .expect("scan_entity answers for a row scan just found");
+        assert_eq!(
+            by_id.as_ref(),
+            Some(doc),
+            "scan_entity disagreed with scan over {}",
+            entity.id
+        );
+    }
+
+    let missing = EntityId("person:contract-nobody".into());
+    assert_eq!(
+        memory
+            .scan_entity(&missing)
+            .await
+            .expect("the read answers"),
+        None,
+        "an entity scan never heard of is a miss, not an error",
+    );
+
+    store.stop().await;
+}
+
 /// **The mark's own contract, against the real store.**
 #[tokio::test]
 async fn dolt_satisfies_the_stands_for_contract() {
