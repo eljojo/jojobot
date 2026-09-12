@@ -1171,6 +1171,27 @@ fn has_standing_edge(world: &str, subject: Option<&str>, shape: &str, object: &s
     })
 }
 
+/// **Whether a standing edge of the named shape links `subject` to some
+/// entity of `kind`**, read off one boundary's world — the object's KIND
+/// checked rather than its exact handle. The mirror image of
+/// [`has_standing_edge`]'s own `subject: None`: there the record's SUBJECT
+/// can rename itself inside the window being read, so the object is pinned
+/// instead; here the record's OBJECT is an entity the occupant just
+/// invented and was never handed a spelling for, so the subject is pinned
+/// and the object is matched by kind instead. `kind` is passed with its own
+/// colon (`"event:"`), which is what makes this a prefix test rather than an
+/// accidental match on a handle that merely starts the same way.
+fn has_standing_edge_to_a(world: &str, subject: &str, shape: &str, kind: &str) -> bool {
+    search_hits(world).into_iter().flatten().any(|hit| {
+        hit["subject"].as_str() == Some(subject)
+            && hit["status"].as_str() == Some("active")
+            && hit["edge"]["type"].as_str() == Some(shape)
+            && hit["edge"]["object"]
+                .as_str()
+                .is_some_and(|object| object.starts_with(kind))
+    })
+}
+
 /// 🚨 **June drew a standing attendee edge for each of the two people it
 /// names — asked in June's own window.**
 ///
@@ -1186,6 +1207,15 @@ fn has_standing_edge(world: &str, subject: Option<&str>, shape: &str, object: &s
 /// Nelson's attendance is legitimate rather than a mistake to catch — the
 /// question this asks is only what June itself left standing, the same
 /// question July's own lock asks about the club's schedule.
+///
+/// ⛔️ **No handle is named here, on either side.** January invents the
+/// survey's own handle just as it invents everything else about it — a
+/// check pinning `event:trail-survey` would fail a run that chose a
+/// different word for the identical thing, the fault this room's own
+/// `one_record_points_at_two_kinds` and October's location-edge check
+/// already remove for their own handles. **The object is matched by KIND**
+/// rather than left unpinned entirely, because an unpinned object would
+/// also hold on an edge to the wrong kind of thing.
 async fn junes_survey_drew_a_standing_attendee_for_each(seen: &Observed<'_>) -> Result<(), String> {
     let Some((before, after)) = seen.across(JUNE) else {
         return Err(format!(
@@ -1193,12 +1223,9 @@ async fn junes_survey_drew_a_standing_attendee_for_each(seen: &Observed<'_>) -> 
              sitting recorded. A check scoped to one sitting needs the run's own boundaries.",
         ));
     };
-    // **The event's handle is safe to hardcode here, unlike October's.** The
-    // survey is not renamed until October, four sittings after this window
-    // closes, so within June's own before/after it is always this handle.
     let gained = |who: &str| {
-        !has_standing_edge(&before.world, Some(who), "attendee", "event:trail-survey")
-            && has_standing_edge(&after.world, Some(who), "attendee", "event:trail-survey")
+        !has_standing_edge_to_a(&before.world, who, "attendee", "event:")
+            && has_standing_edge_to_a(&after.world, who, "attendee", "event:")
     };
     let (milhouse, nelson) = (gained("person:milhouse"), gained("person:nelson"));
     match (milhouse, nelson) {

@@ -119,6 +119,7 @@ const ROSTER: &[&str] = &[
     "event:departure-flight",
     "event:the-booking",
     "event:the-jotting",
+    "event:the-june-trail-day",
     "event:erosion-review",
     "event:moe-open-mic",
     "event:otto-benefit-show",

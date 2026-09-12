@@ -551,6 +551,55 @@ async fn june_also_points_at_a_second_event(room: &Surface, sid: &str) {
     .await;
 }
 
+/// **June, drawing its attendee edges at an event under a differently
+/// spelled handle than the one January happened to invent.**
+///
+/// Nothing tells a model what to call the survey — January's own handle is
+/// that sitting's invention, not a word the operator used — so a June that
+/// lands on a different spelling has done the same work as one that landed
+/// on `event:trail-survey` by chance. `event:trail-survey` itself is left
+/// standing, unused: the point is that June's own lock must not care which
+/// event carries the edges, only that one does.
+async fn june_points_at_a_differently_spelled_survey(room: &Surface, sid: &str) {
+    did(
+        room,
+        sid,
+        "add_entity",
+        json!({"kind": "event", "handle": "the-june-trail-day", "name": "The June trail day",
+               "source": "the operator"}),
+    )
+    .await;
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "org:north-trail-club",
+               "content": WHAT_JUNE_SAW,
+               "provenance": "testimony"}),
+    )
+    .await;
+    for who in ["person:milhouse", "person:nelson"] {
+        did(
+            room,
+            sid,
+            "capture",
+            json!({"subject": who, "content": "was at the trail survey",
+                   "provenance": "testimony",
+                   "shape": "attendance", "object": "event:the-june-trail-day"}),
+        )
+        .await;
+    }
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "rhythm:chain-check", "content": "did the bike chain this morning",
+               "provenance": "testimony",
+               "check_in": "ran"}),
+    )
+    .await;
+}
+
 /// **June, with the survey claim saying `said`.**
 ///
 /// One body for every June the suite drives, because the sittings differ in one
@@ -1666,6 +1715,13 @@ const JUNE_ATTENDANCE_AS_MENTIONS: usize = 22;
 /// meant to still leaves this one exactly as written.
 const JUNE_ALSO_POINTS_AT_A_SECOND_EVENT: usize = 23;
 
+/// **A different, honest June, named the same way as its variant siblings.**
+/// Nothing tells a model what to call the survey it is attending, so a
+/// sitting that spells the event's handle differently from the one January
+/// happened to invent has done exactly as well as one that landed on the
+/// same spelling by chance.
+const JUNE_POINTS_AT_A_DIFFERENTLY_SPELLED_SURVEY: usize = 25;
+
 /// **October's fifth guilt, named the same way.** Nelson's account is filed
 /// as a fresh claim instead of a correction, so September's own address is
 /// left exactly as it was — unrevised, still Ralph's. This is the play the
@@ -1723,6 +1779,8 @@ async fn work_the_year(
             at == JUNE_AT && guilty.contains(&JUNE_ATTENDANCE_AS_MENTIONS);
         let june_second_event_variant =
             at == JUNE_AT && guilty.contains(&JUNE_ALSO_POINTS_AT_A_SECOND_EVENT);
+        let june_differently_spelled_variant =
+            at == JUNE_AT && guilty.contains(&JUNE_POINTS_AT_A_DIFFERENTLY_SPELLED_SURVEY);
         let late_november_variant =
             at == LATE_NOVEMBER_AT && guilty.contains(&LATE_NOVEMBER_STANDS_UP_A_SECOND_LOOP);
         let october_variant =
@@ -1750,6 +1808,7 @@ async fn work_the_year(
             && june_variant.is_none()
             && !june_attendance_as_mentions
             && !june_second_event_variant
+            && !june_differently_spelled_variant
             && !late_november_variant
             && !october_variant
             && !october_no_rename_variant
@@ -1780,6 +1839,8 @@ async fn work_the_year(
             june_with_attendance_as_mentions(room, sid).await;
         } else if june_second_event_variant {
             june_also_points_at_a_second_event(room, sid).await;
+        } else if june_differently_spelled_variant {
+            june_points_at_a_differently_spelled_survey(room, sid).await;
         } else if late_november_variant {
             late_november_stands_up_a_second_loop(room, sid).await;
         } else if october_variant {
@@ -3368,6 +3429,35 @@ async fn junes_attendee_lock_holds_despite_a_later_legitimate_retraction() {
         judged[JUNE[0]].held,
         "June's own window drew both attendees, and a later, legitimate retraction four \
          sittings on must not sour it: {}",
+        saying(&judged),
+    );
+}
+
+/// 🚨 **June's lock holds however the survey happens to be spelled.**
+///
+/// The old lock pinned `event:trail-survey` as the object, hardcoded — safe
+/// only because the reference transcript here happens to spell it that way.
+/// Nothing tells a model what to call the event it just invented, so a June
+/// that draws its attendee edges at a differently spelled handle has done
+/// the same work. `event:trail-survey` itself still exists, from January,
+/// untouched and unused — proving the lock is not merely failing open on a
+/// missing object.
+#[tokio::test]
+async fn junes_attendee_lock_holds_whatever_the_survey_is_spelled() {
+    let (_room, surface) = furnished().await;
+    let boundaries = work_the_year(
+        &surface,
+        &room_document(),
+        &WORKED,
+        &[JUNE_POINTS_AT_A_DIFFERENTLY_SPELLED_SURVEY],
+    )
+    .await;
+    let judged = judge_all(&surface, &boundaries).await;
+    assert!(
+        judged[JUNE[0]].held,
+        "June drew both attendee edges at an event spelled differently from January's own \
+         handle, and the lock still failed — so it is reading the handle rather than the shape: \
+         {}",
         saying(&judged),
     );
 }
