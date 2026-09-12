@@ -158,7 +158,7 @@ say     January: nothing on Milhouse says where he lives, so April has nothing t
 >
 > Nobody will answer you, but your answer is being read. You must answer.
 >
-> start jojobot as assistant — it is 8 February 2026, I lent Ralph my floor pump today and I want it back before the June survey, and Nelson has joined the club
+> start jojobot as assistant — it is 8 February 2026, I lent Ralph my floor pump today and I want it back before the June survey, and Nelson has joined the club, and I picked up a used canoe at a yard sale — there is a soft spot in the hull near the bow I should keep an eye on
 
 ```locks
 # The commitment. September asks whether it ever came back, and a September
@@ -186,6 +186,13 @@ say     February: nothing on the pump reaches Ralph, so who has it is only in th
 # edge and a status key on the same record either way.
 check   februarys_club_drew_a_standing_member_for_each
 say     February: the club cannot be walked to its members, so August's question has no answer but a guess
+
+# The first of five small repairs on the canoe, scattered across the year.
+# December asks the operator's real question about the pile they add up to,
+# and nothing before then names a mark or a fold.
+recall {"subject": "thing:canoe", "facts": true}
+carries "recorded_at":"2026-02-08"
+say     February: nothing on the canoe carries this sitting's own day, so the soft spot the operator noticed today is not on record for December to draw on
 ```
 
 ## Phase 3 — March, something the operator will take back
@@ -196,7 +203,7 @@ say     February: the club cannot be walked to its members, so August's question
 >
 > Nobody will answer you, but your answer is being read. You must answer.
 >
-> start jojobot as assistant — it is 15 March 2026 and the club meets on Tuesdays, put that down
+> start jojobot as assistant — it is 15 March 2026 and the club meets on Tuesdays, put that down, and I patched that soft spot in the canoe's hull
 
 ```locks
 # ⚠️ **A named check, because this is the one sitting the finished room cannot
@@ -210,6 +217,12 @@ say     February: the club cannot be walked to its members, so August's question
 # club gained a record in that window. Only this sitting writes there.
 check   the_club_was_given_a_claim_in_march
 say     March: nothing says the club meets on Tuesdays, so July has nothing to take back
+
+# The second small repair. Same reason as February's own note beside its
+# first one: no mark, no fold, until December asks.
+recall {"subject": "thing:canoe", "facts": true}
+carries "recorded_at":"2026-03-15"
+say     March: nothing on the canoe carries this sitting's own day, so the patch the operator made today is not on record for December to draw on
 ```
 
 ## Phase 4 — April, a fact that changed
@@ -246,7 +259,7 @@ say     April: the Springfield claim is either gone or still standing as current
 >
 > Nobody will answer you, but your answer is being read. You must answer.
 >
-> start jojobot as assistant — it is 10 May 2026 and the north trail was washed out at the top end this spring, put it where it belongs
+> start jojobot as assistant — it is 10 May 2026 and the north trail was washed out at the top end this spring, put it where it belongs, and I gave the canoe seat a coat of varnish since it was getting rough
 
 ```locks
 # The trail and the club are both real and neither is a typo. What is locked is
@@ -260,6 +273,11 @@ recall {"kind": "place", "facts": true}
 at least 1 of "subject":"place:north-trail"
 lacks   place:north-trail-2
 say     May: the washout was not filed against the trail that already existed — either nothing was filed, or a second trail was stood up to carry it
+
+# The third small repair, same reason as before.
+recall {"subject": "thing:canoe", "facts": true}
+carries "recorded_at":"2026-05-10"
+say     May: nothing on the canoe carries this sitting's own day, so the varnish the operator put on today is not on record for December to draw on
 ```
 
 ## Phase 6 — June, the survey, and the loop that went quiet
@@ -334,7 +352,7 @@ say     June: no single record points at two different kinds of thing as handles
 >
 > Nobody will answer you, but your answer is being read. You must answer.
 >
-> start jojobot as assistant — it is 5 July 2026 and I was wrong in March, the club has never met on Tuesdays and I do not want that standing
+> start jojobot as assistant — it is 5 July 2026 and I was wrong in March, the club has never met on Tuesdays and I do not want that standing, and I replaced the canoe's rear foot brace, the old one had cracked
 
 ```locks
 # Rewritten in place, not retracted. The March claim is about what the club's
@@ -362,6 +380,11 @@ say     June: no single record points at two different kinds of thing as handles
 # retracts, legitimately, four sittings from here.
 check   the_club_was_corrected_in_place_in_july
 say     July: nothing on the club carries July's own day, or the correction was taken back instead of written in — either way the March claim was not corrected in place on the day it was corrected
+
+# The fourth small repair, same reason as before.
+recall {"subject": "thing:canoe", "facts": true}
+carries "recorded_at":"2026-07-05"
+say     July: nothing on the canoe carries this sitting's own day, so the foot brace the operator replaced today is not on record for December to draw on
 ```
 
 ## Phase 8 — August, a question that needs a walk
@@ -410,7 +433,7 @@ generates no day assertion here and the lock below names the day instead.
 >
 > Nobody will answer you, but your answer is being read. You must answer.
 >
-> start jojobot as assistant — it is 13 September 2026, did that thing I lent out ever come back? Ralph gave it back at the survey, so put that down either way
+> start jojobot as assistant — it is 13 September 2026, did that thing I lent out ever come back? Ralph gave it back at the survey, so put that down either way, and I patched a new crack near the canoe's bow before it gets worse
 
 ```locks
 # What this sitting must leave is a record about the pump carrying the day the
@@ -438,6 +461,11 @@ recall {"subject": "thing:floor-pump", "facts": true}
 carries person:ralph
 carries "happened_at":"2026-06-14"
 say     nothing on the pump currently carries the day it came back, so a reader is left with no day to find — whether it was never recorded, or a later, legitimate correction cleared the only trace of it
+
+# The fifth and last small repair. Nothing has asked about the pile yet.
+recall {"subject": "thing:canoe", "facts": true}
+carries "recorded_at":"2026-09-13"
+say     September: nothing on the canoe carries this sitting's own day, so the crack the operator patched today is not on record for December to draw on
 ```
 
 ## Phase 10 — October corrects what September said
@@ -735,7 +763,7 @@ said I would do*, beyond the pump, which came back.
 >
 > Nobody will answer you, but your answer is being read. You must answer.
 >
-> start jojobot as assistant — it is 20 December 2026. The record says the club does not meet on Tuesdays. Has it always said that, or did we have it wrong at some point and fix it? Put down what it used to say, under `was`, so I do not have to ask again.
+> start jojobot as assistant — it is 20 December 2026. The record says the club does not meet on Tuesdays. Has it always said that, or did we have it wrong at some point and fix it? Put down what it used to say, under `was`, so I do not have to ask again. And I am about to sell the canoe — could you pull together everything that has happened to it this year so I do not leave anything out for the buyer, though I do not want a stack of separate notes about it either.
 
 ```locks
 # 🚨 **THE QUESTION A CORRECTION MAKES ANSWERABLE, AND ONLY IF IT LEFT A
@@ -802,6 +830,31 @@ say     later December: what the claim used to say is not on the record, so eith
 # missing, so a gap is reported where it happened.
 check   a_records_trace_matches_the_writes_the_run_made
 say     later December: a record's trace does not agree with what the run actually wrote to it, so the history read is inventing or losing a write and a reader is told jojobot changed its mind about something it never did
+
+# 🚨 **THE CANOE'S YEAR, AND NOTHING ABOVE TOLD THIS SITTING WHAT TO DO ABOUT
+# IT.** Five small repairs are scattered across the year on `thing:canoe`,
+# each planted beside that sitting's other business and none of them beside a
+# word like "fold" or "mark" or "stands for". This entry asks the operator's
+# real question — pull the year together without losing anything, and without
+# a stack of separate notes — in the operator's own words, and never names
+# the mechanism. Whether anything below holds depends on whether this
+# sitting reached for a capability nobody told it about.
+#
+# ⭐ **What the room looks like with the feature absent**: an occupant with no
+# way to mark one record as standing for others can, at best, capture one more
+# ordinary note that summarizes the five in prose — leaving the five originals
+# unlinked to it and to each other, findable only by search rather than by a
+# single answer that also proves it did not drop anything. Every lock below
+# fails on exactly that shape, which is what makes it a measurement of the
+# capability rather than of whether the sitting was willing to be helpful.
+check   a_late_sitting_folds_the_canoes_pile_without_being_told_to
+say     later December: nothing marks a record as standing for the canoe's year of small repairs, so nobody folded the pile even though this sitting asked for exactly that
+
+check   the_canoes_five_repairs_are_still_active_and_named_by_the_fold
+say     later December: the fold either lost one of the canoe's five repairs, left it retracted, or the mark does not actually name it — the full picture is supposed to still be one recall away
+
+check   the_canoes_fold_invents_no_date_the_repairs_never_gave
+say     later December: the folded record states a date that appears in none of the five repairs it is supposed to be drawn from, which is the fabrication this mark exists to prevent
 ```
 
 ## What this room cannot measure
@@ -821,3 +874,11 @@ person's to read.
 **Whether the year was written well or merely written.** Every lock here says a
 question is answerable. None of them says the answer was easy to find, and a
 store nobody could work in still passes them all.
+
+**Whether the canoe's fold actually pulls anything together.** The three
+locks beside it prove a mark exists, names every one of the five repairs, and
+invents no date — never that the words on it say anything. A record that
+stands for five others and adds nothing beyond the fact of standing for them
+would still pass all three. Whether the fold is a genuine summary or an empty
+gesture wearing one is in the transcript, like the rest of this list — a lock
+that graded prose would be a worse failure than the gap it filled.

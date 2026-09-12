@@ -86,6 +86,21 @@
 //!   three are about *whichever bot is not the one that ships*. Nothing in the
 //!   query surface computes that, and pinning a handle would assert the
 //!   occupant guessed the same word the room did.
+//! * **`a_late_sitting_folds_the_canoes_pile_without_being_told_to`** — say
+//!   that a mark is NEW in one sitting's own window rather than merely
+//!   present on the finished board. A plain "does a mark exist" question
+//!   cannot tell a mark this sitting made from one that happened to exist
+//!   before the room asked anything.
+//! * **`the_canoes_five_repairs_are_still_active_and_named_by_the_fold`** —
+//!   correlate a mark's `stands_for` list against the STATUS of each address
+//!   it should cover, across five separate records. An assertion is a
+//!   substring of the whole answer, so it cannot ask whether every one of
+//!   five specific addresses is both active and named, only whether some
+//!   address somewhere is.
+//! * **`the_canoes_fold_invents_no_date_the_repairs_never_gave`** — compare
+//!   one record's own date-bearing fields and prose against the union of
+//!   every OTHER record's dates. Nothing on the query surface computes a set
+//!   difference across records.
 
 use serde_json::{Value, json};
 
@@ -96,7 +111,7 @@ type Hatch = (&'static str, fn() -> Box<dyn Checks>);
 
 /// **Every named check this build ships.** A room adds one line here and one
 /// `check` line in its document, and both are visible in the count.
-pub const CHECKS: [Hatch; 22] = [
+pub const CHECKS: [Hatch; 25] = [
     ("the_brief_left_the_box", || {
         checked(|seen| Box::pin(the_brief_left_the_box(seen)))
     }),
@@ -173,6 +188,28 @@ pub const CHECKS: [Hatch; 22] = [
     ("late_octobers_club_drew_a_standing_member_for_bart", || {
         checked(|seen| Box::pin(late_octobers_club_drew_a_standing_member_for_bart(seen)))
     }),
+    (
+        "a_late_sitting_folds_the_canoes_pile_without_being_told_to",
+        || {
+            checked(|seen| {
+                Box::pin(a_late_sitting_folds_the_canoes_pile_without_being_told_to(
+                    seen,
+                ))
+            })
+        },
+    ),
+    (
+        "the_canoes_five_repairs_are_still_active_and_named_by_the_fold",
+        || {
+            checked(|seen| {
+                Box::pin(the_canoes_five_repairs_are_still_active_and_named_by_the_fold(seen))
+            })
+        },
+    ),
+    (
+        "the_canoes_fold_invents_no_date_the_repairs_never_gave",
+        || checked(|seen| Box::pin(the_canoes_fold_invents_no_date_the_repairs_never_gave(seen))),
+    ),
 ];
 
 /// The identity a fresh instance ships with, and the one every occupant wears.
@@ -790,6 +827,41 @@ const JULYS_DAY: &str = "\"recorded_at\":\"2026-07-05\"";
 /// what is written.
 const TAKEN_BACK: &str = "\"retracts\":";
 
+/// **Every search hit whose subject is `subject`, re-serialized to JSON
+/// text** — so a substring needle can be asked of the ONE record a sitting's
+/// claim is about, never of the whole window.
+///
+/// **Re-serializing is safe for a needle that names one key beside its
+/// value**, which is every needle this asks: `"recorded_at":"2026-07-05"` and
+/// `"retracts":` both stay intact regardless of where the rest of the
+/// object's keys land, because neither depends on a NEIGHBOUR key's position.
+///
+/// 🚨 **THE RULE, NOT JUST THIS LOCK'S FIX.** A whole-world count answers "did
+/// this text appear in the window", never "did it appear on the record this
+/// sitting's claim is about" — so it stops discriminating the moment a
+/// SITTING does two things, on two subjects, in the same window. That is
+/// ordinary now: every later thread woven through this room adds a sitting
+/// that already had other business. **Any lock built the same way this one
+/// was needs the same fix**, which is why this is its own function rather
+/// than inlined once.
+fn hits_naming_subject(world: &str, subject: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    for line in world.lines() {
+        let Ok(parsed) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        let Some(hits) = parsed["results"].as_array() else {
+            continue;
+        };
+        for hit in hits {
+            if hit["subject"].as_str() == Some(subject) {
+                found.push(hit.to_string());
+            }
+        }
+    }
+    found
+}
+
 /// 🚨 **The correction was written IN, not taken back — asked in July's own
 /// window.**
 ///
@@ -818,9 +890,15 @@ async fn the_club_was_corrected_in_place_in_july(seen: &Observed<'_>) -> Result<
              sitting recorded. A check scoped to one sitting needs the run's own boundaries.",
         ));
     };
-    let dated = after.world.matches(JULYS_DAY).count() > before.world.matches(JULYS_DAY).count();
-    let took_back =
-        after.world.matches(TAKEN_BACK).count() > before.world.matches(TAKEN_BACK).count();
+    // 🚨 **Scoped to the CLUB's own records, not the whole window.** July now
+    // does other business too — every woven thread adds one more sitting that
+    // does — so counting either needle across the whole world is satisfied by
+    // ANY record dated July's day or ANY retraction anywhere, on any subject.
+    let club_before = hits_naming_subject(&before.world, "org:north-trail-club");
+    let club_after = hits_naming_subject(&after.world, "org:north-trail-club");
+    let count = |hits: &[String], needle: &str| hits.iter().filter(|h| h.contains(needle)).count();
+    let dated = count(&club_after, JULYS_DAY) > count(&club_before, JULYS_DAY);
+    let took_back = count(&club_after, TAKEN_BACK) > count(&club_before, TAKEN_BACK);
     match (dated, took_back) {
         (true, false) => Ok(()),
         (false, _) => Err(format!(
@@ -1791,4 +1869,251 @@ async fn a_records_trace_matches_the_writes_the_run_made(
     Err(format!(
         "the trace of {UNTOUCHED_RECORD} reports {reported} write(s) and the run made {made} — across the boundaries the record was seen holding {seen_holding:?}, so the trace and what the run actually did disagree: {read}"
     ))
+}
+
+/// The canoe's own subject, and the sitting whose entry asks the operator's
+/// real question — pull the year together without losing anything and
+/// without a stack of separate notes — never the word "fold" or a mark's
+/// name.
+const CANOE: &str = "thing:canoe";
+const LATER_DECEMBER: &str = "Phase 15";
+
+/// Every fact `recall` currently reports for the canoe.
+async fn canoes_facts(seen: &Observed<'_>) -> Vec<Value> {
+    let read = seen
+        .room
+        .call("recall", json!({"subject": CANOE, "facts": true}))
+        .await;
+    serde_json::from_str::<Value>(&read)
+        .ok()
+        .and_then(|body| body["objects"][0]["facts"].as_array().cloned())
+        .unwrap_or_default()
+}
+
+/// The one fact, if any, that stands for others — the fold this room is
+/// watching for. `stands_for` is unforgeable by construction (rule 234's
+/// shape does not apply here; this is the dedicated-field kind), so finding
+/// one non-empty array here means a caller actually set the mark through the
+/// served surface.
+fn the_fold(facts: &[Value]) -> Option<&Value> {
+    facts.iter().find(|fact| {
+        fact["stands_for"]
+            .as_array()
+            .is_some_and(|marks| !marks.is_empty())
+    })
+}
+
+/// 🚨 **A sitting late in the year folds the canoe's pile, and nothing in its
+/// entry told it to.** The document's own entry for {LATER_DECEMBER} asks the
+/// operator's real question — pull the year together without losing anything
+/// and without a stack of separate notes — and never names a mark, a verb, or
+/// the word "fold". A session that reads the orientation essay's own example
+/// is the only thing that can make this pass; nothing here scripts it.
+///
+/// ⛔️ **Existence alone is not enough — the window is the point.** A mark
+/// that happened to exist before this room ever asked anything would satisfy
+/// a plain "does a mark exist" question while proving nothing about THIS
+/// sitting choosing to make it. So this reads the board either side of
+/// {LATER_DECEMBER}'s own window and asks whether the mark is new there — the
+/// same technique March's own lock uses for the identical shape of claim.
+async fn a_late_sitting_folds_the_canoes_pile_without_being_told_to(
+    seen: &Observed<'_>,
+) -> Result<(), String> {
+    let Some((before, after)) = seen.across(LATER_DECEMBER) else {
+        return Err(format!(
+            "this run took no reading either side of {LATER_DECEMBER}, so nothing here can say \
+             whether that sitting folded anything",
+        ));
+    };
+    let had = before
+        .world
+        .matches("\"stands_for\":[\"thing:canoe")
+        .count();
+    let has = after.world.matches("\"stands_for\":[\"thing:canoe").count();
+    match has > had {
+        true => Ok(()),
+        false => Err(format!(
+            "no record standing for the canoe's other claims appeared in {LATER_DECEMBER}'s own \
+             window — the pile of small repairs is still just a pile",
+        )),
+    }
+}
+
+/// ⭐ **Both directions of the one property this feature promises: synthesis
+/// layers and never discards (rule 263).** A run where the fold made the pile
+/// look like one right up until the pile stopped existing is a worse failure
+/// than never folding at all, however tidy the finished board reads — so this
+/// asks whether EVERY one of the canoe's five small repairs is still active,
+/// and whether the fold's own mark actually names each of them, rather than
+/// asking either question alone.
+///
+/// 🚨 **A hatch, because both halves live on the SAME set of records and
+/// nothing on this surface reports them together.** `facts` says what stands
+/// today; whether the fold's `stands_for` list covers a given address is a
+/// set-membership question over that same answer, which is past what a
+/// substring assertion can say.
+///
+/// **The fold's own address is exempt from being named** — a fold made by
+/// rewriting one of the five in place cannot name itself (rule: a mark
+/// naming its own address is refused), so its coverage is that it is still
+/// active, not that the mark lists it.
+///
+/// 🚨 **EVERY record on a day, not the first one `recorded_at` happens to
+/// list.** February plausibly writes two canoe facts on the same date —
+/// picking it up, and finding the soft spot — and a fold that named one but
+/// not the other left the second exactly as lost as if it named neither. A
+/// day is a SELECTION, never an address by another name.
+async fn the_canoes_five_repairs_are_still_active_and_named_by_the_fold(
+    seen: &Observed<'_>,
+) -> Result<(), String> {
+    let facts = canoes_facts(seen).await;
+    let Some(fold) = the_fold(&facts) else {
+        return Err(
+            "no record on the canoe stands for any other, so there is no fold to check the \
+             sources of"
+                .into(),
+        );
+    };
+    let fold_address = fold["address"].as_str().unwrap_or_default();
+    let named: std::collections::HashSet<&str> = fold["stands_for"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|address| address.as_str())
+        .collect();
+    let mut missing = Vec::new();
+    for (day, _) in CANOE_DAYS {
+        let sources: Vec<&Value> = facts
+            .iter()
+            .filter(|fact| fact["recorded_at"] == day)
+            .collect();
+        if sources.is_empty() {
+            missing.push(format!("{day} — no repair on record for that day at all"));
+            continue;
+        }
+        for source in sources {
+            if source["status"] != "active" {
+                missing.push(format!(
+                    "{day} — {} is not active, so the fold cost the original account",
+                    source["address"]
+                ));
+                continue;
+            }
+            let address = source["address"].as_str().unwrap_or_default();
+            if address != fold_address && !named.contains(address) {
+                missing.push(format!(
+                    "{day} — {address} is active but the fold does not name it, so it reads as \
+                     lost even though it is still there"
+                ));
+            }
+        }
+    }
+    match missing.is_empty() {
+        true => Ok(()),
+        false => Err(format!(
+            "the fold does not leave the whole picture reachable: {}",
+            missing.join("; ")
+        )),
+    }
+}
+
+/// The five days the canoe gains a small repair — read by the lock above to
+/// find each one, and by the sentence beside it to say what a reader loses.
+const CANOE_DAYS: [(&str, &str); 5] = [
+    ("2026-02-08", "the soft spot was noticed"),
+    ("2026-03-15", "the soft spot was patched"),
+    ("2026-05-10", "the seat was varnished"),
+    ("2026-07-05", "the foot brace was replaced"),
+    ("2026-09-13", "a new crack was patched"),
+];
+
+/// 🚨 **THE FABRICATION CHECK.** The folded record must not assert a date
+/// that none of the canoe's other records ever gave — the failure this mark
+/// is most likely to produce, being asked to say less while sounding more
+/// certain than any one part of the pile it is drawn from.
+///
+/// **Dates only, not cadence or confidence.** The other two are a person's
+/// reading of tone — whether an answer reads well is not something a lock
+/// can hold, the same line this room already draws around a rewrite's
+/// wording. A date is the one part of "invented a cadence, a made-up date, or
+/// a confidence nobody earned" that is a plain fact, checkable without
+/// reading anyone's prose for how it sounds.
+///
+/// **`recorded_at` is sourced against EVERY canoe record, the fold's own
+/// included — `happened_at` is not.** The fold's own `recorded_at` is the
+/// day it was actually written, and stating that day is not invention;
+/// excluding it convicted an honest fold for naming the day it was itself
+/// written on. But `happened_at` is exactly the field a fold's own
+/// invention would land on — a single day claimed for a pile that spans
+/// several — so the fold's OWN `happened_at` cannot be a source for judging
+/// itself, only the other five records' can be.
+async fn the_canoes_fold_invents_no_date_the_repairs_never_gave(
+    seen: &Observed<'_>,
+) -> Result<(), String> {
+    let facts = canoes_facts(seen).await;
+    let Some(fold) = the_fold(&facts) else {
+        return Err(
+            "no record on the canoe stands for any other, so there is nothing here to check for \
+             an invented date"
+                .into(),
+        );
+    };
+    let fold_address = fold["address"].as_str().unwrap_or_default().to_string();
+    let mut known: std::collections::HashSet<&str> = facts
+        .iter()
+        .filter_map(|fact| fact["recorded_at"].as_str())
+        .collect();
+    known.extend(
+        facts
+            .iter()
+            .filter(|fact| fact["address"] != fold_address.as_str())
+            .filter_map(|fact| fact["happened_at"].as_str()),
+    );
+    if let Some(claimed) = fold["happened_at"].as_str()
+        && !known.contains(claimed)
+    {
+        return Err(format!(
+            "the fold says the pile happened on {claimed}, a day none of the canoe's other \
+             records give"
+        ));
+    }
+    let content = fold["content"].as_str().unwrap_or_default();
+    for date in iso_dates_in(content) {
+        if !known.contains(date.as_str()) {
+            return Err(format!(
+                "the fold's own words name {date}, a day none of the canoe's other records give"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Every `YYYY-MM-DD` substring in `text`, hand-rolled because this crate
+/// carries no regex dependency and a fabricated date is as likely to land in
+/// prose as in a structured field.
+fn iso_dates_in(text: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let bytes = text.as_bytes();
+    let mut at = 0;
+    while at + 10 <= bytes.len() {
+        if !text.is_char_boundary(at) || !text.is_char_boundary(at + 10) {
+            at += 1;
+            continue;
+        }
+        let slice = &text[at..at + 10];
+        let shaped = slice.as_bytes().iter().enumerate().all(|(offset, &b)| {
+            if offset == 4 || offset == 7 {
+                b == b'-'
+            } else {
+                b.is_ascii_digit()
+            }
+        });
+        if shaped {
+            found.push(slice.to_string());
+            at += 10;
+        } else {
+            at += 1;
+        }
+    }
+    found
 }

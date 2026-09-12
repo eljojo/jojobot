@@ -27,22 +27,22 @@ use serde_json::{Value, json};
 /// order and what each lock is about, so a sentence rewritten in the room does
 /// not break a case here.
 const JANUARY: [usize; 3] = [0, 1, 2];
-const FEBRUARY: [usize; 3] = [3, 4, 5];
-const MARCH: [usize; 1] = [6];
-const APRIL: [usize; 2] = [7, 8];
-const MAY: [usize; 1] = [9];
-const JUNE: [usize; 3] = [10, 11, 12];
-const JULY: [usize; 1] = [13];
-const AUGUST: [usize; 2] = [14, 15];
-const SEPTEMBER: [usize; 1] = [16];
-const OCTOBER: [usize; 2] = [17, 18];
-const LATE_OCTOBER: [usize; 4] = [19, 20, 21, 22];
-const LATE_NOVEMBER: [usize; 2] = [23, 24];
+const FEBRUARY: [usize; 4] = [3, 4, 5, 6];
+const MARCH: [usize; 2] = [7, 8];
+const APRIL: [usize; 2] = [9, 10];
+const MAY: [usize; 2] = [11, 12];
+const JUNE: [usize; 3] = [13, 14, 15];
+const JULY: [usize; 2] = [16, 17];
+const AUGUST: [usize; 2] = [18, 19];
+const SEPTEMBER: [usize; 2] = [20, 21];
+const OCTOBER: [usize; 2] = [22, 23];
+const LATE_OCTOBER: [usize; 4] = [24, 25, 26, 27];
+const LATE_NOVEMBER: [usize; 2] = [28, 29];
 
 /// How many locks the year carries.
-const LATE_DECEMBER: [usize; 2] = [25, 26];
+const LATE_DECEMBER: [usize; 5] = [30, 31, 32, 33, 34];
 
-const LOCKS: usize = 27;
+const LOCKS: usize = 35;
 
 /// **The sittings a person reads**, which assert nothing and must not.
 const READ_THESE: [&str; 2] = ["Phase 12", "Phase 14"];
@@ -161,6 +161,29 @@ const A_PLACE_AND_A_PERSON: &str =
 /// **Pointers, all of one kind.** Every mention leads to a person, so no claim
 /// links a thing of one kind to a thing of another.
 const PEOPLE_ONLY: &str = "@person:milhouse and @person:nelson were both at the survey";
+
+/// **The five days the canoe gains a small repair**, and what each is — read
+/// off `recorded_at` by `checks.rs`'s canoe hatches, so the wording here is
+/// free to change and the day is not.
+const CANOE_DAYS: [(&str, &str); 5] = [
+    (
+        "2026-02-08",
+        "there is a soft spot in the canoe's hull near the bow",
+    ),
+    ("2026-03-15", "patched that soft spot in the canoe's hull"),
+    (
+        "2026-05-10",
+        "gave the canoe seat a coat of varnish since it was getting rough",
+    ),
+    (
+        "2026-07-05",
+        "replaced the canoe's rear foot brace, the old one had cracked",
+    ),
+    (
+        "2026-09-13",
+        "patched a new crack near the canoe's bow before it gets worse",
+    ),
+];
 
 /// A call an occupant would make.
 async fn did(room: &Surface, sid: &str, verb: &str, mut args: Value) -> String {
@@ -313,6 +336,7 @@ async fn february(room: &Surface, sid: &str) {
         ("person", "ralph", "Ralph"),
         ("person", "nelson", "Nelson"),
         ("thing", "floor-pump", "The Floor Pump"),
+        ("thing", "canoe", "The Canoe"),
     ] {
         did(
             room,
@@ -340,6 +364,14 @@ async fn february(room: &Surface, sid: &str) {
                "shape": "membership", "object": "org:north-trail-club"}),
     )
     .await;
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "thing:canoe", "content": CANOE_DAYS[0].1,
+               "provenance": "testimony", "recorded_at": CANOE_DAYS[0].0}),
+    )
+    .await;
 }
 
 /// **A February that stands the things up and never says who has the pump.**
@@ -353,6 +385,7 @@ async fn february_records_no_holder(room: &Surface, sid: &str) {
         ("person", "ralph", "Ralph"),
         ("person", "nelson", "Nelson"),
         ("thing", "floor-pump", "The Floor Pump"),
+        ("thing", "canoe", "The Canoe"),
     ] {
         did(
             room,
@@ -384,6 +417,14 @@ async fn february_records_no_holder(room: &Surface, sid: &str) {
                "shape": "membership", "object": "org:north-trail-club"}),
     )
     .await;
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "thing:canoe", "content": CANOE_DAYS[0].1,
+               "provenance": "testimony", "recorded_at": CANOE_DAYS[0].0}),
+    )
+    .await;
 }
 
 async fn march(room: &Surface, sid: &str) {
@@ -393,6 +434,14 @@ async fn march(room: &Surface, sid: &str) {
         "capture",
         json!({"subject": "org:north-trail-club", "content": "meets on Tuesdays",
                "provenance": "testimony", "recorded_at": "2026-03-15"}),
+    )
+    .await;
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "thing:canoe", "content": CANOE_DAYS[1].1,
+               "provenance": "testimony", "recorded_at": CANOE_DAYS[1].0}),
     )
     .await;
 }
@@ -424,6 +473,14 @@ async fn may(room: &Surface, sid: &str) {
         "capture",
         json!({"subject": "place:north-trail", "content": "washed out at the top end this spring",
                "provenance": "testimony", "recorded_at": "2026-05-10"}),
+    )
+    .await;
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "thing:canoe", "content": CANOE_DAYS[2].1,
+               "provenance": "testimony", "recorded_at": CANOE_DAYS[2].0}),
     )
     .await;
 }
@@ -621,6 +678,30 @@ async fn july(room: &Surface, sid: &str) {
                "recorded_at": "2026-07-05"}),
     )
     .await;
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "thing:canoe", "content": CANOE_DAYS[3].1,
+               "provenance": "testimony", "recorded_at": CANOE_DAYS[3].0}),
+    )
+    .await;
+}
+
+/// **A July that writes only the canoe record and does nothing to the
+/// club.** The case a review found this room could not yet fail: once the
+/// canoe thread gave July a second subject, a whole-world count of "a record
+/// gained July's day" was satisfied by the canoe alone, and "no retraction
+/// appeared" holds trivially over a subject nobody touched.
+async fn july_writes_only_the_canoe(room: &Surface, sid: &str) {
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "thing:canoe", "content": CANOE_DAYS[3].1,
+               "provenance": "testimony", "recorded_at": CANOE_DAYS[3].0}),
+    )
+    .await;
 }
 
 /// **A July that takes the claim back instead of writing the correction in.**
@@ -684,6 +765,14 @@ async fn september(room: &Surface, sid: &str) {
         json!({"subject": "thing:floor-pump", "content": "came back at the survey",
                    "provenance": "testimony", "happened_at": "2026-06-14",
                    "shape": "connection", "object": "person:ralph"}),
+    )
+    .await;
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "thing:canoe", "content": CANOE_DAYS[4].1,
+               "provenance": "testimony", "recorded_at": CANOE_DAYS[4].0}),
     )
     .await;
 }
@@ -1119,6 +1208,227 @@ async fn later_december(room: &Surface, sid: &str) {
         json!({"subject": "org:north-trail-club", "content": "the record was corrected during the year",
                "provenance": "inference",
                "fields": {"was": was}}),
+    )
+    .await;
+    fold_the_canoes_pile(room, sid).await;
+}
+
+/// Every fact `recall` currently reports for the canoe.
+async fn canoe_facts(room: &Surface) -> Vec<Value> {
+    let read = room
+        .call("recall", json!({"subject": "thing:canoe", "facts": true}))
+        .await;
+    serde_json::from_str::<Value>(&read)
+        .ok()
+        .and_then(|body| body["objects"][0]["facts"].as_array().cloned())
+        .unwrap_or_default()
+}
+
+/// **The fold this room's own lock is watching for, done honestly.** A fresh
+/// record stands for the canoe's five small repairs, none of which is
+/// touched — the pile stays fully readable and gains a single answer on top
+/// of it, which is the shape the operator's own request asked for without
+/// naming.
+async fn fold_the_canoes_pile(room: &Surface, sid: &str) {
+    let sources: Vec<String> = canoe_facts(room)
+        .await
+        .iter()
+        .filter_map(|fact| fact["address"].as_str().map(str::to_string))
+        .collect();
+    let captured = did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "thing:canoe",
+               "content": "the canoe needed a handful of small repairs this year — the details are on the records this stands for",
+               "provenance": "inference"}),
+    )
+    .await;
+    let address = serde_json::from_str::<Value>(&captured)
+        .ok()
+        .and_then(|v| v["address"].as_str().map(str::to_string))
+        .unwrap_or_else(|| panic!("the fold's own capture answers with its address: {captured}"));
+    did(
+        room,
+        sid,
+        "update_fact",
+        json!({"address": address, "stands_for": sources}),
+    )
+    .await;
+}
+
+/// **A later December that answers the club question and never folds the
+/// canoe's pile at all.** The wrong shape this room's canoe locks exist to
+/// catch: five small repairs sit on the record and nothing marks any of them
+/// as standing for the others.
+async fn later_december_never_folds_the_canoe(room: &Surface, sid: &str) {
+    let trace = room
+        .call(
+            "recall",
+            json!({"subject": "org:north-trail-club",
+                   "history_record": "org:north-trail-club#f1"}),
+        )
+        .await;
+    let parsed: Value = serde_json::from_str(&trace).expect("the trace is json");
+    let was = parsed["objects"][0]["record_history"]["writes"][0]["content"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the correction left no earlier write: {trace}"))
+        .to_string();
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "org:north-trail-club", "content": "the record was corrected during the year",
+               "provenance": "inference",
+               "fields": {"was": was}}),
+    )
+    .await;
+}
+
+/// **A fold that names its sources and then loses one of them.** The mark
+/// itself is honest; a later act on the SAME sitting retracts one of the five
+/// repairs it just named, which is the shape `stands_for` promises never
+/// happens — synthesis layers and never discards.
+async fn later_december_folds_but_loses_a_source(room: &Surface, sid: &str) {
+    later_december_never_folds_the_canoe(room, sid).await;
+    let sources: Vec<String> = canoe_facts(room)
+        .await
+        .iter()
+        .filter_map(|fact| fact["address"].as_str().map(str::to_string))
+        .collect();
+    let captured = did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "thing:canoe",
+               "content": "the canoe needed a handful of small repairs this year — the details are on the records this stands for",
+               "provenance": "inference"}),
+    )
+    .await;
+    let address = serde_json::from_str::<Value>(&captured)
+        .ok()
+        .and_then(|v| v["address"].as_str().map(str::to_string))
+        .unwrap_or_else(|| panic!("the fold's own capture answers with its address: {captured}"));
+    did(
+        room,
+        sid,
+        "update_fact",
+        json!({"address": address, "stands_for": sources}),
+    )
+    .await;
+    did(
+        room,
+        sid,
+        "retract",
+        json!({"address": sources[0], "reason": "never mind, this one did not need a note"}),
+    )
+    .await;
+}
+
+/// **A fold that invents a date none of the canoe's five repairs ever gave.**
+/// The mark itself is honest and names every source; the fold's own
+/// `happened_at` claims a single day for a pile that spans half the year,
+/// which none of the five repairs said.
+async fn later_december_folds_with_an_invented_date(room: &Surface, sid: &str) {
+    later_december_never_folds_the_canoe(room, sid).await;
+    let sources: Vec<String> = canoe_facts(room)
+        .await
+        .iter()
+        .filter_map(|fact| fact["address"].as_str().map(str::to_string))
+        .collect();
+    let captured = did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "thing:canoe",
+               "content": "the canoe needed a handful of small repairs this year — the details are on the records this stands for",
+               "provenance": "inference",
+               "happened_at": "2026-04-01"}),
+    )
+    .await;
+    let address = serde_json::from_str::<Value>(&captured)
+        .ok()
+        .and_then(|v| v["address"].as_str().map(str::to_string))
+        .unwrap_or_else(|| panic!("the fold's own capture answers with its address: {captured}"));
+    did(
+        room,
+        sid,
+        "update_fact",
+        json!({"address": address, "stands_for": sources}),
+    )
+    .await;
+}
+
+/// **A fold that names its own write day in its own prose.** Naming the day
+/// a record was itself written is not invention — a review found the
+/// fabrication check once excluded the fold's own date from what it treated
+/// as known, which would have convicted exactly this honest fold.
+async fn fold_the_canoes_pile_naming_its_own_day(room: &Surface, sid: &str) {
+    let sources: Vec<String> = canoe_facts(room)
+        .await
+        .iter()
+        .filter_map(|fact| fact["address"].as_str().map(str::to_string))
+        .collect();
+    let captured = did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "thing:canoe",
+               "content": "as of 2026-12-20 the canoe has needed five small repairs this year — the details are on the records this stands for",
+               "provenance": "inference"}),
+    )
+    .await;
+    let address = serde_json::from_str::<Value>(&captured)
+        .ok()
+        .and_then(|v| v["address"].as_str().map(str::to_string))
+        .unwrap_or_else(|| panic!("the fold's own capture answers with its address: {captured}"));
+    did(
+        room,
+        sid,
+        "update_fact",
+        json!({"address": address, "stands_for": sources}),
+    )
+    .await;
+}
+
+/// **Two canoe facts on the same day, and a fold that names only one of
+/// them.** February plausibly writes an acquisition and a defect as two
+/// separate claims on the same date; a review found the sources check once
+/// found only the FIRST record `recorded_at` reported for a day, so a fold
+/// missing this one's sibling would have read as complete.
+async fn fold_the_canoes_pile_missing_a_same_day_sibling(room: &Surface, sid: &str) {
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "thing:canoe", "content": "picked it up at a yard sale",
+               "provenance": "testimony", "recorded_at": CANOE_DAYS[0].0}),
+    )
+    .await;
+    let facts = canoe_facts(room).await;
+    let sources: Vec<String> = facts
+        .iter()
+        .filter(|fact| fact["content"] != "picked it up at a yard sale")
+        .filter_map(|fact| fact["address"].as_str().map(str::to_string))
+        .collect();
+    let captured = did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "thing:canoe",
+               "content": "the canoe needed a handful of small repairs this year — the details are on the records this stands for",
+               "provenance": "inference"}),
+    )
+    .await;
+    let address = serde_json::from_str::<Value>(&captured)
+        .ok()
+        .and_then(|v| v["address"].as_str().map(str::to_string))
+        .unwrap_or_else(|| panic!("the fold's own capture answers with its address: {captured}"));
+    did(
+        room,
+        sid,
+        "update_fact",
+        json!({"address": address, "stands_for": sources}),
     )
     .await;
 }
@@ -1936,6 +2246,32 @@ async fn julys_window_catches_a_guilty_july_and_ignores_a_later_retraction() {
         judged[JULY[0]].held,
         "a later sitting taking a club claim back reddened July, which had nothing to do with \
          it: {}",
+        saying(&judged),
+    );
+}
+
+/// 🚨 **July's lock, re-proven once July had a second subject to write.**
+///
+/// A review of this room found that the lock's two needles were counted
+/// across the whole world rather than the club's own records — so a July
+/// that wrote only the canoe repair and never touched the club satisfied
+/// "the club gained its day" (the canoe did) and "no retraction appeared"
+/// (trivially, nobody touched the club at all). This is the case that did
+/// not exist before the fix, and it is the one that proves it.
+#[tokio::test]
+async fn julys_lock_reddens_when_july_writes_only_the_canoe() {
+    const BEFORE_JULY: [usize; 6] = [0, 1, 2, 3, 4, 5];
+    let (_room, surface) = furnished().await;
+    let mut boundaries = work_the_year(&surface, &room_document(), &BEFORE_JULY, &[]).await;
+    let sid = sitting(&surface, "2026-07-05").await;
+    july_writes_only_the_canoe(&surface, &sid).await;
+    let named = boundary_names(&room_document());
+    boundaries[7] = boundary(&surface, &named[7]).await;
+    let judged = judge_all(&surface, &boundaries).await;
+    assert!(
+        !judged[JULY[0]].held,
+        "a July that wrote only the canoe record — nothing on the club at all — held the club's \
+         own correction lock: {}",
         saying(&judged),
     );
 }
@@ -3029,7 +3365,6 @@ async fn a_fuller_answer_satisfies_the_trace_lock_and_a_wrong_one_still_does_not
     // **The year without its last sitting**, then this sitting played by hand.
     // The lock reads the finished room, so a write after the boundaries are
     // taken is the same to it.
-    const WITHOUT_LATER_DECEMBER: [usize; 12] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12];
     let (_room, surface) = furnished().await;
     let fuller = work_the_year(&surface, &room_document(), &WITHOUT_LATER_DECEMBER, &[]).await;
     let settling = sitting(&surface, "2026-12-20").await;
@@ -3118,5 +3453,179 @@ async fn september_is_graded_and_a_sitting_in_the_wrong_day_still_fails() {
         missed.iter().any(|name| name.starts_with("Phase 9")),
         "a September that wrote under June was not caught, so taking its exemption out left a \
          check with nothing to catch: {missed:?}",
+    );
+}
+
+/// **The whole year, worked without its last sitting**, so a case can play
+/// its own version of December and take a boundary right after it — the same
+/// technique `a_fuller_answer_satisfies_the_trace_lock_and_a_wrong_one_still_does_not`
+/// uses for the club's own trace lock.
+const WITHOUT_LATER_DECEMBER: [usize; 12] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12];
+
+/// **The happy path: all three of the canoe's year locks hold together.**
+///
+/// Five small repairs, each planted beside that sitting's other business
+/// across ten months, folded by a sixth record late in the year that names
+/// every one of them and invents nothing. This is the shape the feature
+/// promises, worked the ordinary way the whole year is worked.
+#[tokio::test]
+async fn the_canoes_year_is_folded_late_and_holds_all_three_locks() {
+    let (_room, surface) = furnished().await;
+    let boundaries = worked_the_year(&surface).await;
+    let judged = judge_all(&surface, &boundaries).await;
+    assert!(
+        judged[LATE_DECEMBER[2]].held,
+        "the fold did not appear in December's own window: {}",
+        saying(&judged),
+    );
+    assert!(
+        judged[LATE_DECEMBER[3]].held,
+        "the fold does not leave all five repairs active and named: {}",
+        saying(&judged),
+    );
+    assert!(
+        judged[LATE_DECEMBER[4]].held,
+        "the fold was read as inventing a date it never gave: {}",
+        saying(&judged),
+    );
+}
+
+/// 🚨 **The fold-timing lock, asked both ways.**
+///
+/// A December that answers the club's question and never marks anything on
+/// the canoe must fail the lock that exists to catch exactly that — and the
+/// happy-path case above already proves a real fold passes it.
+#[tokio::test]
+async fn the_canoe_fold_lock_reddens_when_december_never_folds_anything() {
+    let (_room, surface) = furnished().await;
+    let mut boundaries =
+        work_the_year(&surface, &room_document(), &WITHOUT_LATER_DECEMBER, &[]).await;
+    let sid = sitting(&surface, "2026-12-20").await;
+    later_december_never_folds_the_canoe(&surface, &sid).await;
+    *boundaries.last_mut().expect("the year has a last boundary") =
+        boundary(&surface, "the end").await;
+    let judged = judge_all(&surface, &boundaries).await;
+    assert!(
+        !judged[LATE_DECEMBER[2]].held,
+        "a December that folded nothing held the fold-timing lock, so the check can no longer \
+         fail for the reason it exists: {}",
+        saying(&judged),
+    );
+}
+
+/// 🚨 **The sources lock, asked both ways.**
+///
+/// A fold that names its five sources honestly and then retracts one of them
+/// must fail — synthesis layers and never discards (rule 263) — while the
+/// fold-timing lock and the fabrication lock, which are about different
+/// questions, still hold: a real mark was made, in the window, inventing
+/// nothing.
+#[tokio::test]
+async fn the_canoes_sources_lock_reddens_when_a_fold_destroys_one_of_them() {
+    let (_room, surface) = furnished().await;
+    let mut boundaries =
+        work_the_year(&surface, &room_document(), &WITHOUT_LATER_DECEMBER, &[]).await;
+    let sid = sitting(&surface, "2026-12-20").await;
+    later_december_folds_but_loses_a_source(&surface, &sid).await;
+    *boundaries.last_mut().expect("the year has a last boundary") =
+        boundary(&surface, "the end").await;
+    let judged = judge_all(&surface, &boundaries).await;
+    assert!(
+        judged[LATE_DECEMBER[2]].held,
+        "a fold that genuinely happened, in the window, failed the timing lock instead of the \
+         sources lock: {}",
+        saying(&judged),
+    );
+    assert!(
+        !judged[LATE_DECEMBER[3]].held,
+        "a fold that retracted one of its own five sources held the lock that exists to catch \
+         exactly that: {}",
+        saying(&judged),
+    );
+    assert!(
+        judged[LATE_DECEMBER[4]].held,
+        "a fold that invented no date failed the fabrication lock instead of the sources lock: {}",
+        saying(&judged),
+    );
+}
+
+/// 🚨 **The fabrication lock, asked both ways.**
+///
+/// A fold that names every source honestly and then claims a single day for
+/// a pile that spans half the year must fail — while the timing lock and the
+/// sources lock, about different questions, still hold: a real mark was
+/// made, in the window, over five untouched sources.
+#[tokio::test]
+async fn the_canoes_fabrication_lock_reddens_when_the_fold_invents_a_date() {
+    let (_room, surface) = furnished().await;
+    let mut boundaries =
+        work_the_year(&surface, &room_document(), &WITHOUT_LATER_DECEMBER, &[]).await;
+    let sid = sitting(&surface, "2026-12-20").await;
+    later_december_folds_with_an_invented_date(&surface, &sid).await;
+    *boundaries.last_mut().expect("the year has a last boundary") =
+        boundary(&surface, "the end").await;
+    let judged = judge_all(&surface, &boundaries).await;
+    assert!(
+        judged[LATE_DECEMBER[2]].held,
+        "a fold that genuinely happened, in the window, failed the timing lock instead of the \
+         fabrication lock: {}",
+        saying(&judged),
+    );
+    assert!(
+        judged[LATE_DECEMBER[3]].held,
+        "a fold naming every source intact failed the sources lock instead of the fabrication \
+         lock: {}",
+        saying(&judged),
+    );
+    assert!(
+        !judged[LATE_DECEMBER[4]].held,
+        "a fold that invented a day none of the five repairs gave held the lock that exists to \
+         catch exactly that: {}",
+        saying(&judged),
+    );
+}
+
+/// 🚨 **The fabrication lock must not convict a fold for naming the day it
+/// was itself written on.** A review found the check once built its known
+/// dates from every OTHER canoe record, excluding the fold — so a fold
+/// stating its own honest write day in its own prose read as inventing a
+/// date nobody gave.
+#[tokio::test]
+async fn the_fabrication_lock_does_not_convict_a_fold_for_naming_its_own_write_day() {
+    let (_room, surface) = furnished().await;
+    let mut boundaries =
+        work_the_year(&surface, &room_document(), &WITHOUT_LATER_DECEMBER, &[]).await;
+    let sid = sitting(&surface, "2026-12-20").await;
+    later_december_never_folds_the_canoe(&surface, &sid).await;
+    fold_the_canoes_pile_naming_its_own_day(&surface, &sid).await;
+    *boundaries.last_mut().expect("the year has a last boundary") =
+        boundary(&surface, "the end").await;
+    let judged = judge_all(&surface, &boundaries).await;
+    assert!(
+        judged[LATE_DECEMBER[4]].held,
+        "a fold that named the day it was itself written on was read as fabrication: {}",
+        saying(&judged),
+    );
+}
+
+/// 🚨 **The sources lock must check EVERY record on a day, not the first one
+/// `recorded_at` happens to report.** A review found that February plausibly
+/// writes two canoe facts on the same date — an acquisition and a defect —
+/// and a fold missing one of a same-day pair used to read as complete.
+#[tokio::test]
+async fn the_sources_lock_catches_a_fold_that_misses_one_of_two_same_day_repairs() {
+    let (_room, surface) = furnished().await;
+    let mut boundaries =
+        work_the_year(&surface, &room_document(), &WITHOUT_LATER_DECEMBER, &[]).await;
+    let sid = sitting(&surface, "2026-12-20").await;
+    later_december_never_folds_the_canoe(&surface, &sid).await;
+    fold_the_canoes_pile_missing_a_same_day_sibling(&surface, &sid).await;
+    *boundaries.last_mut().expect("the year has a last boundary") =
+        boundary(&surface, "the end").await;
+    let judged = judge_all(&surface, &boundaries).await;
+    assert!(
+        !judged[LATE_DECEMBER[3]].held,
+        "a fold that left one of February's two same-day repairs unnamed held the sources lock: {}",
+        saying(&judged),
     );
 }
