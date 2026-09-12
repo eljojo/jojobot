@@ -3373,6 +3373,52 @@ mod tests {
         );
         tx.commit().await.expect("the read commits");
 
+        // **A deliberate rename**, not one incidentally left behind by the
+        // contract: the badge does not move when the handle does, so this is
+        // the one case that actually exercises "resolves to the handle it
+        // wears NOW" rather than "resolves to whichever handle it always
+        // wore."
+        let was = EntityId::person("person:contract-current-handle-was");
+        let now = EntityId::person("person:contract-current-handle-now");
+        memory
+            .add_entity(NewEntity::new(
+                was.clone(),
+                "Current Handle Rename Subject",
+                "contract-fixture",
+            ))
+            .await
+            .expect("add_entity ok")
+            .written()
+            .expect("the guard waves it through");
+        memory
+            .rename_entity(&was, &now, None, date(2026, 8, 10), None)
+            .await
+            .expect("rename_entity ok")
+            .written()
+            .expect("the guard waves it through");
+
+        let mut tx = pool.begin().await.expect("a transaction");
+        let known = memory.known(&mut tx).await.expect("the known rows read");
+        let badge = known
+            .iter()
+            .find(|e| e.id == now)
+            .and_then(|e| e.badge.clone())
+            .expect("the renamed entity kept its badge");
+        assert_eq!(
+            jojobot_domain::memory::entity_wearing(&badge, &known).map(|e| e.id.clone()),
+            Some(now.clone()),
+            "the fixture itself should resolve the badge to the new handle",
+        );
+        assert_eq!(
+            memory
+                .current_handle(&mut tx, &EntityId(badge))
+                .await
+                .expect("current_handle answers"),
+            now,
+            "current_handle did not follow a rename to the handle its badge wears now",
+        );
+        tx.commit().await.expect("the read commits");
+
         store.stop().await;
     }
 }
