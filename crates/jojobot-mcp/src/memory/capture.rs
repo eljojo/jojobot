@@ -471,19 +471,19 @@ impl Jojobot {
                 &[],
                 format!("Nothing was written: {why}."),
             ))),
+            // **Name the key that is actually at fault, and only that one.**
+            // `schedule_of` fails on the first key it cannot read, so `why`
+            // is always about exactly one — never all three at once. Naming
+            // the other two regardless used to tell a caller short of
+            // `cadence_days` alone to also capture `counts_from`, which is
+            // the value a working check-in already supplies and the exact
+            // move rule 261 exists to stop.
             Err(why) => Ok(Err(blocked_body(
                 subject,
                 &[],
                 format!(
-                    "Nothing was written: {why}. A rhythm takes a check-in once it holds a whole \
-                     schedule — '{}' in days, '{}' ({}), and the '{}' this cycle counts from. \
-                     Capture the missing key on '{subject}', then send this check-in again.",
-                    attention::CADENCE_DAYS,
-                    attention::ADVANCES_FROM,
-                    attention::AdvancesFrom::ALL
-                        .map(attention::AdvancesFrom::as_token)
-                        .join(" or "),
-                    attention::COUNTS_FROM,
+                    "Nothing was written: {why}. Capture the missing key on '{subject}', then \
+                     send this check-in again.",
                 ),
             ))),
         }
@@ -1573,6 +1573,12 @@ mod tests {
         assert!(
             how.contains("cadence_days") && how.contains("Capture the missing key"),
             "a loop with no cadence is told which key to capture: {how}"
+        );
+        assert!(
+            !how.contains("counts_from"),
+            "counts_from is not this loop's problem, and a working check-in supplies it — \
+             naming it here sends the caller to type the one value this whole path exists to \
+             derive: {how}"
         );
     }
 
