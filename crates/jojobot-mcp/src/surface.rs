@@ -584,6 +584,32 @@ fn the_mark_processed_description_states_the_crash_contract() {
     );
 }
 
+/// 🚨 **The colleagues view's one-liner key names itself nowhere a bot would
+/// meet it.** `view:colleagues` reads `fields.one_liner`, but nothing
+/// agent-facing ever told a bot the key exists or how to write it — a caller
+/// reading `view:colleagues` sees a gap where a colleague's summary should
+/// be, with no path from there to filling it in. `set_charter` is the
+/// surface a bot reaches for to describe itself, so this is where the
+/// pointer belongs.
+#[test]
+fn the_colleagues_one_liner_key_is_named_on_a_surface_a_bot_would_meet() {
+    let tools = Jojobot::tool_router().list_all();
+    let set_charter = tools
+        .iter()
+        .find(|t| t.name == "set_charter")
+        .expect("set_charter is a tool");
+    let description = set_charter.description.as_deref().unwrap_or_default();
+    assert!(
+        description.contains(crate::orientation::charter::ONE_LINER_KEY),
+        "the exact key view:colleagues reads must be named where a bot writing about itself \
+         would read it: {description}"
+    );
+    assert!(
+        description.contains("capture"),
+        "and it must say which verb writes it, since set_charter itself does not: {description}"
+    );
+}
+
 /// **`retract` and `update_fact`'s `clear_edge` used to both claim the same
 /// case — a past event that turned out never to have happened.** `retract`
 /// names itself the move for it; `clear_edge`'s own worked example, until
