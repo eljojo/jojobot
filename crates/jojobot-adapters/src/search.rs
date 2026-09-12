@@ -5123,6 +5123,9 @@ mod tests {
 
     #[async_trait]
     impl Memory for Scanned {
+        async fn former_handles(&self) -> Result<Vec<FormerHandle>, MemoryError> {
+            unimplemented!("this double only scans")
+        }
         async fn scan(&self) -> Result<Vec<DocScan>, MemoryError> {
             if self.blind.load(std::sync::atomic::Ordering::SeqCst) {
                 return Err(MemoryError::Store("the store cannot be read".into()));
@@ -5354,6 +5357,9 @@ mod tests {
 
     #[async_trait]
     impl Memory for Delegated {
+        async fn former_handles(&self) -> Result<Vec<FormerHandle>, MemoryError> {
+            unimplemented!("this double answers the three reads a store owns")
+        }
         async fn backing(
             &self,
             _: &EntityId,

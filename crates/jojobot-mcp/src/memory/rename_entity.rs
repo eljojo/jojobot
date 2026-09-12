@@ -892,4 +892,115 @@ mod tests {
             "must name the near miss: {body}"
         );
     }
+
+    /// 🚨 **A renamed bot's SENT mail still counts as theirs.**
+    ///
+    /// `list_sent` answers "did my report land" by matching the sender
+    /// column exactly against the caller's CURRENT handle. Without mailbox
+    /// `Mentioning` resolving `sender` the way `session.bot` already is, a
+    /// bot that posts, is renamed, and then asks what it sent is told
+    /// none — a confident zero standing in for mail that is still there.
+    ///
+    /// PAIRED: a bot that genuinely sent nothing is still told zero, so the
+    /// fix cannot be told from deleting the filter.
+    #[tokio::test]
+    async fn a_renamed_bots_sent_mail_still_counts_as_theirs() {
+        use crate::mailboxes::list_sent::ListSentArgs;
+        use crate::mailboxes::post_message::PostMessageArgs;
+        use jojobot_domain::mailbox::Mailboxes;
+        use jojobot_domain::mailbox::mention::Mentioning as MailboxMentioning;
+        use jojobot_domain::mailbox::testing::InMemoryMailboxes;
+
+        let memory = std::sync::Arc::new(jojobot_domain::memory::testing::InMemoryMemory::booted());
+        let bare_mail = std::sync::Arc::new(InMemoryMailboxes::knowing_any_owner());
+        let mailboxes: std::sync::Arc<dyn Mailboxes> =
+            std::sync::Arc::new(MailboxMentioning::new(bare_mail.clone(), memory.clone()));
+        let jojobot = Jojobot::new(
+            memory.clone(),
+            std::sync::Arc::new(SpySearch::default()),
+            mailboxes,
+            std::sync::Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
+            std::sync::Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+            seeded_registry(),
+        );
+
+        jojobot
+            .add_entity(Parameters(add_args("bot", "otto", "Otto")))
+            .await
+            .expect("add ok");
+        jojobot
+            .add_entity(Parameters(add_args("bot", "gamma", "Gamma")))
+            .await
+            .expect("add ok");
+        let writer = booted(&jojobot, "gamma").await;
+
+        for body in ["first report", "second report"] {
+            jojobot
+                .post_message(Parameters(PostMessageArgs {
+                    to: "otto".into(),
+                    body: body.into(),
+                    sid: writer.clone(),
+                    subject: None,
+                    in_reply_to: None,
+                }))
+                .await
+                .expect("post ok");
+        }
+
+        jojobot
+            .rename_entity(Parameters(args("bot:gamma", "bot:sigma", &writer)))
+            .await
+            .expect("rename ok");
+
+        let sent = json_of(
+            &jojobot
+                .list_sent(Parameters(ListSentArgs {
+                    limit: None,
+                    sender: None,
+                    to: None,
+                    include_bodies: None,
+                    sid: Some(writer.clone()),
+                }))
+                .await
+                .expect("list_sent ok"),
+        );
+        assert_eq!(
+            sent["count"], 2,
+            "both messages sent before the rename are still theirs: {sent}"
+        );
+        let senders: Vec<&str> = sent["messages"]
+            .as_array()
+            .expect("messages")
+            .iter()
+            .map(|m| m["sender"].as_str().expect("a sender"))
+            .collect();
+        assert_eq!(
+            senders,
+            vec!["bot:sigma", "bot:sigma"],
+            "rendered under the CURRENT handle, not the one they were sent under: {sent}"
+        );
+
+        // PAIRED — a bot that genuinely sent nothing is still told zero.
+        jojobot
+            .add_entity(Parameters(add_args("bot", "epsilon", "Epsilon")))
+            .await
+            .expect("add ok");
+        let other = booted(&jojobot, "epsilon").await;
+        let empty = json_of(
+            &jojobot
+                .list_sent(Parameters(ListSentArgs {
+                    limit: None,
+                    sender: None,
+                    to: None,
+                    include_bodies: None,
+                    sid: Some(other),
+                }))
+                .await
+                .expect("list_sent ok"),
+        );
+        assert_eq!(
+            empty["count"], 0,
+            "a bot that never sent anything still reads zero: {empty}"
+        );
+    }
 }

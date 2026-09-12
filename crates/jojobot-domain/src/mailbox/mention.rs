@@ -18,7 +18,9 @@
 
 use std::sync::Arc;
 
-use crate::memory::{Entity, Memory, mention};
+use crate::memory::{
+    Entity, EntityId, FormerHandle, Memory, entity_wearing, mention, resolve_handle,
+};
 
 use super::{
     Delivered, Delivery, Mailbox, MailboxError, MailboxName, Mailboxes, Message, MessageId,
@@ -27,7 +29,13 @@ use super::{
 
 /// Wraps any [`Mailboxes`] so a handle written into a message's body,
 /// subject or notes is stored as the permanent id and served as the handle
-/// the thing wears today.
+/// the thing wears today — **and so is `sender` itself**, the same rule
+/// applied to the one column that names who sent a message rather than
+/// mentioning them in its text. Without this, a message outlives the name
+/// its sender was posted under: `list_sent`'s exact match against the
+/// caller's current handle stops finding mail sent before a rename, and a
+/// bot that has just been renamed asks what it sent and is told none —
+/// a confident zero standing in for mail that is still there.
 pub struct Mentioning {
     inner: Arc<dyn Mailboxes>,
     memory: Arc<dyn Memory>,
@@ -47,7 +55,41 @@ impl Mentioning {
             .map_err(|e| MailboxError::Store(e.to_string()))
     }
 
+    /// Every rename this store still remembers — needed only to resolve a
+    /// `sender` handle that may itself be stale. Rendering never needs this:
+    /// [`entity_wearing`] finds the current wearer of a badge directly,
+    /// whatever it used to be called.
+    async fn former(&self) -> Result<Vec<FormerHandle>, MailboxError> {
+        self.memory
+            .former_handles()
+            .await
+            .map_err(|e| MailboxError::Store(e.to_string()))
+    }
+
+    /// **The value `sender` is stored under**: the badge of whoever it
+    /// resolves to, or the raw string unchanged when it does not resolve at
+    /// all, or resolves to a row with no badge yet — the same fallback the
+    /// real store's own pointer columns use, so posting is never blocked on
+    /// this.
+    fn storage_sender_for(sender: &str, known: &[Entity], former: &[FormerHandle]) -> String {
+        match resolve_handle(&EntityId(sender.to_string()), known, former) {
+            Some(entity) => entity.badge.clone().unwrap_or_else(|| entity.id.0.clone()),
+            None => sender.to_string(),
+        }
+    }
+
+    /// **The handle `sender` renders as today**: whoever currently wears the
+    /// stored badge, or the stored value unchanged when nobody does — a
+    /// value stored before this existed, which is a plain handle rather than
+    /// a badge, and reads back exactly as it did before.
+    fn current_sender_for(stored: &str, known: &[Entity]) -> String {
+        entity_wearing(stored, known)
+            .map(|e| e.id.0.clone())
+            .unwrap_or_else(|| stored.to_string())
+    }
+
     fn render(message: &mut Message, known: &[Entity]) {
+        message.sender = Self::current_sender_for(&message.sender, known);
         message.body = mention::rendered(&message.body, known);
         if let Some(subject) = &message.subject {
             message.subject = Some(mention::rendered(subject, known));
@@ -113,6 +155,8 @@ impl Mailboxes for Mentioning {
         message: NewMessage,
     ) -> Result<super::Guarded<Message>, MailboxError> {
         let known = self.known().await?;
+        let former = self.former().await?;
+        let sender = Self::storage_sender_for(&message.sender, &known, &former);
         let written = self
             .inner
             .post_message(NewMessage {
@@ -121,6 +165,7 @@ impl Mailboxes for Mentioning {
                     .subject
                     .as_deref()
                     .map(|s| mention::resolved(s, &known)),
+                sender,
                 ..message
             })
             .await?;
@@ -282,6 +327,81 @@ mod tests {
         assert!(!raw.body.contains(was.as_str()));
         assert!(!raw.body.contains(now.as_str()));
         assert!(raw.body.contains(mention::MARK));
+    }
+
+    /// 🚨 **A renamed bot's SENT mail is still found under its new name.**
+    ///
+    /// This is the `sender` column itself, not a mention written into free
+    /// text: it is compared exactly, by `list_sent`, against the caller's
+    /// current handle — so a stored value that never moves off the old
+    /// handle leaves every message this bot sent before the rename
+    /// unfindable by its new name.
+    #[tokio::test]
+    async fn a_renamed_bots_sent_message_renders_under_the_current_handle() {
+        let memory: Arc<dyn Memory> = Arc::new(InMemoryMemory::booted());
+        let was = crate::memory::EntityId("bot:gamma".into());
+        let now = crate::memory::EntityId("bot:sigma".into());
+        add(memory.as_ref(), &was).await;
+
+        let owner = crate::memory::EntityId("bot:delta".into());
+        let bare = Arc::new(InMemoryMailboxes::new());
+        bare.know_owner(&owner);
+        let mailboxes = Mentioning::new(bare.clone(), memory.clone());
+        let mailbox_name = MailboxName("delta".to_string());
+
+        mailboxes
+            .create_mailbox(&mailbox_name, &owner, None)
+            .await
+            .expect("create_mailbox should succeed")
+            .written()
+            .expect("the guard must not block creating delta's box");
+
+        let posted = mailboxes
+            .post_message(NewMessage {
+                mailbox: mailbox_name.clone(),
+                body: "the kiln slice is done".to_string(),
+                subject: None,
+                sender: was.to_string(),
+                sent_at: epoch(),
+                in_reply_to: None,
+                sender_mail_waiting_at_send: None,
+            })
+            .await
+            .expect("post_message should succeed")
+            .written()
+            .expect("the guard must not block posting");
+        assert_eq!(posted.sender, was.to_string());
+
+        memory
+            .rename_entity(&was, &now, None, date(2026, 6, 2), None)
+            .await
+            .expect("rename_entity should succeed")
+            .written()
+            .expect("the guard must not block the rename");
+
+        let delivered = mailboxes
+            .read_message(&posted.id)
+            .await
+            .expect("read_message should succeed");
+        assert_eq!(
+            delivered.message.sender,
+            now.to_string(),
+            "the sent message must render under the current handle"
+        );
+
+        // The bare store never held either spelling — only the badge, which
+        // is what proves the rename reached `sender` rather than the read
+        // guessing at the current handle from the old one.
+        let stored = bare
+            .scan_messages()
+            .await
+            .expect("scan_messages should succeed");
+        let raw = stored
+            .iter()
+            .find(|m| m.id == posted.id)
+            .expect("the message is still there");
+        assert_ne!(raw.sender, was.to_string());
+        assert_ne!(raw.sender, now.to_string());
     }
 
     #[tokio::test]

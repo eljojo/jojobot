@@ -3249,15 +3249,14 @@ pub trait Memory: Send + Sync {
     /// miss on a twice-renamed thing's first name would read no differently
     /// from a handle that never existed.
     ///
-    /// **No verb writes here yet.** Nothing renames a handle in this build, so
-    /// this always answers empty in production — a decorator that forgets to
-    /// delegate it is invisible until the day something does. The default
-    /// answers empty for the same reason [`backing`](Memory::backing) has one:
-    /// a store that has nothing to say about its own history is not a store
-    /// that has to say so twice.
-    async fn former_handles(&self) -> Result<Vec<FormerHandle>, MemoryError> {
-        Ok(Vec::new())
-    }
+    /// **`rename_entity` writes here.** A store with no rename history
+    /// answers empty, same as one that has never renamed anything — but that
+    /// is an answer the store gives, not a default standing in for a call
+    /// nobody wired. Required rather than defaulted: a decorator or a double
+    /// that forwards every other method and forgets this one used to fall
+    /// through to an empty answer that looked exactly like "no renames here"
+    /// — the compiler now names every implementor instead.
+    async fn former_handles(&self) -> Result<Vec<FormerHandle>, MemoryError>;
     /// **Where each folded value came from, and who backs it.**
     ///
     /// [`fields`](Memory::fields) says what a thing holds; this says which

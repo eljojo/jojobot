@@ -64,10 +64,10 @@ pub struct InMemoryMemory {
     /// read *when jojobot took this in* off the wall clock, and pass on a build
     /// where the stated day never reaches the store at all.
     clock: crate::clock::Clock,
-    /// **Rename history.** No verb writes here yet — nothing renames a handle
-    /// in this build — so this is populated only through
-    /// [`InMemoryMemory::past_the_guard_rename`], the same seam
-    /// `past_the_guard` is, for the state a verb cannot produce yet.
+    /// **Rename history.** `rename_entity` appends here on every real rename;
+    /// [`InMemoryMemory::former_handle_past_the_guard`] is the separate seam
+    /// for staging a row directly, the same way `past_the_guard` stages an
+    /// entity without going through the guard.
     former_handles: Mutex<Vec<FormerHandle>>,
 }
 

@@ -157,6 +157,11 @@ mod tests {
 
         #[async_trait]
         impl Memory for Down {
+            async fn former_handles(
+                &self,
+            ) -> Result<Vec<jojobot_domain::memory::FormerHandle>, MemoryError> {
+                unimplemented!("the owner index only reads the index")
+            }
             async fn list_entities(
                 &self,
                 _: Option<EntityKind>,

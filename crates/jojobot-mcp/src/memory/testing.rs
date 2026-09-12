@@ -306,6 +306,11 @@ pub(crate) struct DownMemory(pub(crate) Down, pub(crate) Arc<InMemoryMemory>);
 
 #[async_trait]
 impl Memory for DownMemory {
+    async fn former_handles(
+        &self,
+    ) -> Result<Vec<jojobot_domain::memory::FormerHandle>, MemoryError> {
+        self.1.former_handles().await
+    }
     async fn list_entities(&self, kind: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError> {
         match self.0 {
             Down::EntityIndex => Err(MemoryError::Store("the entity index cannot be read".into())),

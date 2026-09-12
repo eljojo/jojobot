@@ -100,6 +100,58 @@ impl DoltMailboxes {
         Ok(rewritten)
     }
 
+    /// **Rewrite `sender` itself, once, onto the permanent id it names** —
+    /// the column sibling of [`Self::migrate_mentions`], which only ever
+    /// touched TEXT, mirroring
+    /// [`crate::dolt::sessions::DoltSessions::migrate_bot_column`]. A row
+    /// written before `Mentioning` resolved this column holds a plain
+    /// handle, and a rename since then left it exactly as stale as an
+    /// un-migrated mention would have: `list_sent`'s exact match against the
+    /// CURRENT handle stops finding it, because the row still names the one
+    /// before.
+    ///
+    /// **Chases a former handle too**, for the same reason
+    /// `migrate_bot_column` does: nothing stops a caller from renaming twice
+    /// before this migration runs, and the row must still resolve past both
+    /// moves.
+    ///
+    /// Idempotent for the same reason: a row already holding a badge
+    /// resolves through neither `known` nor `former` (both index by
+    /// HANDLE), so it is read, found to resolve to nothing, and left
+    /// untouched.
+    pub async fn migrate_sender_column(
+        &self,
+        known: &[Entity],
+        former: &[jojobot_domain::memory::FormerHandle],
+    ) -> Result<usize, MailboxError> {
+        let mut rewritten = 0;
+        let rows: Vec<(String, String)> = sqlx::query_as("SELECT id, sender FROM message")
+            .fetch_all(&self.pool)
+            .await
+            .map_err(store)?;
+        for (id, sender) in rows {
+            let Some(entity) =
+                jojobot_domain::memory::resolve_handle(&EntityId(sender.clone()), known, former)
+            else {
+                continue;
+            };
+            let Some(badge) = entity.badge.as_deref() else {
+                continue;
+            };
+            if badge == sender {
+                continue;
+            }
+            sqlx::query("UPDATE message SET sender = ? WHERE id = ?")
+                .bind(badge)
+                .bind(&id)
+                .execute(&self.pool)
+                .await
+                .map_err(store)?;
+            rewritten += 1;
+        }
+        Ok(rewritten)
+    }
+
     /// The same store over a supplied draw, **so the collision path can be
     /// watched through the verb that mints**. Entropy will not produce a
     /// collision on demand.
@@ -1175,6 +1227,124 @@ mod tests {
 
         let second_pass = mail
             .migrate_mentions(&known)
+            .await
+            .expect("a second run should succeed");
+        assert_eq!(second_pass, 0, "nothing left to rewrite touches nothing");
+
+        store.stop().await;
+    }
+
+    #[tokio::test]
+    async fn migrate_sender_column_rewrites_a_handle_stored_before_resolution_existed() {
+        use jojobot_domain::memory::{Memory, NewEntity};
+
+        let scratch = Scratch::new("migrate-sender-column-mailbox");
+        let path = scratch.0.clone();
+        std::mem::forget(scratch);
+        let mut store = Dolt::start(&path, free_port())
+            .await
+            .expect("the store comes up");
+        migrate::run(store.pool()).await.expect("the schema");
+        migrate::seed_kinds(store.pool())
+            .await
+            .expect("the kinds are seeded");
+
+        let memory = crate::dolt::memory::DoltMemory::open(store.pool().clone());
+        memory
+            .add_entity(NewEntity::new(
+                EntityId("bot:contract-migrate-sender-column-gamma".to_string()),
+                "gamma",
+                "contract-fixture",
+            ))
+            .await
+            .expect("add_entity should succeed")
+            .written()
+            .expect("the guard must not block a fresh handle");
+        memory.badge_the_unbadged().await.expect("badges are drawn");
+
+        let mail = DoltMailboxes::open(store.pool().clone(), Arc::new(AnyOwner));
+        mail.create_mailbox(
+            &MailboxName("inbox".into()),
+            &EntityId("bot:gamma".into()),
+            None,
+        )
+        .await
+        .expect("create ok")
+        .written()
+        .expect("not blocked");
+        let posted = mail
+            .post_message(NewMessage {
+                mailbox: MailboxName("inbox".into()),
+                body: "the kiln slice is done".into(),
+                subject: None,
+                sender: "bot:contract-migrate-sender-column-gamma".into(),
+                sent_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
+                in_reply_to: None,
+                sender_mail_waiting_at_send: None,
+            })
+            .await
+            .expect("post ok")
+            .written()
+            .expect("not blocked");
+
+        // Renamed twice, so the row's stored sender is now two moves stale.
+        memory
+            .rename_entity(
+                &EntityId("bot:contract-migrate-sender-column-gamma".to_string()),
+                &EntityId("bot:contract-migrate-sender-column-delta".to_string()),
+                None,
+                jiff::civil::date(2026, 1, 2),
+                None,
+            )
+            .await
+            .expect("rename_entity should succeed")
+            .written()
+            .expect("the guard must not block the rename");
+        memory
+            .rename_entity(
+                &EntityId("bot:contract-migrate-sender-column-delta".to_string()),
+                &EntityId("bot:contract-migrate-sender-column-sigma".to_string()),
+                None,
+                jiff::civil::date(2026, 1, 3),
+                None,
+            )
+            .await
+            .expect("rename_entity should succeed")
+            .written()
+            .expect("the guard must not block the second rename");
+
+        let known = memory
+            .list_entities(None)
+            .await
+            .expect("list_entities should succeed");
+        let former = memory
+            .former_handles()
+            .await
+            .expect("former_handles should succeed");
+
+        let rewritten = mail
+            .migrate_sender_column(&known, &former)
+            .await
+            .expect("migrate_sender_column should succeed");
+        assert_eq!(rewritten, 1, "the one stale row changed");
+
+        let stored: (String,) = sqlx::query_as("SELECT sender FROM message WHERE id = ?")
+            .bind(posted.id.as_str())
+            .fetch_one(store.pool())
+            .await
+            .expect("the row is there");
+        let sigma = known
+            .iter()
+            .find(|e| e.id.as_str() == "bot:contract-migrate-sender-column-sigma")
+            .expect("sigma is in the known list");
+        assert_eq!(
+            Some(stored.0.as_str()),
+            sigma.badge.as_deref(),
+            "the row must hold the badge, not any handle it was ever called",
+        );
+
+        let second_pass = mail
+            .migrate_sender_column(&known, &former)
             .await
             .expect("a second run should succeed");
         assert_eq!(second_pass, 0, "nothing left to rewrite touches nothing");

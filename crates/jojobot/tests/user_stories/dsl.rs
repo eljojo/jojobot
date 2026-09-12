@@ -83,6 +83,13 @@ impl Blindable {
 
 #[async_trait::async_trait]
 impl jojobot_domain::memory::Memory for Blindable {
+    async fn former_handles(
+        &self,
+    ) -> Result<Vec<jojobot_domain::memory::FormerHandle>, jojobot_domain::memory::MemoryError>
+    {
+        self.inner.former_handles().await
+    }
+
     async fn scan(
         &self,
     ) -> Result<Vec<jojobot_domain::memory::search::DocScan>, jojobot_domain::memory::MemoryError>

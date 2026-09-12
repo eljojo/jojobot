@@ -487,8 +487,9 @@ pub enum Migrated {
 /// read `Skip`s together when it fails, rather than three separate copies
 /// of the same mistake — this is the one place that decision is made.
 ///
-/// `former_handles` failing is narrower: only the bot-column migration
-/// needs it, so only that one migration `Skip`s when it alone fails.
+/// `former_handles` failing is narrower: only the bot-column and
+/// sender-column migrations need it, so only those two `Skip` when it alone
+/// fails.
 pub async fn migrate_permanent_ids(
     memory: &dyn jojobot_domain::memory::Memory,
     mail: &mailboxes::DoltMailboxes,
@@ -501,7 +502,8 @@ pub async fn migrate_permanent_ids(
             return vec![
                 ("mail mentions", Migrated::Skipped(reason.clone())),
                 ("session mentions", Migrated::Skipped(reason.clone())),
-                ("session bot column", Migrated::Skipped(reason)),
+                ("session bot column", Migrated::Skipped(reason.clone())),
+                ("message sender column", Migrated::Skipped(reason)),
             ];
         }
     };
@@ -513,8 +515,16 @@ pub async fn migrate_permanent_ids(
         Ok(n) => Migrated::Ran(n),
         Err(e) => Migrated::Failed(e.to_string()),
     };
-    let bot_column = match memory.former_handles().await {
-        Ok(former) => match sessions.migrate_bot_column(&known, &former).await {
+    let former = memory.former_handles().await;
+    let bot_column = match &former {
+        Ok(former) => match sessions.migrate_bot_column(&known, former).await {
+            Ok(n) => Migrated::Ran(n),
+            Err(e) => Migrated::Failed(e.to_string()),
+        },
+        Err(e) => Migrated::Skipped(e.to_string()),
+    };
+    let sender_column = match &former {
+        Ok(former) => match mail.migrate_sender_column(&known, former).await {
             Ok(n) => Migrated::Ran(n),
             Err(e) => Migrated::Failed(e.to_string()),
         },
@@ -524,6 +534,7 @@ pub async fn migrate_permanent_ids(
         ("mail mentions", mail_mentions),
         ("session mentions", session_mentions),
         ("session bot column", bot_column),
+        ("message sender column", sender_column),
     ]
 }
 
@@ -994,6 +1005,12 @@ pub(crate) mod tests {
 
     #[async_trait::async_trait]
     impl jojobot_domain::memory::Memory for FailingEntityRead {
+        async fn former_handles(
+            &self,
+        ) -> Result<Vec<jojobot_domain::memory::FormerHandle>, jojobot_domain::memory::MemoryError>
+        {
+            Ok(Vec::new())
+        }
         async fn list_entities(
             &self,
             _: Option<jojobot_domain::memory::EntityKind>,
