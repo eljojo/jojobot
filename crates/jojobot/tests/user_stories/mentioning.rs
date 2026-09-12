@@ -192,6 +192,18 @@ async fn a_rename_reaches_months_of_mentions_written_under_the_old_name() {
         .await
         .says("is where the operator's parents still live");
 
+    // **`recall` itself answers to the old handle, not only `rename_entity`'s
+    // own refusal above.** A rename never rewrites what points at a thing
+    // (rule 243, decision log 272): a caller who only ever knew this place as
+    // `place:shelbyvile` and asks `recall` for it by that name reaches the
+    // same claim, not a miss. This is the door a caller actually knocks on —
+    // the contract test behind this fix called `Memory::recall` directly and
+    // never traveled the served verb's own walk, so a regression in the walk
+    // alone would have passed it.
+    s.recall("place:shelbyvile")
+        .await
+        .says("is where the operator's parents still live");
+
     // **The stored mention, four months old, renders under the new name.**
     // Neither January's nor April's claim was rewritten; what changed is
     // what a read of the pointer renders back.
