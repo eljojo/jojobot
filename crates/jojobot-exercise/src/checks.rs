@@ -1148,24 +1148,32 @@ const JUNE: &str = "Phase 6";
 /// **Whether a standing edge of the named shape at the named object exists**,
 /// read off one boundary's world — on ONE subject's own record when `subject`
 /// names one, or on any record at all when it does not. Correlated on the
-/// record, not just present somewhere: `edge.type`, `edge.object` and an
-/// ACTIVE `status` all have to land on the SAME hit, which is the thing a
-/// `carries` needle cannot ask. **The object matters whenever a subject can
-/// carry more than one edge of the same shape** — Milhouse carries two
-/// `location` edges over the year, one to each place he has ever lived, and a
-/// check that asked only about the SHAPE would read his standing Shelbyville
-/// edge as already present before April ever wrote it, because his
-/// Springfield one already was. **`subject` is `None` when the record it
-/// lands on can change its own handle inside the window being read** — a
-/// rename does not move the id underneath, but it does move which handle a
-/// read renders, so a check that pinned the OLD handle would miss its own
-/// record the moment the same sitting also renames it. One body for every
-/// edge-window check in this room, so a second shape is a call rather than a
-/// second copy of the walk.
+/// record, not just present somewhere: `edge.type` and `edge.object` have to
+/// land on the SAME hit, which is the thing a `carries` needle cannot ask.
+/// **The object matters whenever a subject can carry more than one edge of
+/// the same shape** — Milhouse carries two `location` edges over the year,
+/// one to each place he has ever lived, and a check that asked only about
+/// the SHAPE would read his standing Shelbyville edge as already present
+/// before April ever wrote it, because his Springfield one already was.
+/// **`subject` is `None` when the record it lands on can change its own
+/// handle inside the window being read** — a rename does not move the id
+/// underneath, but it does move which handle a read renders, so a check
+/// that pinned the OLD handle would miss its own record the moment the same
+/// sitting also renames it. One body for every edge-window check in this
+/// room, so a second shape is a call rather than a second copy of the walk.
+///
+/// ⛔️ **No status check here, and that is not an oversight.** `world` comes
+/// from a default `search`, and a default search already answers active
+/// records only — so a status clause on a hit that already passed through
+/// it can only ever read `active`, and asking it again decides nothing. What
+/// actually tells a standing edge from one gone since is the WINDOW: found
+/// in `after`, absent from `before`. A status clause here has shipped once
+/// already, in five checks and a comment that called it a correlation this
+/// function draws — it correlates nothing, because there is nothing left to
+/// disagree with it once search has already filtered.
 fn has_standing_edge(world: &str, subject: Option<&str>, shape: &str, object: &str) -> bool {
     search_hits(world).into_iter().flatten().any(|hit| {
         subject.is_none_or(|subject| hit["subject"].as_str() == Some(subject))
-            && hit["status"].as_str() == Some("active")
             && hit["edge"]["type"].as_str() == Some(shape)
             && hit["edge"]["object"].as_str() == Some(object)
     })
@@ -1181,10 +1189,13 @@ fn has_standing_edge(world: &str, subject: Option<&str>, shape: &str, object: &s
 /// and the object is matched by kind instead. `kind` is passed with its own
 /// colon (`"event:"`), which is what makes this a prefix test rather than an
 /// accidental match on a handle that merely starts the same way.
+///
+/// No status check, for the reason [`has_standing_edge`]'s own doc gives: a
+/// hit reached through a default `search` is active by construction, and the
+/// WINDOW is what tells a standing edge from one gone since.
 fn has_standing_edge_to_a(world: &str, subject: &str, shape: &str, kind: &str) -> bool {
     search_hits(world).into_iter().flatten().any(|hit| {
         hit["subject"].as_str() == Some(subject)
-            && hit["status"].as_str() == Some("active")
             && hit["edge"]["type"].as_str() == Some(shape)
             && hit["edge"]["object"]
                 .as_str()
