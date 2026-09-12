@@ -1225,17 +1225,20 @@ mod standing_tests {
     }
 
     /// **The companion is any explicit status, not only `active`.** A lock
-    /// proving something was superseded is as pinned as one proving something
+    /// proving something was archived is as pinned as one proving something
     /// stands — what matters is that the lock NAMES the status it expects,
     /// not which value it names. The real instance: April's Springfield lock
-    /// in `rooms/year.md` pins `"status":"superseded"`.
+    /// in `rooms/year.md` pins `"status":"archived"` — superseded and
+    /// retracted collapsed into that one status, so a status pin alone no
+    /// longer tells the two apart, which is why that lock also pairs it with
+    /// a `lacks "retracts":`.
     #[test]
-    fn a_bare_handle_paired_with_a_superseded_status_needle_is_not_flagged() {
+    fn a_bare_handle_paired_with_an_archived_status_needle_is_not_flagged() {
         let locks = read(
             "```locks\n\
              recall {\"subject\": \"person:milhouse\", \"facts\": true}\n\
              carries place:springfield\n\
-             carries \"status\":\"superseded\"\n\
+             carries \"status\":\"archived\"\n\
              say     the old claim is marked as no longer true\n\
              ```\n",
         )

@@ -138,15 +138,18 @@ say     January: no loop carries the ninety days and the day it was last done, s
 # Recorded early, needed late: where Milhouse lives. April moves him and
 # November asks.
 #
-# ⚠️ **A companion pins the status, for the reason April's own Springfield
-# lock four sittings down already carries one.** April legitimately
-# supersedes this claim, and a retraction would read identically to that on
-# the marked-but-not-filtered text alone — the companion is what tells a
-# retraction from the legitimate supersession this lock was never written to
-# catch.
+# ⚠️ **A companion pins what archived it, for the reason April's own
+# Springfield lock four sittings down already carries one.** Superseded and
+# retracted are now one `archived` status, so a status word alone can no
+# longer tell April's legitimate supersession from a retraction this claim
+# never earned — the marked-but-not-filtered text reads the same either way.
+# What still tells them apart is structural: only `retract` ever writes a
+# `"retracts":` pointer naming the address it took back. Its ABSENCE here is
+# the companion — April moved Milhouse, nobody took this claim back.
 recall {"subject": "person:milhouse", "facts": true}
 carries place:springfield
-carries "status":"superseded"
+carries "status":"archived"
+lacks   "retracts":
 say     January: nothing on Milhouse says where he lives, so April has nothing to change and November nothing to read
 ```
 
@@ -245,9 +248,15 @@ say     April: nothing on Milhouse points at Shelbyville, so the move was record
 
 # The old claim was true in its day. Taking it out loses that he ever lived
 # there; leaving it current gives November two towns and no way to choose.
+#
+# ⚠️ **`lacks "retracts":` is the companion now**, for the same reason
+# January's own copy of this lock carries one: superseded and retracted are
+# one `archived` status, so the word alone cannot say this was a move rather
+# than a retraction Milhouse's Springfield claim never earned.
 recall {"subject": "person:milhouse", "facts": true}
 carries place:springfield
-carries "status":"superseded"
+carries "status":"archived"
+lacks   "retracts":
 say     April: the Springfield claim is either gone or still standing as current, and it should be there and marked as no longer true
 ```
 
@@ -542,13 +551,16 @@ say     October: the survey cannot be walked to the place it was held at, so whe
 # February stood up Nelson, and June is what put him at it: a run that started
 # here from nothing has nobody on file to un-attend.
 #
-# The positive is the mark; the negative is the other move that also stops a
-# later sitting reading him as having gone — an edit that leaves the record
-# superseded rather than retracted would say his attendance changed, when he
-# was never there to begin with.
+# The positive is the mark; the other is the move that also stops a later
+# sitting reading him as having gone — an ordinary edit would leave the
+# record archived exactly as a retraction does, and say his attendance
+# changed, when he was never there to begin with. Superseded and retracted
+# are now one `archived` status, so what tells the two apart is no longer
+# the word: only `retract` writes a `"retracts":` pointer naming the address
+# it took back, and that pointer is the companion now.
 recall {"subject": "person:nelson", "facts": true}
-carries "status":"retracted"
-lacks   "status":"superseded"
+carries "status":"archived"
+carries "retracts":
 say     October (again): Nelson's survey attendance is not marked taken back, so a session reading his page later still finds him at an event he never went to
 
 # The second shape, folded in: Bart, walked rather than read off a sentence,

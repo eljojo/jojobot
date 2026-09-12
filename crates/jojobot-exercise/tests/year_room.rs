@@ -452,7 +452,7 @@ async fn april(room: &Surface, sid: &str) {
         room,
         sid,
         "update_fact",
-        json!({"address": was, "status": "superseded"}),
+        json!({"address": was, "status": "archived"}),
     )
     .await;
     did(
@@ -3572,19 +3572,25 @@ async fn late_octobers_bart_lock_fails_when_late_octobers_own_window_drew_nothin
     );
 }
 
-/// 🚨 **A retraction does not read as a supersession — the needle January's
-/// Springfield lock now pins.**
+/// 🚨 **A retraction reads as archived, and carries its own retraction
+/// pointer — the two things January's and October's own locks now check
+/// instead of a status word that used to tell retraction from supersession
+/// apart.**
 ///
-/// Nothing in this room's honest storyline ever retracts Milhouse's
-/// Springfield claim; April supersedes it instead, legitimately, so the
-/// companion the lock gained is never exercised by a guilty play in the year
-/// itself. This proves the needle directly: a record retracted rather than
-/// superseded does not carry `"status":"superseded"`, so the companion would
-/// have caught the bug the old bare `carries place:springfield` could not —
-/// a retraction reading identically to the legitimate supersession on that
-/// needle alone.
+/// Superseded and retracted collapsed into one `archived` status: both leave
+/// a record marked rather than filtered, and nothing downstream needs to
+/// tell them apart by status any more. What still tells them apart is
+/// structural rather than a status word — only [`retract`] ever writes a
+/// companion record naming the address it took back, under `retracts`. This
+/// proves both halves directly: an archived record still carries its own
+/// edge, reads `"status":"archived"` rather than the retired `"superseded"`
+/// or `"retracted"` tokens, and — only for a genuine retraction — a
+/// `"retracts":` pointer to its own address is somewhere on the same
+/// subject. October's Nelson lock now checks FOR that pointer; January's and
+/// April's Springfield lock checks its ABSENCE, because Milhouse's move is a
+/// supersession and must not read as a retraction it never was.
 #[tokio::test]
-async fn a_retracted_claim_does_not_read_as_superseded() {
+async fn a_retracted_claim_reads_as_archived_and_carries_its_own_retraction_pointer() {
     let (_room, surface) = furnished().await;
     let sid = sitting(&surface, "2026-01-12").await;
     did(
@@ -3615,13 +3621,18 @@ async fn a_retracted_claim_does_not_read_as_superseded() {
         "a retracted record still carries its own edge, marked rather than filtered: {read}",
     );
     assert!(
-        !read.contains("\"status\":\"superseded\""),
-        "a RETRACTED record must not also read as SUPERSEDED, or the companion on January's \
-         lock could not tell the two apart either: {read}",
+        !read.contains("\"status\":\"superseded\"") && !read.contains("\"status\":\"retracted\""),
+        "a retired status token is back on the wire, so a reader watching for the CURRENT \
+         spelling would miss this record entirely: {read}",
     );
     assert!(
-        read.contains("\"status\":\"retracted\""),
-        "…and it has to say what it actually is: {read}",
+        read.contains("\"status\":\"archived\""),
+        "…and it has to say what it actually is now: {read}",
+    );
+    assert!(
+        read.contains(&format!("\"retracts\":\"{address}\"")),
+        "the retraction left no pointer naming the address it took back, so nothing on this \
+         subject can tell this archival apart from an ordinary supersession: {read}",
     );
 }
 
