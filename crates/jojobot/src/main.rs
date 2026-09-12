@@ -287,38 +287,36 @@ async fn main() -> anyhow::Result<()> {
     // run its own boot steps. Idempotent by construction — see
     // `DoltSessions::migrate_mentions`'s own doc — so a failed half is not
     // lost progress and a retried boot converges rather than repeating work.
-    let known = indexed.list_entities(None).await.unwrap_or_default();
-    match bare_mail_store.migrate_mentions(&known).await {
-        Ok(n) => tracing::info!(rewritten = n, "mail: mentions migrated onto permanent ids"),
-        Err(e) => tracing::warn!(
-            error = %e,
-            "MAIL MENTION MIGRATION FAILED — old text may still hold a bare handle; a \
-             restart retries, and nothing already migrated is undone."
-        ),
-    }
-    match bare_sessions.migrate_mentions(&known).await {
-        Ok(n) => tracing::info!(
-            rewritten = n,
-            "sessions: mentions migrated onto permanent ids"
-        ),
-        Err(e) => tracing::warn!(
-            error = %e,
-            "SESSION MENTION MIGRATION FAILED — old text may still hold a bare handle; a \
-             restart retries, and nothing already migrated is undone."
-        ),
-    }
-    let former = indexed.former_handles().await.unwrap_or_default();
-    match bare_sessions.migrate_bot_column(&known, &former).await {
-        Ok(n) => tracing::info!(
-            rewritten = n,
-            "sessions: bot column migrated onto permanent ids"
-        ),
-        Err(e) => tracing::warn!(
-            error = %e,
-            "SESSION BOT COLUMN MIGRATION FAILED — a session renamed since it last wrote may \
-             not be found by its current handle; a restart retries, and nothing already \
-             migrated is undone."
-        ),
+    //
+    // The decision of what a failed read means to each migration —
+    // distinct from an empty store, which is what `Migrated::Skipped`
+    // exists to say — lives in `migrate_permanent_ids` itself, where it can
+    // be tested against a real store; this only renders what came back.
+    for (name, outcome) in jojobot_adapters::dolt::migrate_permanent_ids(
+        indexed.as_ref(),
+        &bare_mail_store,
+        &bare_sessions,
+    )
+    .await
+    {
+        match outcome {
+            jojobot_adapters::dolt::Migrated::Ran(n) => {
+                tracing::info!(rewritten = n, migration = name, "permanent ids: migrated")
+            }
+            jojobot_adapters::dolt::Migrated::Skipped(reason) => tracing::warn!(
+                error = %reason,
+                migration = name,
+                "PERMANENT-ID MIGRATION SKIPPED — the read it needed failed, so nothing was \
+                 rewritten rather than guessing the store is empty. Not fatal; a restart \
+                 retries."
+            ),
+            jojobot_adapters::dolt::Migrated::Failed(reason) => tracing::warn!(
+                error = %reason,
+                migration = name,
+                "PERMANENT-ID MIGRATION FAILED — a restart retries, and nothing already \
+                 migrated is undone."
+            ),
+        }
     }
 
     let teachings: Arc<dyn Teachings> = Arc::new(DoltTeachings::open(store.pool().clone()));

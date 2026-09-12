@@ -75,6 +75,68 @@ pub enum StartError {
     /// else — a different data directory, with somebody else's records in it.
     #[error("the store's server could not take port {0}: another server holds it")]
     PortTaken(u16),
+    /// **The child exited before it answered, for a reason of its own** —
+    /// checked and ruled out as a port collision: nothing answered in its
+    /// place. A corrupt store, a config error or an incompatible binary all
+    /// land here, named by their own exit status and what the process itself
+    /// said, rather than reported as somebody else holding the port.
+    #[error("the store's server exited before it answered (status {status}): {stderr}")]
+    Exited {
+        /// How the process ended.
+        status: std::process::ExitStatus,
+        /// The last lines of its stderr, bounded — see [`StderrTail`].
+        stderr: String,
+    },
+}
+
+/// **The last [`STDERR_TAIL_LINES`] lines of a child's stderr**, kept as it
+/// runs rather than read after the fact — a process this call is about to
+/// kill on drop cannot be asked for its output afterwards.
+///
+/// Bounded because a long-running server can write far more than a startup
+/// failure needs: this exists to say WHY a child exited immediately, not to
+/// be its transcript. Lossy on non-UTF-8, because a byte that cannot be
+/// shown is not worth failing the capture over.
+struct StderrTail {
+    lines: std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<String>>>,
+}
+
+/// How many trailing lines of stderr [`StderrTail`] keeps. Generous enough
+/// for a real crash message, bounded so a runaway process cannot grow it
+/// without limit.
+const STDERR_TAIL_LINES: usize = 40;
+
+impl StderrTail {
+    /// Start reading `stderr` in the background. The returned value stays
+    /// live and current for as long as the caller holds it; nothing needs to
+    /// be polled or awaited to keep it filling.
+    fn capture(stderr: tokio::process::ChildStderr) -> Self {
+        let lines = std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new()));
+        let sink = lines.clone();
+        tokio::spawn(async move {
+            use tokio::io::AsyncBufReadExt;
+            let mut read = tokio::io::BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = read.next_line().await {
+                let mut kept = sink.lock().expect("stderr tail lock");
+                if kept.len() == STDERR_TAIL_LINES {
+                    kept.pop_front();
+                }
+                kept.push_back(line);
+            }
+        });
+        StderrTail { lines }
+    }
+
+    /// What the tail holds right now, one string, oldest kept line first.
+    fn snapshot(&self) -> String {
+        self.lines
+            .lock()
+            .expect("stderr tail lock")
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
 }
 
 /// A running store: the child process, and a pool of connections to it.
@@ -120,12 +182,17 @@ impl Dolt {
             .arg("--port")
             .arg(port.to_string())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .kill_on_drop(true);
         die_with_this_process(&mut spawning);
-        let child = spawning
+        let mut child = spawning
             .spawn()
             .map_err(|e| StartError::Spawn(e.to_string()))?;
+        // **Read as it runs, not after.** `kill_on_drop` means a failed start
+        // is a killed process by the time anything could read its stderr the
+        // ordinary way; capturing has to start now, beside the spawn, to have
+        // anything left to report.
+        let stderr = StderrTail::capture(child.stderr.take().expect("stderr was piped"));
 
         // **`root`, and there is no choice about it.** The server's own
         // `--user` flag is gone from this toolchain: it initializes a root
@@ -134,8 +201,8 @@ impl Dolt {
         // password to leak — and inventing a second account would be
         // ceremony over a socket only this process reaches.
         let server = format!("mysql://root@127.0.0.1:{port}");
-        let mut child = child;
-        let pool = Self::once_answering(&format!("{server}/{DATABASE}"), &mut child, port).await?;
+        let pool =
+            Self::once_answering(&format!("{server}/{DATABASE}"), &mut child, &stderr).await?;
         Self::prove_it_is_ours(&pool, data_dir, port).await?;
         Ok(Dolt {
             child,
@@ -160,38 +227,14 @@ impl Dolt {
     async fn once_answering(
         url: &str,
         child: &mut tokio::process::Child,
-        port: u16,
+        stderr: &StderrTail,
     ) -> Result<MySqlPool, StartError> {
         let deadline = std::time::Instant::now() + READY_WITHIN;
         let mut last = String::new();
         while std::time::Instant::now() < deadline {
-            // ⚠️ **UNPROVEN, AND DELIBERATELY KEPT.** No test in this suite
-            // reaches this branch, and the comment exists so the next reader
-            // knows the coverage is absent rather than assuming it.
-            //
-            // It guards one window: two processes picking the same free port at
-            // the same instant, each spawning before the other has bound. The
-            // loser's child exits, and this notices before a connection is even
-            // attempted. That is reachable across the two test binaries, so it
-            // is not decoration.
-            //
-            // The suite cannot produce it. Its deterministic case is a port
-            // ALREADY held, and there the connection succeeds on the first
-            // pass — against the other server — before this child has finished
-            // dying, so the identity check below is what refuses. Reaching this
-            // branch needs a hook between the spawn and the poll, which is more
-            // apparatus than the branch is worth.
-            //
-            // **Nothing downstream depends on it**: the identity check refuses
-            // the same collision by construction, later and more expensively.
-            // This is the cheap early exit, not the guarantee.
-            if child
+            let exited = child
                 .try_wait()
-                .map_err(|e| StartError::Spawn(e.to_string()))?
-                .is_some()
-            {
-                return Err(StartError::PortTaken(port));
-            }
+                .map_err(|e| StartError::Spawn(e.to_string()))?;
             match MySqlPoolOptions::new()
                 .max_connections(4)
                 .acquire_timeout(POLL_EVERY * 4)
@@ -200,11 +243,33 @@ impl Dolt {
             {
                 Ok(pool) => match sqlx::query("SELECT 1").execute(&pool).await {
                     Ok(_) => {
+                        // **An answer, even from a child that has exited.**
+                        // Two processes can pick the same free port at the
+                        // same instant; the loser's child dies, and the
+                        // winner is still what answers here. This is not a
+                        // failure to report — it is `prove_it_is_ours`'s
+                        // question, and reserving `PortTaken` for its
+                        // corroborated answer is why this call does not mint
+                        // it too.
                         return Ok(pool);
                     }
                     Err(e) => last = e.to_string(),
                 },
                 Err(e) => last = e.to_string(),
+            }
+            // **The child is gone, and nothing just answered in its place.**
+            // A lost port race would have answered above, against the
+            // winner — see the branch that returns `Ok(pool)`. Reaching here
+            // with the child exited means it exited for a reason of its
+            // own, and polling a process that is not there any longer would
+            // only spend the rest of `READY_WITHIN` to say `NeverReady`,
+            // which is honest about nothing having answered and silent
+            // about the crash that guaranteed it never would.
+            if let Some(status) = exited {
+                return Err(StartError::Exited {
+                    status,
+                    stderr: stderr.snapshot(),
+                });
             }
             tokio::time::sleep(POLL_EVERY).await;
         }
@@ -394,6 +459,72 @@ impl Dolt {
         self.pool.close().await;
         let _ = self.child.kill().await;
     }
+}
+
+/// One permanent-id migration's own outcome, for a caller to log — the
+/// words a restart's log should use are the composition root's call, never
+/// this crate's.
+#[derive(Debug)]
+pub enum Migrated {
+    /// The read this migration needs failed; nothing was attempted, and
+    /// nothing already migrated was touched.
+    Skipped(String),
+    /// It ran, and rewrote this many rows — zero is a real, successful
+    /// answer here, never conflated with [`Migrated::Skipped`].
+    Ran(usize),
+    /// It ran and failed partway.
+    Failed(String),
+}
+
+/// **Run every one-time permanent-id migration mail and sessions still
+/// need, over one read of the entity list, and say what actually happened
+/// for each — never a false `Ran(0)` standing in for a read that never
+/// happened.**
+///
+/// `memory.list_entities` failing is not an empty store: feeding an empty
+/// `Vec` to a migration either way makes it match nothing and report a
+/// completed run over rows it never saw. So every migration needing that
+/// read `Skip`s together when it fails, rather than three separate copies
+/// of the same mistake — this is the one place that decision is made.
+///
+/// `former_handles` failing is narrower: only the bot-column migration
+/// needs it, so only that one migration `Skip`s when it alone fails.
+pub async fn migrate_permanent_ids(
+    memory: &dyn jojobot_domain::memory::Memory,
+    mail: &mailboxes::DoltMailboxes,
+    sessions: &sessions::DoltSessions,
+) -> Vec<(&'static str, Migrated)> {
+    let known = match memory.list_entities(None).await {
+        Ok(known) => known,
+        Err(e) => {
+            let reason = e.to_string();
+            return vec![
+                ("mail mentions", Migrated::Skipped(reason.clone())),
+                ("session mentions", Migrated::Skipped(reason.clone())),
+                ("session bot column", Migrated::Skipped(reason)),
+            ];
+        }
+    };
+    let mail_mentions = match mail.migrate_mentions(&known).await {
+        Ok(n) => Migrated::Ran(n),
+        Err(e) => Migrated::Failed(e.to_string()),
+    };
+    let session_mentions = match sessions.migrate_mentions(&known).await {
+        Ok(n) => Migrated::Ran(n),
+        Err(e) => Migrated::Failed(e.to_string()),
+    };
+    let bot_column = match memory.former_handles().await {
+        Ok(former) => match sessions.migrate_bot_column(&known, &former).await {
+            Ok(n) => Migrated::Ran(n),
+            Err(e) => Migrated::Failed(e.to_string()),
+        },
+        Err(e) => Migrated::Skipped(e.to_string()),
+    };
+    vec![
+        ("mail mentions", mail_mentions),
+        ("session mentions", session_mentions),
+        ("session bot column", bot_column),
+    ]
 }
 
 /// **Mark a boundary in the store's own history, so a person can see what
@@ -722,6 +853,50 @@ pub(crate) mod tests {
         first.stop().await;
     }
 
+    /// 🚨 **An early exit that is NOT a port collision names its own
+    /// reason, rather than being reported as one.**
+    ///
+    /// Calls `once_answering` directly, on a child that was never going to
+    /// come up: a subcommand `dolt` does not have, on a port nothing is
+    /// listening on, so there is no answer for the collision branch to
+    /// mistake for a lost race. This is the branch the module doc used to
+    /// call unproven — the existing `PortTaken` test above reaches its
+    /// sibling instead (an answer FROM the winner, before this child has
+    /// finished dying), never this one.
+    #[tokio::test]
+    async fn an_early_exit_that_is_not_a_port_collision_names_its_own_reason() {
+        let mut child = tokio::process::Command::new("dolt")
+            .arg("this-is-not-a-real-dolt-subcommand")
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("dolt itself must be on PATH to run this suite at all");
+        let stderr = StderrTail::capture(child.stderr.take().expect("stderr was piped"));
+        let port = free_port();
+
+        let err = Dolt::once_answering(
+            &format!("mysql://root@127.0.0.1:{port}/jojobot"),
+            &mut child,
+            &stderr,
+        )
+        .await
+        .expect_err("a nonexistent subcommand cannot come up, and nothing else answers for it");
+
+        match err {
+            StartError::Exited { status, stderr } => {
+                assert!(
+                    !status.success(),
+                    "a bad subcommand must exit non-zero: {status}"
+                );
+                assert!(
+                    !stderr.is_empty(),
+                    "the real reason must be captured, not silently discarded"
+                );
+            }
+            other => panic!("expected Exited, naming the real reason — got {other:?} instead"),
+        }
+    }
+
     /// **A boot whose boundary cannot be marked still serves.**
     ///
     /// Every boot marks now, so the mark is on the path a server takes on an
@@ -808,5 +983,356 @@ pub(crate) mod tests {
             "a boundary with nothing behind it leaves no mark: {after_second:?}"
         );
         again.stop().await;
+    }
+
+    /// A `Memory` that answers `list_entities` and `former_handles` on
+    /// request and refuses to be asked anything else — `migrate_permanent_ids`
+    /// makes no other call on the entity world, and a call to one of these
+    /// is this test's own bug, not something to paper over with a fake
+    /// implementation.
+    struct FailingEntityRead;
+
+    #[async_trait::async_trait]
+    impl jojobot_domain::memory::Memory for FailingEntityRead {
+        async fn list_entities(
+            &self,
+            _: Option<jojobot_domain::memory::EntityKind>,
+        ) -> Result<Vec<jojobot_domain::memory::Entity>, jojobot_domain::memory::MemoryError>
+        {
+            Err(jojobot_domain::memory::MemoryError::Store(
+                "the entity world is down".into(),
+            ))
+        }
+        async fn add_entity(
+            &self,
+            _: jojobot_domain::memory::NewEntity,
+        ) -> Result<
+            jojobot_domain::memory::Guarded<jojobot_domain::memory::Entity>,
+            jojobot_domain::memory::MemoryError,
+        > {
+            unimplemented!("migrate_permanent_ids only reads the entity world")
+        }
+        async fn declare_type(
+            &self,
+            _: jojobot_domain::memory::types::DeclaredType,
+        ) -> Result<jojobot_domain::memory::types::DeclaredType, jojobot_domain::memory::MemoryError>
+        {
+            unimplemented!("migrate_permanent_ids only reads the entity world")
+        }
+        async fn declared_types(
+            &self,
+        ) -> Result<
+            Vec<jojobot_domain::memory::types::DeclaredType>,
+            jojobot_domain::memory::MemoryError,
+        > {
+            unimplemented!("migrate_permanent_ids only reads the entity world")
+        }
+        async fn declare_kind(
+            &self,
+            _: &str,
+            _: jojobot_domain::memory::types::Origin,
+            _: Vec<jojobot_domain::memory::types::Field>,
+        ) -> Result<(), jojobot_domain::memory::MemoryError> {
+            unimplemented!("migrate_permanent_ids only reads the entity world")
+        }
+        async fn declared_kinds(
+            &self,
+        ) -> Result<
+            Vec<(String, jojobot_domain::memory::types::Origin)>,
+            jojobot_domain::memory::MemoryError,
+        > {
+            unimplemented!("migrate_permanent_ids only reads the entity world")
+        }
+        async fn reclaim_kind(&self, _: &str) -> Result<(), jojobot_domain::memory::MemoryError> {
+            unimplemented!("migrate_permanent_ids only reads the entity world")
+        }
+        async fn update_entity(
+            &self,
+            _: &jojobot_domain::memory::EntityId,
+            _: jojobot_domain::memory::EntityPatch,
+        ) -> Result<
+            jojobot_domain::memory::Guarded<jojobot_domain::memory::Entity>,
+            jojobot_domain::memory::MemoryError,
+        > {
+            unimplemented!("migrate_permanent_ids only reads the entity world")
+        }
+        async fn rename_entity(
+            &self,
+            _: &jojobot_domain::memory::EntityId,
+            _: &jojobot_domain::memory::EntityId,
+            _: Option<jojobot_domain::memory::EntityId>,
+            _: jiff::civil::Date,
+            _: Option<&str>,
+        ) -> Result<
+            jojobot_domain::memory::Guarded<jojobot_domain::memory::Entity>,
+            jojobot_domain::memory::MemoryError,
+        > {
+            unimplemented!("migrate_permanent_ids only reads the entity world")
+        }
+        async fn capture(
+            &self,
+            _: jojobot_domain::memory::NewFact,
+        ) -> Result<
+            jojobot_domain::memory::Guarded<jojobot_domain::memory::Fact>,
+            jojobot_domain::memory::MemoryError,
+        > {
+            unimplemented!("migrate_permanent_ids only reads the entity world")
+        }
+        async fn recall(
+            &self,
+            _: &jojobot_domain::memory::EntityId,
+        ) -> Result<Vec<jojobot_domain::memory::Fact>, jojobot_domain::memory::MemoryError>
+        {
+            unimplemented!("migrate_permanent_ids only reads the entity world")
+        }
+        async fn history(
+            &self,
+            _: &jojobot_domain::memory::EntityId,
+            _: &str,
+        ) -> Result<Vec<jojobot_domain::memory::FieldWrite>, jojobot_domain::memory::MemoryError>
+        {
+            unimplemented!("migrate_permanent_ids only reads the entity world")
+        }
+        async fn claim_history(
+            &self,
+            _: &jojobot_domain::memory::FactAddress,
+        ) -> Result<Vec<jojobot_domain::memory::ClaimWrite>, jojobot_domain::memory::MemoryError>
+        {
+            unimplemented!("migrate_permanent_ids only reads the entity world")
+        }
+        async fn fields(
+            &self,
+            _: &jojobot_domain::memory::EntityId,
+        ) -> Result<std::collections::BTreeMap<String, String>, jojobot_domain::memory::MemoryError>
+        {
+            unimplemented!("migrate_permanent_ids only reads the entity world")
+        }
+        async fn update_fact(
+            &self,
+            _: &jojobot_domain::memory::FactAddress,
+            _: jojobot_domain::memory::FactPatch,
+        ) -> Result<
+            jojobot_domain::memory::Guarded<jojobot_domain::memory::Fact>,
+            jojobot_domain::memory::MemoryError,
+        > {
+            unimplemented!("migrate_permanent_ids only reads the entity world")
+        }
+        async fn retract(
+            &self,
+            _: &jojobot_domain::memory::FactAddress,
+            _: Option<&str>,
+            _: jiff::civil::Date,
+        ) -> Result<jojobot_domain::memory::Retraction, jojobot_domain::memory::MemoryError>
+        {
+            unimplemented!("migrate_permanent_ids only reads the entity world")
+        }
+        async fn merge(
+            &self,
+            _: &jojobot_domain::memory::EntityId,
+            _: &jojobot_domain::memory::EntityId,
+            _: Option<&str>,
+            _: jiff::civil::Date,
+        ) -> Result<jojobot_domain::memory::Merge, jojobot_domain::memory::MemoryError> {
+            unimplemented!("migrate_permanent_ids only reads the entity world")
+        }
+        async fn set_prose(
+            &self,
+            _: &jojobot_domain::memory::EntityId,
+            _: &str,
+        ) -> Result<String, jojobot_domain::memory::MemoryError> {
+            unimplemented!("migrate_permanent_ids only reads the entity world")
+        }
+        async fn scan(
+            &self,
+        ) -> Result<Vec<jojobot_domain::memory::search::DocScan>, jojobot_domain::memory::MemoryError>
+        {
+            unimplemented!("migrate_permanent_ids only reads the entity world")
+        }
+    }
+
+    /// 🚨 **A failed entity read skips every migration that needs it,
+    /// against a REAL store carrying REAL legacy text — never a false
+    /// `Ran(0)` standing in for a read that never happened.**
+    #[tokio::test]
+    async fn migrate_permanent_ids_skips_rather_than_guesses_the_store_is_empty() {
+        use jojobot_domain::memory::{Memory, NewEntity};
+        use jojobot_domain::session::{NewEntry, NewSession, Sessions, Sid};
+
+        let scratch = Scratch::new("migrate-permanent-ids-skip");
+        let path = scratch.0.clone();
+        std::mem::forget(scratch);
+        let mut store = Dolt::start(&path, free_port())
+            .await
+            .expect("the store comes up");
+        migrate::run(store.pool()).await.expect("the schema");
+        migrate::seed_kinds(store.pool())
+            .await
+            .expect("the kinds are seeded");
+
+        let real_memory = crate::dolt::memory::DoltMemory::open(store.pool().clone());
+        real_memory
+            .add_entity(NewEntity::new(
+                jojobot_domain::memory::EntityId(
+                    "thing:contract-migrate-permanent-ids-skip".to_string(),
+                ),
+                "was",
+                "contract-fixture",
+            ))
+            .await
+            .expect("add_entity should succeed")
+            .written()
+            .expect("the guard must not block a fresh handle");
+        real_memory
+            .badge_the_unbadged()
+            .await
+            .expect("badges are drawn");
+
+        let mail = mailboxes::DoltMailboxes::open(
+            store.pool().clone(),
+            std::sync::Arc::new(crate::owners::MemoryOwners::new(std::sync::Arc::new(
+                jojobot_domain::memory::testing::InMemoryMemory::default(),
+            ))),
+        );
+        let sess = sessions::DoltSessions::open(store.pool().clone());
+        let session = sess
+            .begin(NewSession {
+                bot: jojobot_domain::memory::EntityId("bot:contract-migrate-permanent-ids".into()),
+                sid: Sid("sid-permanent-ids".to_string()),
+                focus: "about @thing:contract-migrate-permanent-ids-skip".to_string(),
+                started_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
+                timezone: None,
+                started_on: None,
+            })
+            .await
+            .expect("begin should succeed");
+        sess.append(
+            &session.id,
+            NewEntry::manual(
+                "found @thing:contract-migrate-permanent-ids-skip",
+                "2026-01-01T00:01:00Z".parse().expect("a fixed instant"),
+                None,
+            ),
+        )
+        .await
+        .expect("append should succeed");
+
+        let results = migrate_permanent_ids(&FailingEntityRead, &mail, &sess).await;
+        for (name, outcome) in &results {
+            assert!(
+                matches!(outcome, Migrated::Skipped(_)),
+                "{name} must skip on a failed read rather than run against an empty \
+                 stand-in for one"
+            );
+        }
+
+        // **And nothing moved.** The legacy text is exactly as it was —
+        // proof that `Skipped` is not just the right word but the right
+        // absence of a write.
+        let untouched = sess
+            .read_session(&session.id)
+            .await
+            .expect("read_session should succeed");
+        assert!(
+            untouched
+                .focus
+                .contains("thing:contract-migrate-permanent-ids-skip"),
+            "a skipped migration must leave the bare handle exactly as it was: {}",
+            untouched.focus
+        );
+
+        store.stop().await;
+    }
+
+    /// **The healthy path still reports what really happened**, each
+    /// migration's own real count — the positive `_skips_rather_than_guesses`
+    /// rests on, so that test cannot pass on a build where nothing ever runs.
+    #[tokio::test]
+    async fn migrate_permanent_ids_reports_the_real_count_when_the_read_succeeds() {
+        use jojobot_domain::memory::{Memory, NewEntity};
+        use jojobot_domain::session::{NewEntry, NewSession, Sessions, Sid};
+
+        let scratch = Scratch::new("migrate-permanent-ids-run");
+        let path = scratch.0.clone();
+        std::mem::forget(scratch);
+        let mut store = Dolt::start(&path, free_port())
+            .await
+            .expect("the store comes up");
+        migrate::run(store.pool()).await.expect("the schema");
+        migrate::seed_kinds(store.pool())
+            .await
+            .expect("the kinds are seeded");
+
+        let memory = crate::dolt::memory::DoltMemory::open(store.pool().clone());
+        memory
+            .add_entity(NewEntity::new(
+                jojobot_domain::memory::EntityId(
+                    "thing:contract-migrate-permanent-ids-run".to_string(),
+                ),
+                "was",
+                "contract-fixture",
+            ))
+            .await
+            .expect("add_entity should succeed")
+            .written()
+            .expect("the guard must not block a fresh handle");
+        memory.badge_the_unbadged().await.expect("badges are drawn");
+
+        let mail = mailboxes::DoltMailboxes::open(
+            store.pool().clone(),
+            std::sync::Arc::new(crate::owners::MemoryOwners::new(std::sync::Arc::new(
+                jojobot_domain::memory::testing::InMemoryMemory::default(),
+            ))),
+        );
+        let sess = sessions::DoltSessions::open(store.pool().clone());
+        let session = sess
+            .begin(NewSession {
+                bot: jojobot_domain::memory::EntityId(
+                    "bot:contract-migrate-permanent-ids-2".into(),
+                ),
+                sid: Sid("sid-permanent-ids-2".to_string()),
+                focus: "about @thing:contract-migrate-permanent-ids-run".to_string(),
+                started_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
+                timezone: None,
+                started_on: None,
+            })
+            .await
+            .expect("begin should succeed");
+        sess.append(
+            &session.id,
+            NewEntry::manual(
+                "found @thing:contract-migrate-permanent-ids-run",
+                "2026-01-01T00:01:00Z".parse().expect("a fixed instant"),
+                None,
+            ),
+        )
+        .await
+        .expect("append should succeed");
+
+        let results = migrate_permanent_ids(&memory, &mail, &sess).await;
+        let ran: std::collections::HashMap<_, _> = results
+            .into_iter()
+            .map(|(name, outcome)| match outcome {
+                Migrated::Ran(n) => (name, n),
+                other => panic!("{name}: expected Ran on a healthy read, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            ran["session mentions"], 2,
+            "the focus and the entry both had a bare handle to rewrite"
+        );
+
+        let after = sess
+            .read_session(&session.id)
+            .await
+            .expect("read_session should succeed");
+        assert!(
+            !after
+                .focus
+                .contains("thing:contract-migrate-permanent-ids-run"),
+            "the bare handle must not survive a run that reports Ran: {}",
+            after.focus
+        );
+
+        store.stop().await;
     }
 }
