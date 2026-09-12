@@ -36,19 +36,15 @@ struct Allowed<'a> {
 /// **Every exposure this build ships, named.** Add a lock's own companion
 /// instead of an entry here whenever that is the real fix — an entry is for
 /// the exposures that are staying, with the sentence that says why.
-const ALLOWED: &[Allowed<'static>] = &[Allowed {
-    room: "rooms/year.md",
-    lock: "Phase 9 — nothing on the pump currently carries the day it came back, so a \
-               reader is left with no day to find — whether it was never recorded, or a later, \
-               legitimate correction cleared the only trace of it",
-    needle: "person:ralph",
-    risk: Risk::Retraction,
-    reason: "the historical instance the classifier was built to catch. October corrects \
-                 this record in place rather than retracting it, so the honest play never trips \
-                 it — but the lock still carries a bare person:ralph with no companion, so a \
-                 future sitting that retracted Ralph's account instead of correcting it would \
-                 satisfy this lock on dead text exactly as the original bug did",
-}];
+///
+/// **Empty, as of the September pump lock's own fix.** Its bare
+/// `person:ralph` needle was not only exposed to the retraction this
+/// allowlist used to accept — it was satisfied by February's own loan edge
+/// regardless of anything September did, so removing it was a strictly
+/// better lock rather than a needle that merely traded one risk for
+/// another. Nothing here means no exposure has ever shipped; it means none
+/// is being kept on purpose right now.
+const ALLOWED: &[Allowed<'static>] = &[];
 
 /// The findings a room's shipped locks classify to.
 fn found_in(room: &str) -> Vec<StandingFinding> {

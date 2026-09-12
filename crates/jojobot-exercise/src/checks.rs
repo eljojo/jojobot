@@ -111,7 +111,7 @@ type Hatch = (&'static str, fn() -> Box<dyn Checks>);
 
 /// **Every named check this build ships.** A room adds one line here and one
 /// `check` line in its document, and both are visible in the count.
-pub const CHECKS: [Hatch; 26] = [
+pub const CHECKS: [Hatch; 29] = [
     ("the_brief_left_the_box", || {
         checked(|seen| Box::pin(the_brief_left_the_box(seen)))
     }),
@@ -172,8 +172,21 @@ pub const CHECKS: [Hatch; 26] = [
     ("februarys_club_drew_a_standing_member_for_each", || {
         checked(|seen| Box::pin(februarys_club_drew_a_standing_member_for_each(seen)))
     }),
+    (
+        "januarys_note_drew_a_standing_location_edge_to_springfield",
+        || {
+            checked(|seen| {
+                Box::pin(januarys_note_drew_a_standing_location_edge_to_springfield(
+                    seen,
+                ))
+            })
+        },
+    ),
     ("aprils_move_drew_a_standing_location_edge", || {
         checked(|seen| Box::pin(aprils_move_drew_a_standing_location_edge(seen)))
+    }),
+    ("aprils_move_archives_the_springfield_claim", || {
+        checked(|seen| Box::pin(aprils_move_archives_the_springfield_claim(seen)))
     }),
     (
         "octobers_note_drew_a_standing_location_edge_to_the_trail",
@@ -187,6 +200,9 @@ pub const CHECKS: [Hatch; 26] = [
     ),
     ("late_octobers_club_drew_a_standing_member_for_bart", || {
         checked(|seen| Box::pin(late_octobers_club_drew_a_standing_member_for_bart(seen)))
+    }),
+    ("late_octobers_note_retracts_nelsons_attendance", || {
+        checked(|seen| Box::pin(late_octobers_note_retracts_nelsons_attendance(seen)))
     }),
     (
         "a_late_sitting_folds_the_canoes_pile_without_being_told_to",
@@ -1203,6 +1219,126 @@ fn has_standing_edge_to_a(world: &str, subject: &str, shape: &str, kind: &str) -
     })
 }
 
+/// **The one fact among `facts` whose edge is `shape`, at `object` when one
+/// is named** — the record a "status"/"retracts" pair needs correlated onto
+/// a SINGLE hit, never asked as independent substrings of a whole answer. A
+/// subject carrying more than one record of the same edge shape (Milhouse's
+/// two `location` edges, one per place he has lived) makes a bare
+/// `carries "status":...` ambiguous about WHICH of them it is talking
+/// about; this picks the one the claim is actually about, live, from a
+/// fresh read rather than a window's own world snapshot — archived facts do
+/// not appear in a default search at all, so no window can see this
+/// correlation either way.
+fn fact_drawing<'a>(facts: &'a [Value], shape: &str, object: Option<&str>) -> Option<&'a Value> {
+    facts.iter().find(|f| {
+        f["edge"]["type"].as_str() == Some(shape)
+            && object.is_none_or(|object| f["edge"]["object"].as_str() == Some(object))
+    })
+}
+
+/// **Whether some OTHER record among `facts` names `address` under
+/// `retracts`** — the structural marker only [`retract`](crate::run) ever
+/// writes, now that archived status alone cannot tell a retraction from an
+/// ordinary edit that archived a claim for an unrelated reason.
+fn is_retracted(facts: &[Value], address: &str) -> bool {
+    facts
+        .iter()
+        .any(|f| f["fields"]["retracts"].as_str() == Some(address))
+}
+
+/// The sitting that first makes the claim [`aprils_move_archives_the_springfield_claim`]
+/// later archives.
+const JANUARY: &str = "Phase 1";
+
+/// 🚨 **January drew a standing location edge to Springfield — asked in
+/// January's own window.**
+///
+/// **Not the same question as April's own Springfield lock**, which used to
+/// be this lock's byte-for-byte copy: asked of the finished board, both
+/// checks read the SAME end state, so either sitting's failure convicted
+/// both and neither told a reader which one was actually wrong. January's
+/// job is only that the claim exists; whether it is later archived without
+/// being retracted is entirely April's, in
+/// [`aprils_move_archives_the_springfield_claim`].
+async fn januarys_note_drew_a_standing_location_edge_to_springfield(
+    seen: &Observed<'_>,
+) -> Result<(), String> {
+    let Some((before, after)) = seen.across(JANUARY) else {
+        return Err(format!(
+            "this run took no reading either side of {JANUARY}, so nothing here can say what \
+             that sitting recorded. A check scoped to one sitting needs the run's own \
+             boundaries.",
+        ));
+    };
+    let gained = !has_standing_edge(
+        &before.world,
+        Some("person:milhouse"),
+        "location",
+        "place:springfield",
+    ) && has_standing_edge(
+        &after.world,
+        Some("person:milhouse"),
+        "location",
+        "place:springfield",
+    );
+    match gained {
+        true => Ok(()),
+        false => Err(format!(
+            "{JANUARY}'s window did not draw a standing location edge to place:springfield, so \
+             the claim April is meant to move him off of was never made",
+        )),
+    }
+}
+
+/// 🚨 **April archived Milhouse's Springfield claim without retracting it —
+/// correlated on that ONE record, not read as two substrings of his whole
+/// page.**
+///
+/// A bare `"status":"archived"` and a bare `"retracts":` needle each hold if
+/// EITHER of Milhouse's records satisfies it: his Shelbyville edge could
+/// carry one and his Springfield one the other, and a document lock would
+/// still pass having correlated nothing between them. This finds
+/// Springfield's own address, live, and asks both questions of it alone: is
+/// IT archived, and does no OTHER record retract IT specifically. Live
+/// rather than window-scoped, for the reason [`has_standing_edge`]'s own
+/// doc gives: an archived fact does not appear in a default search at all,
+/// so no boundary snapshot could ever answer this.
+async fn aprils_move_archives_the_springfield_claim(seen: &Observed<'_>) -> Result<(), String> {
+    let read = seen
+        .room
+        .call(
+            "recall",
+            json!({"subject": "person:milhouse", "facts": true}),
+        )
+        .await;
+    let parsed: Value = serde_json::from_str(&read).unwrap_or(Value::Null);
+    let Some(facts) = parsed["objects"][0]["facts"].as_array() else {
+        return Err(format!(
+            "nothing is on file for person:milhouse at all: {read}"
+        ));
+    };
+    let Some(fact) = fact_drawing(facts, "location", Some("place:springfield")) else {
+        return Err(format!(
+            "nothing on Milhouse points at Springfield any more, so the claim was removed \
+             rather than archived: {read}"
+        ));
+    };
+    if fact["status"] != "archived" {
+        return Err(format!(
+            "the Springfield claim is still standing as current rather than archived, so it \
+             and the Shelbyville claim leave November two towns and no way to choose: {read}"
+        ));
+    }
+    let address = fact["address"].as_str().unwrap_or_default();
+    match is_retracted(facts, address) {
+        false => Ok(()),
+        true => Err(format!(
+            "{address} was retracted rather than archived by an ordinary edit, so Milhouse's \
+             page says he was never in Springfield rather than that he moved: {read}"
+        )),
+    }
+}
+
 /// 🚨 **June drew a standing attendee edge for each of the two people it
 /// names — asked in June's own window.**
 ///
@@ -1366,6 +1502,52 @@ async fn octobers_note_drew_a_standing_location_edge_to_the_trail(
         false => Err(format!(
             "{OCTOBER}'s window did not draw a standing location edge to place:north-trail, so \
              where the survey was held was not recorded where a later reader would find it",
+        )),
+    }
+}
+
+/// 🚨 **Late October retracts Nelson's own survey attendance — correlated on
+/// that ONE record, not read as two substrings of his whole page.**
+///
+/// Nelson also carries a club membership, never archived or retracted in
+/// this room's honest storyline. A bare `"status":"archived"` and a bare
+/// `"retracts":` needle each hold if EITHER of his records satisfies it —
+/// asking them of his whole answer correlates nothing between them, the
+/// same gap June's own attendance walk carried before its fix, on the shape
+/// rather than the status. This finds the one record whose edge is the
+/// attendance shape and asks both questions of it alone. Live rather than
+/// window-scoped: an archived fact does not appear in a default search at
+/// all, so no boundary snapshot could answer this either way.
+async fn late_octobers_note_retracts_nelsons_attendance(seen: &Observed<'_>) -> Result<(), String> {
+    let read = seen
+        .room
+        .call("recall", json!({"subject": "person:nelson", "facts": true}))
+        .await;
+    let parsed: Value = serde_json::from_str(&read).unwrap_or(Value::Null);
+    let Some(facts) = parsed["objects"][0]["facts"].as_array() else {
+        return Err(format!(
+            "nothing is on file for person:nelson at all: {read}"
+        ));
+    };
+    let Some(fact) = fact_drawing(facts, "attendee", None) else {
+        return Err(format!(
+            "nothing on Nelson's page carries an attendee edge at all, so there is no attendance \
+             record here to have taken back: {read}"
+        ));
+    };
+    if fact["status"] != "archived" {
+        return Err(format!(
+            "Nelson's survey attendance is still standing as current, so a session reading his \
+             page later still finds him at an event he never went to: {read}"
+        ));
+    }
+    let address = fact["address"].as_str().unwrap_or_default();
+    match is_retracted(facts, address) {
+        true => Ok(()),
+        false => Err(format!(
+            "{address} is archived without a retraction naming it, so an ordinary edit rather \
+             than `retract` reached it — his attendance reads as CHANGED rather than as \
+             something that never happened: {read}"
         )),
     }
 }

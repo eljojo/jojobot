@@ -138,19 +138,15 @@ say     January: no loop carries the ninety days and the day it was last done, s
 # Recorded early, needed late: where Milhouse lives. April moves him and
 # November asks.
 #
-# ⚠️ **A companion pins what archived it, for the reason April's own
-# Springfield lock four sittings down already carries one.** Superseded and
-# retracted are now one `archived` status, so a status word alone can no
-# longer tell April's legitimate supersession from a retraction this claim
-# never earned — the marked-but-not-filtered text reads the same either way.
-# What still tells them apart is structural: only `retract` ever writes a
-# `"retracts":` pointer naming the address it took back. Its ABSENCE here is
-# the companion — April moved Milhouse, nobody took this claim back.
-recall {"subject": "person:milhouse", "facts": true}
-carries place:springfield
-carries "status":"archived"
-lacks   "retracts":
-say     January: nothing on Milhouse says where he lives, so April has nothing to change and November nothing to read
+# 🚨 **A hatch, scoped to January's own window — not the same question as
+# April's own Springfield lock, which used to be this lock's own byte-for-byte
+# copy.** Asked of the finished board, one check for "the claim was made" and
+# one for "the claim was later archived without being retracted" convict
+# whichever sitting is named for whatever the OTHER one did or did not do.
+# January's job is only that the claim exists at all; April's is what happens
+# to it next.
+check   januarys_note_drew_a_standing_location_edge_to_springfield
+say     January: nothing on Milhouse points at Springfield, so the move was recorded somewhere a later sitting will not look
 ```
 
 ## Phase 2 — February, a thing lent
@@ -249,14 +245,14 @@ say     April: nothing on Milhouse points at Shelbyville, so the move was record
 # The old claim was true in its day. Taking it out loses that he ever lived
 # there; leaving it current gives November two towns and no way to choose.
 #
-# ⚠️ **`lacks "retracts":` is the companion now**, for the same reason
-# January's own copy of this lock carries one: superseded and retracted are
-# one `archived` status, so the word alone cannot say this was a move rather
-# than a retraction Milhouse's Springfield claim never earned.
-recall {"subject": "person:milhouse", "facts": true}
-carries place:springfield
-carries "status":"archived"
-lacks   "retracts":
+# 🚨 **A hatch, correlated on Springfield's own record rather than two
+# independent substrings of Milhouse's whole answer.** A bare `"status"` and
+# a bare `"retracts"` needle each hold if EITHER of Milhouse's records
+# satisfies it — his Shelbyville edge could carry one, his Springfield one
+# the other, and the lock would still pass having correlated nothing. This
+# reads Springfield's own address and asks both questions of it alone: does
+# IT read archived, and does no OTHER record retract IT specifically.
+check   aprils_move_archives_the_springfield_claim
 say     April: the Springfield claim is either gone or still standing as current, and it should be there and marked as no longer true
 ```
 
@@ -456,7 +452,6 @@ generates no day assertion here and the lock below names the day instead.
 # for it. So the sentence below says only what is observably true of the
 # finished room — never who is to blame.
 recall {"subject": "thing:floor-pump", "facts": true}
-carries person:ralph
 carries "happened_at":"2026-06-14"
 say     nothing on the pump currently carries the day it came back, so a reader is left with no day to find — whether it was never recorded, or a later, legitimate correction cleared the only trace of it
 
@@ -557,10 +552,15 @@ say     October: the survey cannot be walked to the place it was held at, so whe
 # changed, when he was never there to begin with. Superseded and retracted
 # are now one `archived` status, so what tells the two apart is no longer
 # the word: only `retract` writes a `"retracts":` pointer naming the address
-# it took back, and that pointer is the companion now.
-recall {"subject": "person:nelson", "facts": true}
-carries "status":"archived"
-carries "retracts":
+# it took back.
+#
+# 🚨 **A hatch, correlated on the attendance record itself.** Nelson may
+# carry other records — his club membership, never archived or retracted —
+# so a bare `"status":"archived"` and a bare `"retracts":` each holding
+# somewhere on his page is not the same claim as his OWN attendance record
+# being both. This finds the one record whose edge is the attendance shape
+# and asks both questions of it alone.
+check   late_octobers_note_retracts_nelsons_attendance
 say     October (again): Nelson's survey attendance is not marked taken back, so a session reading his page later still finds him at an event he never went to
 
 # The second shape, folded in: Bart, walked rather than read off a sentence,
