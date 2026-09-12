@@ -1596,8 +1596,8 @@ pub async fn no_read_serves_a_badge_and_every_one_serves_the_handle<M: Memory + 
         .written()
         .expect("nothing collides with it");
 
-    // A page, a claim, a correction, a note on a key, and a retraction —
-    // every door text leaves this store by.
+    // A page, a claim, a correction, a note on a key read two ways, and a
+    // retraction — every door text leaves this store by.
     let page = store
         .set_prose(&author, "keeps the books at @place:contract-mention-inn")
         .await
@@ -1663,6 +1663,18 @@ pub async fn no_read_serves_a_badge_and_every_one_serves_the_handle<M: Memory + 
         .expect("the writes read")
     {
         served.extend(write.note);
+    }
+    // **A key's backing carries the same note, through a different door.**
+    // `history` and `backing` answer different questions about one key —
+    // every write in order, and what the key holds now — but both carry the
+    // record's note, so both have to render it.
+    for held in store
+        .backing(&author)
+        .await
+        .expect("the backing reads")
+        .into_values()
+    {
+        served.extend(held.note);
     }
     // What points here, and what was built on what — two reads that hand
     // back claims written on something else.
@@ -1732,7 +1744,7 @@ pub async fn no_read_serves_a_badge_and_every_one_serves_the_handle<M: Memory + 
             .iter()
             .filter(|text| text.contains(named.as_str()))
             .count()
-            >= 11,
+            >= 12,
         "some read served text with the mention taken out of it: {served:?}",
     );
 }

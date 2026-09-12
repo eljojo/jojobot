@@ -533,11 +533,25 @@ impl super::Memory for Mentioning {
     ) -> Result<std::collections::BTreeMap<String, String>, super::MemoryError> {
         self.inner.fields(entity).await
     }
+    /// **A key's backing carries the note its record carried**, the same
+    /// text under the same name [`Self::history`] already renders — read
+    /// through a different door, which is why a bare delegate here missed
+    /// it.
     async fn backing(
         &self,
         entity: &EntityId,
     ) -> Result<std::collections::BTreeMap<String, super::FieldBacking>, super::MemoryError> {
-        self.inner.backing(entity).await
+        let mut backing = self.inner.backing(entity).await?;
+        if backing.values().all(|b| b.note.is_none()) {
+            return Ok(backing);
+        }
+        let known = self.known().await?;
+        for held in backing.values_mut() {
+            if let Some(note) = &held.note {
+                held.note = Some(rendered(note, &known));
+            }
+        }
+        Ok(backing)
     }
     /// **Both claims a retraction hands back are claims**, so both render.
     /// The reason is text a caller wrote, so it resolves on the way in.
