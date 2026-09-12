@@ -161,6 +161,8 @@ const ROSTER: &[&str] = &[
     "person:contract-claim-histories",
     "person:contract-claim-histories-ghost",
     "person:contract-corrected",
+    "person:contract-current-handle-now",
+    "person:contract-current-handle-was",
     "person:contract-derived",
     "person:contract-no-such-chain",
     "person:contract-nobody",
