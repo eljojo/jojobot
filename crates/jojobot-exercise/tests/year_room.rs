@@ -806,6 +806,36 @@ async fn october_retracts_junes_claim_instead_of_renaming(room: &Surface, sid: &
     .await;
 }
 
+/// **October retracts June's claim, and ALSO makes the rename it never
+/// called happen underneath it.** Neither existing variant tests this
+/// combination: the honest October renames and touches nothing retracted;
+/// `october_retracts_junes_claim_instead_of_renaming` retracts and never
+/// renames. Here the survey is renamed for real, so a live read of June's
+/// now-retracted address renders the NEW handle — the same content a
+/// genuine rename would leave — even though this address is not standing.
+/// Only a check that reads the address's own status, ahead of comparing
+/// what it renders, can tell this dead address from a live one that was
+/// actually carried across the rename.
+async fn october_retracts_junes_claim_and_renames_the_survey_anyway(room: &Surface, sid: &str) {
+    october_writes_the_pump_and_the_place(room, sid).await;
+    let junes = address_of(room, "org:north-trail-club", "ran on").await;
+    did(
+        room,
+        sid,
+        "retract",
+        json!({"address": junes,
+               "reason": "filing the survey under its proper record instead"}),
+    )
+    .await;
+    did(
+        room,
+        sid,
+        "rename_entity",
+        json!({"handle": "event:trail-survey", "to": "event:erosion-review"}),
+    )
+    .await;
+}
+
 /// **September's own address on the pump, whatever it said.** Excludes
 /// February's fixed wording rather than matching September's, because
 /// September's own wording is what varies between plays here — a prose
@@ -1242,6 +1272,13 @@ const OCTOBER_DOES_NOT_RENAME_THE_SURVEY: usize = 20;
 /// different event.
 const OCTOBER_RETRACTS_JUNES_CLAIM_INSTEAD_OF_RENAMING: usize = 21;
 
+/// **October's sixth guilt, named the same way.** June's claim is retracted
+/// AND the survey is renamed for real underneath it — the case the rename
+/// lock's status guard exists to catch, apart from
+/// [`OCTOBER_RETRACTS_JUNES_CLAIM_INSTEAD_OF_RENAMING`], where nothing is
+/// ever renamed.
+const OCTOBER_RETRACTS_JUNES_CLAIM_AND_RENAMES_ANYWAY: usize = 29;
+
 /// **A different, honest June, named the same way as its guilty siblings.**
 /// Attendance filed as a mention per person rather than an edge — the shape
 /// a live run actually wrote — so more than one of June's own addresses
@@ -1318,6 +1355,8 @@ async fn work_the_year(
             at == OCTOBER_AT && guilty.contains(&OCTOBER_DOES_NOT_RENAME_THE_SURVEY);
         let october_retracts_variant =
             at == OCTOBER_AT && guilty.contains(&OCTOBER_RETRACTS_JUNES_CLAIM_INSTEAD_OF_RENAMING);
+        let october_retracts_and_renames_variant =
+            at == OCTOBER_AT && guilty.contains(&OCTOBER_RETRACTS_JUNES_CLAIM_AND_RENAMES_ANYWAY);
         let october_second_account_variant = at == OCTOBER_AT
             && guilty.contains(&OCTOBER_CAPTURES_A_SECOND_ACCOUNT_INSTEAD_OF_CORRECTING);
         let october_clears_the_day_variant =
@@ -1339,6 +1378,7 @@ async fn work_the_year(
             && !october_variant
             && !october_no_rename_variant
             && !october_retracts_variant
+            && !october_retracts_and_renames_variant
             && !october_second_account_variant
             && !october_clears_the_day_variant
             && !september_prose_variant
@@ -1372,6 +1412,8 @@ async fn work_the_year(
             october_without_renaming_the_survey(room, sid).await;
         } else if october_retracts_variant {
             october_retracts_junes_claim_instead_of_renaming(room, sid).await;
+        } else if october_retracts_and_renames_variant {
+            october_retracts_junes_claim_and_renames_the_survey_anyway(room, sid).await;
         } else if october_second_account_variant {
             october_captures_a_second_account_instead_of_correcting(room, sid).await;
         } else if october_clears_the_day_variant {
@@ -2046,6 +2088,42 @@ async fn junes_mention_lock_is_not_satisfied_by_a_retraction_and_a_fresh_claim()
         judged[OCTOBER[1]].held,
         "the sitting that retracted June's claim failed a lock that has nothing to do with it: \
          {}",
+        saying(&judged),
+    );
+}
+
+/// **The status guard's own case: June's claim retracted, and the survey
+/// renamed for real underneath it anyway.** A retracted address's content is
+/// frozen at what it said when it was written, but a mention inside it still
+/// resolves to whatever its subject is called NOW — so once the survey is
+/// actually renamed, a live read of June's dead address renders the new
+/// handle too, exactly as a genuine rename would leave it. Only a check that
+/// first asks whether the address is still active can tell this apart from
+/// one that really carried the rename across.
+#[tokio::test]
+async fn junes_mention_lock_is_not_satisfied_by_a_retracted_address_the_rename_also_reached() {
+    let (_room, surface) = furnished().await;
+    let guilty = work_the_year(
+        &surface,
+        &room_document(),
+        &WORKED,
+        &[OCTOBER_RETRACTS_JUNES_CLAIM_AND_RENAMES_ANYWAY],
+    )
+    .await;
+    let judged = judge_all(&surface, &guilty).await;
+    assert!(
+        !judged[LATE_OCTOBER[3]].held,
+        "an October that retracted June's claim and then renamed the survey anyway held the \
+         lock that watches for a rename, so a dead address that merely re-renders under the \
+         new handle satisfies it: {}",
+        saying(&judged),
+    );
+    // The half that stops the assertion above passing on a room where every
+    // lock fails: October's other work is still there.
+    assert!(
+        judged[OCTOBER[1]].held,
+        "the sitting that retracted June's claim and renamed the survey failed a lock that has \
+         nothing to do with it: {}",
         saying(&judged),
     );
 }
