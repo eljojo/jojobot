@@ -215,6 +215,26 @@ async fn a_rename_reaches_months_of_mentions_written_under_the_old_name() {
     // **The control is untouched.**
     milhouse.says("thing:handcart");
 
+    // **The negative control the two `recall`s above need.** Nothing here
+    // resembles `person:zzz-nobody` — not the renamed place, not Milhouse,
+    // not the handcart — so a `recall` that had started resolving anything
+    // at all, rather than genuinely walking the old-handle pointer, would
+    // have left both positives above green while this one goes green for
+    // the wrong reason. The refusal has to name its candidates as empty,
+    // not merely carry `status: blocked`: the field is on every blocked
+    // body regardless of what fired it, so only the empty list says nothing
+    // was found to resemble.
+    let miss = s
+        .refused("recall", json!({"subject": "person:zzz-nobody"}))
+        .await;
+    assert_eq!(miss.json()["attempted"], "person:zzz-nobody");
+    assert_eq!(
+        miss.json()["candidates"].as_array().expect("a list").len(),
+        0,
+        "nothing here resembles this handle: {}",
+        miss.json()
+    );
+
     s.wrap("corrected a four-month-old typo; everything written under it still finds the place")
         .await;
 }
