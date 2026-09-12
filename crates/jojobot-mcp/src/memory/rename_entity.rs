@@ -777,6 +777,100 @@ mod tests {
         );
     }
 
+    /// **A stale handle refuses as an answer, never a protocol error** — the
+    /// verb's own argument documentation already promises this ("a stale
+    /// `handle` given here is refused with the name it moved to, rather than
+    /// a bare miss"), and until this fix `memory_declined` let
+    /// `MemoryError::HandleMoved` fall through to a plain `McpError`, making
+    /// the promise false for the one case it names.
+    #[tokio::test]
+    async fn a_stale_handle_rename_is_blocked_rather_than_a_client_error() {
+        let jojobot = handler();
+        let sid = writing_as(&jojobot);
+        jojobot
+            .add_entity(Parameters(add_args("thing", "red-bike", "Red Bike")))
+            .await
+            .expect("add ok");
+        jojobot
+            .rename_entity(Parameters(args("thing:red-bike", "work:red-bike", &sid)))
+            .await
+            .expect("rename ok");
+
+        // "thing:red-bike" is now stale: it answers to "work:red-bike".
+        let result = jojobot
+            .rename_entity(Parameters(args("thing:red-bike", "work:sigma", &sid)))
+            .await
+            .expect("a stale handle is an answer, not a protocol failure");
+        let body = blocked(&result);
+        assert_eq!(body["attempted"], "thing:red-bike");
+        assert_eq!(body["wrote"], false);
+        assert!(
+            body["how_to_proceed"]
+                .as_str()
+                .unwrap()
+                .contains("work:red-bike"),
+            "the way forward names what it is called now: {body}",
+        );
+    }
+
+    /// **A rename to the handle it already wears refuses as an answer**, not
+    /// a protocol error — `MemoryError::NothingToRename` fell through to
+    /// `memory_error` exactly as `HandleMoved` and `SuppliedHandle` did.
+    #[tokio::test]
+    async fn renaming_to_the_same_handle_is_blocked_rather_than_a_client_error() {
+        let jojobot = handler();
+        let sid = writing_as(&jojobot);
+        jojobot
+            .add_entity(Parameters(add_args("thing", "red-bike", "Red Bike")))
+            .await
+            .expect("add ok");
+
+        let result = jojobot
+            .rename_entity(Parameters(args("thing:red-bike", "thing:red-bike", &sid)))
+            .await
+            .expect("renaming to itself is an answer, not a protocol failure");
+        let body = blocked(&result);
+        assert_eq!(body["attempted"], "thing:red-bike");
+        assert_eq!(body["wrote"], false);
+    }
+
+    /// **A build-supplied handle's rename refuses as an answer**, not a
+    /// protocol error. Built on a bare store that knows what the build
+    /// supplies directly (the shape `Memory::rename_entity`'s own
+    /// `MemoryError::SuppliedHandle` names), rather than `handler_shipped()`
+    /// — that handler wraps `Provisioned`, whose `rename_entity` answers a
+    /// supplied handle with `Guarded::Blocked` before the store underneath is
+    /// ever asked, so it cannot exercise this error at all.
+    #[tokio::test]
+    async fn a_supplied_handles_rename_is_blocked_rather_than_a_client_error() {
+        use jojobot_domain::mailbox::testing::InMemoryMailboxes;
+        use jojobot_domain::memory::testing::InMemoryMemory;
+        use jojobot_domain::session::testing::InMemorySessions;
+        use jojobot_domain::teaching::testing::InMemoryTeachings;
+
+        let jojobot = Jojobot::new(
+            std::sync::Arc::new(InMemoryMemory::booted().knowing(crate::provisions())),
+            std::sync::Arc::new(SpySearch::default()),
+            std::sync::Arc::new(InMemoryMailboxes::knowing_any_owner()),
+            std::sync::Arc::new(InMemorySessions::new()),
+            std::sync::Arc::new(InMemoryTeachings::new()),
+            seeded_registry(),
+        );
+        let sid = writing_as(&jojobot);
+
+        let result = jojobot
+            .rename_entity(Parameters(args(
+                "view:loops",
+                "view:contract-supplied-rename-target",
+                &sid,
+            )))
+            .await
+            .expect("a build-supplied handle is an answer, not a protocol failure");
+        let body = blocked(&result);
+        assert_eq!(body["attempted"], "view:loops");
+        assert_eq!(body["wrote"], false);
+    }
+
     /// A `handle` naming nothing jojobot ever held is a client error naming
     /// near misses, exactly as the other verbs answer one — never a create.
     #[tokio::test]

@@ -354,6 +354,52 @@ pub(crate) fn memory_declined(
                  {verb} with confirmed_by_user only once they have actually said so."
             ),
         )),
+        // **Three of `rename_entity`'s own misses**, each a caller mistake
+        // and none of them a resemblance or an ordinary absence, so none of
+        // them fits `blocked_result`'s gates. Answered here instead of
+        // falling through to `memory_error`, which turned all three into a
+        // plain protocol error — false against this verb's own argument
+        // documentation, which promises a stale handle comes back "with the
+        // name it moved to, rather than a bare miss."
+        //
+        // **Two sides of one handle** is not a resemblance: the destination
+        // is fine, it names exactly what the source already answers to.
+        MemoryError::NothingToRename { ref attempted } => Ok(blocked_body(
+            &EntityId(attempted.clone()),
+            &[],
+            format!(
+                "Nothing was renamed: {e}. Sending this again with the same handle on both \
+                 sides will not change the answer — name a destination that differs from \
+                 '{attempted}'."
+            ),
+        )),
+        // **Stale, not absent** (rule 261): the caller's evidence is real, it
+        // is just out of date. The way forward is the handle it wears now,
+        // never a bare miss that reads the same as a handle that never
+        // existed.
+        MemoryError::HandleMoved {
+            ref attempted,
+            ref now,
+        } => Ok(blocked_body(
+            &EntityId(attempted.clone()),
+            &[],
+            format!(
+                "Nothing was renamed: {e}. Re-call {verb} with handle: \"{now}\" — that is what \
+                 '{attempted}' answers to now."
+            ),
+        )),
+        // **Real, and with nothing stored underneath it.** Neither a create
+        // (it already exists) nor an ordinary miss (it is not gone): a
+        // build-supplied record has nothing for a rename to move.
+        MemoryError::SuppliedHandle { ref attempted } => Ok(blocked_body(
+            &EntityId(attempted.clone()),
+            &[],
+            format!(
+                "Nothing was renamed: {e}. Sending this again will not change the answer — \
+                 '{attempted}' is part of the software rather than something stored that a \
+                 rename could move."
+            ),
+        )),
         other => Err(memory_error(other)),
     }
 }
