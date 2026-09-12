@@ -1954,6 +1954,7 @@ mod tests {
             fields: Default::default(),
             refs: Vec::new(),
             derived_from: None,
+            stands_for: Vec::new(),
             inserted_at: None,
             stale_after: None,
         }

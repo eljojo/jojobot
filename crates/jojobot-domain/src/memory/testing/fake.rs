@@ -389,6 +389,11 @@ impl InMemoryMemory {
             .iter()
             .map(|object| self.current_handle(object))
             .collect();
+        f.stands_for = f
+            .stands_for
+            .iter()
+            .map(|named| FactAddress::new(self.current_handle(&named.home), named.local.clone()))
+            .collect();
         f
     }
 
@@ -968,6 +973,9 @@ impl Memory for InMemoryMemory {
             fields: fact.fields,
             refs,
             derived_from,
+            // A capture never carries a mark — see [`NewFact`]; the mark is
+            // an edit's to make, once the record it names already exists.
+            stands_for: Vec::new(),
             // **A store stamps this, so the double does too.** A fake that left
             // it empty would let every case above it pass on a build where the
             // real store's stamp never happens.
@@ -1283,6 +1291,48 @@ impl Memory for InMemoryMemory {
                 attempted: source.to_string(),
             });
         }
+        // **Every claim a mark names faces the same existence rule a source
+        // does** — a mark is a set of citations, and a citation to nothing
+        // is exactly the failure [`derived_from`] is screened against above,
+        // just plural.
+        if let Some(stands_for) = &patch.stands_for {
+            for named in stands_for {
+                // **A home nobody has heard of is an ENTITY miss, the same
+                // shape `capture`'s own existence check already answers
+                // with** — two shapes, no third: what is absent differs, so
+                // what the caller does about it differs.
+                let Some((named_key, handle)) = self.resolve(&named.home) else {
+                    return Err(MemoryError::UnknownEntity {
+                        attempted: named.home.to_string(),
+                        nearest: guard::screen(&named.home, &[], &self.known()),
+                    });
+                };
+                let found = facts
+                    .iter()
+                    .any(|f| f.home == named_key && f.id == named.local);
+                if !found {
+                    return Err(MemoryError::UnknownFact {
+                        attempted: named.to_string(),
+                        nearest: facts
+                            .iter()
+                            .filter(|f| f.home == named_key)
+                            .map(|f| self.address_under(f, &handle))
+                            .collect(),
+                    });
+                }
+                // **Self-reference is checked here, on the same storage key
+                // the record being edited already resolved to** — never on
+                // the name the patch sent, which is not yet in that key
+                // space and would let a self-reference through unnoticed
+                // whenever a badge is in play (see [`validate_stands_for`]).
+                if named_key == key && named.local == address.local {
+                    return Err(MemoryError::InvalidFact(format!(
+                        "a record cannot be marked as standing for itself: {named} is its own \
+                         address"
+                    )));
+                }
+            }
+        }
         apply_fact_patch(&mut edited, &patch)?;
         // **Stored under its source's storage key, exactly as a capture's
         // does.** `apply_fact_patch` only carries the patch's address
@@ -1309,6 +1359,22 @@ impl Memory for InMemoryMemory {
                     .expect("checked to exist just above"),
                 source.local.clone(),
             ));
+        }
+        // **Stored under each source's storage key, exactly as `derived_from`
+        // just above.** A mark's addresses go stale the same way if the
+        // entity they name is ever renamed.
+        if patch.stands_for.is_some() {
+            edited.stands_for = edited
+                .stands_for
+                .iter()
+                .map(|named| {
+                    FactAddress::new(
+                        self.storage_key(&named.home)
+                            .expect("checked to exist just above"),
+                        named.local.clone(),
+                    )
+                })
+                .collect();
         }
         // **The thing's fields as they will stand, against the thing's fields
         // as they stand now** — the same guard the real store runs, so the two
@@ -1461,6 +1527,16 @@ impl Memory for InMemoryMemory {
                     source.home = survivor_key.clone();
                 }
             }
+            // A mark at a moved row follows it to its new address, for the
+            // same reason [`Fact::derived_from`] just above does.
+            for named in fact.stands_for.iter_mut() {
+                if named.home == folded_key {
+                    if let Some((_, now)) = moved.iter().find(|(was, _)| was == &named.local) {
+                        named.local = now.clone();
+                    }
+                    named.home = survivor_key.clone();
+                }
+            }
         }
         // The field substrate moves with the claims that wrote it: a folded
         // thing's history is the survivor's history now.
@@ -1525,6 +1601,7 @@ impl Memory for InMemoryMemory {
             fields: account.fields,
             refs: account.refs,
             derived_from: account.derived_from,
+            stands_for: Vec::new(),
             inserted_at: Some(self.clock.now()),
             stale_after: None,
         };
@@ -1633,6 +1710,7 @@ impl Memory for InMemoryMemory {
             fields: account.fields,
             refs: account.refs,
             derived_from: account.derived_from,
+            stands_for: Vec::new(),
             inserted_at: Some(self.clock.now()),
             stale_after: None,
         };

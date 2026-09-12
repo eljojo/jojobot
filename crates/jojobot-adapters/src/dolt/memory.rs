@@ -196,10 +196,19 @@ impl DoltMemory {
     /// `fact.entity` was, so a rename that left it on the handle would sever
     /// a thing from its own nicknames — and from every search hit that came
     /// through one — the moment the row moved.
-    /// `fact_event_ref.entity` and `entity.parent`, the columns that name a
-    /// DIFFERENT entity rather than the row's own, are untouched — they
-    /// resolve on the way out instead, in the mention layer, not badge-keyed
-    /// at all.
+    ///
+    /// **`fact_stands_for` is not in this list.** It is a new table, born
+    /// badge-keyed from its first row: the write path resolves a mark's
+    /// addresses to badges before anything lands, exactly as `fact.entity`
+    /// and `fact.derived_from` now do, so there are no legacy handle-keyed
+    /// rows under it for a backfill to find. This list is for what predates
+    /// a column's own badge-awareness, never for what was born with it.
+    /// `fact_event_ref.entity`, `entity.parent` and `edge_object` are
+    /// badge-keyed too (rule 268), but not by this call: they name a
+    /// DIFFERENT entity rather than the row's own, and [`Self::
+    /// resolve_stale_pointer_columns`] is the migration that rekeys those,
+    /// separately, because an unresolvable value there is an error rather
+    /// than a row this backfill can quietly skip.
     ///
     /// Returns how many entities had rows rekeyed. **Idempotent**: a second
     /// run touches none.
@@ -650,11 +659,28 @@ impl DoltMemory {
             .iter()
             .map(|r| EntityId(r.get::<String, _>("entity")))
             .collect();
+            let stands_for = sqlx::query(
+                "SELECT source_home, source_id FROM fact_stands_for
+                 WHERE fact_home = ? AND fact_id = ? ORDER BY ordinal",
+            )
+            .bind(entity.as_str())
+            .bind(id.as_str())
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(store)?
+            .iter()
+            .map(|r| {
+                FactAddress::new(
+                    EntityId(r.get::<String, _>("source_home")),
+                    FactId(r.get::<String, _>("source_id")),
+                )
+            })
+            .collect();
             // **Served under the handle this storage key answers to today**
             // — `entity` here is the badge (or an unrenamed handle stored as
             // itself), never what a reader is shown.
             let handle = self.current_handle(tx, &entity).await?;
-            let raw = fact_from(row, entity, id, fields, refs)?;
+            let raw = fact_from(row, entity, id, fields, refs, stands_for)?;
             let mut served = raw;
             served.home = handle.clone();
             served.subject = handle;
@@ -677,6 +703,16 @@ impl DoltMemory {
                 resolved_refs.push(self.current_handle(tx, object).await?);
             }
             served.refs = resolved_refs;
+            // **A mark's addresses are badge-keyed exactly as `derived_from`
+            // is**, resolved here the same way.
+            let mut resolved_stands_for = Vec::with_capacity(served.stands_for.len());
+            for named in &served.stands_for {
+                resolved_stands_for.push(FactAddress::new(
+                    self.current_handle(tx, &named.home).await?,
+                    named.local.clone(),
+                ));
+            }
+            served.stands_for = resolved_stands_for;
             facts.push(served);
         }
         Ok(facts)
@@ -890,6 +926,31 @@ impl DoltMemory {
             .bind(fact.id.as_str())
             .bind(ordinal as i64 + 1)
             .bind(object.as_str())
+            .execute(&mut **tx)
+            .await
+            .map_err(store)?;
+        }
+
+        // **Replaced whole, exactly as the row above and the refs above it
+        // are.** Current state only — see the migration's own doc — so a
+        // write that carries no mark leaves this fact standing for nothing,
+        // the same way it leaves a capture or a retraction with none.
+        sqlx::query("DELETE FROM fact_stands_for WHERE fact_home = ? AND fact_id = ?")
+            .bind(fact.home.as_str())
+            .bind(fact.id.as_str())
+            .execute(&mut **tx)
+            .await
+            .map_err(store)?;
+        for (ordinal, named) in fact.stands_for.iter().enumerate() {
+            sqlx::query(
+                "INSERT INTO fact_stands_for (fact_home, fact_id, ordinal, source_home, source_id)
+                 VALUES (?, ?, ?, ?, ?)",
+            )
+            .bind(fact.home.as_str())
+            .bind(fact.id.as_str())
+            .bind(ordinal as i64 + 1)
+            .bind(named.home.as_str())
+            .bind(named.local.as_str())
             .execute(&mut **tx)
             .await
             .map_err(store)?;
@@ -1151,6 +1212,7 @@ fn fact_from(
     id: FactId,
     fields: std::collections::BTreeMap<String, String>,
     refs: Vec<EntityId>,
+    stands_for: Vec<FactAddress>,
 ) -> Result<Fact, MemoryError> {
     let provenance =
         Provenance::from_token(&row.try_get::<String, _>("provenance").map_err(store)?);
@@ -1221,6 +1283,7 @@ fn fact_from(
         fields,
         refs,
         derived_from,
+        stands_for,
         // **NULL is a row written before the store recorded this**, and it
         // reads back as nothing rather than as a guess.
         inserted_at: row
@@ -1668,6 +1731,9 @@ impl Memory for DoltMemory {
             fields: fact.fields,
             refs,
             derived_from,
+            // A capture never carries a mark — see [`NewFact`]; the mark is
+            // an edit's to make, once the record it names already exists.
+            stands_for: Vec::new(),
             // **The store stamps it, so nothing above can.** The moment a
             // record is taken in is this one, and a caller that could name it
             // could claim jojobot knew something before it did.
@@ -1836,6 +1902,7 @@ impl Memory for DoltMemory {
                 address.local.clone(),
                 Default::default(),
                 Vec::new(),
+                Vec::new(),
             )?;
             // **A lineage pointer in the chain is a `FactAddress` like any
             // other** — stored under its source's key, served under the
@@ -1891,7 +1958,14 @@ impl Memory for DoltMemory {
                 .try_get::<Option<String>, _>("written_at")
                 .map_err(store)?
                 .and_then(|at| at.parse::<jiff::Timestamp>().ok());
-            let mut fact = fact_from(row, key.clone(), id.clone(), Default::default(), Vec::new())?;
+            let mut fact = fact_from(
+                row,
+                key.clone(),
+                id.clone(),
+                Default::default(),
+                Vec::new(),
+                Vec::new(),
+            )?;
             if let Some(source) = &fact.derived_from {
                 let resolved = self.current_handle(&mut tx, &source.home).await?;
                 fact.derived_from = Some(FactAddress::new(resolved, source.local.clone()));
@@ -2041,6 +2115,41 @@ impl Memory for DoltMemory {
         // patch rewrites it, because that is what decides which of the patch's
         // clears is a write and which names a key this record never had.
         let carried = fact.fields.clone();
+        // **Every claim a mark names faces the existence rule a source
+        // does** — a mark is a set of citations, and a citation to nothing
+        // is exactly the failure `derived_from` is screened against below,
+        // just plural.
+        let mut resolved_stands_for = Vec::new();
+        if let Some(stands_for) = &patch.stands_for {
+            let index = Self::index(&mut tx).await?;
+            for named in stands_for {
+                let Some((named_key, _)) = self.resolve(&mut tx, &named.home).await? else {
+                    return Err(MemoryError::UnknownEntity {
+                        attempted: named.home.to_string(),
+                        nearest: guard::screen(&named.home, &[], &index),
+                    });
+                };
+                let resolved_named = FactAddress::new(named_key.clone(), named.local.clone());
+                if self.read_fact(&mut tx, &resolved_named).await?.is_none() {
+                    return Err(MemoryError::UnknownFact {
+                        attempted: named.to_string(),
+                        nearest: self.addresses_in(&mut tx, &named_key).await?,
+                    });
+                }
+                // **Self-reference is checked on the same storage key the
+                // record being edited already resolved to** — never on the
+                // name the patch sent, which is not yet in that key space
+                // and would let a self-reference through unnoticed whenever
+                // a badge is in play.
+                if named_key == key && named.local == address.local {
+                    return Err(MemoryError::InvalidFact(format!(
+                        "a record cannot be marked as standing for itself: {named} is its own \
+                         address"
+                    )));
+                }
+                resolved_stands_for.push(resolved_named);
+            }
+        }
         // **A source named by an EDIT faces the rule a source named at capture
         // faces.** Lineage is learned late, so it is set here too — and a
         // pointer at a claim nobody wrote would be a link that reads as
@@ -2094,6 +2203,13 @@ impl Memory for DoltMemory {
                 object: resolved,
             });
         }
+        // **Stored under each source's storage key, exactly as `derived_from`
+        // above.** Resolved once, above, before the patch was applied — a
+        // mark's addresses go stale the same way if the entity they name is
+        // ever renamed.
+        if patch.stands_for.is_some() {
+            fact.stands_for = resolved_stands_for;
+        }
         // **The thing's fields as they will stand, against the thing's fields
         // as they stand now.** A write may not drop a thing below a type it
         // already fits; a thing that fits nothing has nothing to protect, so
@@ -2136,6 +2252,13 @@ impl Memory for DoltMemory {
             }),
             None => None,
         };
+        let mut served_stands_for = Vec::with_capacity(fact.stands_for.len());
+        for named in &fact.stands_for {
+            served_stands_for.push(FactAddress::new(
+                self.current_handle(&mut tx, &named.home).await?,
+                named.local.clone(),
+            ));
+        }
         tx.commit().await.map_err(store)?;
         Ok(Guarded::Written(Fact {
             fields,
@@ -2143,6 +2266,7 @@ impl Memory for DoltMemory {
             subject: handle,
             derived_from: served_derived_from,
             edge: served_edge,
+            stands_for: served_stands_for,
             ..fact
         }))
     }
@@ -2235,6 +2359,14 @@ impl Memory for DoltMemory {
                  WHERE fact_home = ? AND fact_id = ?",
                 "UPDATE fact_event_ref SET fact_home = ?, fact_id = ? \
                  WHERE fact_home = ? AND fact_id = ?",
+                // **A mark moves with the row it marks, and a mark that
+                // NAMED the moved row follows it too** — the same two
+                // directions `derived_from` gets above, just on the mark's
+                // own table.
+                "UPDATE fact_stands_for SET fact_home = ?, fact_id = ? \
+                 WHERE fact_home = ? AND fact_id = ?",
+                "UPDATE fact_stands_for SET source_home = ?, source_id = ? \
+                 WHERE source_home = ? AND source_id = ?",
             ] {
                 sqlx::query(statement)
                     .bind(survivor_key.as_str())
@@ -2292,6 +2424,7 @@ impl Memory for DoltMemory {
             fields: account.fields,
             refs: account.refs,
             derived_from: account.derived_from,
+            stands_for: Vec::new(),
             inserted_at: Some(self.clock.now()),
             stale_after: None,
         };
@@ -2396,6 +2529,7 @@ impl Memory for DoltMemory {
             fields: account.fields,
             refs: account.refs,
             derived_from: account.derived_from,
+            stands_for: Vec::new(),
             // A retraction is a record in its own right, taken in now.
             inserted_at: Some(self.clock.now()),
             stale_after: None,

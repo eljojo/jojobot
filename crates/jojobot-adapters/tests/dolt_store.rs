@@ -1037,6 +1037,25 @@ async fn dolt_satisfies_the_memory_contract() {
     store.stop().await;
 }
 
+/// **The mark's own contract, against the real store.**
+#[tokio::test]
+async fn dolt_satisfies_the_stands_for_contract() {
+    let scratch = Scratch::new("stands-for");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("standsfor")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+
+    memory::run_all_stands_for(&DoltMemory::open(pool)).await;
+
+    store.stop().await;
+}
+
 /// **…and what sits under a supplied record answers over the real store too.**
 ///
 /// The read is derived from `list_entities` rather than implemented by either

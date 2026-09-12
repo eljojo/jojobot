@@ -539,8 +539,10 @@ impl NewEntity {
 }
 
 /// A metadata edit to an existing entity. **The handle is not in here**: a
-/// rename is a pointer-rewrite, a separate gated operation, not a field edit.
-/// A `None` field is left alone.
+/// rename changes identity and is screened like a creation, a separate gated
+/// operation rather than a field edit — and it rewrites no pointer, since
+/// every one of them already holds the permanent id rather than the name
+/// (rule 268). A `None` field is left alone.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct EntityPatch {
     /// New display name. Screened by the write guard exactly as a creation is —
@@ -646,6 +648,23 @@ pub struct FactPatch {
     /// recorded. Its own flag rather than an empty value, for the reason the
     /// cleared keys are their own list.
     pub clear_derived_from: bool,
+    /// **The claims to mark this record as standing for** — see
+    /// [`Fact::stands_for`]. `None` leaves the mark alone; `Some` replaces it
+    /// whole, exactly as [`FactPatch::edge`] replaces rather than merges.
+    ///
+    /// **An empty set is refused, not stored** — see [`validate_stands_for`].
+    /// A patch that means "take the mark off" says so with
+    /// [`FactPatch::clear_stands_for`], the same way every other pair here
+    /// separates "leave alone", "set", and "take off" into three states
+    /// rather than trying to read the third off an empty second.
+    ///
+    /// Every named claim must exist, exactly as [`FactPatch::derived_from`]
+    /// must.
+    pub stands_for: Option<Vec<FactAddress>>,
+    /// **Take the mark off**, leaving a record that stands for nothing named.
+    /// Its own flag rather than an empty [`FactPatch::stands_for`], for the
+    /// reason [`FactPatch::clear_derived_from`] is its own flag too.
+    pub clear_stands_for: bool,
     /// **A new day to look again on** — see [`Fact::stale_after`]. It is the
     /// caller's judgement about how long a reading stays trustworthy, so a
     /// caller may move it; the stamp that says when jojobot took the record in
@@ -1459,6 +1478,49 @@ pub fn validate_fields(fields: &BTreeMap<String, String>) -> Result<(), MemoryEr
     Ok(())
 }
 
+/// **A mark that stands for nothing is refused, not stored** — see
+/// [`FactPatch::stands_for`].
+///
+/// `Some(&[])` is a state that pair has no honest reading for: not "leave
+/// alone" (that is `None`), not "take it off" (that is
+/// [`FactPatch::clear_stands_for`]). A build that stored it anyway would let
+/// a session interrupted right after starting a mark, before naming anyone
+/// in it, read back as a mark standing for nothing — indistinguishable from
+/// a real, deliberate empty fold, which does not exist. Refusing it is what
+/// makes every mark that IS stored a real one.
+///
+/// **Nor may a mark name the same address twice** — the count of names would
+/// overstate the count of distinct sources, which is the one thing a mark's
+/// count must never do.
+///
+/// **Self-reference is checked separately, by the adapter, not here.** This
+/// runs on the addresses exactly as the patch named them — the caller's own
+/// spelling, not yet resolved to a storage key — and the record being
+/// edited is not visible from a pure function over the patch alone. A store
+/// checks self-reference itself, once both sides are resolved to the same
+/// key space; comparing an unresolved name against a resolved one here would
+/// silently pass a self-reference through whenever a badge is in play.
+pub fn validate_stands_for(stands_for: &[FactAddress]) -> Result<(), MemoryError> {
+    if stands_for.is_empty() {
+        return Err(MemoryError::InvalidFact(
+            "a mark cannot stand for an empty set. To take the mark off, clear it — setting it \
+             to nothing is not the same edit."
+                .to_string(),
+        ));
+    }
+    let mut named = std::collections::BTreeSet::new();
+    if let Some(twice) = stands_for
+        .iter()
+        .find(|address| !named.insert(address.to_string()))
+    {
+        return Err(MemoryError::InvalidFact(format!(
+            "{twice} is named more than once in the same mark. The count is the number of \
+             distinct sources, so a repeat would overstate it."
+        )));
+    }
+    Ok(())
+}
+
 /// **Nor may an edit take that key back off.**
 ///
 /// The set path is screened so the marker cannot be forged; the clear path is
@@ -1530,6 +1592,9 @@ pub fn apply_fact_patch(fact: &mut Fact, patch: &FactPatch) -> Result<(), Memory
     // the reserved key is as unwritable off a record as onto one.
     validate_fields(&patch.fields)?;
     validate_cleared_fields(&patch.clear_fields)?;
+    if let Some(stands_for) = &patch.stands_for {
+        validate_stands_for(stands_for)?;
+    }
 
     if let Some(content) = &patch.content {
         fact.content = normalize_content(content);
@@ -1589,6 +1654,13 @@ pub fn apply_fact_patch(fact: &mut Fact, patch: &FactPatch) -> Result<(), Memory
     }
     if let Some(source) = &patch.derived_from {
         fact.derived_from = Some(source.clone());
+    }
+    // **Cleared before set**, the same order every other pair here uses.
+    if patch.clear_stands_for {
+        fact.stands_for = Vec::new();
+    }
+    if let Some(stands_for) = &patch.stands_for {
+        fact.stands_for = stands_for.clone();
     }
     if let Some(day) = patch.stale_after {
         fact.stale_after = Some(day);
@@ -2183,6 +2255,22 @@ pub struct Fact {
     /// not a wider one. One link, with one fixed meaning: this is not a
     /// vocabulary of relations, and it draws no edge of its own.
     pub derived_from: Option<FactAddress>,
+    /// **The claims this one stands for.** Where [`Fact::derived_from`] names
+    /// the one thing a claim was worked out from, this names the several
+    /// claims a record has been marked as standing for — a synthesis, never a
+    /// citation. Widening `derived_from` itself to hold a set would break the
+    /// property its own doc rests on: one link, one fixed meaning. So the
+    /// mark is its own thing, drawing no edge of its own, exactly as
+    /// `derived_from` draws none.
+    ///
+    /// **Empty is the ordinary case.** A record marked as standing for
+    /// nothing is not a lesser mark — see [`validate_stands_for`], which
+    /// refuses that state outright rather than storing it.
+    ///
+    /// **The named claims are untouched by carrying this.** Nothing here
+    /// supersedes them, moves them, or changes their status; each stays its
+    /// own row, at its own address, independently walkable.
+    pub stands_for: Vec<FactAddress>,
 }
 
 impl Fact {
@@ -2656,6 +2744,11 @@ pub struct FieldWrite {
 /// ⚠️ **Nor does it carry the record's fields or its references.** Those are
 /// versioned by their own substrate and by nothing here, so a claim's write
 /// reporting them would report today's keys against words from a year ago.
+///
+/// **Nor does it carry [`Fact::stands_for`], for the same reason.** The mark
+/// is current state, not versioned per write — a store answers what a record
+/// stands for now, never what it stood for as of an old write, so there is
+/// nothing honest to put here yet.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClaimWrite {
     /// **Which write this is, counting from one.** The first write is what the
@@ -3915,6 +4008,13 @@ mod tests {
     #[tokio::test]
     async fn fake_satisfies_the_contract() {
         contract::run_all(&InMemoryMemory::booted()).await;
+    }
+
+    /// The mark's own contract against the fake — the same suite the gated
+    /// integration test runs against real Dolt.
+    #[tokio::test]
+    async fn fake_satisfies_the_stands_for_contract() {
+        contract::run_all_stands_for(&InMemoryMemory::booted()).await;
     }
 
     /// **The mention contract against the fake**, over the layer that resolves

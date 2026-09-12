@@ -243,6 +243,10 @@ impl Jojobot {
                 .map(|address| FactAddress::parse(address).map_err(memory_error))
                 .transpose()?,
             clear_derived_from: args.clear_derived_from.unwrap_or(false),
+            // Not on this verb's surface yet — the mark is domain-and-adapter
+            // plumbing so far, with no served argument to carry it.
+            stands_for: None,
+            clear_stands_for: false,
             clear_edge: args.clear_edge.unwrap_or(false),
             edge: match parse_edge(args.shape.as_deref(), args.object.as_deref())? {
                 Ok(edge) => edge,

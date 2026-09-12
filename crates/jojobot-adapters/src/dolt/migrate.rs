@@ -397,6 +397,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0043_message_sender_mail_waiting.sql"),
         leaves: Leaves::Column("message", "sender_mail_waiting_at_send"),
     },
+    Migration {
+        version: "0044_fact_stands_for",
+        sql: include_str!("../../migrations/0044_fact_stands_for.sql"),
+        leaves: Leaves::Table("fact_stands_for"),
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a
@@ -807,6 +812,7 @@ mod tests {
         "0041_session_teaching",
         "0042_entity_former_handle",
         "0043_message_sender_mail_waiting",
+        "0044_fact_stands_for",
     ];
 
     /// **A migration set of this test's own, carrying the shape no shipped

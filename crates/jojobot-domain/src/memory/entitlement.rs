@@ -232,6 +232,7 @@ mod tests {
             happened_at: None,
             edge: None,
             derived_from: None,
+            stands_for: Vec::new(),
             fields,
             refs: Vec::new(),
             inserted_at: None,
