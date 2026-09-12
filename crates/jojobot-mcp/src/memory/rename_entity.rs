@@ -201,6 +201,46 @@ impl Jojobot {
                 }
                 json_result(&body)
             }
+            // **A parent refusal is not a near miss, and saying it is offers
+            // a way forward that leads back to the same wall.** Neither of
+            // these is overridable: a parent must already exist, because
+            // nothing is created as a side effect of renaming something
+            // else, and nothing is its own parent. The near-miss sentence
+            // tells a caller to re-call with a token, and a caller who does
+            // is refused again and minted another. Rule 68 is about a way
+            // FORWARD. Mirrors `add_entity`'s own two arms below.
+            Guarded::Blocked {
+                attempted,
+                candidates,
+            } if candidates
+                .iter()
+                .any(|c| c.reason == guard::MatchReason::SelfParent) =>
+            {
+                Ok(blocked_body(
+                    &attempted,
+                    &candidates,
+                    format!(
+                        "Nothing was renamed. '{attempted}' names itself as its parent, and \
+                         nothing is its own parent. No override_token lifts this. Name the \
+                         entity this one sits under, or leave parent off to leave the current \
+                         parent alone."
+                    ),
+                ))
+            }
+            Guarded::Blocked {
+                attempted,
+                candidates,
+            } if attempted != to => Ok(blocked_body(
+                &attempted,
+                &candidates,
+                format!(
+                    "Nothing was renamed. '{attempted}' is the parent this call named, and it \
+                     is not an entity jojobot knows. No override_token lifts this: nothing is \
+                     created as a side effect of renaming something else. Create '{attempted}' \
+                     with its own add_entity call first, then re-call this one — or drop the \
+                     parent to leave '{from}' under its current parent."
+                ),
+            )),
             Guarded::Blocked {
                 attempted,
                 candidates,
@@ -603,6 +643,137 @@ mod tests {
         assert!(
             boxes.iter().any(|b| b.owner.as_str() == "bot:epsilon"),
             "epsilon's own box must still be its own: {boxes:?}",
+        );
+    }
+
+    /// How a refusal HANDS OVER a token, which is the thing a caller can act
+    /// on — as against merely naming the argument to say no token applies.
+    const OFFERS_A_TOKEN: &str = "override_token: \"";
+
+    /// **A refusal about the PARENT says what repairs it, and does not offer
+    /// a token that cannot lift it.**
+    ///
+    /// Mirrors `add_entity`'s own
+    /// `a_parent_refusal_does_not_offer_a_token_that_cannot_lift_it`: before
+    /// this fix, every `Guarded::Blocked` from `rename_entity` — the
+    /// destination colliding, or the parent being unusable — wore the same
+    /// near-miss sentence, which tells a caller to re-call with an
+    /// `override_token`. Neither parent refusal is overridable: a parent
+    /// must exist, because nothing is created as a side effect of renaming
+    /// something else, and nothing is its own parent. A caller following
+    /// that advice is refused again and minted another token, forever — a
+    /// way forward that leads back to the same wall.
+    ///
+    /// Paired with the positive: a parent that DOES exist still reparents,
+    /// asserted in the same read.
+    #[tokio::test]
+    async fn a_rename_parent_refusal_does_not_offer_a_token_that_cannot_lift_it() {
+        let jojobot = handler();
+        let sid = writing_as(&jojobot);
+        ensure(&jojobot, "thing:kettle").await;
+        jojobot
+            .add_entity(Parameters(add_args("thing", "tau", "Tau")))
+            .await
+            .expect("add ok");
+
+        let missing = json_of(
+            &jojobot
+                .rename_entity(Parameters(RenameEntityArgs {
+                    handle: "thing:tau".into(),
+                    to: "work:sigma".into(),
+                    parent: Some("thing:no-such-bike".into()),
+                    recorded_at: None,
+                    override_token: None,
+                    sid: Some(sid.clone()),
+                }))
+                .await
+                .expect("a refusal is an answer, not a failure"),
+        );
+        assert_eq!(missing["status"], "blocked");
+        assert_eq!(missing["attempted"], "thing:no-such-bike");
+        let how = missing["how_to_proceed"]
+            .as_str()
+            .expect("a blocked answer says how to proceed");
+        assert!(
+            !how.contains(OFFERS_A_TOKEN),
+            "no token lifts a parent that does not exist: {how}",
+        );
+        assert!(
+            how.contains("add_entity"),
+            "and the repair is to create it first: {how}",
+        );
+        assert_eq!(
+            missing["candidates"].as_array().map(Vec::len),
+            Some(0),
+            "no candidate resembles it: {missing}",
+        );
+
+        // Self-parent: the destination named as its own parent.
+        let itself = json_of(
+            &jojobot
+                .rename_entity(Parameters(RenameEntityArgs {
+                    handle: "thing:tau".into(),
+                    to: "work:sigma".into(),
+                    parent: Some("work:sigma".into()),
+                    recorded_at: None,
+                    override_token: None,
+                    sid: Some(sid.clone()),
+                }))
+                .await
+                .expect("a refusal is an answer, not a failure"),
+        );
+        assert_eq!(itself["status"], "blocked");
+        let how = itself["how_to_proceed"]
+            .as_str()
+            .expect("a blocked answer says how to proceed");
+        assert!(
+            !how.contains(OFFERS_A_TOKEN),
+            "nothing is its own parent, and no token changes that: {how}",
+        );
+
+        // **And a token does not lift it, which is what the old advice sent a
+        // caller to find out.** The near-miss sentence told them to re-call
+        // with one; doing that is refused again, so the loop the advice
+        // opened is pinned shut here rather than only described.
+        let forced = json_of(
+            &jojobot
+                .rename_entity(Parameters(RenameEntityArgs {
+                    handle: "thing:tau".into(),
+                    to: "work:sigma".into(),
+                    parent: Some("thing:no-such-bike".into()),
+                    recorded_at: None,
+                    override_token: Some(guard::override_token(
+                        &EntityId::person("thing:no-such-bike"),
+                        &[],
+                    )),
+                    sid: Some(sid.clone()),
+                }))
+                .await
+                .expect("a refusal is an answer, not a failure"),
+        );
+        assert_eq!(
+            forced["status"], "blocked",
+            "a token cannot create the parent it names: {forced}",
+        );
+
+        // The positive: a parent that DOES exist still reparents.
+        let ok = json_of(
+            &jojobot
+                .rename_entity(Parameters(RenameEntityArgs {
+                    handle: "thing:tau".into(),
+                    to: "work:sigma".into(),
+                    parent: Some("thing:kettle".into()),
+                    recorded_at: None,
+                    override_token: None,
+                    sid: Some(sid),
+                }))
+                .await
+                .expect("a real parent must still let the rename through"),
+        );
+        assert_eq!(ok["id"], "work:sigma", "{ok}");
+        assert_eq!(
+            ok["parent"], "thing:kettle",
+            "a real parent still reparents: {ok}",
         );
     }
 
