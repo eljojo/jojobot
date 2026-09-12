@@ -464,18 +464,34 @@ impl DoltMemory {
 
     /// **The other direction**: a stored key read back as whatever handle it
     /// answers to today, or kept as written when it wears nobody's badge.
+    ///
+    /// **One row, not the whole table.** [`entity_wearing`](jojobot_domain::memory::entity_wearing)
+    /// finds the first entity in a list whose badge matches; the list this
+    /// used to search was [`known`](Self::known) — every row in the store,
+    /// resolved fresh on every single call. This is the same lookup a rename
+    /// makes findable, `WHERE badge = ?`, checked against what the build
+    /// supplies first because [`known`](Self::known) does too: a stored row
+    /// wins a collision, but nothing stored collides with what nobody wrote.
     async fn current_handle(
         &self,
         tx: &mut Transaction<'_, MySql>,
         stored: &EntityId,
     ) -> Result<EntityId, MemoryError> {
-        let known = self.known(tx).await?;
-        Ok(
-            match jojobot_domain::memory::entity_wearing(stored.as_str(), &known) {
-                Some(entity) => entity.id.clone(),
-                None => stored.clone(),
-            },
-        )
+        let wearing: Option<String> =
+            sqlx::query_scalar("SELECT id FROM entity WHERE badge = ? ORDER BY id LIMIT 1")
+                .bind(stored.as_str())
+                .fetch_optional(&mut **tx)
+                .await
+                .map_err(store)?;
+        if let Some(id) = wearing {
+            return Ok(EntityId(id));
+        }
+        for (entity, _) in self.supplied.records() {
+            if entity.badge.as_deref() == Some(stored.as_str()) {
+                return Ok(entity.id.clone());
+            }
+        }
+        Ok(stored.clone())
     }
 
     /// **Rows plus what the build supplies, over rows already read.** Split out
@@ -3280,6 +3296,80 @@ mod tests {
             many.as_ref().map(|f| f.content.as_str()),
             Some("third thing said"),
             "the projection took a write that is not the newest",
+        );
+        tx.commit().await.expect("the read commits");
+
+        store.stop().await;
+    }
+
+    /// **`current_handle` must answer exactly what `entity_wearing` over the
+    /// full `known` list would answer, for every badge a real corpus holds.**
+    ///
+    /// The contract's own run leaves behind entities, renames and former
+    /// handles — everything `current_handle` exists to resolve. Comparing its
+    /// answer against the list-search it replaces, badge by badge, whole
+    /// value against whole value, is what catches a fast path that gets the
+    /// common row right and a collision or a never-badged handle wrong.
+    #[tokio::test]
+    async fn current_handle_agrees_with_entity_wearing_for_every_badge_the_real_store_holds() {
+        let scratch = Scratch::new("current-handle");
+        let mut store = Dolt::start(&scratch.0, free_port())
+            .await
+            .expect("the store comes up");
+        let pool = store
+            .database("currenthandle")
+            .await
+            .expect("a database of its own");
+        migrate::run(&pool).await.expect("the schema");
+        jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
+            .await
+            .expect("the kinds are seeded");
+
+        let memory = DoltMemory::open(pool.clone());
+        jojobot_domain::memory::testing::contract::run_all(&memory).await;
+
+        let mut tx = pool.begin().await.expect("a transaction");
+        let known = memory.known(&mut tx).await.expect("the known rows read");
+        assert!(
+            known.len() > 50,
+            "the contract should have left far more than {} entities behind",
+            known.len()
+        );
+
+        let mut checked = 0;
+        for entity in &known {
+            let mut candidates = vec![entity.id.clone()];
+            if let Some(badge) = &entity.badge {
+                candidates.push(EntityId(badge.clone()));
+            }
+            for candidate in candidates {
+                let expected = jojobot_domain::memory::entity_wearing(candidate.as_str(), &known)
+                    .map(|e| e.id.clone())
+                    .unwrap_or_else(|| candidate.clone());
+                let actual = memory
+                    .current_handle(&mut tx, &candidate)
+                    .await
+                    .expect("current_handle answers");
+                assert_eq!(
+                    actual, expected,
+                    "current_handle disagreed with entity_wearing over {candidate}",
+                );
+                checked += 1;
+            }
+        }
+        assert!(
+            checked > 50,
+            "too few candidates were actually checked ({checked})",
+        );
+
+        let missing = EntityId("person:contract-nobody".into());
+        assert_eq!(
+            memory
+                .current_handle(&mut tx, &missing)
+                .await
+                .expect("current_handle answers"),
+            missing,
+            "a value nobody wears comes back unchanged",
         );
         tx.commit().await.expect("the read commits");
 
