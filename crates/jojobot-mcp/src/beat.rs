@@ -47,9 +47,19 @@ impl Jojobot {
             return;
         };
         let Some((_, phrase)) = BEAT_CLASSES.iter().find(|(known, _)| *known == class) else {
-            // A class with no phrase would render a beat nothing can read back,
-            // so it writes none at all rather than one that breaks the tally on
-            // the next reconnect.
+            // **Every caller of `beat` is this crate's own code**, so a class
+            // with no phrase is a programming error, not live data — a new
+            // call site landed without its entry in `BEAT_CLASSES`. Loud in
+            // every test and dev build, where `cargo test` runs debug
+            // assertions and the mismatch is caught the moment anything
+            // exercises the new call site, rather than becoming a beat that
+            // silently never writes again. Compiled out in release, where a
+            // write that has already landed must not crash the caller over
+            // its own footnote — the warn below is what release keeps.
+            debug_assert!(
+                false,
+                "no beat phrase for class {class:?} — add it to BEAT_CLASSES"
+            );
             tracing::warn!(
                 class,
                 "no beat phrase for this verb class — no beat written"
@@ -130,6 +140,8 @@ impl Jojobot {
 mod tests {
     use super::*;
     use crate::harness::*;
+    use crate::memory::RenameEntityArgs;
+    use crate::memory::merge_entities::MergeArgs;
     use crate::memory::testing::*;
     use crate::session::testing::*;
     use rmcp::handler::server::wrapper::Parameters;
@@ -520,6 +532,80 @@ mod tests {
             "an anonymous write lands in nobody's chronology, however obvious the candidate — \
              neither as a new beat nor as a count moving on one that is already there"
         );
+    }
+
+    /// **`rename_entity`, `retract` and `merge_entities` each write their own
+    /// beat, paired against `add_entity`, which already did.**
+    ///
+    /// `BEAT_CLASSES` named seven classes and these three call `self.beat`
+    /// with a class it did not name — so the lookup at the top of this file
+    /// failed on every one of them, warned once to a log nobody reads, and
+    /// wrote nothing. Permanently: nothing ever revisits a class once its
+    /// own call site has run. `add_entity` is asserted in the same batch so
+    /// a build that beats about nothing at all does not pass half of this.
+    #[tokio::test]
+    async fn rename_retract_and_merge_each_write_their_own_beat() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+
+        ensure_as(&jojobot, &sid, "alpha").await;
+        ensure_as(&jojobot, &sid, "milhouse").await;
+        ensure_as(&jojobot, &sid, "beta").await;
+        ensure_as(&jojobot, &sid, "kappa").await;
+        let captured = capture_as(&jojobot, &sid, capture_args("alpha", "plays go")).await;
+        let address = captured["address"]
+            .as_str()
+            .expect("an address")
+            .to_string();
+
+        jojobot
+            .retract(Parameters(RetractArgs {
+                address,
+                reason: None,
+                recorded_at: None,
+                sid: Some(sid.clone()),
+            }))
+            .await
+            .expect("retract ok");
+        jojobot
+            .rename_entity(Parameters(RenameEntityArgs {
+                handle: "person:milhouse".into(),
+                to: "person:milhouse-two".into(),
+                parent: None,
+                recorded_at: None,
+                override_token: None,
+                sid: Some(sid.clone()),
+            }))
+            .await
+            .expect("rename ok");
+        jojobot
+            .merge_entities(Parameters(MergeArgs {
+                duplicate: "person:beta".into(),
+                survivor: "person:kappa".into(),
+                reason: None,
+                recorded_at: None,
+                sid: Some(sid.clone()),
+            }))
+            .await
+            .expect("merge ok");
+
+        let live = store
+            .sessions_of(&EntityId("bot:gamma".into()))
+            .await
+            .expect("list ok");
+        let classes: Vec<&str> = live[0]
+            .entries
+            .iter()
+            .filter_map(|e| e.beat.as_deref())
+            .collect();
+        for class in ["add_entity", "retract", "rename_entity", "merge_entities"] {
+            assert!(
+                classes.contains(&class),
+                "{class} wrote no beat: {classes:?}"
+            );
+        }
     }
 
     /// The same race, one class down: two concurrent captures must leave one
