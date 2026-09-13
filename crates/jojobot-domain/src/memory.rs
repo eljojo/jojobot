@@ -3102,17 +3102,19 @@ pub enum MemoryError {
         /// What it is called now.
         now: String,
     },
-    /// **The named handle is real, and still cannot be renamed.**
+    /// **The named handle is real, and still cannot be moved.**
     ///
-    /// Neither of rename's other two misses fits: this is not
+    /// Shared by `rename_entity` and `merge`, the two verbs that mutate a
+    /// stored row rather than reading one: this is not
     /// [`UnknownEntity`](Self::UnknownEntity) — the handle names a record
-    /// the build supplies, so it exists — and it is not
+    /// the build supplies, so it exists — and for a rename it is not
     /// [`HandleMoved`](Self::HandleMoved) either, since it never moved
-    /// anywhere. A rename mutates a stored row, and a build-supplied
-    /// record has none: there is nothing under the handle for the verb to
-    /// move, on this call or any other.
+    /// anywhere. A build-supplied record has no row: there is nothing under
+    /// the handle for either verb to move, on this call or any other,
+    /// whether it is named as a rename's source or as either side of a
+    /// fold.
     #[error(
-        "'{attempted}' is a record the build supplies: it exists, and there is no row under it to rename"
+        "'{attempted}' is a record the build supplies: it exists, and there is no row under it to move"
     )]
     SuppliedHandle {
         /// The build-supplied handle that was named.
@@ -3648,10 +3650,13 @@ pub trait Memory: Send + Sync {
     /// read what happened is the whole safeguard.
     ///
     /// Nothing may be folded into itself ([`MemoryError::NothingToMerge`]), a
-    /// handle naming nothing is [`MemoryError::UnknownEntity`], and a row that
+    /// handle naming nothing is [`MemoryError::UnknownEntity`], a row that
     /// was already folded is not a survivor anything else may be folded into
     /// ([`MemoryError::AlreadyMerged`]) — chains are how a forwarding row stops
-    /// answering in one hop.
+    /// answering in one hop — and a handle the build supplies is real and
+    /// still has no row for either side of a fold to move
+    /// ([`MemoryError::SuppliedHandle`]), exactly as it has none for a
+    /// rename.
     async fn merge(
         &self,
         folded: &EntityId,
@@ -4084,6 +4089,14 @@ mod tests {
     #[tokio::test]
     async fn a_rename_of_a_supplied_handle_is_refused_against_the_fake() {
         contract::a_rename_of_a_supplied_handle_is_refused_not_a_silent_no_op(
+            &fake_knowing_a_supplied_view(),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn a_merge_naming_a_supplied_handle_is_refused_against_the_fake() {
+        contract::a_merge_naming_a_supplied_handle_is_refused_not_a_silent_no_op(
             &fake_knowing_a_supplied_view(),
         )
         .await;

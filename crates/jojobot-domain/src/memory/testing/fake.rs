@@ -1415,13 +1415,35 @@ impl Memory for InMemoryMemory {
             });
         }
         let index = self.index();
-        // Both sides are checked before anything moves, so a refusal leaves the
-        // store exactly as it was.
+        // **Rows only, deliberately** — a fold mutates stored rows, and a
+        // build-supplied record has none to mutate, exactly as
+        // `rename_entity`'s own existence check reads rows only. Reading the
+        // wider `known()` set here would let a supplied handle pass this
+        // check and fall through to the guard, which the mutation below
+        // cannot actually carry out.
+        //
+        // Both sides are checked before anything moves, so a refusal leaves
+        // the store exactly as it was.
         for side in [folded, survivor] {
             if !index.iter().any(|e| &e.id == side) {
+                // **A supplied record is real and still not a row.** Reported
+                // apart from an ordinary miss (rule 234): the handle reads,
+                // lists and searches as existing, so `UnknownEntity` here
+                // would tell the caller in the next breath that it does not.
+                if self
+                    .supplied
+                    .lock()
+                    .expect("fake mutex poisoned")
+                    .record_for(side)
+                    .is_some()
+                {
+                    return Err(MemoryError::SuppliedHandle {
+                        attempted: side.to_string(),
+                    });
+                }
                 return Err(MemoryError::UnknownEntity {
                     attempted: side.to_string(),
-                    nearest: guard::screen(side, &[], &index),
+                    nearest: guard::screen(side, &[], &self.known()),
                 });
             }
         }

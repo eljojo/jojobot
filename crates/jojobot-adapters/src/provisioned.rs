@@ -332,6 +332,20 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
     ) -> Result<Retraction, MemoryError> {
         self.inner.retract(address, reason, date).await
     }
+    /// **A handle the build supplies is taken, on either side of a fold —
+    /// exactly as it is for add, update and rename** (rule 234). Checked
+    /// here, before the store underneath is ever asked, for the reason
+    /// those three are: a guard that consults the store to decide something
+    /// has to see the supplied half too, or a handle that reads, lists and
+    /// searches as existing comes back from a row-only existence check as
+    /// though it names nothing.
+    ///
+    /// ⚠️ **This returns an `Err`, not `Guarded::Blocked`** — unlike its
+    /// three siblings. `merge`'s own signature carries no blocked shape to
+    /// answer into: there is no `Guarded<Merge>`. `MemoryError::SuppliedHandle`
+    /// is the one this layer already has for exactly this fact — real
+    /// handle, no row underneath — so this reuses it rather than growing a
+    /// second shape that says the same thing.
     async fn merge(
         &self,
         folded: &EntityId,
@@ -339,6 +353,13 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
         reason: Option<&str>,
         date: Date,
     ) -> Result<Merge, MemoryError> {
+        for side in [folded, survivor] {
+            if self.provisions.record_for(side).is_some() {
+                return Err(MemoryError::SuppliedHandle {
+                    attempted: side.to_string(),
+                });
+            }
+        }
         self.inner.merge(folded, survivor, reason, date).await
     }
     async fn declare_type(
@@ -608,6 +629,72 @@ mod tests {
             matches!(stored, jojobot_domain::memory::Guarded::Written(ref e) if e.name == "The week ahead"),
             "…and a stored record still renames exactly as it did: {stored:?}",
         );
+    }
+
+    /// **Folding a supplied record away, or into it, is refused before the
+    /// store is ever asked — the fourth sibling merge was missing.**
+    ///
+    /// `add_entity`, `update_entity` and `rename_entity` all short-circuit on
+    /// what the build supplies; `merge` forwarded straight through. Checked
+    /// on both sides, because a supplied handle is equally untouchable as
+    /// the duplicate and as the survivor.
+    ///
+    /// **Paired with a genuinely stored fold, which still lands** — without
+    /// it, a decorator that refused every fold would pass the first two
+    /// assertions identically.
+    #[tokio::test]
+    async fn merging_a_supplied_record_is_refused_and_a_stored_pair_still_merges() {
+        let store = InMemoryMemory::booted();
+        for id in ["thing:merge-spare", "thing:merge-kept"] {
+            store
+                .add_entity(jojobot_domain::memory::NewEntity::new(
+                    EntityId(id.into()),
+                    id,
+                    "the operator",
+                ))
+                .await
+                .expect("the operator's own thing is created")
+                .written()
+                .expect("an empty board blocks nothing");
+        }
+        let over = Provisioned::new(store, Provisions::new(vec![shipped_record("loops")]));
+
+        let as_folded = over
+            .merge(
+                &EntityId("view:loops".into()),
+                &EntityId("thing:merge-kept".into()),
+                None,
+                Date::constant(2026, 6, 13),
+            )
+            .await
+            .expect_err("folding a supplied record away must be refused");
+        assert!(
+            matches!(&as_folded, MemoryError::SuppliedHandle { attempted } if attempted == "view:loops"),
+            "the refusal says the supplied handle exists and has no row to move: {as_folded:?}",
+        );
+
+        let as_survivor = over
+            .merge(
+                &EntityId("thing:merge-spare".into()),
+                &EntityId("view:loops".into()),
+                None,
+                Date::constant(2026, 6, 13),
+            )
+            .await
+            .expect_err("folding a stored thing into a supplied record must be refused");
+        assert!(
+            matches!(&as_survivor, MemoryError::SuppliedHandle { attempted } if attempted == "view:loops"),
+            "the refusal says the same when the supplied handle is the survivor: {as_survivor:?}",
+        );
+
+        over.merge(
+            &EntityId("thing:merge-spare".into()),
+            &EntityId("thing:merge-kept".into()),
+            None,
+            Date::constant(2026, 6, 13),
+        )
+        .await
+        .expect("a fold of two stored things is still the decorator's to pass through");
     }
 
     /// A record the build ships: kind, handle, and the keys it carries.

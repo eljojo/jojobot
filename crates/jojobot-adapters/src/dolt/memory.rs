@@ -2384,15 +2384,28 @@ impl Memory for DoltMemory {
             });
         }
         let mut tx = self.pool.begin().await.map_err(store)?;
+        // **Rows only, deliberately** — a fold mutates stored rows, and a
+        // build-supplied record has none to mutate. The same exception
+        // `rename_entity`'s own existence check reads off.
         let index = Self::index(&mut tx).await?;
         // **Everything is decided before anything moves.** A fold rewrites rows
         // across every table that holds a handle, so a refusal discovered
         // half-way through is the one outcome this must not produce.
         for side in [folded, survivor] {
             let Some(held) = index.iter().find(|e| &e.id == side) else {
+                // **A supplied record is real and still not a row** — reported
+                // apart from an ordinary miss (rule 234): the handle reads,
+                // lists and searches as existing, so `UnknownEntity` here
+                // would tell the caller in the next breath that it does not.
+                if self.supplied.record_for(side).is_some() {
+                    return Err(MemoryError::SuppliedHandle {
+                        attempted: side.to_string(),
+                    });
+                }
+                let known = self.extend_with_supplied(index.clone());
                 return Err(MemoryError::UnknownEntity {
                     attempted: side.to_string(),
-                    nearest: guard::screen(side, &[], &index),
+                    nearest: guard::screen(side, &[], &known),
                 });
             };
             if let Some(into) = &held.merged_into {

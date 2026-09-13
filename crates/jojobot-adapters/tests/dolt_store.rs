@@ -1401,6 +1401,7 @@ async fn dolt_satisfies_the_supplied_record_guard_contract() {
     memory::an_exact_collision_with_a_supplied_handle_is_never_forceable(&known).await;
     memory::a_claim_on_a_supplied_record_reads_back(&known).await;
     memory::a_rename_of_a_supplied_handle_is_refused_not_a_silent_no_op(&known).await;
+    memory::a_merge_naming_a_supplied_handle_is_refused_not_a_silent_no_op(&known).await;
 
     store.stop().await;
 }

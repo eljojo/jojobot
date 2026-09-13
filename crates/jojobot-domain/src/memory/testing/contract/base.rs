@@ -5285,6 +5285,75 @@ pub async fn a_rename_of_a_supplied_handle_is_refused_not_a_silent_no_op<M: Memo
     );
 }
 
+/// **Naming a build-supplied record on either side of a fold is refused,
+/// never a bare miss** — `merge`'s existence check reads stored rows only,
+/// deliberately excluding what the build supplies, exactly as
+/// `rename_entity`'s does; a supplied record's handle reads, lists and
+/// searches as existing, so `UnknownEntity` there would be a lie the caller
+/// has no way to catch.
+///
+/// **Paired with a genuinely unknown handle, which still misses as such** —
+/// or a store that answered `SuppliedHandle` for every not-found handle
+/// would pass this case identically to the one it exists to catch (rule
+/// 234).
+pub async fn a_merge_naming_a_supplied_handle_is_refused_not_a_silent_no_op<M: Memory>(store: &M) {
+    let shipped = EntityId(SUPPLIED_VIEW_FOR_THE_GUARD_SPECS.into());
+    let stored = EntityId("thing:contract-supplied-merge-stored".into());
+    add(
+        store,
+        NewEntity::new(
+            stored.clone(),
+            "Merge Stored, Not Supplied",
+            "contract-fixture",
+        ),
+    )
+    .await;
+
+    // The supplied record as the duplicate side.
+    let as_folded = store
+        .merge(&shipped, &stored, None, date(2026, 6, 13))
+        .await
+        .expect_err("folding a build-supplied record away must be refused");
+    assert!(
+        matches!(&as_folded, MemoryError::SuppliedHandle { attempted } if attempted == &shipped.to_string()),
+        "a supplied record named as the duplicate must say it is a supplied record with no \
+         row to move, never a bare miss: {as_folded:?}",
+    );
+
+    // The supplied record as the survivor side.
+    let as_survivor = store
+        .merge(&stored, &shipped, None, date(2026, 6, 13))
+        .await
+        .expect_err("folding a stored record into a build-supplied one must be refused");
+    assert!(
+        matches!(&as_survivor, MemoryError::SuppliedHandle { attempted } if attempted == &shipped.to_string()),
+        "a supplied record named as the survivor must say the same: {as_survivor:?}",
+    );
+
+    assert!(
+        store
+            .list_entities(None)
+            .await
+            .expect("list_entities should succeed")
+            .iter()
+            .all(|e| e.id != stored || e.merged_into.is_none()),
+        "a refused fold must write nothing: the stored side must not end up folded away",
+    );
+
+    // A genuinely unknown handle still misses as such — the case this one
+    // must be told apart from is a store that answers SuppliedHandle for
+    // every miss.
+    let nobody = EntityId("thing:contract-supplied-merge-nobody".into());
+    let unknown = store
+        .merge(&nobody, &stored, None, date(2026, 6, 13))
+        .await
+        .expect_err("a handle nothing ever held must still miss");
+    assert!(
+        matches!(&unknown, MemoryError::UnknownEntity { attempted, .. } if attempted == &nobody.to_string()),
+        "a genuinely unknown handle must miss as such, not as a supplied one: {unknown:?}",
+    );
+}
+
 /// **A genuine move still says where the thing went; a handle nothing
 /// ever held still misses — from `rename_entity` itself**, not only
 /// the pure resolver [`super::resolve_handle`] already covers.
