@@ -380,14 +380,48 @@ pub(crate) fn memory_declined(
         )),
         // **Real, and with nothing stored underneath it.** Neither a create
         // (it already exists) nor an ordinary miss (it is not gone): a
-        // build-supplied record has nothing for a rename to move.
+        // build-supplied record has nothing for `rename_entity` or `merge`
+        // to move, on either side of a fold.
         MemoryError::SuppliedHandle { ref attempted } => Ok(blocked_body(
             &EntityId(attempted.clone()),
             &[],
             format!(
-                "Nothing was renamed: {e}. Sending this again will not change the answer — \
-                 '{attempted}' is part of the software rather than something stored that a \
-                 rename could move."
+                "Nothing changed: {e}. Sending this again will not change the answer — \
+                 '{attempted}' is part of the software rather than something stored that \
+                 {verb} could move."
+            ),
+        )),
+        // **Two of `merge`'s own misses**, answered here for the same reason
+        // `rename_entity`'s three are: neither is a resemblance or an
+        // ordinary absence, and the tool's own published description
+        // promises both come back `status: blocked` naming a way forward —
+        // a promise the code was breaking rather than the description
+        // (rule 199).
+        //
+        // **Two sides of one handle** is not a resemblance: the survivor is
+        // fine, it names exactly what the duplicate already answers to.
+        MemoryError::NothingToMerge { ref attempted } => Ok(blocked_body(
+            &EntityId(attempted.clone()),
+            &[],
+            format!(
+                "Nothing was merged: {e}. Sending this again with the same handle on both \
+                 sides will not change the answer — name a survivor that differs from \
+                 '{attempted}'."
+            ),
+        )),
+        // **Stale, not absent** (rule 261): the row named is real — it is a
+        // forwarding row rather than a side to fold or a survivor to fold
+        // into — so the way forward is the handle it forwards to, on
+        // whichever side it was named.
+        MemoryError::AlreadyMerged {
+            ref attempted,
+            ref into,
+        } => Ok(blocked_body(
+            &EntityId(attempted.clone()),
+            &[],
+            format!(
+                "Nothing was merged: {e}. Re-call {verb} naming '{into}' instead of \
+                 '{attempted}' — that is where it resolves now."
             ),
         )),
         other => Err(memory_error(other)),

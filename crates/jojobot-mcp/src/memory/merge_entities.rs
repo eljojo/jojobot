@@ -100,3 +100,119 @@ impl Jojobot {
         json_result(&body)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::harness::*;
+    use crate::memory::testing::add_args;
+
+    /// **Naming one handle as both sides is an answer, not a protocol
+    /// failure** — the tool's own description promises `status: blocked`,
+    /// and `MemoryError::NothingToMerge` fell straight past
+    /// `memory_declined` into the client-error channel instead.
+    #[tokio::test]
+    async fn merging_a_handle_into_itself_is_blocked_rather_than_a_client_error() {
+        let jojobot = handler();
+        let sid = writing_as(&jojobot);
+        jojobot
+            .add_entity(Parameters(add_args(
+                "person",
+                "person:milhouse",
+                "Milhouse",
+            )))
+            .await
+            .expect("add ok");
+
+        let result = jojobot
+            .merge_entities(Parameters(MergeArgs {
+                duplicate: "person:milhouse".into(),
+                survivor: "person:milhouse".into(),
+                reason: None,
+                recorded_at: None,
+                sid: Some(sid),
+            }))
+            .await
+            .expect("folding a handle into itself is an answer, not a protocol failure");
+        let body = blocked(&result);
+        assert_eq!(body["attempted"], "person:milhouse");
+        assert!(
+            body["how_to_proceed"]
+                .as_str()
+                .unwrap()
+                .contains("survivor"),
+            "the way forward names what to send instead: {body}",
+        );
+    }
+
+    /// **Naming a handle that was already folded away is an answer too**,
+    /// on either side — the description promises this comes back blocked
+    /// and names the handle to use instead, and `MemoryError::AlreadyMerged`
+    /// fell past `memory_declined` exactly as `NothingToMerge` did.
+    #[tokio::test]
+    async fn merging_an_already_merged_handle_is_blocked_rather_than_a_client_error() {
+        let jojobot = handler();
+        let sid = writing_as(&jojobot);
+        for handle in ["person:milhouse", "person:alpha", "person:bart"] {
+            jojobot
+                .add_entity(Parameters(add_args("person", handle, handle)))
+                .await
+                .expect("add ok");
+        }
+        jojobot
+            .merge_entities(Parameters(MergeArgs {
+                duplicate: "person:milhouse".into(),
+                survivor: "person:alpha".into(),
+                reason: None,
+                recorded_at: None,
+                sid: Some(sid.clone()),
+            }))
+            .await
+            .expect("the first fold lands")
+            .content
+            .first()
+            .expect("a body came back");
+
+        // The forwarding handle named again, as the duplicate.
+        let result = jojobot
+            .merge_entities(Parameters(MergeArgs {
+                duplicate: "person:milhouse".into(),
+                survivor: "person:bart".into(),
+                reason: None,
+                recorded_at: None,
+                sid: Some(sid.clone()),
+            }))
+            .await
+            .expect("a folded handle named again is an answer, not a protocol failure");
+        let body = blocked(&result);
+        assert_eq!(body["attempted"], "person:milhouse");
+        assert!(
+            body["how_to_proceed"]
+                .as_str()
+                .unwrap()
+                .contains("person:alpha"),
+            "the way forward names where it forwards to: {body}",
+        );
+
+        // The forwarding handle named again, as the survivor.
+        let as_survivor = jojobot
+            .merge_entities(Parameters(MergeArgs {
+                duplicate: "person:bart".into(),
+                survivor: "person:milhouse".into(),
+                reason: None,
+                recorded_at: None,
+                sid: Some(sid),
+            }))
+            .await
+            .expect("a folded handle named as the survivor is an answer too");
+        let body = blocked(&as_survivor);
+        assert_eq!(body["attempted"], "person:milhouse");
+        assert!(
+            body["how_to_proceed"]
+                .as_str()
+                .unwrap()
+                .contains("person:alpha"),
+            "the way forward names where it forwards to, on either side: {body}",
+        );
+    }
+}
