@@ -37,7 +37,9 @@ impl Jojobot {
                        It is a plain read: nothing here is begun, closed or swept. A bot with no \
                        runs at all comes back with an empty list rather than a blocked answer — \
                        that is not a fault, it is a bot that has never journalled. Each run \
-                       carries its own handle (`sid`, addressable through start_here's resume), \
+                       carries its own handle (`sid`, addressable through start_here's resume — \
+                       `null` only for a run that predates stored handles, since a plain read mints \
+                       none), \
                        what it was working on last, its state (active · wrapped · abandoned), \
                        when it began, when it last had anything to show for itself, and how many \
                        beats its chronology holds — never the chronology itself, which grows \
@@ -73,24 +75,27 @@ impl Jojobot {
         let limit = args.limit.map_or(DEFAULT_LIMIT, |l| l as usize);
         runs.truncate(limit);
 
-        let rendered: Result<Vec<serde_json::Value>, CallToolResult> = runs
+        let rendered: Vec<serde_json::Value> = runs
             .iter()
             .map(|session| {
-                let handle = self.handle_for(&caller.bot, &session.id)?;
-                Ok(serde_json::json!({
-                    "sid": handle.as_str(),
+                serde_json::json!({
+                    // **The handle the card was born with, read off the
+                    // record — never minted.** A registry mint is a write,
+                    // and this call promises to begin, close and sweep none
+                    // of a bot's runs. A card written before handles were
+                    // persisted carries none, and comes back `null` rather
+                    // than minted on the spot: honest about what this run
+                    // cannot yet be addressed by, rather than a side effect
+                    // a plain read must not have.
+                    "sid": session.sid.as_ref().map(|s| s.as_str()),
                     "working_on": session.focus,
                     "state": session.state.as_token(),
                     "started_at": session.started_at.to_string(),
                     "last_beat": session.last_beat().to_string(),
                     "entry_count": session.entries.len(),
-                }))
+                })
             })
             .collect();
-        let rendered = match rendered {
-            Ok(rendered) => rendered,
-            Err(refused) => return Ok(refused),
-        };
 
         json_result(&serde_json::json!({
             "bot": caller.bot.as_str(),
@@ -205,6 +210,42 @@ mod tests {
             empty["runs"].as_array().expect("a list").len(),
             0,
             "{empty}"
+        );
+    }
+
+    /// **A plain read never mints.** A card with no stored handle — the shape
+    /// of one written before handles were persisted — is answered `sid: null`
+    /// rather than jojobot minting one on the spot: `list_runs` promises to
+    /// begin, close and sweep none of a bot's runs, and a registry mint taken
+    /// under no gate is exactly the race the boot's own mint (`attach.rs`)
+    /// takes a gate to avoid.
+    #[tokio::test]
+    async fn list_runs_answers_a_handleless_card_with_sid_null_rather_than_minting_one() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma").await;
+
+        let legacy = run(&store, "gamma", 1, "from before handles were stored").await;
+        store.forget_sid(&legacy.id);
+
+        let sid = as_bot(&jojobot, "gamma");
+        let body = json_of(
+            &jojobot
+                .list_runs(Parameters(ListRunsArgs {
+                    limit: None,
+                    sid: Some(sid),
+                }))
+                .await
+                .expect("list_runs ok"),
+        );
+        assert_eq!(body["count"], 1, "{body}");
+        assert!(
+            body["runs"][0]["sid"].is_null(),
+            "a card with no stored handle must not be minted one by a plain read: {body}"
+        );
+        assert!(
+            jojobot.registry.addressing(&legacy.id).is_none(),
+            "list_runs must not have minted a handle for this card"
         );
     }
 
