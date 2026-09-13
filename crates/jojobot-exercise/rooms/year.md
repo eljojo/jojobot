@@ -189,7 +189,7 @@ say     February: the club cannot be walked to its members, so August's question
 # The first of five small repairs on the canoe, scattered across the year.
 # December asks the operator's real question about the pile they add up to,
 # and nothing before then names a mark or a fold.
-recall {"subject": "thing:canoe", "facts": true}
+recall {"subject": "thing:canoe", "facts": true, "stood_for": true}
 carries "recorded_at":"2026-02-08"
 say     February: nothing on the canoe carries this sitting's own day, so the soft spot the operator noticed today is not on record for December to draw on
 ```
@@ -219,7 +219,7 @@ say     March: nothing says the club meets on Tuesdays, so July has nothing to t
 
 # The second small repair. Same reason as February's own note beside its
 # first one: no mark, no fold, until December asks.
-recall {"subject": "thing:canoe", "facts": true}
+recall {"subject": "thing:canoe", "facts": true, "stood_for": true}
 carries "recorded_at":"2026-03-15"
 say     March: nothing on the canoe carries this sitting's own day, so the patch the operator made today is not on record for December to draw on
 ```
@@ -280,7 +280,7 @@ lacks   place:north-trail-2
 say     May: the washout was not filed against the trail that already existed — either nothing was filed, or a second trail was stood up to carry it
 
 # The third small repair, same reason as before.
-recall {"subject": "thing:canoe", "facts": true}
+recall {"subject": "thing:canoe", "facts": true, "stood_for": true}
 carries "recorded_at":"2026-05-10"
 say     May: nothing on the canoe carries this sitting's own day, so the varnish the operator put on today is not on record for December to draw on
 ```
@@ -376,7 +376,7 @@ check   julys_claim_is_withdrawn_rather_than_rewritten
 say     July: no retraction appeared on the club in this sitting's own window, so the March claim about Tuesdays was either left standing or rewritten in place instead of withdrawn
 
 # The fourth small repair, same reason as before.
-recall {"subject": "thing:canoe", "facts": true}
+recall {"subject": "thing:canoe", "facts": true, "stood_for": true}
 carries "recorded_at":"2026-07-05"
 say     July: nothing on the canoe carries this sitting's own day, so the foot brace the operator replaced today is not on record for December to draw on
 ```
@@ -456,7 +456,7 @@ carries "happened_at":"2026-06-14"
 say     nothing on the pump currently carries the day it came back, so a reader is left with no day to find — whether it was never recorded, or a later, legitimate correction cleared the only trace of it
 
 # The fifth and last small repair. Nothing has asked about the pile yet.
-recall {"subject": "thing:canoe", "facts": true}
+recall {"subject": "thing:canoe", "facts": true, "stood_for": true}
 carries "recorded_at":"2026-09-13"
 say     September: nothing on the canoe carries this sitting's own day, so the crack the operator patched today is not on record for December to draw on
 ```

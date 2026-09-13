@@ -2100,7 +2100,10 @@ const LATER_DECEMBER: &str = "Phase 15";
 async fn canoes_facts(seen: &Observed<'_>) -> Vec<Value> {
     let read = seen
         .room
-        .call("recall", json!({"subject": CANOE, "facts": true}))
+        .call(
+            "recall",
+            json!({"subject": CANOE, "facts": true, "stood_for": true}),
+        )
         .await;
     serde_json::from_str::<Value>(&read)
         .ok()
