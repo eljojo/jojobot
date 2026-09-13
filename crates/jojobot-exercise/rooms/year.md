@@ -22,11 +22,12 @@ that was told it is March and wrote under the day the run happened fails
 saying so. That is not the harness catching itself: it is a real session's
 most likely silent mistake, caught where a person reads it.
 
-**One sitting is asked about an earlier day and answers under that day**, which
-is right: a date says when a claim is true of and not when somebody typed it.
-That sitting says so under its own heading, the run generates nothing for it,
-and its lock names the day it does write under. The exemption is written where
-a person reads it rather than worked out from the text.
+**One sitting is asked about something that happened on an earlier day, and
+names that day in a separate field.** A date says when a claim is true of and
+not when somebody typed it, so the earlier day lands there. The record itself
+is still written on this sitting's own day, so the run's generated assertion
+checks it exactly as it does for every other sitting; that sitting's own lock,
+below, asks about the separate field instead.
 
 ## Two facts every entry opens with
 
@@ -420,8 +421,10 @@ say     August: nothing on the club carries this sitting's own day, so the one t
 **Session: fresh.** **Day: 2026-09-13.**
 
 The pump came back at the survey in June, so
-the record belongs on the June day and not on this sitting's own. The run
-generates no day assertion here and the lock below names the day instead.
+the record names that day separately, under `happened_at`. The record itself
+is still written on this sitting's own day, which the run's generated
+assertion checks like any other sitting's; the lock below asks about the day
+the pump came back instead.
 
 > This is a role-play: play the day below as if it is really today.
 >
