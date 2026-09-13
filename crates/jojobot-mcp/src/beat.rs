@@ -572,7 +572,7 @@ mod tests {
         jojobot
             .rename_entity(Parameters(RenameEntityArgs {
                 handle: "person:milhouse".into(),
-                to: "person:milhouse-two".into(),
+                to: "person:bart".into(),
                 parent: None,
                 recorded_at: None,
                 override_token: None,
