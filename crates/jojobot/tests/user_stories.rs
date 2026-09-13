@@ -24,6 +24,8 @@ mod backdated;
 mod bikes;
 #[path = "user_stories/boot.rs"]
 mod boot;
+#[path = "user_stories/catching_up.rs"]
+mod catching_up;
 #[path = "user_stories/challenge.rs"]
 mod challenge;
 /// A rule settled by reading it at its address, not by taking somebody's word.
