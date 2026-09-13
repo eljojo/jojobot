@@ -2403,18 +2403,23 @@ async fn the_bike_locks_mistake_is_rewritten_in_place(seen: &Observed<'_>) -> Re
         .room
         .call(
             "recall",
-            json!({"subject": BIKE_LOCK, "history_record": address}),
+            json!({"subject": BIKE_LOCK, "history_record": address, "history_most": 1}),
         )
         .await;
     let parsed_trace: Value = serde_json::from_str(&trace).unwrap_or(Value::Null);
-    let writes = parsed_trace["objects"][0]["record_history"]["writes"]
-        .as_array()
-        .map(Vec::len)
+    // **The reported total, not the length of what this read happened to
+    // ship.** A `history_record` read ships at most `history_most` writes and
+    // reports the true count beside them, for the reason
+    // [`a_records_trace_matches_the_writes_the_run_made`]'s own doc gives —
+    // a long history comes back elided, and measuring the shipped list would
+    // read an elision as a missing write.
+    let writes = parsed_trace["objects"][0]["record_history"]["count"]
+        .as_u64()
         .unwrap_or(0);
     match writes >= 2 {
         true => Ok(()),
         false => Err(format!(
-            "{address}'s own trace carries {writes} write(s), so nothing here shows a mistake \
+            "{address}'s own trace reports {writes} write(s), so nothing here shows a mistake \
              being caught and corrected in the same breath it was made: {trace}"
         )),
     }

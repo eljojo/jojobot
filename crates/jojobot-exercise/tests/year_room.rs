@@ -3394,6 +3394,43 @@ async fn the_bike_locks_rewrite_lock_reddens_on_one_write_or_two_records() {
     );
 }
 
+/// 🚨 **The rewrite lock reads the trace's own REPORTED TOTAL, never the
+/// length of whatever a read happened to ship.**
+///
+/// A `history_record` read ships at most `history_most` writes and reports
+/// the true count beside them — the same distinction
+/// [`a_records_trace_matches_the_writes_the_run_made`]'s own doc names for
+/// its neighbour lock: a long history comes back elided, and measuring the
+/// shipped list reads an elision as a missing write. **The bike lock's own
+/// correction genuinely carries two writes**, proven here by an independent,
+/// uncut read before the lock is ever asked — so a failure below is about
+/// the lock's own read rather than about whether the correction happened.
+#[tokio::test]
+async fn the_bike_locks_rewrite_lock_holds_on_a_record_whose_trace_read_is_cut() {
+    let (_room, surface) = furnished().await;
+    let boundaries = work_the_year(&surface, &room_document(), &WITHOUT_LATER_DECEMBER, &[]).await;
+    let sid = sitting(&surface, "2026-12-20").await;
+    let address = bike_lock_corrected_in_the_same_breath(&surface, &sid).await;
+    let full = surface
+        .call(
+            "recall",
+            json!({"subject": "thing:bike-lock", "history_record": address}),
+        )
+        .await;
+    let parsed_full: Value = serde_json::from_str(&full).expect("the trace is json");
+    assert_eq!(
+        parsed_full["objects"][0]["record_history"]["count"], 2,
+        "the bike lock's own same-breath correction should carry two writes: {full}",
+    );
+    let judged = judge_all(&surface, &boundaries).await;
+    assert!(
+        judged[LATE_DECEMBER[5]].held,
+        "the bike lock's correction genuinely carries two writes and the rewrite lock still \
+         failed, so it is not reading the trace's own reported total: {}",
+        saying(&judged),
+    );
+}
+
 /// 🚨 **February's lock is satisfiable only by what February recorded.**
 ///
 /// The needle it used to carry was ambiguous rather than wrong: September draws
