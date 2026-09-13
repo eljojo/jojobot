@@ -625,6 +625,97 @@ mod tests {
         );
     }
 
+    /// **The handover is the run that WRAPPED last, not the one that STARTED
+    /// last.**
+    ///
+    /// `sessions_of` sorts newest-start-first, and the handover used to take
+    /// the first `Wrapped` run off that list — the newest START among the
+    /// wrapped runs, not the newest CLOSE. A run started Monday, worked all
+    /// week and wrapped Friday lost to a same-evening run started Wednesday,
+    /// because Wednesday sorts ahead of Monday — so the next boot read the
+    /// older story and never saw the newer one.
+    ///
+    /// **Both halves asserted**, because a build that always returned the
+    /// week-long run's story would pass the first half by accident.
+    #[tokio::test]
+    async fn the_handover_is_the_run_that_wrapped_most_recently_not_the_one_that_started_most_recently()
+     {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma").await;
+        let now = jiff::Timestamp::now();
+
+        // Started Monday, worked all week, and is the run that wrapped LAST.
+        let long_running = store
+            .begin(NewSession {
+                timezone: None,
+                started_on: None,
+                bot: EntityId("bot:gamma".into()),
+                sid: Sid("t001".into()),
+                focus: "the week-long piece of work".into(),
+                started_at: now - jiff::SignedDuration::from_hours(96),
+            })
+            .await
+            .expect("begin ok");
+        store
+            .append(
+                &long_running.id,
+                NewEntry::manual(
+                    "wrapped Friday evening — the story that must win",
+                    now - jiff::SignedDuration::from_hours(2),
+                    None,
+                ),
+            )
+            .await
+            .expect("append ok");
+        store
+            .close(&long_running.id, SessionState::Wrapped)
+            .await
+            .expect("close ok");
+
+        // Started Wednesday — AFTER the run above — and wrapped that same
+        // evening, well BEFORE it: the newer start, the older close.
+        let short_run = store
+            .begin(NewSession {
+                timezone: None,
+                started_on: None,
+                bot: EntityId("bot:gamma".into()),
+                sid: Sid("t002".into()),
+                focus: "a same-day errand".into(),
+                started_at: now - jiff::SignedDuration::from_hours(48),
+            })
+            .await
+            .expect("begin ok");
+        store
+            .append(
+                &short_run.id,
+                NewEntry::manual(
+                    "wrapped Wednesday evening — the older close",
+                    now - jiff::SignedDuration::from_hours(46),
+                    None,
+                ),
+            )
+            .await
+            .expect("append ok");
+        store
+            .close(&short_run.id, SessionState::Wrapped)
+            .await
+            .expect("close ok");
+
+        let body = boot(&jojobot, "gamma").await;
+        let story = body["session"]["handover"]["story"]
+            .as_str()
+            .expect("a story");
+        assert!(
+            story.contains("must win"),
+            "the run that wrapped LAST must be the handover: {body}"
+        );
+        assert!(
+            !story.contains("older close"),
+            "…not the run that merely started later: {body}"
+        );
+    }
+
     /// **A sitting that left nothing says so, and does not read as silence.**
     ///
     /// ⭐ **On the measured evidence this is the COMMON path, not an edge**:

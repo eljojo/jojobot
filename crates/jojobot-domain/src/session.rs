@@ -890,11 +890,16 @@ pub async fn sweep_and_find(
         .filter(|s| !s.state.is_terminal() && !s.is_stale(now, today))
         .cloned()
         .collect();
-    // **The newest run somebody closed properly**, read before the list is
-    // consumed. Newest first already, so the first wrapped one is the newest.
+    // **The run somebody closed properly MOST RECENTLY**, read before the
+    // list is consumed. `existing` sorts newest-START-first, which is not
+    // the order a WRAP happened in: a run started long ago and wrapped just
+    // now still needs to win over one started more recently and wrapped
+    // earlier. `last_beat` is the wrap's own moment — the closing story is
+    // the last entry `wrap_session` appends, right before the close.
     let handover = existing
         .iter()
-        .find(|s| s.state == SessionState::Wrapped)
+        .filter(|s| s.state == SessionState::Wrapped)
+        .max_by_key(|s| s.last_beat())
         .cloned();
     // **Read AFTER the sweep, and through it.** The run this boot just marked
     // `abandoned` is the archetypal "resume last session" — it is the one that
