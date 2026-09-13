@@ -14,7 +14,7 @@
 //! * [`orientation`] — `ping`, `start_here`, and the boot beneath them.
 //! * [`memory`] — the eight verbs over entities and facts.
 //! * [`mailboxes`] — the six verbs over boxes and messages.
-//! * [`session`] — the three verbs that keep a run's own record.
+//! * [`session`] — the four verbs that keep and read a run's own record.
 //!
 //! Three things belong to no one context and sit beside them: [`caller`] (who
 //! is asking, and which card their write lands in), [`beat`] (jojobot's own
@@ -95,7 +95,7 @@ pub use memory::{
     SearchArgs, SetCharterArgs, UpdateEntityArgs, UpdateFactArgs,
 };
 pub use orientation::OrientArgs;
-pub use session::{AmendJournalArgs, JournalArgs, WrapSessionArgs};
+pub use session::{AmendJournalArgs, JournalArgs, ListRunsArgs, WrapSessionArgs};
 
 use mailboxes::wire::*;
 use memory::declined::*;

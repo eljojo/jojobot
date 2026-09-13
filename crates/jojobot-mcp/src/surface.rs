@@ -370,10 +370,12 @@ fn the_tool_surface_is_exactly_this_list() {
     // that has one; and no list_mailboxes, RETIRED rather than never-built.
     // Its two surviving jobs are `read_mailbox` with counts_only (your own
     // box's counts and its unreadable report, taking delivery of nothing)
-    // and `start_here`'s snapshot (every box on the board by name). The
-    // three session verbs are journal, amend_journal and wrap_session (there
-    // is deliberately no start_session — booting an identity IS starting its
-    // session); the rest are Memory's.
+    // and `start_here`'s snapshot (every box on the board by name). The four
+    // session verbs are journal, amend_journal, wrap_session and list_runs
+    // (there is deliberately no start_session — booting an identity IS
+    // starting its session); list_runs is the one read among them, and takes
+    // no `bot` argument — the `sid` says whose runs it reads, exactly as it
+    // says whose box `read_mailbox` opens; the rest are Memory's.
     assert_eq!(
         names,
         [
@@ -383,6 +385,7 @@ fn the_tool_surface_is_exactly_this_list() {
             "declare_type",
             "journal",
             "list_entities",
+            "list_runs",
             "list_sent",
             "mark_processed",
             "merge_entities",
@@ -540,6 +543,7 @@ fn the_verbs_whose_misses_are_blocked_all_say_so() {
         "journal",
         "amend_journal",
         "wrap_session",
+        "list_runs",
         "read_message",
         "set_charter",
         "start_here",
@@ -698,6 +702,7 @@ fn the_session_verbs_are_described_by_the_one_address_they_take() {
         "journal",
         "amend_journal",
         "wrap_session",
+        "list_runs",
         "read_mailbox",
         "post_message",
     ] {
