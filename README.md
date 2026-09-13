@@ -186,6 +186,7 @@ Two consequences worth stating outright, because they surprise people:
 | `journal` | Recording what happened, at the altitude of a journal rather than a log. |
 | `amend_journal` | Fixing the last thing it wrote, rather than appending a correction. |
 | `wrap_session` | Ending this run and telling its story. |
+| `list_runs` | Seeing its own past runs, in whatever state each reached. |
 
 ### Planned
 
