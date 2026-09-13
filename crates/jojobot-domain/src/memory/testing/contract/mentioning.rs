@@ -543,6 +543,108 @@ pub async fn a_ref_follows_a_thing_that_is_rehandled<M: Memory + ?Sized, B: Memo
     );
 }
 
+/// 🚨 **A reference-typed field value resolves in THING scope exactly as it
+/// does in RECORD scope, after a rename.**
+///
+/// `Memory::fields` folds a thing's writes into the map a thing-scope filter
+/// compares against — the default scope, so this is the shape most callers
+/// write. `render_fact` walks a reference-typed field value through
+/// `resolve_handle` on every fact-returning read, which is what a
+/// record-scope filter compares against instead. Before this, `fields` was a
+/// bare delegate with no resolution, so the two disagreed about the same key
+/// on the same thing: a filter for today's handle missed, in thing scope
+/// alone, an object that points there right now.
+///
+/// **Paired in one read**: found under today's handle, and NOT found under
+/// the handle the query never sent — the trap is that "not found under the
+/// stale handle" passes identically on a build that finds nothing at all, so
+/// the positive half has to stand beside it.
+pub async fn a_reference_typed_field_value_resolves_in_thing_scope_after_a_rename<
+    M: Memory + ?Sized,
+>(
+    mentioning: &M,
+) {
+    mentioning
+        .declare_type(DeclaredType::new(
+            "contract-scope-pet",
+            vec![Field::new("owner", ValueType::Reference)],
+        ))
+        .await
+        .expect("the type is declared");
+
+    let was = EntityId::person("person:contract-scope-owner-was");
+    mentioning
+        .add_entity(NewEntity::new(was.clone(), "The Old Owner", "the roster"))
+        .await
+        .expect("the fixture is written")
+        .written()
+        .expect("nothing collides with it");
+
+    let pet = EntityId("pet:contract-scope-pet".into());
+    mentioning
+        .add_entity(NewEntity::new(pet.clone(), "The Pet", "the roster"))
+        .await
+        .expect("the fixture is written")
+        .written()
+        .expect("nothing collides with it");
+
+    capture(
+        mentioning,
+        NewFact {
+            fields: [("owner".to_string(), was.to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(pet.clone(), "belongs to its owner", date(2026, 7, 1))
+        },
+    )
+    .await;
+
+    let now = EntityId::person("person:contract-scope-owner-now");
+    mentioning
+        .rename_entity(&was, &now, None, date(2026, 7, 2), None)
+        .await
+        .expect("the rename lands")
+        .written()
+        .expect("nothing collides with the destination");
+
+    let query = |value: &str| graph::GraphQuery {
+        select: graph::Selection {
+            fields: vec![graph::FieldFilter::holding("owner", value)],
+            ..graph::Selection::default()
+        },
+        include: graph::Include {
+            facts: false,
+            prose: false,
+            stood_for: false,
+        },
+        follow: None,
+        history: None,
+    };
+
+    let found_by_new = graph::walk(mentioning, &query(now.as_str()))
+        .await
+        .expect("a thing-scope filter on a reference key must resolve");
+    assert_eq!(
+        found_by_new
+            .objects
+            .iter()
+            .map(|o| o.entity.id.clone())
+            .collect::<Vec<_>>(),
+        vec![pet.clone()],
+        "the pet does not come back under today's owner handle, in thing scope: \
+         {found_by_new:?}",
+    );
+
+    let found_by_old = graph::walk(mentioning, &query(was.as_str()))
+        .await
+        .expect("a thing-scope filter on a reference key must resolve");
+    assert!(
+        found_by_old.objects.is_empty(),
+        "the pet still comes back under the owner's stale handle, in thing scope: \
+         {found_by_old:?}",
+    );
+}
+
 /// 🚨 **A rename, through the real verb, and every kind of reference a
 /// reader resolves still resolves in the same call: a mention, a
 /// reference-typed field value, an edge and a ref.**
@@ -1872,6 +1974,7 @@ pub async fn run_all_mentioning<M: Memory + ?Sized, B: Memory + ?Sized>(
     a_childs_parent_pointer_follows_a_rename(bare, rehandles).await;
     an_edge_follows_a_thing_that_is_rehandled(mentioning, bare, rehandles).await;
     a_ref_follows_a_thing_that_is_rehandled(mentioning, bare, rehandles).await;
+    a_reference_typed_field_value_resolves_in_thing_scope_after_a_rename(mentioning).await;
     a_rename_moves_the_handle_and_every_reference_still_resolves(mentioning, bare).await;
     an_edit_that_touches_only_the_content_still_follows_a_later_rename(mentioning).await;
     a_retraction_still_follows_a_later_rename(mentioning).await;

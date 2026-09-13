@@ -301,7 +301,25 @@ impl Mentioning {
         if let Some(details) = &fact.details {
             fact.details = Some(rendered(details, known));
         }
-        for (key, value) in fact.fields.iter_mut() {
+        Self::render_fields(&mut fact.fields, known, former, declared);
+    }
+
+    /// **Resolve every reference-typed value in a field map.**
+    ///
+    /// Shared by [`Self::render_fact`], over a fact's own fields, and by
+    /// [`Memory::fields`](super::Memory::fields), over a thing's folded
+    /// fields — both are `BTreeMap<String, String>`, and the same
+    /// reference-typed key holds a plain handle in either. **Both need this,
+    /// or `graph::walk`'s thing-scope filter and record-scope filter compare
+    /// today's handle against two different maps agreeing on every key but
+    /// this one.**
+    fn render_fields(
+        fields: &mut std::collections::BTreeMap<String, String>,
+        known: &[Entity],
+        former: &[super::FormerHandle],
+        declared: &[super::types::DeclaredType],
+    ) {
+        for (key, value) in fields.iter_mut() {
             let Some(field) = declared
                 .iter()
                 .filter_map(|d| d.field(key))
@@ -527,11 +545,23 @@ impl super::Memory for Mentioning {
         }
         Ok(chain)
     }
+    /// **Resolved exactly as a fact's own fields are.** A thing-scope filter
+    /// compares this map, and a record-scope filter compares a resolved
+    /// fact's — both need to see today's handle under a reference-typed key,
+    /// or the two scopes disagree about the same key on the same thing.
     async fn fields(
         &self,
         entity: &EntityId,
     ) -> Result<std::collections::BTreeMap<String, String>, super::MemoryError> {
-        self.inner.fields(entity).await
+        let mut fields = self.inner.fields(entity).await?;
+        if fields.is_empty() {
+            return Ok(fields);
+        }
+        let known = self.known().await?;
+        let former = self.former().await?;
+        let declared = self.declared().await?;
+        Self::render_fields(&mut fields, &known, &former, &declared);
+        Ok(fields)
     }
     /// **A key's backing carries the note its record carried**, the same
     /// text under the same name [`Self::history`] already renders — read
