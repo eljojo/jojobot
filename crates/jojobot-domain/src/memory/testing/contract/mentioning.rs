@@ -1567,6 +1567,148 @@ impl Rehandles for FakeRehandles {
     }
 }
 
+/// 🚨 **`retract` and `merge` screen their reason exactly as `capture` and
+/// `update_fact` screen their content and nuance: a mention naming nothing
+/// is refused and nothing is written, on all four verbs — not just two of
+/// them.**
+///
+/// **Answered as an error, not as `Guarded::Blocked`.** Neither verb's
+/// return type — `Retraction`, `Merge` — carries a blocked shape to answer
+/// in, so this is the same near-miss the write guard already raises for
+/// any OTHER absent handle on these two verbs (an unknown address, an
+/// unknown duplicate or survivor): [`super::MemoryError::UnknownEntity`],
+/// which the surface already renders as blocked-with-candidates. A mention
+/// naming nothing in the reason is the one absence that verb did not reach
+/// yet.
+///
+/// **Paired with the write that must still land**, on both verbs, or a
+/// build refusing every reason with an `@` in it passes half of this.
+pub async fn retract_and_merge_screen_their_reason_and_write_nothing_on_a_miss<
+    M: Memory + ?Sized,
+    B: Memory + ?Sized,
+>(
+    mentioning: &M,
+    bare: &B,
+) {
+    let author = EntityId::person("person:contract-refscreen-author");
+    ensure(mentioning, &author).await;
+    let claim = capture(
+        mentioning,
+        NewFact::about(author.clone(), "stands until retracted", date(2026, 4, 22)),
+    )
+    .await;
+
+    let refused = mentioning
+        .retract(
+            &claim.address(),
+            Some("named @person:contract-mention-nobody"),
+            date(2026, 4, 23),
+        )
+        .await;
+    match refused {
+        Err(super::MemoryError::UnknownEntity { attempted, .. }) => assert_eq!(
+            attempted, "person:contract-mention-nobody",
+            "the refusal names the mention that could not be followed",
+        ),
+        other => panic!("a retraction reason naming something absent was not refused: {other:?}"),
+    }
+    let untouched = bare
+        .recall(&author)
+        .await
+        .expect("the store answers")
+        .into_iter()
+        .find(|f| f.id == claim.id)
+        .expect("the claim is there");
+    assert_eq!(
+        untouched.status,
+        super::FactStatus::Active,
+        "the refused retraction still landed: {untouched:?}",
+    );
+
+    let landed = mentioning
+        .retract(
+            &claim.address(),
+            Some("named @person:contract-refscreen-author"),
+            date(2026, 4, 23),
+        )
+        .await
+        .expect("a retraction reason naming something real is not refused");
+    assert!(
+        landed
+            .record
+            .content
+            .contains("person:contract-refscreen-author"),
+        "the retraction's own account did not read back the mention it named: {:?}",
+        landed.record,
+    );
+
+    // The same rule, over merge — its own pair of entities, so the
+    // retraction above is not what this half is judging.
+    let folded = EntityId::person("person:contract-refscreen-duplicate");
+    let survivor = EntityId::person("person:contract-refscreen-survivor");
+    mentioning
+        .add_entity(NewEntity::new(
+            folded.clone(),
+            "Ref Screen Duplicate",
+            "the roster",
+        ))
+        .await
+        .expect("the fixture is written")
+        .written()
+        .expect("nothing collides with it");
+    mentioning
+        .add_entity(NewEntity::new(
+            survivor.clone(),
+            "Ref Screen Survivor",
+            "the roster",
+        ))
+        .await
+        .expect("the fixture is written")
+        .written()
+        .expect("nothing collides with it");
+
+    let refused = mentioning
+        .merge(
+            &folded,
+            &survivor,
+            Some("named @person:contract-mention-nobody"),
+            date(2026, 4, 23),
+        )
+        .await;
+    assert!(
+        matches!(refused, Err(super::MemoryError::UnknownEntity { .. })),
+        "a merge reason naming something absent was not refused: {refused:?}",
+    );
+    let still_two = bare
+        .list_entities(None)
+        .await
+        .expect("the store answers")
+        .into_iter()
+        .find(|e| e.id == folded)
+        .expect("the duplicate is still there")
+        .merged_into
+        .is_none();
+    assert!(still_two, "the refused merge folded the duplicate anyway");
+
+    let landed = mentioning
+        .merge(
+            &folded,
+            &survivor,
+            Some("named @person:contract-refscreen-survivor"),
+            date(2026, 4, 24),
+        )
+        .await
+        .expect("a merge reason naming something real is not refused");
+    assert!(
+        landed
+            .record
+            .content
+            .contains("person:contract-refscreen-survivor"),
+        "the merge's own account did not read back the mention it named: {:?}",
+        landed.record,
+    );
+}
+
 /// 🚨 **A mention naming nothing is refused, and nothing is written.**
 ///
 /// The rule an edge's object already faces and a record's refs already
@@ -1968,6 +2110,7 @@ pub async fn run_all_mentioning<M: Memory + ?Sized, B: Memory + ?Sized>(
     a_mention_follows_a_thing_that_is_rehandled(mentioning, bare, rehandles).await;
     a_dead_link_and_text_that_was_never_a_link_read_differently(mentioning, bare).await;
     a_mention_naming_nothing_is_refused_and_writes_nothing(mentioning, bare).await;
+    retract_and_merge_screen_their_reason_and_write_nothing_on_a_miss(mentioning, bare).await;
     no_read_serves_a_badge_and_every_one_serves_the_handle(mentioning).await;
     an_account_written_from_a_reason_stores_its_mentions(mentioning, bare).await;
     a_stale_handle_resolves_through_its_rename_history(bare, rehandles).await;

@@ -378,16 +378,44 @@ impl Mentioning {
     /// link creates the thing, which is two deliberate steps exactly as it is
     /// everywhere else here.
     fn screen<T>(text: &[&str], known: &[Entity]) -> Option<super::Guarded<T>> {
+        Self::first_unresolved(text, known).map(|(attempted, candidates)| super::Guarded::Blocked {
+            attempted,
+            candidates,
+        })
+    }
+
+    /// **The same rule, answered as an error.**
+    ///
+    /// `retract` and `merge` return `Retraction`/`Merge` directly — neither
+    /// carries a `Guarded` shape to answer blocked in. A mention naming
+    /// nothing is the same near-miss the write guard already raises for
+    /// any OTHER absent handle on these two verbs (an unknown address, an
+    /// unknown duplicate or survivor): [`super::MemoryError::UnknownEntity`],
+    /// which the surface already renders as blocked-with-candidates.
+    fn screen_or_unknown(text: &[&str], known: &[Entity]) -> Option<super::MemoryError> {
+        Self::first_unresolved(text, known).map(|(attempted, nearest)| {
+            super::MemoryError::UnknownEntity {
+                attempted: attempted.to_string(),
+                nearest,
+            }
+        })
+    }
+
+    /// **The mention screen's shared core**: the first handle named in this
+    /// text that nothing answers to, and what the guard found nearby.
+    /// [`Self::screen`] and [`Self::screen_or_unknown`] each wrap this in
+    /// the shape their own caller's return type can carry.
+    fn first_unresolved(
+        text: &[&str],
+        known: &[Entity],
+    ) -> Option<(EntityId, Vec<super::guard::EntityMatch>)> {
         for part in text {
             for handle in named(part) {
                 if known.iter().any(|e| e.id == handle) {
                     continue;
                 }
                 let candidates = super::guard::screen(&handle, &[], known);
-                return Some(super::Guarded::Blocked {
-                    attempted: handle,
-                    candidates,
-                });
+                return Some((handle, candidates));
             }
         }
         None
@@ -592,6 +620,9 @@ impl super::Memory for Mentioning {
         date: jiff::civil::Date,
     ) -> Result<super::Retraction, super::MemoryError> {
         let known = self.known().await?;
+        if let Some(err) = Self::screen_or_unknown(&[reason.unwrap_or("")], &known) {
+            return Err(err);
+        }
         let former = self.former().await?;
         let declared = self.declared().await?;
         let reason = reason.map(|r| resolved(r, &known));
@@ -610,6 +641,9 @@ impl super::Memory for Mentioning {
         date: jiff::civil::Date,
     ) -> Result<super::Merge, super::MemoryError> {
         let known = self.known().await?;
+        if let Some(err) = Self::screen_or_unknown(&[reason.unwrap_or("")], &known) {
+            return Err(err);
+        }
         let former = self.former().await?;
         let declared = self.declared().await?;
         let reason = reason.map(|r| resolved(r, &known));
