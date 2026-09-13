@@ -796,13 +796,16 @@ async fn a_node_page_shows_the_facts_held_there_and_who_backs_them() {
 
 /// **A mention in served text becomes a link to that thing's own page.**
 ///
-/// Three plays in one read, because a linkifier that wrapped every `@`-shaped
+/// Four plays in one read, because a linkifier that wrapped every `@`-shaped
 /// run in an anchor would pass on the genuine case alone: a real mention
 /// becomes a followable link; text shaped like a handle that never named
-/// anything renders distinctly and is never a link; and the unrelated claim
+/// anything renders distinctly and is never a link; the unrelated claim
 /// already on this page (`The widget stall runs on Thursdays`, which mentions
 /// nothing) is unchanged in the same body — a page with no mentions on it is
-/// not something a passing linkifier gets to touch.
+/// not something a passing linkifier gets to touch; and a mention in the
+/// entity's own PROSE follows the same rule as one in a record's content —
+/// the page has one linker, not two, and the map it needs (`by_id`) is
+/// already read for the fact table above it.
 ///
 /// **The rename case is here too.** `rename_entity` moves a thing's badge
 /// while a stored mention keeps pointing at the same row — proven below by
@@ -845,7 +848,7 @@ async fn a_mention_in_served_text_becomes_a_followable_link() {
         .memory
         .set_prose(
             &EntityId("topic:widgets".into()),
-            "handcart's twin is @thing:handcart-lost",
+            "handcart's twin is @thing:handcart-lost, and it is kept near @place:shelbyville",
         )
         .await
         .expect("the unresolvable mention is written");
@@ -874,6 +877,11 @@ async fn a_mention_in_served_text_becomes_a_followable_link() {
     assert!(
         body.contains("The widget stall runs on Thursdays"),
         "a claim that mentions nothing is unchanged on the same page: {body}"
+    );
+    assert!(
+        body.contains("<a href=\"/place:shelbyville/\">@place:shelbyville</a>"),
+        "a mention in the entity's own prose becomes a link exactly as one in a record's \
+         content does: {body}"
     );
 
     // **The rename case.** Nothing about the claim above is rewritten — what

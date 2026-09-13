@@ -216,7 +216,10 @@ pub async fn node(
     body.push_str(&facts_table(&facts, &by_id));
 
     if !prose.trim().is_empty() {
-        body.push_str(&format!("<h2>Prose</h2>\n<pre>{}</pre>\n", escape(&prose)));
+        body.push_str(&format!(
+            "<h2>Prose</h2>\n<pre>{}</pre>\n",
+            linkify(&prose, &by_id)
+        ));
     }
 
     // The records that are not entities hang off the one entity that owns
