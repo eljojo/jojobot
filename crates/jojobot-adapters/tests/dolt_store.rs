@@ -20,6 +20,7 @@ use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::dolt::sessions::DoltSessions;
 use jojobot_adapters::dolt::teaching::DoltTeachings;
+use jojobot_adapters::fold::Folded;
 use jojobot_adapters::provisioned::Provisioned;
 use jojobot_adapters::search::{IndexedMemory, Retrieval};
 use jojobot_adapters::testing::free_port;
@@ -1622,6 +1623,28 @@ async fn dolt_satisfies_the_memory_contract() {
     booted(&pool).await;
 
     memory::run_all(&DoltMemory::open(pool)).await;
+
+    store.stop().await;
+}
+
+/// **The same contract, wrapped in a fold, against the real store.** `Folded`
+/// forwards every guard, every read and every write it does not itself
+/// refresh straight to Dolt, so this is the regression test for that claim
+/// against the store the fold exists to spare, not only against the fake.
+#[tokio::test]
+async fn dolt_satisfies_the_memory_contract_when_folded() {
+    let scratch = Scratch::new("memory_folded");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("memory")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+
+    memory::run_all(&Folded::new(Arc::new(DoltMemory::open(pool)))).await;
 
     store.stop().await;
 }

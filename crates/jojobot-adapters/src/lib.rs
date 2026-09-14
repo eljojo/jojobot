@@ -13,6 +13,7 @@
 //! context rather than a store: mail does not know what an entity is.
 
 pub mod dolt;
+pub mod fold;
 pub mod owners;
 pub mod provisioned;
 pub mod search;
