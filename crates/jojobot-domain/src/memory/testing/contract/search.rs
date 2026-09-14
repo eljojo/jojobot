@@ -51,6 +51,52 @@ pub async fn search_finds_a_fact_captured_moments_ago<M: Memory, S: Search>(stor
     );
 }
 
+/// **A caller's search finds an existing thing by a word it actually
+/// carries — a stored thing's own captured name, or a supplied thing's own
+/// shipped one** (rule 234): the index is built from the same substrate
+/// every other read is, so a record the build supplies and never a caller
+/// wrote is exactly as findable as one that was — a search that only ever
+/// found rows would make a shipped view unreachable by the one verb whose
+/// whole job is finding things by what they say.
+async fn existing_thing_is_found_by_its_own_word<S: Search>(
+    search: &S,
+    word: &str,
+    existing: &EntityId,
+) {
+    let hits = found(search, SearchQuery::text(word)).await;
+    assert!(
+        hits.iter()
+            .any(|h| matches!(h, Hit::Entity { entity, .. } if &entity.id == existing)),
+        "the existing thing must be found by its own word {word:?}: {hits:?}",
+    );
+}
+
+/// The search case, asked of a stored row — see
+/// [`existing_thing_is_found_by_its_own_word`].
+pub async fn a_stored_things_own_word_is_found<M: Memory, S: Search>(store: &M, search: &S) {
+    let id = EntityId("thing:contract-searchable-stored".into());
+    add(
+        store,
+        NewEntity::new(id.clone(), "Zambonium Register", "user-named"),
+    )
+    .await;
+    existing_thing_is_found_by_its_own_word(search, "zambonium", &id).await;
+}
+
+/// The same case, asked of a record the build supplies rather than one a
+/// caller wrote. Takes no store: nothing is written, because there is
+/// nothing to write — the fixture wiring the supplied record is the
+/// caller's, so the word searched for here must match what that fixture
+/// names it.
+pub async fn a_supplied_things_own_word_is_found<S: Search>(search: &S) {
+    existing_thing_is_found_by_its_own_word(
+        search,
+        "shipped",
+        &EntityId(SUPPLIED_VIEW_FOR_THE_GUARD_SPECS.into()),
+    )
+    .await;
+}
+
 /// Every fact hit carries the **whole row** — its address and its provenance
 /// included. The address is what an edit needs; the provenance is what keeps a
 /// guess from being read as something the user said.
@@ -987,6 +1033,7 @@ pub async fn run_all_searchable<M: Memory, S: Search>(store: &M, search: &S) {
     run_all(store).await;
 
     search_finds_a_fact_captured_moments_ago(store, search).await;
+    a_stored_things_own_word_is_found(store, search).await;
     search_fact_hits_carry_an_address_and_provenance(store, search).await;
     a_term_from_a_superseded_wording_is_found_only_when_asked_for(store, search).await;
     a_hit_carries_the_clocks_the_store_kept(store, search).await;

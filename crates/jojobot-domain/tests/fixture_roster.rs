@@ -575,6 +575,7 @@ const ROSTER: &[&str] = &[
     "thing:contract-journal-mention-now",
     "thing:contract-journal-mention-never-existed",
     "thing:contract-relation-held",
+    "thing:contract-searchable-stored",
     "thing:contract-short-history",
     "thing:contract-the-ledger",
     "thing:contract-the-scrap",
