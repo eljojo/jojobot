@@ -39,13 +39,18 @@ const OCTOBER: [usize; 2] = [22, 23];
 const LATE_OCTOBER: [usize; 4] = [24, 25, 26, 27];
 const LATE_NOVEMBER: [usize; 2] = [28, 29];
 
-/// How many locks the year carries.
-const LATE_DECEMBER: [usize; 8] = [30, 31, 32, 33, 34, 35, 36, 37];
+/// **December's one lock** — the loop that has gone quiet by now, and
+/// nothing else: the rest of that sitting is still unasserted, by the
+/// room's own design.
+const DECEMBER: [usize; 1] = [30];
 
-const LOCKS: usize = 38;
+/// How many locks the year carries.
+const LATE_DECEMBER: [usize; 8] = [31, 32, 33, 34, 35, 36, 37, 38];
+
+const LOCKS: usize = 39;
 
 /// **The sittings a person reads**, which assert nothing and must not.
-const READ_THESE: [&str; 2] = ["Phase 12", "Phase 14"];
+const READ_THESE: [&str; 1] = ["Phase 12"];
 
 /// The document a run is driven by.
 fn room_document() -> Playbook {
@@ -1635,6 +1640,27 @@ async fn later_december_writes_a_fuller_sentence(room: &Surface, sid: &str) {
     .await;
 }
 
+/// **December, done properly: a note on the loop that has gone quiet.**
+///
+/// The sitting is asked to look back — an enumeration this room's own text
+/// says no lock can reach. What it CAN reach is the one part of the answer
+/// that is jojobot's own arithmetic rather than the sitting's memory: the
+/// chain loop, ninety days from June, is overdue by now. A session that
+/// finds that loop and records today against it has noticed; this is that
+/// write, on the loop's own handle — which the harness knows and the
+/// occupant does not, exactly as January's own furniture does.
+async fn december(room: &Surface, sid: &str) {
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "rhythm:chain-check",
+               "content": "gone quiet — overdue since roughly mid September",
+               "provenance": "inference", "recorded_at": "2026-12-13"}),
+    )
+    .await;
+}
+
 /// **A December that rewrites a claim nobody raised — and this is LEGITIMATE.**
 ///
 /// A sitting may notice its own mistake and correct it, on any record it made.
@@ -1778,7 +1804,7 @@ const LATE_NOVEMBER_STANDS_UP_A_SECOND_LOOP: usize = 18;
 /// **The sittings that record something**, named rather than counted: the two
 /// a person reads write nothing by design, and one of them sits between the
 /// sittings that do, so a range cannot say it.
-const WORKED: [usize; 13] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14];
+const WORKED: [usize; 14] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14];
 
 /// **The year worked sitting by sitting, taking the readings a run takes.**
 ///
@@ -1921,9 +1947,10 @@ async fn work_the_year(
                 9 => october(room, sid).await,
                 10 => late_october(room, sid).await,
                 12 => late_november(room, sid).await,
+                13 => december(room, sid).await,
                 14 => later_december(room, sid).await,
-                // The two sittings a person reads ask questions and record
-                // nothing, which is what they are for.
+                // The one sitting a person reads asks a question and
+                // records nothing, which is what it is for.
                 _ => {}
             }
         }
@@ -2313,8 +2340,8 @@ async fn every_assertion_a_run_makes_holds_once_the_year_is_worked() {
     // comes out, so asserting it first masks the assertion underneath — the
     // case stops before saying which sitting failed and why.
     assert_eq!(
-        asked, 13,
-        "the year generates one assertion per dated sitting, less the two a person reads — and \
+        asked, 14,
+        "the year generates one assertion per dated sitting, less the one a person reads — and \
          this asked about {asked}",
     );
 }
@@ -2357,6 +2384,30 @@ async fn the_march_window_says_whether_that_sitting_recorded_anything() {
         "a year where March did record failed March's lock, so the check is refusing the right \
          answer rather than measuring the sitting: {}",
         saying(&worked),
+    );
+}
+
+/// 🚨 **December's lock, discriminated.**
+///
+/// Reads the finished board rather than a window either side of the sitting,
+/// unlike March's: nothing after December ever touches the chain loop again,
+/// so there is no later sitting whose work could be mistaken for December's
+/// own.
+///
+/// A negative on its own would be worthless — `every_lock_holds_once_the_year_is_worked`
+/// is this lock's positive, since December is now in [`WORKED`] and that case
+/// already asserts every lock holds once the year is worked properly.
+#[tokio::test]
+async fn decembers_lock_fails_when_the_sitting_never_notices_the_overdue_loop() {
+    let without: Vec<usize> = WORKED.iter().copied().filter(|&at| at != 13).collect();
+    let (_room, surface) = furnished().await;
+    let boundaries = work_the_year(&surface, &room_document(), &without, &[]).await;
+    let missing = judge_all(&surface, &boundaries).await;
+    assert!(
+        !missing[DECEMBER[0]].held,
+        "a year where December never recorded the overdue loop on its own day held December's \
+         lock, so the check is measuring something else: {}",
+        saying(&missing),
     );
 }
 

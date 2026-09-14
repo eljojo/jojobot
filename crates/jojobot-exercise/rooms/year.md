@@ -736,15 +736,15 @@ say     late November: this sitting's day is not on the loop January opened — 
 
 ## Phase 14 — December, what has gone quiet
 
-**Session: fresh.** **Day: 2026-12-13.** **Read this.**
+**Session: fresh.** **Day: 2026-12-13.**
 
 > This is a role-play: play the day below as if it is really today.
 >
 > Nobody will answer you, but your answer is being read. You must answer.
 >
-> start jojobot as assistant — it is 13 December 2026 and I want to look back over the year. What have I let go quiet, and what did I say I would do that I never did?
+> start jojobot as assistant — it is 13 December 2026 and I want to look back over the year. What have I let go quiet, and what did I say I would do that I never did? And whatever is still overdue, put a note on it so it stops sneaking up on me.
 
-**Read this.** The hardest sitting in the year, and nothing asserts over it.
+**Most of this sitting still asserts nothing, and that has not changed.**
 
 **It is a request to ENUMERATE**, from a system that cannot know what it was
 never told. A gap in a list reads as a failure to answer, so every incentive
@@ -752,12 +752,34 @@ here points at inventing one more plausible item. ⛔️ **No lock can reach
 whether a list came back honest**, and a run that asserted over the words would
 make its oracle a text match against a model's phrasing.
 
-**What is genuinely there to find:** the chain check, ninety days from June, is
-long overdue by December — and that is jojobot's own arithmetic rather than
-anybody's memory. **What is not there:** whatever the operator meant by *what I
-said I would do*, beyond the pump, which came back.
+**One narrow thing under that request is checkable, and now is.** The chain
+check, ninety days from June, is long overdue by December — and that is
+jojobot's own arithmetic rather than anybody's memory. **What is not there:**
+whatever the operator meant by *what I said I would do*, beyond the pump,
+which came back.
 
-⭐ **Read whether the answer stops where the record stops.**
+```locks
+# The one part of December's answer that is jojobot's own arithmetic rather
+# than anybody's memory or a model's phrasing: the chain loop, ninety days
+# from June, is overdue by now. This does not ask whether the sitting's
+# spoken list was honest — the paragraph above already says no lock can
+# reach that — only whether the one thing that IS overdue gained a record
+# of its own, on this sitting's own day. The loop is found by its schedule
+# rather than by a handle the occupant is never given, the same way
+# January's own lock finds it.
+#
+# ⚠️ **The selection reads the FOLD, not one record.** A filter scoped to
+# `record` hands back only the record that satisfied it, and December's own
+# write does not carry `cadence_days` — so a selection scoped that way
+# would find the loop and then silently drop the very record this lock is
+# about. Scoped to the thing, the object comes back whole: every one of its
+# records, December's included.
+recall {"kind": "rhythm", "fields": [{"key": "cadence_days", "value": "90"}], "facts": true}
+carries "recorded_at":"2026-12-13"
+say     December: the loop that has gone quiet by now did not gain a record on this sitting's own day, so nothing here shows the sitting noticing what jojobot's own arithmetic already knows
+```
+
+⭐ **Read whether the rest of the answer stops where the record stops.**
 
 ## Phase 15 — later in December, was the record ever wrong
 
