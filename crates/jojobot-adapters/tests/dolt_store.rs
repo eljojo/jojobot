@@ -2873,3 +2873,106 @@ async fn the_backfill_rewrites_every_retired_status_to_archived() {
 
     store.stop().await;
 }
+
+/// **A `fields` hit never pays for a listing of every entity.** `resolve`
+/// answers a live handle from one targeted row; the full listing exists only
+/// to say what a name that answered to nothing resembles, and a hit never
+/// needs that question asked.
+#[tokio::test]
+async fn a_fields_hit_answers_with_no_full_listing() {
+    let scratch = Scratch::new("resolve_hit");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("memory")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+
+    let memory = DoltMemory::open(pool);
+    let gamma = EntityId::person("person:gamma");
+    memory
+        .add_entity(NewEntity::new(gamma.clone(), "Gamma", "user-named"))
+        .await
+        .expect("add ok")
+        .written()
+        .expect("not blocked");
+    memory
+        .capture(NewFact {
+            fields: std::collections::BTreeMap::from([(
+                "due_on".to_string(),
+                "2026-09-14".to_string(),
+            )]),
+            ..NewFact::about(gamma.clone(), "seeded", date(2026, 9, 1))
+        })
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("not blocked");
+
+    let before = memory.index_listings();
+    let fields = memory.fields(&gamma).await.expect("fields ok");
+    assert_eq!(
+        fields.get("due_on"),
+        Some(&"2026-09-14".to_string()),
+        "the hit still answers correctly"
+    );
+    assert_eq!(
+        memory.index_listings(),
+        before,
+        "a hit must not build the full listing"
+    );
+
+    store.stop().await;
+}
+
+/// **A `fields` miss still comes back with its near candidates.** The fix
+/// above defers the full listing to the miss branch rather than removing it
+/// — the refusal's whole value is naming a way forward, and that still needs
+/// the picture a hit does not.
+#[tokio::test]
+async fn a_fields_miss_still_answers_with_its_near_candidates() {
+    let scratch = Scratch::new("resolve_miss");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("memory")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+
+    let memory = DoltMemory::open(pool);
+    let gamma = EntityId::person("person:gamma");
+    memory
+        .add_entity(NewEntity::new(gamma.clone(), "Gamma", "user-named"))
+        .await
+        .expect("add ok")
+        .written()
+        .expect("not blocked");
+
+    // One letter off — near enough for the screen to find it, far enough
+    // that the direct row lookups in resolve_by_id/resolve_by_badge miss.
+    let near_miss = EntityId::person("person:gama");
+    let before = memory.index_listings();
+    let err = memory
+        .fields(&near_miss)
+        .await
+        .expect_err("an unwritten near-miss handle must not resolve");
+    match err {
+        MemoryError::UnknownEntity { nearest, .. } => assert!(
+            !nearest.is_empty(),
+            "a near-miss must still come back with candidates, not an empty list"
+        ),
+        other => panic!("expected UnknownEntity, got {other:?}"),
+    }
+    assert!(
+        memory.index_listings() > before,
+        "a miss must still build the listing, which is what the candidates come from"
+    );
+
+    store.stop().await;
+}

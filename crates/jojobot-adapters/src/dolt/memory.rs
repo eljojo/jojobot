@@ -56,6 +56,12 @@ use super::ids::{self, Draw};
 #[derive(Clone)]
 pub struct DoltMemory {
     pool: MySqlPool,
+    /// **How many times [`known`](Self::known) has built the full listing.**
+    /// Test-only instrumentation for the one property nothing else here can
+    /// observe: whether a read paid for every entity in the store or only
+    /// the one (or few) it actually needed. Shared across a clone, exactly as
+    /// the pool it counts calls against is.
+    index_listings: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     /// Where a badge comes from. **A value rather than a call**, so the
     /// collision path can be watched through the verb that mints: entropy will
     /// not produce a collision on demand.
@@ -88,10 +94,21 @@ impl DoltMemory {
     pub fn open(pool: MySqlPool) -> Self {
         DoltMemory {
             pool,
+            index_listings: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             draw: ids::drawing(),
             supplied: Provisions::default(),
             clock: Clock::default(),
         }
+    }
+
+    /// **How many times the full listing has been built, this instance's
+    /// whole life.** Test-only: a caller measures a delta across the
+    /// operation it is checking, since a store already used for setup has
+    /// paid for listings this count includes.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn index_listings(&self) -> usize {
+        self.index_listings
+            .load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// **The store, told what the build supplies over it.** Only the existence
@@ -120,6 +137,7 @@ impl DoltMemory {
     pub fn open_drawing(pool: MySqlPool, draw: Draw) -> Self {
         DoltMemory {
             pool,
+            index_listings: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             draw,
             supplied: Provisions::default(),
             clock: Clock::default(),
@@ -548,6 +566,8 @@ impl DoltMemory {
     /// set — so a read gated on the rows alone answered as if that claim did
     /// not exist, over a store holding its rows.
     async fn known(&self, tx: &mut Transaction<'_, MySql>) -> Result<Vec<Entity>, MemoryError> {
+        self.index_listings
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let rows = Self::index(tx).await?;
         Ok(self.extend_with_supplied(rows))
     }
@@ -593,22 +613,86 @@ impl DoltMemory {
     /// **What a handle is stored as, and what it is called today, together**
     /// — the pair every write and every miss-report needs. Mirrors the fake's
     /// `resolve`, over a real store's own rows and its own rename history.
+    ///
+    /// **Builds no full listing.** Both tiers below are one targeted row
+    /// each; only a caller who gets `None` back needs [`known`](Self::known)
+    /// at all, to say what a name that answered to nothing resembles.
     async fn resolve(
         &self,
         tx: &mut Transaction<'_, MySql>,
         id: &EntityId,
     ) -> Result<Option<(EntityId, EntityId)>, MemoryError> {
-        let known = self.known(tx).await?;
+        if let Some(found) = self.resolve_by_id(tx, id).await? {
+            return Ok(Some(found));
+        }
         let former = Self::former_handles_in(tx).await?;
-        Ok(
-            jojobot_domain::memory::resolve_handle(id, &known, &former).map(|entity| {
-                let key = match &entity.badge {
-                    Some(badge) => EntityId(badge.clone()),
-                    None => entity.id.clone(),
-                };
-                (key, entity.id.clone())
-            }),
-        )
+        let Some(badge) = former
+            .iter()
+            .find(|f| &f.former == id)
+            .map(|f| f.badge.clone())
+        else {
+            return Ok(None);
+        };
+        self.resolve_by_badge(tx, &badge).await
+    }
+
+    /// **Tier one of [`resolve`](Self::resolve): an id that already answers
+    /// directly, stored or supplied.** One row by primary key — mirrors
+    /// [`jojobot_domain::memory::resolve_handle`]'s own first tier
+    /// (`known.iter().find(|e| &e.id == id)`), expressed as SQL instead of an
+    /// in-memory scan, so the common case never has to build the list that
+    /// scan runs over.
+    async fn resolve_by_id(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        id: &EntityId,
+    ) -> Result<Option<(EntityId, EntityId)>, MemoryError> {
+        let row = sqlx::query("SELECT badge FROM entity WHERE id = ?")
+            .bind(id.as_str())
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(store)?;
+        if let Some(row) = row {
+            let badge = row.try_get::<Option<String>, _>("badge").map_err(store)?;
+            let key = badge.map(EntityId).unwrap_or_else(|| id.clone());
+            return Ok(Some((key, id.clone())));
+        }
+        if let Some((entity, _)) = self.supplied.record_for(id) {
+            let key = entity
+                .badge
+                .clone()
+                .map(EntityId)
+                .unwrap_or_else(|| entity.id.clone());
+            return Ok(Some((key, entity.id.clone())));
+        }
+        Ok(None)
+    }
+
+    /// **Tier two of [`resolve`](Self::resolve): a former handle, resolved to
+    /// whoever wears its badge today.** One row by badge — the same query
+    /// [`current_handle`](Self::current_handle) already runs for the same
+    /// reason, and the same second tier `resolve_handle` walks in memory
+    /// (`known.iter().find(|e| e.badge == Some(badge))`).
+    async fn resolve_by_badge(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        badge: &str,
+    ) -> Result<Option<(EntityId, EntityId)>, MemoryError> {
+        let row: Option<(String,)> =
+            sqlx::query_as("SELECT id FROM entity WHERE badge = ? ORDER BY id LIMIT 1")
+                .bind(badge)
+                .fetch_optional(&mut **tx)
+                .await
+                .map_err(store)?;
+        if let Some((handle,)) = row {
+            return Ok(Some((EntityId(badge.to_string()), EntityId(handle))));
+        }
+        for (entity, _) in self.supplied.records() {
+            if entity.badge.as_deref() == Some(badge) {
+                return Ok(Some((EntityId(badge.to_string()), entity.id.clone())));
+            }
+        }
+        Ok(None)
     }
 
     /// **The other direction**: a stored key read back as whatever handle it
@@ -2159,13 +2243,18 @@ impl Memory for DoltMemory {
         entity: &EntityId,
     ) -> Result<std::collections::BTreeMap<String, String>, MemoryError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
-        let index = self.known(&mut tx).await?;
         // An unknown entity is a miss with its near candidates, exactly as a
         // recall of one is: a thing nobody has written a key on and a handle
         // nobody created are different answers with different repairs. A
         // stale-but-renamed handle resolves through its own history, same as
         // every other lookup here.
+        //
+        // **The full listing is built only here, on the miss.** `resolve`
+        // above answers a hit from one targeted row; a caller here pays for
+        // the whole store only when it has to say what a name that answered
+        // to nothing resembles.
         let Some((key, _)) = self.resolve(&mut tx, entity).await? else {
+            let index = self.known(&mut tx).await?;
             return Err(MemoryError::UnknownEntity {
                 attempted: entity.to_string(),
                 nearest: guard::screen(entity, &[], &index),
