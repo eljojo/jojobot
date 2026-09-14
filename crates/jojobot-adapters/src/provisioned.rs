@@ -908,6 +908,23 @@ mod tests {
         );
     }
 
+    /// The shared contract's listing case (rule 234), asked of this layer —
+    /// the one place `list_entities` actually resolves what the build
+    /// supplies. Not a rewrite of
+    /// [`a_record_the_build_ships_answers_like_a_stored_one_and_is_stored_nowhere`]
+    /// above, which is the wider proof over every read; this is the doubled
+    /// contract's own case, so the listing question cannot drift from the
+    /// stored one the same way the add_entity guard already had.
+    #[tokio::test]
+    async fn a_supplied_record_appears_in_its_kinds_listing() {
+        let supplied = Provisions::new(vec![shipped_record("loops")]);
+        let over = Provisioned::new(InMemoryMemory::booted().knowing(supplied.clone()), supplied);
+        jojobot_domain::memory::testing::contract::a_supplied_record_appears_in_its_kinds_listing(
+            &over,
+        )
+        .await;
+    }
+
     /// 🚨 **Asking what sits under a supplied record is an answer, not a
     /// miss.**
     ///

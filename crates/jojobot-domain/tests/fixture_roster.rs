@@ -528,6 +528,7 @@ const ROSTER: &[&str] = &[
     "thing:contract-edited-older-record",
     "thing:contract-folded-thing",
     "thing:contract-kettle",
+    "thing:contract-listed-thing",
     "thing:contract-long-history",
     "thing:contract-marker-not-a-field",
     "thing:contract-pallet-half",

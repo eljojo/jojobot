@@ -4398,6 +4398,80 @@ async fn add_entity_guards_hold_for<M: Memory, B: support::Backing<M>>(store: &M
     );
 }
 
+/// The listing case, asked of a stored row — see
+/// [`an_existing_thing_is_in_its_kinds_listing`].
+pub async fn add_entity_appears_in_its_kinds_listing<M: Memory>(store: &M) {
+    an_existing_thing_is_in_its_kinds_listing(
+        store,
+        &support::Stored {
+            handle: EntityId("thing:contract-listed-thing".into()),
+            name: "Listed",
+            source: "user-named",
+        },
+    )
+    .await;
+}
+
+/// The same case, asked of a record the build supplies, over a store that
+/// resolves one (a bare store's `list_entities` does not — see
+/// [`an_existing_thing_is_in_its_kinds_listing`]).
+pub async fn a_supplied_record_appears_in_its_kinds_listing<M: Memory>(store: &M) {
+    an_existing_thing_is_in_its_kinds_listing(store, &support::Supplied).await;
+}
+
+/// 🚨 **A LISTING answers for a stored thing and a supplied one alike**
+/// (rule 234): naming a kind, or naming none, has to return everything the
+/// store holds of it AND everything the build supplies — a listing that
+/// answered only for rows would make a shipped view invisible to the one
+/// verb whose whole job is saying what is there. Called against a bare
+/// store for the stored half and a supplied-resolving decorator for the
+/// supplied one — `list_entities` resolving what the build supplies is
+/// that layer's job, not the bare store's, so this asks each the question
+/// it can actually answer.
+async fn an_existing_thing_is_in_its_kinds_listing<M: Memory, B: support::Backing<M>>(
+    store: &M,
+    backing: &B,
+) {
+    let (existing, _source) = backing.existing(store).await;
+    let kind = existing.kind().expect("an existing handle names a kind");
+    assert!(
+        store
+            .list_entities(Some(kind))
+            .await
+            .expect("list_entities should succeed")
+            .iter()
+            .any(|e| e.id == existing),
+        "the existing thing must appear in its kind's listing: {existing}",
+    );
+    assert!(
+        store
+            .list_entities(None)
+            .await
+            .expect("list_entities should succeed")
+            .iter()
+            .any(|e| e.id == existing),
+        "the existing thing must appear in the unfiltered listing: {existing}",
+    );
+    // **The negative half of the same read**: a kind nothing here answers
+    // to selects nothing, stored or supplied — a listing that returned
+    // everything regardless of the filter would pass the assertions above
+    // for the wrong reason.
+    let other = if kind == EntityKind::THING {
+        EntityKind::PERSON
+    } else {
+        EntityKind::THING
+    };
+    assert!(
+        store
+            .list_entities(Some(other))
+            .await
+            .expect("list_entities should succeed")
+            .iter()
+            .all(|e| e.id != existing),
+        "the existing thing appeared under a kind it does not answer to: {existing}",
+    );
+}
+
 /// Capture's subject must already exist. Not "must not look like
 /// something else" — must *be* something: letting a novel subject
 /// self-provision a nameless entity would turn every typo or
@@ -9116,6 +9190,7 @@ pub async fn run_all<M: Memory>(store: &M) {
     update_fact_tells_an_unknown_handle_from_an_empty_entity(store).await;
 
     add_entity_blocks_an_existing_handle(store).await;
+    add_entity_appears_in_its_kinds_listing(store).await;
     capture_requires_an_existing_subject(store).await;
     capture_requires_an_existing_edge_object(store).await;
     update_fact_requires_an_existing_edge_object(store).await;
