@@ -25,10 +25,6 @@ pub const LOOP_ROOM: &str = "rooms/loop.md";
 /// and the two claims no query expresses are named checks.
 pub const BIKE_ROOM: &str = "rooms/bike.md";
 
-/// **The ledger room**, which has no Rust half: its world and its locks are
-/// written in its own document, so the name is all there is to register.
-pub const LEDGER_ROOM: &str = "rooms/ledger.md";
-
 /// **The year** — fourteen cold sittings inside one year. Written in its
 /// document from the beginning, which is what the format was built for.
 pub const YEAR_ROOM: &str = "rooms/year.md";
@@ -49,10 +45,9 @@ type Room = (&'static str, Option<InRust>);
 /// **`None` is a converted room**: its world and its locks are in its own
 /// document, which is where both are read from for every room — the Rust below
 /// is only what a room that has not been converted still falls back to.
-const ROOMS: [Room; 5] = [
+const ROOMS: [Room; 4] = [
     (BIKE_ROOM, None),
     (LOOP_ROOM, None),
-    (LEDGER_ROOM, None),
     (YEAR_ROOM, None),
     (HANDOVER_ROOM, None),
 ];

@@ -149,10 +149,9 @@ fn said_in(text: &str) -> Vec<(usize, String)> {
 /// literals alongside real sentences, and the predicate cannot tell them
 /// apart — only file selection can. Widening further would need a
 /// per-string allow-list, which is the guard somebody eventually turns off.
-const ROOM_SUITE: [&str; 5] = [
+const ROOM_SUITE: [&str; 4] = [
     "bike_room.rs",
     "handover_room.rs",
-    "ledger_room.rs",
     "loop_room.rs",
     "year_room.rs",
 ];
