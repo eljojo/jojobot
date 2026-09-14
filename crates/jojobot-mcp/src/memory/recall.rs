@@ -808,6 +808,17 @@ impl Jojobot {
                 overdue: args
                     .overdue
                     .or_else(|| asked.overdue.then_some(OverdueArgs { as_of: None })),
+                answers_type: args.answers_type.or(asked.answers_type),
+                follow: args.follow.or_else(|| {
+                    asked.follow.map(|f| FollowArgs {
+                        shape: f.shape,
+                        relation: f.relation,
+                        direction: f.direction,
+                        depth: f.depth,
+                        keeping: None,
+                        fits_type: f.fits_type,
+                    })
+                }),
                 ..args
             },
             view_filters,
@@ -1158,6 +1169,27 @@ impl Jojobot {
             Err(refused) => return Ok(refused),
         };
         let asked_by = caller.as_ref().map(|caller| caller.bot.clone());
+        // **A view fills the call in before anything reads it.** What the view
+        // says is what this call asks; what the caller sent beside it wins, so
+        // a view is a starting point rather than a cage. **Done before
+        // anything below resolves a name to a declaration or a shape to a
+        // link**, because those read `args` as the caller left it — a view
+        // filling in `answers_type` or `follow` after that point would fill
+        // in fields nothing downstream ever looks at again.
+        //
+        // **The view's own key filters ride separately from `args`**, because
+        // `RecallArgs.fields` is the caller-facing shape (`KeyFilterArgs`) and
+        // a view's are already the domain shape — carrying them through as
+        // `RecallArgs` would mean converting them twice for no reason. Used
+        // only when the caller named no `fields` of its own; a caller that did
+        // meant that filter, exactly as every other view-filled argument works.
+        let (args, view_filters) = match args.view.clone() {
+            None => (args, Vec::new()),
+            Some(named) => match self.asked_by_name(&named, args).await {
+                Ok(filled) => filled,
+                Err(refused) => return Ok(*refused),
+            },
+        };
         // **The name is resolved to its declaration here, once**, exactly as
         // `search` resolves it: everything below takes the keys rather than
         // the name, and a name nobody declared is answered where the roster to
@@ -1235,23 +1267,6 @@ impl Jojobot {
         // day.** What is held is asked as of a day like everything else, so a
         // call that named one for `overdue` asks about the same day here, and
         // the answer says which day it used either way.
-        // **A view fills the call in before anything reads it.** What the view
-        // says is what this call asks; what the caller sent beside it wins, so
-        // a view is a starting point rather than a cage.
-        //
-        // **The view's own key filters ride separately from `args`**, because
-        // `RecallArgs.fields` is the caller-facing shape (`KeyFilterArgs`) and
-        // a view's are already the domain shape — carrying them through as
-        // `RecallArgs` would mean converting them twice for no reason. Used
-        // only when the caller named no `fields` of its own; a caller that did
-        // meant that filter, exactly as every other view-filled argument works.
-        let (args, view_filters) = match args.view.clone() {
-            None => (args, Vec::new()),
-            Some(named) => match self.asked_by_name(&named, args).await {
-                Ok(filled) => filled,
-                Err(refused) => return Ok(*refused),
-            },
-        };
         let today = self.dated(None, args.sid.as_deref())?;
         // Every key some declaration made a reference — what makes a value a
         // link. Read once, here, so the ranking stays a function of what it is
@@ -3926,6 +3941,170 @@ mod tests {
             !ids.contains(&"thing:contract-view-filter-urgent".to_string()),
             "the caller's own filter must win over the view's, excluding what only the view's \
              filter would have kept: {body}",
+        );
+    }
+
+    /// 🚨 **A view can name a type to select structurally** — the same
+    /// `answers_type` the argument already has, reached by naming the view
+    /// rather than the type. A bare kind selection cannot tell the two
+    /// things apart; only the type name can.
+    ///
+    /// **Paired**: the view keeps the thing carrying the type's key and
+    /// excludes the one carrying none of it, AND the same kind selection
+    /// with no view still carries both.
+    ///
+    /// The fixture view, `view:marked-things`, is declared here rather than
+    /// shipped.
+    #[tokio::test]
+    async fn a_view_naming_a_type_reaches_what_a_bare_kind_cannot() {
+        let jojobot = handler();
+        jojobot
+            .declare_type(Parameters(DeclareTypeArgs {
+                name: "contract-view-answers-marker".into(),
+                fields: vec![FieldArgs {
+                    key: "flagged".into(),
+                    holds: None,
+                    folds: None,
+                    required: false,
+                    one_of: None,
+                }],
+                sid: Some(crate::harness::TEST_SID.into()),
+            }))
+            .await
+            .expect("declaring a type is accepted");
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                fields: Some([("flagged".to_string(), "yes".to_string())].into()),
+                ..capture_args("thing:contract-view-answers-marked", "carries the marker")
+            },
+        )
+        .await;
+        ensure(&jojobot, "thing:contract-view-second-thing").await;
+
+        declared_view(
+            &jojobot,
+            "marked-things",
+            &[
+                ("selects", "thing"),
+                ("answers_type", "contract-view-answers-marker"),
+            ],
+        )
+        .await;
+
+        let ids_of = |body: &serde_json::Value| -> Vec<String> {
+            body["objects"]
+                .as_array()
+                .expect("objects is a list")
+                .iter()
+                .map(|o| {
+                    o["id"]
+                        .as_str()
+                        .expect("every object carries an id")
+                        .to_string()
+                })
+                .collect()
+        };
+        let viewed = json_of(
+            &jojobot
+                .recall(Parameters(by_view("marked-things")))
+                .await
+                .expect("recall ok"),
+        );
+        let viewed_ids = ids_of(&viewed);
+        assert!(
+            viewed_ids.contains(&"thing:contract-view-answers-marked".to_string()),
+            "the view's own type must select the thing carrying the key: {viewed}",
+        );
+        assert!(
+            !viewed_ids.contains(&"thing:contract-view-second-thing".to_string()),
+            "the view's own type must exclude the thing carrying none of its keys: {viewed}",
+        );
+
+        let bare = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    subject: None,
+                    kind: Some("thing".into()),
+                    ..of("unused")
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        let bare_ids = ids_of(&bare);
+        assert!(
+            bare_ids.contains(&"thing:contract-view-second-thing".to_string()),
+            "a bare kind selection must not already exclude what only the view's type does, or \
+             the view proves nothing: {bare}",
+        );
+    }
+
+    /// 🚨 **A view can name a relation walk — a key, a direction, a depth —
+    /// reaching what it walks to rather than what it names directly.** A
+    /// bare kind or subject selection cannot reach a neighbour; only a walk
+    /// can.
+    ///
+    /// The fixture view, `view:my-pets`, is declared here rather than
+    /// shipped.
+    #[tokio::test]
+    async fn a_view_naming_a_walk_reaches_the_neighbour_a_bare_selection_cannot() {
+        let jojobot = handler();
+        jojobot
+            .declare_type(Parameters(DeclareTypeArgs {
+                name: "contract-view-walk-pet".into(),
+                fields: vec![FieldArgs {
+                    key: "owner".into(),
+                    holds: Some("reference".into()),
+                    folds: None,
+                    required: false,
+                    one_of: None,
+                }],
+                sid: Some(crate::harness::TEST_SID.into()),
+            }))
+            .await
+            .expect("declaring a type is accepted");
+        ensure(&jojobot, "person:contract-view-walk-owner").await;
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                fields: Some(
+                    [(
+                        "owner".to_string(),
+                        "person:contract-view-walk-owner".to_string(),
+                    )]
+                    .into(),
+                ),
+                ..capture_args("pet:contract-view-walk-pet", "belongs to its owner")
+            },
+        )
+        .await;
+
+        declared_view(
+            &jojobot,
+            "my-pets",
+            &[("follow_relation", "owner"), ("follow_direction", "in")],
+        )
+        .await;
+
+        let body = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    subject: Some("person:contract-view-walk-owner".into()),
+                    ..by_view("my-pets")
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        let object = &body["objects"][0];
+        let connected: Vec<&str> = object["connected"]
+            .as_array()
+            .expect("connected is a list")
+            .iter()
+            .map(|c| c["id"].as_str().expect("a connected object carries an id"))
+            .collect();
+        assert!(
+            connected.contains(&"pet:contract-view-walk-pet"),
+            "the view's own walk must reach the pet through the owner relation: {body}",
         );
     }
 

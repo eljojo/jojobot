@@ -670,14 +670,41 @@ pub struct Asked {
     /// **Only what has fallen due.** Arithmetic over dates rather than a value
     /// to filter on, which is why it is a named ask rather than a key filter.
     pub overdue: bool,
-    /// **The view's own fields, beyond the reserved keys, read as key
-    /// filters** — a thing's fields are its properties everywhere else
-    /// this store reads one, and a view is a record like any other, so it
-    /// needs no filter syntax of its own to hold what an object already
-    /// holds. `equals` is the default and carries no prefix; another
-    /// comparison is named ahead of the value with a colon, the same token
-    /// [`types::Compare`] already reads and writes.
+    /// **A key filter for every record on the view that carries one** — see
+    /// [`asked_by_view`] for the shape a filter record takes. Several
+    /// filters are several records; nothing here caps it at one per key.
     pub filters: Vec<FieldFilter>,
+    /// **A type name to select structurally, by the key `answers_type`** —
+    /// unresolved: the caller of [`asked_by_view`] still has to look the
+    /// name up, the same way it already does for the argument of the same
+    /// name.
+    pub answers_type: Option<String>,
+    /// **A relation walk, unresolved the same way `answers_type` is.**
+    /// `None` when the view names no walk at all — distinct from a walk
+    /// that names no shape or relation, which is "any edge".
+    pub follow: Option<AskedFollow>,
+}
+
+/// **A view's own relation walk, read off its fields — the pieces
+/// [`Follow`] is built from, still as plain strings.** A
+/// relation's or a shape's name is not resolved here for the same reason a
+/// filter's `fits_type` is not: resolving a declared type needs a read this
+/// pure function cannot make, so the caller finishes what this starts,
+/// exactly as it already does for the argument of the same shape.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AskedFollow {
+    /// One edge shape, by its token — `along:location`, `along:membership`,
+    /// and so on for the five shapes.
+    pub shape: Option<String>,
+    /// A declared relation's key, instead of a shape.
+    pub relation: Option<String>,
+    /// `in` or `out`. `None` is outbound, the same default the argument of
+    /// the same name has.
+    pub direction: Option<String>,
+    /// How many hops. `None` defaults to 1, the same as the argument.
+    pub depth: Option<u32>,
+    /// **Keep only what fits this type**, by name, unresolved.
+    pub fits_type: Option<String>,
 }
 
 /// Read a view's question off the keys it holds and the records it
@@ -726,6 +753,33 @@ pub fn asked_by_view(held: &BTreeMap<String, String>, facts: &[Fact]) -> Asked {
             })
         })
         .collect();
+    // **`None` when the view names neither a shape nor a relation and asks
+    // no depth, direction or fits_type either** — a walk that names nothing
+    // is not "any edge", it is no walk, the same distinction `args.follow`
+    // being absent already makes for a caller.
+    let follow = {
+        let shape = held.get("follow_shape").cloned();
+        let relation = held.get("follow_relation").cloned();
+        let direction = held.get("follow_direction").cloned();
+        let depth = held.get("follow_depth").and_then(|d| d.trim().parse().ok());
+        let fits_type = held.get("follow_fits_type").cloned();
+        if shape.is_none()
+            && relation.is_none()
+            && direction.is_none()
+            && depth.is_none()
+            && fits_type.is_none()
+        {
+            None
+        } else {
+            Some(AskedFollow {
+                shape,
+                relation,
+                direction,
+                depth,
+                fits_type,
+            })
+        }
+    };
     Asked {
         selects: held.get("selects").cloned(),
         facts: shows("facts"),
@@ -733,6 +787,8 @@ pub fn asked_by_view(held: &BTreeMap<String, String>, facts: &[Fact]) -> Asked {
         filters,
         charter: shows("charter"),
         overdue: held.get("asks").map(String::as_str) == Some("overdue"),
+        answers_type: held.get("answers_type").cloned(),
+        follow,
     }
 }
 
@@ -2098,6 +2154,48 @@ mod tests {
             asked.filters.is_empty(),
             "a retracted filter record must not be asked: {:?}",
             asked.filters
+        );
+    }
+
+    /// 🚨 **A view can name a type to select structurally, and a relation
+    /// walk with its own direction, depth and fits_type** — both unresolved,
+    /// because resolving a name to a declaration needs a read this pure
+    /// function cannot make.
+    ///
+    /// **Paired with the absence**: a view naming neither must answer
+    /// `None` for the walk, not a walk that names nothing — those are
+    /// different questions, the same distinction `args.follow` already
+    /// draws for a caller.
+    #[test]
+    fn a_views_own_fields_name_a_type_and_a_walk() {
+        let held: std::collections::BTreeMap<String, String> = [
+            ("selects".to_string(), "person".to_string()),
+            ("answers_type".to_string(), "pet-owner".to_string()),
+            ("follow_relation".to_string(), "owner".to_string()),
+            ("follow_direction".to_string(), "in".to_string()),
+            ("follow_depth".to_string(), "2".to_string()),
+            ("follow_fits_type".to_string(), "pet".to_string()),
+        ]
+        .into_iter()
+        .collect();
+        let asked = asked_by_view(&held, &[]);
+        assert_eq!(asked.answers_type.as_deref(), Some("pet-owner"));
+        let follow = asked.follow.expect("a walk was named");
+        assert_eq!(follow.relation.as_deref(), Some("owner"));
+        assert_eq!(follow.shape, None);
+        assert_eq!(follow.direction.as_deref(), Some("in"));
+        assert_eq!(follow.depth, Some(2));
+        assert_eq!(follow.fits_type.as_deref(), Some("pet"));
+
+        let bare: std::collections::BTreeMap<String, String> =
+            [("selects".to_string(), "person".to_string())]
+                .into_iter()
+                .collect();
+        let unasked = asked_by_view(&bare, &[]);
+        assert_eq!(unasked.answers_type, None);
+        assert_eq!(
+            unasked.follow, None,
+            "a view naming no walk must answer no walk, not one that names nothing",
         );
     }
 
