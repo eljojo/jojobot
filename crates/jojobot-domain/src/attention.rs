@@ -34,6 +34,8 @@ use std::collections::BTreeMap;
 
 use jiff::civil::Date;
 
+use crate::memory::types;
+
 /// **The cadence, in days.** A cadence is always TIME: the time prompts the
 /// check, and what the check measures — a distance, a reading, a count — is a
 /// field on the check-in rather than a unit of the schedule.
@@ -382,15 +384,25 @@ impl Due {
     }
 }
 
-/// **How a KIND of thing says when one of its things falls due.**
+/// **How a SORT of thing says when one of its things falls due.**
 ///
 /// The read asks what is owed and compares a moment to a day; it never knows
 /// how any particular sort of thing computes that moment. A loop's is its
 /// schedule; the next carrier's will be something else, and it lands by
 /// answering here rather than by the read growing a branch.
+///
+/// **Found by what a thing carries, never by its kind.** A carrier names a
+/// structural interface — the same [`types::DeclaredType`] shape
+/// `answers_type` already matches things against — rather than a kind token,
+/// so a thing of a kind this file has never heard of is still this carrier's
+/// business the moment its fields answer the interface. One matcher serves
+/// both questions (rule 51); a kind is what a write is refused for holding
+/// too little of, and a carrier's interface refuses nothing.
 pub trait Carrier: Send + Sync {
-    /// The kind token whose things this computes for.
-    fn kind(&self) -> &str;
+    /// **The keys that make a thing this carrier's business.** Structural:
+    /// nothing here is asked what kind produced the fields, only what they
+    /// hold. See [`types::DeclaredType::matched_by`].
+    fn interface(&self) -> types::DeclaredType;
     /// When this thing falls due, read off what it holds.
     fn due(&self, fields: &BTreeMap<String, String>) -> Due;
 }
@@ -400,8 +412,19 @@ pub trait Carrier: Send + Sync {
 pub struct Rhythms;
 
 impl Carrier for Rhythms {
-    fn kind(&self) -> &str {
-        "rhythm"
+    /// **A cadence, a policy and a basis — none of them required here.** A
+    /// thing holding any one of the three is this carrier's business; which
+    /// of them it is missing, and whether that is a defect or simply not yet
+    /// opened, is [`Rhythms::due`]'s question, not this interface's.
+    fn interface(&self) -> types::DeclaredType {
+        types::DeclaredType::new(
+            "is-due",
+            vec![
+                types::Field::new(CADENCE_DAYS, types::ValueType::Number),
+                types::Field::one_of(ADVANCES_FROM, AdvancesFrom::ALL.map(AdvancesFrom::as_token)),
+                types::Field::new(COUNTS_FROM, types::ValueType::Date),
+            ],
+        )
     }
 
     /// **A loop carrying none of the schedule is not late.** It is a loop
@@ -411,14 +434,11 @@ impl Carrier for Rhythms {
     /// that is the case the loud answer exists for — unless the only thing
     /// missing is the basis itself, which is the shape a declared, never
     /// checked-in loop takes and not a defect. See [`Due::NotYetOpened`].
+    ///
+    /// **Never reached over none of the schedule** — [`owed`] screens that
+    /// through [`Carrier::interface`] before calling here, so this is the
+    /// half-built and the whole-built cases only.
     fn due(&self, fields: &BTreeMap<String, String>) -> Due {
-        let carries = [CADENCE_DAYS, ADVANCES_FROM, COUNTS_FROM]
-            .iter()
-            .filter(|key| fields.contains_key(**key))
-            .count();
-        if carries == 0 {
-            return Due::Never;
-        }
         match schedule_of(fields) {
             Ok(schedule) => Due::On(schedule.due_on()),
             // **The one key a check-in derives, and only when nobody wrote
@@ -431,12 +451,14 @@ impl Carrier for Rhythms {
     }
 }
 
-/// **What is owed, over any carrier.** The read hands the object's kind and its
-/// folded fields; a kind no carrier answers for owes nothing.
-pub fn owed(carriers: &[&dyn Carrier], kind: &str, fields: &BTreeMap<String, String>) -> Due {
+/// **What is owed, over any carrier.** The read hands a thing's folded fields;
+/// a carrier is found by which of them it structurally answers to, never by
+/// what kind produced them, and a thing no carrier's interface matches owes
+/// nothing.
+pub fn owed(carriers: &[&dyn Carrier], fields: &BTreeMap<String, String>) -> Due {
     carriers
         .iter()
-        .find(|carrier| carrier.kind() == kind)
+        .find(|carrier| carrier.interface().matched_by(fields).is_some())
         .map(|carrier| carrier.due(fields))
         .unwrap_or(Due::Never)
 }
@@ -801,10 +823,18 @@ mod tests {
     ///
     /// Both in one case, because either alone passes against a build that
     /// answers the same for everything.
+    ///
+    /// **The empty case goes through [`owed`], not [`Rhythms::due`] alone.**
+    /// Screening out "carries none of the interface" is [`Carrier::interface`]
+    /// and [`owed`]'s job now, so [`Rhythms::due`] is only ever asked about a
+    /// thing that already answers to it — same as every other caller in this
+    /// build reaches it.
     #[test]
     fn a_loop_with_no_schedule_is_not_late_and_half_a_schedule_is() {
+        let carriers: Vec<Box<dyn Carrier>> = shipped();
+        let asked: Vec<&dyn Carrier> = carriers.iter().map(AsRef::as_ref).collect();
         assert_eq!(
-            Rhythms.due(&BTreeMap::new()),
+            owed(&asked, &BTreeMap::new()),
             Due::Never,
             "a loop nobody has scheduled owes nothing",
         );
@@ -854,23 +884,71 @@ mod tests {
         assert!(Rhythms.due(&garbled).owed_on(date(2026, 8, 1)));
     }
 
-    /// **A kind no carrier speaks for owes nothing**, which is what this whole
-    /// shape is for: a person has no schedule to read, and a check that reads
-    /// "cannot compute" as "late" marks every one of them.
+    /// **Something carrying none of any carrier's keys owes nothing**, which
+    /// is what this whole shape is for: a person carries none of a loop's
+    /// schedule, and a check that reads "cannot compute" as "late" marks
+    /// every one of them.
     #[test]
-    fn a_kind_with_no_carrier_owes_nothing() {
+    fn something_carrying_no_carriers_keys_owes_nothing() {
         let carriers: Vec<Box<dyn Carrier>> = shipped();
         let asked: Vec<&dyn Carrier> = carriers.iter().map(AsRef::as_ref).collect();
         assert_eq!(
-            owed(&asked, "person", &BTreeMap::new()),
+            owed(&asked, &BTreeMap::new()),
             Due::Never,
-            "nobody computes a due moment for a person",
+            "nobody computes a due moment over an empty set of fields",
         );
         // The positive in the same read: the carrier that IS there answers.
         let whole = weekly(date(2026, 8, 1), AdvancesFrom::CheckInDate);
         assert!(
-            matches!(owed(&asked, "rhythm", &whole), Due::On(_)),
+            matches!(owed(&asked, &whole), Due::On(_)),
             "and the loop carrier does compute one",
+        );
+    }
+
+    /// **A carrier is found by the keys a thing carries, never by its kind.**
+    ///
+    /// `Promises` here claims no kind at all — there is nothing left on
+    /// [`Carrier`] to claim one with — and it is still found, purely because
+    /// the fields it is handed carry its interface's key. This is the case
+    /// that proves the point of routing through the structural matcher: a
+    /// carrier registered for one kind's business, asked about a thing of a
+    /// kind nobody wrote a line of code to name, still answers.
+    ///
+    /// Paired with the same negative as above, under this carrier instead of
+    /// the shipped one: carrying none of its key still owes nothing.
+    #[test]
+    fn a_carrier_the_read_never_named_a_kind_for_is_still_found_by_its_keys() {
+        struct Promises;
+        impl Carrier for Promises {
+            fn interface(&self) -> types::DeclaredType {
+                types::DeclaredType::new(
+                    "promises",
+                    vec![types::Field::new("promised_for", types::ValueType::Date)],
+                )
+            }
+            fn due(&self, fields: &BTreeMap<String, String>) -> Due {
+                match fields.get("promised_for").map(|held| held.trim().parse()) {
+                    Some(Ok(day)) => Due::On(day),
+                    Some(Err(_)) => Due::Unreadable,
+                    None => Due::Never,
+                }
+            }
+        }
+
+        let promises = Promises;
+        let carriers: Vec<&dyn Carrier> = vec![&promises];
+
+        let mut promised = BTreeMap::new();
+        promised.insert("promised_for".to_string(), "2026-08-01".to_string());
+        assert_eq!(
+            owed(&carriers, &promised),
+            Due::On(date(2026, 8, 1)),
+            "found by the key it carries, with no kind named anywhere in this call",
+        );
+        assert_eq!(
+            owed(&carriers, &BTreeMap::new()),
+            Due::Never,
+            "…and carrying none of it still owes nothing",
         );
     }
 }

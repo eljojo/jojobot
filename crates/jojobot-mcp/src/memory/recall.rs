@@ -1409,10 +1409,7 @@ impl Jojobot {
             // owes nothing, which is what keeps a person out of an answer about
             // what is late.
             let asked = self.carriers();
-            found.retain(|object| {
-                attention::owed(&asked, object.entity.id.kind_token(), &object.fields)
-                    .owed_on(as_of)
-            });
+            found.retain(|object| attention::owed(&asked, &object.fields).owed_on(as_of));
         }
         // **The context a reader did not ask for, and the whole point of the
         // card.** A session that pulls a thing is told who holds what that
@@ -1671,18 +1668,30 @@ mod tests {
     /// it, nothing registers it, and the read has no branch for its kind — it
     /// is handed to the handler and turns up in the answer.
     ///
-    /// **Paired with the negative in the same read**: a thing of a kind NO
-    /// carrier speaks for stays out, or this passes against a read that keeps
+    /// **Found by its interface's key, never by a kind — the case that proves
+    /// the point.** `Promises` claims no kind at all: there is nothing left on
+    /// `Carrier` to claim one with. A `person`, a kind its own code never
+    /// names, still turns up the moment it carries the key — proving the read
+    /// is genuinely structural and not a kind check wearing a new name.
+    /// Paired with the negative: a thing carrying NONE of the key, whatever
+    /// its kind, stays out — or this passes against a read that keeps
     /// everything.
     #[tokio::test]
     async fn a_carrier_the_read_never_heard_of_answers_in_the_same_read() {
         /// A promise falls due on the day it says it does. Two lines of
-        /// arithmetic that share nothing with a loop's.
+        /// arithmetic that share nothing with a loop's, and no kind at all —
+        /// `Carrier` has nowhere left to put one.
         struct Promises;
 
         impl attention::Carrier for Promises {
-            fn kind(&self) -> &str {
-                "work"
+            fn interface(&self) -> jojobot_domain::memory::types::DeclaredType {
+                jojobot_domain::memory::types::DeclaredType::new(
+                    "promises",
+                    vec![jojobot_domain::memory::types::Field::new(
+                        "promised_for",
+                        jojobot_domain::memory::types::ValueType::Date,
+                    )],
+                )
             }
 
             fn due(&self, fields: &std::collections::BTreeMap<String, String>) -> attention::Due {
@@ -1699,8 +1708,8 @@ mod tests {
         let jojobot = crate::harness::handler_carrying(carriers);
         let sid = writing_as(&jojobot);
 
-        // The stub's kind, one owed and one not — the whole answer turns on the
-        // carrier's own arithmetic, which the read has never read.
+        // One owed and one not — the whole answer turns on the carrier's own
+        // arithmetic, which the read has never read.
         for (slug, promised_for) in [("phi", "2026-08-01"), ("sigma", "2026-09-30")] {
             ensure(&jojobot, &format!("work:{slug}")).await;
             capture_ok(
@@ -1717,8 +1726,9 @@ mod tests {
             )
             .await;
         }
-        // And a thing of a kind nothing speaks for, carrying the same key.
-        ensure(&jojobot, "person:alpha").await;
+        // A DIFFERENT kind, carrying the same key and owed the same way — the
+        // carrier's own code never says "person", and it is found anyway.
+        ensure(&jojobot, "person:beta").await;
         capture_ok(
             &jojobot,
             CaptureArgs {
@@ -1728,6 +1738,16 @@ mod tests {
                         .into_iter()
                         .collect(),
                 ),
+                ..capture_args("person:beta", "a person can promise something too")
+            },
+        )
+        .await;
+        // And a thing carrying none of the key at all, whatever it is.
+        ensure(&jojobot, "person:alpha").await;
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                sid: Some(sid.clone()),
                 ..capture_args("person:alpha", "a person is never late")
             },
         )
@@ -1737,8 +1757,9 @@ mod tests {
             &jojobot
                 .recall(Parameters(RecallArgs {
                     sid: Some(sid),
-                    // **One selection reaching both kinds**, which is what makes
-                    // this the SAME answer rather than two reads compared.
+                    // **One selection reaching every kind**, which is what
+                    // makes this the SAME answer rather than two reads
+                    // compared.
                     fields: Some(vec![KeyFilterArgs {
                         key: Some("promised_for".into()),
                         value: None,
@@ -1763,8 +1784,12 @@ mod tests {
             "…and its arithmetic decided, rather than everything of that kind coming back: {said}",
         );
         assert!(
+            said.contains("person:beta"),
+            "found by the key it carries, over a kind the carrier's own code never names: {said}",
+        );
+        assert!(
             !said.contains("person:alpha"),
-            "a kind no carrier speaks for owes nothing, whatever it holds: {said}",
+            "carrying none of any carrier's key owes nothing, whatever its kind: {said}",
         );
     }
 
