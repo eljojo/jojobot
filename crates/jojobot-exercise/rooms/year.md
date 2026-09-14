@@ -294,7 +294,7 @@ say     May: nothing on the canoe carries this sitting's own day, so the varnish
 >
 > Nobody will answer you, but your answer is being read. You must answer.
 >
-> start jojobot as assistant — it is 14 June 2026, the survey happened today up on the north trail and Milhouse and Nelson were both there, and I did the bike chain this morning
+> start jojobot as assistant — it is 14 June 2026, the survey happened today up on the north trail and Milhouse and Nelson were both there, and I did the bike chain this morning, and I've put around 800 kilometres on it since the spring
 
 ```locks
 # Attendance is an edge. August walks it.
@@ -666,7 +666,7 @@ is, and it must not.**
 >
 > Nobody will answer you, but your answer is being read. You must answer.
 >
-> start jojobot as assistant — it is 22 November 2026, when did I last get the drivetrain serviced, and put down that I did it again today
+> start jojobot as assistant — it is 22 November 2026, when did I last get the drivetrain serviced, and put down that I did it again today, and I've ridden it about 600 kilometres since then
 
 ```locks
 # **The day, not the word.** What the operator calls the drivetrain the record
@@ -789,7 +789,7 @@ say     December: the loop that has gone quiet by now did not gain a record on t
 >
 > Nobody will answer you, but your answer is being read. You must answer.
 >
-> start jojobot as assistant — it is 20 December 2026. The record says the club does not meet on Tuesdays. Has it always said that, or did we have it wrong at some point and fix it? Put down what it used to say, under `was`, so I do not have to ask again. And I am about to sell the canoe — could you pull together everything that has happened to it this year so I do not leave anything out for the buyer, though I do not want a stack of separate notes about it either. Oh, and I finally bought a lock for the bike — a U-lock — no, wait, sorry, I mean a cable lock, those are not the same thing at all.
+> start jojobot as assistant — it is 20 December 2026. The record says the club does not meet on Tuesdays. Has it always said that, or did we have it wrong at some point and fix it? Put down what it used to say, under `was`, so I do not have to ask again. And I am about to sell the canoe — could you pull together everything that has happened to it this year so I do not leave anything out for the buyer, though I do not want a stack of separate notes about it either. Oh, and I finally bought a lock for the bike — a U-lock — no, wait, sorry, I mean a cable lock, those are not the same thing at all. And how far have I ridden the gravel bike this year altogether? Put the number where I can find it without doing the sum myself.
 
 ```locks
 # 🚨 **THE QUESTION A CORRECTION MAKES ANSWERABLE, AND ONLY IF IT LEFT A
@@ -923,6 +923,23 @@ say     later December: a plain read of the canoe — no stood_for — still han
 recall {"subject": "thing:canoe", "facts": true, "stood_for": true}
 carries "recorded_at":"2026-07-05"
 say     later December: the canoe's own sources are not reachable even by name, so the lock above proves nothing about elision — only that nothing here works
+
+# 🚨 **THE YEAR'S KILOMETRES, SUMMED — JOJOBOT'S OWN ARITHMETIC, NEVER THE
+# SITTING'S.** June says the bike has done around 800 kilometres since the
+# spring; late November says another 600 since then. Two sittings, seven
+# months apart, each recording its own figure under the same key — and
+# nothing in either entry says the two add up to anything. That is this
+# sitting's own question, asked in the operator's own words, and it is
+# answerable only if the key the earlier sittings wrote is one jojobot
+# folds by summing rather than by keeping the newest. A key nobody
+# declared a counter reads back 600 here — June's own figure overwritten
+# rather than joined — which is the wrong answer a plain value gives.
+#
+# Placed last, for the reason every other lock in this block already is:
+# adding it here never renumbers a lock this room already had.
+recall {"subject": "thing:gravel-bike"}
+carries "km":"1400"
+say     later December: the bike's distance does not read as the year's two figures summed, so either they were never joined under a key jojobot folds, or one replaced the other instead of adding to it
 ```
 
 ## What this room cannot measure

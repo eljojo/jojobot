@@ -45,9 +45,9 @@ const LATE_NOVEMBER: [usize; 2] = [28, 29];
 const DECEMBER: [usize; 1] = [30];
 
 /// How many locks the year carries.
-const LATE_DECEMBER: [usize; 8] = [31, 32, 33, 34, 35, 36, 37, 38];
+const LATE_DECEMBER: [usize; 9] = [31, 32, 33, 34, 35, 36, 37, 38, 39];
 
-const LOCKS: usize = 39;
+const LOCKS: usize = 40;
 
 /// **The sittings a person reads**, which assert nothing and must not.
 const READ_THESE: [&str; 1] = ["Phase 12"];
@@ -645,6 +645,26 @@ async fn june_saying(room: &Surface, sid: &str, said: &str) {
         json!({"subject": "rhythm:chain-check", "content": "did the bike chain this morning",
                "provenance": "testimony",
                "check_in": "ran"}),
+    )
+    .await;
+    // **The first figure, under a key declared to sum rather than replace.**
+    // Declared here, once: the fold behaviour belongs to the key, and late
+    // November's own figure only joins this one rather than overwriting it
+    // because this declaration ran before either write landed.
+    did(
+        room,
+        sid,
+        "declare_type",
+        json!({"name": "cycling",
+               "fields": [{"key": "km", "holds": "number", "folds": "sum"}]}),
+    )
+    .await;
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "thing:gravel-bike", "content": "around 800 kilometres since the spring",
+               "provenance": "testimony", "fields": {"km": "800"}}),
     )
     .await;
 }
@@ -1249,6 +1269,16 @@ async fn late_november(room: &Surface, sid: &str) {
         json!({"subject": "rhythm:chain-check", "content": "did the chain again today",
                "provenance": "testimony",
                "check_in": "ran"}),
+    )
+    .await;
+    // **The second figure, joining June's under the same key.** No second
+    // declaration: the fold behaviour is the key's own, decided once in June.
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "thing:gravel-bike", "content": "around 600 kilometres since June",
+               "provenance": "testimony", "fields": {"km": "600"}}),
     )
     .await;
 }
@@ -2407,6 +2437,30 @@ async fn decembers_lock_fails_when_the_sitting_never_notices_the_overdue_loop() 
         !missing[DECEMBER[0]].held,
         "a year where December never recorded the overdue loop on its own day held December's \
          lock, so the check is measuring something else: {}",
+        saying(&missing),
+    );
+}
+
+/// 🚨 **The bike's summed kilometres, discriminated.**
+///
+/// Late November is the sitting excluded: without its own figure, the bike
+/// carries June's 800 alone, never 1400 — the wrong total a plain
+/// newest-write-wins fold would also produce, which is exactly the failure
+/// this lock exists to catch.
+///
+/// The positive is `every_lock_holds_once_the_year_is_worked`, once more:
+/// both sittings are in [`WORKED`] and that case already asserts every lock
+/// holds on the properly worked year.
+#[tokio::test]
+async fn the_bikes_summed_kilometres_fail_when_only_one_sitting_wrote_a_figure() {
+    let without: Vec<usize> = WORKED.iter().copied().filter(|&at| at != 12).collect();
+    let (_room, surface) = furnished().await;
+    let boundaries = work_the_year(&surface, &room_document(), &without, &[]).await;
+    let missing = judge_all(&surface, &boundaries).await;
+    assert!(
+        !missing[LATE_DECEMBER[8]].held,
+        "a year where only June recorded a distance held the summed-kilometres lock, so the \
+         check is not telling a sum from a single figure: {}",
         saying(&missing),
     );
 }
