@@ -318,8 +318,6 @@ const ROSTER: &[&str] = &[
     "org:contract-loose-record",
     "org:contract-orient-guild",
     "org:contract-pinnable-guild",
-    "org:contract-riversid",
-    "org:contract-riverside",
     "org:contract-self-labelled",
     "org:contract-unscreened",
     "org:contract-unscreened-twin",

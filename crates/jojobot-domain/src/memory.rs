@@ -4118,11 +4118,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_near_miss_against_a_supplied_record_is_caught_against_the_fake() {
-        contract::a_near_miss_against_a_supplied_record_is_caught_and_its_override_lifts_it(
-            &fake_knowing_a_supplied_view(),
-        )
-        .await;
+    async fn add_entity_guards_hold_for_a_supplied_record_against_the_fake() {
+        contract::add_entity_guards_hold_for_a_supplied_record(&fake_knowing_a_supplied_view())
+            .await;
     }
 
     #[tokio::test]
@@ -4135,14 +4133,6 @@ mod tests {
     async fn every_entity_read_answers_for_a_supplied_record_against_the_fake() {
         contract::every_entity_read_answers_for_a_supplied_record(&fake_knowing_a_supplied_view())
             .await;
-    }
-
-    #[tokio::test]
-    async fn an_exact_collision_with_a_supplied_handle_is_never_forceable_against_the_fake() {
-        contract::an_exact_collision_with_a_supplied_handle_is_never_forceable(
-            &fake_knowing_a_supplied_view(),
-        )
-        .await;
     }
 
     #[tokio::test]

@@ -4263,11 +4263,46 @@ pub async fn retracting_an_unknown_address_never_writes<M: Memory>(store: &M) {
 /// **no token forces it — not even the one this refusal itself mints.** Two
 /// same-named people can never merge into one portrait silently (rule 61).
 pub async fn add_entity_blocks_an_existing_handle<M: Memory>(store: &M) {
-    let id = EntityId::person("person:contract-alpha");
-    add(store, NewEntity::new(id.clone(), "Alpha", "crm-card")).await;
+    add_entity_guards_hold_for(
+        store,
+        &support::Stored {
+            handle: EntityId::person("person:contract-alpha"),
+            name: "Alpha",
+            source: "crm-card",
+        },
+    )
+    .await;
+}
 
+/// The same case, asked of a record the build supplies rather than one a
+/// caller wrote — see [`add_entity_guards_hold_for`].
+pub async fn add_entity_guards_hold_for_a_supplied_record<M: Memory>(store: &M) {
+    add_entity_guards_hold_for(store, &support::Supplied).await;
+}
+
+/// 🚨 **An exact handle collision is refused and stays refused — no token
+/// clears it — and a near-miss is caught and its own override lifts it,
+/// whether the existing thing is a stored row or one the build supplies.**
+///
+/// **One case, asked of two kinds of existing** (rule 234): the existence
+/// gate reads what the build supplies over the store, so a guard that only
+/// ever faced a stored row could collide with a shipped name and nobody
+/// would know until it happened live. Written once against a
+/// [`support::Backing`],
+/// never twice by hand — two hand-written copies of this already existed
+/// and had already drifted: the stored one checked a candidate's reason and
+/// its source, the supplied one checked neither.
+async fn add_entity_guards_hold_for<M: Memory, B: support::Backing<M>>(store: &M, backing: &B) {
+    let (existing, source) = backing.existing(store).await;
+    let kind = existing.kind().expect("an existing handle names a kind");
+
+    // ── exact collision: refused, and no token clears it ──────────────
     let outcome = store
-        .add_entity(NewEntity::new(id.clone(), "Alpha Two", "user-named"))
+        .add_entity(NewEntity::new(
+            existing.clone(),
+            "Somebody Else's Name",
+            "user-named",
+        ))
         .await
         .expect("the call itself succeeds; the guard answers in the result");
     let Guarded::Blocked {
@@ -4275,93 +4310,92 @@ pub async fn add_entity_blocks_an_existing_handle<M: Memory>(store: &M) {
         candidates,
     } = outcome
     else {
-        panic!("a colliding handle must be blocked");
+        panic!("an exact handle collision must be refused: {existing}");
     };
-    assert_eq!(candidates[0].reason, guard::MatchReason::ExactHandle);
     assert_eq!(
-        candidates[0].source, "crm-card",
-        "the caller decides on the source"
+        candidates[0].reason,
+        guard::MatchReason::ExactHandle,
+        "the candidate's reason must name an exact match: {candidates:?}",
     );
-
-    let held = guard::override_token(&attempted, &candidates);
-    let again = store
+    assert_eq!(
+        candidates[0].source, source,
+        "the candidate must report the existing thing's own source: {candidates:?}",
+    );
+    let token = guard::override_token(&attempted, &candidates);
+    let forced = store
         .add_entity(NewEntity {
-            override_token: Some(held),
-            ..NewEntity::new(id.clone(), "Alpha Two", "user-named")
+            override_token: Some(token),
+            ..NewEntity::new(existing.clone(), "Somebody Else's Name", "user-named")
         })
         .await
         .expect("the call itself succeeds; the guard answers in the result");
-    let Guarded::Blocked { candidates, .. } = again else {
-        panic!("a colliding handle stays blocked, token or not");
-    };
-    assert_eq!(candidates[0].reason, guard::MatchReason::ExactHandle);
-
-    let seen = read_entity(store, &id).await;
-    assert_eq!(
-        seen.name, "Alpha",
-        "the blocked write must not have overwritten anything"
+    assert!(
+        matches!(forced, Guarded::Blocked { .. }),
+        "an exact handle collision is never overridable: {forced:?}",
     );
-}
+    // **The read every existing thing answers, stored or supplied** — a
+    // whole-entity lookup like [`read_entity`]'s is `list_entities`-backed,
+    // and `list_entities` is deliberately narrower than the existence gate
+    // (`Provisioned`'s to widen, not this contract's to test), so it cannot
+    // stand in for both backings here.
+    assert!(
+        store.fields(&existing).await.is_ok(),
+        "the existing thing must still resolve after a refused write: {existing}",
+    );
 
-/// A near-miss handle is reported, and **the token that refusal minted** is
-/// what lets a genuinely different entity through — while a token nobody
-/// minted lets nothing through at all. Both halves, because a store that
-/// accepts any string passes the first one.
-pub async fn add_entity_reports_a_near_miss_then_accepts_its_own_token<M: Memory>(store: &M) {
-    let first = EntityId("org:contract-riverside".into());
-    add(
-        store,
-        NewEntity::new(first.clone(), "Riverside", "user-named"),
-    )
-    .await;
-
-    let typo = EntityId("org:contract-riversid".into());
+    // ── near miss: caught, and its own override lifts it ──────────────
+    let slug = existing.slug();
+    let near = EntityId::new(kind, &slug[..slug.len() - 1]);
     let outcome = store
-        .add_entity(NewEntity::new(typo.clone(), "Riversid", "user-named"))
+        .add_entity(NewEntity::new(near.clone(), "Near Miss", "user-named"))
         .await
-        .expect("call succeeds");
+        .expect("the call itself succeeds; the guard answers in the result");
     let Guarded::Blocked {
         attempted,
         candidates,
     } = outcome
     else {
-        panic!("a one-letter-off handle must be reported");
+        panic!("a one-edit-off handle must be reported: {near}");
     };
-    assert!(candidates.iter().any(|m| m.handle == first));
+    assert!(
+        candidates.iter().any(|m| m.handle == existing),
+        "the existing thing itself must be the candidate: {candidates:?}",
+    );
     assert!(
         store
-            .list_entities(Some(EntityKind::ORG))
+            .list_entities(Some(kind))
             .await
-            .expect("list orgs")
+            .expect("list_entities should succeed")
             .iter()
-            .all(|e| e.id != typo),
-        "a blocked add must write nothing"
+            .all(|e| e.id != near),
+        "a blocked add must write nothing",
     );
-    let token = guard::override_token(&attempted, &candidates);
-
     assert!(
         matches!(
             store
                 .add_entity(NewEntity {
                     override_token: Some("0000000000000000".into()),
-                    ..NewEntity::new(typo.clone(), "Riversid", "user-named")
+                    ..NewEntity::new(near.clone(), "Near Miss", "user-named")
                 })
                 .await
-                .expect("call succeeds"),
+                .expect("the call itself succeeds; the guard answers in the result"),
             Guarded::Blocked { .. }
         ),
-        "a token nobody minted lifts nothing"
+        "a token nobody minted lifts nothing",
     );
-
-    let forced = add(
+    let token = guard::override_token(&attempted, &candidates);
+    let lifted = add(
         store,
         NewEntity {
             override_token: Some(token),
-            ..NewEntity::new(typo.clone(), "Riversid", "user-named")
+            ..NewEntity::new(near.clone(), "Near Miss", "user-named")
         },
     )
     .await;
-    assert_eq!(forced.id, typo);
+    assert_eq!(
+        lifted.id, near,
+        "the refusal's own token must let a genuinely different thing through",
+    );
 }
 
 /// Capture's subject must already exist. Not "must not look like
@@ -5212,80 +5246,6 @@ pub async fn every_entity_read_answers_for_a_supplied_record<M: Memory>(store: &
             .expect("a pointer read is a selection, never a lookup")
             .is_empty(),
         "a pointer read of a handle nobody has selected something",
-    );
-}
-
-/// **A near-miss against a record the build supplies is caught, exactly as
-/// one against a stored record is — and the refusal's own token lifts it.**
-///
-/// The creation screen used to read the rows this store holds and nothing
-/// else, so a handle one edit-step from a supplied record sailed straight
-/// through: the guard's index had no row for it, found no candidate, and
-/// the write landed, shadowing the supplied record under a name the guard
-/// exists to catch. `known()` — rows plus what the build supplies — is
-/// what fixes that, matching the existence gate `capture` already reads.
-pub async fn a_near_miss_against_a_supplied_record_is_caught_and_its_override_lifts_it<
-    M: Memory,
->(
-    store: &M,
-) {
-    let shipped = EntityId(SUPPLIED_VIEW_FOR_THE_GUARD_SPECS.into());
-    let near = EntityId("view:loop".into());
-    let outcome = store
-        .add_entity(NewEntity::new(near.clone(), "Loop", "user-named"))
-        .await
-        .expect("the call itself succeeds; the guard answers in the result");
-    let Guarded::Blocked {
-        attempted,
-        candidates,
-    } = outcome
-    else {
-        panic!("a handle one edit-step from a supplied record must be screened");
-    };
-    assert!(
-        candidates.iter().any(|m| m.handle == shipped),
-        "the supplied record itself must be the candidate: {candidates:?}"
-    );
-    let token = guard::override_token(&attempted, &candidates);
-    store
-        .add_entity(NewEntity {
-            override_token: Some(token),
-            ..NewEntity::new(near, "Loop", "user-named")
-        })
-        .await
-        .expect("add_entity should succeed")
-        .written()
-        .expect("the refusal's own token must let a genuinely different thing through");
-}
-
-/// **An exact handle collision with a supplied record is refused and stays
-/// refused — no token clears it**, exactly as an exact collision with a
-/// stored handle never clears (rule 234's own first exception): a caller
-/// cannot take over a name the build already uses.
-pub async fn an_exact_collision_with_a_supplied_handle_is_never_forceable<M: Memory>(store: &M) {
-    let shipped = EntityId(SUPPLIED_VIEW_FOR_THE_GUARD_SPECS.into());
-    let outcome = store
-        .add_entity(NewEntity::new(
-            shipped.clone(),
-            "Somebody Else's View",
-            "user-named",
-        ))
-        .await
-        .expect("the call itself succeeds; the guard answers in the result");
-    let Guarded::Blocked { candidates, .. } = outcome else {
-        panic!("an exact handle collision with a supplied record must be refused");
-    };
-    let token = guard::override_token(&shipped, &candidates);
-    let forced = store
-        .add_entity(NewEntity {
-            override_token: Some(token),
-            ..NewEntity::new(shipped, "Somebody Else's View", "user-named")
-        })
-        .await
-        .expect("the call itself succeeds; the guard answers in the result");
-    assert!(
-        matches!(forced, Guarded::Blocked { .. }),
-        "an exact handle collision is never overridable, supplied or not: {forced:?}"
     );
 }
 
@@ -9156,7 +9116,6 @@ pub async fn run_all<M: Memory>(store: &M) {
     update_fact_tells_an_unknown_handle_from_an_empty_entity(store).await;
 
     add_entity_blocks_an_existing_handle(store).await;
-    add_entity_reports_a_near_miss_then_accepts_its_own_token(store).await;
     capture_requires_an_existing_subject(store).await;
     capture_requires_an_existing_edge_object(store).await;
     update_fact_requires_an_existing_edge_object(store).await;
