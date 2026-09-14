@@ -732,7 +732,7 @@ impl Jojobot {
         &self,
         named: &str,
         args: RecallArgs,
-    ) -> Result<RecallArgs, Box<CallToolResult>> {
+    ) -> Result<(RecallArgs, Vec<graph::FieldFilter>), Box<CallToolResult>> {
         let handle = match named.trim().split_once(':') {
             Some((kind, _)) if kind == EntityKind::VIEW.as_token() => {
                 EntityId(named.trim().to_string())
@@ -785,16 +785,27 @@ impl Jojobot {
         };
         // **The view's own keys, read where the page reads them** (rule 51).
         let asked = graph::asked_by_view(&held);
-        Ok(RecallArgs {
-            kind: args.kind.or(asked.selects),
-            facts: args.facts.or(asked.facts.then_some(true)),
-            prose: args.prose.or(asked.prose.then_some(true)),
-            charter: args.charter.or(asked.charter.then_some(true)),
-            overdue: args
-                .overdue
-                .or_else(|| asked.overdue.then_some(OverdueArgs { as_of: None })),
-            ..args
-        })
+        // **The caller's own `fields` wins whole, never merged item by
+        // item.** A caller that named a filter meant that filter; the
+        // view's own is a starting point, not something to add to.
+        let view_filters = if args.fields.is_none() {
+            asked.filters.clone()
+        } else {
+            Vec::new()
+        };
+        Ok((
+            RecallArgs {
+                kind: args.kind.or(asked.selects),
+                facts: args.facts.or(asked.facts.then_some(true)),
+                prose: args.prose.or(asked.prose.then_some(true)),
+                charter: args.charter.or(asked.charter.then_some(true)),
+                overdue: args
+                    .overdue
+                    .or_else(|| asked.overdue.then_some(OverdueArgs { as_of: None })),
+                ..args
+            },
+            view_filters,
+        ))
     }
 }
 
@@ -1221,8 +1232,15 @@ impl Jojobot {
         // **A view fills the call in before anything reads it.** What the view
         // says is what this call asks; what the caller sent beside it wins, so
         // a view is a starting point rather than a cage.
-        let args = match args.view.clone() {
-            None => args,
+        //
+        // **The view's own key filters ride separately from `args`**, because
+        // `RecallArgs.fields` is the caller-facing shape (`KeyFilterArgs`) and
+        // a view's are already the domain shape — carrying them through as
+        // `RecallArgs` would mean converting them twice for no reason. Used
+        // only when the caller named no `fields` of its own; a caller that did
+        // meant that filter, exactly as every other view-filled argument works.
+        let (args, view_filters) = match args.view.clone() {
+            None => (args, Vec::new()),
             Some(named) => match self.asked_by_name(&named, args).await {
                 Ok(filled) => filled,
                 Err(refused) => return Ok(*refused),
@@ -1302,7 +1320,10 @@ impl Jojobot {
                 subject: args.subject.as_deref().map(EntityId::person),
                 kind: args.kind.as_deref().map(parse_kind).transpose()?,
                 answers_type,
-                fields: key_filters(args.fields.as_deref().unwrap_or_default())?,
+                fields: match &args.fields {
+                    Some(named) => key_filters(named)?,
+                    None => view_filters,
+                },
                 near,
                 asked_by,
             },
@@ -3727,6 +3748,164 @@ mod tests {
             .find(|o| o["id"] == "bot:gamma")
             .unwrap_or_else(|| panic!("gamma is in the answer: {body}"));
         assert_eq!(gamma["charter"], own, "{body}");
+    }
+
+    /// 🚨 **A view can hold a real question — a key filter — reaching an
+    /// answer a caller setting only the five view-fillable arguments cannot
+    /// reach without already knowing the view's own words.** This is the
+    /// case the slice exists to prove: before this, a view was strictly
+    /// less expressive than the bare read, because it could only ever fill
+    /// in a kind and four booleans, every one of which was already a
+    /// top-level argument.
+    ///
+    /// The fixture view built here, `view:urgent-things`, is declared
+    /// rather than shipped — a test's own, never a name real callers use.
+    ///
+    /// **Paired**: the view finds the matching thing and excludes the
+    /// other, AND the same kind selection with no view still carries both —
+    /// so the view's filter is doing real work, not narrowing something the
+    /// bare read already narrowed.
+    #[tokio::test]
+    async fn a_view_carrying_a_filter_reaches_what_the_five_flags_alone_cannot() {
+        let jojobot = handler();
+        declared_view(
+            &jojobot,
+            "urgent-things",
+            &[("selects", "thing"), ("priority", "urgent")],
+        )
+        .await;
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                fields: Some([("priority".to_string(), "urgent".to_string())].into()),
+                ..capture_args("thing:contract-view-filter-urgent", "an urgent thing")
+            },
+        )
+        .await;
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                fields: Some([("priority".to_string(), "routine".to_string())].into()),
+                ..capture_args("thing:contract-view-filter-routine", "a routine thing")
+            },
+        )
+        .await;
+
+        let ids = |body: &serde_json::Value| -> Vec<String> {
+            body["objects"]
+                .as_array()
+                .expect("objects is a list")
+                .iter()
+                .map(|o| {
+                    o["id"]
+                        .as_str()
+                        .expect("every object carries an id")
+                        .to_string()
+                })
+                .collect()
+        };
+
+        let viewed = json_of(
+            &jojobot
+                .recall(Parameters(by_view("urgent-things")))
+                .await
+                .expect("recall ok"),
+        );
+        let viewed_ids = ids(&viewed);
+        assert!(
+            viewed_ids.contains(&"thing:contract-view-filter-urgent".to_string()),
+            "the view's own filter must select the matching thing: {viewed}",
+        );
+        assert!(
+            !viewed_ids.contains(&"thing:contract-view-filter-routine".to_string()),
+            "the view's own filter must exclude the non-matching thing: {viewed}",
+        );
+
+        let bare = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    subject: None,
+                    kind: Some("thing".into()),
+                    ..of("unused")
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        let bare_ids = ids(&bare);
+        assert!(
+            bare_ids.contains(&"thing:contract-view-filter-routine".to_string()),
+            "a bare kind selection must not already exclude what only the view's filter does, \
+             or the view proves nothing: {bare}",
+        );
+    }
+
+    /// **A caller's own `fields` still wins over the view's** — a view is a
+    /// starting point, not a cage, the same rule every other view-fillable
+    /// argument already answers to.
+    ///
+    /// **Paired the same way the case above is**: the caller's filter keeps
+    /// its own match AND excludes the view's — an unfiltered answer would
+    /// carry both and pass the positive half for the wrong reason.
+    #[tokio::test]
+    async fn a_callers_own_fields_still_override_the_views_filter() {
+        let jojobot = handler();
+        declared_view(
+            &jojobot,
+            "urgent-things",
+            &[("selects", "thing"), ("priority", "urgent")],
+        )
+        .await;
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                fields: Some([("priority".to_string(), "urgent".to_string())].into()),
+                ..capture_args("thing:contract-view-filter-urgent", "an urgent thing")
+            },
+        )
+        .await;
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                fields: Some([("priority".to_string(), "routine".to_string())].into()),
+                ..capture_args("thing:contract-view-filter-routine", "a routine thing")
+            },
+        )
+        .await;
+
+        let body = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    fields: Some(vec![KeyFilterArgs {
+                        key: Some("priority".into()),
+                        value: Some("routine".into()),
+                        compare: None,
+                        scope: None,
+                    }]),
+                    ..by_view("urgent-things")
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        let ids: Vec<String> = body["objects"]
+            .as_array()
+            .expect("objects is a list")
+            .iter()
+            .map(|o| {
+                o["id"]
+                    .as_str()
+                    .expect("every object carries an id")
+                    .to_string()
+            })
+            .collect();
+        assert!(
+            ids.contains(&"thing:contract-view-filter-routine".to_string()),
+            "the caller's own filter must keep its own match: {body}",
+        );
+        assert!(
+            !ids.contains(&"thing:contract-view-filter-urgent".to_string()),
+            "the caller's own filter must win over the view's, excluding what only the view's \
+             filter would have kept: {body}",
+        );
     }
 
     /// **A one-liner rides in the small list as an ordinary field** — no new

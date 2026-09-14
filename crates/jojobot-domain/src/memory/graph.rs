@@ -670,7 +670,20 @@ pub struct Asked {
     /// **Only what has fallen due.** Arithmetic over dates rather than a value
     /// to filter on, which is why it is a named ask rather than a key filter.
     pub overdue: bool,
+    /// **The view's own fields, beyond the reserved keys, read as key
+    /// filters** — a thing's fields are its properties everywhere else
+    /// this store reads one, and a view is a record like any other, so it
+    /// needs no filter syntax of its own to hold what an object already
+    /// holds. `equals` is the default and carries no prefix; another
+    /// comparison is named ahead of the value with a colon, the same token
+    /// [`types::Compare`] already reads and writes.
+    pub filters: Vec<FieldFilter>,
 }
+
+/// **A view's key is a filter unless it is spoken for.** Kept in one place
+/// so a key added to [`Asked`] later is a key added here, not a key that
+/// silently starts reading as a filter on somebody's rhythm.
+const RESERVED_VIEW_KEYS: &[&str] = &["selects", "shows", "asks"];
 
 /// Read a view's question off the keys it holds. See [`Asked`].
 pub fn asked_by_view(held: &BTreeMap<String, String>) -> Asked {
@@ -678,10 +691,30 @@ pub fn asked_by_view(held: &BTreeMap<String, String>) -> Asked {
         held.get("shows")
             .is_some_and(|s| s.split(',').any(|part| part.trim() == what))
     };
+    let filters = held
+        .iter()
+        .filter(|(key, _)| !RESERVED_VIEW_KEYS.contains(&key.as_str()))
+        .map(|(key, value)| {
+            let (compare, value) = match value.split_once(':') {
+                Some((token, rest)) if types::Compare::of_token(token).is_some() => (
+                    types::Compare::of_token(token).expect("checked above"),
+                    rest,
+                ),
+                _ => (types::Compare::Equals, value.as_str()),
+            };
+            FieldFilter {
+                key: Some(key.clone()),
+                value: Some(value.trim().to_string()),
+                compare,
+                scope: Scope::Thing,
+            }
+        })
+        .collect();
     Asked {
         selects: held.get("selects").cloned(),
         facts: shows("facts"),
         prose: shows("prose"),
+        filters,
         charter: shows("charter"),
         overdue: held.get("asks").map(String::as_str) == Some("overdue"),
     }
@@ -1960,6 +1993,47 @@ where
 mod tests {
     use super::*;
     use crate::memory::{Boot, FactId, FactStatus, Provenance, Standing};
+
+    /// 🚨 **A view's own fields, beyond the three reserved keys, are the
+    /// question's key filters** — the same "a thing's fields are its
+    /// properties" reading every other object already gets, so a view does
+    /// not need a filter syntax of its own to hold one.
+    ///
+    /// **Equals needs no comparison prefix; another comparison is named
+    /// ahead of the value it applies to**, the same token vocabulary
+    /// [`types::Compare`] already reads and writes — not a second one.
+    #[test]
+    fn a_views_own_fields_beyond_the_reserved_keys_become_filters() {
+        let held: std::collections::BTreeMap<String, String> = [
+            ("selects".to_string(), "rhythm".to_string()),
+            ("status".to_string(), "active".to_string()),
+            ("donuts_eaten".to_string(), "greater:3".to_string()),
+        ]
+        .into_iter()
+        .collect();
+        let asked = asked_by_view(&held);
+        assert_eq!(asked.selects.as_deref(), Some("rhythm"));
+        assert_eq!(
+            asked.filters.len(),
+            2,
+            "both non-reserved keys must become filters: {:?}",
+            asked.filters
+        );
+        let status = asked
+            .filters
+            .iter()
+            .find(|f| f.key.as_deref() == Some("status"))
+            .expect("the status key must be a filter");
+        assert_eq!(status.value.as_deref(), Some("active"));
+        assert_eq!(status.compare, types::Compare::Equals);
+        let donuts = asked
+            .filters
+            .iter()
+            .find(|f| f.key.as_deref() == Some("donuts_eaten"))
+            .expect("the donuts_eaten key must be a filter");
+        assert_eq!(donuts.value.as_deref(), Some("3"));
+        assert_eq!(donuts.compare, types::Compare::Greater);
+    }
 
     fn entity(handle: &str, name: &str) -> Entity {
         // **The fixture stands a store up, because the set is setup here.**
