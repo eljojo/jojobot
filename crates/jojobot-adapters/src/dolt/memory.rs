@@ -56,11 +56,12 @@ use super::ids::{self, Draw};
 #[derive(Clone)]
 pub struct DoltMemory {
     pool: MySqlPool,
-    /// **How many times [`known`](Self::known) has built the full listing.**
-    /// Test-only instrumentation for the one property nothing else here can
-    /// observe: whether a read paid for every entity in the store or only
-    /// the one (or few) it actually needed. Shared across a clone, exactly as
-    /// the pool it counts calls against is.
+    /// **How many times [`index`](Self::index) has built the full listing** —
+    /// the one raw query every path to it, [`known`](Self::known) included,
+    /// runs through. Test-only instrumentation for the one property nothing
+    /// else here can observe: whether a read paid for every entity in the
+    /// store or only the one (or few) it actually needed. Shared across a
+    /// clone, exactly as the pool it counts calls against is.
     index_listings: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     /// Where a badge comes from. **A value rather than a call**, so the
     /// collision path can be watched through the verb that mints: entropy will
@@ -566,9 +567,7 @@ impl DoltMemory {
     /// set — so a read gated on the rows alone answered as if that claim did
     /// not exist, over a store holding its rows.
     async fn known(&self, tx: &mut Transaction<'_, MySql>) -> Result<Vec<Entity>, MemoryError> {
-        self.index_listings
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let rows = Self::index(tx).await?;
+        let rows = self.index(tx).await?;
         Ok(self.extend_with_supplied(rows))
     }
 
@@ -879,7 +878,9 @@ impl DoltMemory {
         rows
     }
 
-    async fn index(tx: &mut Transaction<'_, MySql>) -> Result<Vec<Entity>, MemoryError> {
+    async fn index(&self, tx: &mut Transaction<'_, MySql>) -> Result<Vec<Entity>, MemoryError> {
+        self.index_listings
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let rows = sqlx::query(
             "SELECT id, kind, name, source, crm, parent, boot, merged_into, badge
              FROM entity ORDER BY id",
@@ -1767,7 +1768,7 @@ impl Memory for DoltMemory {
 
     async fn list_entities(&self, kind: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
-        let all = Self::index(&mut tx).await?;
+        let all = self.index(&mut tx).await?;
         tx.commit().await.map_err(store)?;
         Ok(all
             .into_iter()
@@ -1794,7 +1795,7 @@ impl Memory for DoltMemory {
         // finding one here would let an edit turn a shipped record into a
         // stored one wearing its handle, which is exactly what a caller must
         // not be able to do (rule 234's own exception).
-        let rows = Self::index(&mut tx).await?;
+        let rows = self.index(&mut tx).await?;
         let Some(mut entity) = rows.iter().find(|e| &e.id == handle).cloned() else {
             return Err(MemoryError::UnknownEntity {
                 attempted: handle.to_string(),
@@ -1859,7 +1860,7 @@ impl Memory for DoltMemory {
         // **A row, never a supplied record** — the same exception
         // `update_entity` reads off: a rename mutates a stored row, and a
         // build-shipped record has none to mutate.
-        let rows = Self::index(&mut tx).await?;
+        let rows = self.index(&mut tx).await?;
         let known = self.extend_with_supplied(rows.clone());
         let Some(entity) = rows.iter().find(|e| &e.id == from).cloned() else {
             // **A supplied record is real and still not a row** — checked
@@ -2220,14 +2221,17 @@ impl Memory for DoltMemory {
 
     async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
-        let index = self.known(&mut tx).await?;
         // An unknown entity is a miss with its near candidates — never an
         // empty page. Empty-but-real and nonexistent are different answers.
         // A stale-but-renamed handle is not this miss: it resolves through
         // its own history to the one storage key its claims were ever filed
         // under, so this is one lookup rather than a walk of every handle it
         // has worn.
+        //
+        // **The full listing is built only here, on the miss** — see
+        // `fields`'s own comment for why.
         let Some((key, _)) = self.resolve(&mut tx, subject).await? else {
+            let index = self.known(&mut tx).await?;
             return Err(MemoryError::UnknownEntity {
                 attempted: subject.to_string(),
                 nearest: guard::screen(subject, &[], &index),
@@ -2268,11 +2272,15 @@ impl Memory for DoltMemory {
 
     async fn claim_history(&self, address: &FactAddress) -> Result<Vec<ClaimWrite>, MemoryError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
-        let index = self.known(&mut tx).await?;
         // A miss on the HANDLE is an entity miss, exactly as every other
         // addressed read answers one. A stale-but-renamed handle resolves
         // through its own history, same as every other lookup here.
+        //
+        // **The full listing is built only on a miss** — two miss branches
+        // below can reach one, each building its own: a handle that resolves
+        // to nothing, or a resolved handle with no writes under this fact id.
         let Some((key, handle)) = self.resolve(&mut tx, &address.home).await? else {
+            let index = self.known(&mut tx).await?;
             return Err(MemoryError::UnknownEntity {
                 attempted: address.home.to_string(),
                 nearest: guard::screen(&address.home, &[], &index),
@@ -2296,6 +2304,7 @@ impl Memory for DoltMemory {
             // with nothing behind it is a miss here for the same reason it is a
             // miss everywhere else, rather than an empty chain that would read
             // as a record saying nothing.
+            let index = self.known(&mut tx).await?;
             if let Some(resolved) = index.iter().find(|e| e.id == handle)
                 && let Some(err) = jojobot_domain::memory::already_merged(&address.home, resolved)
             {
@@ -2354,8 +2363,10 @@ impl Memory for DoltMemory {
         entity: &EntityId,
     ) -> Result<std::collections::HashMap<FactId, Vec<ClaimWrite>>, MemoryError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
-        let index = self.known(&mut tx).await?;
+        // The full listing is built only on the miss — see `fields`'s own
+        // comment for why.
         let Some((key, _)) = self.resolve(&mut tx, entity).await? else {
+            let index = self.known(&mut tx).await?;
             return Err(MemoryError::UnknownEntity {
                 attempted: entity.to_string(),
                 nearest: guard::screen(entity, &[], &index),
@@ -2414,13 +2425,15 @@ impl Memory for DoltMemory {
 
     async fn history(&self, entity: &EntityId, key: &str) -> Result<Vec<FieldWrite>, MemoryError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
-        let index = self.known(&mut tx).await?;
         // An unknown entity is a miss with its near candidates, exactly as a
         // recall of one is: a key nobody wrote and a handle nobody created are
         // different answers with different repairs. A stale-but-renamed
         // handle resolves through its own history, same as every other
         // lookup here.
+        //
+        // The full listing is built only here, on the miss.
         let Some((storage_key, _)) = self.resolve(&mut tx, entity).await? else {
+            let index = self.known(&mut tx).await?;
             return Err(MemoryError::UnknownEntity {
                 attempted: entity.to_string(),
                 nearest: guard::screen(entity, &[], &index),
@@ -2544,7 +2557,7 @@ impl Memory for DoltMemory {
         // is exactly the failure `derived_from` is screened against below,
         // just plural.
         if let Some(stands_for) = &patch.stands_for {
-            let index = Self::index(&mut tx).await?;
+            let index = self.index(&mut tx).await?;
             for named in stands_for {
                 let Some((named_key, _)) = self.resolve(&mut tx, &named.home).await? else {
                     return Err(MemoryError::UnknownEntity {
@@ -2592,7 +2605,7 @@ impl Memory for DoltMemory {
         // [`Self::lower_pointers`], below, lowers whatever `apply_fact_patch`
         // leaves in `fact.derived_from`, touched by this patch or not.
         if let Some(source) = &patch.derived_from {
-            let index = Self::index(&mut tx).await?;
+            let index = self.index(&mut tx).await?;
             let Some((source_key, _)) = self.resolve(&mut tx, &source.home).await? else {
                 return Err(MemoryError::UnknownEntity {
                     attempted: source.home.to_string(),
@@ -2705,7 +2718,7 @@ impl Memory for DoltMemory {
         // **Rows only, deliberately** — a fold mutates stored rows, and a
         // build-supplied record has none to mutate. The same exception
         // `rename_entity`'s own existence check reads off.
-        let index = Self::index(&mut tx).await?;
+        let index = self.index(&mut tx).await?;
         // **Everything is decided before anything moves.** A fold rewrites rows
         // across every table that holds a handle, so a refusal discovered
         // half-way through is the one outcome this must not produce.
@@ -2875,7 +2888,8 @@ impl Memory for DoltMemory {
         // **Read back rather than reconstructed.** The fold may have moved the
         // survivor's own row — a folded parent is re-pointed above — so the
         // answer is what the store now holds and not what this call assembled.
-        let survived = Self::index(&mut tx)
+        let survived = self
+            .index(&mut tx)
             .await?
             .into_iter()
             .find(|e| &e.id == survivor)
@@ -2905,8 +2919,11 @@ impl Memory for DoltMemory {
         date: Date,
     ) -> Result<Retraction, MemoryError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
-        let index = Self::index(&mut tx).await?;
+        // **The full listing is built only on a miss** — two miss branches
+        // below can reach one, each building its own: a handle that resolves
+        // to nothing, or a resolved handle with no fact at this address.
         let Some((key, handle)) = self.resolve(&mut tx, &address.home).await? else {
+            let index = self.index(&mut tx).await?;
             return Err(MemoryError::UnknownEntity {
                 attempted: address.home.to_string(),
                 nearest: guard::screen(&address.home, &[], &index),
@@ -2916,6 +2933,7 @@ impl Memory for DoltMemory {
         // Everything is decided before anything moves, so a refusal leaves the
         // row exactly as it was.
         let Some(mut target) = self.read_fact(&mut tx, &resolved_address).await? else {
+            let index = self.index(&mut tx).await?;
             if let Some(resolved) = index.iter().find(|e| e.id == handle)
                 && let Some(err) = jojobot_domain::memory::already_merged(&address.home, resolved)
             {
@@ -3007,8 +3025,10 @@ impl Memory for DoltMemory {
         // so a store that overrides it owes that answer too. An empty map says
         // nobody has written a key here, which is a different answer from
         // there is no such thing and has a different repair.
-        let index = self.known(&mut tx).await?;
+        //
+        // The full listing is built only on the miss.
         let Some((key, _)) = self.resolve(&mut tx, entity).await? else {
+            let index = self.known(&mut tx).await?;
             return Err(MemoryError::UnknownEntity {
                 attempted: entity.to_string(),
                 nearest: guard::screen(entity, &[], &index),
@@ -3089,7 +3109,7 @@ impl Memory for DoltMemory {
         validate_write_subject(entity)?;
         validate_prose(prose)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
-        let index = Self::index(&mut tx).await?;
+        let index = self.index(&mut tx).await?;
         // Never creates: a handle that names nothing is a miss with its near
         // candidates, exactly as it is for every other verb here.
         if !index.iter().any(|e| &e.id == entity) {
@@ -3114,7 +3134,7 @@ impl Memory for DoltMemory {
     /// second identifier to invent.
     async fn scan(&self) -> Result<Vec<search::DocScan>, MemoryError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
-        let entities = Self::index(&mut tx).await?;
+        let entities = self.index(&mut tx).await?;
         let mut scanned = Vec::with_capacity(entities.len());
         for entity in entities {
             let (prose, badge): (String, Option<String>) =
