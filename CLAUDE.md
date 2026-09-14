@@ -488,6 +488,13 @@ parameters; the curated list lives in the README.
   session learns what exists without paying for what it does not need.
   jojobot decides nothing about when one applies — the caller asks.
 
+- **Attention** — what is owed and late, answered by one read. A thing carries
+  the keys that make it a loop; jojobot computes when it next falls due, stores
+  that moment, and keeps it current on every write. The read finds a carrier by
+  the keys it holds rather than by its kind, so a thing that acquires them is
+  answered without anybody declaring a new kind. Storing the moment is what
+  makes it findable without reading every row.
+
 > **The engine ships the procedure; the operator's instance personalizes it.**
 > An override is an ordinary fact on the bot, read alongside the shipped text
 > rather than replacing it: it narrows, it never repeals. That keeps the two
@@ -495,8 +502,8 @@ parameters; the curated list lives in the README.
 > owns the personalization — instead of making a second copy of one truth.
 
 The capabilities after these — events remembered where they happened · trace ·
-portraits · attention · sessions booting from jojobot — are ordered, not
-scheduled, on the work-queue board.
+portraits · sessions booting from jojobot — are ordered, not scheduled, on the
+work-queue board.
 
 **Layering: engine + bot.** The engine (this repo) is user-agnostic code; a
 bot and its rules are *data* in the user's own store. Nothing about any
