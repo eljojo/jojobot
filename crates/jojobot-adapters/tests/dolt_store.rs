@@ -721,6 +721,241 @@ async fn resolve_stale_pointer_columns_refuses_to_guess_at_an_unresolvable_row()
     store.stop().await;
 }
 
+/// 🚨 **The migration batch, against rows the previous build actually wrote.**
+///
+/// Every other case in this module builds its "before" state either with the
+/// current port (for a badge fill, still reachable through a real code path)
+/// or by reverting the current port's own output with raw SQL (for the
+/// pointer columns, because the current port always resolves them now). Both
+/// are informed guesses about what a genuinely old row looked like.
+///
+/// **This fixture is neither.** `tests/fixtures/a334e84_pre_batch.sql` is a
+/// literal dump of rows written by `a334e84` — the last pushed commit before
+/// this batch, checked out and built on its own, driven through its own
+/// `DoltMemory` port with no raw SQL involved in producing the rows
+/// themselves. At that commit: `fact.entity`/`fact_write.entity` already hold
+/// the plain handle rather than a badge (the resolve step that prefers a
+/// badge postdates it), `fact.edge_object`/`entity.parent`/
+/// `fact_event_ref.entity` do too, and retraction still worked by writing the
+/// old `retracted`/`superseded` status words rather than `archived`.
+///
+/// **What this proves that the synthetic versions cannot**: that the actual
+/// bytes on disk before this batch take the shape every migration and
+/// backfill here assumes they take. A hand-authored or reverted fixture can
+/// only be wrong in the same way its author already believed; a captured one
+/// cannot.
+#[tokio::test]
+async fn the_batch_migrates_rows_a334e84_actually_wrote() {
+    let scratch = Scratch::new("batch-real-fixture");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("batch_real_fixture")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+
+    let fixture = include_str!("fixtures/a334e84_pre_batch.sql");
+    for statement in fixture.lines().filter(|line| line.starts_with("INSERT")) {
+        sqlx::raw_sql(statement)
+            .execute(&pool)
+            .await
+            .unwrap_or_else(|e| panic!("the captured fixture loads: {e}: {statement}"));
+    }
+
+    // **Loaded and holding what it should, before anything acts on it.** A
+    // case that skipped this could pass identically on a fixture that failed
+    // to load at all.
+    let before_status: Vec<String> = sqlx::query_scalar(
+        "SELECT status FROM fact WHERE entity = 'person:pointer-migration-subject' ORDER BY id",
+    )
+    .fetch_all(&pool)
+    .await
+    .expect("the fixture's own rows read");
+    assert_eq!(
+        before_status,
+        vec!["active", "retracted", "active", "superseded"],
+        "the captured fixture did not load in the shape it was captured in: {before_status:?}",
+    );
+    let before_pointer: Option<String> =
+        sqlx::query_scalar("SELECT edge_object FROM fact WHERE entity = ? AND id = 'f1'")
+            .bind("person:pointer-migration-subject")
+            .fetch_one(&pool)
+            .await
+            .expect("the edge row reads");
+    assert_eq!(
+        before_pointer.as_deref(),
+        Some("thing:pointer-migration-object"),
+        "the fixture's edge_object is not the plain handle it was captured with",
+    );
+
+    // **The remaining migrations, over rows that already exist** — the shape
+    // a real upgrade takes: 0046/0047 ran once already against an empty
+    // database when `migrate::run` created the schema above, so this
+    // re-issues their own statements, verbatim from the shipped files,
+    // against the fixture that landed afterward.
+    sqlx::raw_sql(include_str!("../migrations/0046_fact_status_archived.sql"))
+        .execute(&pool)
+        .await
+        .expect("0046 runs");
+    sqlx::raw_sql(include_str!(
+        "../migrations/0047_fact_write_status_archived.sql"
+    ))
+    .execute(&pool)
+    .await
+    .expect("0047 runs");
+
+    let memory = DoltMemory::open(pool.clone());
+    let rekeyed = memory
+        .backfill_handle_keyed_rows()
+        .await
+        .expect("the handle-keyed rekey runs");
+    assert!(
+        rekeyed > 0,
+        "the fixture's own entity is handle-keyed in fact/fact_write/field_write/\
+         fact_event_ref, and nothing was rekeyed",
+    );
+    let resolved = memory
+        .resolve_stale_pointer_columns()
+        .await
+        .expect("nothing here is unresolvable");
+    assert!(
+        resolved > 0,
+        "the fixture's own edge_object and parent are stale handles, and nothing was resolved",
+    );
+
+    // ── key by key ──
+
+    // A collapsed status arrives as the archive status, on both the record
+    // and its own history.
+    let after_status: Vec<String> = sqlx::query_scalar(
+        "SELECT status FROM fact WHERE entity IN (SELECT badge FROM entity WHERE id = ?) \
+         ORDER BY id",
+    )
+    .bind("person:pointer-migration-subject")
+    .fetch_all(&pool)
+    .await
+    .expect("the migrated rows read");
+    assert_eq!(
+        after_status,
+        vec!["active", "archived", "active", "archived"],
+        "a collapsed status did not arrive as archived: {after_status:?}",
+    );
+    let write_statuses: Vec<String> = sqlx::query_scalar(
+        "SELECT status FROM fact_write WHERE entity IN (SELECT badge FROM entity WHERE id = ?) \
+         ORDER BY fact_id, written_at",
+    )
+    .bind("person:pointer-migration-subject")
+    .fetch_all(&pool)
+    .await
+    .expect("the write history reads");
+    assert_eq!(
+        write_statuses,
+        vec![
+            "active", "active", "archived", "active", "active", "archived"
+        ],
+        "a write carrying a collapsed status was not rewritten: {write_statuses:?}",
+    );
+
+    // The retraction's own reason and pointer survive the status rewrite
+    // intact — its `retracts` value still names the record it took back.
+    let retracts: String = sqlx::query_scalar(
+        "SELECT value FROM field_write WHERE `key` = 'retracts' AND entity IN \
+         (SELECT badge FROM entity WHERE id = ?)",
+    )
+    .bind("person:pointer-migration-subject")
+    .fetch_one(&pool)
+    .await
+    .expect("the retraction pointer reads");
+    assert_eq!(
+        retracts, "person:pointer-migration-subject#f2",
+        "the retraction's own pointer did not survive the status collapse",
+    );
+
+    // A pointer stored as a raw handle arrives lowered: the edge, the parent,
+    // and the ref all now name the object's badge rather than its handle.
+    let badge: String = sqlx::query_scalar("SELECT badge FROM entity WHERE id = ?")
+        .bind("thing:pointer-migration-object")
+        .fetch_one(&pool)
+        .await
+        .expect("the object wears a badge");
+    let edge_now: String = sqlx::query_scalar(
+        "SELECT edge_object FROM fact WHERE id = 'f1' AND edge_object IS NOT NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("the edge row reads");
+    assert_eq!(
+        edge_now, badge,
+        "fact.edge_object still holds the plain handle"
+    );
+    let parent_now: String = sqlx::query_scalar("SELECT parent FROM entity WHERE id = ?")
+        .bind("thing:pointer-migration-child")
+        .fetch_one(&pool)
+        .await
+        .expect("the child reads");
+    assert_eq!(
+        parent_now, badge,
+        "entity.parent still holds the plain handle"
+    );
+    let ref_now: String =
+        sqlx::query_scalar("SELECT entity FROM fact_event_ref WHERE fact_id = 'f1'")
+            .fetch_one(&pool)
+            .await
+            .expect("the ref row reads");
+    assert_eq!(
+        ref_now, badge,
+        "fact_event_ref.entity still holds the plain handle",
+    );
+
+    // A reference-typed field value — the one shape this migration batch does
+    // not touch at all. `retracts` is not a declared reference field, but it
+    // is the same structural shape: a field's own VALUE embeds a handle-based
+    // address, and no backfill here rewrites `field_write.value`. Documented
+    // as current behaviour rather than asserted as a defect: nothing in this
+    // slice's scope says it should change, and the value read back above is
+    // exactly the unrewritten handle-based address the fixture was captured
+    // with.
+
+    // Nothing readable before is unreadable after: every claim the fixture
+    // carried still reads, under the object's current handle.
+    let subject = EntityId::person("person:pointer-migration-subject");
+    let read = memory.recall(&subject).await.expect("recall reads");
+    assert_eq!(
+        read.len(),
+        4,
+        "not every pre-batch claim survived: {read:?}"
+    );
+    assert!(
+        read.iter().any(|f| f.content == "drew an edge and a ref"
+            && f.edge.as_ref().map(|e| &e.object)
+                == Some(&EntityId("thing:pointer-migration-object".into()))),
+        "the edge-bearing claim did not read back correctly: {read:?}",
+    );
+
+    // Idempotent: a second run of both finds nothing left to do.
+    assert_eq!(
+        memory
+            .backfill_handle_keyed_rows()
+            .await
+            .expect("the rekey runs again"),
+        0,
+        "the rekey found handle-keyed rows a second time",
+    );
+    assert_eq!(
+        memory
+            .resolve_stale_pointer_columns()
+            .await
+            .expect("nothing left to fix"),
+        0,
+        "the pointer migration found stale rows a second time",
+    );
+
+    store.stop().await;
+}
+
 /// 🚨 **An alias row is its own entity's foreign key, and a rename must not
 /// sever it.**
 ///
