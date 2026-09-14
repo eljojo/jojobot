@@ -34,7 +34,14 @@ pub(crate) fn session_nothing_to_amend() -> CallToolResult {
 /// The session context's half of "a miss is an answer, not a failure": an id
 /// that names nothing, a session that is closed, and an amend with nothing to
 /// amend all come back in the guards' one shape.
-pub(crate) fn session_declined(e: SessionError) -> Result<CallToolResult, McpError> {
+///
+/// **`sid` is the caller's own handle** — the only public name they hold
+/// (rule 205) — and it is what a `Closed` refusal names, never the store's
+/// internal session id carried on the error. That internal id is not
+/// something the caller ever sent or received as an address, so naming it
+/// would leave a caller unable to tell that the run a status check just
+/// called `wrapped` is the same one this refusal is about.
+pub(crate) fn session_declined(e: SessionError, sid: &str) -> Result<CallToolResult, McpError> {
     let blocked = |attempted: &str, how: WayForward| {
         let body = serde_json::json!({
             "status": "blocked",
@@ -61,12 +68,12 @@ pub(crate) fn session_declined(e: SessionError) -> Result<CallToolResult, McpErr
         // belongs to a new session — that is advice to fork the very thing
         // they were trying to continue.
         SessionError::Closed {
-            attempted,
             state: SessionState::Abandoned,
+            ..
         } => blocked(
-            &attempted.clone(),
+            sid,
             format!(
-                "Nothing was written. Session '{attempted}' is abandoned — it stopped without \
+                "Nothing was written. Session '{sid}' is abandoned — it stopped without \
                  being wrapped up, so it takes no write as it stands. That is not a failure and \
                  not the end of it: resume it. Call start_here with your bot name, and either \
                  take it from the offer or pass resume with its sid — it reopens where it left \
@@ -74,10 +81,10 @@ pub(crate) fn session_declined(e: SessionError) -> Result<CallToolResult, McpErr
             )
             .into(),
         ),
-        SessionError::Closed { attempted, state } => blocked(
-            &attempted.clone(),
+        SessionError::Closed { state, .. } => blocked(
+            sid,
             format!(
-                "Nothing was written. Session '{attempted}' is {state} — its story has been told, \
+                "Nothing was written. Session '{sid}' is {state} — its story has been told, \
                  so this end is the last word. Its chronology stands as the record of what \
                  happened. If there is more to say, it belongs to a new session: boot again (or \
                  rotate) and start_here mints one."

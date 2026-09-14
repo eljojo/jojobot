@@ -146,7 +146,7 @@ impl Jojobot {
         // door is the way back, so a caller whose handle stopped addressing
         // anything is the one who most needs it to open. See
         // [`Jojobot::standing`].
-        let carried = self.standing(args.sid.as_deref());
+        let carried = self.standing(args.sid.as_deref()).await;
         let resume = args
             .resume
             .as_deref()

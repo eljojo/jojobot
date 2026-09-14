@@ -134,13 +134,13 @@ impl Jojobot {
                 .await
             {
                 Ok(entry) => entry,
-                Err(e) => return session_declined(e),
+                Err(e) => return session_declined(e, caller.sid.as_str()),
             },
         };
 
         let wrapped = match self.sessions.close(&session, SessionState::Wrapped).await {
             Ok(wrapped) => wrapped,
-            Err(e) => return session_declined(e),
+            Err(e) => return session_declined(e, caller.sid.as_str()),
         };
         // **The handle outlives the run it named, and stops addressing it.** The
         // registry keeps the mapping — re-issuing a wrapped run's handle would

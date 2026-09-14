@@ -66,7 +66,7 @@ impl Jojobot {
             // turned away a handle would fail exactly the caller whose handle
             // has stopped working, which is the one calling. See
             // [`Jojobot::standing`].
-            "carried_session": self.standing(args.sid.as_deref()),
+            "carried_session": self.standing(args.sid.as_deref()).await,
             "status": "ok",
         });
         Ok(CallToolResult::success(vec![ContentBlock::text(
@@ -248,6 +248,91 @@ mod tests {
         assert!(
             anonymous["carried_session"].is_null(),
             "a probe carrying no handle is told nothing about one: {anonymous}"
+        );
+    }
+
+    /// **A finished run has to be sayable, not folded into `held`.**
+    ///
+    /// The registry never drops a handle, so `held` alone cannot tell a live
+    /// run from one whose story was already told — a wrapped session's sid
+    /// still resolves, and a caller reading `held` reasonably reads that as
+    /// still going. The probe must say which end the run actually reached.
+    ///
+    /// Four states, paired: a lazy boot and an active run with a card both
+    /// still read `held` (the positive this fix must not break), while a
+    /// wrapped and an abandoned run each read their own word rather than
+    /// collapsing into `held` or into each other.
+    #[tokio::test]
+    async fn the_probe_says_when_a_held_handle_addresses_a_run_that_is_over() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma").await;
+
+        // Lazy: booted, nothing written yet — no card at all, still held.
+        let lazy = booted(&jojobot, "gamma").await;
+        let lazy_body = json_of(
+            &jojobot
+                .ping(Parameters(PingArgs {
+                    sid: Some(lazy.clone()),
+                }))
+                .await
+                .expect("ping answers"),
+        );
+        assert_eq!(lazy_body["carried_session"], "held", "{lazy_body}");
+
+        // Active: the first write materializes the card, and it is live.
+        jojobot
+            .journal(Parameters(crate::session::JournalArgs {
+                entry: "starting".into(),
+                focus: None,
+                sid: lazy.clone(),
+            }))
+            .await
+            .expect("journal answers");
+        let active_body = json_of(
+            &jojobot
+                .ping(Parameters(PingArgs {
+                    sid: Some(lazy.clone()),
+                }))
+                .await
+                .expect("ping answers"),
+        );
+        assert_eq!(active_body["carried_session"], "held", "{active_body}");
+
+        // Wrapped: the story is told and the run is over — the probe must not
+        // say `held` about it.
+        jojobot
+            .wrap_session(Parameters(crate::session::WrapSessionArgs {
+                story: "done".into(),
+                sid: lazy.clone(),
+            }))
+            .await
+            .expect("wrap answers");
+        let wrapped_body = json_of(
+            &jojobot
+                .ping(Parameters(PingArgs {
+                    sid: Some(lazy.clone()),
+                }))
+                .await
+                .expect("ping answers"),
+        );
+        assert_eq!(wrapped_body["carried_session"], "wrapped", "{wrapped_body}");
+
+        // Abandoned: the other terminal end reads as itself too, not as
+        // `held` and not as `wrapped`.
+        let stopped = abandoned_run(&store, "gamma", "reading the hand-off", 30).await;
+        let abandoned_sid = as_run(&jojobot, "gamma", &stopped.id);
+        let abandoned_body = json_of(
+            &jojobot
+                .ping(Parameters(PingArgs {
+                    sid: Some(abandoned_sid),
+                }))
+                .await
+                .expect("ping answers"),
+        );
+        assert_eq!(
+            abandoned_body["carried_session"], "abandoned",
+            "{abandoned_body}"
         );
     }
 }

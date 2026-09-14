@@ -63,7 +63,7 @@ impl Jojobot {
                 "session": session.as_str(),
                 "entry": entry_receipt_json(&entry),
             })),
-            Err(e) => session_declined(e),
+            Err(e) => session_declined(e, caller.sid.as_str()),
         }
     }
 }

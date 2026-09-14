@@ -78,7 +78,7 @@ impl Jojobot {
         // again.
         if let Some(theirs) = focus.map(str::trim).filter(|f| !f.is_empty()) {
             if let Err(e) = jojobot_domain::session::validate_focus(theirs) {
-                return session_declined(e);
+                return session_declined(e, caller.sid.as_str());
             }
         }
         let session = self
@@ -110,7 +110,7 @@ impl Jojobot {
             // entry — and dressing those as uncertain would send a caller to
             // go and look for a write that provably never happened.
             Err(e) if !matches!(e, SessionError::Store(_)) => {
-                return session_declined(e);
+                return session_declined(e, caller.sid.as_str());
             }
             Err(e) => {
                 tracing::error!(error = %e, "store failure left an append uncertain");
@@ -564,6 +564,59 @@ mod tests {
         assert!(
             on_told.contains("new session"),
             "…and there the next run really is the way forward: {on_told}"
+        );
+    }
+
+    /// **The refusal must name the identifier the caller actually carries.**
+    ///
+    /// The handle a caller passes is their `sid` — the only public name they
+    /// hold (rule 205) — never the store's own internal session id. A refusal
+    /// that named the internal id instead would leave a caller unable to tell
+    /// that the run `ping` just called `wrapped` is the same one this refusal
+    /// is about, because the two answers would be talking in two different
+    /// vocabularies about the same run.
+    #[tokio::test]
+    async fn the_closed_refusal_names_the_sid_the_caller_carries_not_the_internal_id() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma").await;
+
+        let told = store
+            .begin(NewSession {
+                timezone: None,
+                bot: EntityId("bot:gamma".into()),
+                sid: Sid("t002".into()),
+                focus: "a finished piece of work".into(),
+                started_at: jiff::Timestamp::now(),
+                started_on: None,
+            })
+            .await
+            .expect("begin ok");
+        store
+            .close(&told.id, SessionState::Wrapped)
+            .await
+            .expect("close ok");
+        let sid = as_run(&jojobot, "gamma", &told.id);
+
+        let body = blocked(
+            &jojobot
+                .journal(Parameters(JournalArgs {
+                    entry: "one more thing".into(),
+                    focus: None,
+                    sid: sid.clone(),
+                }))
+                .await
+                .expect("a closed session is an answer, not a protocol failure"),
+        );
+
+        assert_eq!(
+            body["attempted"], sid,
+            "the refusal must name the caller's own sid: {body}"
+        );
+        assert_ne!(
+            body["attempted"],
+            told.id.as_str(),
+            "…and not the store's internal session id, which the caller never carries: {body}"
         );
     }
 

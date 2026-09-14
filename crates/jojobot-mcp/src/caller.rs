@@ -241,12 +241,17 @@ impl Jojobot {
     /// back on precisely the caller taking it, in the words of the call they
     /// just made.
     ///
-    /// The handle is ANSWERED instead: `held` while it still addresses that
-    /// session, `gone` once it does not, `malformed` when it is no handle
-    /// jojobot could have minted, and nothing at all when none was carried.
-    /// [`Jojobot::attributable`] is the same idea for the verbs that write,
-    /// where the answer has to be a refusal: a write is worth less than nothing
-    /// if nobody can be told whose it was.
+    /// The handle is ANSWERED instead: `held` while it addresses a session
+    /// still open, `gone` once the handle itself does not resolve,
+    /// `malformed` when it is no handle jojobot could have minted, and
+    /// nothing at all when none was carried. A handle whose session reached a
+    /// terminal state answers with that state's own word (`wrapped` or
+    /// `abandoned`) rather than `held` — the registry never drops a handle,
+    /// so `held` alone cannot tell a live run from one whose story is already
+    /// told, and a caller reading it as still going would be reading it
+    /// wrong. [`Jojobot::attributable`] is the same idea for the verbs that
+    /// write, where the answer has to be a refusal: a write is worth less
+    /// than nothing if nobody can be told whose it was.
     ///
     /// **`malformed` and `gone` are two answers because they send a caller to
     /// two places** — the same distinction [`Jojobot::caller`] makes in its
@@ -255,16 +260,27 @@ impl Jojobot {
     /// what you sent, and a handle that arrived upcased, truncated or quoted
     /// still addresses a live session once the string is fixed. Answering that
     /// one `gone` abandons a run the caller could have walked back into.
-    pub(crate) fn standing(&self, sid: Option<&str>) -> serde_json::Value {
+    pub(crate) async fn standing(&self, sid: Option<&str>) -> serde_json::Value {
         let Some(raw) = sid.map(str::trim).filter(|s| !s.is_empty()) else {
             return serde_json::Value::Null;
         };
         if !sid::is_readable(raw) {
             return "malformed".into();
         }
-        match self.registry.lookup(raw) {
-            Some(_) => "held".into(),
-            None => "gone".into(),
+        let Some(handle) = self.registry.lookup(raw) else {
+            return "gone".into();
+        };
+        // A lazy handle has no card yet — nothing has been written, so there
+        // is no run state to report beyond "still addresses a session".
+        let Some(card) = handle.card else {
+            return "held".into();
+        };
+        // A card that failed to read back is an inconsistency this probe must
+        // not invent an opinion about — falling back to `held` is the
+        // existing, conservative answer rather than a new failure mode.
+        match self.sessions.read_session(&card).await {
+            Ok(session) if session.state.is_terminal() => session.state.as_token().into(),
+            _ => "held".into(),
         }
     }
 
