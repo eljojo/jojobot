@@ -88,6 +88,8 @@ message assistant | starting to keep track of things | I am going to start keepi
 
     I ride with the North Trail Club. Milhouse is in it and he lives in Springfield. The club is running a trail survey in June and I mean to be there.
 
+    And one more thing, since I know I will forget to say it later: when I pay someone for work on the bike or the canoe, there are three words I use for where that stands, and no others — invoiced, paid, or waived.
+
     Leave it so whoever picks this up in a month has what they need.
 ```
 
@@ -203,7 +205,7 @@ say     February: nothing on the canoe carries this sitting's own day, so the so
 >
 > Nobody will answer you, but your answer is being read. You must answer.
 >
-> start jojobot as assistant — it is 15 March 2026 and the club meets on Tuesdays, put that down, and I patched that soft spot in the canoe's hull
+> start jojobot as assistant — it is 15 March 2026 and the club meets on Tuesdays, put that down, and I patched that soft spot in the canoe's hull — thirty dollars in materials, already paid for
 
 ```locks
 # ⚠️ **A named check, because this is the one sitting the finished room cannot
@@ -666,7 +668,7 @@ is, and it must not.**
 >
 > Nobody will answer you, but your answer is being read. You must answer.
 >
-> start jojobot as assistant — it is 22 November 2026, when did I last get the drivetrain serviced, and put down that I did it again today, and I've ridden it about 600 kilometres since then
+> start jojobot as assistant — it is 22 November 2026, when did I last get the drivetrain serviced, and put down that I did it again today, and I've ridden it about 600 kilometres since then — forty five dollars this time, and they've sent me the bill for it
 
 ```locks
 # **The day, not the word.** What the operator calls the drivetrain the record
@@ -808,7 +810,7 @@ say     December: the walk back from the loop's own cadence does not reach the o
 >
 > Nobody will answer you, but your answer is being read. You must answer.
 >
-> start jojobot as assistant — it is 20 December 2026. The record says the club does not meet on Tuesdays. Has it always said that, or did we have it wrong at some point and fix it? Put down what it used to say, under `was`, so I do not have to ask again. And I am about to sell the canoe — could you pull together everything that has happened to it this year so I do not leave anything out for the buyer, though I do not want a stack of separate notes about it either. Oh, and I finally bought a lock for the bike — a U-lock — no, wait, sorry, I mean a cable lock, those are not the same thing at all. And how far have I ridden the gravel bike this year altogether? Put the number where I can find it without doing the sum myself.
+> start jojobot as assistant — it is 20 December 2026. The record says the club does not meet on Tuesdays. Has it always said that, or did we have it wrong at some point and fix it? Put down what it used to say, under `was`, so I do not have to ask again. And I am about to sell the canoe — could you pull together everything that has happened to it this year so I do not leave anything out for the buyer, though I do not want a stack of separate notes about it either. Oh, and I finally bought a lock for the bike — a U-lock — no, wait, sorry, I mean a cable lock, those are not the same thing at all. And how far have I ridden the gravel bike this year altogether? Put the number where I can find it without doing the sum myself. One more thing — one of the payments for the bike or the canoe is sitting there with a word I don't actually use. Put that one right.
 
 ```locks
 # 🚨 **THE QUESTION A CORRECTION MAKES ANSWERABLE, AND ONLY IF IT LEFT A
@@ -973,6 +975,40 @@ say     later December: the bike's distance does not read as the year's two figu
 recall {"subject": "event:trail-survey", "facts": true}
 carries "standing":"open"
 say     later December: the survey's own planning claim does not read as still open, so either it was never recorded as a hedge or something settled it that had no business doing so
+
+# 🚨 **THE WORD JANUARY DECLARED, NOT A WORD THAT LOOKS RIGHT.** "sent" is a
+# perfectly reasonable status word on its own — nothing about it looks
+# broken. It is wrong only because January said, once, that the operator's
+# own three words are invoiced, paid or waived, and nothing else. A sitting
+# with no memory of January has no way to know "sent" is the odd one out
+# except by having kept that declaration — the same property the ledger
+# room's own design rests this whole capability on.
+#
+# ⚠️ **On the bike, not the canoe, and that placement is load-bearing.** Two
+# jobs sharing one subject would share the fold on `cost` and `settled` too
+# — the newer write would read back as both jobs' current value, and the
+# older job's own figures would be reachable only behind `stood_for`. One
+# job per subject is what keeps each independently readable, the same
+# reason the ledger room's own furniture never put two jobs on one thing.
+#
+# ⚠️ **No `facts: true`.** The fold alone is the question — what the thing
+# HOLDS now — and asking for the records too would put the same pair at two
+# paths in one answer (the fold's own `fields`, and the same key inside
+# `facts[0].fields`), which reads as an ambiguous needle rather than one.
+recall {"subject": "thing:gravel-bike"}
+carries "cost":"45"
+carries "settled":"invoiced"
+say     later December: the drivetrain job does not read as fixed to the operator's own word, so either the declaration was never kept past its own sitting or nothing here reached it
+
+# **The control this rests on, on the canoe — its own subject, its own
+# fold.** The March job already said what the operator's own word says. A
+# sitting that could not tell right from wrong would repaint everything the
+# same value; this catches that by checking the one job that never needed
+# fixing is still exactly as it was. No `facts: true`, for the reason above.
+recall {"subject": "thing:canoe"}
+carries "cost":"30"
+carries "settled":"paid"
+say     later December: the March job no longer reads as paid, so a word that was already right was painted over
 ```
 
 ## What this room cannot measure

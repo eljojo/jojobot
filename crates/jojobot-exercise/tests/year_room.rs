@@ -45,9 +45,9 @@ const LATE_NOVEMBER: [usize; 2] = [28, 29];
 const DECEMBER: [usize; 3] = [30, 31, 32];
 
 /// How many locks the year carries.
-const LATE_DECEMBER: [usize; 10] = [33, 34, 35, 36, 37, 38, 39, 40, 41, 42];
+const LATE_DECEMBER: [usize; 12] = [33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44];
 
-const LOCKS: usize = 43;
+const LOCKS: usize = 45;
 
 /// **The sittings a person reads**, which assert nothing and must not.
 const READ_THESE: [&str; 1] = ["Phase 12"];
@@ -246,6 +246,26 @@ async fn address_of(room: &Surface, subject: &str, needle: &str) -> String {
         .to_string()
 }
 
+/// **[`address_of`], without the panic.** For a sitting whose own business
+/// is optional on a partial year — some cases drive one on purpose, for
+/// reasons that have nothing to do with what this call is finding.
+async fn try_address_of(room: &Surface, subject: &str, needle: &str) -> Option<String> {
+    let read = room
+        .call("recall", json!({"subject": subject, "facts": true}))
+        .await;
+    let parsed: Value = serde_json::from_str(&read).ok()?;
+    parsed["objects"][0]["facts"]
+        .as_array()?
+        .iter()
+        .find(|fact| {
+            fact["content"]
+                .as_str()
+                .is_some_and(|said| said.contains(needle))
+        })
+        .and_then(|fact| fact["address"].as_str())
+        .map(str::to_string)
+}
+
 /// **The one entity of `kind`'s current handle.** Looked up rather than
 /// hardcoded: October may have renamed it by the time this is asked, and a
 /// literal written here would go stale under exactly the rename this room
@@ -334,6 +354,19 @@ async fn january(room: &Surface, sid: &str) {
         "capture",
         json!({"subject": "event:trail-survey", "content": "planning to attend",
                "provenance": "testimony", "standing": "open"}),
+    )
+    .await;
+    // **The brief's own vocabulary, declared once, early — the only place a
+    // cold sitting months from now can learn which word the operator
+    // actually uses.** Without this, "sent" and "invoiced" are just two
+    // words; with it, one of them is wrong.
+    did(
+        room,
+        sid,
+        "declare_type",
+        json!({"name": "paid-job",
+               "fields": [{"key": "settled", "holds": "text",
+                           "one_of": ["invoiced", "paid", "waived"]}]}),
     )
     .await;
     // **The brief asked for this in the operator's own words** — leave it so
@@ -454,12 +487,16 @@ async fn march(room: &Surface, sid: &str) {
                "provenance": "testimony", "recorded_at": "2026-03-15"}),
     )
     .await;
+    // **The correctly-worded job — the control this weave rests on.** It
+    // already says what the operator's own word says, so the cold sitting
+    // that repaints the wrong one must leave this alone.
     did(
         room,
         sid,
         "capture",
         json!({"subject": "thing:canoe", "content": CANOE_DAYS[1].1,
-               "provenance": "testimony", "recorded_at": CANOE_DAYS[1].0}),
+               "provenance": "testimony", "recorded_at": CANOE_DAYS[1].0,
+               "fields": {"cost": "30", "settled": "paid"}}),
     )
     .await;
 }
@@ -1294,6 +1331,18 @@ async fn late_november(room: &Surface, sid: &str) {
                "provenance": "testimony", "fields": {"km": "600"}}),
     )
     .await;
+    // **The job off the vocabulary January declared — on its own subject,
+    // not sharing a key with any other job.** `cost`/`settled` are fresh on
+    // `thing:gravel-bike`, so nothing here folds against another job's own
+    // figures the way two jobs on one subject would.
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "thing:gravel-bike", "content": "the shop serviced the drivetrain",
+               "provenance": "testimony", "fields": {"cost": "45", "settled": "sent"}}),
+    )
+    .await;
 }
 
 /// **The sitting that reads back past a correction**, done properly: it takes
@@ -1364,6 +1413,24 @@ async fn later_december(room: &Surface, sid: &str) {
                "fields": {"was": was}}),
     )
     .await;
+    // **The one job off the vocabulary January declared, put right — if
+    // late November's own job is there to find.** Several cases drive a
+    // partial year that skips late November for reasons of their own; this
+    // sitting still has its other business to do, so it looks rather than
+    // assumes.  "sent" is not one of the operator's own three words —
+    // reachable only by having kept the declaration, since nothing about
+    // "sent" looks wrong on its own.
+    if let Some(wrong_word) =
+        try_address_of(room, "thing:gravel-bike", "serviced the drivetrain").await
+    {
+        did(
+            room,
+            sid,
+            "update_fact",
+            json!({"address": wrong_word, "fields": {"settled": "invoiced"}}),
+        )
+        .await;
+    }
     fold_the_canoes_pile(room, sid).await;
 }
 
@@ -2616,6 +2683,66 @@ async fn the_surveys_hedge_lock_fails_when_nothing_is_marked_open() {
         !outcomes[LATE_DECEMBER[9]].held,
         "a claim sent with no standing at all held the still-open lock, so the check is not \
          actually reading whether it was marked a hedge: {}",
+        saying(&outcomes),
+    );
+}
+
+/// 🚨 **The drivetrain job's word lock, discriminated against no
+/// correction at all.**
+#[tokio::test]
+async fn the_drivetrains_job_lock_fails_when_nothing_corrects_the_word() {
+    let (_room, surface) = furnished().await;
+    let sid = sitting(&surface, "2026-11-22").await;
+    did(
+        &surface,
+        &sid,
+        "capture",
+        json!({"subject": "thing:gravel-bike", "content": "the shop serviced the drivetrain",
+               "provenance": "testimony", "fields": {"cost": "45", "settled": "sent"}}),
+    )
+    .await;
+    let now = boundary(&surface, "after").await;
+    let outcomes = judge_all(&surface, &[now]).await;
+    assert!(
+        !outcomes[LATE_DECEMBER[10]].held,
+        "a job left with the wrong word, never corrected, held the drivetrain lock: {}",
+        saying(&outcomes),
+    );
+}
+
+/// 🚨 **The March control lock, discriminated against a sitting that
+/// repaints a job that was never wrong.**
+///
+/// The failure mode the control exists for: a sitting that cannot tell
+/// right from wrong paints every job the same word, including the one that
+/// already said what the operator's own word says.
+#[tokio::test]
+async fn the_marchs_job_control_fails_when_it_gets_repainted_too() {
+    let (_room, surface) = furnished().await;
+    let sid = sitting(&surface, "2026-03-15").await;
+    did(
+        &surface,
+        &sid,
+        "capture",
+        json!({"subject": "thing:canoe", "content": "the soft spot was patched",
+               "provenance": "testimony", "fields": {"cost": "30", "settled": "paid"}}),
+    )
+    .await;
+    // **A sitting that cannot tell right from wrong**, played: it paints
+    // the already-correct job the same value it gives everything else.
+    did(
+        &surface,
+        &sid,
+        "capture",
+        json!({"subject": "thing:canoe", "content": "the soft spot was patched",
+               "provenance": "inference", "fields": {"settled": "invoiced"}}),
+    )
+    .await;
+    let now = boundary(&surface, "after").await;
+    let outcomes = judge_all(&surface, &[now]).await;
+    assert!(
+        !outcomes[LATE_DECEMBER[11]].held,
+        "a job that was already right, repainted anyway, held the March control lock: {}",
         saying(&outcomes),
     );
 }
