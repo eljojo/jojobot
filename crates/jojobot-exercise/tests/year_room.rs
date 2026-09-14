@@ -40,9 +40,9 @@ const LATE_OCTOBER: [usize; 4] = [24, 25, 26, 27];
 const LATE_NOVEMBER: [usize; 2] = [28, 29];
 
 /// How many locks the year carries.
-const LATE_DECEMBER: [usize; 6] = [30, 31, 32, 33, 34, 35];
+const LATE_DECEMBER: [usize; 8] = [30, 31, 32, 33, 34, 35, 36, 37];
 
-const LOCKS: usize = 36;
+const LOCKS: usize = 38;
 
 /// **The sittings a person reads**, which assert nothing and must not.
 const READ_THESE: [&str; 2] = ["Phase 12", "Phase 14"];
@@ -3889,6 +3889,35 @@ async fn the_canoes_year_is_folded_late_and_holds_all_three_locks() {
     assert!(
         judged[LATE_DECEMBER[4]].held,
         "the fold was read as inventing a date it never gave: {}",
+        saying(&judged),
+    );
+}
+
+/// 🚨 **The fold measured the way an agent actually meets it: a plain read,
+/// no `stood_for`.**
+///
+/// Every other canoe lock in this room asks with `stood_for: true`, because
+/// each is verification code that wants the whole record. Nothing until now
+/// has asked for the canoe's records the way a session with no reason to
+/// know the flag exists actually would — so nothing has ever proven the
+/// fold is served SHORT rather than merely stored. Both halves: the plain
+/// read excludes the pile, and the same read with the opt-in still reaches
+/// it, which is what rules out a subject nothing here can read at all.
+#[tokio::test]
+async fn the_canoes_fold_is_served_short_on_a_plain_read_and_whole_with_stood_for() {
+    let (_room, surface) = furnished().await;
+    let boundaries = worked_the_year(&surface).await;
+    let judged = judge_all(&surface, &boundaries).await;
+    assert!(
+        judged[LATE_DECEMBER[6]].held,
+        "a plain read of the canoe — no stood_for — held one of the sources the fold is \
+         supposed to elide: {}",
+        saying(&judged),
+    );
+    assert!(
+        judged[LATE_DECEMBER[7]].held,
+        "the canoe's own sources are not reachable even with stood_for: true, so the plain-read \
+         negative above proves nothing about elision: {}",
         saying(&judged),
     );
 }

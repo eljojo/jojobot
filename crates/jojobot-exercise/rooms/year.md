@@ -873,6 +873,34 @@ say     later December: the folded record states a date that appears in none of 
 # lock so that adding it never renumbers a lock this room already had.
 check   the_bike_locks_mistake_is_rewritten_in_place
 say     later December: the bike lock's correction did not land as one record with two writes, so either this sitting never corrected it or it split the correction into a retraction and a fresh claim instead of a plain rewrite
+
+# 🚨 **THE FOLD MEASURED THE WAY AN AGENT ACTUALLY MEETS IT: A PLAIN READ,
+# NO `stood_for`.** Every lock above this one that reads the canoe asks for
+# `stood_for: true`, because that is verification code and it wants the
+# whole record. Nothing until now has ever asked for the canoe's records the
+# way a session with no reason to know the flag exists actually would — so
+# nothing has ever proven the fold is served SHORT rather than merely
+# STORED. Placed last, after the bike lock's own check, for the same reason
+# that one is: adding it here never renumbers a lock this room already had.
+#
+# ⚠️ **Both assertions in the same lock, because a `lacks`-only lock passes
+# on an answer that came back empty.** The elision note — `"stood_for":`,
+# a plain string value — only ever appears beside a record actually marked
+# `stands_for` that actually excluded something, so its presence is what
+# makes the absence beside it mean the fold is being served short rather
+# than that nothing here works at all.
+recall {"subject": "thing:canoe", "facts": true}
+carries "stood_for":
+lacks   soft spot
+say     later December: a plain read of the canoe — no stood_for — still hands back the pile behind the fold, so an agent that never learns the flag exists sees every repair the synthesis was supposed to shorten
+
+# **The positive this rests on.** Without it, the lock above could be
+# passing because nothing about the canoe is reachable at all — the same
+# class of failure a `lacks`-only lock would have let through, one level up:
+# the negative means something only if the affirmative route still works.
+recall {"subject": "thing:canoe", "facts": true, "stood_for": true}
+carries "recorded_at":"2026-07-05"
+say     later December: the canoe's own sources are not reachable even by name, so the lock above proves nothing about elision — only that nothing here works
 ```
 
 ## What this room cannot measure
