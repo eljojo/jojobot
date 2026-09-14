@@ -150,13 +150,10 @@ async fn a_server_acting_out_a_day_answers_in_that_day_without_being_told_the_da
         boot["session"]["choices"].is_null(),
         "a run from June was offered back to a July that never arrived: {boot}",
     );
-    assert!(
-        !boot["session"]["swept"]
-            .as_array()
-            .expect("the boot says which runs it swept")
-            .is_empty(),
-        "June's run was neither swept nor offered — the sweep never saw it: {boot}",
-    );
+    // **Which run went abandoned, read by its own address, below** — once
+    // `list_runs` has a second row of its own to answer with. Naming June's
+    // run directly is the whole point: a non-empty `swept` list only says
+    // SOMETHING was swept, never that it was June's.
 
     // ── "when did I eat an apple?" — in June ────────────────────────────────
     later
@@ -193,6 +190,38 @@ async fn a_server_acting_out_a_day_answers_in_that_day_without_being_told_the_da
         .recall("person:milhouse")
         .await
         .says("\"recorded_at\":\"2026-06-22\"");
+
+    // ── THREE, closed: June's own run reads abandoned by its own address ────
+    //
+    // 🚨 **Direct rather than inferred.** `list_runs` names each run's own
+    // state, so this asks about June's run specifically instead of reading a
+    // count of *something* the sweep touched. **Paired**, because a build
+    // that answered `abandoned` for every run would pass the line above on
+    // its own: July's still-open run has to read back as what IT actually
+    // is, not as June's.
+    let runs = later.call("list_runs", json!({})).await.json();
+    let state_of = |sid: &str| -> String {
+        runs["runs"]
+            .as_array()
+            .expect("list_runs answers with an array")
+            .iter()
+            .find(|run| run["sid"] == sid)
+            .unwrap_or_else(|| panic!("{sid} is not among this bot's own runs: {runs}"))["state"]
+            .as_str()
+            .expect("a state")
+            .to_string()
+    };
+    assert_eq!(
+        state_of(sitting.sid()),
+        "abandoned",
+        "June's own run did not read back abandoned by its own address: {runs}",
+    );
+    assert_eq!(
+        state_of(later.sid()),
+        "active",
+        "July's own still-open run did not read back active, so the line above proves nothing \
+         about telling states apart: {runs}",
+    );
 
     later.wrap("read June back from July").await;
     july.finish().await;
