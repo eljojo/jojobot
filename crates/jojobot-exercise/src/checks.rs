@@ -101,6 +101,13 @@
 //!   one record's own date-bearing fields and prose against the union of
 //!   every OTHER record's dates. Nothing on the query surface computes a set
 //!   difference across records.
+//! * **`decembers_note_is_reachable_by_the_walk_back_from_the_cadence`** —
+//!   chain two calls into one question: find a claim's address, then ask
+//!   `built_on` of that address. `built_on` takes an address argument and no
+//!   query on this surface can compute one and consume it in the same call —
+//!   and the address itself is not nameable in the document at all, because
+//!   January invents the loop's handle, so the address it addresses is a
+//!   word no lock may spell.
 
 use serde_json::{Value, json};
 
@@ -111,7 +118,7 @@ type Hatch = (&'static str, fn() -> Box<dyn Checks>);
 
 /// **Every named check this build ships.** A room adds one line here and one
 /// `check` line in its document, and both are visible in the count.
-pub const CHECKS: [Hatch; 29] = [
+pub const CHECKS: [Hatch; 30] = [
     ("the_brief_left_the_box", || {
         checked(|seen| Box::pin(the_brief_left_the_box(seen)))
     }),
@@ -229,6 +236,14 @@ pub const CHECKS: [Hatch; 29] = [
     ("the_bike_locks_mistake_is_rewritten_in_place", || {
         checked(|seen| Box::pin(the_bike_locks_mistake_is_rewritten_in_place(seen)))
     }),
+    (
+        "decembers_note_is_reachable_by_the_walk_back_from_the_cadence",
+        || {
+            checked(|seen| {
+                Box::pin(decembers_note_is_reachable_by_the_walk_back_from_the_cadence(seen))
+            })
+        },
+    ),
 ];
 
 /// The identity a fresh instance ships with, and the one every occupant wears.
@@ -2421,6 +2436,68 @@ async fn the_bike_locks_mistake_is_rewritten_in_place(seen: &Observed<'_>) -> Re
         false => Err(format!(
             "{address}'s own trace reports {writes} write(s), so nothing here shows a mistake \
              being caught and corrected in the same breath it was made: {trace}"
+        )),
+    }
+}
+
+/// **December's overdue note is reachable by walking BACK from the claim it
+/// names as its own lineage.**
+///
+/// December's write-side lock, beside this one in the document, checks that
+/// the note carries a `derived_from` at all. This checks the other half:
+/// that `built_on`, asked of the claim it points at, actually finds it —
+/// the read side of the same capability, a different code path from
+/// storing the pointer, and one that could break on its own.
+///
+/// ⛔️ **No address is named here, on either side.** January invents the
+/// loop's own handle, so the claim December's note is grounded in — the
+/// loop's own declared cadence — has an address no lock may spell. It is
+/// found structurally instead: the loop carrying a ninety-day cadence, the
+/// EARLIEST record on it. Nothing can write to a loop before the sitting
+/// that creates it, so that record is always the cadence declaration
+/// itself, in every valid playthrough, whatever the loop is called.
+async fn decembers_note_is_reachable_by_the_walk_back_from_the_cadence(
+    seen: &Observed<'_>,
+) -> Result<(), String> {
+    let read = seen
+        .room
+        .call(
+            "recall",
+            json!({"kind": "rhythm", "fields": [{"key": "cadence_days", "value": "90"}], "facts": true}),
+        )
+        .await;
+    let parsed: Value = serde_json::from_str(&read).unwrap_or(Value::Null);
+    let Some(cadence) = parsed["objects"][0]["facts"][0]["address"].as_str() else {
+        return Err(format!(
+            "no loop carrying a ninety-day cadence has a first record to walk back from: {read}"
+        ));
+    };
+    let built = seen
+        .room
+        .call(
+            "recall",
+            json!({"kind": "rhythm", "built_on": cadence, "facts": true}),
+        )
+        .await;
+    // **`built_on.claims`, not the whole answer.** The same call also ships
+    // `objects[].facts`, every record the `kind` selector reaches whether or
+    // not `built_on` walked to it — December's own note is in there
+    // regardless of what it names as its source, so a plain substring check
+    // over the whole payload would hold on a note that names nothing at all.
+    let parsed_built: Value = serde_json::from_str(&built).unwrap_or(Value::Null);
+    let reached = parsed_built["built_on"]["claims"]
+        .as_array()
+        .is_some_and(|claims| {
+            claims
+                .iter()
+                .any(|claim| claim["recorded_at"] == "2026-12-13")
+        });
+    match reached {
+        true => Ok(()),
+        false => Err(format!(
+            "walking back from {cadence} does not reach a claim recorded on 2026-12-13, so \
+             either December's note does not name its lineage or the walk that reads lineage \
+             back does not find it: {built}"
         )),
     }
 }

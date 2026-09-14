@@ -777,6 +777,25 @@ which came back.
 recall {"kind": "rhythm", "fields": [{"key": "cadence_days", "value": "90"}], "facts": true}
 carries "recorded_at":"2026-12-13"
 say     December: the loop that has gone quiet by now did not gain a record on this sitting's own day, so nothing here shows the sitting noticing what jojobot's own arithmetic already knows
+
+# **Where the overdue note comes from, named on its own record.** It is
+# arithmetic rather than a guess only because it rests on the loop's own
+# declared cadence — and a later reader who wants to know why has to be
+# able to reach that claim from this one. Both needles ask about the same
+# record: nothing else on this loop is dated 2026-12-13 or ever names a
+# lineage, so there is nothing else either could hold on.
+recall {"kind": "rhythm", "fields": [{"key": "cadence_days", "value": "90"}], "facts": true}
+carries "recorded_at":"2026-12-13"
+carries "derived_from":"
+say     December: the overdue note does not name what it was worked out from, so a later reader has no way back to the claim that makes it arithmetic rather than a guess
+
+# The other half of the same capability: the walk BACK from that claim has
+# to find this note. Storing the pointer and reading it back are different
+# code paths, and this checks the second rests on the first actually
+# working rather than assuming it. Reaching for Rust here says the surface
+# has no way to find an address and consume it in the same call.
+check   decembers_note_is_reachable_by_the_walk_back_from_the_cadence
+say     December: the walk back from the loop's own cadence does not reach the overdue note, so a later reader who follows the lineage forward finds nothing
 ```
 
 ⭐ **Read whether the rest of the answer stops where the record stops.**
