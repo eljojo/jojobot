@@ -17,6 +17,7 @@ pub mod add_entity;
 pub mod capture;
 pub mod declare_type;
 pub mod declined;
+pub mod due;
 pub mod list_entities;
 pub mod merge_entities;
 pub mod parse;

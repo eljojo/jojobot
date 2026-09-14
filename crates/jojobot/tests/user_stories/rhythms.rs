@@ -131,9 +131,9 @@ async fn which_of_the_loops_have_gone_quiet() {
         }),
     )
     .await
-    // Three keys computed on the way in: the outcome, the day, and the date the
-    // next cycle counts from.
-    .says("\"fields_count\":3");
+    // Four keys computed on the way in: the outcome, the day, the date the
+    // next cycle counts from, and the due moment that basis now works out to.
+    .says("\"fields_count\":4");
 
     // The worming is not happening this week and it is not being written off:
     // a snooze consumes nothing, so it comes back at its own date.
@@ -179,8 +179,9 @@ async fn which_of_the_loops_have_gone_quiet() {
         }),
     )
     .await
-    // Three again: a skip advances the schedule exactly as a run does.
-    .says("\"fields_count\":3");
+    // Four again: a skip advances the schedule, and the due moment, exactly
+    // as a run does.
+    .says("\"fields_count\":4");
 
     // A cadence is always TIME, so what the check measured rides on the record
     // as the caller's own key. This one ran, and it read something.
@@ -193,7 +194,9 @@ async fn which_of_the_loops_have_gone_quiet() {
         }),
     )
     .await
-    .says("\"fields_count\":4");
+    // Outcome, day, counts_from, wear_mm, and the due moment that basis now
+    // works out to.
+    .says("\"fields_count\":5");
 
     // **The statistics question.** A skipped cycle and a completed one moved
     // the schedule identically, and the history of the outcome key is the only

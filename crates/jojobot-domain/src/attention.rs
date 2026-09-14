@@ -72,6 +72,19 @@ pub const LAST_CHECK_IN: &str = "last_check_in";
 /// apart afterwards.
 pub const OUTCOME: &str = "outcome";
 
+/// **The day this carrier's thing is next due, computed once and stored** —
+/// never read arithmetic-first. A read trusts this key exactly as it trusts
+/// any other; the arithmetic that keeps it current runs at write time, on
+/// whichever write touched a key a carrier's [`Carrier::interface`] names.
+/// See [`moved_due_moment`].
+///
+/// **Only ever holds a date, and only while the carrier's own answer is
+/// [`Due::On`].** A thing whose answer is `Never`, `NotYetOpened` or
+/// `Unreadable` is not represented by a value here — this build does not yet
+/// clear a stale one left over from before such a change, which is a known
+/// gap rather than a silent one: see the report this shipped with.
+pub const DUE_ON: &str = "due_on";
+
 /// **What a check-in found, and whether the cycle is consumed.**
 ///
 /// Three rather than two, because *it happened* and *it did not happen and the
@@ -466,6 +479,31 @@ pub fn owed(carriers: &[&dyn Carrier], fields: &BTreeMap<String, String>) -> Due
 /// The carriers this build ships.
 pub fn shipped() -> Vec<Box<dyn Carrier>> {
     vec![Box::new(Rhythms)]
+}
+
+/// **The new value for [`DUE_ON`], when a write moves it — never when it
+/// does not.**
+///
+/// `projected` is the thing's fields as they will read once the write in
+/// progress lands — the caller's job, not this function's, since only the
+/// caller knows which keys a write adds and which it clears. `existing` is
+/// what [`DUE_ON`] already holds, read before the write, so this answers
+/// "did it MOVE" rather than "what is it now": a write that leaves the due
+/// moment exactly where it was has nothing to add to the record it is
+/// already part of.
+///
+/// **Only [`Due::On`] is ever stored here.** `Never`, `NotYetOpened` and
+/// `Unreadable` all answer `None` — a write that lands on any of those never
+/// merges a bogus date in, whatever [`DUE_ON`] happened to hold before.
+pub fn moved_due_moment(
+    carriers: &[&dyn Carrier],
+    existing: Option<Date>,
+    projected: &BTreeMap<String, String>,
+) -> Option<Date> {
+    match owed(carriers, projected) {
+        Due::On(day) if Some(day) != existing => Some(day),
+        _ => None,
+    }
 }
 
 /// **Whether this check-in is the one that opens the loop.**
@@ -949,6 +987,53 @@ mod tests {
             owed(&carriers, &BTreeMap::new()),
             Due::Never,
             "…and carrying none of it still owes nothing",
+        );
+    }
+
+    /// **The case that matters most: an input changes with no check-in, and
+    /// the stored due moment moves with it.**
+    ///
+    /// A cadence edited directly — a plain field write, nothing that runs
+    /// through [`check_in`] — is the failure mode this whole slice exists
+    /// for: a stored moment nobody updates nags at the wrong time forever.
+    ///
+    /// Paired: the SAME projected fields, unchanged from what is already
+    /// stored, move nothing — or every write would carry a due moment
+    /// whether or not it had one to report. And a not-yet-opened loop
+    /// (shipped two slices ago) is asked the same question and still answers
+    /// `None`, never a bogus date — the state this fix must not quietly
+    /// paper over.
+    #[test]
+    fn a_cadence_changed_with_no_check_in_moves_the_stored_due_moment() {
+        let existing = weekly(date(2026, 8, 1), AdvancesFrom::CheckInDate);
+        let existing_due_on = match Rhythms.due(&existing) {
+            Due::On(day) => Some(day),
+            other => panic!("the fixture is expected to already be due somewhere: {other:?}"),
+        };
+
+        // The cadence alone changes, from a plain capture — nothing here is
+        // a check-in.
+        let mut changed_cadence = existing.clone();
+        changed_cadence.insert(CADENCE_DAYS.to_string(), "14".to_string());
+        assert_eq!(
+            moved_due_moment(&[&Rhythms], existing_due_on, &changed_cadence),
+            Some(date(2026, 8, 15)),
+            "the cadence moved, so the due moment moves with it, with no check-in in sight",
+        );
+
+        // The paired negative: the same fields, unmoved, move nothing.
+        assert_eq!(
+            moved_due_moment(&[&Rhythms], existing_due_on, &existing),
+            None,
+            "unchanged fields carry no new due moment to store",
+        );
+
+        // The not-yet-opened state survives this: never a bogus date.
+        let declared = unopened(AdvancesFrom::CheckInDate);
+        assert_eq!(
+            moved_due_moment(&[&Rhythms], None, &declared),
+            None,
+            "a declared, never-checked-in loop is not due, and this must not invent a date for it",
         );
     }
 }

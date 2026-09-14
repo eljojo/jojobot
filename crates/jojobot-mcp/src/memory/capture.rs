@@ -577,6 +577,14 @@ impl Jojobot {
                 Err(refused) => return Ok(refused),
             }
         }
+        // **Kept current here too, not only on a check-in.** A cadence edited
+        // by a plain capture is a write like any other, and the due moment it
+        // carries is jojobot's own arithmetic riding along in the same
+        // record — exactly as a check-in's own computed keys already do.
+        let due_on_computed = self.moved_due_moment(&subject, &fields, &[]).await;
+        if let Some(due_on) = due_on_computed {
+            fields.insert(attention::DUE_ON.to_string(), due_on.to_string());
+        }
         // **jojobot's own arithmetic is jojobot's, whatever the caller said
         // about their claim.** A check-in computes the schedule keys, and
         // merging them into a record carrying `testimony` made a date nobody
@@ -585,8 +593,9 @@ impl Jojobot {
         // claim mixing the two is written as a derivation, and the caller's
         // words are not what is being demoted: the record is a caller's
         // sentence and a computed schedule together, and only one of those
-        // has anybody's word behind it.
-        let provenance = if args.check_in.is_some() {
+        // has anybody's word behind it. A moved due moment is the same
+        // arithmetic on a plain capture that never asked for a check-in.
+        let provenance = if args.check_in.is_some() || due_on_computed.is_some() {
             Provenance::Inference
         } else {
             provenance
@@ -752,6 +761,54 @@ mod tests {
         assert_eq!(
             said["provenance"], "testimony",
             "a claim with nothing computed in it was demoted too: {said}",
+        );
+    }
+
+    /// **The case this whole slice exists for: a cadence changes with no
+    /// check-in in sight, and the stored due moment moves with it.**
+    ///
+    /// `a_weekly_rhythm` itself is a plain capture — cadence, policy and
+    /// basis, no `check_in` — so it already proves the mechanism runs on
+    /// ordinary writes: opening the loop this way already stores `due_on`.
+    /// This asks the harder question, changing ONE input afterward.
+    ///
+    /// **Same demotion as a check-in's**, because the same reasoning applies:
+    /// jojobot's own arithmetic is jojobot's, whatever the caller's own claim
+    /// says about their cadence.
+    #[tokio::test]
+    async fn a_plain_capture_that_moves_the_cadence_keeps_the_due_moment_current() {
+        let jojobot = handler();
+        a_weekly_rhythm(&jojobot, "descale", "2026-08-01", "check_in_date").await;
+        let opened = fields_of(&jojobot, "rhythm:descale").await;
+        assert_eq!(
+            opened["due_on"], "2026-08-08",
+            "opening the loop is an ordinary capture too, and it already stores the due moment: \
+             {opened}",
+        );
+
+        let edited = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                provenance: Some("testimony".into()),
+                fields: Some(
+                    [("cadence_days".to_string(), "14".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..capture_args("rhythm:descale", "let's do it every two weeks instead")
+            },
+        )
+        .await;
+        assert_eq!(
+            edited["provenance"], "inference",
+            "a moved due moment overrides the caller's own provenance, same as a check-in's: \
+             {edited}",
+        );
+        let held = fields_of(&jojobot, "rhythm:descale").await;
+        assert_eq!(
+            held["due_on"], "2026-08-15",
+            "the cadence doubled off the same basis, and the stored due moment moved with it, \
+             with no check-in anywhere in this test: {held}",
         );
     }
 

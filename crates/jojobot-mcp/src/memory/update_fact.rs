@@ -3,6 +3,8 @@
 //! One verb, one file: its arguments, the description a caller reads,
 //! and an entrypoint that chains the systems below it.
 
+use jojobot_domain::attention;
+
 use super::*;
 use crate::teaching::{
     CLAIM_SUBJECT_DOMAIN, CLAIM_SUBJECT_TEACHING, CLAIMS_DOMAIN, CLAIMS_TEACHING,
@@ -248,6 +250,17 @@ impl Jojobot {
         let address = FactAddress::parse(&args.address).map_err(memory_error)?;
         let declared = Declared::of(&args);
         let cleared = args.clear_fields.clone().unwrap_or_default();
+        let mut fields = args.fields.unwrap_or_default();
+        // **Kept current here too.** An edit that moves a cadence, a policy or
+        // a basis is a write like any other write that could move the due
+        // moment — the mechanism does not care that this one is a patch
+        // rather than a fresh capture.
+        let due_on_computed = self
+            .moved_due_moment(&address.home, &fields, &cleared)
+            .await;
+        if let Some(due_on) = due_on_computed {
+            fields.insert(attention::DUE_ON.to_string(), due_on.to_string());
+        }
         let patch = FactPatch {
             content: args.content,
             details: args.details,
@@ -255,14 +268,21 @@ impl Jojobot {
             happened_at: parse_date(args.happened_at.as_deref())?,
             clear_happened_at: args.clear_happened_at.unwrap_or(false),
             status: args.status.as_deref().map(parse_status).transpose()?,
-            provenance: args
-                .provenance
-                .as_deref()
-                .map(parse_one_provenance)
-                .transpose()?,
+            // **jojobot's own arithmetic is jojobot's, exactly as a
+            // check-in's is on `capture`.** A moved due moment overrides
+            // whatever provenance this same call asked for, so a computed
+            // date is never read back with the certainty of somebody's word.
+            provenance: if due_on_computed.is_some() {
+                Some(Provenance::Inference)
+            } else {
+                args.provenance
+                    .as_deref()
+                    .map(parse_one_provenance)
+                    .transpose()?
+            },
             standing: args.standing.as_deref().map(parse_standing).transpose()?,
             confirmed_by_user: args.confirmed_by_user.unwrap_or(false),
-            fields: args.fields.unwrap_or_default(),
+            fields,
             clear_fields: args.clear_fields.unwrap_or_default(),
             stale_after: parse_date(args.stale_after.as_deref())?,
             clear_stale_after: args.clear_stale_after.unwrap_or(false),
@@ -1029,6 +1049,97 @@ mod tests {
             recalled["objects"][0]["facts"][0]["fields"],
             serde_json::json!({"cost": "45"}),
             "{recalled}"
+        );
+    }
+
+    /// **The same mechanism, through a patch instead of a fresh capture.**
+    ///
+    /// An edit is a write like any other, and the due moment it can move
+    /// does not care whether the write that moved it was a capture or a
+    /// patch — the case `capture.rs`'s own version of this proves for a
+    /// fresh record, this one proves for an existing one edited in place.
+    ///
+    /// **The record starts as a plain testimony claim with no schedule on
+    /// it at all**, so the provenance this test reads is genuinely this
+    /// patch's own doing — not, as an earlier draft of this case got wrong,
+    /// a record that was already forced to inference the moment it was
+    /// captured with a complete schedule on it.
+    #[tokio::test]
+    async fn an_edit_that_moves_the_cadence_keeps_the_due_moment_current() {
+        let jojobot = handler();
+        ensure(&jojobot, "thing:kettle").await;
+        jojobot
+            .add_entity(Parameters(AddEntityArgs {
+                parent: Some("thing:kettle".into()),
+                ..add_args("rhythm", "descale", "descale")
+            }))
+            .await
+            .expect("add ok");
+        let captured = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                provenance: Some("testimony".into()),
+                ..capture_args("rhythm:descale", "we should descale this regularly")
+            },
+        )
+        .await;
+        let address = address_of(&captured);
+
+        // The patch ADDS the whole schedule at once, onto the SAME record —
+        // this is the patch's own provenance forcing, not inherited.
+        let opened = json_of(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    fields: Some(
+                        [
+                            ("cadence_days".to_string(), "7".to_string()),
+                            ("advances_from".to_string(), "check_in_date".to_string()),
+                            ("counts_from".to_string(), "2026-08-01".to_string()),
+                        ]
+                        .into_iter()
+                        .collect(),
+                    ),
+                    ..update_args(&address)
+                }))
+                .await
+                .expect("update ok"),
+        );
+        assert_eq!(
+            opened["provenance"], "inference",
+            "the patch that completes the schedule computes a due moment, and overrides the \
+             provenance this call named none of: {opened}",
+        );
+
+        // Now the case that matters: ONE input changes, on a second patch.
+        let edited = json_of(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    fields: Some(
+                        [("cadence_days".to_string(), "14".to_string())]
+                            .into_iter()
+                            .collect(),
+                    ),
+                    ..update_args(&address)
+                }))
+                .await
+                .expect("update ok"),
+        );
+        assert_eq!(
+            edited["provenance"], "inference",
+            "a moved due moment overrides the caller's own provenance on a patch too, though \
+             this call named none of its own: {edited}",
+        );
+
+        let read = json_of(
+            &jojobot
+                .recall(Parameters(recall_args("rhythm:descale")))
+                .await
+                .expect("recall ok"),
+        );
+        assert_eq!(
+            read["objects"][0]["fields"]["due_on"], "2026-08-15",
+            "the cadence moved through a patch, not a fresh capture, and the stored due moment \
+             moved with it: {read}",
         );
     }
 
