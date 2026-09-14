@@ -959,6 +959,20 @@ say     later December: the canoe's own sources are not reachable even by name, 
 recall {"subject": "thing:gravel-bike"}
 carries "km":"1400"
 say     later December: the bike's distance does not read as the year's two figures summed, so either they were never joined under a key jojobot folds, or one replaced the other instead of adding to it
+
+# 🚨 **THE HEDGE FROM JANUARY, STILL OPEN.** The brief's own words about the
+# survey were a plan rather than a fact — "I mean to be there" — and nothing
+# in the year ever settles it: nobody asks whether the operator personally
+# made it, and no sitting confirms the plan came true. A claim recorded that
+# way stays open until the operator settles it, never on its own and never
+# because time passed. This is the read nobody in the year has needed until
+# now, and it is the one this whole block is themed around — whether the
+# record still says what it always said.
+#
+# Placed last, for the reason every lock in this block already is.
+recall {"subject": "event:trail-survey", "facts": true}
+carries "standing":"open"
+say     later December: the survey's own planning claim does not read as still open, so either it was never recorded as a hedge or something settled it that had no business doing so
 ```
 
 ## What this room cannot measure

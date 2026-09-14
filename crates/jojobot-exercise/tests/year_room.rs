@@ -45,9 +45,9 @@ const LATE_NOVEMBER: [usize; 2] = [28, 29];
 const DECEMBER: [usize; 3] = [30, 31, 32];
 
 /// How many locks the year carries.
-const LATE_DECEMBER: [usize; 9] = [33, 34, 35, 36, 37, 38, 39, 40, 41];
+const LATE_DECEMBER: [usize; 10] = [33, 34, 35, 36, 37, 38, 39, 40, 41, 42];
 
-const LOCKS: usize = 42;
+const LOCKS: usize = 43;
 
 /// **The sittings a person reads**, which assert nothing and must not.
 const READ_THESE: [&str; 1] = ["Phase 12"];
@@ -321,6 +321,19 @@ async fn january(room: &Surface, sid: &str) {
         "add_entity",
         json!({"kind": "event", "handle": "trail-survey", "name": "The trail survey",
                "source": "the operator"}),
+    )
+    .await;
+    // **The brief's own hedge, carried as one.** "I mean to be there" is the
+    // operator's word about something that has not happened yet — testimony,
+    // and open, because only June's own outcome could settle it. Nothing
+    // later in the year promotes it: this weave is that the hedge is
+    // recorded as one, not that it is later confirmed.
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "event:trail-survey", "content": "planning to attend",
+               "provenance": "testimony", "standing": "open"}),
     )
     .await;
     // **The brief asked for this in the operator's own words** — leave it so
@@ -2567,6 +2580,42 @@ async fn decembers_walk_back_lock_fails_when_the_pointer_is_wrong() {
         !outcomes[DECEMBER[2]].held,
         "a note pointing at the wrong record still passed the walk-back lock, so that lock is \
          not actually following the pointer: {}",
+        saying(&outcomes),
+    );
+}
+
+/// 🚨 **The survey's own hedge, discriminated.**
+///
+/// The negative omits `standing` entirely rather than naming a wrong value:
+/// `capture`'s own default for testimony is `settled`, so a plain claim with
+/// no standing sent is the honest shape of a session that never marked the
+/// plan a hedge at all — not a contrived wrong value nobody would send.
+#[tokio::test]
+async fn the_surveys_hedge_lock_fails_when_nothing_is_marked_open() {
+    let (_room, surface) = furnished().await;
+    let jan = sitting(&surface, "2026-01-12").await;
+    did(
+        &surface,
+        &jan,
+        "add_entity",
+        json!({"kind": "event", "handle": "trail-survey", "name": "The trail survey",
+               "source": "the operator"}),
+    )
+    .await;
+    did(
+        &surface,
+        &jan,
+        "capture",
+        json!({"subject": "event:trail-survey", "content": "planning to attend",
+               "provenance": "testimony"}),
+    )
+    .await;
+    let now = boundary(&surface, "after").await;
+    let outcomes = judge_all(&surface, &[now]).await;
+    assert!(
+        !outcomes[LATE_DECEMBER[9]].held,
+        "a claim sent with no standing at all held the still-open lock, so the check is not \
+         actually reading whether it was marked a hedge: {}",
         saying(&outcomes),
     );
 }
