@@ -1883,6 +1883,41 @@ pub fn referenced_by(
         .collect()
 }
 
+/// **Every reference-typed key on a fields map, with the items its value
+/// holds, kept apart by key** — what [`referenced_by`] flattens for the
+/// existence check, an adapter needs back in shape to resolve each item and
+/// put the key back together.
+///
+/// Same key-matching as [`referenced_by`]: a key any declaration calls a
+/// reference counts. **Unlike `referenced_by`, an item is kept whichever
+/// shape it holds** — never filtered to what looks like a well-formed
+/// handle. A caller lowering a value writes handles and a caller composing
+/// one reads permanent ids, and neither shape passes a filter built for the
+/// other: an id has no `kind:` prefix to find, and filtering it out would
+/// silently compose an empty value rather than the id an adapter's own
+/// resolver already knows what to do with. Malformed input is exactly what
+/// that resolver's own fallback — leave it as written — exists to answer.
+pub fn reference_field_values(
+    fields: &BTreeMap<String, String>,
+    declared: &[types::DeclaredType],
+) -> Vec<(String, Vec<String>)> {
+    fields
+        .iter()
+        .filter_map(|(key, value)| {
+            let field = declared
+                .iter()
+                .filter_map(|d| d.field(key))
+                .find(|f| f.holds == types::ValueType::Reference)?;
+            let items: Vec<String> = field
+                .items(value)
+                .into_iter()
+                .map(|item| item.trim().to_string())
+                .collect();
+            Some((key.clone(), items))
+        })
+        .collect()
+}
+
 /// **A write may not drop a thing below its kind's required keys, and may not
 /// put in any key that kind declared a value the key does not hold.**
 ///

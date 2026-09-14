@@ -222,6 +222,28 @@ async fn main() -> anyhow::Result<()> {
         ),
     }
 
+    // **A reference-typed field value, stored as plain handle text before
+    // this build lowered it at write time, rewritten onto the permanent id
+    // it names** (rule 290). Runs after the three passes above for the same
+    // reason: it reads the badge and the rename history they just made
+    // current. Louder than the first two, for the reason
+    // `resolve_stale_pointer_columns` is: a row left unresolved holds a
+    // stale handle a later collision could still hijack, so it is reported
+    // as a problem to repair rather than a routine retry.
+    match badging.migrate_reference_fields().await {
+        Ok(0) => {}
+        Ok(rewritten) => tracing::info!(
+            rewritten,
+            "store: resolved stale reference-typed field values onto the badges they name"
+        ),
+        Err(e) => tracing::error!(
+            error = %e,
+            "REFERENCE FIELDS NOT RESOLVED — the values named above still hold a stale handle \
+             rather than a badge, and a person has to repair them. Nothing already resolved was \
+             undone; a restart repeats the scan and finds less to do."
+        ),
+    }
+
     // **One set, read by both halves.** The layer above resolves what the
     // build supplies into an answer; the store below has to see the same set
     // when its guard decides whether a handle names anything, or a claim

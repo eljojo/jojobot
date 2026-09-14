@@ -71,7 +71,11 @@ pub(super) async fn add<M: Memory + ?Sized>(store: &M, new: NewEntity) -> Entity
 
 /// Edit a fact the guard is expected to wave through — provisioning any edge
 /// object the patch attaches, for the same reason [`capture`] does.
-pub(super) async fn edit<M: Memory>(store: &M, address: &FactAddress, patch: FactPatch) -> Fact {
+pub(super) async fn edit<M: Memory + ?Sized>(
+    store: &M,
+    address: &FactAddress,
+    patch: FactPatch,
+) -> Fact {
     if let Some(edge) = &patch.edge {
         ensure(store, &edge.object).await;
     }

@@ -393,6 +393,141 @@ impl DoltMemory {
         }
     }
 
+    /// **Rewrite every reference-typed field value stored as plain handle
+    /// text onto the permanent ids it names**, one write at a time.
+    ///
+    /// [`Self::compose_reference_fields`] cannot be this backstop: composing
+    /// only ever resolves a BADGE, and a row from before this mechanism
+    /// existed still holds a handle — `current_handle` finds no entity
+    /// wearing one as a badge, so leaves it exactly as written until this
+    /// runs. Not a migration proper, for the same reason
+    /// [`Self::resolve_stale_pointer_columns`] is not one: it needs the
+    /// badged entity list and the declared reference keys, which exist only
+    /// once the store has already run its own boot steps.
+    ///
+    /// **Idempotent**: an item already lowered names no `kind:slug` handle
+    /// this store has ever worn, so a second run finds nothing left to
+    /// rewrite. An item that resolves through neither a current handle nor
+    /// a former one stops the migration and is named, exactly as
+    /// [`Self::resolve_stale_pointer_columns`] answers the same shape of
+    /// failure — a person has to repair it rather than have it guessed at.
+    ///
+    /// Returns how many writes it rewrote.
+    pub async fn migrate_reference_fields(&self) -> Result<usize, MemoryError> {
+        let known: Vec<(String, String)> =
+            sqlx::query_as("SELECT id, badge FROM entity WHERE badge IS NOT NULL")
+                .fetch_all(&self.pool)
+                .await
+                .map_err(store)?;
+        let mut resolve: std::collections::HashMap<String, String> = known.into_iter().collect();
+        let former: Vec<(String, String)> = sqlx::query_as(
+            "SELECT former_handle, badge FROM entity_former_handle \
+             ORDER BY former_handle, ordinal DESC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(store)?;
+        for (handle, badge) in former {
+            resolve.entry(handle).or_insert(badge);
+        }
+
+        let type_rows = sqlx::query(
+            "SELECT type_name, key_name, holds, folds, origin, required, one_of FROM type_field
+             ORDER BY type_name, ordinal",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(store)?;
+        let declared = gather_types(&type_rows);
+        let reference_keys: std::collections::HashSet<&str> = declared
+            .iter()
+            .flat_map(|d| &d.fields)
+            .filter(|f| f.holds == jojobot_domain::memory::types::ValueType::Reference)
+            .map(|f| f.key.as_str())
+            .collect();
+        if reference_keys.is_empty() {
+            return Ok(0);
+        }
+
+        let rows: Vec<(String, String, i64, String)> = sqlx::query_as(
+            "SELECT entity, `key`, ordinal, value FROM field_write WHERE value IS NOT NULL",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(store)?;
+
+        let mut rewritten = 0;
+        let mut unresolved: Vec<String> = Vec::new();
+        for (entity, key, ordinal, value) in rows {
+            if !reference_keys.contains(key.as_str()) {
+                continue;
+            }
+            let field = declared
+                .iter()
+                .filter_map(|d| d.field(&key))
+                .find(|f| f.holds == jojobot_domain::memory::types::ValueType::Reference)
+                .expect("key was just found among reference_keys");
+            let mut changed = false;
+            let mut ok = true;
+            let lowered: Vec<String> = field
+                .items(&value)
+                .into_iter()
+                .map(|item| {
+                    let item = item.trim();
+                    match resolve.get(item) {
+                        Some(badge) => {
+                            changed = true;
+                            badge.clone()
+                        }
+                        None if jojobot_domain::memory::EntityId(item.to_string())
+                            .kind()
+                            .is_none() =>
+                        {
+                            // Not handle-shaped at all — already a permanent
+                            // id, or never a reference in the first place.
+                            // Left exactly as written.
+                            item.to_string()
+                        }
+                        None => {
+                            ok = false;
+                            unresolved.push(format!(
+                                "field_write.value = '{item}' (key '{key}' on {entity})"
+                            ));
+                            item.to_string()
+                        }
+                    }
+                })
+                .collect();
+            if !ok || !changed {
+                continue;
+            }
+            sqlx::query(
+                "UPDATE field_write SET value = ? WHERE entity = ? AND `key` = ? AND ordinal = ?",
+            )
+            .bind(lowered.join(", "))
+            .bind(&entity)
+            .bind(&key)
+            .bind(ordinal)
+            .execute(&self.pool)
+            .await
+            .map_err(store)?;
+            rewritten += 1;
+        }
+
+        if unresolved.is_empty() {
+            Ok(rewritten)
+        } else {
+            Err(MemoryError::Store(format!(
+                "{} stored reference-field value{} cannot be resolved to anything this store has \
+                 ever named, through a current handle or a former one — a person has to repair \
+                 these before the migration can finish: {}",
+                unresolved.len(),
+                if unresolved.len() == 1 { "" } else { "s" },
+                unresolved.join("; "),
+            )))
+        }
+    }
+
     /// Every entity, whole — what the write guard screens against.
     ///
     /// **The whole roster, because the guard's answer is a function of all of
@@ -572,6 +707,78 @@ impl DoltMemory {
         }
         fact.stands_for = lowered_stands_for;
         Ok(())
+    }
+
+    /// **Every reference-typed field value, lowered from whatever handle a
+    /// caller wrote to the permanent id the store keeps.** Each item was
+    /// already checked to exist by the caller of this function, so
+    /// `resolve` cannot miss on one; the fallback only covers a value that
+    /// never looked like a handle in the first place.
+    async fn lower_reference_fields(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        fields: &mut std::collections::BTreeMap<String, String>,
+    ) -> Result<(), MemoryError> {
+        let declared = Self::types_in(tx).await?;
+        for (key, items) in jojobot_domain::memory::reference_field_values(fields, &declared) {
+            let mut lowered = Vec::with_capacity(items.len());
+            for item in items {
+                let id = EntityId(item);
+                let resolved = self
+                    .resolve(tx, &id)
+                    .await?
+                    .map(|(key, _)| key)
+                    .unwrap_or(id);
+                lowered.push(resolved.to_string());
+            }
+            fields.insert(key, lowered.join(", "));
+        }
+        Ok(())
+    }
+
+    /// **The other direction**: every reference-typed field value, composed
+    /// from the permanent id it is stored as to the handle it answers to
+    /// today — the mirror of [`Self::lower_reference_fields`], run once,
+    /// right before a fields map reaches whoever asked for it.
+    async fn compose_reference_fields(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        fields: &mut std::collections::BTreeMap<String, String>,
+    ) -> Result<(), MemoryError> {
+        let declared = Self::types_in(tx).await?;
+        for (key, items) in jojobot_domain::memory::reference_field_values(fields, &declared) {
+            let mut composed = Vec::with_capacity(items.len());
+            for item in items {
+                composed.push(self.current_handle(tx, &EntityId(item)).await?.to_string());
+            }
+            fields.insert(key, composed.join(", "));
+        }
+        Ok(())
+    }
+
+    /// **The writes [`Self::append_writes`] is about to persist, with every
+    /// reference-typed value lowered to the permanent id it names** — the
+    /// same treatment [`Self::lower_reference_fields`] gives a whole fields
+    /// map, applied to the delta a patch produces instead of the thing's
+    /// whole state. A clear carries no value to lower.
+    async fn lower_writes(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        writes: Vec<(String, Option<String>)>,
+    ) -> Result<Vec<(String, Option<String>)>, MemoryError> {
+        let mut out = Vec::with_capacity(writes.len());
+        for (key, value) in writes {
+            match value {
+                None => out.push((key, None)),
+                Some(value) => {
+                    let mut one = std::collections::BTreeMap::new();
+                    one.insert(key.clone(), value);
+                    self.lower_reference_fields(tx, &mut one).await?;
+                    out.push((key.clone(), one.remove(&key)));
+                }
+            }
+        }
+        Ok(out)
     }
 
     /// **Rows plus what the build supplies, over rows already read.** Split out
@@ -809,6 +1016,10 @@ impl DoltMemory {
                 ));
             }
             served.stands_for = resolved_stands_for;
+            // **A reference-typed field value is a pointer like any
+            // other** (rule 268), composed here too, the same way.
+            self.compose_reference_fields(tx, &mut served.fields)
+                .await?;
             facts.push(served);
         }
         Ok(facts)
@@ -1881,8 +2092,13 @@ impl Memory for DoltMemory {
         )?;
         Self::write_fact(&mut tx, &stored, &self.clock).await?;
         // Every key this record carries is a write of its own, appended to the
-        // history of that key on this thing.
-        Self::append_writes(&mut tx, &stored.home, &stored.id, written_keys(&stored)).await?;
+        // history of that key on this thing. **A reference-typed value is
+        // lowered to the permanent id it names first** (rule 268), guarded
+        // above against the handle-form value the caller actually sent —
+        // the guard has already run, so what lands here is free to be the
+        // storage shape rather than the served one.
+        let lowered_writes = self.lower_writes(&mut tx, written_keys(&stored)).await?;
+        Self::append_writes(&mut tx, &stored.home, &stored.id, lowered_writes).await?;
         // **Served under the handle, stored under the key** — resolved
         // before the commit closes the transaction this needs to do it in.
         let served_derived_from = match &stored.derived_from {
@@ -1903,6 +2119,9 @@ impl Memory for DoltMemory {
         for object in &stored.refs {
             served_refs.push(self.current_handle(&mut tx, object).await?);
         }
+        let mut served_fields = stored.fields.clone();
+        self.compose_reference_fields(&mut tx, &mut served_fields)
+            .await?;
         tx.commit().await.map_err(store)?;
         Ok(Guarded::Written(Fact {
             home: subject_handle.clone(),
@@ -1910,6 +2129,7 @@ impl Memory for DoltMemory {
             derived_from: served_derived_from,
             edge: served_edge,
             refs: served_refs,
+            fields: served_fields,
             ..stored
         }))
     }
@@ -1951,7 +2171,8 @@ impl Memory for DoltMemory {
                 nearest: guard::screen(entity, &[], &index),
             });
         };
-        let held = Self::held_by(&mut tx, &key).await?;
+        let mut held = Self::held_by(&mut tx, &key).await?;
+        self.compose_reference_fields(&mut tx, &mut held).await?;
         tx.commit().await.map_err(store)?;
         Ok(held)
     }
@@ -2333,10 +2554,18 @@ impl Memory for DoltMemory {
         Self::write_fact(&mut tx, &fact, &self.clock).await?;
         // **The edit appends.** The record reads back changed — that is the
         // surface — and the value it replaced stays where it was written.
-        Self::append_writes(&mut tx, &fact.home, &fact.id, writes_of(&patch, &carried)).await?;
+        // **A reference-typed value is lowered to the permanent id it
+        // names first** (rule 268) — the guard just above already checked
+        // the handle-form value the patch sent, so what lands here is free
+        // to be the storage shape.
+        let lowered_writes = self
+            .lower_writes(&mut tx, writes_of(&patch, &carried))
+            .await?;
+        Self::append_writes(&mut tx, &fact.home, &fact.id, lowered_writes).await?;
         // Read back from the substrate rather than from what the patch
         // believed, so the answer is the projection a later read will give.
-        let fields = Self::fields_of(&mut tx, &fact.home, &fact.id).await?;
+        let mut fields = Self::fields_of(&mut tx, &fact.home, &fact.id).await?;
+        self.compose_reference_fields(&mut tx, &mut fields).await?;
         // **Served under the handle, stored under the key.**
         let served_derived_from = match &fact.derived_from {
             Some(source) => Some(FactAddress::new(
@@ -2828,6 +3057,8 @@ impl Memory for DoltMemory {
             // by this key; the facts they return already carry the handle,
             // resolved on the way out exactly as every other read is.
             let key = EntityId(badge.clone());
+            let mut fields = Self::held_by(&mut tx, &key).await?;
+            self.compose_reference_fields(&mut tx, &mut fields).await?;
             scanned.push(search::DocScan {
                 doc_id: badge,
                 title: entity.name.clone(),
@@ -2835,7 +3066,7 @@ impl Memory for DoltMemory {
                 facts: self.facts_of(&mut tx, &key).await?,
                 // What the thing IS travels with the doc: the records beside it
                 // cannot be folded back into it.
-                fields: Self::held_by(&mut tx, &key).await?,
+                fields,
                 entity: Some(entity),
                 owner: None,
             });
@@ -2906,12 +3137,14 @@ impl Memory for DoltMemory {
             )));
         };
         let key = EntityId(badge.clone());
+        let mut fields = Self::held_by(&mut tx, &key).await?;
+        self.compose_reference_fields(&mut tx, &mut fields).await?;
         let doc = search::DocScan {
             doc_id: badge,
             title: resolved.name.clone(),
             prose,
             facts: self.facts_of(&mut tx, &key).await?,
-            fields: Self::held_by(&mut tx, &key).await?,
+            fields,
             entity: Some(resolved),
             owner: None,
         };

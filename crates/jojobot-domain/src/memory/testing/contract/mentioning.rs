@@ -1,4 +1,4 @@
-use super::support::{add, capture, ensure};
+use super::support::{add, capture, edit, ensure};
 use super::*;
 
 /// **A store this suite can rename a handle in.**
@@ -642,6 +642,129 @@ pub async fn a_reference_typed_field_value_resolves_in_thing_scope_after_a_renam
         found_by_old.objects.is_empty(),
         "the pet still comes back under the owner's stale handle, in thing scope: \
          {found_by_old:?}",
+    );
+}
+
+/// 🚨 **A reference-typed LIST field is lowered to permanent ids on the way
+/// in, and composed back to today's handles on the way out — so a caller
+/// that reads the served form and writes it straight back changes nothing
+/// in storage.**
+///
+/// Before this, what was SAVED was the literal text a caller sent — plain
+/// handles, joined however they arrived. Every read re-split that text,
+/// resolved each item through rename history, and rejoined it with a
+/// canonical separator, so what a caller read never matched what was on
+/// disk. A caller that read the field to change something else on the same
+/// record, then wrote the whole record back unedited, carried that
+/// rewritten text into a real write and made the rewrite permanent.
+///
+/// **[`Memory::history`] is the one read nothing composes** — the raw
+/// append log — so it is what proves the stored bytes: written once, then
+/// written back unedited through the served (composed) form, and unchanged
+/// either time.
+///
+/// **Paired**, or either half alone passes on a build that does nothing:
+/// the served form must resolve to real, readable handles (composing
+/// works), and the stored bytes must not be that text (lowering happened).
+pub async fn a_reference_listing_field_is_lowered_and_a_served_write_back_does_not_touch_storage<
+    M: Memory + ?Sized,
+>(
+    mentioning: &M,
+) {
+    mentioning
+        .declare_type(DeclaredType::new(
+            "contract-listed-pointer",
+            vec![Field::listing("friends", ValueType::Reference)],
+        ))
+        .await
+        .expect("the type is declared");
+
+    let alpha = EntityId::person("person:contract-listed-pointer-alpha");
+    ensure(mentioning, &alpha).await;
+    let beta = EntityId::person("person:contract-listed-pointer-beta");
+    ensure(mentioning, &beta).await;
+    let pet = EntityId("pet:contract-listed-pointer-pet".into());
+    mentioning
+        .add_entity(NewEntity::new(
+            pet.clone(),
+            "The Listed Pointer Pet",
+            "the roster",
+        ))
+        .await
+        .expect("the fixture is written")
+        .written()
+        .expect("nothing collides with it");
+
+    // **Deliberately unusual spacing** — no space after the comma, unlike
+    // the canonical `, ` a composed read produces. Nothing here means to
+    // preserve this exact text; the point is that storage holds no typed
+    // text at all once this lands, so which separator survives does not
+    // arise.
+    let written = capture(
+        mentioning,
+        NewFact {
+            fields: [("friends".to_string(), format!("{alpha},{beta}"))]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(pet.clone(), "made two friends", date(2026, 8, 1))
+        },
+    )
+    .await;
+
+    let address = FactAddress::new(pet.clone(), written.id.clone());
+    let stored_first = mentioning
+        .history(&pet, "friends")
+        .await
+        .expect("history answers")
+        .into_iter()
+        .find(|w| w.fact == address)
+        .expect("the write is there")
+        .value
+        .expect("the field was set, not cleared");
+    assert!(
+        !stored_first.contains(':'),
+        "the stored value still holds a plain handle rather than a permanent id: \
+         {stored_first}",
+    );
+
+    let served = mentioning
+        .fields(&pet)
+        .await
+        .expect("fields answers")
+        .get("friends")
+        .cloned()
+        .expect("the key is held");
+    assert!(
+        served.contains(alpha.as_str()) && served.contains(beta.as_str()),
+        "the served form did not compose back to today's handles: {served}",
+    );
+
+    // **The unedited write-back**: exactly what was just read, sent straight
+    // into an edit — the shape a caller produces reading a record to change
+    // something else on it.
+    edit(
+        mentioning,
+        &address,
+        FactPatch {
+            fields: [("friends".to_string(), served)].into_iter().collect(),
+            ..FactPatch::default()
+        },
+    )
+    .await;
+
+    let stored_second = mentioning
+        .history(&pet, "friends")
+        .await
+        .expect("history answers")
+        .into_iter()
+        .last()
+        .expect("a write landed")
+        .value
+        .expect("the field was set, not cleared");
+    assert_eq!(
+        stored_second, stored_first,
+        "writing back the served form changed the stored bytes: {stored_first} -> \
+         {stored_second}",
     );
 }
 
@@ -2118,6 +2241,8 @@ pub async fn run_all_mentioning<M: Memory + ?Sized, B: Memory + ?Sized>(
     an_edge_follows_a_thing_that_is_rehandled(mentioning, bare, rehandles).await;
     a_ref_follows_a_thing_that_is_rehandled(mentioning, bare, rehandles).await;
     a_reference_typed_field_value_resolves_in_thing_scope_after_a_rename(mentioning).await;
+    a_reference_listing_field_is_lowered_and_a_served_write_back_does_not_touch_storage(mentioning)
+        .await;
     a_rename_moves_the_handle_and_every_reference_still_resolves(mentioning, bare).await;
     an_edit_that_touches_only_the_content_still_follows_a_later_rename(mentioning).await;
     a_retraction_still_follows_a_later_rename(mentioning).await;

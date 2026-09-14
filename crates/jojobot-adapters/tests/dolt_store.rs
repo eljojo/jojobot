@@ -31,6 +31,7 @@ use jojobot_domain::memory::Memory;
 use jojobot_domain::memory::owned::{Provision, Provisions};
 use jojobot_domain::memory::search::{Hit, Search, SearchQuery};
 use jojobot_domain::memory::testing::contract as memory;
+use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
 use jojobot_domain::memory::{
     Edge, EdgeShape, EntityPatch, FactPatch, MemoryError, NewEntity, NewFact,
 };
@@ -716,6 +717,240 @@ async fn resolve_stale_pointer_columns_refuses_to_guess_at_an_unresolvable_row()
     .fetch_one(&pool)
     .await
     .expect("the row reads");
+    assert_eq!(still_there, never_existed);
+
+    store.stop().await;
+}
+
+/// 🚨 **The reference-field migration rewrites a value stored as plain
+/// handle text onto the permanent ids it names**, exactly the shape every
+/// row held before this build lowered a reference-typed field value at
+/// write time.
+///
+/// **Reverted with raw SQL, the same way `resolve_stale_pointer_columns`'s
+/// own clean case is**: this feature never lowered a value before this
+/// slice, so there is no earlier commit whose real output would differ from
+/// what reading the pre-fix source already proves the shape to be — a
+/// captured fixture from a checked-out commit would capture nothing this
+/// revert does not already know.
+#[tokio::test]
+async fn migrate_reference_fields_rewrites_a_value_stored_as_plain_handle_text() {
+    let scratch = Scratch::new("reference-field-migration-clean");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("reference_field_migration_clean")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool.clone());
+
+    memory
+        .declare_type(DeclaredType::new(
+            "contract-field-migration-pointer",
+            vec![Field::listing("friends", ValueType::Reference)],
+        ))
+        .await
+        .expect("declare_type ok");
+
+    let alpha = EntityId::person("person:contract-field-migration-alpha");
+    memory
+        .add_entity(NewEntity::new(alpha.clone(), "Alpha", "contract-fixture"))
+        .await
+        .expect("add_entity ok")
+        .written()
+        .expect("nothing collides with it");
+    let beta = EntityId::person("person:contract-field-migration-beta");
+    memory
+        .add_entity(NewEntity::new(beta.clone(), "Beta", "contract-fixture"))
+        .await
+        .expect("add_entity ok")
+        .written()
+        .expect("nothing collides with it");
+    let pet = EntityId("pet:contract-field-migration-pet".into());
+    memory
+        .add_entity(NewEntity::new(pet.clone(), "The Pet", "contract-fixture"))
+        .await
+        .expect("add_entity ok")
+        .written()
+        .expect("nothing collides with it");
+    let written = memory
+        .capture(NewFact {
+            fields: [("friends".to_string(), format!("{alpha}, {beta}"))]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(pet.clone(), "made two friends", date(2026, 5, 1))
+        })
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("nothing collides with it");
+
+    // **Reverted to the plain handle text** — what every reference-typed
+    // field value held before this build lowered it at write time.
+    let badge: String = sqlx::query_scalar("SELECT badge FROM entity WHERE id = ?")
+        .bind(pet.as_str())
+        .fetch_one(&pool)
+        .await
+        .expect("the pet wears a badge");
+    sqlx::query(
+        "UPDATE field_write SET value = ? WHERE entity = ? AND `key` = 'friends' AND fact_id = ?",
+    )
+    .bind(format!("{alpha},{beta}"))
+    .bind(&badge)
+    .bind(written.id.as_str())
+    .execute(&pool)
+    .await
+    .expect("the pre-lowering shape is written");
+
+    // **Watched failing first.** Read bare, off the raw column: still the
+    // plain handle text, not a permanent id, because nothing has resolved
+    // it yet.
+    let stale: String = sqlx::query_scalar(
+        "SELECT value FROM field_write WHERE entity = ? AND `key` = 'friends' AND fact_id = ?",
+    )
+    .bind(&badge)
+    .bind(written.id.as_str())
+    .fetch_one(&pool)
+    .await
+    .expect("the row reads");
+    assert_eq!(
+        stale,
+        format!("{alpha},{beta}"),
+        "the fixture was not reverted to the pre-lowering shape",
+    );
+
+    let rewritten = memory
+        .migrate_reference_fields()
+        .await
+        .expect("nothing is unresolvable here");
+    assert_eq!(
+        rewritten, 1,
+        "the one stale write should have been rewritten"
+    );
+
+    let now: String = sqlx::query_scalar(
+        "SELECT value FROM field_write WHERE entity = ? AND `key` = 'friends' AND fact_id = ?",
+    )
+    .bind(&badge)
+    .bind(written.id.as_str())
+    .fetch_one(&pool)
+    .await
+    .expect("the rewritten row is there");
+    assert!(
+        !now.contains(':'),
+        "the migrated value still holds a plain handle rather than a permanent id: {now}",
+    );
+
+    // Served under the handle, exactly as before the fixture reverted it.
+    let held = memory.fields(&pet).await.expect("fields reads");
+    let served = held.get("friends").cloned().unwrap_or_default();
+    assert!(
+        served.contains(alpha.as_str()) && served.contains(beta.as_str()),
+        "the migrated value did not compose back to today's handles: {served}",
+    );
+
+    assert_eq!(
+        memory
+            .migrate_reference_fields()
+            .await
+            .expect("nothing left to fix"),
+        0,
+        "the migration rewrote a value a second time, so running it at every startup would not \
+         be safe",
+    );
+
+    store.stop().await;
+}
+
+/// 🚨 **The reference-field migration refuses to guess.** A stored value
+/// that resolves through no current handle and no former one is not
+/// silently dropped and not silently kept — the whole call comes back an
+/// error naming the count and the row, and nothing for that value is
+/// rewritten.
+///
+/// **Paired with the clean case above**: a fixture built the same way, with
+/// one item nothing has ever answered to mixed in.
+#[tokio::test]
+async fn migrate_reference_fields_refuses_to_guess_at_an_unresolvable_value() {
+    let scratch = Scratch::new("reference-field-migration-blocked");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("reference_field_migration_blocked")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool.clone());
+
+    memory
+        .declare_type(DeclaredType::new(
+            "contract-field-migration-blocked-pointer",
+            vec![Field::new("friend", ValueType::Reference)],
+        ))
+        .await
+        .expect("declare_type ok");
+
+    let pet = EntityId("pet:contract-field-migration-blocked-pet".into());
+    memory
+        .add_entity(NewEntity::new(pet.clone(), "The Pet", "contract-fixture"))
+        .await
+        .expect("add_entity ok")
+        .written()
+        .expect("nothing collides with it");
+    memory
+        .capture(NewFact::about(
+            pet.clone(),
+            "names nothing that ever existed",
+            date(2026, 5, 1),
+        ))
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("nothing collides with it");
+    let never_existed = "person:contract-field-migration-never-existed";
+    let badge: String = sqlx::query_scalar("SELECT badge FROM entity WHERE id = ?")
+        .bind(pet.as_str())
+        .fetch_one(&pool)
+        .await
+        .expect("the pet wears a badge");
+    sqlx::query(
+        "INSERT INTO field_write (entity, `key`, ordinal, value, fact_id) VALUES (?, 'friend', \
+         1, ?, (SELECT id FROM fact WHERE entity = ? LIMIT 1))",
+    )
+    .bind(&badge)
+    .bind(never_existed)
+    .bind(&badge)
+    .execute(&pool)
+    .await
+    .expect("a dangling reference-field value is written directly");
+
+    let err = memory
+        .migrate_reference_fields()
+        .await
+        .expect_err("an unresolvable value must refuse rather than guess");
+    let message = err.to_string();
+    assert!(
+        message.contains(never_existed),
+        "the refusal does not name the value it could not resolve: {message}",
+    );
+    assert!(
+        message.contains('1'),
+        "the refusal does not carry the count: {message}",
+    );
+
+    // Nothing was silently dropped: the dangling value is exactly where it
+    // was, not blanked and not guessed at.
+    let still_there: String =
+        sqlx::query_scalar("SELECT value FROM field_write WHERE entity = ? AND `key` = 'friend'")
+            .bind(&badge)
+            .fetch_one(&pool)
+            .await
+            .expect("the row reads");
     assert_eq!(still_there, never_existed);
 
     store.stop().await;

@@ -375,6 +375,63 @@ impl InMemoryMemory {
         }
     }
 
+    /// **Every reference-typed field value, lowered from whatever handle a
+    /// caller wrote to the permanent id the store keeps** (rule 268, reaching
+    /// a field the way it already reaches an edge's object and a ref). Each
+    /// item was already checked to exist, so `storage_key` cannot miss on
+    /// one; the fallback only covers a caller-supplied value that never
+    /// looked like a handle in the first place.
+    fn lower_reference_fields(&self, fields: &mut std::collections::BTreeMap<String, String>) {
+        let declared = self.declarations();
+        for (key, items) in super::super::reference_field_values(fields, &declared) {
+            let lowered: Vec<String> = items
+                .iter()
+                .map(|item| {
+                    self.storage_key(&EntityId(item.clone()))
+                        .map(|id| id.to_string())
+                        .unwrap_or_else(|| item.clone())
+                })
+                .collect();
+            fields.insert(key, lowered.join(", "));
+        }
+    }
+
+    /// **The other direction**: every reference-typed field value, composed
+    /// from the permanent id it is stored as to the handle it answers to
+    /// today — the mirror of [`Self::lower_reference_fields`], run once,
+    /// right before a fields map reaches whoever asked for it.
+    fn compose_reference_fields(&self, fields: &mut std::collections::BTreeMap<String, String>) {
+        let declared = self.declarations();
+        for (key, items) in super::super::reference_field_values(fields, &declared) {
+            let composed: Vec<String> = items
+                .iter()
+                .map(|item| self.current_handle(&EntityId(item.clone())).to_string())
+                .collect();
+            fields.insert(key, composed.join(", "));
+        }
+    }
+
+    /// **The writes [`Self::append_writes`] is about to persist, with every
+    /// reference-typed value lowered to the permanent id it names** — the
+    /// same treatment [`Self::lower_reference_fields`] gives a whole fields
+    /// map, applied to the delta a patch produces instead of the thing's
+    /// whole state. A clear carries no value to lower.
+    fn lower_writes(&self, writes: Vec<(String, Option<String>)>) -> Vec<(String, Option<String>)> {
+        writes
+            .into_iter()
+            .map(|(key, value)| match value {
+                None => (key, None),
+                Some(value) => {
+                    let mut one = std::collections::BTreeMap::new();
+                    one.insert(key.clone(), value);
+                    self.lower_reference_fields(&mut one);
+                    let lowered = one.remove(&key);
+                    (key, lowered)
+                }
+            })
+            .collect()
+    }
+
     /// **Every stored key on a fact, served under the handle it answers to
     /// today** — `home`, `subject`, and a lineage pointer's own `home`, which
     /// is a `FactAddress` like any other and goes stale the same way. Applied
@@ -404,6 +461,13 @@ impl InMemoryMemory {
             .iter()
             .map(|named| FactAddress::new(self.current_handle(&named.home), named.local.clone()))
             .collect();
+        // **A reference-typed field value is a pointer like any other**, so
+        // it is composed here too. Safe to run over the fields this
+        // function is handed whether they are already handle form (a
+        // capture's own immediate return) or still badge form (a fields
+        // map read back off the substrate): resolving an already-current
+        // handle finds no badge wearing it and leaves the value as it was.
+        self.compose_reference_fields(&mut f.fields);
         f
     }
 
@@ -894,6 +958,11 @@ impl Memory for InMemoryMemory {
             .iter()
             .map(|object| self.storage_key(object).unwrap_or_else(|| object.clone()))
             .collect();
+        // **A reference-typed field value is stored the same way** — every
+        // item checked to exist just above, so nothing here can be an
+        // unresolvable handle.
+        let mut fields = fact.fields.clone();
+        self.lower_reference_fields(&mut fields);
 
         let mut facts = self.facts.lock().expect("fake mutex poisoned");
         // **A claim this one is derived from is named, so it must already
@@ -945,8 +1014,7 @@ impl Memory for InMemoryMemory {
         };
         let existing: Vec<&Fact> = facts.iter().filter(|f| f.home == home).collect();
         let id = FactId(format!("f{}", existing.len() + 1));
-        let wrote: Vec<(String, Option<String>)> = fact
-            .fields
+        let wrote: Vec<(String, Option<String>)> = fields
             .iter()
             .map(|(key, value)| (key.clone(), Some(value.clone())))
             .collect();
@@ -1063,7 +1131,9 @@ impl Memory for InMemoryMemory {
                 nearest: guard::screen(entity, &[], &index),
             });
         };
-        Ok(self.held(&key))
+        let mut held = self.held(&key);
+        self.compose_reference_fields(&mut held);
+        Ok(held)
     }
 
     async fn claim_history(&self, address: &FactAddress) -> Result<Vec<ClaimWrite>, MemoryError> {
@@ -1391,7 +1461,13 @@ impl Memory for InMemoryMemory {
         // what the claim used to say readable after it stops being true.
         self.append_claim_write(&edited);
         drop(facts);
-        self.append_writes(&home, &id, super::super::writes_of(&patch, &carried));
+        // **Guarded and stored are different questions.** The guard just
+        // above validated the patch's own handle-form values, exactly as a
+        // caller wrote them (rule 268 needs the shape it named to check the
+        // shape); what actually lands is lowered to a permanent id per
+        // reference-typed item, same as a capture's does.
+        let lowered_writes = self.lower_writes(super::super::writes_of(&patch, &carried));
+        self.append_writes(&home, &id, lowered_writes);
         let facts = self.facts.lock().expect("fake mutex poisoned");
         let stored = facts
             .iter()
@@ -1810,6 +1886,11 @@ impl Memory for InMemoryMemory {
                     Some(badge) => EntityId(badge.clone()),
                     None => entity.id.clone(),
                 };
+                // The scan carries what the thing IS, because the records
+                // it also carries cannot be folded back into it.
+                let mut fields =
+                    super::super::folded_fields(&self.writes_on(&key, &facts), &declared);
+                self.compose_reference_fields(&mut fields);
                 search::DocScan {
                     doc_id: badges
                         .get(&entity.id)
@@ -1822,9 +1903,7 @@ impl Memory for InMemoryMemory {
                         .filter(|f| f.home == key)
                         .map(|f| self.served(self.projected(f), &entity.id))
                         .collect(),
-                    // The scan carries what the thing IS, because the records
-                    // it also carries cannot be folded back into it.
-                    fields: super::super::folded_fields(&self.writes_on(&key, &facts), &declared),
+                    fields,
                     entity: Some(entity),
                     // A stored row is the whole instance's, exactly as it was.
                     owner: None,
