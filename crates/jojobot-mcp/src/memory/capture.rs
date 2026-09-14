@@ -627,8 +627,18 @@ impl Jojobot {
         // Routed through the declined path rather than straight to the mapper:
         // a fact the validators refuse is a caller mistake, and it comes back
         // as an answer with a way forward (rule 68).
-        let captured = match self.memory.capture(new).await {
-            Ok(captured) => captured,
+        // **A write that landed is never reported as failed** (rule 130): the
+        // fold's own refresh can fail after the inner write already
+        // succeeded, and that failure must not read as this capture having
+        // failed. `fold_behind` carries what to note on the receipt; the
+        // written record itself is unpacked exactly as an ordinary success.
+        let (captured, fold_behind) = match self.memory.capture(new).await {
+            Ok(captured) => (captured, None),
+            Err(MemoryError::FoldBehind {
+                landed: Landed::Fact(fact),
+                behind,
+                ..
+            }) => (Guarded::Written(*fact), Some(behind)),
             Err(e) => return memory_declined("capture", e),
         };
         match captured {
@@ -642,6 +652,9 @@ impl Jojobot {
                 // write answers as of today, so a receipt answering as of the
                 // claim's day contradicts it inside one session.
                 let mut body = fact_receipt_json(&fact, self.dated(None, args.sid.as_deref())?);
+                if let Some(behind) = fold_behind {
+                    crate::answer::note_fold_behind(&mut body, behind);
+                }
                 crate::answer::note_delta(
                     &mut body,
                     declared.not_stored(&fact, checked_in.then_some(WHY_A_CHECK_IN_DERIVES)),
@@ -2505,5 +2518,41 @@ mod tests {
                 .is_some_and(|advice| advice.contains(&said)),
             "the refusal names the fault: {body}"
         );
+    }
+
+    /// **The write says it landed, never that it failed, when only the fold
+    /// behind it could not confirm it** (rule 130) — `capture`'s own catch of
+    /// `MemoryError::FoldBehind`, proven through the served verb rather than
+    /// by calling `Folded` directly.
+    #[tokio::test]
+    async fn a_capture_whose_fold_could_not_refresh_answers_landed_not_failed() {
+        let jojobot = Jojobot::new(
+            Arc::new(FoldBehindMemory(Arc::new(InMemoryMemory::booted()))),
+            Arc::new(SpySearch::default()),
+            Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
+            Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
+            Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+            seeded_registry(),
+        );
+
+        let receipt = capture_ok(
+            &jojobot,
+            capture_args("person:alpha", "said the kiln was lit"),
+        )
+        .await;
+
+        assert_eq!(receipt["fold"]["behind"], "stale", "{receipt}");
+        assert!(
+            receipt["fold"]["note"]
+                .as_str()
+                .is_some_and(|note| note.contains("landed")),
+            "the note has to say the write landed, not that it failed: {receipt}"
+        );
+
+        // **The positive half.** The receipt still carries the record itself,
+        // exactly as an ordinary capture does — a `FoldBehind` error is never
+        // allowed to swallow what the write actually produced.
+        assert_eq!(receipt["subject"], "person:alpha", "{receipt}");
+        assert_ne!(receipt["status"], "blocked", "{receipt}");
     }
 }

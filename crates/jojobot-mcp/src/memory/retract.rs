@@ -70,12 +70,19 @@ impl Jojobot {
         let address = FactAddress::parse(&args.address).map_err(memory_error)?;
         let date = self.dated(args.recorded_at.as_deref(), args.sid.as_deref())?;
 
-        let taken_back = match self
+        // **A write that landed is never reported as failed** (rule 130): see
+        // `capture`'s own note on the same shape.
+        let (taken_back, fold_behind) = match self
             .memory
             .retract(&address, args.reason.as_deref(), date)
             .await
         {
-            Ok(taken_back) => taken_back,
+            Ok(taken_back) => (taken_back, None),
+            Err(MemoryError::FoldBehind {
+                landed: Landed::Retraction(taken_back),
+                behind,
+                ..
+            }) => (*taken_back, Some(behind)),
             Err(e) => return memory_declined("retract", e),
         };
         // **What was built on it, said at the moment it is taken back.** That
@@ -107,6 +114,9 @@ impl Jojobot {
                 }))
                 .collect::<Vec<_>>(),
         });
+        if let Some(behind) = fold_behind {
+            crate::answer::note_fold_behind(&mut body, behind);
+        }
         crate::answer::note_postcondition(
             &mut body,
             what_a_retraction_left_standing(&address, &standing_on),
@@ -683,5 +693,32 @@ mod tests {
                 .contains("person:alpha#f1"),
             "the addresses that DO exist are what makes this repairable: {missed}"
         );
+    }
+
+    /// **The write says it landed, never that it failed, when only the fold
+    /// behind it could not confirm it** (rule 130) — `retract`'s own catch of
+    /// `MemoryError::FoldBehind`, the same shape `capture`'s own case proves.
+    #[tokio::test]
+    async fn a_retraction_whose_fold_could_not_refresh_answers_landed_not_failed() {
+        let jojobot = Jojobot::new(
+            Arc::new(FoldBehindMemory(Arc::new(InMemoryMemory::booted()))),
+            Arc::new(SpySearch::default()),
+            Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
+            Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
+            Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+            seeded_registry(),
+        );
+        let address = a_record(&jojobot, "will be taken back").await;
+
+        let body = json_of(
+            &jojobot
+                .retract(Parameters(retract_args(&address, "it did not happen")))
+                .await
+                .expect("retract ok"),
+        );
+        assert_eq!(body["fold"]["behind"], "stale", "{body}");
+        // **The positive half.** The retraction still landed, exactly as an
+        // ordinary retract does.
+        assert_eq!(body["retracted"]["status"], "archived", "{body}");
     }
 }

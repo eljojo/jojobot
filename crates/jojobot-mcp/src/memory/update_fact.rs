@@ -309,8 +309,15 @@ impl Jojobot {
                 Err(refused) => return Ok(refused),
             },
         };
-        let written = match self.memory.update_fact(&address, patch).await {
-            Ok(written) => written,
+        // **A write that landed is never reported as failed** (rule 130): see
+        // `capture`'s own note on the same shape.
+        let (written, fold_behind) = match self.memory.update_fact(&address, patch).await {
+            Ok(written) => (written, None),
+            Err(MemoryError::FoldBehind {
+                landed: Landed::Fact(fact),
+                behind,
+                ..
+            }) => (Guarded::Written(*fact), Some(behind)),
             Err(e) => return memory_declined("update_fact", e),
         };
         match written {
@@ -322,6 +329,9 @@ impl Jojobot {
                 )
                 .await;
                 let mut body = fact_receipt_json(&fact, self.dated(None, args.sid.as_deref())?);
+                if let Some(behind) = fold_behind {
+                    crate::answer::note_fold_behind(&mut body, behind);
+                }
                 crate::answer::note_delta(&mut body, declared.not_stored(&fact));
                 crate::answer::note_postcondition(
                     &mut body,
@@ -1824,5 +1834,40 @@ mod tests {
                 .is_some_and(|d| !d.is_empty()),
             "stands_for carries no schema description of its own: {schema}"
         );
+    }
+
+    /// **The write says it landed, never that it failed, when only the fold
+    /// behind it could not confirm it** (rule 130) — `update_fact`'s own
+    /// catch of `MemoryError::FoldBehind`, the same shape `capture`'s own
+    /// case proves.
+    #[tokio::test]
+    async fn an_update_whose_fold_could_not_refresh_answers_landed_not_failed() {
+        let jojobot = Jojobot::new(
+            Arc::new(FoldBehindMemory(Arc::new(InMemoryMemory::booted()))),
+            Arc::new(SpySearch::default()),
+            Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
+            Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
+            Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+            seeded_registry(),
+        );
+        capture_ok(
+            &jojobot,
+            capture_args("person:alpha", "works at the old place"),
+        )
+        .await;
+
+        let edited = json_of(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    content: Some("works at the new place".into()),
+                    ..update_args("person:alpha#f1")
+                }))
+                .await
+                .expect("update ok"),
+        );
+        assert_eq!(edited["fold"]["behind"], "stale", "{edited}");
+        // **The positive half.** The edited record still comes back, exactly
+        // as an ordinary update does.
+        assert_eq!(edited["content_head"], "works at the new place", "{edited}");
     }
 }

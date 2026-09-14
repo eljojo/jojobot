@@ -472,6 +472,21 @@ pub(crate) fn memory_error(e: MemoryError) -> McpError {
         MemoryError::SuppliedRecordCollidesWithStoredRow { .. } => {
             McpError::internal_error(e.to_string(), None)
         }
+        // **Reaching this arm is itself the bug.** `FoldBehind` says the write
+        // landed — every verb that can raise it (`capture`, `update_fact`,
+        // `retract`, `merge`) catches it before its error ever reaches this
+        // mapper, and answers with the record it carries plus a fold-behind
+        // note (rule 130). An `McpError` here would tell the caller the write
+        // failed, which is exactly false; there is no channel through this
+        // function that says otherwise, so a call site missing that handling
+        // is what needs fixing, not this arm.
+        MemoryError::FoldBehind { .. } => McpError::internal_error(
+            format!(
+                "{e}. This is not a failed write — the record landed. The verb that raised this \
+                 is missing its fold-behind handling; that is the defect to fix."
+            ),
+            None,
+        ),
     }
 }
 

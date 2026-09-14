@@ -294,6 +294,36 @@ pub(crate) fn note_postcondition(body: &mut serde_json::Value, line: String) {
     fields.insert("postcondition".into(), line.into());
 }
 
+/// **State that a write landed even though the in-process fold behind it
+/// could not confirm it** (rule 130) — the write-path sibling of memory's own
+/// coverage note: one vocabulary for "an in-process projection is behind the
+/// store it mirrors", reused rather than reinvented (rule 51).
+///
+/// **Never [`Behind::Unscanned`].** [`jojobot_domain::memory::MemoryError::FoldBehind`]
+/// is raised only after a write already landed, which is the write-path
+/// route into [`Behind::Stale`] alone — that type's own doc names it.
+pub(crate) fn note_fold_behind(body: &mut serde_json::Value, behind: Behind) {
+    let Some(fields) = body.as_object_mut() else {
+        return;
+    };
+    let note = match behind {
+        Behind::Stale => {
+            "This write landed and is in the store. The in-process fold that backs \
+                          a candidate-picking read of this entity could not be refreshed \
+                          afterward, so such a read may still answer with what stood before this \
+                          write until the entity is next touched. recall and history read the \
+                          store directly and already reflect it."
+        }
+        Behind::Unscanned => {
+            "unreachable: a write-path fold gap is always reported as stale, never unscanned"
+        }
+    };
+    fields.insert(
+        "fold".into(),
+        serde_json::json!({ "behind": behind.as_token(), "note": note }),
+    );
+}
+
 /// **Ride a teaching on the answer that triggered it**, rather than a
 /// separate call the caller has to know to make — see
 /// [`crate::teaching`].

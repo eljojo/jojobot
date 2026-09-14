@@ -65,12 +65,19 @@ impl Jojobot {
         let survivor = EntityId(args.survivor.trim().to_string());
         let date = self.dated(args.recorded_at.as_deref(), args.sid.as_deref())?;
 
-        let done = match self
+        // **A write that landed is never reported as failed** (rule 130): see
+        // `capture`'s own note on the same shape.
+        let (done, fold_behind) = match self
             .memory
             .merge(&duplicate, &survivor, args.reason.as_deref(), date)
             .await
         {
-            Ok(done) => done,
+            Ok(done) => (done, None),
+            Err(MemoryError::FoldBehind {
+                landed: Landed::Merge(done),
+                behind,
+                ..
+            }) => (*done, Some(behind)),
             Err(e) => return memory_declined("merge_entities", e),
         };
         self.beat(
@@ -94,6 +101,9 @@ impl Jojobot {
             "claims_moved": done.rehomed,
             "addresses_changed": done.rehomed > 0,
         });
+        if let Some(behind) = fold_behind {
+            crate::answer::note_fold_behind(&mut body, behind);
+        }
         if self.first_contact(CLAIMS_DOMAIN, Some(&caller)).await {
             crate::answer::note_teaching(&mut body, CLAIMS_TEACHING);
         }
@@ -214,5 +224,53 @@ mod tests {
                 .contains("person:alpha"),
             "the way forward names where it forwards to, on either side: {body}",
         );
+    }
+
+    /// **The write says it landed, never that it failed, when only the fold
+    /// behind it could not confirm it** (rule 130) — `merge_entities`'s own
+    /// catch of `MemoryError::FoldBehind`, the same shape `capture`'s own
+    /// case proves.
+    #[tokio::test]
+    async fn a_merge_whose_fold_could_not_refresh_answers_landed_not_failed() {
+        use crate::memory::testing::{FoldBehindMemory, InMemoryMemory, SpySearch};
+
+        let jojobot = Jojobot::new(
+            Arc::new(FoldBehindMemory(Arc::new(InMemoryMemory::booted()))),
+            Arc::new(SpySearch::default()),
+            Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
+            Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
+            Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+            seeded_registry(),
+        );
+        let sid = writing_as(&jojobot);
+        jojobot
+            .add_entity(Parameters(add_args(
+                "person",
+                "person:milhouse",
+                "Milhouse",
+            )))
+            .await
+            .expect("add ok");
+        jojobot
+            .add_entity(Parameters(add_args("person", "person:bart", "Bart")))
+            .await
+            .expect("add ok");
+
+        let body = json_of(
+            &jojobot
+                .merge_entities(Parameters(MergeArgs {
+                    duplicate: "person:bart".into(),
+                    survivor: "person:milhouse".into(),
+                    reason: None,
+                    recorded_at: None,
+                    sid: Some(sid),
+                }))
+                .await
+                .expect("merge ok"),
+        );
+        assert_eq!(body["fold"]["behind"], "stale", "{body}");
+        // **The positive half.** The merge still landed, exactly as an
+        // ordinary merge does.
+        assert_eq!(body["merged"], "person:bart", "{body}");
     }
 }

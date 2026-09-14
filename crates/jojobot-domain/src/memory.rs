@@ -2932,6 +2932,24 @@ impl<T> Guarded<T> {
     }
 }
 
+/// **What a write already produced, when [`MemoryError::FoldBehind`] carries
+/// it instead of returning it directly.**
+///
+/// The refresh that runs after a write can fail without the write itself
+/// having failed — the row already landed in the store before the refresh
+/// is attempted. `Landed` is what lets [`MemoryError::FoldBehind`] hand that
+/// row back instead of discarding it: one variant per write this can happen
+/// to, holding exactly what that write would otherwise have returned.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Landed {
+    /// What [`Memory::capture`] or [`Memory::update_fact`] wrote.
+    Fact(Box<Fact>),
+    /// What [`Memory::retract`] wrote.
+    Retraction(Box<Retraction>),
+    /// What [`Memory::merge`] did.
+    Merge(Box<Merge>),
+}
+
 /// Why a memory operation failed. Adapters map their transport/parse errors into
 /// these; the domain and the MCP layer speak only this vocabulary.
 #[derive(Debug, thiserror::Error)]
@@ -3246,6 +3264,34 @@ pub enum MemoryError {
     SuppliedRecordCollidesWithStoredRow {
         /// The address both the provision and a stored row name.
         attempted: String,
+    },
+    /// **The write landed. Only the in-process fold that mirrors it could not
+    /// be refreshed afterward.**
+    ///
+    /// An adapter that keeps a RAM projection of every thing's fields
+    /// re-reads the one thing a write just touched, to keep that projection
+    /// current (decision log 292). The write itself already committed
+    /// before that re-read runs — there is no undo the store gives back —
+    /// so a re-read that fails here must never be reported as the write
+    /// having failed. `landed` carries what the write actually produced;
+    /// `source` is why the re-read itself could not run.
+    ///
+    /// **Never [`search::Behind::Unscanned`].** That state means a half was
+    /// never read at all; this is reached only after a write landed, which
+    /// is the write-path route into [`search::Behind::Stale`] that type's
+    /// own doc already names — a committed write whose re-read failed.
+    #[error("wrote {landed:?}, but the fold could not be refreshed afterward: {source}")]
+    FoldBehind {
+        /// What the write produced — never discarded even though this is an
+        /// error.
+        landed: Landed,
+        /// Always [`search::Behind::Stale`]; carried rather than hard-coded
+        /// at every call site so a caller reads one value instead of
+        /// assuming it.
+        behind: search::Behind,
+        /// Why the fold's re-read failed.
+        #[source]
+        source: Box<MemoryError>,
     },
 }
 
