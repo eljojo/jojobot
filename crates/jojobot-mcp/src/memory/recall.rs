@@ -783,8 +783,14 @@ impl Jojobot {
                 )));
             }
         };
-        // **The view's own keys, read where the page reads them** (rule 51).
-        let asked = graph::asked_by_view(&held);
+        // **The view's own keys and its own records, read where the page
+        // reads them** (rule 51). A filter is a record on the view, so
+        // reading the view's question needs its facts beside its fields —
+        // degrading to none on a read failure, the same way the candidate
+        // list just above does, rather than failing a view whose fields
+        // already answered.
+        let facts = self.memory.recall(&handle).await.unwrap_or_default();
+        let asked = graph::asked_by_view(&held, &facts);
         // **The caller's own `fields` wins whole, never merged item by
         // item.** A caller that named a filter meant that filter; the
         // view's own is a starting point, not something to add to.
@@ -3750,6 +3756,29 @@ mod tests {
         assert_eq!(gamma["charter"], own, "{body}");
     }
 
+    /// **A filter is its own record on the view** — a fact whose own
+    /// fields carry `key` and `value` (and, when needed, `compare` and
+    /// `scope`), the same shape every other claim on this store is.
+    async fn declared_view_filter(jojobot: &Jojobot, view_slug: &str, key: &str, value: &str) {
+        capture_ok(
+            jojobot,
+            CaptureArgs {
+                fields: Some(
+                    [
+                        ("key".to_string(), key.to_string()),
+                        ("value".to_string(), value.to_string()),
+                    ]
+                    .into(),
+                ),
+                ..capture_args(
+                    &format!("view:{view_slug}"),
+                    &format!("filters to {key} {value}"),
+                )
+            },
+        )
+        .await;
+    }
+
     /// 🚨 **A view can hold a real question — a key filter — reaching an
     /// answer a caller setting only the five view-fillable arguments cannot
     /// reach without already knowing the view's own words.** This is the
@@ -3768,12 +3797,8 @@ mod tests {
     #[tokio::test]
     async fn a_view_carrying_a_filter_reaches_what_the_five_flags_alone_cannot() {
         let jojobot = handler();
-        declared_view(
-            &jojobot,
-            "urgent-things",
-            &[("selects", "thing"), ("priority", "urgent")],
-        )
-        .await;
+        declared_view(&jojobot, "urgent-things", &[("selects", "thing")]).await;
+        declared_view_filter(&jojobot, "urgent-things", "priority", "urgent").await;
         capture_ok(
             &jojobot,
             CaptureArgs {
@@ -3849,12 +3874,8 @@ mod tests {
     #[tokio::test]
     async fn a_callers_own_fields_still_override_the_views_filter() {
         let jojobot = handler();
-        declared_view(
-            &jojobot,
-            "urgent-things",
-            &[("selects", "thing"), ("priority", "urgent")],
-        )
-        .await;
+        declared_view(&jojobot, "urgent-things", &[("selects", "thing")]).await;
+        declared_view_filter(&jojobot, "urgent-things", "priority", "urgent").await;
         capture_ok(
             &jojobot,
             CaptureArgs {

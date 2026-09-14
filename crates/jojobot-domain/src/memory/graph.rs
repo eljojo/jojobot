@@ -680,34 +680,50 @@ pub struct Asked {
     pub filters: Vec<FieldFilter>,
 }
 
-/// **A view's key is a filter unless it is spoken for.** Kept in one place
-/// so a key added to [`Asked`] later is a key added here, not a key that
-/// silently starts reading as a filter on somebody's rhythm.
-const RESERVED_VIEW_KEYS: &[&str] = &["selects", "shows", "asks"];
-
-/// Read a view's question off the keys it holds. See [`Asked`].
-pub fn asked_by_view(held: &BTreeMap<String, String>) -> Asked {
+/// Read a view's question off the keys it holds and the records it
+/// carries. See [`Asked`].
+///
+/// **`held` answers `selects`/`shows`/`asks` — bare flags, one value each,
+/// where the view's folded fields are exactly the right shape to hold
+/// them.** A filter is not: it is several fields naming one question (a
+/// key, a value, how they compare, what the comparison is asked of), and a
+/// view may carry more than one. Folding them onto the view's own fields
+/// would need a delimiter for the list and a parse for the fields inside
+/// each entry — a syntax this store does not otherwise have. **A filter is
+/// a record instead**, the same shape every other claim on this store
+/// already is: its own fields carry `key`, `value`, an optional `compare`
+/// and an optional `scope`, exactly the axes [`FieldFilter`] has. Several
+/// filters are several records, and two filters on the same key are two
+/// records — nothing here caps it at one.
+pub fn asked_by_view(held: &BTreeMap<String, String>, facts: &[Fact]) -> Asked {
     let shows = |what: &str| {
         held.get("shows")
             .is_some_and(|s| s.split(',').any(|part| part.trim() == what))
     };
-    let filters = held
+    let filters = facts
         .iter()
-        .filter(|(key, _)| !RESERVED_VIEW_KEYS.contains(&key.as_str()))
-        .map(|(key, value)| {
-            let (compare, value) = match value.split_once(':') {
-                Some((token, rest)) if types::Compare::of_token(token).is_some() => (
-                    types::Compare::of_token(token).expect("checked above"),
-                    rest,
-                ),
-                _ => (types::Compare::Equals, value.as_str()),
-            };
-            FieldFilter {
-                key: Some(key.clone()),
-                value: Some(value.trim().to_string()),
-                compare,
-                scope: Scope::Thing,
+        .filter(|f| f.status == FactStatus::Active)
+        .filter_map(|f| {
+            let key = f.fields.get("key").cloned();
+            let value = f.fields.get("value").cloned();
+            if key.is_none() && value.is_none() {
+                return None;
             }
+            let compare = f
+                .fields
+                .get("compare")
+                .and_then(|token| types::Compare::of_token(token))
+                .unwrap_or_default();
+            let scope = match f.fields.get("scope").map(String::as_str) {
+                Some("record") => Scope::Record,
+                _ => Scope::Thing,
+            };
+            Some(FieldFilter {
+                key,
+                value,
+                compare,
+                scope,
+            })
         })
         .collect();
     Asked {
@@ -1994,45 +2010,95 @@ mod tests {
     use super::*;
     use crate::memory::{Boot, FactId, FactStatus, Provenance, Standing};
 
-    /// 🚨 **A view's own fields, beyond the three reserved keys, are the
-    /// question's key filters** — the same "a thing's fields are its
-    /// properties" reading every other object already gets, so a view does
-    /// not need a filter syntax of its own to hold one.
+    /// 🚨 **A filter is a record on the view, its own fields carrying the
+    /// key, the value, the comparison and the scope** — the same shape
+    /// every other claim on this store already is, so a view needs no
+    /// filter syntax of its own and no cap of one filter per key: several
+    /// filters are several records.
     ///
-    /// **Equals needs no comparison prefix; another comparison is named
-    /// ahead of the value it applies to**, the same token vocabulary
-    /// [`types::Compare`] already reads and writes — not a second one.
+    /// **Equals needs no `compare` field; `scope` defaults to `thing`.**
+    /// Both are named explicitly on the second filter here, to prove the
+    /// non-default path rather than only the common one.
     #[test]
-    fn a_views_own_fields_beyond_the_reserved_keys_become_filters() {
-        let held: std::collections::BTreeMap<String, String> = [
-            ("selects".to_string(), "rhythm".to_string()),
-            ("status".to_string(), "active".to_string()),
-            ("donuts_eaten".to_string(), "greater:3".to_string()),
-        ]
-        .into_iter()
-        .collect();
-        let asked = asked_by_view(&held);
+    fn a_views_own_records_become_its_filters() {
+        let held: std::collections::BTreeMap<String, String> =
+            [("selects".to_string(), "rhythm".to_string())]
+                .into_iter()
+                .collect();
+        let facts = vec![
+            Fact {
+                fields: [
+                    ("key".to_string(), "status".to_string()),
+                    ("value".to_string(), "active".to_string()),
+                ]
+                .into_iter()
+                .collect(),
+                ..fact("view:contract-asked-by-view", "f1", "status is active")
+            },
+            Fact {
+                fields: [
+                    ("key".to_string(), "donuts_eaten".to_string()),
+                    ("value".to_string(), "3".to_string()),
+                    ("compare".to_string(), "greater".to_string()),
+                    ("scope".to_string(), "record".to_string()),
+                ]
+                .into_iter()
+                .collect(),
+                ..fact(
+                    "view:contract-asked-by-view",
+                    "f2",
+                    "more than three donuts",
+                )
+            },
+        ];
+        let asked = asked_by_view(&held, &facts);
         assert_eq!(asked.selects.as_deref(), Some("rhythm"));
         assert_eq!(
             asked.filters.len(),
             2,
-            "both non-reserved keys must become filters: {:?}",
+            "both records must become filters: {:?}",
             asked.filters
         );
         let status = asked
             .filters
             .iter()
             .find(|f| f.key.as_deref() == Some("status"))
-            .expect("the status key must be a filter");
+            .expect("the status record must be a filter");
         assert_eq!(status.value.as_deref(), Some("active"));
         assert_eq!(status.compare, types::Compare::Equals);
+        assert_eq!(status.scope, Scope::Thing);
         let donuts = asked
             .filters
             .iter()
             .find(|f| f.key.as_deref() == Some("donuts_eaten"))
-            .expect("the donuts_eaten key must be a filter");
+            .expect("the donuts_eaten record must be a filter");
         assert_eq!(donuts.value.as_deref(), Some("3"));
         assert_eq!(donuts.compare, types::Compare::Greater);
+        assert_eq!(donuts.scope, Scope::Record);
+    }
+
+    /// **A retracted filter record stops filtering.** The view's records
+    /// are read the same way any object's records are: an archived one is
+    /// history, not a live question.
+    #[test]
+    fn a_retracted_filter_record_is_not_asked() {
+        let held = std::collections::BTreeMap::new();
+        let facts = vec![Fact {
+            status: FactStatus::Archived,
+            fields: [
+                ("key".to_string(), "status".to_string()),
+                ("value".to_string(), "active".to_string()),
+            ]
+            .into_iter()
+            .collect(),
+            ..fact("view:contract-asked-by-view", "f1", "status is active")
+        }];
+        let asked = asked_by_view(&held, &facts);
+        assert!(
+            asked.filters.is_empty(),
+            "a retracted filter record must not be asked: {:?}",
+            asked.filters
+        );
     }
 
     fn entity(handle: &str, name: &str) -> Entity {

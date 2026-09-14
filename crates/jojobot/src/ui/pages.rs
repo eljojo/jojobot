@@ -197,7 +197,7 @@ pub async fn node(
     // definition rather than over it: a reader has to see which question they
     // asked before they read what it came back with.
     if entity.kind == EntityKind::VIEW {
-        body.push_str(&view_section(&state, &held, &by_id).await);
+        body.push_str(&view_section(&state, &held, &facts, &by_id).await);
     }
     body.push_str(&history_section(&state, &entity.id, asked.history.as_deref()).await);
     body.push_str(&conforms_section(&state, &held).await);
@@ -508,9 +508,10 @@ fn fields_section(folded: &BTreeMap<String, String>, canonical: &str) -> String 
 async fn view_section(
     state: &AppState,
     held: &BTreeMap<String, String>,
+    facts: &[Fact],
     by_id: &HashMap<&EntityId, &Entity>,
 ) -> String {
-    let asked = graph::asked_by_view(held);
+    let asked = graph::asked_by_view(held, facts);
     // **A view short of what it selects is a question nobody can ask**, and it
     // says which key it lacks. Rendering it as an empty answer would send a
     // reader looking for the records instead of for the key.
@@ -534,6 +535,7 @@ async fn view_section(
     let query = graph::GraphQuery {
         select: graph::Selection {
             kind: Some(kind),
+            fields: asked.filters.clone(),
             ..graph::Selection::default()
         },
         // **The objects, and nothing of each.** A view's `shows` says what of
