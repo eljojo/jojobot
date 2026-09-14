@@ -2385,6 +2385,12 @@ const BIKE_LOCK: &str = "thing:bike-lock";
 /// bike lock's own mistake would fail the honest year. It is told apart
 /// structurally, by the field the entry itself names, rather than by its
 /// prose.
+///
+/// **The fold-in's own job is a third, legitimate record on this same
+/// subject, told apart the same way.** The bike lock is where the fold-in's
+/// second control lives — its own `cost`/`settled` fields, filed correctly
+/// and left alone — and that record carries neither `was` nor an empty
+/// field set, so it is excluded on the same structural basis.
 async fn the_bike_locks_mistake_is_rewritten_in_place(seen: &Observed<'_>) -> Result<(), String> {
     let read = seen
         .room
@@ -2399,7 +2405,11 @@ async fn the_bike_locks_mistake_is_rewritten_in_place(seen: &Observed<'_>) -> Re
     };
     let active: Vec<&Value> = facts
         .iter()
-        .filter(|f| f["status"] == "active" && f["fields"]["was"].is_null())
+        .filter(|f| {
+            f["status"] == "active"
+                && f["fields"]["was"].is_null()
+                && f["fields"]["settled"].is_null()
+        })
         .collect();
     let [fact] = active.as_slice() else {
         return Err(format!(

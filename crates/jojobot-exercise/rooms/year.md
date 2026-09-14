@@ -668,7 +668,7 @@ is, and it must not.**
 >
 > Nobody will answer you, but your answer is being read. You must answer.
 >
-> start jojobot as assistant — it is 22 November 2026, when did I last get the drivetrain serviced, and put down that I did it again today, and I've ridden it about 600 kilometres since then — forty five dollars this time, and they've sent me the bill for it
+> start jojobot as assistant — it is 22 November 2026, when did I last get the drivetrain serviced, and put down that I did it again today, and I've ridden it about 600 kilometres since then — forty five dollars this time, and they've sent me the bill for it. Also, the floor pump needed a new washer when it came back — twenty dollars for the part, and they've billed me for that one too
 
 ```locks
 # **The day, not the word.** What the operator calls the drivetrain the record
@@ -810,7 +810,7 @@ say     December: the walk back from the loop's own cadence does not reach the o
 >
 > Nobody will answer you, but your answer is being read. You must answer.
 >
-> start jojobot as assistant — it is 20 December 2026. The record says the club does not meet on Tuesdays. Has it always said that, or did we have it wrong at some point and fix it? Put down what it used to say, under `was`, so I do not have to ask again. And I am about to sell the canoe — could you pull together everything that has happened to it this year so I do not leave anything out for the buyer, though I do not want a stack of separate notes about it either. Oh, and I finally bought a lock for the bike — a U-lock — no, wait, sorry, I mean a cable lock, those are not the same thing at all. And how far have I ridden the gravel bike this year altogether? Put the number where I can find it without doing the sum myself. One more thing — one of the payments for the bike or the canoe is sitting there with a word I don't actually use. Put that one right.
+> start jojobot as assistant — it is 20 December 2026. The record says the club does not meet on Tuesdays. Has it always said that, or did we have it wrong at some point and fix it? Put down what it used to say, under `was`, so I do not have to ask again. And I am about to sell the canoe — could you pull together everything that has happened to it this year so I do not leave anything out for the buyer, though I do not want a stack of separate notes about it either. Oh, and I finally bought a lock for the bike — a U-lock — no, wait, sorry, I mean a cable lock, those are not the same thing at all. Fifteen dollars, and they waived the fitting charge since I am in there so often. And how far have I ridden the gravel bike this year altogether? Put the number where I can find it without doing the sum myself, and while you are at it, add up whatever is actually invoiced this year — not paid, not waived — and put that total under owed on the bike too. One more thing — some of the payments for the bike or the canoe are sitting there with words I don't actually use. Put those right.
 
 ```locks
 # 🚨 **THE QUESTION A CORRECTION MAKES ANSWERABLE, AND ONLY IF IT LEFT A
@@ -1009,6 +1009,37 @@ recall {"subject": "thing:canoe"}
 carries "cost":"30"
 carries "settled":"paid"
 say     later December: the March job no longer reads as paid, so a word that was already right was painted over
+
+# 🚨 **THE SECOND OFF-VOCABULARY WORD, INDEPENDENT OF NOVEMBER'S "sent".**
+# Ledger's own room uses two odd words on purpose — its own text says one
+# outlier is guessable, and two make the question about the actual SET
+# rather than about the one word that looks wrong. This is the other half
+# of the same fix this block already proves for the drivetrain, on its own
+# subject, so a sitting that catches one off-vocabulary word and stops is
+# caught apart from one that found the set.
+recall {"subject": "thing:floor-pump"}
+carries "cost":"20"
+carries "settled":"invoiced"
+say     later December: the floor pump's job does not read as fixed to the operator's own word, so the fold-in's second off-vocabulary word was never caught
+
+# **The control this rests on, filed under a word neither control above
+# already uses.** This sitting creates the bike lock and its job in the
+# same breath, so what is locked is whether the sitting — busy fixing two
+# other jobs at the same time — still leaves the one it filed correctly
+# exactly as it wrote it.
+recall {"subject": "thing:bike-lock"}
+carries "cost":"15"
+carries "settled":"waived"
+say     later December: the bike lock's own job does not read as waived, so either it was never filed under the operator's own word or this sitting repainted it while fixing the others
+
+# 🚨 **THE SELECTIVE SUM — filter by the declared word, then add.** A
+# different capability from the unconditional sum a few lines up, which
+# joins every write on one key regardless of what it says. Only the jobs
+# marked invoiced total sixty five; every other route — all four jobs, or
+# every job that is not waived — gives a different number.
+recall {"subject": "thing:gravel-bike"}
+carries "owed":"65"
+say     later December: the bike does not carry what is actually invoiced across the year's jobs, so either the sitting did not select on the operator's own word or it summed something other than what the record says
 ```
 
 ## What this room cannot measure

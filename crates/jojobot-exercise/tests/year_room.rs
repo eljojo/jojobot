@@ -45,9 +45,9 @@ const LATE_NOVEMBER: [usize; 2] = [28, 29];
 const DECEMBER: [usize; 3] = [30, 31, 32];
 
 /// How many locks the year carries.
-const LATE_DECEMBER: [usize; 12] = [33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44];
+const LATE_DECEMBER: [usize; 15] = [33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47];
 
-const LOCKS: usize = 45;
+const LOCKS: usize = 48;
 
 /// **The sittings a person reads**, which assert nothing and must not.
 const READ_THESE: [&str; 1] = ["Phase 12"];
@@ -1343,6 +1343,18 @@ async fn late_november(room: &Surface, sid: &str) {
                "provenance": "testimony", "fields": {"cost": "45", "settled": "sent"}}),
     )
     .await;
+    // **The second job off the vocabulary — its own subject, its own wrong
+    // word.** "billed" is not one of the operator's three, and it is wrong
+    // for a reason independent of "sent" above: two odd words rather than
+    // one, on purpose, for the reason `ledger.md` gives.
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "thing:floor-pump", "content": "the pump needed a new washer",
+               "provenance": "testimony", "fields": {"cost": "20", "settled": "billed"}}),
+    )
+    .await;
 }
 
 /// **The sitting that reads back past a correction**, done properly: it takes
@@ -1413,6 +1425,20 @@ async fn later_december(room: &Surface, sid: &str) {
                "fields": {"was": was}}),
     )
     .await;
+    // **The control this rests on, filed under the operator's own word in
+    // the same breath the bike lock is created.** No separate sitting to
+    // hold it: the bike lock exists only from this entry on, so what
+    // "filed correctly from the start" means here is that this sitting,
+    // with two other wrong words to fix in the same breath, does not
+    // touch this one.
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "thing:bike-lock", "content": "the shop waived the fitting charge",
+               "provenance": "testimony", "fields": {"cost": "15", "settled": "waived"}}),
+    )
+    .await;
     // **The one job off the vocabulary January declared, put right — if
     // late November's own job is there to find.** Several cases drive a
     // partial year that skips late November for reasons of their own; this
@@ -1431,7 +1457,59 @@ async fn later_december(room: &Surface, sid: &str) {
         )
         .await;
     }
+    // **The second job off the vocabulary, put right the same way — its own
+    // subject, its own address, if late November's own job is there to
+    // find.**
+    if let Some(wrong_word) = try_address_of(room, "thing:floor-pump", "needed a new washer").await
+    {
+        did(
+            room,
+            sid,
+            "update_fact",
+            json!({"address": wrong_word, "fields": {"settled": "invoiced"}}),
+        )
+        .await;
+    }
+    // **THE SELECTIVE SUM — filter by the declared word, then add.** Reads
+    // every job this sitting can reach and totals the ones marked invoiced,
+    // never the unconditional fold `km` uses a few lines above and never a
+    // total the sitting invents from memory.
+    let owed = invoiced_total(room).await;
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "thing:gravel-bike", "content": "what is actually invoiced across this year's jobs",
+               "provenance": "inference", "fields": {"owed": owed.to_string()}}),
+    )
+    .await;
     fold_the_canoes_pile(room, sid).await;
+}
+
+/// **THE SELECTIVE SUM, done properly.** Every job-bearing thing the year
+/// holds, filtered on the operator's own word and then added — never the
+/// key's own unconditional fold, and never a total the sitting invents.
+async fn invoiced_total(room: &Surface) -> u32 {
+    let mut total = 0;
+    for subject in [
+        "thing:canoe",
+        "thing:gravel-bike",
+        "thing:floor-pump",
+        "thing:bike-lock",
+    ] {
+        let read = room.call("recall", json!({"subject": subject})).await;
+        let Ok(parsed) = serde_json::from_str::<Value>(&read) else {
+            continue;
+        };
+        let fields = &parsed["objects"][0]["fields"];
+        if fields["settled"].as_str() != Some("invoiced") {
+            continue;
+        }
+        if let Some(cost) = fields["cost"].as_str().and_then(|c| c.parse::<u32>().ok()) {
+            total += cost;
+        }
+    }
+    total
 }
 
 /// Every fact `recall` currently reports for the canoe.
@@ -2743,6 +2821,138 @@ async fn the_marchs_job_control_fails_when_it_gets_repainted_too() {
     assert!(
         !outcomes[LATE_DECEMBER[11]].held,
         "a job that was already right, repainted anyway, held the March control lock: {}",
+        saying(&outcomes),
+    );
+}
+
+/// 🚨 **The floor pump's job word lock, discriminated against no correction
+/// at all — the second off-vocabulary word, independent of the
+/// drivetrain's.**
+#[tokio::test]
+async fn the_floor_pumps_job_lock_fails_when_nothing_corrects_the_word() {
+    let (_room, surface) = furnished().await;
+    let sid = sitting(&surface, "2026-11-22").await;
+    did(
+        &surface,
+        &sid,
+        "capture",
+        json!({"subject": "thing:floor-pump", "content": "the pump needed a new washer",
+               "provenance": "testimony", "fields": {"cost": "20", "settled": "billed"}}),
+    )
+    .await;
+    let now = boundary(&surface, "after").await;
+    let outcomes = judge_all(&surface, &[now]).await;
+    assert!(
+        !outcomes[LATE_DECEMBER[12]].held,
+        "a job left with the wrong word, never corrected, held the floor pump lock: {}",
+        saying(&outcomes),
+    );
+}
+
+/// 🚨 **The bike lock's control lock, discriminated against a sitting that
+/// repaints a job that was never wrong — the second control, under a word
+/// neither the canoe's nor the drivetrain's own fix uses.**
+#[tokio::test]
+async fn the_bike_locks_job_control_fails_when_it_gets_repainted_too() {
+    let (_room, surface) = furnished().await;
+    let sid = sitting(&surface, "2026-12-20").await;
+    did(
+        &surface,
+        &sid,
+        "add_entity",
+        json!({"kind": "thing", "handle": "bike-lock", "name": "The Bike Lock",
+               "source": "the operator"}),
+    )
+    .await;
+    did(
+        &surface,
+        &sid,
+        "capture",
+        json!({"subject": "thing:bike-lock", "content": "the shop waived the fitting charge",
+               "provenance": "testimony", "fields": {"cost": "15", "settled": "waived"}}),
+    )
+    .await;
+    // **A sitting that cannot tell right from wrong**, played: it paints
+    // the already-correct job the same value it gives everything else.
+    did(
+        &surface,
+        &sid,
+        "capture",
+        json!({"subject": "thing:bike-lock", "content": "the shop waived the fitting charge",
+               "provenance": "inference", "fields": {"settled": "invoiced"}}),
+    )
+    .await;
+    let now = boundary(&surface, "after").await;
+    let outcomes = judge_all(&surface, &[now]).await;
+    assert!(
+        !outcomes[LATE_DECEMBER[13]].held,
+        "a job that was already right, repainted anyway, held the bike lock control lock: {}",
+        saying(&outcomes),
+    );
+}
+
+/// 🚨 **The selective-sum lock, discriminated against the unconditional
+/// sum — every job added regardless of its word, the wrong route a plain
+/// reading of the record gives.**
+#[tokio::test]
+async fn the_selective_sum_lock_fails_when_the_sum_is_not_selective() {
+    let (_room, surface) = furnished().await;
+    let sid = sitting(&surface, "2026-12-20").await;
+    did(
+        &surface,
+        &sid,
+        "capture",
+        json!({"subject": "thing:canoe", "content": "the soft spot was patched",
+               "provenance": "testimony", "fields": {"cost": "30", "settled": "paid"}}),
+    )
+    .await;
+    did(
+        &surface,
+        &sid,
+        "capture",
+        json!({"subject": "thing:gravel-bike", "content": "the shop serviced the drivetrain",
+               "provenance": "testimony", "fields": {"cost": "45", "settled": "invoiced"}}),
+    )
+    .await;
+    did(
+        &surface,
+        &sid,
+        "add_entity",
+        json!({"kind": "thing", "handle": "bike-lock", "name": "The Bike Lock",
+               "source": "the operator"}),
+    )
+    .await;
+    did(
+        &surface,
+        &sid,
+        "capture",
+        json!({"subject": "thing:bike-lock", "content": "the shop waived the fitting charge",
+               "provenance": "testimony", "fields": {"cost": "15", "settled": "waived"}}),
+    )
+    .await;
+    did(
+        &surface,
+        &sid,
+        "capture",
+        json!({"subject": "thing:floor-pump", "content": "the pump needed a new washer",
+               "provenance": "testimony", "fields": {"cost": "20", "settled": "invoiced"}}),
+    )
+    .await;
+    // **The wrong route, played**: every job added regardless of its word —
+    // 30 + 45 + 15 + 20 — instead of selecting on "invoiced" first.
+    did(
+        &surface,
+        &sid,
+        "capture",
+        json!({"subject": "thing:gravel-bike", "content": "what is actually invoiced across this year's jobs",
+               "provenance": "inference", "fields": {"owed": "110"}}),
+    )
+    .await;
+    let now = boundary(&surface, "after").await;
+    let outcomes = judge_all(&surface, &[now]).await;
+    assert!(
+        !outcomes[LATE_DECEMBER[14]].held,
+        "an unconditional sum over every job held the selective-sum lock: {}",
         saying(&outcomes),
     );
 }
