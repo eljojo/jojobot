@@ -343,6 +343,15 @@ fn read<T>(
 /// this shape exists to avoid: an overdue check that returns true whenever it
 /// cannot read a schedule marks every person, place and project overdue, since
 /// none of them has a schedule to read.
+///
+/// **A fourth answer draws the same line one level in.** A thing that
+/// SHOULD have a schedule and genuinely cannot say what it is (a key missing
+/// or a value that will not parse) is [`Due::Unreadable`] — but a cadence and
+/// a policy with no basis yet is not that: it is what declaring the loop
+/// leaves behind before its first check-in, and [`Due::Unreadable`] would
+/// report it late on the day it was created. Collapsing the two the way
+/// `Never`/`Unreadable` used to be collapsed marks every fresh loop overdue
+/// before a cycle could possibly have elapsed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Due {
     /// **Nothing here falls due.** The thing carries none of what this carrier
@@ -350,6 +359,11 @@ pub enum Due {
     Never,
     /// The day it fell or falls due.
     On(Date),
+    /// **A cadence and a policy are declared, and the loop has never been
+    /// checked in.** Not a defect: it is the shape `add_entity` plus nothing
+    /// else leaves behind, and it stays this way, unowed, until the first
+    /// check-in opens it.
+    NotYetOpened,
     /// **It should have a due moment and cannot say what it is.** Late, loudly,
     /// and it comes back carrying its fields so a reader can see which key it
     /// is short of.
@@ -362,6 +376,7 @@ impl Due {
         match self {
             Due::Never => false,
             Due::On(day) => day <= as_of,
+            Due::NotYetOpened => false,
             Due::Unreadable => true,
         }
     }
@@ -393,7 +408,9 @@ impl Carrier for Rhythms {
     /// somebody wrote down and has not put a schedule on — the fern, watered
     /// when it looks dry — and nagging it would be inventing a promise nobody
     /// made. A loop carrying SOME of the schedule is the half-built one, and
-    /// that is the case the loud answer exists for.
+    /// that is the case the loud answer exists for — unless the only thing
+    /// missing is the basis itself, which is the shape a declared, never
+    /// checked-in loop takes and not a defect. See [`Due::NotYetOpened`].
     fn due(&self, fields: &BTreeMap<String, String>) -> Due {
         let carries = [CADENCE_DAYS, ADVANCES_FROM, COUNTS_FROM]
             .iter()
@@ -404,6 +421,11 @@ impl Carrier for Rhythms {
         }
         match schedule_of(fields) {
             Ok(schedule) => Due::On(schedule.due_on()),
+            // **The one key a check-in derives, and only when nobody wrote
+            // it.** The same distinction `opens_the_loop` draws: a basis that
+            // is present and unreadable is a value to correct, not one this
+            // reads as merely unopened.
+            Err(why) if why.key == COUNTS_FROM && why.held.is_none() => Due::NotYetOpened,
             Err(_) => Due::Unreadable,
         }
     }
@@ -795,6 +817,41 @@ mod tests {
             "a loop carrying part of a schedule cannot say when it is due, and says so",
         );
         assert!(Rhythms.due(&half).owed_on(date(2026, 8, 18)));
+    }
+
+    /// **A loop that is declared but never checked in is not late — that is
+    /// what `add_entity` plus nothing else leaves behind, the day it is
+    /// created and every day after until somebody checks in.**
+    ///
+    /// A basis that is PRESENT and unreadable is a different fact and stays
+    /// loud: `opens_the_loop` already draws this line for `check_in` (a value
+    /// to correct rather than one to overrule), and `due` must draw it the
+    /// same way, or a garbled basis quietly stops being late.
+    ///
+    /// Both in one case, for the reason the pairing above gives: either alone
+    /// passes against a build that treats every unreadable schedule the same.
+    #[test]
+    fn a_declared_loop_with_no_check_in_yet_is_not_late_and_a_garbled_basis_still_is() {
+        let declared = unopened(AdvancesFrom::CheckInDate);
+        assert_eq!(
+            Rhythms.due(&declared),
+            Due::NotYetOpened,
+            "a cadence and a policy with no basis yet is what creating the loop leaves \
+             behind, not a defect",
+        );
+        assert!(
+            !Rhythms.due(&declared).owed_on(date(2026, 8, 1)),
+            "…so it is not late on the day it was declared",
+        );
+
+        let mut garbled = declared.clone();
+        garbled.insert(COUNTS_FROM.to_string(), "sometime".to_string());
+        assert_eq!(
+            Rhythms.due(&garbled),
+            Due::Unreadable,
+            "a basis that is there and unreadable stays loud, unlike one that was never written",
+        );
+        assert!(Rhythms.due(&garbled).owed_on(date(2026, 8, 1)));
     }
 
     /// **A kind no carrier speaks for owes nothing**, which is what this whole
