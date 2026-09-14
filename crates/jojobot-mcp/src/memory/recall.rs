@@ -942,6 +942,25 @@ fn object_json(
                 .into(),
             );
         }
+        // **A `record`-scoped filter is a caller's own choice about which
+        // records answer, never a claim about how many exist.** `facts_held`
+        // is the true total; anything past what `facts` and `stood_for`
+        // already account for is a record this scope left out, and that is
+        // named here rather than read as "this thing only ever held the
+        // ones shown".
+        let scoped_out = object
+            .facts_held
+            .saturating_sub(object.facts.len() + object.facts_folded);
+        if scoped_out > 0 {
+            fields.insert(
+                "scoped_out".into(),
+                format!(
+                    "{scoped_out} more records exist on this thing and do not answer the \
+                     record filter — ask again with a broader one, or none, to read them"
+                )
+                .into(),
+            );
+        }
     } else if object.facts_held > 0 {
         fields.insert(
             "records".into(),
@@ -4320,6 +4339,81 @@ mod tests {
                 .iter()
                 .any(|f| f["content"] == "vegetarian"),
             "a reached object arrives carrying its own page: {walked}"
+        );
+    }
+
+    /// **A `record`-scoped filter narrows what comes back and says so.**
+    ///
+    /// The unscoped question is the positive half: everything on the page
+    /// comes back, so the paired negative — the scoped answer naming what it
+    /// left out — is not passing over an empty set. `facts_held` is fixed
+    /// against the unscoped read, so a build that let a `record` filter
+    /// shrink it back down would fail the second assertion even though the
+    /// first still passes.
+    #[tokio::test]
+    async fn a_record_scoped_filter_says_what_it_left_out() {
+        let jojobot = handler();
+        ensure(&jojobot, "patana").await;
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                fields: Some(
+                    [("answer".to_string(), "yes".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..capture_args("patana", "coming to the party")
+            },
+        )
+        .await;
+        capture_ok(&jojobot, capture_args("patana", "vegetarian")).await;
+
+        let unscoped = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    subject: Some("person:patana".into()),
+                    facts: Some(true),
+                    ..of_nothing()
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        assert_eq!(
+            unscoped["objects"][0]["facts"].as_array().map(Vec::len),
+            Some(2),
+            "the unscoped question returns the full page: {unscoped}"
+        );
+        assert!(
+            unscoped["objects"][0].get("scoped_out").is_none(),
+            "nothing was left out, so there is nothing to name: {unscoped}"
+        );
+
+        let scoped = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    subject: Some("person:patana".into()),
+                    fields: Some(vec![KeyFilterArgs {
+                        key: Some("answer".into()),
+                        value: Some("yes".into()),
+                        compare: None,
+                        scope: Some("record".into()),
+                    }]),
+                    facts: Some(true),
+                    ..of_nothing()
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        assert_eq!(
+            scoped["objects"][0]["facts"].as_array().map(Vec::len),
+            Some(1),
+            "the scoped question narrows what comes back: {scoped}"
+        );
+        assert_eq!(
+            scoped["objects"][0]["scoped_out"],
+            "1 more records exist on this thing and do not answer the record filter — ask \
+             again with a broader one, or none, to read them",
+            "the note names what the scope left out: {scoped}"
         );
     }
 

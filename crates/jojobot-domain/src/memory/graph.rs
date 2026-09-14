@@ -1644,7 +1644,13 @@ impl<'a> Ctx<'a> {
             entity,
             via,
             fields: self.folded(id),
-            facts_held: kept.len(),
+            // **The true total, never narrowed by a record filter.** `kept`
+            // already answers the record filters — a caller's own scope — so
+            // counting it here would report a scoped filter's narrowing as
+            // the whole of what the thing holds. `facts_held` promises the
+            // opposite: "unaffected by elision", the same claim it already
+            // makes for a shape folding its sources out of the listing.
+            facts_held: self.facts.get(id).map(Vec::len).unwrap_or(0),
             facts: if query.include.facts {
                 kept.iter()
                     .filter(|f| !folded.contains(&(&f.home, &f.id)))
@@ -2995,6 +3001,82 @@ mod tests {
         assert_eq!(
             found[0].facts_folded, 0,
             "nothing was left out when the sources were asked for: {:?}",
+            found[0],
+        );
+    }
+
+    /// **A record-scoped filter narrows which records come back — it must
+    /// not narrow how many the answer claims are behind them.**
+    ///
+    /// `facts_held` is documented and already tested as "the true total,
+    /// unaffected by elision" (see the shape-fold case above). A record
+    /// filter is exactly as much an elision as shape-folding is: it decides
+    /// which of the object's own records are served, never how many exist.
+    /// An answer that let `facts_held` shrink to match a record filter would
+    /// be a smaller number that reads as "this is everything", which is
+    /// indistinguishable from an object that only ever held the one record.
+    #[test]
+    fn a_record_scoped_filter_narrows_what_comes_back_and_not_the_held_count() {
+        let matching = Fact {
+            fields: BTreeMap::from([("rsvp".to_string(), "yes".to_string())]),
+            ..fact("person:milhouse", "f1", "said yes")
+        };
+        let other = Fact {
+            fields: BTreeMap::from([("rsvp".to_string(), "no".to_string())]),
+            ..fact("person:milhouse", "f2", "said no, a different sitting")
+        };
+        let scanned = vec![doc(
+            entity("person:milhouse", "Milhouse"),
+            "His page.",
+            vec![matching, other],
+        )];
+
+        // The unscoped question: every record on the thing.
+        let unscoped = GraphQuery {
+            select: Selection {
+                subject: Some(EntityId("person:milhouse".into())),
+                ..Selection::default()
+            },
+            include: Include {
+                facts: true,
+                prose: false,
+                stood_for: false,
+            },
+            follow: None,
+            history: None,
+        };
+        let found = resolved(&scanned, &[], &unscoped).expect("a named subject always comes back");
+        assert_eq!(
+            found[0].facts.len(),
+            2,
+            "the unscoped question returns the full set: {:?}",
+            found[0].facts,
+        );
+        assert_eq!(found[0].facts_held, 2);
+
+        // The scoped question: only the record that answers the filter.
+        let scoped = GraphQuery {
+            select: Selection {
+                fields: vec![FieldFilter::holding("rsvp", "yes").on_a_record()],
+                ..unscoped.select.clone()
+            },
+            ..unscoped.clone()
+        };
+        let found = resolved(&scanned, &[], &scoped).expect("a named subject always comes back");
+        assert_eq!(
+            found[0]
+                .facts
+                .iter()
+                .map(|f| f.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["f1"],
+            "the scoped question narrows what comes back: {:?}",
+            found[0].facts,
+        );
+        assert_eq!(
+            found[0].facts_held, 2,
+            "the held count must still say the true total — the caller's own filter is not the \
+             store's whole picture of the thing: {:?}",
             found[0],
         );
     }
