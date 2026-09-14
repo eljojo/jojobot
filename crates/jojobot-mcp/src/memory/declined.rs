@@ -465,6 +465,13 @@ pub(crate) fn memory_error(e: MemoryError) -> McpError {
         MemoryError::Store(msg) => {
             McpError::internal_error(crate::boundary::store_failed("this call", &msg), None)
         }
+        // **A build-time misconfiguration, not a caller mistake.** No verb
+        // produces this — it is caught at boot, before an instance ever
+        // serves — so there is no way forward to hand a caller and no
+        // `memory_declined` arm for it either.
+        MemoryError::SuppliedRecordCollidesWithStoredRow { .. } => {
+            McpError::internal_error(e.to_string(), None)
+        }
     }
 }
 

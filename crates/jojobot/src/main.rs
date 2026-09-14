@@ -227,12 +227,20 @@ async fn main() -> anyhow::Result<()> {
     // when its guard decides whether a handle names anything, or a claim
     // pointing at a supplied record is refused as naming nothing.
     let supplied = jojobot_mcp::provisions();
-    let resolved: Arc<dyn Memory> = Arc::new(Provisioned::new(
-        DoltMemory::open(store.pool().clone())
-            .knowing(supplied.clone())
-            .on_clock(config.clock),
-        supplied,
-    ));
+    let bare_memory = DoltMemory::open(store.pool().clone())
+        .knowing(supplied.clone())
+        .on_clock(config.clock);
+    // **Read against the bare store, before it is wrapped in `Provisioned`.**
+    // A whole-record provision at an address a real row already occupies
+    // breaks `Supplies::Record`'s own contract — a record the store holds
+    // NOTHING of — and every existence check that reads what the build
+    // supplies would see the address as already provisioned, never learning
+    // the real row needs creating or re-creating. Refuse to start rather
+    // than serve on a misconfiguration that silent.
+    jojobot_domain::memory::owned::guard_supplied_records(&bare_memory, &supplied)
+        .await
+        .context("a shipped provision collides with a stored row")?;
+    let resolved: Arc<dyn Memory> = Arc::new(Provisioned::new(bare_memory, supplied));
     // **The kinds, before anything reads a handle.** Every kind this instance
     // holds is written and then read back, and what comes back is the set this
     // process parses handles against. A store that cannot be reached leaves

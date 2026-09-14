@@ -190,6 +190,39 @@ impl Provisions {
     }
 }
 
+/// **Refuse a whole-record provision at an address the store already holds a
+/// row at.**
+///
+/// [`Supplies::Record`]'s own contract is a record the store holds NOTHING
+/// of. An address the store already has a row at breaks that contract before
+/// a caller ever asks anything: every existence check that reads what the
+/// build supplies (rule 234) — `list_entities` among them — sees the address
+/// as already provisioned and never learns the real row is missing, which is
+/// silent and, for a kind whose row is also its mailbox, unrecoverable from
+/// inside the running instance.
+///
+/// **Read against the BARE store**, before it is wrapped in `Provisioned`: a
+/// store already carrying the decorator would resolve the very collision this
+/// checks for, and never report one.
+///
+/// Called once, at boot, before an instance starts serving — never on a
+/// caller's path, so there is nothing here for a verb to catch.
+pub async fn guard_supplied_records<M: super::Memory + ?Sized>(
+    store: &M,
+    provisions: &Provisions,
+) -> Result<(), MemoryError> {
+    let held = store.list_entities(None).await?;
+    if let Some((collided, _)) = provisions
+        .records()
+        .find(|(entity, _)| held.iter().any(|row| row.id == entity.id))
+    {
+        return Err(MemoryError::SuppliedRecordCollidesWithStoredRow {
+            attempted: collided.id.to_string(),
+        });
+    }
+    Ok(())
+}
+
 /// **What the build supplies, then what the operator wrote.**
 ///
 /// The build's half comes first because the second narrows the first: a reader

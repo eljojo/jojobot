@@ -1641,6 +1641,32 @@ async fn dolt_satisfies_the_supplied_record_guard_contract() {
     store.stop().await;
 }
 
+/// **A whole-record provision colliding with a real stored row is refused,
+/// over the real store** — the class the original defect actually shipped
+/// as: a crate-narrow suite runs only the fake, and this is the case the
+/// fake alone could not have proven wrong about the real thing.
+///
+/// On its own database: the collision is checked against `list_entities`
+/// directly, and a row left behind by another case would be a row this case
+/// did not create the collision against.
+#[tokio::test]
+async fn dolt_refuses_a_supplied_record_colliding_with_a_stored_row() {
+    let scratch = Scratch::new("provision-collision");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("provision-collision")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+
+    memory::a_supplied_record_colliding_with_a_stored_row_is_refused(&DoltMemory::open(pool)).await;
+
+    store.stop().await;
+}
+
 /// **…and every entity read counted in one place, over the real store.**
 ///
 /// A database of its own, because the case is the one a sabotage is aimed at:

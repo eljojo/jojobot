@@ -4882,6 +4882,71 @@ pub async fn add_entity_screens_every_name_an_entity_answers_to<M: Memory>(store
 /// own example named.
 pub const SUPPLIED_VIEW_FOR_THE_GUARD_SPECS: &str = "view:loops";
 
+/// 🚨 **A whole-record provision at an address the store already holds is
+/// refused, not silently honoured.**
+///
+/// `Supplies::Record`'s own contract is a record the store holds NOTHING of.
+/// An address a real row already occupies breaks that contract before a
+/// caller ever asks anything: every existence check that reads what the
+/// build supplies (`list_entities` among them, rule 234) would see the
+/// address as already provisioned and never learn the real row needs
+/// creating or re-creating — silent, and for a kind whose row is also its
+/// mailbox, unrecoverable from inside the running instance.
+///
+/// **Paired in the same read**: the refusal alone proves nothing if it also
+/// destroys the very row it is protecting — so after the refusal, the real
+/// entity must still be exactly what `add` wrote, untouched by the check
+/// that caught the collision.
+pub async fn a_supplied_record_colliding_with_a_stored_row_is_refused<M: Memory>(store: &M) {
+    let real = EntityId("thing:contract-provision-collision".into());
+    add(
+        store,
+        NewEntity::new(real.clone(), "Really Stored", "contract-fixture"),
+    )
+    .await;
+
+    let colliding =
+        crate::memory::owned::Provisions::new(vec![crate::memory::owned::Provision::record(
+            Entity {
+                id: real.clone(),
+                kind: EntityKind::THING,
+                name: "Shipped By Mistake".into(),
+                aliases: Vec::new(),
+                source: "jojobot".into(),
+                crm: None,
+                parent: None,
+                boot: Boot::default(),
+                merged_into: None,
+                badge: None,
+            },
+            std::collections::BTreeMap::new(),
+        )]);
+
+    let refused = crate::memory::owned::guard_supplied_records(store, &colliding)
+        .await
+        .expect_err("a whole record at an address the store already holds must be refused");
+    assert!(
+        matches!(
+            &refused,
+            MemoryError::SuppliedRecordCollidesWithStoredRow { attempted }
+                if attempted == &real.to_string()
+        ),
+        "the refusal must name the colliding address: {refused:?}",
+    );
+
+    let still_there = store
+        .list_entities(None)
+        .await
+        .expect("list_entities should succeed")
+        .into_iter()
+        .find(|e| e.id == real)
+        .expect("the real row must survive the check that caught the collision");
+    assert_eq!(
+        still_there.name, "Really Stored",
+        "the refusal must not have touched the real row: {still_there:?}",
+    );
+}
+
 /// 🚨 **A claim written on a record the build supplies reads back.**
 ///
 /// The write path already lets one land: the existence gate reads what the

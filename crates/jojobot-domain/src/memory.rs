@@ -3188,6 +3188,30 @@ pub enum MemoryError {
     /// so the record is as it was and retrying is a reasonable next move.
     #[error("store error: {0}")]
     Store(String),
+    /// **A whole-record provision names an address the store already holds a
+    /// row at.**
+    ///
+    /// [`owned::Supplies::Record`](crate::memory::owned::Supplies::Record)'s
+    /// own contract is a record the store holds NOTHING of — that is what
+    /// lets a reader be unable to tell which half answered. An address the
+    /// store already has a row at breaks that contract before a caller ever
+    /// asks anything: every existence check that reads what the build
+    /// supplies (rule 234) sees the address as already provisioned and skips
+    /// creating, or re-creating, the real row — silent, and for a kind whose
+    /// row is also its mailbox, unrecoverable from inside the running
+    /// instance.
+    ///
+    /// **Never reaches a caller.** This is a build-time misconfiguration
+    /// caught before the instance starts serving, not a write any verb can
+    /// provoke — there is no `memory_declined` arm for it.
+    #[error(
+        "'{attempted}' is supplied as a whole record, and the store already holds a row there — \
+         the record supply shape is only for an address the store holds nothing of"
+    )]
+    SuppliedRecordCollidesWithStoredRow {
+        /// The address both the provision and a stored row name.
+        attempted: String,
+    },
 }
 
 /// Render the addresses that do exist. An entity that simply holds nothing says
@@ -4098,6 +4122,14 @@ mod tests {
     async fn a_merge_naming_a_supplied_handle_is_refused_against_the_fake() {
         contract::a_merge_naming_a_supplied_handle_is_refused_not_a_silent_no_op(
             &fake_knowing_a_supplied_view(),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn a_supplied_record_colliding_with_a_stored_row_is_refused_against_the_fake() {
+        contract::a_supplied_record_colliding_with_a_stored_row_is_refused(
+            &InMemoryMemory::booted(),
         )
         .await;
     }

@@ -554,6 +554,7 @@ const ROSTER: &[&str] = &[
     "thing:contract-supplied-merge-nobody",
     "thing:merge-spare",
     "thing:merge-kept",
+    "thing:contract-provision-collision",
     "thing:contract-double-rename-was",
     "thing:contract-mention-cart",
     "thing:contract-mention-was",
