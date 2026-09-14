@@ -282,8 +282,9 @@ impl Story {
     }
 
     /// The store, plus what this build supplies over it — everything short of
-    /// `jojobot::wiring::assemble_memory`'s own `Mentioning` wrap, which
-    /// `spawn` calls, exactly as `main.rs` does, so the two cannot drift.
+    /// `jojobot::wiring::assemble_memory`'s own `Folded` and `Mentioning`
+    /// wraps, which `spawn` calls, exactly as `main.rs` does, so the two
+    /// cannot drift.
     fn wired(store: InMemoryMemory) -> Arc<dyn jojobot_domain::memory::Memory> {
         // **Both halves are told the same set**, exactly as the binary wires
         // it: the layer above resolves supplied records into answers and the
@@ -398,8 +399,9 @@ impl Story {
         // the deployment this stands for and silently so; calling the same
         // functions the binary calls is what stops that from being possible
         // to write by accident.
-        let indexed = jojobot::wiring::assemble_memory(store).expect("index opens");
+        let (folded, indexed) = jojobot::wiring::assemble_memory(store).expect("index opens");
         if inherited {
+            let _ = folded.rebuild().await;
             let _ = indexed.rebuild().await;
         }
         let indexed_for_seed = indexed.clone();

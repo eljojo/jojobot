@@ -285,7 +285,16 @@ async fn main() -> anyhow::Result<()> {
     // re-scan — and a failed scan is not fatal: the store is the truth, and
     // refusing to start because a projection couldn't be built is worse
     // than a thin `search`. It says so loudly instead.
-    let indexed = jojobot::wiring::assemble_memory(resolved)?;
+    let (folded, indexed) = jojobot::wiring::assemble_memory(resolved)?;
+    match folded.rebuild().await {
+        Ok(things) => tracing::info!(things, "fold: candidate fields built from a full read"),
+        Err(e) => tracing::warn!(
+            error = %e,
+            "FOLD EMPTY — the boot read failed, so a fields read falls through to the store \
+             until a write through this process fills the cache entry it touches. Nothing is \
+             wrong; every read stays correct and only slower until then."
+        ),
+    }
     match indexed.rebuild().await {
         Ok(docs) => tracing::info!(docs, "search: index built from a full scan"),
         Err(e) => tracing::warn!(

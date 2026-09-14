@@ -35,6 +35,7 @@
 use std::sync::Arc;
 
 use anyhow::Context;
+use jojobot_adapters::fold::Folded;
 use jojobot_adapters::search::{IndexedMailboxes, IndexedMemory, IndexedSessions, Retrieval};
 use jojobot_domain::mailbox::Mailboxes;
 use jojobot_domain::mailbox::mention as mailbox_mention;
@@ -44,20 +45,31 @@ use jojobot_domain::memory::search::Search;
 use jojobot_domain::session::Sessions;
 use jojobot_domain::session::mention as session_mention;
 
-/// **Stage one: wrap memory, and open the index over it.**
+/// **Stage one: wrap memory, and open the fold and the index over it.**
 ///
 /// `resolved` is memory already carrying `.knowing(supplied)` and
 /// `Provisioned::new` — see the module doc for why that step is not here
-/// too. The concrete `IndexedMemory` comes back, not a trait object, because
-/// a caller runs its own boot work against it (a full rebuild, or reading
-/// `list_entities` for the mention-text migration) before stage two.
-pub fn assemble_memory(resolved: Arc<dyn Memory>) -> anyhow::Result<Arc<IndexedMemory>> {
-    // **Mentions resolve above the raw store and below the index.** A
-    // mention in a claim has to see the full entity list, and what search
-    // holds must be what a reader sees.
-    let memory: Arc<dyn Memory> = Arc::new(mention::Mentioning::new(resolved));
-    Ok(Arc::new(
-        IndexedMemory::new(memory).context("opening the search index")?,
+/// too. Both concrete wrappers come back, not trait objects, because a
+/// caller runs its own boot work against each of them (the fold's own
+/// `rebuild`, the index's full rebuild, or reading `list_entities` for the
+/// mention-text migration) before stage two.
+///
+/// **The fold sits closest to the store, under `Mentioning` and the
+/// index.** Both of those forward `fields` straight through (decision log
+/// 292's mechanism is this one wrapper, not a copy in each), so wherever a
+/// caller holds the outermost `Memory` — the index — a `fields` read
+/// reaches the fold before it reaches the store.
+pub fn assemble_memory(
+    resolved: Arc<dyn Memory>,
+) -> anyhow::Result<(Arc<Folded>, Arc<IndexedMemory>)> {
+    let folded = Arc::new(Folded::new(resolved));
+    // **Mentions resolve above the fold and below the index.** A mention in
+    // a claim has to see the full entity list, and what search holds must
+    // be what a reader sees.
+    let memory: Arc<dyn Memory> = Arc::new(mention::Mentioning::new(folded.clone()));
+    Ok((
+        folded,
+        Arc::new(IndexedMemory::new(memory).context("opening the search index")?),
     ))
 }
 
@@ -126,5 +138,93 @@ pub fn assemble_ports(
         sessions: sessions_mentioned,
         sessions_indexed,
         search,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jiff::civil::date;
+    use jojobot_domain::memory::testing::InMemoryMemory;
+    use jojobot_domain::memory::{EntityId, NewEntity, NewFact};
+
+    /// **`Folded` genuinely sits inside the whole assembled stack — it is not
+    /// merely forwarding to a store that happens to hold the right answer
+    /// anyway.** `fields` falls through to the store on a cache miss (see
+    /// `Folded::fields`), so a value-only check here would pass even if
+    /// `assemble_memory` dropped `Folded` from the chain entirely: the store
+    /// underneath still has the right data either way. What actually proves
+    /// the fold is in the live write path is staleness — a write made AROUND
+    /// the whole assembled stack, straight to the bare store, must be
+    /// invisible to a `fields` read through `folded`, exactly as
+    /// `Folded`'s own single-writer doc warns.
+    #[tokio::test]
+    async fn a_write_through_the_assembled_stack_reaches_the_fold_underneath() {
+        let bare = Arc::new(InMemoryMemory::booted());
+        let resolved: Arc<dyn Memory> = bare.clone();
+        let (folded, indexed) = assemble_memory(resolved).expect("index opens");
+
+        let alpha = EntityId::person("person:alpha");
+        indexed
+            .add_entity(NewEntity::new(alpha.clone(), "Alpha", "user-named"))
+            .await
+            .expect("add ok")
+            .written()
+            .expect("not blocked");
+        indexed
+            .capture(NewFact {
+                fields: std::collections::BTreeMap::from([(
+                    "due_on".to_string(),
+                    "2026-09-14".to_string(),
+                )]),
+                ..NewFact::about(
+                    alpha.clone(),
+                    "wired through the whole stack",
+                    date(2026, 9, 1),
+                )
+            })
+            .await
+            .expect("capture ok")
+            .written()
+            .expect("not blocked");
+
+        assert_eq!(
+            folded
+                .fields(&alpha)
+                .await
+                .expect("fields ok")
+                .get("due_on"),
+            Some(&"2026-09-14".to_string()),
+            "a write through the outermost assembled port must reach the fold beneath it"
+        );
+
+        // Straight to the bare store, around `indexed`, `Mentioning` and
+        // `folded` alike — the shape a second writer would take.
+        bare.capture(NewFact {
+            fields: std::collections::BTreeMap::from([(
+                "due_on".to_string(),
+                "2026-09-21".to_string(),
+            )]),
+            ..NewFact::about(
+                alpha.clone(),
+                "written around the whole stack",
+                date(2026, 9, 8),
+            )
+        })
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("not blocked");
+
+        assert_eq!(
+            folded
+                .fields(&alpha)
+                .await
+                .expect("fields ok")
+                .get("due_on"),
+            Some(&"2026-09-14".to_string()),
+            "the fold must still answer with what it cached, proving it is genuinely wired into \
+             the write path rather than always falling through to the store"
+        );
     }
 }
