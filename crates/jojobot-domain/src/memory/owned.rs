@@ -97,6 +97,18 @@ pub enum Supplies {
         entity: Box<Entity>,
         fields: BTreeMap<String, String>,
     },
+    /// **A default for one key on a row the store already holds.** Sits
+    /// under what the operator wrote, exactly as [`Prose`](Self::Prose)
+    /// does — the operator's own write of the same key replaces it, never
+    /// beside it.
+    ///
+    /// This is the shape [`Record`](Self::Record) cannot be: that one is for
+    /// an address the store holds nothing of, and a key on a row that
+    /// already exists is not that. Shipping a default for a kind whose
+    /// address is always a real stored row — an identity, among others —
+    /// needs this rather than a whole record at its address (see
+    /// [`super::MemoryError::SuppliedRecordCollidesWithStoredRow`]).
+    Field { key: String, value: String },
 }
 
 /// **A value this build supplies at an address in the store.**
@@ -135,6 +147,18 @@ impl Provision {
             },
         }
     }
+
+    /// **A default for one key on an entity the store already holds a row
+    /// for.** The operator's own write of the same key replaces it.
+    pub fn field(at: EntityId, key: impl Into<String>, value: impl Into<String>) -> Self {
+        Provision {
+            at,
+            supplies: Supplies::Field {
+                key: key.into(),
+                value: value.into(),
+            },
+        }
+    }
 }
 
 /// **What this build supplies, and the two questions asked of it.**
@@ -161,8 +185,23 @@ impl Provisions {
     pub fn records(&self) -> impl Iterator<Item = (&Entity, &BTreeMap<String, String>)> {
         self.0.iter().filter_map(|p| match &p.supplies {
             Supplies::Record { entity, fields } => Some((entity.as_ref(), fields)),
-            Supplies::Prose(_) => None,
+            Supplies::Prose(_) | Supplies::Field { .. } => None,
         })
+    }
+
+    /// **The field defaults this build supplies for one entity** — a row the
+    /// store already holds, never a whole record: see
+    /// [`Supplies::Field`]. Empty for an entity nothing supplies a default
+    /// for, which is the ordinary case.
+    pub fn fields_for(&self, entity: &EntityId) -> BTreeMap<String, String> {
+        self.0
+            .iter()
+            .filter(|p| &p.at == entity)
+            .filter_map(|p| match &p.supplies {
+                Supplies::Field { key, value } => Some((key.clone(), value.clone())),
+                Supplies::Prose(_) | Supplies::Record { .. } => None,
+            })
+            .collect()
     }
 
     /// **Every address this build supplies at**, whatever it puts there.

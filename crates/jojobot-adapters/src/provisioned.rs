@@ -207,18 +207,23 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
     /// build supplies, so a supplied record is not a miss underneath and there
     /// is nothing to turn into an empty answer — and an arm that did would hide
     /// the keys a caller really wrote on that handle.
+    ///
+    /// **Two supplied halves fold in, both under what the store holds**: a
+    /// whole record's own fields (for an address the store holds nothing
+    /// of), and per-key defaults (for a row the store already holds — see
+    /// [`Supplies::Field`](jojobot_domain::memory::owned::Supplies::Field)).
+    /// Either way the store's own write of the same key is what a caller
+    /// reads; a supplied default only ever answers where the operator wrote
+    /// nothing.
     async fn fields(&self, entity: &EntityId) -> Result<BTreeMap<String, String>, MemoryError> {
         let held = self.inner.fields(entity).await?;
-        match self.provisions.record_for(entity) {
-            // Supplied keys sit UNDER what the store holds, for the reason
-            // prose does: the operator's write is the narrowing one.
-            Some((_, supplied)) => {
-                let mut folded = supplied.clone();
-                folded.extend(held);
-                Ok(folded)
-            }
-            None => Ok(held),
-        }
+        let mut folded = match self.provisions.record_for(entity) {
+            Some((_, supplied)) => supplied.clone(),
+            None => BTreeMap::new(),
+        };
+        folded.extend(self.provisions.fields_for(entity));
+        folded.extend(held);
+        Ok(folded)
     }
     async fn backing(
         &self,
@@ -695,6 +700,73 @@ mod tests {
         )
         .await
         .expect("a fold of two stored things is still the decorator's to pass through");
+    }
+
+    /// **A shipped default for one key on a row the store already holds**,
+    /// under what the operator wrote — same rule prose narrows by, on a
+    /// single field instead of a paragraph.
+    ///
+    /// The missing shape `Provision::record` cannot fill: that one is for an
+    /// address the store holds nothing of, and `bot:assistant` (and any
+    /// other real identity) always has a row. This is the mechanism
+    /// `orientation/charter.rs`'s comment says does not exist yet.
+    ///
+    /// **Both halves in one read**: the default sits where the operator
+    /// wrote nothing, and it stops sitting there — replaced, not
+    /// accumulated — the moment the operator writes their own value for the
+    /// same key. Without the second half, a decorator that just always
+    /// showed the default would pass the first half alone.
+    #[tokio::test]
+    async fn a_supplied_field_default_sits_under_what_the_operator_wrote() {
+        let store = InMemoryMemory::booted();
+        let bot = EntityId("bot:gamma".into());
+        store
+            .add_entity(NewEntity::new(bot.clone(), "Gamma", "jojobot"))
+            .await
+            .expect("the identity is created")
+            .written()
+            .expect("an empty board blocks nothing");
+        let over = Provisioned::new(
+            store,
+            Provisions::new(vec![Provision::field(
+                bot.clone(),
+                "one_liner",
+                "The disposable implementer.",
+            )]),
+        );
+
+        let before = over.fields(&bot).await.expect("fields read");
+        assert_eq!(
+            before.get("one_liner").map(String::as_str),
+            Some("The disposable implementer."),
+            "the shipped default answers when the operator wrote nothing: {before:?}",
+        );
+
+        over.inner
+            .capture(NewFact {
+                fields: [(
+                    "one_liner".to_string(),
+                    "Files the weekly note.".to_string(),
+                )]
+                .into_iter()
+                .collect(),
+                ..NewFact::about(
+                    bot.clone(),
+                    "gamma's own one-liner",
+                    Date::constant(2026, 4, 18),
+                )
+            })
+            .await
+            .expect("capture ok")
+            .written()
+            .expect("nothing collides");
+
+        let after = over.fields(&bot).await.expect("fields read");
+        assert_eq!(
+            after.get("one_liner").map(String::as_str),
+            Some("Files the weekly note."),
+            "the operator's own write replaces the default rather than sitting beside it: {after:?}",
+        );
     }
 
     /// A record the build ships: kind, handle, and the keys it carries.
