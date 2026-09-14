@@ -71,26 +71,31 @@ async fn existing_thing_is_found_by_its_own_word<S: Search>(
     );
 }
 
-/// The search case, asked of a stored row — see
-/// [`existing_thing_is_found_by_its_own_word`].
-pub async fn a_stored_things_own_word_is_found<M: Memory, S: Search>(store: &M, search: &S) {
+/// 🚨 **A word an existing thing carries finds it — a stored thing's own
+/// captured name, or a supplied thing's own shipped one, asked in one
+/// call** (rule 234).
+///
+/// **Both searches are arguments, not a choice of two functions** — see
+/// [`super::add_entity_guards_hold_for_stored_and_supplied`], the same
+/// shape for the same reason: the supplied half cannot be silently
+/// dropped from a suite that calls this one. No store for the supplied
+/// half: nothing is written, because there is nothing to write — the
+/// fixture wiring the supplied record is the caller's, so the word
+/// searched for on that side must match what that fixture names it.
+pub async fn a_things_own_word_is_found_stored_and_supplied<M: Memory, SM: Search, SS: Search>(
+    stored: &M,
+    stored_search: &SM,
+    supplied_search: &SS,
+) {
     let id = EntityId("thing:contract-searchable-stored".into());
     add(
-        store,
+        stored,
         NewEntity::new(id.clone(), "Zambonium Register", "user-named"),
     )
     .await;
-    existing_thing_is_found_by_its_own_word(search, "zambonium", &id).await;
-}
-
-/// The same case, asked of a record the build supplies rather than one a
-/// caller wrote. Takes no store: nothing is written, because there is
-/// nothing to write — the fixture wiring the supplied record is the
-/// caller's, so the word searched for here must match what that fixture
-/// names it.
-pub async fn a_supplied_things_own_word_is_found<S: Search>(search: &S) {
+    existing_thing_is_found_by_its_own_word(stored_search, "zambonium", &id).await;
     existing_thing_is_found_by_its_own_word(
-        search,
+        supplied_search,
         "shipped",
         &EntityId(SUPPLIED_VIEW_FOR_THE_GUARD_SPECS.into()),
     )
@@ -1033,7 +1038,6 @@ pub async fn run_all_searchable<M: Memory, S: Search>(store: &M, search: &S) {
     run_all(store).await;
 
     search_finds_a_fact_captured_moments_ago(store, search).await;
-    a_stored_things_own_word_is_found(store, search).await;
     search_fact_hits_carry_an_address_and_provenance(store, search).await;
     a_term_from_a_superseded_wording_is_found_only_when_asked_for(store, search).await;
     a_hit_carries_the_clocks_the_store_kept(store, search).await;

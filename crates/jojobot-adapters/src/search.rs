@@ -2618,16 +2618,17 @@ mod tests {
 
     use super::*;
 
-    /// The shared contract's search case (rule 234), asked of a record the
-    /// build supplies — the doubled half of
-    /// [`a_stored_things_own_word_is_found`](contract::a_stored_things_own_word_is_found),
-    /// which `the_contract_holds_over_the_fake` below already runs. A
-    /// supplied record is never captured, so nothing writes it into the
-    /// index incrementally the way every stored case here relies on —
-    /// `rebuild` is what a boot does, and it is the only path that reaches
-    /// a record the build supplies and a caller never touches.
+    /// The shared contract's search case (rule 234), asked of a stored row
+    /// and a record the build supplies, in one call. A supplied record is
+    /// never captured, so nothing writes it into the index incrementally
+    /// the way the stored half relies on — `rebuild` is what a boot does,
+    /// and it is the only path that reaches a record the build supplies
+    /// and a caller never touches.
     #[tokio::test]
-    async fn a_supplied_records_own_word_is_found() {
+    async fn a_things_own_word_is_found_stored_and_supplied() {
+        let stored =
+            Arc::new(IndexedMemory::new(Arc::new(InMemoryMemory::booted())).expect("index opens"));
+
         let id = EntityId(contract::SUPPLIED_VIEW_FOR_THE_GUARD_SPECS.into());
         let supplied = jojobot_domain::memory::owned::Provisions::new(vec![
             jojobot_domain::memory::owned::Provision::record(
@@ -2650,12 +2651,14 @@ mod tests {
             InMemoryMemory::booted().knowing(supplied.clone()),
             supplied,
         ));
-        let store = Arc::new(IndexedMemory::new(inner).expect("index opens"));
-        store.rebuild().await.expect("the boot scan reads");
-        contract::a_supplied_things_own_word_is_found(&Retrieval::new(
-            store.index(),
-            vec![store.clone()],
-        ))
+        let supplied_store = Arc::new(IndexedMemory::new(inner).expect("index opens"));
+        supplied_store.rebuild().await.expect("the boot scan reads");
+
+        contract::a_things_own_word_is_found_stored_and_supplied(
+            stored.as_ref(),
+            &Retrieval::new(stored.index(), vec![stored.clone()]),
+            &Retrieval::new(supplied_store.index(), vec![supplied_store.clone()]),
+        )
         .await;
     }
 

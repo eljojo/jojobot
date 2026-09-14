@@ -4118,9 +4118,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn add_entity_guards_hold_for_a_supplied_record_against_the_fake() {
-        contract::add_entity_guards_hold_for_a_supplied_record(&fake_knowing_a_supplied_view())
-            .await;
+    async fn add_entity_guards_hold_for_stored_and_supplied_against_the_fake() {
+        contract::add_entity_guards_hold_for_stored_and_supplied(
+            &InMemoryMemory::booted(),
+            &fake_knowing_a_supplied_view(),
+        )
+        .await;
     }
 
     #[tokio::test]

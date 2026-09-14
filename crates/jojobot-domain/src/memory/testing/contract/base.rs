@@ -4259,12 +4259,28 @@ pub async fn retracting_an_unknown_address_never_writes<M: Memory>(store: &M) {
 
 // --- the write guard, on the write path ----------------------------------
 
-/// The golden case: a second entity at an existing handle is blocked, and
-/// **no token forces it — not even the one this refusal itself mints.** Two
-/// same-named people can never merge into one portrait silently (rule 61).
-pub async fn add_entity_blocks_an_existing_handle<M: Memory>(store: &M) {
+/// 🚨 **An exact handle collision is refused and stays refused — no token
+/// clears it — and a near-miss is caught and its own override lifts it —
+/// asked of a stored row and a record the build supplies, in one call**
+/// (rule 234).
+///
+/// **Both stores are arguments, not a choice of two functions.** A caller
+/// cannot supply the stored half alone: the supplied half is not a second
+/// entry point somebody has to remember to also call, so it cannot be
+/// silently dropped from a suite that calls this one — a gap no assertion
+/// can catch on its own, because a call nobody made leaves nothing to
+/// fail. Two same-named people can never merge into one portrait silently
+/// (rule 61) is the stored answer; the collision refusing a shipped name
+/// even harder is the supplied one. Written once against a
+/// [`support::Backing`], never twice by hand — two hand-written copies of
+/// this already existed and had already drifted: the stored one checked a
+/// candidate's reason and its source, the supplied one checked neither.
+pub async fn add_entity_guards_hold_for_stored_and_supplied<M: Memory, S: Memory>(
+    stored: &M,
+    supplied: &S,
+) {
     add_entity_guards_hold_for(
-        store,
+        stored,
         &support::Stored {
             handle: EntityId::person("person:contract-alpha"),
             name: "Alpha",
@@ -4272,26 +4288,9 @@ pub async fn add_entity_blocks_an_existing_handle<M: Memory>(store: &M) {
         },
     )
     .await;
+    add_entity_guards_hold_for(supplied, &support::Supplied).await;
 }
 
-/// The same case, asked of a record the build supplies rather than one a
-/// caller wrote — see [`add_entity_guards_hold_for`].
-pub async fn add_entity_guards_hold_for_a_supplied_record<M: Memory>(store: &M) {
-    add_entity_guards_hold_for(store, &support::Supplied).await;
-}
-
-/// 🚨 **An exact handle collision is refused and stays refused — no token
-/// clears it — and a near-miss is caught and its own override lifts it,
-/// whether the existing thing is a stored row or one the build supplies.**
-///
-/// **One case, asked of two kinds of existing** (rule 234): the existence
-/// gate reads what the build supplies over the store, so a guard that only
-/// ever faced a stored row could collide with a shipped name and nobody
-/// would know until it happened live. Written once against a
-/// [`support::Backing`],
-/// never twice by hand — two hand-written copies of this already existed
-/// and had already drifted: the stored one checked a candidate's reason and
-/// its source, the supplied one checked neither.
 async fn add_entity_guards_hold_for<M: Memory, B: support::Backing<M>>(store: &M, backing: &B) {
     let (existing, source) = backing.existing(store).await;
     let kind = existing.kind().expect("an existing handle names a kind");
@@ -4398,11 +4397,30 @@ async fn add_entity_guards_hold_for<M: Memory, B: support::Backing<M>>(store: &M
     );
 }
 
-/// The listing case, asked of a stored row — see
-/// [`an_existing_thing_is_in_its_kinds_listing`].
-pub async fn add_entity_appears_in_its_kinds_listing<M: Memory>(store: &M) {
+/// 🚨 **A LISTING answers for a stored thing and a supplied one alike —
+/// asked of both in one call** (rule 234): naming a kind, or naming none,
+/// has to return everything the store holds of it AND everything the
+/// build supplies — a listing that answered only for rows would make a
+/// shipped view invisible to the one verb whose whole job is saying what
+/// is there.
+///
+/// **Both stores are arguments, not a choice of two functions** — see
+/// [`add_entity_guards_hold_for_stored_and_supplied`], the same shape for
+/// the same reason: the supplied half cannot be silently dropped from a
+/// suite that calls this one. `list_entities` resolving what the build
+/// supplies is a supplied-resolving decorator's job, not the bare store's,
+/// so the caller passes a bare store for the stored half and one that
+/// resolves supplied records for the other — each asked the question it
+/// can actually answer.
+pub async fn an_existing_thing_appears_in_its_kinds_listing_stored_and_supplied<
+    M: Memory,
+    S: Memory,
+>(
+    stored: &M,
+    supplied: &S,
+) {
     an_existing_thing_is_in_its_kinds_listing(
-        store,
+        stored,
         &support::Stored {
             handle: EntityId("thing:contract-listed-thing".into()),
             name: "Listed",
@@ -4410,24 +4428,8 @@ pub async fn add_entity_appears_in_its_kinds_listing<M: Memory>(store: &M) {
         },
     )
     .await;
+    an_existing_thing_is_in_its_kinds_listing(supplied, &support::Supplied).await;
 }
-
-/// The same case, asked of a record the build supplies, over a store that
-/// resolves one (a bare store's `list_entities` does not — see
-/// [`an_existing_thing_is_in_its_kinds_listing`]).
-pub async fn a_supplied_record_appears_in_its_kinds_listing<M: Memory>(store: &M) {
-    an_existing_thing_is_in_its_kinds_listing(store, &support::Supplied).await;
-}
-
-/// 🚨 **A LISTING answers for a stored thing and a supplied one alike**
-/// (rule 234): naming a kind, or naming none, has to return everything the
-/// store holds of it AND everything the build supplies — a listing that
-/// answered only for rows would make a shipped view invisible to the one
-/// verb whose whole job is saying what is there. Called against a bare
-/// store for the stored half and a supplied-resolving decorator for the
-/// supplied one — `list_entities` resolving what the build supplies is
-/// that layer's job, not the bare store's, so this asks each the question
-/// it can actually answer.
 async fn an_existing_thing_is_in_its_kinds_listing<M: Memory, B: support::Backing<M>>(
     store: &M,
     backing: &B,
@@ -9189,8 +9191,6 @@ pub async fn run_all<M: Memory>(store: &M) {
     update_fact_unknown_address_never_creates(store).await;
     update_fact_tells_an_unknown_handle_from_an_empty_entity(store).await;
 
-    add_entity_blocks_an_existing_handle(store).await;
-    add_entity_appears_in_its_kinds_listing(store).await;
     capture_requires_an_existing_subject(store).await;
     capture_requires_an_existing_edge_object(store).await;
     update_fact_requires_an_existing_edge_object(store).await;
