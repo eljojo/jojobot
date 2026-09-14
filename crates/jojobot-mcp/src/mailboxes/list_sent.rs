@@ -581,4 +581,41 @@ mod tests {
             "nothing was elided to announce"
         );
     }
+
+    /// **The same refusal `post_message` gives, because it is the same
+    /// resolver.** `to` naming a bot's alias here must read the same honest
+    /// way it does there — a shared fix behind a shared call, not two copies
+    /// to keep in step.
+    #[tokio::test]
+    async fn asking_after_mail_sent_to_a_bots_alias_names_the_bot_it_belongs_to() {
+        let jojobot = mailbox_handler();
+        jojobot
+            .add_entity(Parameters(AddEntityArgs {
+                aliases: Some(vec!["Dev Two".into()]),
+                ..crate::memory::testing::add_args("bot", "gamma", "gamma")
+            }))
+            .await
+            .expect("add ok");
+
+        let refused = json_of(
+            &jojobot
+                .list_sent(Parameters(ListSentArgs {
+                    limit: None,
+                    sender: Some("bot:otto".into()),
+                    to: Some("dev-two".into()),
+                    include_bodies: None,
+                    sid: None,
+                }))
+                .await
+                .expect("a bad address is an answer, not an error"),
+        );
+        assert_eq!(refused["status"], "blocked", "{refused}");
+        let advice = refused["how_to_proceed"]
+            .as_str()
+            .expect("advice is a string");
+        assert!(
+            advice.contains("alias") && advice.contains("bot:gamma"),
+            "the refusal has to say this is an alias and name the bot it belongs to: {advice}",
+        );
+    }
 }

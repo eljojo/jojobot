@@ -60,6 +60,29 @@ pub(crate) fn bot_handle(named: &str) -> EntityId {
     }
 }
 
+/// **If `addressee`'s own slug is how some bot is known** — its display name
+/// or one of its aliases — that bot's handle, and whether the match came
+/// through an alias specifically rather than the name itself.
+///
+/// The same comparison [`guard::screen`]'s own `SameName` channel makes
+/// (fold, then slugify, each label), asked here to tell an alias apart from
+/// a coincidental name: `screen` reports both the same way, because both are
+/// equally a reason to hold a WRITE for confirmation, but only this
+/// distinction tells a caller what to send to instead of what they typed.
+fn named_by(addressee: &EntityId, bots: &[Entity]) -> Option<(EntityId, bool)> {
+    let slug = addressee.slug();
+    let matches = |label: &str| guard::slugify(&guard::normalize_name(label)) == slug;
+    bots.iter().find_map(|bot| {
+        if matches(&bot.name) {
+            return Some((bot.id.clone(), false));
+        }
+        bot.aliases
+            .iter()
+            .any(|alias| matches(alias))
+            .then(|| (bot.id.clone(), true))
+    })
+}
+
 /// Leave a message in a box.
 impl Jojobot {
     /// **Nothing was written: that addressee has nowhere to receive.**
@@ -68,6 +91,13 @@ impl Jojobot {
     /// a name no bot answers to (the ordinary caller mistake, answered with the
     /// bots that do exist), a bot whose box is missing, and a bot holding more
     /// than one — the last two being damage rather than anything a caller did.
+    ///
+    /// **`OwnBox::None` is itself two conditions, told apart here.** A name
+    /// nobody answers to at all is the "creation that did not finish" case
+    /// below. A name that IS answered to — as another bot's own name or one
+    /// of its aliases — is not damage and start_here cannot repair it: the
+    /// box already exists, under the handle that name belongs to. Aliasing a
+    /// bot does not make the alias a second address; only the handle is one.
     pub(crate) async fn no_such_addressee(
         &self,
         addressee: &EntityId,
@@ -77,11 +107,15 @@ impl Jojobot {
         // **The near-miss screen, over the bot directory.** A typo must not
         // send a report somewhere nobody reads, and the candidates are names
         // the caller already knows: the same screen a creation is held to,
-        // asked the other way round.
-        let nearby = match self.memory.list_entities(Some(EntityKind::BOT)).await {
-            Ok(bots) => guard::screen(addressee, &[addressee.slug()], &bots),
-            Err(_) => Vec::new(),
-        };
+        // asked the other way round. Fetched once and reused below, so the
+        // "is this actually somebody's name or alias" question asks the same
+        // directory the screen just read rather than a second lookup.
+        let bots = self
+            .memory
+            .list_entities(Some(EntityKind::BOT))
+            .await
+            .unwrap_or_default();
+        let nearby = guard::screen(addressee, &[addressee.slug()], &bots);
         let how_to_proceed = match found {
             OwnBox::Several(boxes) => format!(
                 "Nothing was written. '{addressee}' owns more than one mailbox ({}), and one bot \
@@ -93,12 +127,20 @@ impl Jojobot {
                     .collect::<Vec<_>>()
                     .join(", "),
             ),
-            OwnBox::None => format!(
-                "Nothing was written. '{addressee}' has no mailbox. A box opens with the bot that \
-                 owns it, so this is a creation that did not finish rather than a step somebody \
-                 skipped — booting that bot with start_here opens it. If you meant somebody \
-                 else: {roster}.",
-            ),
+            OwnBox::None => match named_by(addressee, &bots) {
+                Some((owner, via_alias)) => format!(
+                    "Nothing was written. '{addressee}' is not a bot's own handle — it is {} of \
+                     {owner}. An alias is a second name, never a second address: send to \
+                     {owner} instead.",
+                    if via_alias { "an alias" } else { "the name" },
+                ),
+                None => format!(
+                    "Nothing was written. '{addressee}' has no mailbox. A box opens with the \
+                     bot that owns it, so this is a creation that did not finish rather than a \
+                     step somebody skipped — booting that bot with start_here opens it. If you \
+                     meant somebody else: {roster}.",
+                ),
+            },
             OwnBox::Unreadable => "Nothing was written. jojobot could not read the mail board, so \
                  it cannot say where this belongs. Nothing is wrong with your call — try it again."
                 .to_string(),
@@ -767,6 +809,78 @@ mod tests {
         assert!(
             unlinked["in_reply_to"].is_null(),
             "blank is absent, not empty: {unlinked}"
+        );
+    }
+
+    /// **A name that is a bot's alias is refused honestly** — named as an
+    /// alias, naming the bot it belongs to, and never advised to boot a bot
+    /// that cannot exist: the box is already open, under a different handle.
+    #[tokio::test]
+    async fn posting_to_a_bots_alias_names_the_bot_and_the_address_that_works() {
+        let jojobot = mailbox_handler();
+        jojobot
+            .add_entity(Parameters(AddEntityArgs {
+                aliases: Some(vec!["Dev Two".into()]),
+                ..crate::memory::testing::add_args("bot", "gamma", "gamma")
+            }))
+            .await
+            .expect("add ok");
+
+        let refused = json_of(
+            &jojobot
+                .post_message(Parameters(PostMessageArgs {
+                    to: "dev-two".into(),
+                    sid: as_bot(&jojobot, "otto"),
+                    body: "reporting in".into(),
+                    subject: None,
+                    in_reply_to: None,
+                }))
+                .await
+                .expect("a bad address is an answer, not an error"),
+        );
+        assert_eq!(refused["status"], "blocked", "{refused}");
+        assert_eq!(refused["wrote"], false);
+        let advice = refused["how_to_proceed"]
+            .as_str()
+            .expect("advice is a string");
+        assert!(
+            advice.contains("alias") && advice.contains("bot:gamma"),
+            "the refusal has to say this is an alias and name the bot it belongs to: {advice}",
+        );
+        assert!(
+            !advice.contains("start_here"),
+            "start_here cannot open a box for a name that was never a bot — the box it means \
+             already exists, under a different handle: {advice}",
+        );
+    }
+
+    /// **The genuinely-missing case reads exactly as it did before.** A name
+    /// nothing answers to — no bot, no alias — still gets the repair that
+    /// actually fits it.
+    #[tokio::test]
+    async fn posting_to_a_name_nothing_answers_to_still_gets_the_old_advice() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "otto").await;
+
+        let refused = json_of(
+            &jojobot
+                .post_message(Parameters(PostMessageArgs {
+                    to: "nobody-here".into(),
+                    sid: as_bot(&jojobot, "otto"),
+                    body: "reporting in".into(),
+                    subject: None,
+                    in_reply_to: None,
+                }))
+                .await
+                .expect("a bad address is an answer, not an error"),
+        );
+        assert_eq!(refused["status"], "blocked", "{refused}");
+        let advice = refused["how_to_proceed"]
+            .as_str()
+            .expect("advice is a string");
+        assert!(
+            advice.contains("start_here"),
+            "a name nothing answers to still points at the repair that fits it: {advice}",
         );
     }
 }
