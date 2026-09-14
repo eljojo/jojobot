@@ -19,7 +19,49 @@ pub(crate) fn display_line(prose: &str) -> String {
     text::FOCUS_LINE.render(prose)
 }
 
+/// **About four characters to a token** — the common rule of thumb, and the
+/// only honest unit here. jojobot cannot count tokens: tokenising belongs
+/// to whichever model is reading, and they differ, so borrowing one
+/// tokeniser (say, an embeddings model's) would look precise while being
+/// wrong for the reader actually holding this answer. An estimate that
+/// says so, and shows the arithmetic behind it, is the only figure that
+/// stays honest as models change.
+const CHARS_PER_TOKEN: f64 = 4.0;
+
+/// A magnitude rendered the way a reader skims it: bare under a thousand,
+/// `N.Nk` above it.
+fn magnitude(n: u64) -> String {
+    if n >= 1000 {
+        format!("{:.1}k", n as f64 / 1000.0)
+    } else {
+        n.to_string()
+    }
+}
+
+/// **What a session has been handed, with the estimate showing its own
+/// working** (rule 264) — never a bare number, because a figure nobody can
+/// re-derive is a figure nobody can recalibrate later without a caller
+/// having believed a lie in the meantime.
+pub(crate) fn served_json(served_chars: u64) -> serde_json::Value {
+    let tokens = (served_chars as f64 / CHARS_PER_TOKEN).round() as u64;
+    serde_json::json!({
+        "characters": served_chars,
+        "note": format!(
+            "≈{} tokens, from {} characters at about {CHARS_PER_TOKEN:.0} per token",
+            magnitude(tokens),
+            magnitude(served_chars),
+        ),
+    })
+}
+
 /// One session on the wire — the record, its chronology, and where it sits.
+///
+/// **Deliberately carries no `served` figure.** This renders `start_here`'s
+/// boot and `wrap_session`'s close, both already sized against a hard
+/// character budget the chronology tail is cut to fit (rule 264's own
+/// dispatch: "not a per-answer change"). `list_runs` is the read built to
+/// report about sessions and is where [`served_json`] rides instead —
+/// adding it here grew a boot past its own cap on the day it was tried.
 pub(crate) fn session_json(session: &Session) -> serde_json::Value {
     let mut body = serde_json::json!({
         "id": session.id.as_str(),
@@ -115,6 +157,42 @@ pub(crate) fn entry_receipt_json(entry: &JournalEntry) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **Never a bare number** (rule 264): the served figure shows the
+    /// arithmetic that produced it, so a reader can re-derive it and a later
+    /// recalibration of the divisor is one line with no lie standing in the
+    /// meantime.
+    #[test]
+    fn the_served_figure_shows_its_own_working() {
+        let body = served_json(49_623);
+        assert_eq!(body["characters"], 49_623, "{body}");
+        let note = body["note"].as_str().expect("a note string");
+        assert!(
+            note.contains("49.6k") && note.contains("characters"),
+            "the raw character count is named, not just the estimate: {note}"
+        );
+        assert!(
+            note.contains("≈") && note.contains("tokens"),
+            "the figure is marked as an estimate rather than read as exact: {note}"
+        );
+        assert!(
+            note.contains("per token"),
+            "the divisor itself is shown, so it can be recalibrated later: {note}"
+        );
+    }
+
+    /// **Zero is an ordinary answer and reads as one**, not as a missing
+    /// field — an untouched session's figure is still a real number with
+    /// its own working, never elided into absence.
+    #[test]
+    fn an_untouched_session_shows_a_real_zero() {
+        let body = served_json(0);
+        assert_eq!(body["characters"], 0, "{body}");
+        assert!(
+            body["note"].as_str().is_some_and(|n| n.contains('0')),
+            "{body}"
+        );
+    }
 
     /// **The golden: every byte the derived focus has ever been given.** A focus
     /// is stored in a session card's description on a live board, so this

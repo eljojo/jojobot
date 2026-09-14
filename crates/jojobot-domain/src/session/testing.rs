@@ -140,6 +140,7 @@ impl Sessions for InMemorySessions {
             entries: Vec::new(),
             timezone: new.timezone,
             started_on: new.started_on,
+            served_chars: 0,
         };
         self.sessions
             .lock()
@@ -240,6 +241,20 @@ impl Sessions for InMemorySessions {
         let at = Self::writable(&mut sessions, id)?;
         sessions[at].state = to;
         Ok(sessions[at].clone())
+    }
+
+    async fn add_served(&self, id: &SessionId, chars: u64) -> Result<(), SessionError> {
+        validate_session_id(id)?;
+        let mut sessions = self.sessions.lock().expect("session lock");
+        // **Existence only, deliberately not `writable`**: this never refuses
+        // on a closed session — see the trait's own doc.
+        let at = sessions.iter().position(|s| &s.id == id).ok_or_else(|| {
+            SessionError::UnknownSession {
+                attempted: id.to_string(),
+            }
+        })?;
+        sessions[at].served_chars += chars;
+        Ok(())
     }
 
     async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
@@ -609,6 +624,41 @@ pub mod contract {
     /// Three beats, and the third is the one the other two rest on: a run born
     /// with no zone carries none, so this cannot pass on a store that hands
     /// back a zone whatever it was given.
+    /// **A session handed several answers totals them, and an untouched
+    /// session reads zero — in the same read** (rule 264).
+    ///
+    /// Both halves matter and neither alone would catch a broken build:
+    /// a counter always reporting zero would still pass the untouched case,
+    /// and a counter that ignored `add_served` entirely would still pass a
+    /// case that never checked a positive total.
+    pub async fn served_characters_accrue_and_an_untouched_session_reads_zero(
+        store: &dyn Sessions,
+    ) {
+        let handed = begin(store, "milhouse", "answering things", 90).await;
+        let untouched = begin(store, "bart", "not yet asked anything", 91).await;
+
+        store
+            .add_served(&handed.id, 120)
+            .await
+            .expect("add_served ok");
+        store
+            .add_served(&handed.id, 340)
+            .await
+            .expect("add_served ok");
+
+        let read_handed = store.read_session(&handed.id).await.expect("read ok");
+        let read_untouched = store.read_session(&untouched.id).await.expect("read ok");
+
+        assert_eq!(
+            read_handed.served_chars, 460,
+            "several answers total: {read_handed:?}"
+        );
+        assert_eq!(
+            read_untouched.served_chars, 0,
+            "an untouched session reads zero: {read_untouched:?}"
+        );
+    }
+
     pub async fn a_runs_zone_is_stored_and_can_be_moved(store: &dyn Sessions) {
         let born = store
             .begin(NewSession {
@@ -1149,6 +1199,7 @@ pub mod contract {
         amending_with_no_entries_is_refused(&fresh()).await;
         focus_is_rewritten_in_place_and_leaves_the_chronology_alone(&fresh()).await;
         a_runs_zone_is_stored_and_can_be_moved(&fresh()).await;
+        served_characters_accrue_and_an_untouched_session_reads_zero(&fresh()).await;
         a_closed_session_is_terminal_both_ways(&fresh()).await;
         an_abandoned_session_reopens_and_a_wrapped_one_never_does(&fresh()).await;
         sessions_are_listed_per_bot_newest_first(&fresh()).await;

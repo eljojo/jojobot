@@ -93,6 +93,7 @@ impl Jojobot {
                     "started_at": session.started_at.to_string(),
                     "last_beat": session.last_beat().to_string(),
                     "entry_count": session.entries.len(),
+                    "served": served_json(session.served_chars),
                 })
             })
             .collect();

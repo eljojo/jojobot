@@ -241,6 +241,13 @@ impl Sessions for Mentioning {
         self.render(&mut session).await?;
         Ok(session)
     }
+
+    // **A plain forward, no rendering.** This carries no text and no `bot`
+    // handle — a bare count — so there is nothing here for a mention to
+    // resolve or render.
+    async fn add_served(&self, id: &SessionId, chars: u64) -> Result<(), SessionError> {
+        self.inner.add_served(id, chars).await
+    }
 }
 
 #[cfg(test)]

@@ -485,6 +485,13 @@ pub struct Session {
     /// same way `started_at` is on the clock.
     #[serde(default)]
     pub started_on: Option<Date>,
+    /// **A running total of characters this session has been handed** —
+    /// every answer's own body, added on the way out (rule 264). Zero for a
+    /// session nobody has answered yet, and absent on no card: a legacy row
+    /// reads zero rather than nothing, because it has been handed nothing
+    /// since this existed to count either way.
+    #[serde(default)]
+    pub served_chars: u64,
 }
 
 impl Session {
@@ -710,6 +717,19 @@ pub trait Sessions: Send + Sync {
     /// Move a session to a terminal state. Refused if it is already in one —
     /// terminal both ways.
     async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError>;
+
+    /// **Add to the running total of what this session has been handed**
+    /// (rule 264) — characters, on every answer this run receives.
+    ///
+    /// **Never refused on a closed session.** [`SessionError::Closed`] is
+    /// about writes that change what a session SAID — an entry, a focus, a
+    /// chronology — and this changes none of that: the answer that closes a
+    /// run is itself something the run was handed, so refusing here would
+    /// undercount by exactly the one answer that matters most.
+    ///
+    /// [`SessionError::UnknownSession`] on a card that does not exist,
+    /// exactly as every other addressed verb here.
+    async fn add_served(&self, id: &SessionId, chars: u64) -> Result<(), SessionError>;
 
     /// Take an `abandoned` session back to `active`, so the run continues where
     /// it stopped rather than starting again beside it.
@@ -1009,6 +1029,7 @@ mod projection_tests {
             state: SessionState::Active,
             timezone: None,
             started_on: None,
+            served_chars: 0,
             entries: vec![
                 JournalEntry {
                     id: EntryId("e1".into()),
@@ -1210,6 +1231,7 @@ mod tests {
         let session = Session {
             timezone: None,
             started_on: None,
+            served_chars: 0,
             id: SessionId("1".into()),
             sid: Some(Sid("s001".into())),
             bot: EntityId("bot:gamma".into()),
@@ -1371,6 +1393,9 @@ mod tests {
             async fn close(&self, _: &SessionId, _: SessionState) -> Result<Session, SessionError> {
                 Err(SessionError::Store("the board said no".into()))
             }
+            async fn add_served(&self, id: &SessionId, chars: u64) -> Result<(), SessionError> {
+                self.0.add_served(id, chars).await
+            }
             async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
                 self.0.reopen(id).await
             }
@@ -1487,6 +1512,7 @@ mod tests {
         let run = |on: Date| Session {
             timezone: None,
             started_on: Some(on),
+            served_chars: 0,
             id: SessionId("1".into()),
             sid: Some(Sid("s001".into())),
             bot: EntityId("bot:gamma".into()),
@@ -1541,6 +1567,7 @@ mod tests {
         let bare = Session {
             timezone: None,
             started_on: None,
+            served_chars: 0,
             id: SessionId("1".into()),
             sid: Some(Sid("s001".into())),
             bot: EntityId("bot:gamma".into()),
@@ -1635,6 +1662,7 @@ mod tests {
         let run = Session {
             timezone: None,
             started_on: None,
+            served_chars: 0,
             id: SessionId("1".into()),
             sid: Some(Sid("s001".into())),
             bot: EntityId("bot:gamma".into()),

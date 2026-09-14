@@ -420,6 +420,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
             "status IN ('superseded', 'retracted', 'negated')",
         ),
     },
+    Migration {
+        version: "0048_session_served_chars",
+        sql: include_str!("../../migrations/0048_session_served_chars.sql"),
+        leaves: Leaves::Column("session", "served_chars"),
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a
@@ -834,6 +839,7 @@ mod tests {
         "0045_entity_former_handle_ordinal",
         "0046_fact_status_archived",
         "0047_fact_write_status_archived",
+        "0048_session_served_chars",
     ];
 
     /// **A migration set of this test's own, carrying the shape no shipped

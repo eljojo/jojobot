@@ -149,9 +149,45 @@ impl Jojobot {
         structured: bool,
     ) {
         self.add_status_bar(answered, sid).await;
+        self.record_served(answered, sid).await;
         if structured {
             structure(answered);
         }
+    }
+
+    /// **Add this answer's own size to the running total of what this
+    /// session has been handed** (rule 264) — characters, counted from the
+    /// same text this call actually ships, after the status bar joins it and
+    /// before `structure` moves it anywhere else.
+    ///
+    /// **Silent when there is nothing to charge it to.** An anonymous
+    /// caller, or a caller whose first write has not landed yet, has no card
+    /// to hold a total on — accounting attaches to a session that already
+    /// exists, exactly as the status bar and every beat do, and a boot that
+    /// does nothing still leaves nothing behind. A store that could not take
+    /// the write is swallowed here for the same reason a mail count is: an
+    /// accounting side-channel must never be why an otherwise-good answer
+    /// fails to reach its caller.
+    async fn record_served(&self, answered: &CallToolResponse, sid: Option<&str>) {
+        let Ok(Some(caller)) = self.caller(sid) else {
+            return;
+        };
+        let Some(card) = caller.card else {
+            return;
+        };
+        let CallToolResponse::Complete(result) = answered else {
+            return;
+        };
+        let chars: u64 = result
+            .content
+            .iter()
+            .filter_map(|block| block.as_text())
+            .map(|text| text.text.chars().count() as u64)
+            .sum();
+        if chars == 0 {
+            return;
+        }
+        let _ = self.sessions.add_served(&card, chars).await;
     }
 }
 
@@ -351,6 +387,8 @@ pub(crate) fn note_teaching(body: &mut serde_json::Value, content: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::harness::*;
+    use rmcp::handler::server::wrapper::Parameters;
 
     /// 🚨 **An empty way forward cannot be built at all** (decision log 261,
     /// 262) — the constructor is the one door, and it panics rather than
@@ -377,6 +415,95 @@ mod tests {
     #[should_panic(expected = "way forward")]
     fn misused_cannot_be_built_with_an_empty_way_forward() {
         misused(String::new());
+    }
+
+    /// **A session handed several answers totals them, and an untouched
+    /// session reads zero — in the same read** (rule 264).
+    ///
+    /// Both cases matter together: a build that never called `add_served`
+    /// would still pass the untouched half, and a build that always
+    /// reported zero would still pass a case that never checked a positive
+    /// total. Driven through `record_served` itself — the one seat every
+    /// answer passes through via `finish` — rather than through `add_served`
+    /// directly, which the domain and adapter suites already cover on their
+    /// own layers.
+    ///
+    /// One real write materializes each session's card first — `finish` is
+    /// not on the path a test calls a verb through directly, so neither
+    /// materializing write is itself counted, exactly as production never
+    /// counts the write that opens a session before `finish` runs on its
+    /// own answer.
+    #[tokio::test]
+    async fn several_answers_total_and_an_untouched_session_reads_zero() {
+        let jojobot = handler();
+        let handed_sid = jojobot
+            .registry
+            .mint_with(&EntityId("bot:milhouse".into()), None, || {
+                "svmm".to_string()
+            })
+            .expect("a free handle")
+            .0;
+        let untouched_sid = jojobot
+            .registry
+            .mint_with(&EntityId("bot:gamma".into()), None, || "svbt".to_string())
+            .expect("a free handle")
+            .0;
+
+        jojobot
+            .journal(Parameters(JournalArgs {
+                entry: "first beat".into(),
+                focus: None,
+                sid: handed_sid.clone(),
+            }))
+            .await
+            .expect("journal ok");
+        jojobot
+            .journal(Parameters(JournalArgs {
+                entry: "first beat".into(),
+                focus: None,
+                sid: untouched_sid.clone(),
+            }))
+            .await
+            .expect("journal ok");
+
+        let first: CallToolResponse =
+            CallToolResult::success(vec![ContentBlock::text("a".repeat(120))]).into();
+        let second: CallToolResponse =
+            CallToolResult::success(vec![ContentBlock::text("b".repeat(340))]).into();
+        jojobot.record_served(&first, Some(&handed_sid)).await;
+        jojobot.record_served(&second, Some(&handed_sid)).await;
+
+        let handed_card = jojobot
+            .caller(Some(&handed_sid))
+            .expect("resolved")
+            .expect("bound")
+            .card
+            .expect("materialized by the journal write above");
+        let untouched_card = jojobot
+            .caller(Some(&untouched_sid))
+            .expect("resolved")
+            .expect("bound")
+            .card
+            .expect("materialized by the journal write above");
+
+        let handed = jojobot
+            .sessions
+            .read_session(&handed_card)
+            .await
+            .expect("read ok");
+        let untouched = jojobot
+            .sessions
+            .read_session(&untouched_card)
+            .await
+            .expect("read ok");
+        assert_eq!(
+            handed.served_chars, 460,
+            "the two recorded answers total: {handed:?}"
+        );
+        assert_eq!(
+            untouched.served_chars, 0,
+            "a session record_served was never called for reads zero: {untouched:?}"
+        );
     }
 
     /// 🚨 **Two teachings on one body must both survive.** A single `"teaching"`

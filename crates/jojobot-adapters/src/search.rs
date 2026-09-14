@@ -4431,6 +4431,7 @@ mod tests {
         Session {
             started_on: None,
             timezone: None,
+            served_chars: 0,
             id: SessionId(id.into()),
             sid: None,
             bot: EntityId(bot.into()),

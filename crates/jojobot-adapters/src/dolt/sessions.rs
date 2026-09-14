@@ -203,8 +203,8 @@ impl DoltSessions {
         id: &SessionId,
     ) -> Result<Session, SessionError> {
         let row = sqlx::query(
-            "SELECT id, sid, bot, focus, started_at, state, timezone, started_on FROM session
-             WHERE id = ?",
+            "SELECT id, sid, bot, focus, started_at, state, timezone, started_on, served_chars
+             FROM session WHERE id = ?",
         )
         .bind(id.as_str())
         .fetch_optional(&mut **tx)
@@ -290,6 +290,7 @@ fn session_from(
         started_on: day(row
             .try_get::<Option<String>, _>("started_on")
             .map_err(store)?)?,
+        served_chars: row.try_get::<i64, _>("served_chars").map_err(store)? as u64,
         // A state token the store does not recognize is a record jojobot
         // cannot read. It is not a session in an unknown column — there are no
         // columns here — so it is a store fault a person repairs.
@@ -608,6 +609,22 @@ impl Sessions for DoltSessions {
         )
         .await;
         Ok(session)
+    }
+
+    async fn add_served(&self, id: &SessionId, chars: u64) -> Result<(), SessionError> {
+        validate_session_id(id)?;
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        // Existence only, never refused on a closed session — see the
+        // trait's own doc.
+        Self::read_in(&mut tx, id).await?;
+        sqlx::query("UPDATE session SET served_chars = served_chars + ? WHERE id = ?")
+            .bind(chars as i64)
+            .bind(id.as_str())
+            .execute(&mut *tx)
+            .await
+            .map_err(store)?;
+        tx.commit().await.map_err(store)?;
+        Ok(())
     }
 
     async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
@@ -1287,6 +1304,86 @@ mod tests {
             .await
             .expect("a second run should succeed");
         assert_eq!(second_pass, 0, "nothing left to rewrite touches nothing");
+
+        store.stop().await;
+    }
+
+    /// **`add_served` against the real store — the migration's own column,
+    /// written and read back.** Two writes total, an untouched session in
+    /// the same database reads zero, and closing the first run does not
+    /// refuse a further add — the trait's own "never refused on a closed
+    /// session" contract, proven against the real column rather than only
+    /// the fake.
+    #[tokio::test]
+    async fn add_served_totals_across_writes_and_survives_a_close() {
+        let scratch = Scratch::new("session-served-chars");
+        let path = scratch.0.clone();
+        std::mem::forget(scratch);
+        let mut store = Dolt::start(&path, free_port())
+            .await
+            .expect("the store comes up");
+        migrate::run(store.pool()).await.expect("the schema");
+        migrate::seed_kinds(store.pool())
+            .await
+            .expect("the kinds are seeded");
+
+        let sessions = DoltSessions::open(store.pool().clone());
+        let handed = sessions
+            .begin(NewSession {
+                bot: EntityId("bot:milhouse".to_string()),
+                sid: Sid("served-sid-a".to_string()),
+                focus: "answering things".to_string(),
+                started_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
+                timezone: None,
+                started_on: None,
+            })
+            .await
+            .expect("begin should succeed");
+        let untouched = sessions
+            .begin(NewSession {
+                bot: EntityId("bot:gamma".to_string()),
+                sid: Sid("served-sid-b".to_string()),
+                focus: "not yet asked anything".to_string(),
+                started_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
+                timezone: None,
+                started_on: None,
+            })
+            .await
+            .expect("begin should succeed");
+
+        sessions
+            .add_served(&handed.id, 120)
+            .await
+            .expect("add_served ok");
+        sessions
+            .add_served(&handed.id, 340)
+            .await
+            .expect("add_served ok");
+
+        let read_handed = sessions.read_session(&handed.id).await.expect("read ok");
+        let read_untouched = sessions.read_session(&untouched.id).await.expect("read ok");
+        assert_eq!(
+            read_handed.served_chars, 460,
+            "the two writes total: {read_handed:?}"
+        );
+        assert_eq!(
+            read_untouched.served_chars, 0,
+            "an untouched session reads zero: {read_untouched:?}"
+        );
+
+        sessions
+            .close(&handed.id, SessionState::Wrapped)
+            .await
+            .expect("close should succeed");
+        sessions
+            .add_served(&handed.id, 50)
+            .await
+            .expect("add_served must not be refused on a closed session");
+        let after_close = sessions.read_session(&handed.id).await.expect("read ok");
+        assert_eq!(
+            after_close.served_chars, 510,
+            "accounting keeps running after the session closes: {after_close:?}"
+        );
 
         store.stop().await;
     }
