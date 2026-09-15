@@ -101,6 +101,32 @@ fn lines_of(document: &str) -> Vec<(usize, String)> {
     found
 }
 
+/// **An entity line's optional third field: `resembles: kind:slug`.**
+///
+/// Declares that this entity is meant to resemble another already in the
+/// world — the one thing [`Seed::furnish`] will retry a resemblance
+/// refusal past. Absent means undeclared, and the guard's refusal stands.
+/// A third field present but not in this shape is refused rather than
+/// silently dropped, because a note an author believes travelled with the
+/// entity and does not is a worse failure than one that never compiled.
+fn resemblance(fields: &[&str]) -> Result<Option<String>> {
+    let Some(third) = fields.get(2).copied().filter(|f| !f.is_empty()) else {
+        return Ok(None);
+    };
+    let other = third
+        .strip_prefix("resembles:")
+        .map(str::trim)
+        .filter(|h| !h.is_empty())
+        .with_context(|| {
+            format!("{third:?} does not declare a resemblance — write `resembles: kind:slug`")
+        })?;
+    anyhow::ensure!(
+        other.contains(':'),
+        "{other:?} is no handle — a handle carries its kind, as `thing:jukebox` does",
+    );
+    Ok(Some(other.to_string()))
+}
+
 /// One item of furniture.
 fn item(seed: Seed, line: &str) -> Result<Seed> {
     let (verb, rest) = line
@@ -129,7 +155,11 @@ fn item(seed: Seed, line: &str) -> Result<Seed> {
     match verb {
         "entity" => {
             let (kind, slug) = handle(0)?;
-            seed.entity(&kind, &slug, &text(1)?)
+            let seed = seed.entity(&kind, &slug, &text(1)?)?;
+            Ok(match resemblance(&fields)? {
+                Some(other) => seed.resembling(&other),
+                None => seed,
+            })
         }
         "child" => {
             let parent = text(0)?;
@@ -252,6 +282,44 @@ mod tests {
         assert!(
             format!("{refused:#}").contains("carries its kind"),
             "the refusal says what a handle is: {refused:#}",
+        );
+    }
+
+    /// **An entity line may declare a resemblance, and it rides on that
+    /// entity's own write.**
+    ///
+    /// `Seed` has no verb of its own to inspect this by, so the check reads
+    /// the seed's `Debug` output — the same thing every other case in this
+    /// file does to look inside what a line furnished.
+    #[test]
+    fn an_entity_line_may_declare_a_resemblance_the_furnish_can_retry_past() {
+        let read = read(
+            "```world\n\
+             entity thing:kettl | Kettl\n\
+             entity thing:kettle | Kettle | resembles: thing:kettl\n\
+             ```\n",
+        )
+        .expect("the world reads");
+        let debug = format!("{read:?}");
+        assert!(
+            debug.contains("declared_near") && debug.contains("thing:kettl"),
+            "the declaration rides on the entity's own write: {debug}",
+        );
+    }
+
+    /// **A third field that is not a resemblance is refused, naming the
+    /// shape it wanted.**
+    ///
+    /// Silently dropping it would leave an author believing a note they wrote
+    /// travelled with the entity, when nothing reads a third field except
+    /// this one shape.
+    #[test]
+    fn an_entity_lines_third_field_must_be_a_resemblance() {
+        let refused = read("```world\nentity thing:kettle | Kettle | some other note\n```\n")
+            .expect_err("a third field that is not a resemblance is refused");
+        assert!(
+            format!("{refused:#}").contains("resembles:"),
+            "the refusal says the shape it wanted: {refused:#}",
         );
     }
 }

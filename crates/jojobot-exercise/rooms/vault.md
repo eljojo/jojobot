@@ -79,9 +79,13 @@ a sitting.
 `event:wagstaff-fair`, `place:capital-city` and nothing else — and neither
 meets the near-miss guard: it is scoped to one kind, and these cross kinds by
 design, so both stand without incident. **The pair that does meet it is
-`person:linda` and `person:tina`, two edits apart and the same kind.**
-Furnishing meets that refusal the way a real caller does, retrying once with
-the override token it mints, rather than the room dodging it by construction.
+`person:linda` and `person:tina`, two edits apart and the same kind.** This
+document DECLARES the pair, below, so furnishing retries that one refusal
+with the override token it mints — the judgement a real caller would make by
+hand, made here because the document is what stands in for one. An
+undeclared collision still refuses; declaring is not a way to dodge the guard
+by construction, it is the one thing a room's own document can do that a
+caller sitting in front of the refusal could also do.
 
 ⚠️ **Furniture is stamped with real today.** Only the loops carry records, and
 their dates live in KEYS (`counts_from`, `last_check_in`), which the overdue
@@ -91,7 +95,7 @@ arithmetic reads; nothing in this room asks `near` around real today.
 entity  person:linda | Linda
 entity  person:teddy | Teddy
 entity  person:gayle | Gayle
-entity  person:tina | Tina
+entity  person:tina | Tina | resembles: person:linda
 entity  person:louise | Louise
 entity  person:gene | Gene
 

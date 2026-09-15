@@ -131,6 +131,9 @@ async fn every_shipped_rooms_seed_furnishes_a_real_room() {
 /// comparison against anything: furnishing against a real room is the one
 /// thing that does, which is the exact shape a room can ship unrunnable in
 /// and still read green.
+///
+/// **Paired with the case below**: an UNDECLARED near-identical pair, this
+/// one, is refused; a pair the room's own document DECLARES is not.
 #[tokio::test]
 async fn a_world_with_two_near_identical_things_cannot_furnish_a_room() {
     let seed = Seed::new()
@@ -146,6 +149,32 @@ async fn a_world_with_two_near_identical_things_cannot_furnish_a_room() {
         furnished.is_err(),
         "thing:kettl and thing:kettle are one edit apart, inside the resemblance guard's budget \
          of 2 — furnishing both must be refused, not silently accepted: {furnished:?}",
+    );
+}
+
+/// **The pair's other half: a DECLARED near-identical pair furnishes.**
+///
+/// Same fixture as the refusal above, except the second entity declares the
+/// first as its intentional resemblance — the judgement a real caller makes
+/// by hand when a resemblance refusal names two things that are genuinely
+/// different, made here by the seed instead because a room's world block is
+/// a document with nobody standing at furnish time to make it. Proves the
+/// override retry a furnish performs is conditional rather than gone:
+/// undeclared still refuses (the case above), declared still furnishes.
+#[tokio::test]
+async fn a_declared_near_identical_pair_furnishes_a_room() {
+    let seed = Seed::new()
+        .entity("thing", "kettl", "Kettl")
+        .expect("a plain entity builds")
+        .entity("thing", "kettle", "Kettle")
+        .expect("a plain entity builds")
+        .resembling("thing:kettl");
+    let (_room, surface) = Room::open_with_client(&server_binary().expect("a jojobot binary"))
+        .await
+        .expect("a room");
+    seed.furnish(&surface).await.expect(
+        "thing:kettl was declared as thing:kettle's resemblance, so the refusal must be \
+                 retried past rather than left standing",
     );
 }
 

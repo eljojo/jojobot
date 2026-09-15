@@ -177,6 +177,29 @@ impl Seed {
         Ok(self)
     }
 
+    /// **Declare that the entity or child just added is meant to resemble
+    /// another thing already in the room.**
+    ///
+    /// A resemblance refusal is the guard doing its job: two same-kind names
+    /// a couple of edits apart is exactly what it exists to catch, and
+    /// overriding it is a JUDGEMENT that the two are different things. A real
+    /// caller makes that judgement by hand; a room's world block is a
+    /// document, and nobody is standing there at furnish time to make it. So
+    /// [`Seed::furnish`] only retries a resemblance refusal past the guard
+    /// for a pair THIS DOCUMENT DECLARED — everything else it catches, a
+    /// typo included, still refuses.
+    ///
+    /// Chain it onto the entity or child it describes:
+    /// `.entity("thing", "kettle", "Kettle")?.resembling("thing:kettl")`.
+    /// Calling it with nothing added yet does nothing — there is no write to
+    /// attach the declaration to.
+    pub fn resembling(mut self, other: &str) -> Seed {
+        if let Some((_, arguments)) = self.writes.last_mut() {
+            arguments["declared_near"] = json!(other);
+        }
+        self
+    }
+
     /// Record something about a thing in the world. A claim about a bot is
     /// refused for the same reason: a rule on an identity is coaching.
     pub fn fact(mut self, subject: &str, content: &str, provenance: &str) -> Result<Seed> {
@@ -279,20 +302,23 @@ impl Seed {
     }
 
     /// **One seed write, done the way a real caller recovers from a
-    /// resemblance refusal.**
+    /// resemblance refusal — but only for a pair the room DECLARED.**
     ///
-    /// Furnishing is a privileged setup act, but the refusal it can meet on
+    /// Furnishing is a privileged setup act, and the refusal it can meet on
     /// `add_entity` is not a bug: two same-kind names two edits apart is
-    /// exactly the guard a real caller meets too, and the product's own
-    /// answer is the `override_token` the refusal already mints — "yes,
-    /// these are two different people". Doing what a real caller does here
-    /// keeps the harness honest and keeps a room's cast intact, rather than
-    /// asking a room's author to dodge the guard by construction.
-    ///
-    /// Every other refusal, and every other verb, still fails the room
-    /// loudly — this retries exactly once, and only when there is a token to
-    /// retry with.
-    async fn write_entity(room: &Surface, verb: &str, arguments: Value) -> Result<Value> {
+    /// exactly the guard a real caller meets too. But overriding it with the
+    /// `override_token` the refusal mints is a JUDGEMENT — "yes, these are
+    /// two different people" — and a real caller makes that judgement by
+    /// hand. A room's world block is a document; nobody is standing there at
+    /// furnish time to make it. So this retries a resemblance refusal only
+    /// when [`Seed::resembling`] declared the write's own pair, stripping
+    /// that declaration before either send since `add_entity` carries no
+    /// such argument; an undeclared collision — a typo included — still
+    /// fails the room loudly, exactly as every other refusal does.
+    async fn write_entity(room: &Surface, verb: &str, mut arguments: Value) -> Result<Value> {
+        let declared_near = arguments
+            .as_object_mut()
+            .and_then(|object| object.remove("declared_near"));
         let text = room.call(verb, arguments.clone()).await;
         let body: Value = serde_json::from_str(&text)
             .with_context(|| format!("{verb} answered something that is not JSON: {text}"))?;
@@ -303,6 +329,13 @@ impl Seed {
             );
             return Ok(body);
         }
+        let Some(resembles) = declared_near else {
+            anyhow::bail!(
+                "{verb} was refused as a resemblance to something already in the room, and \
+                 nothing declared this pair as intentional — the room did not reach its \
+                 starting state: {text}",
+            );
+        };
         let token = body["how_to_proceed"]
             .as_str()
             .unwrap_or_default()
@@ -311,8 +344,9 @@ impl Seed {
             .map(|(token, _)| token);
         let Some(token) = token else {
             anyhow::bail!(
-                "add_entity was refused with no override token to retry with, so the room did \
-                 not reach its starting state: {text}",
+                "add_entity was refused with no override token to retry with, even though \
+                 {resembles} was declared as its resemblance, so the room did not reach its \
+                 starting state: {text}",
             );
         };
         let mut retried = arguments;

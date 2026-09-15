@@ -164,6 +164,12 @@ async fn a_seed_furnishes_the_room_and_never_coaches_the_occupant() {
 /// mints. Furnishing is a privileged setup act; it still has to meet the
 /// guard the way an occupant would, or a cast this shape can never be built.
 ///
+/// **The override is retried only because this seed declares the pair.**
+/// `Seed::furnish` does not override a resemblance refusal on its own — an
+/// undeclared collision, a typo included, still fails the room loudly — so
+/// `tina` names `linda` as her intentional resemblance, the judgement a real
+/// caller would make by hand.
+///
 /// **Both survive, and in the order they were written** — the positive a
 /// harness that silently dropped the second write, or renamed it, would
 /// still pass a weaker check on.
@@ -179,6 +185,7 @@ async fn a_seed_furnishes_two_same_kind_people_two_edits_apart() {
         .expect("a person is furniture")
         .entity("person", "tina", "Tina")
         .expect("a person is furniture")
+        .resembling("person:linda")
         .furnish(&surface)
         .await
         .expect("the room is furnished, near-slug pair and all");
