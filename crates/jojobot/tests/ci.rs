@@ -117,3 +117,51 @@ fn the_bar_reports_every_target_and_not_only_the_ones_before_a_failure() {
          name: {step}",
     );
 }
+
+/// `make -n paid <vars>`, dry run: what the recipe would run, never run.
+///
+/// `-n` prints the commands a target would execute without executing them —
+/// including the guard line and the `cargo run` beneath it — so this asks the
+/// real thing the paid target does without ever spending the money it costs.
+fn paid_dry_run(playbook: Option<&str>) -> String {
+    let mut command = std::process::Command::new("make");
+    command
+        .current_dir(root())
+        .arg("-n")
+        .arg("paid")
+        .env_remove("PLAYBOOK");
+    if let Some(playbook) = playbook {
+        command.env("PLAYBOOK", playbook);
+    }
+    let done = command.output().expect("make runs");
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&done.stdout),
+        String::from_utf8_lossy(&done.stderr),
+    )
+}
+
+/// **An unset room must not reach the binary as an empty flag, and a named one
+/// must still reach it.**
+///
+/// Decision log 299 put the default room in the binary; the target wrapping it
+/// must let a caller reach that default rather than gating it behind a
+/// variable the binary no longer needs. The positive half is in the same
+/// case: a target that dropped `--playbook` unconditionally would pass the
+/// first half by never sending the flag at all.
+#[test]
+fn an_unset_playbook_reaches_the_binary_with_no_flag_and_a_set_one_still_passes_through() {
+    let bare = paid_dry_run(None);
+    assert!(
+        !bare.contains("--playbook"),
+        "an unset PLAYBOOK reached the binary as a flag with nothing after it, which the \
+         binary would refuse as a missing argument rather than resolve to its own default: \
+         {bare}",
+    );
+
+    let named = paid_dry_run(Some("rooms/loop.md"));
+    assert!(
+        named.contains("--playbook rooms/loop.md"),
+        "a named PLAYBOOK must still reach the binary: {named}",
+    );
+}

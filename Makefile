@@ -154,12 +154,11 @@ integration: ## Run the suites against the real store
 # `transcripts/`, and the run says where it went. TRANSCRIPT=<path> puts it
 # somewhere else.
 #
-#     make paid PLAYBOOK=<path> [MODEL=<name>] [TRANSCRIPT=<path>]
+#     make paid [PLAYBOOK=<path>] [MODEL=<name>] [TRANSCRIPT=<path>]
 PLAYBOOK ?=
 MODEL ?=
 TRANSCRIPT ?=
 paid: build ## Drive a REAL model through a playbook — reaches the network and COSTS MONEY
-	@test -n "$(PLAYBOOK)" || { echo "make paid needs a playbook: make paid PLAYBOOK=<path>"; exit 2; }
 	$(CARGO) run -q -p jojobot-exercise -- \
-		--playbook $(PLAYBOOK) $(if $(MODEL),--model $(MODEL),) \
+		$(if $(PLAYBOOK),--playbook $(PLAYBOOK),) $(if $(MODEL),--model $(MODEL),) \
 		$(if $(TRANSCRIPT),--transcript $(TRANSCRIPT),)
