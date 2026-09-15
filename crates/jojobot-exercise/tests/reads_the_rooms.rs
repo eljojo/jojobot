@@ -159,6 +159,13 @@ fn the_second_year_room_is_shipped() {
     );
 }
 
+/// **The table itself says which room a run gets when none is named** —
+/// decision log 299 — so nothing outside the table repeats the name.
+#[test]
+fn the_default_room_is_the_second_year_room() {
+    assert_eq!(expectations::default_room(), "rooms/vault.md");
+}
+
 /// **A room's occupant arrives cold, in every phase.**
 ///
 /// The shape the rooms are built on: inside one session a model answers from

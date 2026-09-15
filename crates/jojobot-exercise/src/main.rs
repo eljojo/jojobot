@@ -5,7 +5,10 @@
 //! does not run it: the machinery below it is a library with free tests, and
 //! this binary is what somebody invokes on purpose.
 //!
-//!     jojobot-exercise --playbook <path> [--model <name>]
+//!     jojobot-exercise [--playbook <path>] [--model <name>] [--transcript <path>]
+//!
+//! An omitted `--playbook` resolves to the rooms table's own default room —
+//! decision log 299 — never a name held anywhere in this crate.
 //!
 //! It exits non-zero when an expectation does not hold, because it is a test.
 //! **Auth is the agent CLI's own** — a person is already logged in to it, and
@@ -59,10 +62,15 @@ struct Asked {
 /// **The model is a parameter, never a constant** — it is the operator's call,
 /// for cost.
 fn arguments() -> Result<Asked> {
+    resolve_arguments(std::env::args().skip(1))
+}
+
+/// **The pure half of argument parsing** — no process state, so a case can
+/// hand it a list and read what it decided instead of standing up the binary.
+fn resolve_arguments(mut args: impl Iterator<Item = String>) -> Result<Asked> {
     let mut playbook = None;
     let mut model = DEFAULT_MODEL.to_string();
     let mut transcript = None;
-    let mut args = std::env::args().skip(1);
     while let Some(argument) = args.next() {
         match argument.as_str() {
             "--playbook" => playbook = args.next(),
@@ -77,7 +85,10 @@ fn arguments() -> Result<Asked> {
             ),
         }
     }
-    let playbook = playbook.context("--playbook is required: this crate authors none")?;
+    // **An omitted playbook is not an error — the rooms table names the one a
+    // run gets**, so this is the only place that falls back to it.
+    let playbook =
+        playbook.unwrap_or_else(|| jojobot_exercise::expectations::default_room().to_string());
     Ok(Asked {
         transcript: transcript.unwrap_or_else(|| run::kept_beside(&playbook)),
         playbook,
@@ -104,4 +115,35 @@ fn expectations_for(playbook: &Playbook) -> Result<Vec<Box<dyn run::Expectation>
             playbook.source,
         )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(strings: &[&str]) -> impl Iterator<Item = String> {
+        strings
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>()
+            .into_iter()
+    }
+
+    /// **An omitted `--playbook` resolves to the table's own default room**,
+    /// never a hardcoded name here — decision log 299.
+    #[test]
+    fn an_omitted_playbook_resolves_to_the_default_room() {
+        let asked = resolve_arguments(args(&[])).unwrap();
+        assert_eq!(
+            asked.playbook,
+            jojobot_exercise::expectations::default_room(),
+        );
+    }
+
+    /// **A named `--playbook` still wins over the default.**
+    #[test]
+    fn a_named_playbook_still_wins_over_the_default() {
+        let asked = resolve_arguments(args(&["--playbook", "rooms/loop.md"])).unwrap();
+        assert_eq!(asked.playbook, "rooms/loop.md");
+    }
 }

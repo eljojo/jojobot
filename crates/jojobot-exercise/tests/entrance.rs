@@ -53,17 +53,16 @@ fn a_playbook_with_no_expectations_refuses_before_anything_is_billed() {
     let _ = std::fs::remove_file(&playbook);
 }
 
-/// The two ways a caller gets the arguments wrong, both non-zero and both
-/// naming what to do — paired with the positive that the binary runs at all.
+/// An unknown argument is refused by name, before anything is billed.
+///
+/// **An omitted `--playbook` is not a case here.** It used to refuse the same
+/// way; now it resolves to the rooms table's default room — decision log
+/// 299 — and proving that would mean spawning this binary with no arguments
+/// at all, which would run that room for real. `main.rs`'s own unit tests
+/// prove the resolution without spawning anything, which is the only way to
+/// prove it and keep this suite free.
 #[test]
-fn the_arguments_are_refused_by_name() {
-    let (ok, missing) = run(&[]);
-    assert!(!ok, "a run with no playbook reported success: {missing}");
-    assert!(
-        missing.contains("--playbook"),
-        "the refusal names the argument it needs: {missing}",
-    );
-
+fn an_unknown_argument_is_refused_by_name() {
     let (ok, unknown) = run(&["--playbook", "/dev/null", "--nonsense", "x"]);
     assert!(!ok, "an unknown argument was accepted: {unknown}");
     assert!(

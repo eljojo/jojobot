@@ -44,8 +44,9 @@ type InRust = (
     fn() -> anyhow::Result<Seed>,
 );
 
-/// One room: the document it is driven by, and its Rust half when it has one.
-type Room = (&'static str, Option<InRust>);
+/// One room: the document it is driven by, its Rust half when it has one, and
+/// whether a run that names none gets this one.
+type Room = (&'static str, Option<InRust>, bool);
 
 /// **Every room this build ships.** A room is added here in one line, and a
 /// document that is not on this list is a document no run will drive.
@@ -53,13 +54,25 @@ type Room = (&'static str, Option<InRust>);
 /// **`None` is a converted room**: its world and its locks are in its own
 /// document, which is where both are read from for every room — the Rust below
 /// is only what a room that has not been converted still falls back to.
+///
+/// **Exactly one entry carries `true`** — decision log 299 — and this table is
+/// the only place that name lives; nothing outside it repeats it.
 const ROOMS: [Room; 5] = [
-    (BIKE_ROOM, None),
-    (LOOP_ROOM, None),
-    (YEAR_ROOM, None),
-    (HANDOVER_ROOM, None),
-    (VAULT_ROOM, None),
+    (BIKE_ROOM, None, false),
+    (LOOP_ROOM, None, false),
+    (YEAR_ROOM, None, false),
+    (HANDOVER_ROOM, None, false),
+    (VAULT_ROOM, None, true),
 ];
+
+/// **The room a run uses when none is named** — decision log 299.
+pub fn default_room() -> &'static str {
+    ROOMS
+        .iter()
+        .find(|(_, _, is_default)| *is_default)
+        .map(|(document, _, _)| *document)
+        .expect("exactly one room in ROOMS must be marked default")
+}
 
 /// **Where a shipped room's document is on disk.**
 ///
@@ -73,7 +86,7 @@ pub fn room_document(name: &str) -> std::path::PathBuf {
 
 /// The documents this build ships, by name — what a caller may point a run at.
 pub fn shipped_rooms() -> impl Iterator<Item = &'static str> {
-    ROOMS.iter().map(|(document, _)| *document)
+    ROOMS.iter().map(|(document, _, _)| *document)
 }
 
 /// The expectations for a playbook, or nothing when none are written.
@@ -87,8 +100,8 @@ pub fn for_playbook(source: &str) -> Option<Vec<Box<dyn Expectation>>> {
     }
     ROOMS
         .iter()
-        .find(|(document, _)| source.ends_with(document))
-        .and_then(|(_, rust)| rust.map(|(checks, _)| checks()))
+        .find(|(document, _, _)| source.ends_with(document))
+        .and_then(|(_, rust, _)| rust.map(|(checks, _)| checks()))
 }
 
 /// The locks a room's document carries, or nothing when it carries none.
@@ -154,9 +167,9 @@ pub fn seed_for(source: &str) -> anyhow::Result<Seed> {
     }
     match ROOMS
         .iter()
-        .find(|(document, _)| source.ends_with(document))
+        .find(|(document, _, _)| source.ends_with(document))
     {
-        Some((_, Some((_, furniture)))) => furniture(),
-        Some((_, None)) | None => Ok(Seed::new()),
+        Some((_, Some((_, furniture)), _)) => furniture(),
+        Some((_, None, _)) | None => Ok(Seed::new()),
     }
 }
