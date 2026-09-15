@@ -9,7 +9,6 @@
 //! Test-only, and declared by `lib.rs`.
 
 use super::*;
-use crate::orientation::essay::ORIENTATION;
 
 /// Every shipped `.rs` file in this crate, named, with its test half cut off.
 ///
@@ -337,7 +336,7 @@ fn the_mention_spelling_is_taught_on_every_argument_that_resolves_one() {
     }
 
     assert!(
-        ORIENTATION.contains("@person:milhouse and @person:nelson"),
+        crate::orientation::essay::orientation().contains("@person:milhouse and @person:nelson"),
         "the orientation essay's worked example for writing a mention is missing",
     );
 }
@@ -425,7 +424,10 @@ fn the_tool_surface_is_exactly_this_list() {
 #[test]
 fn every_served_place_that_teaches_provenance_names_all_three_values() {
     let tools = Jojobot::tool_router().list_all();
-    let mut corpus: Vec<(String, String)> = vec![("the orientation".into(), ORIENTATION.into())];
+    let mut corpus: Vec<(String, String)> = vec![(
+        "the orientation".into(),
+        crate::orientation::essay::orientation(),
+    )];
     for tool in &tools {
         if let Some(described) = tool.description.as_deref() {
             corpus.push((
@@ -493,10 +495,17 @@ fn there_is_exactly_one_orientation_verb() {
             "Parameters<OrientArgs>",
             1,
         ),
-        // Defined once, read once. A door that reimplemented the answer
-        // rather than calling `orient` would still have to reach for the
-        // essay, and this is where that shows.
-        ("readers of the orientation essay", "ORIENTATION", 2),
+        // Defined once, read once — one count per half, since the essay is
+        // now two blocks (`ORIENTATION_CORE`, always served; `ORIENTATION_REMAINDER`,
+        // ranked). A door that reimplemented the answer rather than calling
+        // `orient` would still have to reach for the essay, and this is
+        // where that shows.
+        ("readers of the essay's core", "ORIENTATION_CORE", 2),
+        (
+            "readers of the essay's remainder",
+            "ORIENTATION_REMAINDER",
+            2,
+        ),
     ] {
         let found = code.matches(marker).count();
         assert_eq!(
@@ -748,7 +757,7 @@ fn the_session_verbs_are_described_by_the_one_address_they_take() {
 #[test]
 fn no_agent_facing_text_asks_a_caller_to_declare_a_sender() {
     assert!(
-        !ORIENTATION.contains("`sender`"),
+        !crate::orientation::essay::orientation().contains("`sender`"),
         "the essay still asks a caller for a sender it does not supply"
     );
     let tools = Jojobot::tool_router().list_all();
@@ -799,20 +808,21 @@ fn the_boot_door_says_the_sid_rides_every_call_including_the_reads() {
 /// will never appear.
 #[test]
 fn the_orientation_teaches_the_sid_as_the_address_and_leaves_reads_untallied() {
+    let essay = crate::orientation::essay::orientation();
     assert!(
-        ORIENTATION.contains("`sid` you carry"),
+        essay.contains("`sid` you carry"),
         "the essay must name what makes two connections one session"
     );
     assert!(
-        !ORIENTATION.contains("the identity that booted them"),
+        !essay.contains("the identity that booted them"),
         "the essay still says a connection carries the identity, which nothing does"
     );
     assert!(
-        ORIENTATION.contains("Reads are not journalled"),
+        essay.contains("Reads are not journalled"),
         "the essay must say which calls jojobot beats about"
     );
     assert!(
-        !ORIENTATION.contains("one per verb class you use"),
+        !essay.contains("one per verb class you use"),
         "the essay still promises a beat per verb class, reads included"
     );
 }
@@ -828,21 +838,22 @@ fn the_orientation_teaches_the_sid_as_the_address_and_leaves_reads_untallied() {
 /// seeding — not prose compiled into a user-agnostic server.
 #[test]
 fn the_orientation_teaches_the_two_endings_and_the_own_box_norm() {
+    let essay = crate::orientation::essay::orientation();
     // The two endings, and that they are a choice about the WORK.
     assert!(
-        ORIENTATION.contains("CLEAR AND RESUME"),
+        essay.contains("CLEAR AND RESUME"),
         "the continuing case is named"
     );
     assert!(
-        ORIENTATION.contains("do NOT wrap"),
+        essay.contains("do NOT wrap"),
         "…and says which verb NOT to reach for, since wrapping is the tempting default"
     );
     assert!(
-        ORIENTATION.contains("resume note"),
+        essay.contains("resume note"),
         "…and names the thing you leave for whoever picks it up"
     );
     assert!(
-        ORIENTATION.contains("exception to journal leanness"),
+        essay.contains("exception to journal leanness"),
         "…and exempts it from the leanness rule, or the rule suppresses it"
     );
     // **`abandoned` is not a failure**, and the essay must not teach it as
@@ -851,32 +862,32 @@ fn the_orientation_teaches_the_two_endings_and_the_own_box_norm() {
     // the distinction that survives — a run that ENDED against one that
     // merely STOPPED.
     assert!(
-        ORIENTATION.contains("not a failure"),
+        essay.contains("not a failure"),
         "abandoned is a run nobody wrapped up, not a run that broke"
     );
     assert!(
-        !ORIENTATION.contains("failure path"),
+        !essay.contains("failure path"),
         "…so the old framing must be gone, not merely balanced by the new one"
     );
     assert!(
-        ORIENTATION.contains("merely stopped"),
+        essay.contains("merely stopped"),
         "…and the distinction that does survive is ended against stopped"
     );
 
     // The own-box norm, and the affordance that tempted otherwise. It is no
     // longer a norm a caller can decline — the read side takes no box name —
     // so what the essay owes is that the reader knows which box opens.
-    assert!(ORIENTATION.contains("read your OWN mailbox"));
+    assert!(essay.contains("read your OWN mailbox"));
     assert!(
-        ORIENTATION.contains("no name to pass"),
+        essay.contains("no name to pass"),
         "the essay has to say the choice is gone, not merely discouraged"
     );
     assert!(
-        ORIENTATION.contains("not an invitation"),
+        essay.contains("not an invitation"),
         "the flat listing is what posed the access question, so it is what gets answered"
     );
     assert!(
-        ORIENTATION.contains("post_message"),
+        essay.contains("post_message"),
         "…and there is a sanctioned way to reach another box: write to it"
     );
 }
@@ -933,7 +944,8 @@ fn the_orientation_says_a_kind_holds_a_thing_and_a_type_does_not() {
     // Scoped to the paragraph that teaches declaring: "refus" is a word the
     // essay spends elsewhere, on the gates, and a needle over the whole text
     // would find one of those and call it this rule.
-    let taught = ORIENTATION
+    let essay = crate::orientation::essay::orientation();
+    let taught = essay
         .lines()
         .find(|line| line.contains("Declare a type"))
         .expect("the essay teaches declaring a type");
@@ -1238,7 +1250,10 @@ fn no_shipped_file_has_its_sentences_missed() {
 /// [`everything_served`] is the pair, and it is what the sweeps read.
 fn agent_facing_text() -> Vec<(String, String)> {
     let mut found = vec![
-        ("the orientation essay".to_string(), ORIENTATION.to_string()),
+        (
+            "the orientation essay".to_string(),
+            crate::orientation::essay::orientation(),
+        ),
         (
             "the server instructions".to_string(),
             Jojobot::new(

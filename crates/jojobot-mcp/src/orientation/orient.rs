@@ -41,33 +41,37 @@ fn elide_rule_details(rule: &mut serde_json::Value) {
     );
 }
 
-/// **Rank the rules' `details`, newest first, then the essay last, against
-/// a budget already computed to be what is left of the ceiling** — see
-/// `orient` for where that number comes from. `content` and `charter` are
-/// never here: `content` is never cut at all, and `charter` is always
-/// served whole regardless of size (rule 138's own dispatch: "the interesting
-/// case... cutting it silently is worse than shipping it"), so it costs
-/// nothing to rank and is counted in the floor instead, once, rather than a
-/// second time here.
+/// **Rank the rules' `details`, newest first, then the essay's REMAINDER
+/// last, against a budget already computed to be what is left of the
+/// ceiling** — see `orient` for where that number comes from. `content` and
+/// `charter` are never here: `content` is never cut at all, and `charter` is
+/// always served whole regardless of size (rule 138's own dispatch: "the
+/// interesting case... cutting it silently is worse than shipping it"), so
+/// it costs nothing to rank and is counted in the floor instead, once,
+/// rather than a second time here. **The essay's own core joins it there
+/// too** — the same reasoning, on the same short, fixed block — which is
+/// what this function ranks the remainder against a smaller budget than the
+/// whole essay would have cost.
 ///
-/// **The essay ranks LAST, and that placement is load-bearing, not a
+/// **The remainder ranks LAST, and that placement is load-bearing, not a
 /// preference.** [`text::Capped::head`] keeps a contiguous PREFIX of a
 /// ranked list — it stops at the first candidate that does not fit and
-/// never looks past it. The essay is the one candidate here whose own size
-/// (over 24,000 characters) can exceed the whole remaining budget on its
-/// own; ranked anywhere but last, a boot with real rules content would have
-/// every one of them dropped behind an essay that itself did not fit, which
-/// would cut exactly the bot-specific content a caller named this bot to
-/// read. Last, the essay either fits in what the rules left over, or it
-/// alone is what the budget declines — the rest stands. It is also the one
+/// never looks past it. The remainder is the one candidate here whose own
+/// size (still tens of thousands of characters) can exceed the whole
+/// remaining budget on its own; ranked anywhere but last, a boot with real
+/// rules content would have every one of them dropped behind a remainder
+/// that itself did not fit, which would cut exactly the bot-specific content
+/// a caller named this bot to read. Last, the remainder either fits in what
+/// the rules left over, or it alone is what the budget declines — the rest
+/// stands, and the core already shipped regardless. It is also the one
 /// candidate that is not bot-specific: the same text on every boot of every
 /// identity, and reachable uncontested from a boot that names no bot or has
 /// nothing else competing for the room.
 ///
-/// Returns the essay to ship (`None` when `brief` already dropped it, or the
-/// budget did) and whether that omission is the budget's doing rather than
-/// `brief`'s — `identity`'s own `rules` are mutated in place for whichever
-/// `details` the budget reached.
+/// Returns the remainder to ship (`None` when `brief` already dropped it, or
+/// the budget did) and whether that omission is the budget's doing rather
+/// than `brief`'s — `identity`'s own `rules` are mutated in place for
+/// whichever `details` the budget reached.
 fn rank_remaining_prose(
     essay: Option<&'static str>,
     identity: &mut serde_json::Value,
@@ -388,11 +392,13 @@ impl Jojobot {
         // cannot read, not a field inside it). Measure the FLOOR first:
         // everything that ships whatever the ranking below decides — bot
         // metadata, charter whole (it is never cut, see
-        // `rank_remaining_prose`), every rule's own structural fields
+        // `rank_remaining_prose`), the essay's own core (also never cut, see
+        // below), every rule's own structural fields
         // (address, dates, provenance, standing, status, fields, refs),
         // session, snapshot, skills — with every rule's `details` already
-        // gone and the essay absent. What is LEFT of the ceiling after that
-        // floor is what the rules' `details` and the essay compete for.
+        // gone and the essay's remainder absent. What is LEFT of the ceiling
+        // after that floor is what the rules' `details` and the essay's
+        // remainder compete for.
         let mut floor_identity = identity.clone();
         if let Some(rules) = floor_identity
             .get_mut("rules")
@@ -402,8 +408,13 @@ impl Jojobot {
                 elide_rule_details(rule);
             }
         }
+        // **The essay's core rides in the floor, exactly like the charter.**
+        // It is short by design and never ranked, so its true cost is
+        // counted here, once, rather than competing with the rules'
+        // `details` for what the remainder ranks against below.
+        let core = (!brief).then_some(essay::ORIENTATION_CORE);
         let floor_len = serde_json::json!({
-            "orientation": serde_json::Value::Null,
+            "orientation": core,
             "orientation_elided": true,
             "skills": skills::index(),
             "snapshot": snapshot.clone(),
@@ -418,18 +429,25 @@ impl Jojobot {
         let remaining_for_prose = text::BOOT_ANSWER.budget.saturating_sub(floor_len);
 
         let mut identity = identity;
-        let candidate_essay = (!brief).then_some(essay::ORIENTATION);
-        let (essay, essay_elided_by_ceiling) =
-            rank_remaining_prose(candidate_essay, &mut identity, remaining_for_prose);
+        let candidate_remainder = (!brief).then_some(essay::ORIENTATION_REMAINDER);
+        let (remainder, remainder_elided_by_ceiling) =
+            rank_remaining_prose(candidate_remainder, &mut identity, remaining_for_prose);
+        // **The core never travels alone when it can help it.** Whole when the
+        // remainder fit, core-only when the ceiling declined it — either way
+        // this is the one string a caller reads, never two fields to stitch.
+        let orientation = core.map(|core| match remainder {
+            Some(remainder) => format!("{core}{remainder}"),
+            None => core.to_string(),
+        });
         let mut answer = serde_json::json!({
-            "orientation": essay,
+            "orientation": orientation,
             // **The elision is marked, and that is all it is.** The essay used
             // to arrive stamped with a version so a returning session could ask
             // whether the copy it held was current; the stamp is gone, and no
             // staleness check replaces it. What is left is the marker every
             // elision on this surface owes — less came back, and the caller is
             // told so rather than left to infer withheld from empty.
-            "orientation_elided": essay.is_none(),
+            "orientation_elided": remainder.is_none(),
             // **Names and when-to-use lines, never bodies.** A session that
             // needs a procedure fetches it by name; a boot that shipped every
             // one would spend a session's attention on the jobs it is not
@@ -452,16 +470,18 @@ impl Jojobot {
             "clock": self.stated_clock(),
         });
         // **The one case `orientation_elided` alone cannot explain**: the
-        // caller asked for the essay (`brief: false`) and it still is not
-        // here, because the boot's own charter and rules did not leave the
-        // declared ceiling room for it. `brief`'s own case adds no note —
-        // the caller set that flag and already knows why.
-        if essay_elided_by_ceiling && let Some(obj) = answer.as_object_mut() {
+        // caller asked for the essay (`brief: false`) and its remainder still
+        // is not here, because the boot's own charter and rules did not leave
+        // the declared ceiling room for it — the core still shipped. `brief`'s
+        // own case adds no note — the caller set that flag and already knows
+        // why.
+        if remainder_elided_by_ceiling && let Some(obj) = answer.as_object_mut() {
             obj.insert(
                 "orientation_note".into(),
-                "the essay did not fit this boot's declared prose ceiling alongside its charter \
-                 and rules — call start_here again naming no bot, or this one with nothing else \
-                 competing for the ceiling, to read it on its own"
+                "the essay's core shipped whole; the rest did not fit this boot's declared \
+                 prose ceiling alongside its charter and rules — call start_here again naming \
+                 no bot, or this one with nothing else competing for the ceiling, to read it \
+                 whole"
                     .into(),
             );
         }
@@ -568,12 +588,17 @@ mod tests {
     }
 
     /// 🚨 **The same bar, the opposite shape: a charter big enough to be the
-    /// dominant weight on its own**, with modest rules. The essay is the one
-    /// candidate ranked last — see [`rank_remaining_prose`] — so a charter
-    /// this size is what proves that placement rather than merely asserting it:
-    /// if the essay ranked anywhere else, it would take the charter down
-    /// with it the moment it did not fit, which is exactly the regression
-    /// this case exists to catch.
+    /// dominant weight on its own**, with modest rules. The essay's remainder
+    /// is the one candidate ranked last — see [`rank_remaining_prose`] — so a
+    /// charter this size is what proves that placement rather than merely
+    /// asserting it: if the remainder ranked anywhere else, it would take the
+    /// charter down with it the moment it did not fit, which is exactly the
+    /// regression this case exists to catch.
+    ///
+    /// **And this is the negative half of the core/remainder bar**: a boot
+    /// heavy enough to cut the essay still carries the core whole — never
+    /// null, never a mangled fragment of the remainder. `the_essay_ships_whole_when_there_is_room`
+    /// below is the positive it is paired with.
     #[tokio::test]
     async fn a_boot_ranked_heavy_in_charter_keeps_it_whole_and_elides_the_essay_with_a_reason() {
         let jojobot = handler();
@@ -626,10 +651,25 @@ mod tests {
             "{rules:?}"
         );
 
-        // **Explicitly asked for (`brief: false`) and still not here** —
-        // this is the one case `orientation_elided` alone cannot explain,
-        // so it is paired with a reason.
-        assert!(booted["orientation"].is_null(), "{booted}");
+        // **The core is never null — this is the bar itself.** A boot heavy
+        // enough to cut the essay's remainder still carries the short core
+        // whole: what the kinds are, what a claim carries, the structural
+        // type questions, and the call that reaches the rest.
+        let orientation = booted["orientation"]
+            .as_str()
+            .expect("the core always ships when brief is false: {booted}");
+        assert_eq!(
+            orientation,
+            crate::orientation::essay::ORIENTATION_CORE,
+            "a boot this heavy must still carry exactly the core and nothing of the \
+             remainder: {orientation:?}",
+        );
+        // **The remainder is genuinely gone, not merely truncated** — content
+        // that only the remainder carries must not appear.
+        assert!(
+            !orientation.contains("CLEAR AND RESUME"),
+            "the remainder leaked into what was supposed to be core-only: {orientation:?}",
+        );
         assert_eq!(booted["orientation_elided"], true, "{booted}");
         let note = booted["orientation_note"]
             .as_str()
@@ -645,6 +685,57 @@ mod tests {
         assert!(
             whole <= jojobot_domain::text::BOOT_ANSWER.budget,
             "the whole answer must fit the one declared ceiling: {whole} chars"
+        );
+    }
+
+    /// 🚨 **The positive half of the core/remainder bar**: a boot with room
+    /// to spare ships the essay whole — core and remainder joined, byte for
+    /// byte the same text a session would read from `essay::orientation()`.
+    /// Paired with `a_boot_ranked_heavy_in_charter_keeps_it_whole_and_elides_the_essay_with_a_reason`
+    /// above, which is the same code path under pressure: together they are
+    /// the case the split point could get wrong twice — shipping only the
+    /// core when there was room for everything, or silently dropping content
+    /// out of the middle of the essay rather than cleanly at the seam.
+    #[tokio::test]
+    async fn the_essay_ships_whole_when_there_is_room() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        jojobot
+            .set_charter(Parameters(SetCharterArgs {
+                bot: "gamma".into(),
+                prose: "Small charter.".into(),
+                sid: Some(crate::harness::TEST_SID.into()),
+            }))
+            .await
+            .expect("set_charter ok");
+
+        let booted = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    timezone: None,
+                    bot: Some("gamma".into()),
+                    brief: Some(false),
+                    skill: None,
+                    resume: None,
+                    sid: None,
+                    today: None,
+                }))
+                .await
+                .expect("start_here ok"),
+        );
+
+        let orientation = booted["orientation"]
+            .as_str()
+            .expect("a light boot ships the essay: {booted}");
+        assert_eq!(
+            orientation,
+            crate::orientation::essay::orientation(),
+            "a boot with room to spare must ship the essay whole, core and remainder joined",
+        );
+        assert_eq!(booted["orientation_elided"], false, "{booted}");
+        assert!(
+            booted["orientation_note"].is_null(),
+            "nothing was cut, so there is nothing to explain: {booted}"
         );
     }
 

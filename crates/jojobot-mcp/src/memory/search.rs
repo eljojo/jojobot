@@ -723,7 +723,6 @@ mod tests {
     use super::*;
     use crate::harness::*;
     use crate::memory::testing::*;
-    use crate::orientation::essay::ORIENTATION;
     use jojobot_domain::memory::{Boot, FactId};
 
     /// **Each query-driven exclusion is reachable, and by the query the note
@@ -1851,12 +1850,13 @@ mod tests {
         // client loads before it calls anything — and fixing one leaves a
         // session reading either of the others exactly as misinformed as before.
         let instructions = handler().get_info().instructions.unwrap_or_default();
+        let essay = crate::orientation::essay::orientation();
         for (surface, text) in [
             (
                 "the search description",
                 search.description.as_deref().unwrap_or_default(),
             ),
-            ("the orientation", ORIENTATION),
+            ("the orientation", essay.as_str()),
             ("the server instructions", instructions.as_str()),
         ] {
             for stale in [

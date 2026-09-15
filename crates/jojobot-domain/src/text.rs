@@ -324,13 +324,14 @@ pub const HELD_CONTEXT: Capped = Capped { budget: 2_000 };
 ///
 /// **So this is spent in two passes, not one selection.** First, the FLOOR:
 /// the whole answer as it would serialize with every rule's `details`
-/// already gone and the essay absent — bot metadata, charter (always
-/// served whole; see below), every rule's structural fields, session,
+/// already gone and the essay's REMAINDER absent — bot metadata, charter
+/// (always served whole; see below), the essay's own CORE (the same
+/// treatment, see below), every rule's structural fields, session,
 /// snapshot, skills. That floor is subtracted from this budget, and what is
 /// LEFT is a second, narrower [`Capped`] built at that remaining size, which
-/// ranks only the rules' `details` and the essay against it — see
-/// `rank_remaining_prose` in `jojobot-mcp`'s `orient` module, the one place
-/// both halves come together.
+/// ranks only the rules' `details` and the essay's remainder against it —
+/// see `rank_remaining_prose` in `jojobot-mcp`'s `orient` module, the one
+/// place both halves come together.
 ///
 /// **`charter` is never ranked at all — it does not need to be.** It is the
 /// identity text the caller explicitly asked to read by naming this bot,
@@ -338,18 +339,22 @@ pub const HELD_CONTEXT: Capped = Capped { budget: 2_000 };
 /// cutting it silently would be worse than shipping it. So its whole text
 /// rides in the FLOOR alongside the structural fields nothing ever cuts,
 /// which is what guarantees it is always served whole without a special
-/// case anywhere ranking it could get wrong. **Each rule's `details`** ranks
+/// case anywhere ranking it could get wrong. **The essay's own CORE gets the
+/// identical treatment** — a short, fixed block teaching the vocabulary a
+/// session needs before it can do anything else — so a boot never ships an
+/// essay with no vocabulary in it at all. **Each rule's `details`** ranks
 /// next, newest first, on the same reasoning [`SESSION_CHRONOLOGY`] already
 /// uses: the newest reasoning is what a session is most likely to need read
 /// in full, and an older one waits behind an ordinary `recall` of the bot.
-/// **The essay ranks LAST, and that placement is load-bearing rather than a
-/// preference**: [`Capped::head`] keeps a contiguous prefix and stops at
-/// the first candidate that does not fit, never looking past it — so the
-/// essay, the one candidate here whose own size can exceed the whole
-/// remaining budget by itself, would take every bot-specific candidate
-/// after it down too if it ranked anywhere else. Last, it either fits in
-/// what the rules left over or it alone is what the budget declines, and
-/// the identity a caller named this bot to read still stands either way.
+/// **The essay's REMAINDER ranks LAST, and that placement is load-bearing
+/// rather than a preference**: [`Capped::head`] keeps a contiguous prefix
+/// and stops at the first candidate that does not fit, never looking past
+/// it — so the remainder, the one candidate here whose own size can exceed
+/// the whole remaining budget by itself, would take every bot-specific
+/// candidate after it down too if it ranked anywhere else. Last, it either
+/// fits in what the rules left over or it alone is what the budget
+/// declines, and the identity a caller named this bot to read still stands
+/// either way — as does the essay's core, already paid for in the floor.
 /// It is also the one candidate that is not bot-specific — the same text on
 /// every boot of every identity — and it stays reachable uncontested from a
 /// boot that names no bot or has nothing else competing for the room.

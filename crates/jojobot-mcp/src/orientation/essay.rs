@@ -5,9 +5,12 @@
 //! 60 lines of text rather than code, and because the one-door test counts how
 //! many places reach for it: defined once, read once.
 
-/// What `start_here` hands a fresh agent. Engine prose: the method, in role
-/// language only — no operator specifics, fictional example identities.
-pub(crate) const ORIENTATION: &str = r#"# jojobot — start here
+/// **The core of what `start_here` hands a fresh agent** — always served
+/// whole, the same way a bot's charter is: the kinds, what a claim carries,
+/// that a question can be asked structurally, and the call that reaches the
+/// rest. Engine prose: the method, in role language only — no operator
+/// specifics, fictional example identities.
+pub(crate) const ORIENTATION_CORE: &str = r#"# jojobot — start here
 
 jojobot is a personal-assistant server: the durable memory and message rail behind an assistant serving one person, the operator. You are one of possibly many AI sessions connected to it — jojobot itself never thinks; it stores, guards, and serves. What you write here outlives this conversation and will be read back as truth by sessions that cannot ask you what you meant. The rules below exist for them.
 
@@ -17,6 +20,15 @@ jojobot is a personal-assistant server: the durable memory and message rail behi
 
 **A record carries FIELDS**, always: a flat bag of key/value pairs beside the claim, which jojobot stores and never interprets. Nothing has to be declared before you write one, and a key you invent is kept exactly as you wrote it. **A thing's fields are every write on it, folded, the newest write of each key winning** — what jojobot knows about `person:milhouse` is the claims plus the keys written onto it a piece at a time, and a write that takes a key off takes it off the thing. **Carrying keys is what makes a thing ANSWER a type**, and answering one is not being held to one. Declare a type to say which keys it names; a thing holding all of them FITS it. Declaring admits nothing and refuses nothing — a thing is found by the keys it carries whether or not anybody declared the type, and no write is ever blocked by a type. **What a write may take off a thing is its KIND's question**: a kind may name keys that the things of that kind have to keep, and a write that would drop one of those is blocked, naming the key it would lose. The loop kind names two: a `rhythm` has to keep its `name` and its `last_check_in`, and a write that takes either away is refused, naming the key. A `view` has to keep its `selects`, because a question that says nothing about what it looks at is one nobody can ask. Most shipped kinds name none. **The floor is what a thing already holds**, so a thing that does not carry a kind's keys yet is refused nothing and a record written a piece at a time is never blocked on the way up. What declaring a type buys is write-time help, the vocabulary search asks with, plus ordering and traversal on the keys it names. Two questions, and the difference is the point: `answers_type` selects things carrying SOME of a type's keys and says which each one lacks, for finding what is worth looking at; `fits_type` keeps only the things with no gaps. Ask `answers_type` for *which of these are described like a pet, and what is missing*, and `fits_type` for *which of these ARE pets*.
 
+**This is the short form.** The rest of this — mailboxes, worked examples, the six refusal shapes, what a bot and a session are — reads the same way, in full, from a boot with room for it: call `start_here` again, naming no bot, or this one with nothing else competing for its answer's ceiling.
+"#;
+
+/// **The rest of the essay** — everything past the core: the small-answer
+/// discipline, mailboxes, worked examples, the refusal shapes, bots and
+/// sessions. Ranked against what is left of the boot's declared ceiling once
+/// the core and the identity's own content are counted, the same way a
+/// rule's older `details` are — see `rank_remaining_prose`.
+pub(crate) const ORIENTATION_REMAINDER: &str = r#"
 **jojobot hands back the small answer and keeps the large one reachable.** A write returns a receipt rather than the thing you just wrote; a message body is not echoed to the author who sent it; a delivery leaves out what it already handed you once; prose is off by default on a read, because a page is bigger than a claim. The reason is the same every time and it is about you: context is the scarce thing in this conversation, and an answer that ships everything spends it on what you already have. **Eliding is never silent** — whenever less comes back, the answer says what was left out and which call returns it. So ask for the larger thing when you need it, and expect the smaller one when you have not.
 
 **MAILBOXES** are the async rail between sessions: named boxes where one session leaves a message another will find. A message is `new` → `read` → `processed`. Reading IS taking delivery (no peek); anything read but not yet processed comes back on the next read, flagged — so crashed work resurfaces on its own. `processed` means acted-on, and it is a terminal archive: nothing here is ever deleted. **A box belongs to exactly one bot**, is named for it, and comes into being with it: a box states its owner, so whose it is is a fact you can read rather than an arrangement you have to be told. That is why there is no verb that opens one — a new box would mean a new identity, and standing somebody up to file a note is not a move you make on your own. **Yours is yours by construction**: booting as your identity is what tells you which box you drain. **Messages are searchable, on request**: `search` with `include_mail: true` finds them beside the memory hits, in every state, `processed` archives included — it is opt-in because a hit carries somebody's box, sender and a snippet, and `search` is the verb you reach for first — so a finding somebody filed for another session is reachable by anyone who asks the right question, without knowing where to look. A hit says which box and which state. `read_message` takes that one message without making the rest of the box yours — **from your own box**, because taking delivery of somebody else's mail moves it out of `new` and it never looks fresh to them again. A `processed` hit is the exception and is readable from any box: that one is history, and reading it moves nothing.
@@ -90,6 +102,15 @@ The resume note is **the one sanctioned exception to journal leanness**. Everywh
 This door's snapshot names every identity on the server, each with its mail beside it: that is a fact about the board and **not an invitation**. Only your own comes back with counts — somebody else's queue is not yours to weigh. If you need something from a colleague, ask them — and know that `post_message` is not a pure write: it also takes delivery of YOUR box. Whatever was waiting rides back with the receipt under your_mail, out of `new` and yours to finish, exactly as `read_mailbox` would have handed it over — because posting is the moment a reply is most likely to be sitting there, and two agents each holding an unread reply is the failure nothing else notices. Posting into your own box delivers nothing. So a message you meet flagged `seen_before` after a post of your own is one THAT POST took, not work you had already taken on.
 "#;
 
+/// **The whole essay, core and remainder joined** — test-only. Production
+/// never wants this: the floor always serves the core, and the remainder is
+/// ranked against what is left, so the two are never concatenated outside a
+/// test that means to check the text a session reads when nothing cut it.
+#[cfg(test)]
+pub(crate) fn orientation() -> String {
+    format!("{ORIENTATION_CORE}{ORIENTATION_REMAINDER}")
+}
+
 #[cfg(test)]
 mod tests {
     use jojobot_domain::memory::EntityKind;
@@ -118,8 +139,9 @@ mod tests {
     /// purpose.
     #[test]
     fn every_kind_is_named_in_the_prose_a_session_reads() {
-        let taught: [(&str, &str); 1] = [("the orientation essay", super::ORIENTATION)];
-        for (what, text) in taught {
+        let taught: [(&str, String); 1] = [("the orientation essay", super::orientation())];
+        for (what, text) in &taught {
+            let text = text.as_str();
             for kind in EntityKind::ALL {
                 let token = kind.as_token();
                 assert!(
@@ -128,6 +150,40 @@ mod tests {
                      a session that reads it learns a kind set the store does not have"
                 );
             }
+        }
+    }
+
+    /// **The core alone still names every kind.**
+    ///
+    /// This is what "always ships" is for: a boot heavy enough to cut the
+    /// essay's remainder (`crate::orientation::orient`'s own ranking) must
+    /// not leave a session with no kind vocabulary at all. Checked at the
+    /// essay's own level, independent of the ranking machinery, so a future
+    /// change to the split point is caught here rather than only in a boot
+    /// test that has to construct a heavy identity to notice.
+    #[test]
+    fn the_core_alone_names_every_kind() {
+        for kind in EntityKind::ALL {
+            let token = kind.as_token();
+            assert!(
+                names(super::ORIENTATION_CORE, token),
+                "the essay's core does not name the `{token}` kind — a boot that cuts the \
+                 remainder would leave a session with no kind vocabulary at all"
+            );
+        }
+    }
+
+    /// **The core alone still teaches the structural type questions** —
+    /// `answers_type` and `fits_type` — the same reasoning as the kind test
+    /// above, applied to the other half of what a cut boot must not lose.
+    #[test]
+    fn the_core_alone_teaches_the_structural_type_questions() {
+        for filter in ["answers_type", "fits_type"] {
+            assert!(
+                names(super::ORIENTATION_CORE, filter),
+                "the essay's core does not name `{filter}` — a boot that cuts the remainder \
+                 would leave a session unable to ask the question it answers",
+            );
         }
     }
 
@@ -166,8 +222,9 @@ mod tests {
              type filters are not among them",
         );
 
-        let taught: [(&str, &str); 1] = [("the orientation essay", super::ORIENTATION)];
-        for (what, text) in taught {
+        let taught: [(&str, String); 1] = [("the orientation essay", super::orientation())];
+        for (what, text) in &taught {
+            let text = text.as_str();
             for filter in &published {
                 assert!(
                     names(text, filter),
@@ -288,7 +345,7 @@ mod tests {
     #[test]
     fn stands_for_is_named_in_the_orientation_essay() {
         assert!(
-            names(super::ORIENTATION, "stands_for"),
+            names(&super::orientation(), "stands_for"),
             "a session that reads only the essay has no way to find the synthesis mark"
         );
     }
