@@ -309,6 +309,22 @@ pub const SESSION_CHRONOLOGY: Capped = Capped { budget: 12_000 };
 /// costs a reader information rather than access.
 pub const HELD_CONTEXT: Capped = Capped { budget: 2_000 };
 
+/// **A boot's own rules, the WHY half of each.** A rule's `content` is short
+/// and bounded by curation — somebody wrote one line — but its `details`
+/// grows every time a rule is set down, and a boot shipped every rule's
+/// whole reasoning with no budget at all: measured on a real identity, 25
+/// rules' `details` alone ran to 26,216 characters, which is most of why the
+/// answer stopped fitting in a tool result a real client could render.
+///
+/// **Content is never bounded by this** — it is what a rule SAYS, and it
+/// rides on every rule regardless. This budget governs only the reasoning
+/// behind it, and it is asked for the caller's own boot, so it is more
+/// generous than [`HELD_CONTEXT`]'s unasked-for aside but still well short of
+/// [`SESSION_CHRONOLOGY`]'s: the newest rules' own reasoning is what a
+/// session is most likely to need read in full; an older one waits behind an
+/// ordinary `recall` of the bot.
+pub const IDENTITY_RULE_DETAILS: Capped = Capped { budget: 6_000 };
+
 /// **One named case, and the goldens are its floor.** The store respells
 /// underscore-emphasis as asterisk-emphasis: `_under_` comes back
 /// `*under*`. Nothing is escaped and nothing is lost — it is the same

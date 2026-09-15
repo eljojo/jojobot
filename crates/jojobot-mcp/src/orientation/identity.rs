@@ -68,6 +68,39 @@ pub(crate) fn booting_unknown(
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])
 }
 
+/// **A rule as a boot ships it: `content` always, `details` when the
+/// collection's own budget still has room.**
+///
+/// `fact_json` is shared with every other reader of a fact and must not
+/// itself narrow what a fact carries — `recall` on a bot still shows every
+/// rule's reasoning whole. This is the one caller that bounds a COLLECTION of
+/// them, so the elision lives here, one rule at a time, rather than in the
+/// renderer every other verb depends on.
+fn rule_json(rule: &Fact, as_of: jiff::civil::Date, elide_details: bool) -> serde_json::Value {
+    let mut rendered = fact_json(rule, as_of, None);
+    let Some(details) = elide_details.then_some(rule.details.as_deref()).flatten() else {
+        // Not eliding, or nothing to elide: a rule the budget never reached,
+        // or one with no details at all, renders exactly as it always did.
+        return rendered;
+    };
+    let Some(fields) = rendered.as_object_mut() else {
+        return rendered;
+    };
+    fields.insert("details".into(), serde_json::Value::Null);
+    fields.insert("details_elided".into(), true.into());
+    fields.insert("details_bytes".into(), details.len().into());
+    fields.insert(
+        "details_note".into(),
+        format!(
+            "this rule's own reasoning is not in this boot — recall {} with facts: true to \
+             read it whole",
+            rule.subject.as_str()
+        )
+        .into(),
+    );
+    rendered
+}
+
 impl Jojobot {
     /// Who this session is: the bot's record, the charter its prose carries,
     /// the rules its facts carry, and the live state of the box it owns.
@@ -112,6 +145,17 @@ impl Jojobot {
                 .filter(|prose| !prose.trim().is_empty()),
         };
         let rules = self.memory.recall(bot).await.map_err(memory_error)?;
+        // **`content` is small and bounded by curation; `details` is not.**
+        // The newest rules' own reasoning is what a session is most likely to
+        // need whole, so the budget keeps the newest end and elides the
+        // rest's `details` — never their `content`, which every rule keeps
+        // regardless of the cut.
+        let kept_details = text::IDENTITY_RULE_DETAILS.tail(&rules, |rule| {
+            rule.details.as_deref().map_or(0, |d| d.chars().count())
+        });
+        // `tail` keeps the newest SUFFIX, so the index it starts at is the
+        // count it dropped from the front — not the count it kept.
+        let details_kept_from = kept_details.omitted();
 
         let mut body = serde_json::json!({
             "bot": entity_json(entity),
@@ -122,7 +166,8 @@ impl Jojobot {
             "charter_elided": answering_an_offer,
             "rules": rules
                 .iter()
-                .map(|rule| fact_json(rule, as_of, None))
+                .enumerate()
+                .map(|(i, rule)| rule_json(rule, as_of, i < details_kept_from))
                 .collect::<Vec<_>>(),
             "owned_mailbox": self.owned_mailbox(&entity.id).await?,
         });
@@ -785,6 +830,72 @@ mod tests {
             note.contains("could not"),
             "an honest failure, not a silent absence: {note}"
         );
+    }
+
+    /// 🚨 **The rules' own DETAILS are the unbounded half of a boot.**
+    /// `content` is short and curated; `details` grows every time a rule is
+    /// written down, and an identity with enough of them shipped a payload a
+    /// real client refused to render (rule 138). Five rules, each carrying
+    /// details larger than the whole budget on its own — hostile enough that
+    /// only a real cap stops the answer growing without limit.
+    #[tokio::test]
+    async fn a_boot_bounds_the_rules_details_and_keeps_every_content_line() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+
+        for n in 0..5 {
+            capture_ok(
+                &jojobot,
+                CaptureArgs {
+                    details: Some(format!("rule {n} reasoning: {}", "x".repeat(3_000))),
+                    ..capture_args("bot:gamma", &format!("rule {n}"))
+                },
+            )
+            .await;
+        }
+
+        let booted = boot(&jojobot, "gamma").await;
+        let rules = booted["identity"]["rules"]
+            .as_array()
+            .expect("rules is an array");
+        assert_eq!(rules.len(), 5, "every rule is still listed: {rules:?}");
+
+        // Content never drops — it is the short, curated half.
+        for (n, rule) in rules.iter().enumerate() {
+            assert_eq!(rule["content"], format!("rule {n}"), "{rule}");
+        }
+
+        let total_details: usize = rules
+            .iter()
+            .filter_map(|r| r["details"].as_str())
+            .map(|d| d.chars().count())
+            .sum();
+        assert!(
+            total_details <= jojobot_domain::text::IDENTITY_RULE_DETAILS.budget,
+            "the shipped details must fit the stated budget: {total_details} chars, rules: \
+             {rules:?}"
+        );
+
+        // The oldest rule is what a tight budget drops first.
+        let oldest = &rules[0];
+        assert!(oldest["details"].is_null(), "{oldest}");
+        assert_eq!(oldest["details_elided"], true, "{oldest}");
+        assert!(
+            oldest["details_bytes"].as_u64().expect("a byte count") > 0,
+            "{oldest}"
+        );
+        let note = oldest["details_note"].as_str().expect("a note");
+        assert!(
+            note.contains("recall") && note.contains("facts"),
+            "the way back is named: {note}"
+        );
+
+        // The newest rule is the positive the drop above depends on: a
+        // budget that dropped everything would pass the assertions above
+        // for the wrong reason.
+        let newest = rules.last().expect("at least one rule");
+        assert!(newest["details"].is_string(), "{newest}");
+        assert!(newest["details_elided"].is_null(), "{newest}");
     }
 
     /// 🚨 **The boot roster asks the `kind` column, not the handle's prefix.**
