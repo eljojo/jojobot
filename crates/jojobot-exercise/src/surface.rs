@@ -253,7 +253,7 @@ impl Seed {
         for (verb, arguments) in &self.writes {
             let mut arguments = arguments.clone();
             arguments["sid"] = json!(sid);
-            room.must(verb, arguments).await?;
+            Self::write_entity(room, verb, arguments).await?;
         }
         // **The furnishing wraps its own run.** Everything above is written
         // through a session, and a session nobody closed is offered to the next
@@ -276,5 +276,47 @@ impl Seed {
         )
         .await?;
         Ok(())
+    }
+
+    /// **One seed write, done the way a real caller recovers from a
+    /// resemblance refusal.**
+    ///
+    /// Furnishing is a privileged setup act, but the refusal it can meet on
+    /// `add_entity` is not a bug: two same-kind names two edits apart is
+    /// exactly the guard a real caller meets too, and the product's own
+    /// answer is the `override_token` the refusal already mints — "yes,
+    /// these are two different people". Doing what a real caller does here
+    /// keeps the harness honest and keeps a room's cast intact, rather than
+    /// asking a room's author to dodge the guard by construction.
+    ///
+    /// Every other refusal, and every other verb, still fails the room
+    /// loudly — this retries exactly once, and only when there is a token to
+    /// retry with.
+    async fn write_entity(room: &Surface, verb: &str, arguments: Value) -> Result<Value> {
+        let text = room.call(verb, arguments.clone()).await;
+        let body: Value = serde_json::from_str(&text)
+            .with_context(|| format!("{verb} answered something that is not JSON: {text}"))?;
+        if verb != "add_entity" || body["status"] != "blocked" {
+            anyhow::ensure!(
+                body["status"] != "blocked" && body["transport_error"].is_null(),
+                "{verb} was refused, so the room did not reach its starting state: {text}",
+            );
+            return Ok(body);
+        }
+        let token = body["how_to_proceed"]
+            .as_str()
+            .unwrap_or_default()
+            .split_once("override_token: \"")
+            .and_then(|(_, rest)| rest.split_once('"'))
+            .map(|(token, _)| token);
+        let Some(token) = token else {
+            anyhow::bail!(
+                "add_entity was refused with no override token to retry with, so the room did \
+                 not reach its starting state: {text}",
+            );
+        };
+        let mut retried = arguments;
+        retried["override_token"] = json!(token);
+        room.must(verb, retried).await
     }
 }

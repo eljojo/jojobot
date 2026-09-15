@@ -76,9 +76,12 @@ loops with their schedules, and one brief. Every fact in the year is written by
 a sitting.
 
 **Two pairs are named alike and both are real** — `place:wagstaff-pool` and
-`event:wagstaff-fair`, `place:capital-city` and nothing else; the near-miss
-guard is there to be met and the seed already copes with it, as `year.md`'s
-club and trail prove.
+`event:wagstaff-fair`, `place:capital-city` and nothing else — and neither
+meets the near-miss guard: it is scoped to one kind, and these cross kinds by
+design, so both stand without incident. **The pair that does meet it is
+`person:linda` and `person:tina`, two edits apart and the same kind.**
+Furnishing meets that refusal the way a real caller does, retrying once with
+the override token it mints, rather than the room dodging it by construction.
 
 ⚠️ **Furniture is stamped with real today.** Only the loops carry records, and
 their dates live in KEYS (`counts_from`, `last_check_in`), which the overdue

@@ -155,6 +155,48 @@ async fn a_seed_furnishes_the_room_and_never_coaches_the_occupant() {
     surface.finish().await;
 }
 
+/// **A seed furnishes two same-kind people two edits apart, the way a real
+/// caller does: by overriding the resemblance refusal, not by dodging it.**
+///
+/// jojobot's own near-slug guard refuses `person:tina` once `person:linda` is
+/// already in the room — both are real, distinct people in a room's cast, and
+/// the product's own answer for that is the `override_token` the refusal
+/// mints. Furnishing is a privileged setup act; it still has to meet the
+/// guard the way an occupant would, or a cast this shape can never be built.
+///
+/// **Both survive, and in the order they were written** — the positive a
+/// harness that silently dropped the second write, or renamed it, would
+/// still pass a weaker check on.
+#[tokio::test]
+async fn a_seed_furnishes_two_same_kind_people_two_edits_apart() {
+    let (_room, surface) =
+        Room::open_with_client(&server_binary().expect("a jojobot binary to run"))
+            .await
+            .expect("a room");
+
+    Seed::new()
+        .entity("person", "linda", "Linda")
+        .expect("a person is furniture")
+        .entity("person", "tina", "Tina")
+        .expect("a person is furniture")
+        .furnish(&surface)
+        .await
+        .expect("the room is furnished, near-slug pair and all");
+
+    let found = surface
+        .call("list_entities", serde_json::json!({"kind": "person"}))
+        .await;
+    assert!(
+        found.contains("person:linda"),
+        "the first of the pair is not in the room: {found}",
+    );
+    assert!(
+        found.contains("person:tina"),
+        "the second of the pair is not in the room — the override never reached it: {found}",
+    );
+    surface.finish().await;
+}
+
 /// **A room that cannot come up is reported after every attempt, not the
 /// first.**
 ///
