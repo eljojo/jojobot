@@ -38,4 +38,10 @@ async-trait = { workspace = true }
 # through the real mechanism rather than through a stand-in the operator could
 # declare too. jojobot-adapters depends on jojobot-domain only, so this carries
 # no cycle.
-jojobot-adapters = { workspace = true }
+#
+# The "testing" feature also backs the boundary scrubber's golden fixture: it
+# starts one real store to capture a genuine driver failure's own text.
+jojobot-adapters = { workspace = true, features = ["testing"] }
+# The boundary golden fixture runs one query against the real store it starts,
+# to capture a genuine driver failure rather than an authored string.
+sqlx = { workspace = true }
