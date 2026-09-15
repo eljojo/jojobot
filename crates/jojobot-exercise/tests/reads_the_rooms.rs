@@ -13,6 +13,8 @@
 
 use jojobot_exercise::expectations;
 use jojobot_exercise::playbook::Playbook;
+use jojobot_exercise::room::{Room, server_binary};
+use jojobot_exercise::surface::Seed;
 
 /// Every document this build ships, read off the registry rather than listed
 /// here — a list in this file goes stale the day a room is added, and reads
@@ -71,11 +73,79 @@ fn every_shipped_room_has_expectations_and_furniture() {
             .unwrap_or_else(|| panic!("{name} is shipped and nothing asserts it"));
         assert!(!checks.is_empty(), "{name} came back with an empty list");
         expectations::seed_for(name)
-            .unwrap_or_else(|e| panic!("{name} cannot be furnished: {e:#}"));
+            .unwrap_or_else(|e| panic!("{name}'s seed does not even BUILD: {e:#}"));
     }
     assert!(
         expectations::for_playbook("docs/SOMETHING-ELSE.md").is_none(),
         "a playbook nobody has written expectations for was given some",
+    );
+}
+
+/// **Every shipped room's starting world actually APPLIES, not only builds.**
+///
+/// The check above only calls [`expectations::seed_for`], which is a pure
+/// builder: `Seed::entity`/`::fact`/etc. touch no store, so a seed whose
+/// writes collide with each other once they are actually sent somewhere
+/// reads as fine there. The only place a seed's writes are sent anywhere is
+/// [`Seed::furnish`], against a real room — the same thing a `make paid` run
+/// does — which is what this proves for every room this build ships, rather
+/// than for the ones somebody remembered to write a bespoke room file for.
+///
+/// **Sequential, not concurrent.** This suite has form: standing a real
+/// store up per room, overlapped, has taken the machine down before (see
+/// `transcripts/run-18-rooms-2026-09-09.md`). One room at a time, opened and
+/// dropped before the next, costs a few seconds total here and carries none
+/// of that risk.
+///
+/// Paired with the case below: that one proves a colliding world FAILS to
+/// furnish; this proves every room actually shipped does not.
+#[tokio::test]
+async fn every_shipped_rooms_seed_furnishes_a_real_room() {
+    let binary = server_binary().expect("a jojobot binary");
+    let mut checked = 0;
+    for name in expectations::shipped_rooms() {
+        let seed = expectations::seed_for(name)
+            .unwrap_or_else(|e| panic!("{name}'s seed does not even build: {e:#}"));
+        let (_room, surface) = Room::open_with_client(&binary)
+            .await
+            .unwrap_or_else(|e| panic!("{name}: a room would not open: {e:#}"));
+        seed.furnish(&surface)
+            .await
+            .unwrap_or_else(|e| panic!("{name}'s own starting world does not furnish: {e:#}"));
+        checked += 1;
+    }
+    // A loop over an empty registry holds every claim above without proving
+    // any of them — the same shape `judge_all`'s own comment names.
+    assert!(
+        checked > 0,
+        "shipped_rooms() named nothing, so this proved zero rooms furnish",
+    );
+}
+
+/// **The other half: a world that cannot furnish fails, by name.**
+///
+/// `thing:kettl` and `thing:kettle` are one edit apart — inside jojobot's own
+/// resemblance guard's budget (`NEAR` = 2, `jojobot_domain::memory::guard`) —
+/// so the second write is refused the moment it is actually sent. A check
+/// that only builds a `Seed` never reaches this, because building draws no
+/// comparison against anything: furnishing against a real room is the one
+/// thing that does, which is the exact shape a room can ship unrunnable in
+/// and still read green.
+#[tokio::test]
+async fn a_world_with_two_near_identical_things_cannot_furnish_a_room() {
+    let seed = Seed::new()
+        .entity("thing", "kettl", "Kettl")
+        .expect("a plain entity builds")
+        .entity("thing", "kettle", "Kettle")
+        .expect("a plain entity builds");
+    let (_room, surface) = Room::open_with_client(&server_binary().expect("a jojobot binary"))
+        .await
+        .expect("a room");
+    let furnished = seed.furnish(&surface).await;
+    assert!(
+        furnished.is_err(),
+        "thing:kettl and thing:kettle are one edit apart, inside the resemblance guard's budget \
+         of 2 — furnishing both must be refused, not silently accepted: {furnished:?}",
     );
 }
 
