@@ -80,9 +80,11 @@ pub const OUTCOME: &str = "outcome";
 ///
 /// **Only ever holds a date, and only while the carrier's own answer is
 /// [`Due::On`].** A thing whose answer is `Never`, `NotYetOpened` or
-/// `Unreadable` is not represented by a value here — this build does not yet
-/// clear a stale one left over from before such a change, which is a known
-/// gap rather than a silent one: see the report this shipped with.
+/// `Unreadable` is not represented by a value here. [`moved_due_moment`]
+/// says so via [`DueMove::Cleared`] — a write that clears a key the schedule
+/// reads from acts on it and removes the stale value; a write that only
+/// adds or changes field values has nothing in its own shape to act on it
+/// with, since it has no way to take a key off a record.
 pub const DUE_ON: &str = "due_on";
 
 /// **What a check-in found, and whether the cycle is consumed.**
@@ -481,8 +483,26 @@ pub fn shipped() -> Vec<Box<dyn Carrier>> {
     vec![Box::new(Rhythms)]
 }
 
-/// **The new value for [`DUE_ON`], when a write moves it — never when it
-/// does not.**
+/// **What a write does to [`DUE_ON`]: move it, remove it, or leave it.**
+///
+/// The mover used to answer with `Option<Date>` alone, which can only ever
+/// say "here is a new date" — there was no way to say "take the stale one
+/// off". A write that clears the schedule a due moment was computed from
+/// needs the third answer, or the old date survives, unread by the schedule
+/// that produced it and misleading to anything that trusts the stored field
+/// directly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DueMove {
+    /// This write does not touch [`DUE_ON`].
+    Unchanged,
+    /// Store this as the new due moment.
+    Set(Date),
+    /// The carrier no longer has an answer of [`Due::On`] for this thing,
+    /// and a value is stored — take it off.
+    Cleared,
+}
+
+/// **What [`DUE_ON`] should become, when a write could move it.**
 ///
 /// `projected` is the thing's fields as they will read once the write in
 /// progress lands — the caller's job, not this function's, since only the
@@ -493,16 +513,20 @@ pub fn shipped() -> Vec<Box<dyn Carrier>> {
 /// already part of.
 ///
 /// **Only [`Due::On`] is ever stored here.** `Never`, `NotYetOpened` and
-/// `Unreadable` all answer `None` — a write that lands on any of those never
-/// merges a bogus date in, whatever [`DUE_ON`] happened to hold before.
+/// `Unreadable` all mean the carrier has no date to give — [`DueMove::Cleared`]
+/// when [`DUE_ON`] holds a value from before, [`DueMove::Unchanged`] when it
+/// does not, so a write never merges a bogus date in and never leaves a
+/// stale one behind either.
 pub fn moved_due_moment(
     carriers: &[&dyn Carrier],
     existing: Option<Date>,
     projected: &BTreeMap<String, String>,
-) -> Option<Date> {
+) -> DueMove {
     match owed(carriers, projected) {
-        Due::On(day) if Some(day) != existing => Some(day),
-        _ => None,
+        Due::On(day) if Some(day) != existing => DueMove::Set(day),
+        Due::On(_) => DueMove::Unchanged,
+        _ if existing.is_some() => DueMove::Cleared,
+        _ => DueMove::Unchanged,
     }
 }
 
@@ -1001,7 +1025,7 @@ mod tests {
     /// stored, move nothing — or every write would carry a due moment
     /// whether or not it had one to report. And a not-yet-opened loop
     /// (shipped two slices ago) is asked the same question and still answers
-    /// `None`, never a bogus date — the state this fix must not quietly
+    /// `Unchanged`, never a bogus date — the state this fix must not quietly
     /// paper over.
     #[test]
     fn a_cadence_changed_with_no_check_in_moves_the_stored_due_moment() {
@@ -1017,14 +1041,14 @@ mod tests {
         changed_cadence.insert(CADENCE_DAYS.to_string(), "14".to_string());
         assert_eq!(
             moved_due_moment(&[&Rhythms], existing_due_on, &changed_cadence),
-            Some(date(2026, 8, 15)),
+            DueMove::Set(date(2026, 8, 15)),
             "the cadence moved, so the due moment moves with it, with no check-in in sight",
         );
 
         // The paired negative: the same fields, unmoved, move nothing.
         assert_eq!(
             moved_due_moment(&[&Rhythms], existing_due_on, &existing),
-            None,
+            DueMove::Unchanged,
             "unchanged fields carry no new due moment to store",
         );
 
@@ -1032,8 +1056,44 @@ mod tests {
         let declared = unopened(AdvancesFrom::CheckInDate);
         assert_eq!(
             moved_due_moment(&[&Rhythms], None, &declared),
-            None,
+            DueMove::Unchanged,
             "a declared, never-checked-in loop is not due, and this must not invent a date for it",
+        );
+    }
+
+    /// **The other half: a write that makes the schedule unreadable REMOVES
+    /// a due moment left over from before, rather than leaving it stale.**
+    ///
+    /// Paired with the case above: that one proves a MOVED cadence moves the
+    /// stored value; this proves a schedule that stops being computable
+    /// takes it off instead — two different outcomes the same mechanism must
+    /// tell apart, so a build that only ever does one of them fails the
+    /// other.
+    #[test]
+    fn a_schedule_that_stops_being_computable_clears_the_stored_due_moment() {
+        let existing = weekly(date(2026, 8, 1), AdvancesFrom::CheckInDate);
+        let existing_due_on = match Rhythms.due(&existing) {
+            Due::On(day) => Some(day),
+            other => panic!("the fixture is expected to already be due somewhere: {other:?}"),
+        };
+
+        // counts_from is gone — the half-opened shape, not an absent
+        // schedule — so the carrier's answer is `NotYetOpened` now.
+        let mut counts_from_cleared = existing.clone();
+        counts_from_cleared.remove(COUNTS_FROM);
+        assert_eq!(
+            moved_due_moment(&[&Rhythms], existing_due_on, &counts_from_cleared),
+            DueMove::Cleared,
+            "the schedule can no longer say when it is due, and a value from before it changed \
+             must not survive as if it still could",
+        );
+
+        // Paired negative: nothing was ever stored, so there is nothing to
+        // take off.
+        assert_eq!(
+            moved_due_moment(&[&Rhythms], None, &counts_from_cleared),
+            DueMove::Unchanged,
+            "clearing a due moment that was never there is not a move",
         );
     }
 }

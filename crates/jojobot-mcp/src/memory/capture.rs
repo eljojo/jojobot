@@ -582,9 +582,19 @@ impl Jojobot {
         // carries is jojobot's own arithmetic riding along in the same
         // record — exactly as a check-in's own computed keys already do.
         let due_on_computed = self.moved_due_moment(&subject, &fields, &[]).await;
-        if let Some(due_on) = due_on_computed {
+        let due_on_set = matches!(due_on_computed, attention::DueMove::Set(_));
+        if let attention::DueMove::Set(due_on) = due_on_computed {
             fields.insert(attention::DUE_ON.to_string(), due_on.to_string());
         }
+        // A capture could in principle turn `Due::On` into something else —
+        // e.g. overwriting `cadence_days` with a value the schedule cannot
+        // read — while a `due_on` from before is still stored. But a
+        // capture can only ADD fields to a record: `NewFact` has no
+        // clear_fields of its own, so there is nothing this path can do
+        // with `DueMove::Cleared` yet. `update_fact`'s own clear path is
+        // where this slice wires `Cleared` up; this narrower gap is not
+        // what it was asked to close.
+        //
         // **jojobot's own arithmetic is jojobot's, whatever the caller said
         // about their claim.** A check-in computes the schedule keys, and
         // merging them into a record carrying `testimony` made a date nobody
@@ -595,7 +605,7 @@ impl Jojobot {
         // sentence and a computed schedule together, and only one of those
         // has anybody's word behind it. A moved due moment is the same
         // arithmetic on a plain capture that never asked for a check-in.
-        let provenance = if args.check_in.is_some() || due_on_computed.is_some() {
+        let provenance = if args.check_in.is_some() || due_on_set {
             Provenance::Inference
         } else {
             provenance

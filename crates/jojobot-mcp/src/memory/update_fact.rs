@@ -249,7 +249,7 @@ impl Jojobot {
         };
         let address = FactAddress::parse(&args.address).map_err(memory_error)?;
         let declared = Declared::of(&args);
-        let cleared = args.clear_fields.clone().unwrap_or_default();
+        let mut cleared = args.clear_fields.clone().unwrap_or_default();
         let mut fields = args.fields.unwrap_or_default();
         // **Kept current here too.** An edit that moves a cadence, a policy or
         // a basis is a write like any other write that could move the due
@@ -258,8 +258,20 @@ impl Jojobot {
         let due_on_computed = self
             .moved_due_moment(&address.home, &fields, &cleared)
             .await;
-        if let Some(due_on) = due_on_computed {
-            fields.insert(attention::DUE_ON.to_string(), due_on.to_string());
+        let due_on_set = matches!(due_on_computed, attention::DueMove::Set(_));
+        match due_on_computed {
+            attention::DueMove::Set(due_on) => {
+                fields.insert(attention::DUE_ON.to_string(), due_on.to_string());
+            }
+            // **The clearing path calls the mover too, and acts on what it
+            // says.** This is the case `capture` cannot reach: a clear is
+            // the one write shape that can actually take a key off a
+            // record, so it is the one that can take the stale due moment
+            // off with it — onto the same `clear_fields` list this patch
+            // already carries, so it is removed in the same write that
+            // made it stale rather than in a write of its own.
+            attention::DueMove::Cleared => cleared.push(attention::DUE_ON.to_string()),
+            attention::DueMove::Unchanged => {}
         }
         let patch = FactPatch {
             content: args.content,
@@ -272,7 +284,7 @@ impl Jojobot {
             // check-in's is on `capture`.** A moved due moment overrides
             // whatever provenance this same call asked for, so a computed
             // date is never read back with the certainty of somebody's word.
-            provenance: if due_on_computed.is_some() {
+            provenance: if due_on_set {
                 Some(Provenance::Inference)
             } else {
                 args.provenance
@@ -283,7 +295,7 @@ impl Jojobot {
             standing: args.standing.as_deref().map(parse_standing).transpose()?,
             confirmed_by_user: args.confirmed_by_user.unwrap_or(false),
             fields,
-            clear_fields: args.clear_fields.unwrap_or_default(),
+            clear_fields: cleared.clone(),
             stale_after: parse_date(args.stale_after.as_deref())?,
             clear_stale_after: args.clear_stale_after.unwrap_or(false),
             derived_from: args
@@ -1150,6 +1162,110 @@ mod tests {
             read["objects"][0]["fields"]["due_on"], "2026-08-15",
             "the cadence moved through a patch, not a fresh capture, and the stored due moment \
              moved with it: {read}",
+        );
+    }
+
+    /// **The mover could only ever say "here is a new date" — this proves
+    /// the other half, that it can also say "remove it".**
+    ///
+    /// **Paired with the case above**: that one proves a changed cadence
+    /// still MOVES the due moment; this one proves a cleared one REMOVES
+    /// it — a build that only ever clears the value on every write would
+    /// pass this case and fail that one, and a build that only ever moves
+    /// it forward would pass that one and fail this.
+    ///
+    /// The clear names `counts_from`, which flips the rhythm's answer from
+    /// `Due::On` to `Due::NotYetOpened` — the half-opened shape, not an
+    /// absent schedule — so the stale date left over from before the clear
+    /// is exactly the value nothing but this mechanism would ever remove.
+    #[tokio::test]
+    async fn clearing_a_schedule_key_removes_the_stale_due_moment() {
+        let jojobot = handler();
+        ensure(&jojobot, "thing:kettle").await;
+        jojobot
+            .add_entity(Parameters(AddEntityArgs {
+                parent: Some("thing:kettle".into()),
+                ..add_args("rhythm", "descale", "descale")
+            }))
+            .await
+            .expect("add ok");
+        let captured = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                provenance: Some("testimony".into()),
+                ..capture_args("rhythm:descale", "we should descale this regularly")
+            },
+        )
+        .await;
+        let address = address_of(&captured);
+
+        update_ok(
+            &jojobot,
+            UpdateFactArgs {
+                fields: Some(
+                    [
+                        ("cadence_days".to_string(), "7".to_string()),
+                        ("advances_from".to_string(), "check_in_date".to_string()),
+                        ("counts_from".to_string(), "2026-08-01".to_string()),
+                    ]
+                    .into_iter()
+                    .collect(),
+                ),
+                ..update_args(&address)
+            },
+        )
+        .await;
+        let opened = json_of(
+            &jojobot
+                .recall(Parameters(recall_args("rhythm:descale")))
+                .await
+                .expect("recall ok"),
+        );
+        assert_eq!(
+            opened["objects"][0]["fields"]["due_on"], "2026-08-08",
+            "the schedule this case clears has to actually be stored first: {opened}",
+        );
+
+        update_ok(
+            &jojobot,
+            UpdateFactArgs {
+                clear_fields: Some(vec!["counts_from".into()]),
+                ..update_args(&address)
+            },
+        )
+        .await;
+        let read = json_of(
+            &jojobot
+                .recall(Parameters(recall_args("rhythm:descale")))
+                .await
+                .expect("recall ok"),
+        );
+        assert!(
+            read["objects"][0]["fields"].get("due_on").is_none(),
+            "counts_from is gone, so the schedule reads NotYetOpened now — the due moment from \
+             before the clear is stale and must not survive the write: {read}",
+        );
+
+        // Paired with the field-level check: the real attention read agrees
+        // too, not only the stored key.
+        let overdue = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    overdue: Some(super::recall::OverdueArgs {
+                        as_of: Some("2026-12-31".into()),
+                    }),
+                    ..recall_args("rhythm:descale")
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        assert!(
+            overdue["objects"]
+                .as_array()
+                .expect("objects is an array")
+                .is_empty(),
+            "a rhythm with no schedule is never owed, whatever a stale field used to say: \
+             {overdue}",
         );
     }
 
