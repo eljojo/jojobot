@@ -197,6 +197,97 @@ pub async fn derived_from_must_name_a_fact_that_exists<M: Memory>(store: &M) {
     );
 }
 
+/// **The same rule, reached by an EDIT.** The case above proves it at
+/// capture; `update_fact`'s own check of `derived_from` is the sibling that
+/// was never driven through this path, and it disagrees with itself in both
+/// directions there: a near miss on the fact answers with no candidates at
+/// all (screened against the raw handle rather than the storage key it
+/// resolves to), and a totally unknown home is answered as a FACT miss
+/// instead of an ENTITY miss — the one shape `stands_for`'s own edit-path
+/// check, right beside this one, already gets right.
+///
+/// Both halves, in one read, exactly as the capture case above: the refusal
+/// alone passes on an edit path that is simply broken; the candidates alone
+/// pass on a store that refuses but reports nothing repairable.
+pub async fn derived_from_on_an_edit_must_name_a_fact_that_exists<M: Memory>(store: &M) {
+    let subject = EntityId::person("person:contract-citation-editpath");
+    let source = capture(
+        store,
+        NewFact::about(subject.clone(), "said the ferry moved", date(2026, 4, 1)),
+    )
+    .await;
+    let target = capture(
+        store,
+        NewFact::about(
+            subject.clone(),
+            "so the crossing is longer now",
+            date(2026, 4, 2),
+        ),
+    )
+    .await;
+
+    // Named and there: accepted, and the link reads back off the record.
+    let edited = edit(
+        store,
+        &target.address(),
+        FactPatch {
+            derived_from: Some(source.address()),
+            ..Default::default()
+        },
+    )
+    .await;
+    assert_eq!(
+        edited.derived_from,
+        Some(source.address()),
+        "a link to a claim that exists survives the edit"
+    );
+
+    // Named and absent, on a home that IS known: refused, with the
+    // addresses that do exist.
+    let missing = FactAddress::parse("person:contract-citation-editpath#f99").expect("well-formed");
+    let refused = store
+        .update_fact(
+            &target.address(),
+            FactPatch {
+                derived_from: Some(missing.clone()),
+                ..Default::default()
+            },
+        )
+        .await;
+    let Err(MemoryError::UnknownFact { attempted, nearest }) = &refused else {
+        panic!("an edit's derived_from naming no claim must be refused as a miss, got {refused:?}");
+    };
+    assert_eq!(attempted, &missing.to_string());
+    assert!(
+        nearest.contains(&source.address().to_string()),
+        "the addresses that DO exist are what makes it repairable: {nearest:?}"
+    );
+
+    // A home nobody has heard of is an ENTITY miss.
+    let nowhere = FactAddress::parse("person:contract-orphaned-editpath#f1").expect("well-formed");
+    let refused = store
+        .update_fact(
+            &target.address(),
+            FactPatch {
+                derived_from: Some(nowhere),
+                ..Default::default()
+            },
+        )
+        .await;
+    assert!(
+        matches!(refused, Err(MemoryError::UnknownEntity { .. })),
+        "an edit's derived_from whose home is unknown is an entity miss, got {refused:?}"
+    );
+
+    // Nothing was written by either refusal.
+    let after = read_back(store, &subject, &target.id).await;
+    assert_eq!(
+        after.derived_from,
+        Some(source.address()),
+        "a refused edit leaves the record exactly as the accepted one left it",
+    );
+}
+
 /// Every field survives capture→recall unchanged and byte-identical —
 /// `derived_from` included, since it is a fact field like any other and
 /// this is the one test that pins ALL of them at once.
@@ -9107,6 +9198,7 @@ pub async fn run_all<M: Memory>(store: &M) {
     a_claim_can_say_nothing_about_when_the_thing_happened(store).await;
     the_day_a_thing_happened_is_versioned_like_the_rest_of_the_claim(store).await;
     derived_from_must_name_a_fact_that_exists(store).await;
+    derived_from_on_an_edit_must_name_a_fact_that_exists(store).await;
     pipe_in_content_round_trips(store).await;
     a_backslash_in_content_round_trips(store).await;
     both_provenances_survive(store).await;

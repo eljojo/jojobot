@@ -1320,21 +1320,27 @@ impl Memory for InMemoryMemory {
         // A source named by an edit faces the capture rule: a link at a claim
         // nobody wrote reads as evidence and leads nowhere.
         if let Some(source) = &patch.derived_from {
-            let resolved = self.resolve(&source.home);
-            let found = resolved.as_ref().is_some_and(|(key, _)| {
-                facts.iter().any(|f| f.home == *key && f.id == source.local)
-            });
-            if !found {
+            // **A home nobody has heard of is an ENTITY miss**, the same
+            // shape `stands_for`'s own check just below already answers
+            // with — two shapes, no third: what is absent differs, so what
+            // the caller does about it differs.
+            let Some((source_key, handle)) = self.resolve(&source.home) else {
+                return Err(MemoryError::UnknownEntity {
+                    attempted: source.home.to_string(),
+                    nearest: guard::screen(&source.home, &[], &self.known()),
+                });
+            };
+            if !facts
+                .iter()
+                .any(|f| f.home == source_key && f.id == source.local)
+            {
                 return Err(MemoryError::UnknownFact {
                     attempted: source.to_string(),
-                    nearest: match &resolved {
-                        Some((key, handle)) => facts
-                            .iter()
-                            .filter(|f| &f.home == key)
-                            .map(|f| self.address_under(f, handle))
-                            .collect(),
-                        None => Vec::new(),
-                    },
+                    nearest: facts
+                        .iter()
+                        .filter(|f| f.home == source_key)
+                        .map(|f| self.address_under(f, &handle))
+                        .collect(),
                 });
             }
         }

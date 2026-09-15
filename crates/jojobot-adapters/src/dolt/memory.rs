@@ -2612,17 +2612,17 @@ impl Memory for DoltMemory {
                     nearest: guard::screen(&source.home, &[], &index),
                 });
             };
+            let resolved_source = FactAddress::new(source_key, source.local.clone());
             // **Archive is a visibility switch, not a validity gate** — a
             // source that is archived may still be cited; see the same note
             // in `capture`.
-            if self
-                .read_fact(&mut tx, &FactAddress::new(source_key, source.local.clone()))
-                .await?
-                .is_none()
-            {
+            if self.read_fact(&mut tx, &resolved_source).await?.is_none() {
                 return Err(MemoryError::UnknownFact {
                     attempted: source.to_string(),
-                    nearest: self.addresses_in(&mut tx, &source.home).await?,
+                    // **The resolved key, not the raw handle** — `addresses_in`
+                    // reads by storage key, exactly as `capture`'s own check
+                    // does; passing the handle here always came back empty.
+                    nearest: self.addresses_in(&mut tx, &resolved_source.home).await?,
                 });
             }
         }
