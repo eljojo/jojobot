@@ -46,7 +46,9 @@ impl Jojobot {
                        without bound and is not what this answers. Read a live or abandoned run's \
                        beats by resuming it through start_here; the most recently wrapped run's \
                        closing story arrives there too, as the handover, on every boot of this \
-                       identity. Newest first. Twenty newest by default: raise `limit` for more, \
+                       identity. Each run also carries `served`: the total characters this run has \
+                       been answered, plus a token count that is an estimate derived from those \
+                       characters, never a real tokenisation. Newest first. Twenty newest by default: raise `limit` for more, \
                        and whatever a cut leaves out is counted under not_shown rather than \
                        silently dropped. A call with no `sid` at all comes back status: blocked — \
                        jojobot will not guess whose runs to read."
@@ -398,6 +400,29 @@ mod tests {
         assert!(
             whole["not_shown"].is_null(),
             "nothing was cut, so nothing says it was: {whole}"
+        );
+    }
+
+    /// **The served figure has no path but reading the diff, and that is no
+    /// path at all.** `list_runs` renders `served` on every run (see the
+    /// map above), but a caller who has only ever read the tool's own
+    /// description has no way to learn the field exists or that its token
+    /// count is an estimate rather than a real tokenisation.
+    #[test]
+    fn list_runs_description_names_the_served_figure_and_its_estimate() {
+        let tools = Jojobot::tool_router().list_all();
+        let tool = tools
+            .iter()
+            .find(|t| t.name == "list_runs")
+            .expect("list_runs is a tool");
+        let description = tool.description.as_deref().unwrap_or_default();
+        assert!(
+            description.contains("served"),
+            "must say the served total comes back with each run: {description}"
+        );
+        assert!(
+            description.contains("estimate"),
+            "must say the token figure is an estimate derived from characters: {description}"
         );
     }
 
