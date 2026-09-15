@@ -29,6 +29,14 @@ pub const BIKE_ROOM: &str = "rooms/bike.md";
 /// document from the beginning, which is what the format was built for.
 pub const YEAR_ROOM: &str = "rooms/year.md";
 
+/// **The second year** — thirteen cold sittings, each filing a fact where a
+/// person would file it, so a late question has to reach across subjects
+/// rather than read one. Decision log 299: this is the year room a paid run
+/// uses unless another is named. `year.md` stays shipped for its own
+/// coverage (retraction vs rewrite, rename rendering, the fold, the ledger
+/// vocabulary, lineage walk-back, derivation-on-check-in).
+pub const VAULT_ROOM: &str = "rooms/vault.md";
+
 /// **The Rust half of a room that still has one** — what must be true of it
 /// afterwards, and what it is furnished with before anybody arrives.
 type InRust = (
@@ -45,11 +53,12 @@ type Room = (&'static str, Option<InRust>);
 /// **`None` is a converted room**: its world and its locks are in its own
 /// document, which is where both are read from for every room — the Rust below
 /// is only what a room that has not been converted still falls back to.
-const ROOMS: [Room; 4] = [
+const ROOMS: [Room; 5] = [
     (BIKE_ROOM, None),
     (LOOP_ROOM, None),
     (YEAR_ROOM, None),
     (HANDOVER_ROOM, None),
+    (VAULT_ROOM, None),
 ];
 
 /// **Where a shipped room's document is on disk.**

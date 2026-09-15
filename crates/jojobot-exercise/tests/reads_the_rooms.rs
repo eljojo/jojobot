@@ -149,6 +149,16 @@ async fn a_world_with_two_near_identical_things_cannot_furnish_a_room() {
     );
 }
 
+/// **The second year room ships, as decision log 299 rules: the year room a
+/// paid run uses unless another is named.**
+#[test]
+fn the_second_year_room_is_shipped() {
+    assert!(
+        expectations::shipped_rooms().any(|name| name == "rooms/vault.md"),
+        "rooms/vault.md is not registered in ROOMS",
+    );
+}
+
 /// **A room's occupant arrives cold, in every phase.**
 ///
 /// The shape the rooms are built on: inside one session a model answers from
