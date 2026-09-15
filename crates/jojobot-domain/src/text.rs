@@ -309,50 +309,58 @@ pub const SESSION_CHRONOLOGY: Capped = Capped { budget: 12_000 };
 /// costs a reader information rather than access.
 pub const HELD_CONTEXT: Capped = Capped { budget: 2_000 };
 
-/// **The boot's own free-form prose, under ONE ceiling — not a constant per
-/// field, and not per part.** The orientation essay, a bot's charter and its
-/// rules' own `details` are the parts of a boot that grow with what somebody
-/// wrote rather than with how many things exist, and nothing measured their
-/// total before. Measured on two real boots at once: an identity carrying 25
-/// rules shipped 52,675 characters, 26,216 of it rule `details`; the
-/// identity that actually produced the complaint shipped 54,636 characters
-/// of which only 7,224 was rule `details` — the rest was the essay (24,177)
-/// and the charter (12,266). A bound on rule `details` alone barely moved
-/// the second number, because the receipts were never that boot's problem.
+/// **The WHOLE boot answer, under ONE ceiling — not its prose alone, and not
+/// a constant per field or per part.** Rule 138's own bar is a payload the
+/// client cannot read, which is a claim about the ANSWER, never about one
+/// field inside it — so bounding only the orientation essay, a bot's
+/// charter and its rules' own `details` (the parts that grow with what
+/// somebody wrote) is not enough: a rule's OWN structural fields (address,
+/// dates, provenance, standing, status, fields, refs) grow with how many
+/// rules there ARE, and on a real 25-rule identity that structure alone —
+/// with every rule's `details` already excluded — ran to 8,319 characters,
+/// beside a 5,305-character session block and a 1,566-character snapshot.
+/// None of that is prose, and none of it was counted before this budget
+/// existed.
 ///
-/// **A rule's `content` is never bounded by this** — it is short, curated,
-/// and rides on every rule regardless of the cut. Ranked, highest first:
-/// **`charter`** — the identity text the caller explicitly asked to read by
-/// naming this bot, and the one thing on this surface that is "what an
-/// identity is FOR"; ranking it first is what guarantees it is always
-/// served whole, because the first candidate in a [`Capped`] selection is
-/// always kept, whatever it costs, never a fragment. **Each rule's
-/// `details`** next, newest first, on the same reasoning
-/// [`SESSION_CHRONOLOGY`] already uses: the newest reasoning is what a
-/// session is most likely to need read in full, and an older one waits
-/// behind an ordinary `recall` of the bot. **The essay ranks LAST, and that
-/// placement is load-bearing rather than a preference**: [`Capped::head`]
-/// keeps a contiguous prefix and stops at the first candidate that does not
-/// fit, never looking past it — so the essay, the one candidate here whose
-/// own size can exceed the whole ceiling by itself, would take every
-/// bot-specific candidate after it down too if it ranked anywhere else.
-/// Last, it either fits in what charter and rules left over or it alone is
-/// what the ceiling declines, and the identity a caller named this bot to
-/// read still stands either way. It is also the one candidate that is not
-/// bot-specific — the same text on every boot of every identity — and it
-/// stays reachable uncontested from a boot that names no bot or has
-/// nothing else competing for the room.
+/// **So this is spent in two passes, not one selection.** First, the FLOOR:
+/// the whole answer as it would serialize with every rule's `details`
+/// already gone and the essay absent — bot metadata, charter (always
+/// served whole; see below), every rule's structural fields, session,
+/// snapshot, skills. That floor is subtracted from this budget, and what is
+/// LEFT is a second, narrower [`Capped`] built at that remaining size, which
+/// ranks only the rules' `details` and the essay against it — see
+/// `rank_remaining_prose` in `jojobot-mcp`'s `orient` module, the one place
+/// both halves come together.
 ///
-/// **The budget itself**: the essay alone runs past 24,000 characters, so a
-/// ceiling below that would drop it on every boot that also has a charter —
-/// including the ordinary case of a small one. This is set just past that
-/// floor, still comfortably under the render-safe target implied by the
-/// 54,636-byte failure, with headroom for the small, already-bounded
-/// remainder of a boot (session, snapshot, skills, the bot's own metadata)
-/// to land well inside it too. Bigger than [`SESSION_CHRONOLOGY`] because
-/// this ceiling spends across three growing parts rather than one, and well
-/// past [`HELD_CONTEXT`]'s unasked-for aside.
-pub const BOOT_PROSE: Capped = Capped { budget: 26_000 };
+/// **`charter` is never ranked at all — it does not need to be.** It is the
+/// identity text the caller explicitly asked to read by naming this bot,
+/// and the one thing on this surface that is "what an identity is FOR";
+/// cutting it silently would be worse than shipping it. So its whole text
+/// rides in the FLOOR alongside the structural fields nothing ever cuts,
+/// which is what guarantees it is always served whole without a special
+/// case anywhere ranking it could get wrong. **Each rule's `details`** ranks
+/// next, newest first, on the same reasoning [`SESSION_CHRONOLOGY`] already
+/// uses: the newest reasoning is what a session is most likely to need read
+/// in full, and an older one waits behind an ordinary `recall` of the bot.
+/// **The essay ranks LAST, and that placement is load-bearing rather than a
+/// preference**: [`Capped::head`] keeps a contiguous prefix and stops at
+/// the first candidate that does not fit, never looking past it — so the
+/// essay, the one candidate here whose own size can exceed the whole
+/// remaining budget by itself, would take every bot-specific candidate
+/// after it down too if it ranked anywhere else. Last, it either fits in
+/// what the rules left over or it alone is what the budget declines, and
+/// the identity a caller named this bot to read still stands either way.
+/// It is also the one candidate that is not bot-specific — the same text on
+/// every boot of every identity — and it stays reachable uncontested from a
+/// boot that names no bot or has nothing else competing for the room.
+///
+/// **The budget itself**: measured against a real client rather than
+/// estimated — 30,000 characters render inline; roughly 50,000 does not,
+/// which was the failure the operator reported. This is set with margin
+/// below the render boundary, comfortably above [`SESSION_CHRONOLOGY`]
+/// because it spends across the whole answer rather than one collection,
+/// and well past [`HELD_CONTEXT`]'s unasked-for aside.
+pub const BOOT_ANSWER: Capped = Capped { budget: 28_000 };
 
 /// **One named case, and the goldens are its floor.** The store respells
 /// underscore-emphasis as asterisk-emphasis: `_under_` comes back

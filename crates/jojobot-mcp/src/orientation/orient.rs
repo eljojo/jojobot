@@ -6,56 +6,72 @@
 
 use super::*;
 
-/// One slot in the boot's own ranked prose — see [`rank_boot_prose`].
+/// One slot in the boot's own ranked prose — see [`rank_remaining_prose`].
 #[derive(Clone, Copy)]
 enum ProseSlot {
-    Charter,
     Essay,
     Rule(usize),
 }
 
-/// **Rank the boot's own free-form prose against ONE declared ceiling** —
-/// [`text::BOOT_PROSE`] — never a constant per field (rule 106). This is
-/// the one place all of it can be measured together: the caller reads the
-/// essay (once — see `there_is_exactly_one_orientation_verb`) and this
-/// function ranks it beside the charter and rules that live inside
-/// `identity`, assembled by a different call.
-///
-/// **Charter ranks first and is ALWAYS served whole.** It is the identity
-/// text this caller explicitly asked to read by naming the bot, and the one
-/// thing on this surface that is "what an identity is FOR" — cutting it
-/// silently is worse than shipping it. Ranking it first is what guarantees
-/// this: the first candidate in a [`text::Capped`] selection is always kept
-/// whole, whatever it costs, so charter can never be the one a tight ceiling
-/// drops.
-///
-/// **Each rule's `details` ranks next, newest first** — the same reasoning
-/// [`text::SESSION_CHRONOLOGY`] already uses: the newest reasoning is what a
-/// session is most likely to need read in full, and an older one waits
-/// behind an ordinary `recall` of the bot. `content` is never ranked and
-/// never cut — every rule keeps its own line regardless.
+/// **Null out one rule's `details`, marked** — the same shape whichever
+/// caller reaches for it: a ranked cut, or the floor measurement below that
+/// has to know the answer's size with every rule's reasoning already gone.
+fn elide_rule_details(rule: &mut serde_json::Value) {
+    let Some(details) = rule["details"].as_str().map(str::to_string) else {
+        return;
+    };
+    let Some(fields) = rule.as_object_mut() else {
+        return;
+    };
+    fields.insert("details".into(), serde_json::Value::Null);
+    fields.insert("details_elided".into(), true.into());
+    fields.insert("details_bytes".into(), details.len().into());
+    let subject = fields
+        .get("subject")
+        .and_then(|s| s.as_str())
+        .unwrap_or_default()
+        .to_string();
+    fields.insert(
+        "details_note".into(),
+        format!(
+            "this rule's own reasoning is not in this boot — recall {subject} with facts: true \
+             to read it whole"
+        )
+        .into(),
+    );
+}
+
+/// **Rank the rules' `details`, newest first, then the essay last, against
+/// a budget already computed to be what is left of the ceiling** — see
+/// `orient` for where that number comes from. `content` and `charter` are
+/// never here: `content` is never cut at all, and `charter` is always
+/// served whole regardless of size (rule 138's own dispatch: "the interesting
+/// case... cutting it silently is worse than shipping it"), so it costs
+/// nothing to rank and is counted in the floor instead, once, rather than a
+/// second time here.
 ///
 /// **The essay ranks LAST, and that placement is load-bearing, not a
 /// preference.** [`text::Capped::head`] keeps a contiguous PREFIX of a
 /// ranked list — it stops at the first candidate that does not fit and
 /// never looks past it. The essay is the one candidate here whose own size
-/// (over 24,000 characters) can exceed the whole ceiling on its own; ranked
-/// anywhere but last, a boot with real charter or rules content would have
-/// every one of them dropped behind an essay that itself did not fit,
-/// which would cut exactly the bot-specific content a caller named this
-/// bot to read. Last, the essay either fits in what charter and rules left
-/// over, or it alone is what the ceiling declines — the rest stands. It is
-/// also the one candidate that is not bot-specific: the same text on every
-/// boot of every identity, and reachable uncontested from a boot that
-/// names no bot or has nothing else competing for the room.
+/// (over 24,000 characters) can exceed the whole remaining budget on its
+/// own; ranked anywhere but last, a boot with real rules content would have
+/// every one of them dropped behind an essay that itself did not fit, which
+/// would cut exactly the bot-specific content a caller named this bot to
+/// read. Last, the essay either fits in what the rules left over, or it
+/// alone is what the budget declines — the rest stands. It is also the one
+/// candidate that is not bot-specific: the same text on every boot of every
+/// identity, and reachable uncontested from a boot that names no bot or has
+/// nothing else competing for the room.
 ///
-/// Returns the essay to ship (`None` when `brief` already dropped it, or
-/// the ceiling did) and whether that omission is the ceiling's doing
-/// rather than `brief`'s — `identity`'s own `rules` are mutated in place
-/// for whichever `details` the ceiling reached.
-fn rank_boot_prose(
+/// Returns the essay to ship (`None` when `brief` already dropped it, or the
+/// budget did) and whether that omission is the budget's doing rather than
+/// `brief`'s — `identity`'s own `rules` are mutated in place for whichever
+/// `details` the budget reached.
+fn rank_remaining_prose(
     essay: Option<&'static str>,
     identity: &mut serde_json::Value,
+    budget: usize,
 ) -> (Option<&'static str>, bool) {
     // **An anonymous boot's `identity` is `Value::Null`, and it stays that
     // way.** Indexing a `Value` with `IndexMut` (below, to reach `rules` for
@@ -66,10 +82,6 @@ fn rank_boot_prose(
         return (essay, false);
     }
     let mut slots: Vec<(ProseSlot, usize)> = Vec::new();
-    let charter_present = identity["charter"].as_str().is_some();
-    if let Some(charter) = identity["charter"].as_str() {
-        slots.push((ProseSlot::Charter, charter.chars().count()));
-    }
     if let Some(rules) = identity["rules"].as_array() {
         for i in (0..rules.len()).rev() {
             if let Some(details) = rules[i]["details"].as_str() {
@@ -81,7 +93,7 @@ fn rank_boot_prose(
         slots.push((ProseSlot::Essay, essay.chars().count()));
     }
 
-    let kept = text::BOOT_PROSE.head(&slots, |(_, len)| *len);
+    let kept = (text::Capped { budget }).head(&slots, |(_, len)| *len);
     let kept_essay = kept
         .kept()
         .iter()
@@ -94,47 +106,12 @@ fn rank_boot_prose(
             _ => None,
         })
         .collect();
-    // Charter is ranked first, and the first candidate in a `Capped`
-    // selection is always kept — provably, not by convention — so this
-    // function never has a "charter was cut" branch to write. The assertion
-    // in this crate's own test is what makes that provable rather than
-    // merely believed.
-    debug_assert!(
-        !charter_present
-            || kept
-                .kept()
-                .iter()
-                .any(|(s, _)| matches!(s, ProseSlot::Charter)),
-        "charter is ranked first and must always be kept whole"
-    );
 
     if let Some(rules) = identity["rules"].as_array_mut() {
         for (i, rule) in rules.iter_mut().enumerate() {
-            if kept_rules.contains(&i) {
-                continue;
+            if !kept_rules.contains(&i) {
+                elide_rule_details(rule);
             }
-            let Some(details) = rule["details"].as_str().map(str::to_string) else {
-                continue;
-            };
-            let Some(fields) = rule.as_object_mut() else {
-                continue;
-            };
-            fields.insert("details".into(), serde_json::Value::Null);
-            fields.insert("details_elided".into(), true.into());
-            fields.insert("details_bytes".into(), details.len().into());
-            let subject = fields
-                .get("subject")
-                .and_then(|s| s.as_str())
-                .unwrap_or_default()
-                .to_string();
-            fields.insert(
-                "details_note".into(),
-                format!(
-                    "this rule's own reasoning is not in this boot — recall {subject} with \
-                     facts: true to read it whole"
-                )
-                .into(),
-            );
         }
     }
 
@@ -406,16 +383,44 @@ impl Jojobot {
                 Err(refused) => return Ok(refused),
             },
         };
-        // **ONE declared ceiling for the boot's own prose, ranked** — see
-        // [`rank_boot_prose`]. This runs AFTER `identity` is whole and
-        // BEFORE it goes on the wire, because it is the one place the
-        // essay's own size and the identity's own (charter, rules) can be
-        // measured together. `brief`'s own veto happens right here, in the
-        // one read of the essay this file makes — a ranking function that
-        // read the constant itself would be a second door onto it.
+        // **ONE declared ceiling for the WHOLE answer** — [`text::BOOT_ANSWER`]
+        // — not for its prose alone (rule 138's own bar: a payload the client
+        // cannot read, not a field inside it). Measure the FLOOR first:
+        // everything that ships whatever the ranking below decides — bot
+        // metadata, charter whole (it is never cut, see
+        // `rank_remaining_prose`), every rule's own structural fields
+        // (address, dates, provenance, standing, status, fields, refs),
+        // session, snapshot, skills — with every rule's `details` already
+        // gone and the essay absent. What is LEFT of the ceiling after that
+        // floor is what the rules' `details` and the essay compete for.
+        let mut floor_identity = identity.clone();
+        if let Some(rules) = floor_identity
+            .get_mut("rules")
+            .and_then(|r| r.as_array_mut())
+        {
+            for rule in rules.iter_mut() {
+                elide_rule_details(rule);
+            }
+        }
+        let floor_len = serde_json::json!({
+            "orientation": serde_json::Value::Null,
+            "orientation_elided": true,
+            "skills": skills::index(),
+            "snapshot": snapshot.clone(),
+            "identity": floor_identity,
+            "session": session.clone(),
+            "carried_session": carried.clone(),
+            "clock": self.stated_clock(),
+        })
+        .to_string()
+        .chars()
+        .count();
+        let remaining_for_prose = text::BOOT_ANSWER.budget.saturating_sub(floor_len);
+
         let mut identity = identity;
         let candidate_essay = (!brief).then_some(essay::ORIENTATION);
-        let (essay, essay_elided_by_ceiling) = rank_boot_prose(candidate_essay, &mut identity);
+        let (essay, essay_elided_by_ceiling) =
+            rank_remaining_prose(candidate_essay, &mut identity, remaining_for_prose);
         let mut answer = serde_json::json!({
             "orientation": essay,
             // **The elision is marked, and that is all it is.** The essay used
@@ -518,10 +523,10 @@ mod tests {
                 .await
                 .expect("start_here ok"),
         );
-        let charter = booted["identity"]["charter"]
-            .as_str()
-            .expect("charter is never dropped by this cut")
-            .to_string();
+        assert_eq!(
+            booted["identity"]["charter"], "Small charter.",
+            "charter is never dropped by this cut: {booted}"
+        );
         let rules = booted["identity"]["rules"]
             .as_array()
             .expect("rules is an array");
@@ -532,21 +537,14 @@ mod tests {
             assert_eq!(rule["content"], format!("rule {n}"), "{rule}");
         }
 
-        // **The whole answer's prose against the WHOLE declared ceiling.**
-        let essay_chars = booted["orientation"]
-            .as_str()
-            .map_or(0, |o| o.chars().count());
-        let total_prose: usize = charter.chars().count()
-            + essay_chars
-            + rules
-                .iter()
-                .filter_map(|r| r["details"].as_str())
-                .map(|d| d.chars().count())
-                .sum::<usize>();
+        // **The bar itself: the WHOLE serialized answer against the WHOLE
+        // declared ceiling** — never a field or a collection measured
+        // against a constant of its own (rule 106). This is what the caller
+        // actually receives, structural JSON included.
+        let whole = booted.to_string().chars().count();
         assert!(
-            total_prose <= jojobot_domain::text::BOOT_PROSE.budget,
-            "the boot's own prose — charter, essay if kept, and every kept rule's details — \
-             must fit the one declared ceiling: {total_prose} chars, rules: {rules:?}"
+            whole <= jojobot_domain::text::BOOT_ANSWER.budget,
+            "the whole answer must fit the one declared ceiling: {whole} chars"
         );
 
         // The oldest rule is what a tight remainder drops first.
@@ -571,8 +569,8 @@ mod tests {
 
     /// 🚨 **The same bar, the opposite shape: a charter big enough to be the
     /// dominant weight on its own**, with modest rules. The essay is the one
-    /// candidate ranked last — see [`rank_boot_prose`] — so a charter this
-    /// size is what proves that placement rather than merely asserting it:
+    /// candidate ranked last — see [`rank_remaining_prose`] — so a charter
+    /// this size is what proves that placement rather than merely asserting it:
     /// if the essay ranked anywhere else, it would take the charter down
     /// with it the moment it did not fit, which is exactly the regression
     /// this case exists to catch.
@@ -641,14 +639,12 @@ mod tests {
             "the reason names what actually held it back: {note}"
         );
 
-        let total_prose = charter.chars().count()
-            + rules[0]["details"]
-                .as_str()
-                .map_or(0, |d| d.chars().count());
+        // **The bar itself: the WHOLE serialized answer against the WHOLE
+        // declared ceiling.**
+        let whole = booted.to_string().chars().count();
         assert!(
-            total_prose <= jojobot_domain::text::BOOT_PROSE.budget,
-            "charter plus the one kept rule must fit the declared ceiling on their own: \
-             {total_prose} chars"
+            whole <= jojobot_domain::text::BOOT_ANSWER.budget,
+            "the whole answer must fit the one declared ceiling: {whole} chars"
         );
     }
 
