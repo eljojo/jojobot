@@ -2688,6 +2688,14 @@ pub fn retraction_of(
         // retraction that pointed wherever its author said would be a way to
         // mark somebody else's record taken back. That is why the key is
         // reserved; see [`reserved_key`].
+        //
+        // **No separate existence screen runs on this value, and none is
+        // missing.** `target` is the record `retract`'s own caller read
+        // successfully, in the transaction that is about to write this
+        // account beside it — `target.address()` names a row that
+        // demonstrably exists at the moment this call is made. A screen here
+        // would check a value nothing between the read and this write can
+        // change.
         fields: [(RETRACTS.to_string(), target.address().to_string())]
             .into_iter()
             .collect(),
@@ -2716,6 +2724,14 @@ pub fn merge_account(
     };
     Ok(NewFact {
         // Written by jojobot and never by a caller — see [`reserved_key`].
+        //
+        // **No separate existence screen runs on this value, and none is
+        // missing.** `merge`'s own caller has already matched both `folded`
+        // and `survivor` against the live entity index, by identity, in the
+        // same transaction this account is about to land in — this is not a
+        // handle resolved or transformed since, it is the exact value just
+        // checked. A screen here would check a value nothing between that
+        // check and this write can change.
         fields: [(MERGED_FROM.to_string(), folded.to_string())]
             .into_iter()
             .collect(),
