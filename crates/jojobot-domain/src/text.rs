@@ -253,11 +253,36 @@ impl Capped {
     /// whole-items rule holds — one item over the whole budget is still served
     /// whole, because half a record says something its writer did not.
     pub fn head<'a, T>(&self, all: &'a [T], size: impl Fn(&T) -> usize) -> Kept<'a, T> {
+        self.head_kept(all, size, false)
+    }
+
+    /// **The same ranked prefix as [`Capped::head`], except it may keep
+    /// NOTHING** — a first candidate that alone exceeds the budget is
+    /// declined rather than served regardless.
+    ///
+    /// `head`'s always-take-the-first guarantee is right for a COLLECTION:
+    /// returning nothing out of a non-empty one is worse than one oversized
+    /// entry, because the caller cannot tell empty from withheld. A single
+    /// piece of PROSE ranked on its own does not have that problem when its
+    /// caller has another way to reach the whole of it — see the essay's own
+    /// core-and-remainder split in `jojobot-mcp`'s `orient` module, the one
+    /// caller this exists for. Reach for `head` unless a real caller needs
+    /// this instead.
+    pub fn head_or_none<'a, T>(&self, all: &'a [T], size: impl Fn(&T) -> usize) -> Kept<'a, T> {
+        self.head_kept(all, size, true)
+    }
+
+    fn head_kept<'a, T>(
+        &self,
+        all: &'a [T],
+        size: impl Fn(&T) -> usize,
+        strict: bool,
+    ) -> Kept<'a, T> {
         let mut spent = 0usize;
         let mut taken = 0usize;
         for item in all {
             let cost = size(item);
-            if taken > 0 && spent + cost > self.budget {
+            if (strict || taken > 0) && spent + cost > self.budget {
                 break;
             }
             spent += cost;
@@ -324,14 +349,14 @@ pub const HELD_CONTEXT: Capped = Capped { budget: 2_000 };
 ///
 /// **So this is spent in two passes, not one selection.** First, the FLOOR:
 /// the whole answer as it would serialize with every rule's `details`
-/// already gone and the essay's REMAINDER absent — bot metadata, charter
-/// (always served whole; see below), the essay's own CORE (the same
-/// treatment, see below), every rule's structural fields, session,
-/// snapshot, skills. That floor is subtracted from this budget, and what is
-/// LEFT is a second, narrower [`Capped`] built at that remaining size, which
-/// ranks only the rules' `details` and the essay's remainder against it —
-/// see `rank_remaining_prose` in `jojobot-mcp`'s `orient` module, the one
-/// place both halves come together.
+/// already gone — bot metadata, charter (always served whole; see below),
+/// the essay's own CORE for a named boot (the same treatment, see below),
+/// every rule's structural fields, session, snapshot, skills. That floor is
+/// subtracted from this budget, and what is LEFT is a second, narrower
+/// [`Capped`] built at that remaining size, which ranks the rules' `details`
+/// — and, for an anonymous boot only, the whole essay — against it; see
+/// `rank_rule_details` and `essay_for_boot` in `jojobot-mcp`'s `orient`
+/// module.
 ///
 /// **`charter` is never ranked at all — it does not need to be.** It is the
 /// identity text the caller explicitly asked to read by naming this bot,
@@ -340,24 +365,30 @@ pub const HELD_CONTEXT: Capped = Capped { budget: 2_000 };
 /// rides in the FLOOR alongside the structural fields nothing ever cuts,
 /// which is what guarantees it is always served whole without a special
 /// case anywhere ranking it could get wrong. **The essay's own CORE gets the
-/// identical treatment** — a short, fixed block teaching the vocabulary a
-/// session needs before it can do anything else — so a boot never ships an
-/// essay with no vocabulary in it at all. **Each rule's `details`** ranks
-/// next, newest first, on the same reasoning [`SESSION_CHRONOLOGY`] already
-/// uses: the newest reasoning is what a session is most likely to need read
-/// in full, and an older one waits behind an ordinary `recall` of the bot.
-/// **The essay's REMAINDER ranks LAST, and that placement is load-bearing
-/// rather than a preference**: [`Capped::head`] keeps a contiguous prefix
-/// and stops at the first candidate that does not fit, never looking past
-/// it — so the remainder, the one candidate here whose own size can exceed
-/// the whole remaining budget by itself, would take every bot-specific
-/// candidate after it down too if it ranked anywhere else. Last, it either
-/// fits in what the rules left over or it alone is what the budget
-/// declines, and the identity a caller named this bot to read still stands
-/// either way — as does the essay's core, already paid for in the floor.
-/// It is also the one candidate that is not bot-specific — the same text on
-/// every boot of every identity — and it stays reachable uncontested from a
-/// boot that names no bot or has nothing else competing for the room.
+/// identical treatment for a named boot** — a short, fixed block teaching
+/// the vocabulary a session needs before it can do anything else, so a
+/// named boot never ships an essay with no vocabulary in it at all.
+/// **Each rule's `details`** ranks next, newest first, on the same
+/// reasoning [`SESSION_CHRONOLOGY`] already uses: the newest reasoning is
+/// what a session is most likely to need read in full, and an older one
+/// waits behind an ordinary `recall` of the bot. [`Capped::head`] is what
+/// ranks them — it keeps a contiguous prefix and always takes the first
+/// (newest) one whatever it costs, because a rules-heavy identity returning
+/// no reasoning at all is worse than one oversized entry.
+///
+/// **A named boot's essay stops there — the REMAINDER is not a ranking
+/// candidate for one at all**, on any charter or rule weight: it is a rule
+/// ("a named boot gets the core"), not an arithmetic outcome, because
+/// resting it on arithmetic is exactly what let the ceiling go unenforced —
+/// a rules-free identity's one and only ranked candidate used to be the
+/// remainder itself, and [`Capped::head`]'s always-take-the-first guarantee
+/// shipped it whole however far past the budget it went. **An anonymous
+/// boot gets the whole essay, core and remainder joined, as the one
+/// candidate ranked against this budget with [`Capped::head_or_none`]** —
+/// the one caller allowed to be declined entirely, because there is no
+/// identity's own content this budget has to protect instead. It is also
+/// the one candidate that is not bot-specific — the same text on every
+/// anonymous boot — and it is what "teach me this surface" is for.
 ///
 /// **The budget itself**: measured against a real client rather than
 /// estimated — 30,000 characters render inline; roughly 50,000 does not,
@@ -991,5 +1022,34 @@ mod prose_forgives_what_was_measured {
         // …and the reverse is not: we did not write the escaped form and get
         // the bare one back, and if we did, something removed it.
         assert!(!same(r"2 \* 3", "2 * 3"));
+    }
+
+    /// **`head_or_none` may keep nothing — the property `head` is not allowed
+    /// to have.** A first candidate that alone exceeds the budget is declined
+    /// rather than served regardless: paired with the case below, where a
+    /// candidate that fits is still kept, so the negative here is not just a
+    /// budget of zero.
+    #[test]
+    fn head_or_none_declines_a_first_candidate_that_alone_exceeds_budget() {
+        let kept = (Capped { budget: 10 }).head_or_none(&[20], |n| *n);
+        assert!(
+            kept.kept().is_empty(),
+            "a lone oversized candidate must not be served: {:?}",
+            kept.kept()
+        );
+        assert_eq!(kept.omitted(), 1);
+    }
+
+    /// The positive `head_or_none_declines_a_first_candidate_that_alone_exceeds_budget`
+    /// depends on: a candidate that fits is still kept, the same as `head`.
+    #[test]
+    fn head_or_none_still_keeps_a_prefix_that_fits() {
+        let kept = (Capped { budget: 10 }).head_or_none(&[4, 4, 4], |n| *n);
+        assert_eq!(
+            kept.kept(),
+            &[4, 4],
+            "the third does not fit after the first two"
+        );
+        assert_eq!(kept.omitted(), 1);
     }
 }

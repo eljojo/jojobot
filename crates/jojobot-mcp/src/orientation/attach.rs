@@ -2128,18 +2128,66 @@ mod tests {
         );
 
         // **And the payload is one a client can read**, which is the whole
-        // reason for the cap. This bot carries no rules, so the essay is the
-        // only ranked candidate and [`text::Capped::head`] ships it whole
-        // regardless of the floor — the "never serve a fragment" rule, not a
-        // regression — which is why this bound sits well below
-        // [`text::BOOT_ANSWER`]'s own 28,000 rather than at it: this case
-        // legitimately carries a full essay beside a capped chronology, and
-        // 42,000 is still comfortably under the 50,000 the operator measured
-        // as where a client stops rendering inline.
+        // reason for the cap. This bot carries no rules and, being named,
+        // never gets the essay's remainder at all — only the core, riding in
+        // the floor — so this is [`text::BOOT_ANSWER`]'s own declared
+        // ceiling, the real architectural bound, not a looser one: a named
+        // boot's answer was never going to approach it once the remainder
+        // stopped being a candidate for one.
+        let whole = resumed.to_string().chars().count();
         assert!(
-            resumed.to_string().len() < 42_000,
-            "a resumed boot is {} characters",
-            resumed.to_string().len()
+            whole <= jojobot_domain::text::BOOT_ANSWER.budget,
+            "a resumed boot is {whole} characters"
+        );
+    }
+
+    /// 🚨 **The strict-cap bar: a rules-free identity's boot fits the ONE
+    /// declared ceiling, and still carries the essay's core.**
+    ///
+    /// A rules-free named bot with a long chronology is the exact shape that
+    /// used to defeat the ceiling: the essay's remainder was the one
+    /// candidate `Capped::head` ranked here, and `head` always takes its
+    /// first candidate whatever it costs — so the remainder shipped whole
+    /// however far past the budget it went. **A named boot no longer ranks
+    /// the remainder at all** — see `essay_for_boot` — so this case is now
+    /// unconditional rather than a close call: the core rides in the floor
+    /// regardless of chronology weight, and the chronology's own cap
+    /// (`SESSION_CHRONOLOGY`) is what keeps the rest of the answer inside
+    /// the ceiling.
+    ///
+    /// **The positive is not optional**: a build that served no orientation
+    /// at all for every rules-free bot would pass the ceiling assertion
+    /// alone. The core is what a session needs to do anything, and a named
+    /// boot always gets it.
+    #[tokio::test]
+    async fn a_rules_free_bot_with_a_long_chronology_fits_the_ceiling_and_still_gets_its_core() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+        for nth in 0..20 {
+            journal_entry(
+                &jojobot,
+                &sid,
+                &format!("beat {nth:02} {}", "w".repeat(1500)),
+            )
+            .await;
+        }
+
+        let resumed = boot_answering(&jojobot, "gamma", &sid).await;
+        let whole = resumed.to_string().chars().count();
+        assert!(
+            whole <= jojobot_domain::text::BOOT_ANSWER.budget,
+            "the whole answer must fit the one declared ceiling: {whole} chars"
+        );
+
+        let orientation = resumed["orientation"]
+            .as_str()
+            .expect("a rules-free bot still gets the essay's core: {resumed}");
+        assert_eq!(
+            orientation,
+            crate::orientation::essay::ORIENTATION_CORE,
+            "the core must ride whole even when the remainder is declined entirely",
         );
     }
 

@@ -6,13 +6,6 @@
 
 use super::*;
 
-/// One slot in the boot's own ranked prose — see [`rank_remaining_prose`].
-#[derive(Clone, Copy)]
-enum ProseSlot {
-    Essay,
-    Rule(usize),
-}
-
 /// **Null out one rule's `details`, marked** — the same shape whichever
 /// caller reaches for it: a ranked cut, or the floor measurement below that
 /// has to know the answer's size with every rule's reasoning already gone.
@@ -41,76 +34,47 @@ fn elide_rule_details(rule: &mut serde_json::Value) {
     );
 }
 
-/// **Rank the rules' `details`, newest first, then the essay's REMAINDER
-/// last, against a budget already computed to be what is left of the
-/// ceiling** — see `orient` for where that number comes from. `content` and
-/// `charter` are never here: `content` is never cut at all, and `charter` is
-/// always served whole regardless of size (rule 138's own dispatch: "the
-/// interesting case... cutting it silently is worse than shipping it"), so
-/// it costs nothing to rank and is counted in the floor instead, once,
-/// rather than a second time here. **The essay's own core joins it there
-/// too** — the same reasoning, on the same short, fixed block — which is
-/// what this function ranks the remainder against a smaller budget than the
-/// whole essay would have cost.
+/// **Rank the rules' `details`, newest first, against a budget already
+/// computed to be what is left of the ceiling** — see `orient` for where
+/// that number comes from. `content` and `charter` are never here:
+/// `content` is never cut at all, and `charter` is always served whole
+/// regardless of size (rule 138's own dispatch: "the interesting case...
+/// cutting it silently is worse than shipping it"), so it costs nothing to
+/// rank and is counted in the floor instead, once, rather than a second time
+/// here.
 ///
-/// **The remainder ranks LAST, and that placement is load-bearing, not a
-/// preference.** [`text::Capped::head`] keeps a contiguous PREFIX of a
-/// ranked list — it stops at the first candidate that does not fit and
-/// never looks past it. The remainder is the one candidate here whose own
-/// size (still tens of thousands of characters) can exceed the whole
-/// remaining budget on its own; ranked anywhere but last, a boot with real
-/// rules content would have every one of them dropped behind a remainder
-/// that itself did not fit, which would cut exactly the bot-specific content
-/// a caller named this bot to read. Last, the remainder either fits in what
-/// the rules left over, or it alone is what the budget declines — the rest
-/// stands, and the core already shipped regardless. It is also the one
-/// candidate that is not bot-specific: the same text on every boot of every
-/// identity, and reachable uncontested from a boot that names no bot or has
-/// nothing else competing for the room.
+/// **The essay is not ranked here at all, for either shape of boot** — see
+/// `orient` for what each gets and why. `head`'s always-take-the-first
+/// guarantee is right for this COLLECTION: a rules-heavy identity returning
+/// no reasoning at all is worse than one oversized entry.
 ///
-/// Returns the remainder to ship (`None` when `brief` already dropped it, or
-/// the budget did) and whether that omission is the budget's doing rather
-/// than `brief`'s — `identity`'s own `rules` are mutated in place for
-/// whichever `details` the budget reached.
-fn rank_remaining_prose(
-    essay: Option<&'static str>,
-    identity: &mut serde_json::Value,
-    budget: usize,
-) -> (Option<&'static str>, bool) {
-    // **An anonymous boot's `identity` is `Value::Null`, and it stays that
-    // way.** Indexing a `Value` with `IndexMut` (below, to reach `rules` for
-    // the elision) auto-vivifies `Null` into an empty object on the first
-    // write — so every field this function might touch is read-only above
-    // this guard, and nothing below runs when there is no identity to rank.
-    if identity.is_null() {
-        return (essay, false);
-    }
-    let mut slots: Vec<(ProseSlot, usize)> = Vec::new();
+/// `identity`'s own `rules` are mutated in place for whichever `details` the
+/// budget reached. A `Value::Null` identity (anonymous) carries no rules and
+/// this is a no-op.
+fn rank_rule_details(identity: &mut serde_json::Value, budget: usize) {
+    let mut rule_slots: Vec<(usize, usize)> = Vec::new();
     if let Some(rules) = identity["rules"].as_array() {
         for i in (0..rules.len()).rev() {
             if let Some(details) = rules[i]["details"].as_str() {
-                slots.push((ProseSlot::Rule(i), details.chars().count()));
+                rule_slots.push((i, details.chars().count()));
             }
         }
     }
-    if let Some(essay) = essay {
-        slots.push((ProseSlot::Essay, essay.chars().count()));
-    }
-
-    let kept = (text::Capped { budget }).head(&slots, |(_, len)| *len);
-    let kept_essay = kept
+    let kept_rules: std::collections::HashSet<usize> = (text::Capped { budget })
+        .head(&rule_slots, |(_, len)| *len)
         .kept()
         .iter()
-        .any(|(slot, _)| matches!(slot, ProseSlot::Essay));
-    let kept_rules: std::collections::HashSet<usize> = kept
-        .kept()
-        .iter()
-        .filter_map(|(slot, _)| match slot {
-            ProseSlot::Rule(i) => Some(*i),
-            _ => None,
-        })
+        .map(|(i, _)| *i)
         .collect();
 
+    // **An anonymous boot's `identity` is `Value::Null`, and it stays that
+    // way.** Indexing a `Value` with `IndexMut` (to reach `rules` for the
+    // elision) auto-vivifies `Null` into an empty object on the first write
+    // — so this is read-only above and this guard is what keeps it that way
+    // when there is nothing to rank.
+    if identity.is_null() {
+        return;
+    }
     if let Some(rules) = identity["rules"].as_array_mut() {
         for (i, rule) in rules.iter_mut().enumerate() {
             if !kept_rules.contains(&i) {
@@ -118,10 +82,55 @@ fn rank_remaining_prose(
             }
         }
     }
+}
 
-    match essay.is_some() && kept_essay {
-        true => (essay, false),
-        false => (None, essay.is_some() && !kept_essay),
+/// **What the essay's own text is for this boot, and whether the ceiling had
+/// a say in it — the two shapes of boot are not the same question.**
+///
+/// **A named boot never gets the remainder — it is not a ranking candidate,
+/// it is a rule.** The core already carries the kinds, what a claim carries,
+/// the structural type questions and the call that reaches the rest, which
+/// is the teaching a session needs before it can write anything; the
+/// remainder waits behind an anonymous boot, always, whatever the ceiling
+/// has room for. Resting this on arithmetic instead — ranking the remainder
+/// against whatever budget happened to be left — is the shape that broke:
+/// the answer depended on a margin (206 characters, on the lightest real
+/// identity measured) that a single new sentence in the essay could flip
+/// with nobody noticing.
+///
+/// **An anonymous boot gets the whole essay, core and remainder joined, and
+/// that answer still goes through the cap** — [`text::Capped::head_or_none`]
+/// — rather than being assumed to fit because there is no identity to pay
+/// for. Today's headroom is real (an anonymous floor measured lighter than
+/// the lightest named one by over a thousand characters, purely from the
+/// identity-shaped JSON a named boot always carries) but it is a fact about
+/// today's essay, not a guarantee, and the one candidate here is the one
+/// this exists to catch if that ever changes.
+///
+/// Returns the text to ship (`None` when `brief` already dropped it, or an
+/// anonymous boot's whole essay did not fit) and whether an anonymous boot's
+/// omission was the ceiling's doing rather than `brief`'s.
+fn essay_for_boot(
+    brief: bool,
+    identity: &serde_json::Value,
+    budget: usize,
+) -> (Option<String>, bool) {
+    if brief {
+        return (None, false);
+    }
+    if !identity.is_null() {
+        return (Some(essay::ORIENTATION_CORE.to_string()), false);
+    }
+    let whole = format!(
+        "{}{}",
+        essay::ORIENTATION_CORE,
+        essay::ORIENTATION_REMAINDER
+    );
+    let candidates = [whole.chars().count()];
+    let kept = (text::Capped { budget }).head_or_none(&candidates, |len| *len);
+    match kept.kept().is_empty() {
+        false => (Some(whole), false),
+        true => (None, true),
     }
 }
 
@@ -391,14 +400,14 @@ impl Jojobot {
         // — not for its prose alone (rule 138's own bar: a payload the client
         // cannot read, not a field inside it). Measure the FLOOR first:
         // everything that ships whatever the ranking below decides — bot
-        // metadata, charter whole (it is never cut, see
-        // `rank_remaining_prose`), the essay's own core (also never cut, see
-        // below), every rule's own structural fields
-        // (address, dates, provenance, standing, status, fields, refs),
-        // session, snapshot, skills — with every rule's `details` already
-        // gone and the essay's remainder absent. What is LEFT of the ceiling
-        // after that floor is what the rules' `details` and the essay's
-        // remainder compete for.
+        // metadata, charter whole (it is never cut, see `rank_rule_details`),
+        // the essay's own core for a named boot (also never cut, see
+        // `essay_for_boot`), every rule's own structural fields (address,
+        // dates, provenance, standing, status, fields, refs), session,
+        // snapshot, skills — with every rule's `details` already gone. What
+        // is LEFT of the ceiling after that floor is what the rules'
+        // `details` compete for, and — for an anonymous boot only — what the
+        // whole essay is ranked against; see `essay_for_boot`.
         let mut floor_identity = identity.clone();
         if let Some(rules) = floor_identity
             .get_mut("rules")
@@ -408,11 +417,13 @@ impl Jojobot {
                 elide_rule_details(rule);
             }
         }
-        // **The essay's core rides in the floor, exactly like the charter.**
-        // It is short by design and never ranked, so its true cost is
-        // counted here, once, rather than competing with the rules'
-        // `details` for what the remainder ranks against below.
-        let core = (!brief).then_some(essay::ORIENTATION_CORE);
+        // **The essay's core rides in the floor for a named boot, exactly
+        // like the charter — an anonymous boot pays nothing here, because it
+        // either gets the whole essay or none of it, ranked below.** It is
+        // short by design and never ranked for a named boot, so its true
+        // cost is counted here, once, rather than competing with the rules'
+        // `details`.
+        let core = (!brief && !identity.is_null()).then_some(essay::ORIENTATION_CORE);
         let floor_len = serde_json::json!({
             "orientation": core,
             "orientation_elided": true,
@@ -429,16 +440,9 @@ impl Jojobot {
         let remaining_for_prose = text::BOOT_ANSWER.budget.saturating_sub(floor_len);
 
         let mut identity = identity;
-        let candidate_remainder = (!brief).then_some(essay::ORIENTATION_REMAINDER);
-        let (remainder, remainder_elided_by_ceiling) =
-            rank_remaining_prose(candidate_remainder, &mut identity, remaining_for_prose);
-        // **The core never travels alone when it can help it.** Whole when the
-        // remainder fit, core-only when the ceiling declined it — either way
-        // this is the one string a caller reads, never two fields to stitch.
-        let orientation = core.map(|core| match remainder {
-            Some(remainder) => format!("{core}{remainder}"),
-            None => core.to_string(),
-        });
+        rank_rule_details(&mut identity, remaining_for_prose);
+        let (orientation, essay_elided_by_ceiling) =
+            essay_for_boot(brief, &identity, remaining_for_prose);
         let mut answer = serde_json::json!({
             "orientation": orientation,
             // **The elision is marked, and that is all it is.** The essay used
@@ -447,7 +451,12 @@ impl Jojobot {
             // staleness check replaces it. What is left is the marker every
             // elision on this surface owes — less came back, and the caller is
             // told so rather than left to infer withheld from empty.
-            "orientation_elided": remainder.is_none(),
+            //
+            // **True unless an anonymous boot got the whole essay** — the
+            // only shape that is ever NOT missing something: a named boot's
+            // core is elided by design, and `None` (brief, or an anonymous
+            // boot the ceiling declined) is elided by construction.
+            "orientation_elided": !(identity.is_null() && orientation.is_some()),
             // **Names and when-to-use lines, never bodies.** A session that
             // needs a procedure fetches it by name; a boot that shipped every
             // one would spend a session's attention on the jobs it is not
@@ -469,21 +478,30 @@ impl Jojobot {
             // exception, and a session reads it before it writes anything.
             "clock": self.stated_clock(),
         });
-        // **The one case `orientation_elided` alone cannot explain**: the
-        // caller asked for the essay (`brief: false`) and its remainder still
-        // is not here, because the boot's own charter and rules did not leave
-        // the declared ceiling room for it — the core still shipped. `brief`'s
-        // own case adds no note — the caller set that flag and already knows
-        // why.
-        if remainder_elided_by_ceiling && let Some(obj) = answer.as_object_mut() {
-            obj.insert(
-                "orientation_note".into(),
-                "the essay's core shipped whole; the rest did not fit this boot's declared \
-                 prose ceiling alongside its charter and rules — call start_here again naming \
-                 no bot, or this one with nothing else competing for the ceiling, to read it \
-                 whole"
-                    .into(),
-            );
+        // **Three reasons an answer can carry less than the whole essay, and
+        // `brief`'s is the only one that needs no note** — the caller set
+        // that flag and already knows why. The other two are `orientation`
+        // itself distinguishing them: a named boot's core, present, means
+        // the remainder was never offered — a designed omission, not a
+        // ceiling one. `None` on an anonymous boot means the ceiling
+        // declined the whole essay outright.
+        if !brief && let Some(obj) = answer.as_object_mut() {
+            let note = match (identity.is_null(), essay_elided_by_ceiling) {
+                (false, _) => Some(
+                    "a named boot's orientation is the essay's core; call start_here again \
+                     naming no bot to read the whole essay"
+                        .to_string(),
+                ),
+                (true, true) => Some(
+                    "the essay did not fit this boot's declared prose ceiling — call start_here \
+                     again with nothing else competing for it to read it whole"
+                        .to_string(),
+                ),
+                (true, false) => None,
+            };
+            if let Some(note) = note {
+                obj.insert("orientation_note".into(), note.into());
+            }
         }
         json_result(&answer)
     }
@@ -587,20 +605,20 @@ mod tests {
         assert!(newest["details_elided"].is_null(), "{newest}");
     }
 
-    /// 🚨 **The same bar, the opposite shape: a charter big enough to be the
-    /// dominant weight on its own**, with modest rules. The essay's remainder
-    /// is the one candidate ranked last — see [`rank_remaining_prose`] — so a
-    /// charter this size is what proves that placement rather than merely
-    /// asserting it: if the remainder ranked anywhere else, it would take the
-    /// charter down with it the moment it did not fit, which is exactly the
-    /// regression this case exists to catch.
+    /// 🚨 **A charter big enough to be the dominant weight on its own**, with
+    /// modest rules — proving `charter` and a rule's own `details` are still
+    /// ranked and served exactly as before; none of that changed when the
+    /// essay stopped being a ranking candidate for a named boot (see
+    /// `essay_for_boot`).
     ///
-    /// **And this is the negative half of the core/remainder bar**: a boot
-    /// heavy enough to cut the essay still carries the core whole — never
-    /// null, never a mangled fragment of the remainder. `the_essay_ships_whole_when_there_is_room`
-    /// below is the positive it is paired with.
+    /// **The core is never null, whatever the charter costs** — a named
+    /// boot's orientation is the core by rule, not by a ranking this charter
+    /// could have won or lost, so a heavy charter proves nothing different
+    /// about the essay than a light one does. `a_light_named_boot_still_gets_only_the_core`
+    /// is the same claim, cheaper to construct; this one exists for the
+    /// charter and rule-ranking behaviour beside it.
     #[tokio::test]
-    async fn a_boot_ranked_heavy_in_charter_keeps_it_whole_and_elides_the_essay_with_a_reason() {
+    async fn a_boot_ranked_heavy_in_charter_still_serves_charter_rule_and_core_whole() {
         let jojobot = handler();
         make_bot(&jojobot, "gamma").await;
         jojobot
@@ -651,18 +669,16 @@ mod tests {
             "{rules:?}"
         );
 
-        // **The core is never null — this is the bar itself.** A boot heavy
-        // enough to cut the essay's remainder still carries the short core
-        // whole: what the kinds are, what a claim carries, the structural
-        // type questions, and the call that reaches the rest.
+        // **The core is never null, and it is the whole of what a named boot
+        // gets — not a ranking outcome this charter's weight could tip.**
         let orientation = booted["orientation"]
             .as_str()
             .expect("the core always ships when brief is false: {booted}");
         assert_eq!(
             orientation,
             crate::orientation::essay::ORIENTATION_CORE,
-            "a boot this heavy must still carry exactly the core and nothing of the \
-             remainder: {orientation:?}",
+            "a named boot must carry exactly the core and nothing of the remainder, \
+             heavy charter or not: {orientation:?}",
         );
         // **The remainder is genuinely gone, not merely truncated** — content
         // that only the remainder carries must not appear.
@@ -673,10 +689,11 @@ mod tests {
         assert_eq!(booted["orientation_elided"], true, "{booted}");
         let note = booted["orientation_note"]
             .as_str()
-            .expect("the ceiling's own omission carries a reason brief's does not need: {booted}");
+            .expect("a named boot's core-only answer names why: {booted}");
         assert!(
-            note.contains("ceiling"),
-            "the reason names what actually held it back: {note}"
+            note.contains("core"),
+            "the reason names what a named boot actually gets, not a ceiling this charter's \
+             weight never touched: {note}"
         );
 
         // **The bar itself: the WHOLE serialized answer against the WHOLE
@@ -688,16 +705,61 @@ mod tests {
         );
     }
 
-    /// 🚨 **The positive half of the core/remainder bar**: a boot with room
-    /// to spare ships the essay whole — core and remainder joined, byte for
-    /// byte the same text a session would read from `essay::orientation()`.
-    /// Paired with `a_boot_ranked_heavy_in_charter_keeps_it_whole_and_elides_the_essay_with_a_reason`
-    /// above, which is the same code path under pressure: together they are
-    /// the case the split point could get wrong twice — shipping only the
-    /// core when there was room for everything, or silently dropping content
-    /// out of the middle of the essay rather than cleanly at the seam.
+    /// 🚨 **The positive half of the core/remainder bar, re-pointed at the
+    /// boot that actually has this behaviour.**
+    ///
+    /// A named boot can never get the whole essay — the remainder is not a
+    /// ranking candidate for one, it is a rule (`essay_for_boot`'s own doc).
+    /// That was this case's original shape, resting on whatever margin a
+    /// light identity happened to leave; it broke the day the margin ran out
+    /// (206 characters short, on the lightest real identity measured), and
+    /// fixing the margin would only have moved the cliff. **An anonymous
+    /// boot is where "whole" is the actual, load-bearing behaviour** — no
+    /// identity to pay for, so it is what a caller who asked to be taught
+    /// the surface actually gets, and it is worth proving the essay's own
+    /// path through the cap still ships it whole rather than assuming an
+    /// anonymous boot never has to ask.
     #[tokio::test]
-    async fn the_essay_ships_whole_when_there_is_room() {
+    async fn an_anonymous_boot_ships_the_essay_whole() {
+        let jojobot = handler();
+        let booted = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    timezone: None,
+                    bot: None,
+                    brief: Some(false),
+                    skill: None,
+                    resume: None,
+                    sid: None,
+                    today: None,
+                }))
+                .await
+                .expect("start_here ok"),
+        );
+
+        let orientation = booted["orientation"]
+            .as_str()
+            .expect("an anonymous boot ships the essay: {booted}");
+        assert_eq!(
+            orientation,
+            crate::orientation::essay::orientation(),
+            "an anonymous boot must ship the essay whole, core and remainder joined",
+        );
+        assert_eq!(booted["orientation_elided"], false, "{booted}");
+        assert!(
+            booted["orientation_note"].is_null(),
+            "nothing was cut, so there is nothing to explain: {booted}"
+        );
+    }
+
+    /// **The negative this pairs with: a named boot never gets the
+    /// remainder, whatever room the ceiling has.** A "Small charter." bot
+    /// with no rules is about as light as a named identity gets — if the
+    /// remainder were still a candidate for anyone, it would fit here — and
+    /// it still gets the core alone, because the rule is that a named boot
+    /// gets the core, not that it sometimes wins a ranking.
+    #[tokio::test]
+    async fn a_light_named_boot_still_gets_only_the_core() {
         let jojobot = handler();
         make_bot(&jojobot, "gamma").await;
         jojobot
@@ -726,16 +788,19 @@ mod tests {
 
         let orientation = booted["orientation"]
             .as_str()
-            .expect("a light boot ships the essay: {booted}");
+            .expect("a named boot still gets the core: {booted}");
         assert_eq!(
             orientation,
-            crate::orientation::essay::orientation(),
-            "a boot with room to spare must ship the essay whole, core and remainder joined",
+            essay::ORIENTATION_CORE,
+            "a named boot must never carry the remainder, light identity or not",
         );
-        assert_eq!(booted["orientation_elided"], false, "{booted}");
+        assert_eq!(booted["orientation_elided"], true, "{booted}");
+        let note = booted["orientation_note"]
+            .as_str()
+            .expect("a named boot's core-only answer names why: {booted}");
         assert!(
-            booted["orientation_note"].is_null(),
-            "nothing was cut, so there is nothing to explain: {booted}"
+            note.contains("core"),
+            "the reason names what a named boot actually gets: {note}"
         );
     }
 
@@ -1207,10 +1272,21 @@ mod tests {
         assert!(on_the_board.contains(&"bot:delta".to_string()), "{booted}");
     }
 
-    /// **One orientation, one door.** Naming a bot is `start_here` plus an
-    /// identity — not a second world-model to drift out of step with the first.
+    /// **One orientation, one door — but not one answer any more, by
+    /// design.** Naming a bot is `start_here` plus an identity, never a
+    /// second world-model to drift out of step with the first; that used to
+    /// mean the two doors' `orientation` text was byte-identical, which
+    /// stopped being true the day a named boot stopped being offered the
+    /// remainder at all (`essay_for_boot`'s own doc). Equality would now be
+    /// asserting the split does not exist. **The relationship that survives
+    /// is what this proves instead**: both carry the core, whole and
+    /// identical; only the anonymous one also carries the remainder; and the
+    /// named one names the call that reaches what it withheld — so a session
+    /// that boots as an identity still learns there is more, and how to get
+    /// it, rather than reading a shorter text with no sign anything is
+    /// missing.
     #[tokio::test]
-    async fn a_named_boot_and_an_anonymous_one_hand_over_the_same_world() {
+    async fn a_named_boot_and_an_anonymous_one_share_the_core_and_differ_by_design() {
         let jojobot = handler();
         make_bot(&jojobot, "gamma").await;
 
@@ -1229,9 +1305,38 @@ mod tests {
                 .expect("start_here ok"),
         );
         let identified = boot(&jojobot, "gamma").await;
+
+        let anonymous_orientation = anonymous["orientation"]
+            .as_str()
+            .expect("an anonymous boot ships the essay: {anonymous}");
+        let named_orientation = identified["orientation"]
+            .as_str()
+            .expect("a named boot ships the core: {identified}");
         assert_eq!(
-            anonymous["orientation"], identified["orientation"],
-            "the world-model is one text, or the two doors teach different jojobots"
+            anonymous_orientation,
+            crate::orientation::essay::orientation(),
+            "the anonymous boot carries the core and the remainder, joined: {anonymous}",
+        );
+        assert_eq!(
+            named_orientation,
+            essay::ORIENTATION_CORE,
+            "the named boot carries the core alone: {identified}",
+        );
+        assert!(
+            anonymous_orientation.starts_with(named_orientation),
+            "the named boot's text must be a genuine prefix of the anonymous one's, not merely \
+             equal in length or independently worded",
+        );
+        let note = identified["orientation_note"]
+            .as_str()
+            .expect("the named boot names the call that reaches what it withheld: {identified}");
+        assert!(
+            note.contains("start_here"),
+            "the note must name the way back to the rest: {note}"
+        );
+        assert!(
+            anonymous["orientation_note"].is_null(),
+            "the anonymous boot withheld nothing, so it has nothing to explain: {anonymous}"
         );
         // **What EXISTS is one answer; whose queue it is, is not.** The bots
         // themselves are the shared invariant — their mail is scoped to the

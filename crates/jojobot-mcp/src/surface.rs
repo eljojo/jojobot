@@ -495,12 +495,14 @@ fn there_is_exactly_one_orientation_verb() {
             "Parameters<OrientArgs>",
             1,
         ),
-        // Defined once, read once — one count per half, since the essay is
-        // now two blocks (`ORIENTATION_CORE`, always served; `ORIENTATION_REMAINDER`,
-        // ranked). A door that reimplemented the answer rather than calling
-        // `orient` would still have to reach for the essay, and this is
-        // where that shows.
-        ("readers of the essay's core", "ORIENTATION_CORE", 2),
+        // Defined once, read at every legitimate site — a door that
+        // reimplemented the answer rather than calling `orient` would still
+        // have to reach for the essay, and this is where that shows. The
+        // core has more readers than the remainder because a named boot
+        // decides on it twice more (sized into the floor, then served) and
+        // an anonymous boot joins it with the remainder for its own one
+        // candidate; the remainder is read only there.
+        ("readers of the essay's core", "ORIENTATION_CORE", 4),
         (
             "readers of the essay's remainder",
             "ORIENTATION_REMAINDER",
