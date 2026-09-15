@@ -70,3 +70,55 @@ fn an_unknown_argument_is_refused_by_name() {
         "the refusal names what it did not understand: {unknown}",
     );
 }
+
+/// Every call site in THIS FILE that spawns the real binary, as `line, args`.
+///
+/// **Textual, on purpose.** Proving a call omits `--playbook` by running it
+/// would mean spawning the binary with no room named — the exact thing being
+/// guarded against. Reading the source is the only way to ask the question
+/// without doing the thing it forbids.
+fn calls_to_run(text: &str) -> Vec<(usize, String)> {
+    text.lines()
+        .enumerate()
+        .filter_map(|(at, line)| {
+            let start = line.find("run(&[")?;
+            let end = line[start..].find("])")?;
+            Some((at + 1, line[start..start + end + 2].to_string()))
+        })
+        .collect()
+}
+
+/// **Nothing in this file may spawn the binary with no room named.**
+///
+/// An omitted `--playbook` resolves to the rooms table's default room and runs
+/// it for real (decision log 299) — that used to be a refusal and no longer
+/// is, so nothing stops a future call site here from doing it by accident.
+/// This scans the file's own source for every `run(&[...])` call and refuses
+/// any that does not carry `--playbook`.
+#[test]
+fn nothing_here_calls_the_binary_with_no_playbook() {
+    let here = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/entrance.rs");
+    let text = std::fs::read_to_string(&here).expect("this file is readable");
+    // Everything above the scanner itself: the guard's own source names the
+    // pattern it looks for, which would otherwise match itself.
+    let boundary = text
+        .find("fn calls_to_run")
+        .expect("this function stays in the file it scans");
+    let calls = calls_to_run(&text[..boundary]);
+    assert!(
+        calls.len() >= 2,
+        "found only {} call site(s) to run(), so this scan is reading almost nothing",
+        calls.len(),
+    );
+    let unguarded: Vec<String> = calls
+        .iter()
+        .filter(|(_, args)| !args.contains("--playbook"))
+        .map(|(line, args)| format!("line {line}: {args}"))
+        .collect();
+    assert!(
+        unguarded.is_empty(),
+        "a call to run() with no --playbook would spawn the real binary against the default \
+         room, for real:\n{}",
+        unguarded.join("\n"),
+    );
+}
