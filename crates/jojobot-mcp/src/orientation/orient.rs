@@ -6,6 +6,144 @@
 
 use super::*;
 
+/// One slot in the boot's own ranked prose — see [`rank_boot_prose`].
+#[derive(Clone, Copy)]
+enum ProseSlot {
+    Charter,
+    Essay,
+    Rule(usize),
+}
+
+/// **Rank the boot's own free-form prose against ONE declared ceiling** —
+/// [`text::BOOT_PROSE`] — never a constant per field (rule 106). This is
+/// the one place all of it can be measured together: the caller reads the
+/// essay (once — see `there_is_exactly_one_orientation_verb`) and this
+/// function ranks it beside the charter and rules that live inside
+/// `identity`, assembled by a different call.
+///
+/// **Charter ranks first and is ALWAYS served whole.** It is the identity
+/// text this caller explicitly asked to read by naming the bot, and the one
+/// thing on this surface that is "what an identity is FOR" — cutting it
+/// silently is worse than shipping it. Ranking it first is what guarantees
+/// this: the first candidate in a [`text::Capped`] selection is always kept
+/// whole, whatever it costs, so charter can never be the one a tight ceiling
+/// drops.
+///
+/// **Each rule's `details` ranks next, newest first** — the same reasoning
+/// [`text::SESSION_CHRONOLOGY`] already uses: the newest reasoning is what a
+/// session is most likely to need read in full, and an older one waits
+/// behind an ordinary `recall` of the bot. `content` is never ranked and
+/// never cut — every rule keeps its own line regardless.
+///
+/// **The essay ranks LAST, and that placement is load-bearing, not a
+/// preference.** [`text::Capped::head`] keeps a contiguous PREFIX of a
+/// ranked list — it stops at the first candidate that does not fit and
+/// never looks past it. The essay is the one candidate here whose own size
+/// (over 24,000 characters) can exceed the whole ceiling on its own; ranked
+/// anywhere but last, a boot with real charter or rules content would have
+/// every one of them dropped behind an essay that itself did not fit,
+/// which would cut exactly the bot-specific content a caller named this
+/// bot to read. Last, the essay either fits in what charter and rules left
+/// over, or it alone is what the ceiling declines — the rest stands. It is
+/// also the one candidate that is not bot-specific: the same text on every
+/// boot of every identity, and reachable uncontested from a boot that
+/// names no bot or has nothing else competing for the room.
+///
+/// Returns the essay to ship (`None` when `brief` already dropped it, or
+/// the ceiling did) and whether that omission is the ceiling's doing
+/// rather than `brief`'s — `identity`'s own `rules` are mutated in place
+/// for whichever `details` the ceiling reached.
+fn rank_boot_prose(
+    essay: Option<&'static str>,
+    identity: &mut serde_json::Value,
+) -> (Option<&'static str>, bool) {
+    // **An anonymous boot's `identity` is `Value::Null`, and it stays that
+    // way.** Indexing a `Value` with `IndexMut` (below, to reach `rules` for
+    // the elision) auto-vivifies `Null` into an empty object on the first
+    // write — so every field this function might touch is read-only above
+    // this guard, and nothing below runs when there is no identity to rank.
+    if identity.is_null() {
+        return (essay, false);
+    }
+    let mut slots: Vec<(ProseSlot, usize)> = Vec::new();
+    let charter_present = identity["charter"].as_str().is_some();
+    if let Some(charter) = identity["charter"].as_str() {
+        slots.push((ProseSlot::Charter, charter.chars().count()));
+    }
+    if let Some(rules) = identity["rules"].as_array() {
+        for i in (0..rules.len()).rev() {
+            if let Some(details) = rules[i]["details"].as_str() {
+                slots.push((ProseSlot::Rule(i), details.chars().count()));
+            }
+        }
+    }
+    if let Some(essay) = essay {
+        slots.push((ProseSlot::Essay, essay.chars().count()));
+    }
+
+    let kept = text::BOOT_PROSE.head(&slots, |(_, len)| *len);
+    let kept_essay = kept
+        .kept()
+        .iter()
+        .any(|(slot, _)| matches!(slot, ProseSlot::Essay));
+    let kept_rules: std::collections::HashSet<usize> = kept
+        .kept()
+        .iter()
+        .filter_map(|(slot, _)| match slot {
+            ProseSlot::Rule(i) => Some(*i),
+            _ => None,
+        })
+        .collect();
+    // Charter is ranked first, and the first candidate in a `Capped`
+    // selection is always kept — provably, not by convention — so this
+    // function never has a "charter was cut" branch to write. The assertion
+    // in this crate's own test is what makes that provable rather than
+    // merely believed.
+    debug_assert!(
+        !charter_present
+            || kept
+                .kept()
+                .iter()
+                .any(|(s, _)| matches!(s, ProseSlot::Charter)),
+        "charter is ranked first and must always be kept whole"
+    );
+
+    if let Some(rules) = identity["rules"].as_array_mut() {
+        for (i, rule) in rules.iter_mut().enumerate() {
+            if kept_rules.contains(&i) {
+                continue;
+            }
+            let Some(details) = rule["details"].as_str().map(str::to_string) else {
+                continue;
+            };
+            let Some(fields) = rule.as_object_mut() else {
+                continue;
+            };
+            fields.insert("details".into(), serde_json::Value::Null);
+            fields.insert("details_elided".into(), true.into());
+            fields.insert("details_bytes".into(), details.len().into());
+            let subject = fields
+                .get("subject")
+                .and_then(|s| s.as_str())
+                .unwrap_or_default()
+                .to_string();
+            fields.insert(
+                "details_note".into(),
+                format!(
+                    "this rule's own reasoning is not in this boot — recall {subject} with \
+                     facts: true to read it whole"
+                )
+                .into(),
+            );
+        }
+    }
+
+    match essay.is_some() && kept_essay {
+        true => (essay, false),
+        false => (None, essay.is_some() && !kept_essay),
+    }
+}
+
 impl Jojobot {
     /// The one orientation, anonymous or identified — **the one call site is
     /// the point.** Naming a bot adds the identity half to an answer that is
@@ -268,15 +406,25 @@ impl Jojobot {
                 Err(refused) => return Ok(refused),
             },
         };
-        json_result(&serde_json::json!({
-            "orientation": if brief { serde_json::Value::Null } else { essay::ORIENTATION.into() },
+        // **ONE declared ceiling for the boot's own prose, ranked** — see
+        // [`rank_boot_prose`]. This runs AFTER `identity` is whole and
+        // BEFORE it goes on the wire, because it is the one place the
+        // essay's own size and the identity's own (charter, rules) can be
+        // measured together. `brief`'s own veto happens right here, in the
+        // one read of the essay this file makes — a ranking function that
+        // read the constant itself would be a second door onto it.
+        let mut identity = identity;
+        let candidate_essay = (!brief).then_some(essay::ORIENTATION);
+        let (essay, essay_elided_by_ceiling) = rank_boot_prose(candidate_essay, &mut identity);
+        let mut answer = serde_json::json!({
+            "orientation": essay,
             // **The elision is marked, and that is all it is.** The essay used
             // to arrive stamped with a version so a returning session could ask
             // whether the copy it held was current; the stamp is gone, and no
             // staleness check replaces it. What is left is the marker every
             // elision on this surface owes — less came back, and the caller is
             // told so rather than left to infer withheld from empty.
-            "orientation_elided": brief,
+            "orientation_elided": essay.is_none(),
             // **Names and when-to-use lines, never bodies.** A session that
             // needs a procedure fetches it by name; a boot that shipped every
             // one would spend a session's attention on the jobs it is not
@@ -297,7 +445,22 @@ impl Jojobot {
             // ordinary answer and means the real clock; present is the
             // exception, and a session reads it before it writes anything.
             "clock": self.stated_clock(),
-        }))
+        });
+        // **The one case `orientation_elided` alone cannot explain**: the
+        // caller asked for the essay (`brief: false`) and it still is not
+        // here, because the boot's own charter and rules did not leave the
+        // declared ceiling room for it. `brief`'s own case adds no note —
+        // the caller set that flag and already knows why.
+        if essay_elided_by_ceiling && let Some(obj) = answer.as_object_mut() {
+            obj.insert(
+                "orientation_note".into(),
+                "the essay did not fit this boot's declared prose ceiling alongside its charter \
+                 and rules — call start_here again naming no bot, or this one with nothing else \
+                 competing for the ceiling, to read it on its own"
+                    .into(),
+            );
+        }
+        json_result(&answer)
     }
 }
 
@@ -308,6 +471,186 @@ mod tests {
     use crate::mailboxes::testing::*;
     use crate::memory::testing::*;
     use crate::session::testing::*;
+
+    /// 🚨 **The bar the correction asked for: the WHOLE answer against the
+    /// declared ceiling, not one field against one constant** (rule 106,
+    /// decision log 297/298) — a rules-heavy identity. Ten rules, each
+    /// carrying details real enough that no single one is trivially small
+    /// next to the others, so only a genuine rank-and-cut over every one of
+    /// them — never a bound on the collection alone — keeps the newest end
+    /// while the essay competes for what is left, exactly as a real
+    /// identity with a long history of rules would.
+    #[tokio::test]
+    async fn a_boot_ranked_heavy_in_rules_cuts_the_oldest_details_and_still_fits_one_ceiling() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        jojobot
+            .set_charter(Parameters(SetCharterArgs {
+                bot: "gamma".into(),
+                prose: "Small charter.".into(),
+                sid: Some(crate::harness::TEST_SID.into()),
+            }))
+            .await
+            .expect("set_charter ok");
+
+        for n in 0..10 {
+            capture_ok(
+                &jojobot,
+                CaptureArgs {
+                    details: Some(format!("rule {n} reasoning: {}", "x".repeat(3_000))),
+                    ..capture_args("bot:gamma", &format!("rule {n}"))
+                },
+            )
+            .await;
+        }
+
+        let booted = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    timezone: None,
+                    bot: Some("gamma".into()),
+                    brief: Some(false),
+                    skill: None,
+                    resume: None,
+                    sid: None,
+                    today: None,
+                }))
+                .await
+                .expect("start_here ok"),
+        );
+        let charter = booted["identity"]["charter"]
+            .as_str()
+            .expect("charter is never dropped by this cut")
+            .to_string();
+        let rules = booted["identity"]["rules"]
+            .as_array()
+            .expect("rules is an array");
+        assert_eq!(rules.len(), 10, "every rule is still listed: {rules:?}");
+
+        // Content never drops — it is the short, curated half.
+        for (n, rule) in rules.iter().enumerate() {
+            assert_eq!(rule["content"], format!("rule {n}"), "{rule}");
+        }
+
+        // **The whole answer's prose against the WHOLE declared ceiling.**
+        let essay_chars = booted["orientation"]
+            .as_str()
+            .map_or(0, |o| o.chars().count());
+        let total_prose: usize = charter.chars().count()
+            + essay_chars
+            + rules
+                .iter()
+                .filter_map(|r| r["details"].as_str())
+                .map(|d| d.chars().count())
+                .sum::<usize>();
+        assert!(
+            total_prose <= jojobot_domain::text::BOOT_PROSE.budget,
+            "the boot's own prose — charter, essay if kept, and every kept rule's details — \
+             must fit the one declared ceiling: {total_prose} chars, rules: {rules:?}"
+        );
+
+        // The oldest rule is what a tight remainder drops first.
+        let oldest = &rules[0];
+        assert!(oldest["details"].is_null(), "{oldest}");
+        assert_eq!(oldest["details_elided"], true, "{oldest}");
+        assert!(
+            oldest["details_bytes"].as_u64().expect("a byte count") > 0,
+            "{oldest}"
+        );
+        let note = oldest["details_note"].as_str().expect("a note");
+        assert!(
+            note.contains("recall") && note.contains("facts"),
+            "the way back is named: {note}"
+        );
+
+        // The newest rule is the positive the drop above depends on.
+        let newest = rules.last().expect("at least one rule");
+        assert!(newest["details"].is_string(), "{newest}");
+        assert!(newest["details_elided"].is_null(), "{newest}");
+    }
+
+    /// 🚨 **The same bar, the opposite shape: a charter big enough to be the
+    /// dominant weight on its own**, with modest rules. The essay is the one
+    /// candidate ranked last — see [`rank_boot_prose`] — so a charter this
+    /// size is what proves that placement rather than merely asserting it:
+    /// if the essay ranked anywhere else, it would take the charter down
+    /// with it the moment it did not fit, which is exactly the regression
+    /// this case exists to catch.
+    #[tokio::test]
+    async fn a_boot_ranked_heavy_in_charter_keeps_it_whole_and_elides_the_essay_with_a_reason() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        jojobot
+            .set_charter(Parameters(SetCharterArgs {
+                bot: "gamma".into(),
+                prose: "x".repeat(15_000),
+                sid: Some(crate::harness::TEST_SID.into()),
+            }))
+            .await
+            .expect("set_charter ok");
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                details: Some(format!("rule 0 reasoning: {}", "x".repeat(2_000))),
+                ..capture_args("bot:gamma", "rule 0")
+            },
+        )
+        .await;
+
+        let booted = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    timezone: None,
+                    bot: Some("gamma".into()),
+                    brief: Some(false),
+                    skill: None,
+                    resume: None,
+                    sid: None,
+                    today: None,
+                }))
+                .await
+                .expect("start_here ok"),
+        );
+
+        // **Charter ranks first and is always served whole**, whatever it
+        // costs — the positive this whole mechanism rests on.
+        let charter = booted["identity"]["charter"]
+            .as_str()
+            .expect("charter is never dropped by this cut");
+        assert_eq!(charter.chars().count(), 15_000, "{charter:?}");
+
+        // The one rule is small enough to survive beside a 15,000-character
+        // charter — proving the essay's own placement, not the rule's.
+        let rules = booted["identity"]["rules"].as_array().expect("rules");
+        assert_eq!(
+            rules[0]["details"].as_str().map(|d| d.chars().count()),
+            Some(2_000 + "rule 0 reasoning: ".chars().count()),
+            "{rules:?}"
+        );
+
+        // **Explicitly asked for (`brief: false`) and still not here** —
+        // this is the one case `orientation_elided` alone cannot explain,
+        // so it is paired with a reason.
+        assert!(booted["orientation"].is_null(), "{booted}");
+        assert_eq!(booted["orientation_elided"], true, "{booted}");
+        let note = booted["orientation_note"]
+            .as_str()
+            .expect("the ceiling's own omission carries a reason brief's does not need: {booted}");
+        assert!(
+            note.contains("ceiling"),
+            "the reason names what actually held it back: {note}"
+        );
+
+        let total_prose = charter.chars().count()
+            + rules[0]["details"]
+                .as_str()
+                .map_or(0, |d| d.chars().count());
+        assert!(
+            total_prose <= jojobot_domain::text::BOOT_PROSE.budget,
+            "charter plus the one kept rule must fit the declared ceiling on their own: \
+             {total_prose} chars"
+        );
+    }
 
     /// The two worlds are apart, and this is the test that says so. Ownership
     /// is stated on the box, so an unreadable entity index takes the

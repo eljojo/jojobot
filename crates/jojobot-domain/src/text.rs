@@ -309,28 +309,50 @@ pub const SESSION_CHRONOLOGY: Capped = Capped { budget: 12_000 };
 /// costs a reader information rather than access.
 pub const HELD_CONTEXT: Capped = Capped { budget: 2_000 };
 
-/// **The boot's own prose, under ONE ceiling — not a constant per field.**
-/// A bot's charter and its rules' own `details` are the parts of a boot that
-/// grow with what somebody wrote rather than with how many things exist, and
-/// nothing measured their total before: on a real identity, 25 rules'
-/// `details` alone ran to 26,216 characters, and a *second* real boot — with
-/// the orientation essay already elided by `brief` — still shipped 52,675
-/// bytes, almost all of it this same prose. The essay is a fixed, compile-time
-/// constant already gated by its own deliberate toggle (`brief`) and is not
-/// what grows here; this budget is for the two things that do.
+/// **The boot's own free-form prose, under ONE ceiling — not a constant per
+/// field, and not per part.** The orientation essay, a bot's charter and its
+/// rules' own `details` are the parts of a boot that grow with what somebody
+/// wrote rather than with how many things exist, and nothing measured their
+/// total before. Measured on two real boots at once: an identity carrying 25
+/// rules shipped 52,675 characters, 26,216 of it rule `details`; the
+/// identity that actually produced the complaint shipped 54,636 characters
+/// of which only 7,224 was rule `details` — the rest was the essay (24,177)
+/// and the charter (12,266). A bound on rule `details` alone barely moved
+/// the second number, because the receipts were never that boot's problem.
 ///
 /// **A rule's `content` is never bounded by this** — it is short, curated,
-/// and rides on every rule regardless of the cut. `charter` ranks first —
-/// it is the identity text the caller explicitly asked to read by naming
-/// this bot — and is always served whole (one item over its own share of
-/// the budget is still served whole, never a fragment); what remains of the
-/// ceiling goes to the rules' `details`, newest first, on the same reasoning
-/// [`SESSION_CHRONOLOGY`] already uses: the newest rules' reasoning is what
-/// a session is most likely to need read in full, and an older one waits
-/// behind an ordinary `recall` of the bot. Same order of magnitude as
-/// [`SESSION_CHRONOLOGY`] — this is a boot's other primary payload — and
-/// well past [`HELD_CONTEXT`]'s unasked-for aside.
-pub const BOOT_PROSE: Capped = Capped { budget: 12_000 };
+/// and rides on every rule regardless of the cut. Ranked, highest first:
+/// **`charter`** — the identity text the caller explicitly asked to read by
+/// naming this bot, and the one thing on this surface that is "what an
+/// identity is FOR"; ranking it first is what guarantees it is always
+/// served whole, because the first candidate in a [`Capped`] selection is
+/// always kept, whatever it costs, never a fragment. **Each rule's
+/// `details`** next, newest first, on the same reasoning
+/// [`SESSION_CHRONOLOGY`] already uses: the newest reasoning is what a
+/// session is most likely to need read in full, and an older one waits
+/// behind an ordinary `recall` of the bot. **The essay ranks LAST, and that
+/// placement is load-bearing rather than a preference**: [`Capped::head`]
+/// keeps a contiguous prefix and stops at the first candidate that does not
+/// fit, never looking past it — so the essay, the one candidate here whose
+/// own size can exceed the whole ceiling by itself, would take every
+/// bot-specific candidate after it down too if it ranked anywhere else.
+/// Last, it either fits in what charter and rules left over or it alone is
+/// what the ceiling declines, and the identity a caller named this bot to
+/// read still stands either way. It is also the one candidate that is not
+/// bot-specific — the same text on every boot of every identity — and it
+/// stays reachable uncontested from a boot that names no bot or has
+/// nothing else competing for the room.
+///
+/// **The budget itself**: the essay alone runs past 24,000 characters, so a
+/// ceiling below that would drop it on every boot that also has a charter —
+/// including the ordinary case of a small one. This is set just past that
+/// floor, still comfortably under the render-safe target implied by the
+/// 54,636-byte failure, with headroom for the small, already-bounded
+/// remainder of a boot (session, snapshot, skills, the bot's own metadata)
+/// to land well inside it too. Bigger than [`SESSION_CHRONOLOGY`] because
+/// this ceiling spends across three growing parts rather than one, and well
+/// past [`HELD_CONTEXT`]'s unasked-for aside.
+pub const BOOT_PROSE: Capped = Capped { budget: 26_000 };
 
 /// **One named case, and the goldens are its floor.** The store respells
 /// underscore-emphasis as asterisk-emphasis: `_under_` comes back

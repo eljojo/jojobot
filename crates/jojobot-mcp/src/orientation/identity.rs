@@ -68,39 +68,6 @@ pub(crate) fn booting_unknown(
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])
 }
 
-/// **A rule as a boot ships it: `content` always, `details` when the boot's
-/// own declared ceiling still has room left over after the charter.**
-///
-/// `fact_json` is shared with every other reader of a fact and must not
-/// itself narrow what a fact carries — `recall` on a bot still shows every
-/// rule's reasoning whole. This is the one caller that ranks a COLLECTION of
-/// them against [`text::BOOT_PROSE`], so the elision lives here, one rule at
-/// a time, rather than in the renderer every other verb depends on.
-fn rule_json(rule: &Fact, as_of: jiff::civil::Date, elide_details: bool) -> serde_json::Value {
-    let mut rendered = fact_json(rule, as_of, None);
-    let Some(details) = elide_details.then_some(rule.details.as_deref()).flatten() else {
-        // Not eliding, or nothing to elide: a rule the budget never reached,
-        // or one with no details at all, renders exactly as it always did.
-        return rendered;
-    };
-    let Some(fields) = rendered.as_object_mut() else {
-        return rendered;
-    };
-    fields.insert("details".into(), serde_json::Value::Null);
-    fields.insert("details_elided".into(), true.into());
-    fields.insert("details_bytes".into(), details.len().into());
-    fields.insert(
-        "details_note".into(),
-        format!(
-            "this rule's own reasoning is not in this boot — recall {} with facts: true to \
-             read it whole",
-            rule.subject.as_str()
-        )
-        .into(),
-    );
-    rendered
-}
-
 impl Jojobot {
     /// Who this session is: the bot's record, the charter its prose carries,
     /// the rules its facts carry, and the live state of the box it owns.
@@ -145,25 +112,11 @@ impl Jojobot {
                 .filter(|prose| !prose.trim().is_empty()),
         };
         let rules = self.memory.recall(bot).await.map_err(memory_error)?;
-        // **ONE declared ceiling for the boot's own prose, ranked, never a
-        // constant per field** (rule 106) — see [`text::BOOT_PROSE`]. Charter
-        // ranks first and is always served whole: it is the identity text
-        // this caller explicitly asked to read by naming this bot, and one
-        // item over its own share of a `Capped` budget is still served
-        // whole rather than as a fragment. Whatever is left of the ceiling
-        // goes to the rules' `details`, newest first — never their
-        // `content`, which every rule keeps regardless of the cut.
-        let charter_chars = charter.as_deref().map_or(0, |c| c.chars().count());
-        let rules_prose_budget = jojobot_domain::text::Capped {
-            budget: text::BOOT_PROSE.budget.saturating_sub(charter_chars),
-        };
-        let kept_details = rules_prose_budget.tail(&rules, |rule| {
-            rule.details.as_deref().map_or(0, |d| d.chars().count())
-        });
-        // `tail` keeps the newest SUFFIX, so the index it starts at is the
-        // count it dropped from the front — not the count it kept.
-        let details_kept_from = kept_details.omitted();
-
+        // **Unranked here, deliberately.** Ranking this identity's own prose
+        // against the essay's needs the essay's own size, and that lives in
+        // `orient()` — the one place that assembles the whole boot answer.
+        // See `orient::rank_boot_prose`, which cuts `charter` and each
+        // rule's `details` in place on the body this call returns.
         let mut body = serde_json::json!({
             "bot": entity_json(entity),
             "charter": charter,
@@ -173,8 +126,7 @@ impl Jojobot {
             "charter_elided": answering_an_offer,
             "rules": rules
                 .iter()
-                .enumerate()
-                .map(|(i, rule)| rule_json(rule, as_of, i < details_kept_from))
+                .map(|rule| fact_json(rule, as_of, None))
                 .collect::<Vec<_>>(),
             "owned_mailbox": self.owned_mailbox(&entity.id).await?,
         });
@@ -837,101 +789,6 @@ mod tests {
             note.contains("could not"),
             "an honest failure, not a silent absence: {note}"
         );
-    }
-
-    /// 🚨 **The boot's own prose — a charter plus its rules' `details` — is
-    /// ranked against ONE declared ceiling, never a constant per field**
-    /// (rule 106, decision log 297/298). `content` is short and curated;
-    /// `details` grows every time a rule is written down, and an identity
-    /// with enough of them, plus a real charter, shipped a payload a real
-    /// client refused to render (rule 138) — measured even with the
-    /// orientation essay already elided by `brief`, so the essay is not
-    /// what this case is about.
-    ///
-    /// The charter (5,000 chars) and five rules (each carrying details over
-    /// 2,000 chars — hostile enough that no single one is trivially small
-    /// next to the others) together comfortably exceed the ceiling on their
-    /// own, so only a real rank-and-cut over the WHOLE prose, not a bound on
-    /// any one field, keeps the answer inside it.
-    #[tokio::test]
-    async fn a_boot_ranks_its_own_prose_against_one_ceiling_and_keeps_every_rule_s_content() {
-        let jojobot = handler();
-        make_bot(&jojobot, "gamma").await;
-        jojobot
-            .set_charter(Parameters(SetCharterArgs {
-                bot: "gamma".into(),
-                prose: "x".repeat(5_000),
-                sid: Some(crate::harness::TEST_SID.into()),
-            }))
-            .await
-            .expect("set_charter ok");
-
-        for n in 0..5 {
-            capture_ok(
-                &jojobot,
-                CaptureArgs {
-                    details: Some(format!("rule {n} reasoning: {}", "x".repeat(2_000))),
-                    ..capture_args("bot:gamma", &format!("rule {n}"))
-                },
-            )
-            .await;
-        }
-
-        let booted = boot(&jojobot, "gamma").await;
-        let charter = booted["identity"]["charter"]
-            .as_str()
-            .expect("the charter is never itself dropped by this cut")
-            .to_string();
-        assert_eq!(
-            charter.chars().count(),
-            5_000,
-            "charter ranks first and is always served whole: {charter:?}"
-        );
-        let rules = booted["identity"]["rules"]
-            .as_array()
-            .expect("rules is an array");
-        assert_eq!(rules.len(), 5, "every rule is still listed: {rules:?}");
-
-        // Content never drops — it is the short, curated half.
-        for (n, rule) in rules.iter().enumerate() {
-            assert_eq!(rule["content"], format!("rule {n}"), "{rule}");
-        }
-
-        // **The whole answer's prose against the WHOLE declared ceiling** —
-        // not one field measured against one constant.
-        let total_prose: usize = charter.chars().count()
-            + rules
-                .iter()
-                .filter_map(|r| r["details"].as_str())
-                .map(|d| d.chars().count())
-                .sum::<usize>();
-        assert!(
-            total_prose <= jojobot_domain::text::BOOT_PROSE.budget,
-            "the boot's own prose — charter plus every kept rule's details — must fit the one \
-             declared ceiling: {total_prose} chars, rules: {rules:?}"
-        );
-
-        // The oldest rule is what a tight remainder drops first, once the
-        // charter has taken its own share.
-        let oldest = &rules[0];
-        assert!(oldest["details"].is_null(), "{oldest}");
-        assert_eq!(oldest["details_elided"], true, "{oldest}");
-        assert!(
-            oldest["details_bytes"].as_u64().expect("a byte count") > 0,
-            "{oldest}"
-        );
-        let note = oldest["details_note"].as_str().expect("a note");
-        assert!(
-            note.contains("recall") && note.contains("facts"),
-            "the way back is named: {note}"
-        );
-
-        // The newest rule is the positive the drop above depends on: a
-        // remainder that dropped everything would pass the assertions above
-        // for the wrong reason.
-        let newest = rules.last().expect("at least one rule");
-        assert!(newest["details"].is_string(), "{newest}");
-        assert!(newest["details_elided"].is_null(), "{newest}");
     }
 
     /// 🚨 **The boot roster asks the `kind` column, not the handle's prefix.**
