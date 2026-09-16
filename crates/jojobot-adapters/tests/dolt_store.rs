@@ -3716,6 +3716,48 @@ async fn session_write_summary_answers_the_real_store() {
         "amend_last did not move the count: {after_amend:?}"
     );
 
+    // `amend_beat` moves it — the auto-beat correction path. Append an
+    // entry that carries a beat (only those are eligible; `amend_last`
+    // already covered a plain entry), checkpoint the signal right there,
+    // then correct it: the assertion below isolates `amend_beat`'s own
+    // write from the setup `append`'s, which the earlier case already
+    // proved moves the count on its own.
+    let beat_entry = sessions_store
+        .append(
+            &session.id,
+            NewEntry {
+                text: "opened the box".into(),
+                at: started,
+                beat: Some("test-beat".into()),
+                on: None,
+            },
+        )
+        .await
+        .expect("append ok");
+    let after_beat_entry = sessions_store
+        .write_summary()
+        .await
+        .expect("write_summary ok")
+        .expect("the signal");
+    sessions_store
+        .amend_beat(
+            &session.id,
+            &beat_entry.id,
+            "opened the box and read the label",
+            started,
+        )
+        .await
+        .expect("amend_beat ok");
+    let after_amend_beat = sessions_store
+        .write_summary()
+        .await
+        .expect("write_summary ok")
+        .expect("the signal");
+    assert!(
+        after_amend_beat.0 > after_beat_entry.0,
+        "amend_beat did not move the count: {after_amend_beat:?}"
+    );
+
     // `set_focus` moves it.
     sessions_store
         .set_focus(&session.id, "idle, polling the box")
@@ -3727,7 +3769,7 @@ async fn session_write_summary_answers_the_real_store() {
         .expect("write_summary ok")
         .expect("the signal");
     assert!(
-        after_focus.0 > after_amend.0,
+        after_focus.0 > after_amend_beat.0,
         "set_focus did not move the count: {after_focus:?}"
     );
 
