@@ -265,7 +265,8 @@ make check             # the DONE bar: formatted, green, clippy-clean — all fr
 # drives a real model through a playbook against an instance it spawns and
 # throws away, and it costs money. It needs the agent CLI on your PATH; this
 # repo does not provision one. The playbook is a parameter and there is more
-# than one; the target refuses to guess and exits without it.
+# than one; name one to choose it, or omit it and the binary runs the room
+# that is current.
 make paid PLAYBOOK=crates/jojobot-exercise/rooms/bike.md
 
 # Everything jojobot holds is rows in a SQL store the server starts and
