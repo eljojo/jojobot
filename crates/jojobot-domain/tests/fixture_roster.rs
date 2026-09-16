@@ -290,6 +290,7 @@ const ROSTER: &[&str] = &[
     "rhythm:descale",
     "rhythm:half-made",
     "rhythm:orphan",
+    "rhythm:polish",
     "rhythm:read-meter",
     "rhythm:water-the-fern",
     "rhythm:pay-the-jukebox-lease",

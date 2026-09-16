@@ -397,6 +397,24 @@ impl Due {
             Due::Unreadable => true,
         }
     }
+
+    /// **A sort key for how overdue this is, oldest due first** — "which has
+    /// gone quiet longest" answered by the order a caller sorts an
+    /// already-[`owed_on`]-filtered set by, rather than a date nobody was
+    /// handed.
+    ///
+    /// [`Due::Unreadable`] sorts before every dated one: it is late, loudly,
+    /// and nothing here can say exactly how late, so it does not hide behind
+    /// something that can be measured. [`Due::Never`] and
+    /// [`Due::NotYetOpened`] sort last — `owed_on` never lets either through,
+    /// so this only matters to a caller that sorts without filtering first.
+    pub fn staleness(self) -> (u8, Date) {
+        match self {
+            Due::Unreadable => (0, Date::MIN),
+            Due::On(day) => (1, day),
+            Due::Never | Due::NotYetOpened => (2, Date::MAX),
+        }
+    }
 }
 
 /// **How a SORT of thing says when one of its things falls due.**
@@ -909,6 +927,34 @@ mod tests {
             "a loop carrying part of a schedule cannot say when it is due, and says so",
         );
         assert!(Rhythms.due(&half).owed_on(date(2026, 8, 18)));
+    }
+
+    /// **`staleness` orders the way a caller building "which has gone quiet
+    /// longest" needs: oldest due date first, and an unreadable schedule
+    /// ahead of every dated one because it is loud and unmeasured.**
+    ///
+    /// Three in one case: a real ordering needs at least two dated points to
+    /// prove it is not accidentally already sorted, plus the unreadable one
+    /// to prove it does not fall in wherever its own date-shaped slot would
+    /// place it.
+    #[test]
+    fn staleness_orders_oldest_due_first_with_unreadable_ahead_of_every_date() {
+        let mut ranked = [
+            Due::On(date(2026, 3, 1)),
+            Due::Unreadable,
+            Due::On(date(2026, 1, 1)),
+        ];
+        ranked.sort_by_key(|due| due.staleness());
+        assert_eq!(
+            ranked,
+            [
+                Due::Unreadable,
+                Due::On(date(2026, 1, 1)),
+                Due::On(date(2026, 3, 1)),
+            ],
+            "unreadable did not sort ahead of every dated one, or the dates did not sort oldest \
+             first: {ranked:?}",
+        );
     }
 
     /// **A loop that is declared but never checked in is not late — that is

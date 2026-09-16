@@ -1443,6 +1443,11 @@ impl Jojobot {
             let before = found.len();
             found.retain(|object| attention::owed(&asked, &object.fields).owed_on(as_of));
             overdue_excluded = Some(before - found.len());
+            // **Oldest due first — which has gone quiet longest, answered by
+            // the order rather than left for a caller to re-derive from dates
+            // it was never given.** Ordering an already-found, already-filtered
+            // set costs nothing extra to find.
+            found.sort_by_key(|object| attention::owed(&asked, &object.fields).staleness());
         }
         // **The context a reader did not ask for, and the whole point of the
         // card.** A session that pulls a thing is told who holds what that
@@ -2440,6 +2445,41 @@ mod tests {
         assert_eq!(handles(&named), vec!["rhythm:descale".to_string()]);
     }
 
+    /// 🚨 **The owed read orders what it found, oldest due first — "which has
+    /// gone quiet longest" answered by the order alone, not by a caller
+    /// re-sorting a bag of dates it was never given.**
+    ///
+    /// `descale` is named ahead of `polish` alphabetically and falls due
+    /// LATER; `polish` falls due first. A read that merely filtered and left
+    /// the scan's own order standing would show `descale` first — this case
+    /// only passes if something actually orders by how overdue each one is.
+    #[tokio::test]
+    async fn the_owed_read_orders_the_longest_quiet_first() {
+        let jojobot = handler();
+        make_bot(&jojobot, "otto").await;
+        a_rhythm(&jojobot, "polish", "7", "2026-01-01").await;
+        a_rhythm(&jojobot, "descale", "7", "2026-03-01").await;
+
+        let found = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    kind: Some("rhythm".into()),
+                    overdue: Some(OverdueArgs {
+                        as_of: Some("2026-06-01".into()),
+                    }),
+                    ..of_nothing()
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        assert_eq!(
+            handles(&found),
+            vec!["rhythm:polish".to_string(), "rhythm:descale".to_string()],
+            "polish fell due in January and descale in March, so polish has gone quiet longer \
+             and belongs first: {found}",
+        );
+    }
+
     /// **Which rhythms have gone quiet, as of a date the caller names.**
     ///
     /// Two loops on different cadences and one date: the answer is the
@@ -2495,9 +2535,12 @@ mod tests {
         );
         assert_eq!(
             handles(&later),
+            // Oldest due first: descale fell due on the eighth of August,
+            // deep-clean not until the end of October — descale has gone
+            // quiet longer and sorts ahead of it.
             vec![
-                "rhythm:deep-clean".to_string(),
-                "rhythm:descale".to_string()
+                "rhythm:descale".to_string(),
+                "rhythm:deep-clean".to_string()
             ],
             "both loops have gone quiet by November: {later}",
         );
