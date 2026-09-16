@@ -116,11 +116,8 @@ impl Jojobot {
         // the direct door, and an archived rule read that way is correct,
         // reachable-by-digging behaviour. A boot is not that: nobody asked
         // for this bot's history, and a retired instruction served beside
-        // the ones that bind reads as still governing when it does not. No
-        // marker is left for what this drops: a retired rule is not
-        // withheld information a session might want, and naming a count
-        // would invite fetching rules that no longer bind it.
-        let rules: Vec<_> = self
+        // the ones that bind reads as still governing when it does not.
+        let in_force: Vec<_> = self
             .memory
             .recall(bot)
             .await
@@ -128,6 +125,31 @@ impl Jojobot {
             .into_iter()
             .filter(|rule| rule.status == jojobot_domain::memory::FactStatus::Active)
             .collect();
+        let total_in_force = in_force.len();
+        // **A boot carries at most `CARRIED_RULES_CAP` of a bot's own
+        // records — the backpack model.** Which ones is NOT computed: no
+        // ranking, no score, no recency rule. A record carries the mark
+        // (`fields.starred == "true"`) or it does not, and only a marked
+        // one ever rides along; the cap is a ceiling on how many marked
+        // seats one boot pays for, never a selector among them. Newest
+        // first when more are marked than fit, the same tie-break every
+        // other ranked list in this file uses — not a heuristic, just a
+        // deterministic order to stop at.
+        let keep: std::collections::HashSet<_> = in_force
+            .iter()
+            .rev()
+            .filter(|rule| rule.fields.get("starred").is_some_and(|v| v == "true"))
+            .take(jojobot_domain::text::CARRIED_RULES)
+            .map(|rule| rule.address())
+            .collect();
+        // **Selected newest-first above, served in the store's own order
+        // here** — the cap decides WHICH records ride along; it does not
+        // reorder the ones that do.
+        let carried: Vec<_> = in_force
+            .iter()
+            .filter(|rule| keep.contains(&rule.address()))
+            .collect();
+        let carried_count = carried.len();
         // **Unranked here, deliberately.** Ranking this identity's own prose
         // against the essay's needs the essay's own size, and that lives in
         // `orient()` — the one place that assembles the whole boot answer.
@@ -140,12 +162,33 @@ impl Jojobot {
             // bot nobody has written a charter for. A reader left to tell
             // withheld from absent would report the absence.
             "charter_elided": answering_an_offer,
-            "rules": rules
+            "rules": carried
                 .iter()
                 .map(|rule| fact_json(rule, as_of, None))
                 .collect::<Vec<_>>(),
             "owned_mailbox": self.owned_mailbox(&entity.id).await?,
         });
+        // **Not truncate-then-hunt.** A retired rule (filtered above) is not
+        // withheld information a session might want, and gets no marker —
+        // that discipline is unchanged. A rule IN FORCE but left at home is
+        // different: some of what was not carried may still bind this bot,
+        // so the boot says so, names how many, and names the way to read
+        // them — the one case where "eliding is never silent" applies here.
+        if carried_count < total_in_force
+            && let Some(obj) = body.as_object_mut()
+        {
+            obj.insert("rules_elided".into(), true.into());
+            obj.insert(
+                "rules_note".into(),
+                format!(
+                    "{carried_count} of {total_in_force} rules in force are carried here — the \
+                     ones marked to carry. The rest are at home, not lost, and some of them may \
+                     still bind this bot: recall {} with facts: true to read them all.",
+                    bot.as_str()
+                )
+                .into(),
+            );
+        }
         if answering_an_offer && let Some(obj) = body.as_object_mut() {
             obj.insert(
                 "note".into(),
@@ -520,6 +563,13 @@ mod tests {
             &jojobot,
             CaptureArgs {
                 stale_after: Some("2026-04-01".into()),
+                // A boot only carries a marked rule (rule 306) — this test
+                // is about staleness, not about the cap.
+                fields: Some(
+                    [("starred".to_string(), "true".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
                 ..capture_args("bot:otto", "checks the board before starting")
             },
         )

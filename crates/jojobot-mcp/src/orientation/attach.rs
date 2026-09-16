@@ -1790,6 +1790,13 @@ mod tests {
         jojobot
             .capture(Parameters(CaptureArgs {
                 provenance: Some("testimony".into()),
+                // A boot only carries a marked rule (rule 306) — this test
+                // is about the rule arriving at all, not about the cap.
+                fields: Some(
+                    [("starred".to_string(), "true".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
                 ..capture_args("bot:otto", "answers before noon")
             }))
             .await

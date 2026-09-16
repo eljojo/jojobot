@@ -525,12 +525,13 @@ mod tests {
 
     /// 🚨 **The bar the correction asked for: the WHOLE answer against the
     /// declared ceiling, not one field against one constant** (rule 106,
-    /// decision log 297/298) — a rules-heavy identity. Ten rules, each
-    /// carrying details real enough that no single one is trivially small
-    /// next to the others, so only a genuine rank-and-cut over every one of
-    /// them — never a bound on the collection alone — keeps the newest end
-    /// while the essay competes for what is left, exactly as a real
-    /// identity with a long history of rules would.
+    /// decision log 297/298) — a rules-heavy identity. Five rules — every
+    /// one this boot's cap can ever carry (rule 306) — each carrying
+    /// details real enough that no single one is trivially small next to
+    /// the others, so only a genuine rank-and-cut over every one of them —
+    /// never a bound on the collection alone — keeps the newest end while
+    /// the essay competes for what is left, exactly as a real identity with
+    /// a long history of rules would.
     #[tokio::test]
     async fn a_boot_ranked_heavy_in_rules_cuts_the_oldest_details_and_still_fits_one_ceiling() {
         let jojobot = handler();
@@ -544,11 +545,19 @@ mod tests {
             .await
             .expect("set_charter ok");
 
-        for n in 0..10 {
+        for n in 0..jojobot_domain::text::CARRIED_RULES {
             capture_ok(
                 &jojobot,
                 CaptureArgs {
                     details: Some(format!("rule {n} reasoning: {}", "x".repeat(3_000))),
+                    // A boot only carries a marked rule (rule 306) — every
+                    // one of these has to be marked, or the cap would drop
+                    // some before the details-ranking below ever runs.
+                    fields: Some(
+                        [("starred".to_string(), "true".to_string())]
+                            .into_iter()
+                            .collect(),
+                    ),
                     ..capture_args("bot:gamma", &format!("rule {n}"))
                 },
             )
@@ -576,7 +585,11 @@ mod tests {
         let rules = booted["identity"]["rules"]
             .as_array()
             .expect("rules is an array");
-        assert_eq!(rules.len(), 10, "every rule is still listed: {rules:?}");
+        assert_eq!(
+            rules.len(),
+            jojobot_domain::text::CARRIED_RULES,
+            "every marked rule is still listed: {rules:?}"
+        );
 
         // Content never drops — it is the short, curated half.
         for (n, rule) in rules.iter().enumerate() {
@@ -635,7 +648,23 @@ mod tests {
         make_bot(&jojobot, "gamma").await;
         ensure(&jojobot, "milhouse").await;
 
-        let empty = capture_ok(&jojobot, capture_args("bot:gamma", "an ordinary rule")).await;
+        // A boot only carries a marked rule (rule 306) — this test is about
+        // null-key rendering, not about the cap, so both rules are marked.
+        let starred = || {
+            Some(
+                [("starred".to_string(), "true".to_string())]
+                    .into_iter()
+                    .collect(),
+            )
+        };
+        let empty = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                fields: starred(),
+                ..capture_args("bot:gamma", "an ordinary rule")
+            },
+        )
+        .await;
         let empty_address = address_of(&empty);
 
         capture_ok(
@@ -646,6 +675,7 @@ mod tests {
                 derived_from: Some(empty_address.clone()),
                 happened_at: Some("2026-01-05".into()),
                 stale_after: Some("2026-02-01".into()),
+                fields: starred(),
                 ..capture_args("bot:gamma", "a rule with every optional key set")
             },
         )
@@ -729,7 +759,16 @@ mod tests {
 
         capture_ok(
             &jojobot,
-            capture_args("bot:gamma", "the rule that still binds"),
+            CaptureArgs {
+                // A boot only carries a marked rule (rule 306) — this test is
+                // about status filtering, not about the cap.
+                fields: Some(
+                    [("starred".to_string(), "true".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..capture_args("bot:gamma", "the rule that still binds")
+            },
         )
         .await;
 
@@ -801,6 +840,14 @@ mod tests {
             &jojobot,
             CaptureArgs {
                 details: Some(format!("rule 0 reasoning: {}", "x".repeat(2_000))),
+                // A boot only carries a marked rule (rule 306) — this test is
+                // about charter/details ranking against the ceiling, not
+                // about the cap.
+                fields: Some(
+                    [("starred".to_string(), "true".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
                 ..capture_args("bot:gamma", "rule 0")
             },
         )
@@ -1548,6 +1595,77 @@ mod tests {
         assert!(
             booted["identity"]["bot"]["archived"]["at"].is_string(),
             "{booted}"
+        );
+    }
+
+    /// 🚨 **A boot carries at most `CARRIED_RULES` of a bot's own records —
+    /// the ones the writer marked, never more, never chosen for it** (rule
+    /// 306, the backpack's other axis). Paired against the positive on
+    /// purpose: a boot that dropped every rule would pass the negative half
+    /// alone, so a marked rule must still survive whole.
+    ///
+    /// **Not truncate-then-hunt**: the answer itself says how many of a
+    /// bot's rules in force are carried and names the way to read the rest,
+    /// because some of what stayed home may still bind this bot.
+    #[tokio::test]
+    async fn a_boot_carries_only_marked_rules_and_says_what_it_left_home() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                fields: Some(
+                    [("starred".to_string(), "true".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..capture_args("bot:gamma", "a rule the writer chose to carry")
+            },
+        )
+        .await;
+
+        capture_ok(
+            &jojobot,
+            capture_args("bot:gamma", "an ordinary rule nobody marked"),
+        )
+        .await;
+
+        let booted = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    timezone: None,
+                    bot: Some("gamma".into()),
+                    brief: Some(false),
+                    skill: None,
+                    resume: None,
+                    sid: None,
+                    today: None,
+                }))
+                .await
+                .expect("start_here ok"),
+        );
+        let rules = booted["identity"]["rules"].as_array().expect("rules");
+
+        assert!(
+            rules
+                .iter()
+                .any(|r| r["content"] == "a rule the writer chose to carry"),
+            "the marked rule did not survive the cap: {rules:?}"
+        );
+        assert!(
+            rules
+                .iter()
+                .all(|r| r["content"] != "an ordinary rule nobody marked"),
+            "an unmarked rule was carried anyway: {rules:?}"
+        );
+        assert_eq!(booted["identity"]["rules_elided"], true, "{booted}");
+        let note = booted["identity"]["rules_note"]
+            .as_str()
+            .expect("the boot names what it left home: {booted}");
+        assert!(
+            note.contains("1 of 2") && note.contains("bot:gamma") && note.contains("facts"),
+            "{note}"
         );
     }
 

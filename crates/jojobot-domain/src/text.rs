@@ -398,6 +398,24 @@ pub const HELD_CONTEXT: Capped = Capped { budget: 2_000 };
 /// and well past [`HELD_CONTEXT`]'s unasked-for aside.
 pub const BOOT_ANSWER: Capped = Capped { budget: 28_000 };
 
+/// **The backpack's other axis: how many of a bot's own records a boot ever
+/// carries, counted in things rather than characters.** The operator's
+/// ruling: a hard cap on what a boot shows, and every writer of a record
+/// knows about it. Which records fill the N seats is not this constant's
+/// question and not anybody's algorithm — a record earns a seat by being
+/// marked to carry (`fields.starred == "true"`); this only bounds how many
+/// marked seats one boot pays for in a single sitting.
+///
+/// **5, not the operator's example number kept out of convenience.**
+/// Measured against the heaviest real identity's shape in the store — the
+/// largest real charter and rule set found, five of them marked — the
+/// served answer clears [`BOOT_ANSWER`] with room to spare; the count itself
+/// was explicitly ruled not load-bearing ("budget or count is fine either
+/// way"), so this is simply the smallest number that comfortably
+/// demonstrates the mechanism without inviting anyone to read it as a
+/// considered ceiling.
+pub const CARRIED_RULES: usize = 5;
+
 /// **One named case, and the goldens are its floor.** The store respells
 /// underscore-emphasis as asterisk-emphasis: `_under_` comes back
 /// `*under*`. Nothing is escaped and nothing is lost — it is the same
