@@ -183,7 +183,10 @@ pub fn validate_sender(sender: &str) -> Result<(), MailboxError> {
         return Err(MailboxError::InvalidMessage("sender is empty".into()));
     }
     if s.chars().count() > 120 {
-        return Err(MailboxError::InvalidMessage("sender is too long".into()));
+        return Err(MailboxError::InvalidMessage(format!(
+            "a sender may be 120 characters and this one is {}",
+            s.chars().count()
+        )));
     }
     if breaks_the_line(s) || s.contains('`') || s.chars().any(char::is_control) {
         return Err(MailboxError::InvalidMessage(
@@ -226,7 +229,10 @@ pub fn validate_subject(subject: Option<&str>) -> Result<(), MailboxError> {
         ));
     }
     if subject.chars().count() > 120 {
-        return Err(MailboxError::InvalidMessage("subject is too long".into()));
+        return Err(MailboxError::InvalidMessage(format!(
+            "a subject may be 120 characters and this one is {}",
+            subject.chars().count()
+        )));
     }
     Ok(())
 }
@@ -952,9 +958,11 @@ mod tests {
             );
         }
         assert!(validate_subject(Some(&"x".repeat(120))).is_ok());
+        let refused = validate_subject(Some(&"x".repeat(121))).expect_err("and it is capped");
+        let said = refused.to_string();
         assert!(
-            validate_subject(Some(&"x".repeat(121))).is_err(),
-            "and it is capped"
+            said.contains("120"),
+            "the refusal must name the limit a caller has to write under: {said}"
         );
 
         assert_eq!(
@@ -989,6 +997,21 @@ mod tests {
         assert!(validate_notes(Some("drained into the journal")).is_ok());
         assert!(validate_notes(Some("")).is_ok(), "blank notes are no notes");
         assert!(validate_notes(Some("two\nlines")).is_err());
+    }
+
+    /// 🚨 **A refusal names the way forward.** A caller told only "too long"
+    /// has no idea what "fixed" means and is left guessing at the bar — the
+    /// same guess a capable model made twice, in production, before landing
+    /// under it.
+    #[test]
+    fn a_sender_past_the_limit_is_told_the_limit() {
+        assert!(validate_sender(&"x".repeat(120)).is_ok());
+        let refused = validate_sender(&"x".repeat(121)).expect_err("and it is capped");
+        let said = refused.to_string();
+        assert!(
+            said.contains("120"),
+            "the refusal must name the limit a caller has to write under: {said}"
+        );
     }
 
     #[test]

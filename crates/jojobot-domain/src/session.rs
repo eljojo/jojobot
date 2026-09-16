@@ -304,7 +304,10 @@ pub fn validate_focus(focus: &str) -> Result<(), SessionError> {
         ));
     }
     if f.chars().count() > 200 {
-        return Err(SessionError::InvalidEntry("a focus is too long".into()));
+        return Err(SessionError::InvalidEntry(format!(
+            "a focus may be 200 characters and this one is {}",
+            f.chars().count()
+        )));
     }
     Ok(())
 }
@@ -1555,9 +1558,11 @@ mod tests {
             );
         }
         assert!(validate_focus(&"x".repeat(200)).is_ok());
+        let refused = validate_focus(&"x".repeat(201)).expect_err("and it is capped");
+        let said = refused.to_string();
         assert!(
-            validate_focus(&"x".repeat(201)).is_err(),
-            "and it is capped"
+            said.contains("200"),
+            "the refusal must name the limit a caller has to write under: {said}"
         );
     }
 

@@ -1195,7 +1195,10 @@ pub fn validate_field(label: &str, value: &str) -> Result<(), MemoryError> {
         return Err(MemoryError::InvalidEntity(format!("{label} is empty")));
     }
     if v.chars().count() > 200 {
-        return Err(MemoryError::InvalidEntity(format!("{label} is too long")));
+        return Err(MemoryError::InvalidEntity(format!(
+            "{label} may be 200 characters and this one is {}",
+            v.chars().count()
+        )));
     }
     if v.chars().any(|c| c == '`' || c.is_control()) {
         return Err(MemoryError::InvalidEntity(format!(
@@ -4032,6 +4035,21 @@ mod tests {
             badge: badge.map(str::to_string),
             archived: None,
         }
+    }
+
+    /// 🚨 **A refusal names the way forward.** `validate_field` backs a
+    /// name, a source, an alias, a crm value and an archive reason — one
+    /// shared shape, so one case here covers every caller of it. A caller
+    /// told only "too long" has no idea what "fixed" means.
+    #[test]
+    fn a_frontmatter_field_past_the_limit_is_told_the_limit() {
+        assert!(validate_field("name", &"x".repeat(200)).is_ok());
+        let refused = validate_field("name", &"x".repeat(201)).expect_err("and it is capped");
+        let said = refused.to_string();
+        assert!(
+            said.contains("200"),
+            "the refusal must name the limit a caller has to write under: {said}"
+        );
     }
 
     /// 🚨 **Both halves of a stale handle, in one case**: a rename it survives,

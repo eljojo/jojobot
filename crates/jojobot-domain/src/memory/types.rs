@@ -1071,7 +1071,10 @@ fn label(what: &str, value: &str) -> Result<(), MemoryError> {
         return Err(MemoryError::InvalidType(format!("{what} is empty")));
     }
     if value.chars().count() > 190 {
-        return Err(MemoryError::InvalidType(format!("{what} is too long")));
+        return Err(MemoryError::InvalidType(format!(
+            "{what} may be 190 characters and this one is {}",
+            value.chars().count()
+        )));
     }
     if value.chars().any(|c| c == '`' || c.is_control()) {
         return Err(MemoryError::InvalidType(format!(
@@ -1654,5 +1657,31 @@ mod tests {
             vec![Field::required(&"k".repeat(MAX_KEY_CHARS), ValueType::Text)],
         ))
         .expect("a key at the limit is one a record may carry, so a type may name it");
+    }
+
+    /// 🚨 **A refusal names the way forward.** `label` backs a type name, a
+    /// key and a set value — one shared shape, so one case here covers every
+    /// caller of it. Named on a TYPE NAME, which answers to no other bound:
+    /// [`MAX_KEY_CHARS`] narrows a key specifically, so a name past 190 is
+    /// the read of `label`'s own limit and nothing else.
+    #[test]
+    fn a_type_name_past_the_limit_is_told_the_limit() {
+        assert!(
+            validate_type(&DeclaredType::new(
+                &"n".repeat(190),
+                vec![Field::required("key", ValueType::Text)],
+            ))
+            .is_ok()
+        );
+        let refused = validate_type(&DeclaredType::new(
+            &"n".repeat(191),
+            vec![Field::required("key", ValueType::Text)],
+        ))
+        .expect_err("a type name past the limit is refused");
+        let said = refused.to_string();
+        assert!(
+            said.contains("190"),
+            "the refusal must name the limit a caller has to write under: {said}"
+        );
     }
 }
