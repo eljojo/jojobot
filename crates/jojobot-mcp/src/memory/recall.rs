@@ -1420,6 +1420,14 @@ impl Jojobot {
         // per key — because a rhythm is described a record at a time: the
         // record that set it up carries the cadence, and each check-in since
         // carries what it found.
+        // 🚨 **How many the overdue filter dropped.** `None` when the call
+        // asked no overdue question, exactly as `overdue_as_of` does — a
+        // count of zero and an absent count are different claims. A total,
+        // never a breakdown, the same shape as `near_unplaced` and
+        // `withheld`: "not in this list" is a disjunction — not due yet,
+        // never opened, unreadable, or a kind no carrier speaks for — and
+        // this says how many, not which.
+        let mut overdue_excluded: Option<usize> = None;
         if let Some(as_of) = as_of {
             // **The read compares a moment to a day and computes none of them.**
             // Which moment a thing falls due at is its carrier's answer, so a
@@ -1428,7 +1436,9 @@ impl Jojobot {
             // owes nothing, which is what keeps a person out of an answer about
             // what is late.
             let asked = self.carriers();
+            let before = found.len();
             found.retain(|object| attention::owed(&asked, &object.fields).owed_on(as_of));
+            overdue_excluded = Some(before - found.len());
         }
         // **The context a reader did not ask for, and the whole point of the
         // card.** A session that pulls a thing is told who holds what that
@@ -1540,6 +1550,7 @@ impl Jojobot {
             // way to learn which day that was, and an answer about an unnamed
             // day is one nobody can check.
             "overdue_as_of": as_of.map(|d| d.to_string()),
+            "overdue_excluded": overdue_excluded,
             // **The day, the window and the clock this read used**, and null
             // when it asked about no day. A caller that let jojobot supply
             // today has no other way to learn which day that was.
@@ -2438,6 +2449,57 @@ mod tests {
             all["overdue_as_of"],
             serde_json::Value::Null,
             "and it names no date, because it asked about none: {all}",
+        );
+    }
+
+    /// 🚨 **The overdue filter accounts for what it dropped.** Without this,
+    /// "not in this list" collapses "not due yet" into the same silence as
+    /// "the loop was never opened" or "nothing here carries a schedule" — the
+    /// same absence `near_unplaced` and `withheld` exist to stop a caller
+    /// mistaking for nothing having changed.
+    #[tokio::test]
+    async fn the_overdue_filter_says_how_many_it_dropped() {
+        let jojobot = handler();
+        a_rhythm(&jojobot, "descale", "7", "2026-08-01").await;
+        a_rhythm(&jojobot, "deep-clean", "90", "2026-08-01").await;
+
+        let quiet = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    kind: Some("rhythm".into()),
+                    overdue: Some(OverdueArgs {
+                        as_of: Some("2026-08-10".into()),
+                    }),
+                    ..of_nothing()
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        assert_eq!(
+            handles(&quiet),
+            vec!["rhythm:descale".to_string()],
+            "the weekly loop is overdue and the quarterly one is not: {quiet}",
+        );
+        assert_eq!(
+            quiet["overdue_excluded"], 1,
+            "one rhythm was dropped by the filter and the count says how many: {quiet}",
+        );
+
+        // The positive the count rests on: a read that asked no overdue
+        // question carries none, not a zero — there was no filter to report on.
+        let all = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    kind: Some("rhythm".into()),
+                    ..of_nothing()
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        assert_eq!(
+            all["overdue_excluded"],
+            serde_json::Value::Null,
+            "an unfiltered read names no count, because it dropped nothing and asked nothing: {all}",
         );
     }
 

@@ -50,12 +50,17 @@ impl Jojobot {
         // the handle directly (through `recall`), never by browsing the
         // inventory — the same broad-door/direct-door split a claim's own
         // archived state already has.
+        let before = entities.len();
         let entities: Vec<_> = entities
             .into_iter()
             .filter(|e| e.archived.is_none())
             .collect();
         let body = serde_json::json!({
             "count": entities.len(),
+            // 🚨 **How many this read excluded as archived** — a total, the
+            // same shape `recall`'s `withheld` uses: an empty inventory and a
+            // suppressed one are the same "nothing here" without it.
+            "archived_excluded": before - entities.len(),
             "entities": entities.iter().map(entity_json).collect::<Vec<_>>(),
         });
         json_result(&body)
@@ -130,6 +135,53 @@ mod tests {
         assert!(
             ids.contains(&"person:milhouse"),
             "a live entity is missing from the default read: {body}",
+        );
+    }
+
+    /// 🚨 **The listing accounts for what it excluded as archived** — the
+    /// same reason `recall`'s `withheld` exists: an empty inventory and a
+    /// suppressed one read as the same "nothing here" without a count.
+    #[tokio::test]
+    async fn the_default_listing_says_how_many_it_excluded_as_archived() {
+        let jojobot = handler();
+        ensure(&jojobot, "person:bart").await;
+        ensure(&jojobot, "person:milhouse").await;
+        jojobot
+            .memory
+            .archive_entity(&EntityId("person:bart".into()), "a mistaken write")
+            .await
+            .expect("archive_entity ok");
+
+        let body = json_of(
+            &jojobot
+                .list_entities(Parameters(ListEntitiesArgs {
+                    kind: None,
+                    sid: None,
+                }))
+                .await
+                .expect("list_entities ok"),
+        );
+        assert_eq!(
+            body["archived_excluded"], 1,
+            "one entity was archived and the count says how many: {body}",
+        );
+
+        // The positive the count rests on: a store holding nothing archived
+        // reports a zero, not an absent field.
+        let clean_jojobot = handler();
+        ensure(&clean_jojobot, "person:milhouse").await;
+        let clean = json_of(
+            &clean_jojobot
+                .list_entities(Parameters(ListEntitiesArgs {
+                    kind: None,
+                    sid: None,
+                }))
+                .await
+                .expect("list_entities ok"),
+        );
+        assert_eq!(
+            clean["archived_excluded"], 0,
+            "nothing was archived and the count says zero, not nothing: {clean}",
         );
     }
 
