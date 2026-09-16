@@ -484,6 +484,61 @@ impl Carrier for Rhythms {
     }
 }
 
+/// **The day a thing runs out** — a supply, a subscription, a membership,
+/// whatever a caller names it on. One key, one date: there is no cadence and
+/// no policy here, because running out is not a loop that repeats on its own.
+pub const RUNS_OUT: &str = "runs_out";
+
+/// **The runs-out carrier**: a thing falls due the day it names as the day it
+/// runs out.
+pub struct RunsOut;
+
+impl Carrier for RunsOut {
+    fn interface(&self) -> types::DeclaredType {
+        types::DeclaredType::new(
+            "runs-out",
+            vec![types::Field::new(RUNS_OUT, types::ValueType::Date)],
+        )
+    }
+
+    /// **A parse failure is loud, never silent** — the same shape every other
+    /// carrier in this file takes: a thing holding this key at all is this
+    /// carrier's business, and a value that will not parse is a defect to
+    /// report rather than a reason to look away.
+    fn due(&self, fields: &BTreeMap<String, String>) -> Due {
+        match fields.get(RUNS_OUT).map(|held| held.trim().parse()) {
+            Some(Ok(day)) => Due::On(day),
+            Some(Err(_)) => Due::Unreadable,
+            None => Due::Never,
+        }
+    }
+}
+
+/// **The day a decision has to be made by** — a project, a plan, an offer
+/// with a window. Same shape as [`RUNS_OUT`]: one key, one date, no cadence.
+pub const DECIDE_BY: &str = "decide_by";
+
+/// **The decide-by carrier**: a thing falls due the day it names as the day
+/// a decision is needed.
+pub struct DecideBy;
+
+impl Carrier for DecideBy {
+    fn interface(&self) -> types::DeclaredType {
+        types::DeclaredType::new(
+            "decide-by",
+            vec![types::Field::new(DECIDE_BY, types::ValueType::Date)],
+        )
+    }
+
+    fn due(&self, fields: &BTreeMap<String, String>) -> Due {
+        match fields.get(DECIDE_BY).map(|held| held.trim().parse()) {
+            Some(Ok(day)) => Due::On(day),
+            Some(Err(_)) => Due::Unreadable,
+            None => Due::Never,
+        }
+    }
+}
+
 /// **What is owed, over any carrier.** The read hands a thing's folded fields;
 /// a carrier is found by which of them it structurally answers to, never by
 /// what kind produced them, and a thing no carrier's interface matches owes
@@ -498,7 +553,7 @@ pub fn owed(carriers: &[&dyn Carrier], fields: &BTreeMap<String, String>) -> Due
 
 /// The carriers this build ships.
 pub fn shipped() -> Vec<Box<dyn Carrier>> {
-    vec![Box::new(Rhythms)]
+    vec![Box::new(Rhythms), Box::new(RunsOut), Box::new(DecideBy)]
 }
 
 /// **What a write does to [`DUE_ON`]: move it, remove it, or leave it.**
@@ -904,6 +959,51 @@ mod tests {
     /// Both in one case, because either alone passes against a build that
     /// answers the same for everything.
     ///
+    /// **`runs_out` and `decide_by` are found by the key they carry, not by
+    /// any kind, and a bad value is loud rather than silent** — the same
+    /// contract every carrier in this file keeps.
+    #[test]
+    fn runs_out_and_decide_by_are_found_by_the_key_over_shipped() {
+        let carriers: Vec<Box<dyn Carrier>> = shipped();
+        let asked: Vec<&dyn Carrier> = carriers.iter().map(AsRef::as_ref).collect();
+
+        let running_out: BTreeMap<String, String> =
+            [(RUNS_OUT.to_string(), "2026-09-01".to_string())]
+                .into_iter()
+                .collect();
+        assert_eq!(
+            owed(&asked, &running_out),
+            Due::On(date(2026, 9, 1)),
+            "a thing carrying runs_out was not found among the shipped carriers",
+        );
+
+        let deciding: BTreeMap<String, String> =
+            [(DECIDE_BY.to_string(), "2026-10-15".to_string())]
+                .into_iter()
+                .collect();
+        assert_eq!(
+            owed(&asked, &deciding),
+            Due::On(date(2026, 10, 15)),
+            "a thing carrying decide_by was not found among the shipped carriers",
+        );
+
+        let garbled: BTreeMap<String, String> = [(RUNS_OUT.to_string(), "not a date".to_string())]
+            .into_iter()
+            .collect();
+        assert_eq!(
+            owed(&asked, &garbled),
+            Due::Unreadable,
+            "a runs_out value that will not parse is loud, not silently absent",
+        );
+
+        // A thing carrying neither key is nobody's business.
+        assert_eq!(
+            owed(&asked, &BTreeMap::new()),
+            Due::Never,
+            "a thing with no schedule of any kind owes nothing",
+        );
+    }
+
     /// **The empty case goes through [`owed`], not [`Rhythms::due`] alone.**
     /// Screening out "carries none of the interface" is [`Carrier::interface`]
     /// and [`owed`]'s job now, so [`Rhythms::due`] is only ever asked about a
