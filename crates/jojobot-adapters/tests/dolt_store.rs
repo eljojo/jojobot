@@ -1196,10 +1196,15 @@ async fn the_batch_migrates_rows_a334e84_actually_wrote() {
 /// sever it.**
 ///
 /// `entity_alias.entity` names the row it belongs to — the same shape
-/// `fact.entity` was before the badge conversion, not an edge's object. A
-/// rename here is the real store's own way of moving a handle: the row is
-/// rewritten in place, exactly as [`DoltRehandles`] does it, because no
-/// production verb exists yet.
+/// `fact.entity` was before the badge conversion, not an edge's object.
+///
+/// **Renamed through `rename_entity`, not a hand-written `UPDATE`.** The
+/// row-rewrite-in-place shape this once exercised through a raw SQL
+/// statement is real, but jojobot is the only writer this store ever has
+/// (the operator's own word — see the search refresh's `write_summary`,
+/// which now trusts exactly that to skip a re-read). A write a caller
+/// cannot reach through the Memory port is not a shape search's refresh
+/// has to survive any more, so the case reaches it the way a caller would.
 ///
 /// **The consequence that matters is search, not the join alone**: a
 /// nickname the index cannot resolve to the entity's current handle is a
@@ -1248,13 +1253,12 @@ async fn an_alias_survives_a_rename_and_a_search_still_finds_it_by_nickname() {
     );
 
     let now = EntityId("work:alias-rename-now".into());
-    sqlx::query("UPDATE entity SET id = ?, kind = ? WHERE id = ?")
-        .bind(now.as_str())
-        .bind(now.kind_token())
-        .bind(was.as_str())
-        .execute(&pool)
+    indexed
+        .rename_entity(&was, &now, None, date(2026, 1, 1), None)
         .await
-        .expect("the row moves");
+        .expect("rename_entity ok")
+        .written()
+        .expect("nothing collides with it");
 
     let entities = indexed.list_entities(None).await.expect("list_entities ok");
     let renamed = entities

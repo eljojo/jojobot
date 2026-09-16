@@ -42,7 +42,7 @@ use std::collections::BTreeMap;
 use jojobot_domain::memory::{
     ClaimWrite, Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress,
     FactId, FactPatch, FactStatus, FieldWrite, FormerHandle, Guarded, Memory, MemoryError, Merge,
-    NewEntity, NewFact, Retraction,
+    NewEntity, NewFact, Retraction, WriteSummary,
     guard::{self, MatchReason},
     kinds,
     search::{
@@ -530,6 +530,20 @@ impl FullTextIndex {
     /// its own reading covered and nothing newer.
     pub fn reading_begins(&self) -> ReadingPoint {
         ReadingPoint(self.mark_seq.load(std::sync::atomic::Ordering::Acquire))
+    }
+
+    /// Whether a whole-corpus refresh has failed and nothing has cleared it
+    /// yet.
+    ///
+    /// **A caller about to skip a real read checks this first.** Only a real
+    /// [`ingest_all`](Self::ingest_all) clears the mark, so skipping while one
+    /// is on record would leave it stuck — every later answer reporting the
+    /// memory half stale even after the store is reachable again and nothing
+    /// has changed on it.
+    pub(crate) fn memory_refresh_pending(&self) -> bool {
+        self.memory_refresh_failed_at
+            .load(std::sync::atomic::Ordering::Acquire)
+            != 0
     }
 
     /// The entities the index knows it is behind on.
@@ -1991,6 +2005,11 @@ fn report_consistency(doc: &DocScan, known: &std::collections::HashSet<EntityId>
 pub struct IndexedMemory {
     inner: Arc<dyn Memory>,
     index: Arc<FullTextIndex>,
+    /// **What the last real read saw, and the signal it saw it under.**
+    /// `None` until the first real read lands. Compared against a fresh
+    /// [`Memory::write_summary`] on every call so an unchanged store can be
+    /// answered from here instead of paying for [`Memory::scan`] again.
+    last_scan: RwLock<Option<(WriteSummary, Vec<DocScan>)>>,
 }
 
 impl IndexedMemory {
@@ -2001,6 +2020,7 @@ impl IndexedMemory {
         Ok(IndexedMemory {
             inner,
             index: Arc::new(FullTextIndex::open()?),
+            last_scan: RwLock::new(None),
         })
     }
 
@@ -2025,7 +2045,27 @@ impl IndexedMemory {
     /// the scan saw. The one refresh — the boot path and the read path run the
     /// same one, so there is no second way for the index to be filled that could
     /// drift from this.
+    ///
+    /// **Skips the read entirely when nothing has changed.** [`Memory::write_summary`]
+    /// is a cheap signal a store may offer; when it matches what the last real
+    /// scan was taken under, and no refresh is on record as failed (a stuck
+    /// failure must still get a real attempt to clear it — see
+    /// [`FullTextIndex::memory_refresh_pending`]), the cached scan from that
+    /// read is the answer, unread again. A store with no signal (`None`) is
+    /// scanned every time, exactly as before this existed.
     async fn rescan(&self) -> Result<Vec<DocScan>, MemoryError> {
+        let summary = self.inner.write_summary().await?;
+        if !self.index.memory_refresh_pending()
+            && let Some(summary) = &summary
+        {
+            let cached = self.last_scan.read().expect("scan cache poisoned");
+            if let Some((last_summary, scan)) = cached.as_ref()
+                && last_summary == summary
+            {
+                return Ok(scan.clone());
+            }
+        }
+
         // **Before the read, never after.** What this scan is entitled to clear
         // is what was already marked when it looked; a write that fails its
         // re-read while the scan is in flight is not covered by it.
@@ -2038,6 +2078,9 @@ impl IndexedMemory {
             }
         }
         self.index.ingest_all(&scan, began, &history)?;
+        if let Some(summary) = summary {
+            *self.last_scan.write().expect("scan cache poisoned") = Some((summary, scan.clone()));
+        }
         Ok(scan)
     }
 
@@ -5458,6 +5501,11 @@ mod tests {
             self.blind.store(false, std::sync::atomic::Ordering::SeqCst);
         }
 
+        /// Whether reads are failing from here right now.
+        fn is_blind(&self) -> bool {
+            self.blind.load(std::sync::atomic::Ordering::SeqCst)
+        }
+
         /// The next scan takes its snapshot and then waits to be let go.
         fn hold_scans(&self) {
             self.park.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -5682,6 +5730,177 @@ mod tests {
             _: Date,
         ) -> Result<Merge, MemoryError> {
             unimplemented!("this double only scans")
+        }
+    }
+
+    /// A [`Scanned`] wrapped with a settable [`Memory::write_summary`] and a
+    /// count of how many times [`Memory::scan`] actually ran.
+    ///
+    /// **The positive control the sabotage bar asks for.** A counter that
+    /// never moves proves the same thing a broken one does, so a test built
+    /// on this drives one case where the count stands still (nothing
+    /// changed) and one where it moves (something did) — the pair, not
+    /// either alone.
+    struct SummarizedScan {
+        inner: Arc<Scanned>,
+        summary: RwLock<Option<WriteSummary>>,
+        scans: std::sync::atomic::AtomicUsize,
+    }
+
+    impl SummarizedScan {
+        fn new(inner: Arc<Scanned>) -> Arc<Self> {
+            Arc::new(SummarizedScan {
+                inner,
+                summary: RwLock::new(None),
+                scans: std::sync::atomic::AtomicUsize::new(0),
+            })
+        }
+
+        /// What [`Memory::write_summary`] answers from here on.
+        fn set_summary(&self, summary: Option<WriteSummary>) {
+            *self.summary.write().expect("summary poisoned") = summary;
+        }
+
+        /// How many times the real [`Memory::scan`] ran.
+        fn scans_ran(&self) -> usize {
+            self.scans.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    #[async_trait]
+    impl Memory for SummarizedScan {
+        async fn former_handles(&self) -> Result<Vec<FormerHandle>, MemoryError> {
+            self.inner.former_handles().await
+        }
+        async fn scan(&self) -> Result<Vec<DocScan>, MemoryError> {
+            self.scans.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.inner.scan().await
+        }
+        async fn write_summary(&self) -> Result<Option<WriteSummary>, MemoryError> {
+            // **The same connection a real store's `scan` reads through.** A
+            // store that cannot be read cannot answer this cheaply either —
+            // both queries reach the same down connection — so this fails
+            // exactly when `scan` would.
+            if self.inner.is_blind() {
+                return Err(MemoryError::Store("the store cannot be read".into()));
+            }
+            Ok(self.summary.read().expect("summary poisoned").clone())
+        }
+        async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
+            self.inner.capture(fact).await
+        }
+        async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
+            self.inner.add_entity(new).await
+        }
+        async fn list_entities(
+            &self,
+            kind: Option<EntityKind>,
+        ) -> Result<Vec<Entity>, MemoryError> {
+            self.inner.list_entities(kind).await
+        }
+        async fn declare_type(&self, declared: DeclaredType) -> Result<DeclaredType, MemoryError> {
+            self.inner.declare_type(declared).await
+        }
+        async fn declare_kind(
+            &self,
+            token: &str,
+            origin: jojobot_domain::memory::types::Origin,
+            fields: Vec<jojobot_domain::memory::types::Field>,
+        ) -> Result<(), MemoryError> {
+            self.inner.declare_kind(token, origin, fields).await
+        }
+        async fn declared_kinds(
+            &self,
+        ) -> Result<Vec<(String, jojobot_domain::memory::types::Origin)>, MemoryError> {
+            self.inner.declared_kinds().await
+        }
+        async fn reclaim_kind(&self, token: &str) -> Result<(), MemoryError> {
+            self.inner.reclaim_kind(token).await
+        }
+        async fn declared_types(&self) -> Result<Vec<DeclaredType>, MemoryError> {
+            self.inner.declared_types().await
+        }
+        async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
+            self.inner.archive_entity(id, reason).await
+        }
+        async fn update_entity(
+            &self,
+            handle: &EntityId,
+            patch: EntityPatch,
+        ) -> Result<Guarded<Entity>, MemoryError> {
+            self.inner.update_entity(handle, patch).await
+        }
+        async fn rename_entity(
+            &self,
+            from: &EntityId,
+            to: &EntityId,
+            parent: Option<EntityId>,
+            date: Date,
+            override_token: Option<&str>,
+        ) -> Result<Guarded<Entity>, MemoryError> {
+            self.inner
+                .rename_entity(from, to, parent, date, override_token)
+                .await
+        }
+        async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
+            self.inner.recall(subject).await
+        }
+        /// **Overridden rather than left to the default.** [`Memory::claim_histories`]'s
+        /// default asks [`Memory::recall`], which [`Scanned`] leaves
+        /// `unimplemented!` on purpose — and `rescan`'s own read of this, for
+        /// every entity a scan finds, is exactly what this double exists to
+        /// let run without exercising history terms at all.
+        async fn claim_histories(
+            &self,
+            _entity: &EntityId,
+        ) -> Result<
+            std::collections::HashMap<jojobot_domain::memory::FactId, Vec<ClaimWrite>>,
+            MemoryError,
+        > {
+            Ok(std::collections::HashMap::new())
+        }
+        async fn history(
+            &self,
+            entity: &EntityId,
+            key: &str,
+        ) -> Result<Vec<FieldWrite>, MemoryError> {
+            self.inner.history(entity, key).await
+        }
+        async fn claim_history(
+            &self,
+            address: &FactAddress,
+        ) -> Result<Vec<ClaimWrite>, MemoryError> {
+            self.inner.claim_history(address).await
+        }
+        async fn fields(&self, entity: &EntityId) -> Result<BTreeMap<String, String>, MemoryError> {
+            self.inner.fields(entity).await
+        }
+        async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
+            self.inner.set_prose(entity, prose).await
+        }
+        async fn update_fact(
+            &self,
+            address: &FactAddress,
+            patch: FactPatch,
+        ) -> Result<Guarded<Fact>, MemoryError> {
+            self.inner.update_fact(address, patch).await
+        }
+        async fn retract(
+            &self,
+            address: &FactAddress,
+            reason: Option<&str>,
+            date: Date,
+        ) -> Result<Retraction, MemoryError> {
+            self.inner.retract(address, reason, date).await
+        }
+        async fn merge(
+            &self,
+            folded: &EntityId,
+            survivor: &EntityId,
+            reason: Option<&str>,
+            date: Date,
+        ) -> Result<Merge, MemoryError> {
+            self.inner.merge(folded, survivor, reason, date).await
         }
     }
 
@@ -5928,6 +6147,139 @@ mod tests {
             derived_from: None,
             stale_after: None,
         }
+    }
+
+    /// **An unchanged store costs no re-read.** [`Memory::write_summary`]
+    /// reported the same signal before and after a search that found nothing
+    /// to do, so the second search's refresh must not have paid for
+    /// [`Memory::scan`] again.
+    #[tokio::test]
+    async fn an_unchanged_store_costs_no_re_read() {
+        let spy = SummarizedScan::new(one_page());
+        spy.set_summary(Some(WriteSummary {
+            entities: (1, Some(jiff::Timestamp::now())),
+            facts: (0, None),
+        }));
+        let store = Arc::new(IndexedMemory::new(spy.clone()).expect("index opens"));
+        store.rebuild().await.expect("rebuild");
+        assert_eq!(spy.scans_ran(), 1, "the boot rebuild always reads once");
+
+        store
+            .search_via_port(&SearchQuery::text("Alpha"))
+            .await
+            .expect("search answers");
+        assert_eq!(
+            spy.scans_ran(),
+            1,
+            "the signal did not move, so the second search paid for no re-read"
+        );
+    }
+
+    /// **The positive control for the test above.** The same shape, except
+    /// the signal DOES move between the two searches — proving the count is
+    /// a real instrument and not one that would read `1` regardless of what
+    /// the store did.
+    #[tokio::test]
+    async fn a_changed_store_is_still_seen() {
+        let spy = SummarizedScan::new(one_page());
+        spy.set_summary(Some(WriteSummary {
+            entities: (1, Some(jiff::Timestamp::now())),
+            facts: (0, None),
+        }));
+        let store = Arc::new(IndexedMemory::new(spy.clone()).expect("index opens"));
+        store.rebuild().await.expect("rebuild");
+        assert_eq!(spy.scans_ran(), 1, "the boot rebuild always reads once");
+
+        spy.set_summary(Some(WriteSummary {
+            entities: (1, Some(jiff::Timestamp::now())),
+            facts: (1, Some(jiff::Timestamp::now())),
+        }));
+        store
+            .search_via_port(&SearchQuery::text("Alpha"))
+            .await
+            .expect("search answers");
+        assert_eq!(
+            spy.scans_ran(),
+            2,
+            "the signal moved, so the refresh paid for a real re-read"
+        );
+    }
+
+    /// **A refresh already on record as failed still gets a real attempt**,
+    /// even when the signal reports exactly what it reported before the
+    /// store went down.
+    ///
+    /// That is the ordinary shape of a real outage: nothing wrote while the
+    /// store was unreachable, so the signal on the way back up equals the
+    /// signal on the way down. A skip keyed on the signal ALONE would read
+    /// that as "unchanged" forever and never attempt the read that clears
+    /// the failure — this is what [`FullTextIndex::memory_refresh_pending`]
+    /// exists to stop.
+    #[tokio::test]
+    async fn a_refresh_marked_failed_still_gets_a_real_read_on_recovery() {
+        let spy = SummarizedScan::new(one_page());
+        let summary = WriteSummary {
+            entities: (1, Some(jiff::Timestamp::now())),
+            facts: (0, None),
+        };
+        spy.set_summary(Some(summary.clone()));
+        let store = Arc::new(IndexedMemory::new(spy.clone()).expect("index opens"));
+        store.rebuild().await.expect("rebuild");
+        assert_eq!(spy.scans_ran(), 1, "the boot rebuild always reads once");
+
+        spy.inner.blinded();
+        Refresh::refresh(store.as_ref()).await;
+        assert_eq!(
+            store.memory_coverage_via_port(),
+            Coverage::Partial(Behind::Stale),
+            "the store went down mid-refresh, so the index is behind"
+        );
+        assert_eq!(
+            spy.scans_ran(),
+            1,
+            "the failed attempt never reached scan — it failed on the signal itself"
+        );
+
+        // The store recovers. Nothing wrote while it was down, so the signal
+        // is exactly what it was before — the case a signal-only skip cannot
+        // tell from "still fine".
+        spy.inner.sighted();
+        store
+            .search_via_port(&SearchQuery::text("Alpha"))
+            .await
+            .expect("search answers");
+        assert_eq!(
+            spy.scans_ran(),
+            2,
+            "a refresh on record as failed must get a real attempt, signal or no signal"
+        );
+        assert_eq!(
+            store.memory_coverage_via_port(),
+            Coverage::Loaded,
+            "the real attempt succeeded, so the failure is cleared"
+        );
+    }
+
+    /// **A store with no signal is scanned every time** — the fallback that
+    /// keeps every store this slice does not touch exactly as it was.
+    #[tokio::test]
+    async fn a_store_with_no_signal_is_scanned_every_search() {
+        let spy = SummarizedScan::new(one_page());
+        // `set_summary` never called: the double's own default is `None`,
+        // exactly the trait's default for a store that has not opted in.
+        let store = Arc::new(IndexedMemory::new(spy.clone()).expect("index opens"));
+        store.rebuild().await.expect("rebuild");
+        assert_eq!(spy.scans_ran(), 1);
+
+        store
+            .search_via_port(&SearchQuery::text("Alpha"))
+            .await
+            .expect("search answers");
+        assert_eq!(
+            spy.scans_ran(),
+            2,
+            "no signal means no cache to trust, so every search still reads"
+        );
     }
 
     /// **A refresh clears only what its own reading covered.**
