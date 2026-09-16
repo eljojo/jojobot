@@ -3386,6 +3386,26 @@ fn nearest_handles(nearest: &[guard::EntityMatch]) -> String {
     format!("; did you mean: {}", list.join(", "))
 }
 
+/// **What [`Memory::write_summary`] answers, when a store can answer it.**
+///
+/// Two counts and two moments — one pair per table a refresh has to read in
+/// full when it cannot trust this instead. Equal to the summary a caller
+/// cached from an earlier call, it means nothing has been written to either
+/// table since; different, in either half, means something has.
+///
+/// **Coarser than the tables it summarises, on purpose.** It says nothing
+/// about which entity or which claim changed, only that the store as a
+/// whole did or did not — a refresh that skips a read skips all of it or
+/// none of it, so a finer answer would buy nothing here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WriteSummary {
+    /// How many entity writes the store has kept, and the latest one's
+    /// moment — `None` when there have been none yet.
+    pub entities: (i64, Option<jiff::Timestamp>),
+    /// The same pair, for fact writes.
+    pub facts: (i64, Option<jiff::Timestamp>),
+}
+
 /// The Memory port — six verbs over entities and the facts about them. One real
 /// adapter stands behind it in production (Outline); a fake stands behind it in
 /// tests. Three invariants bind every adapter:
@@ -3887,6 +3907,20 @@ pub trait Memory: Send + Sync {
             .await?
             .into_iter()
             .find(|d| d.entity.as_ref().is_some_and(|e| &e.id == entity)))
+    }
+
+    /// A cheap signal for whether anything has been written since a caller
+    /// last looked, so a refresh can skip paying for [`scan`](Memory::scan)
+    /// when nothing changed.
+    ///
+    /// **`None` means this store offers no such signal.** That is the
+    /// default, and it is the only correct one for an adapter that has not
+    /// opted in: a caller that cannot tell "unchanged" from "I don't know"
+    /// must treat every refresh as if something changed, which is exactly
+    /// today's behaviour. Only a store that can answer the question cheaply,
+    /// and completely, should return `Some`.
+    async fn write_summary(&self) -> Result<Option<WriteSummary>, MemoryError> {
+        Ok(None)
     }
 
     /// **Declare a type: a name, and the keys a record of it carries.**

@@ -29,7 +29,7 @@ use jiff::civil::Date;
 use jojobot_domain::memory::{
     ClaimWrite, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactPatch,
     FieldWrite, FormerHandle, Guarded, Landed, Memory, MemoryError, Merge, NewEntity, NewFact,
-    Retraction,
+    Retraction, WriteSummary,
     search::{self, DocScan},
     types::{self, DeclaredType},
 };
@@ -236,6 +236,10 @@ impl Memory for Folded {
 
     async fn scan(&self) -> Result<Vec<DocScan>, MemoryError> {
         self.inner.scan().await
+    }
+
+    async fn write_summary(&self) -> Result<Option<WriteSummary>, MemoryError> {
+        self.inner.write_summary().await
     }
 
     async fn declare_type(&self, declared: DeclaredType) -> Result<DeclaredType, MemoryError> {

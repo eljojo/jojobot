@@ -3421,3 +3421,189 @@ async fn a_retract_hit_answers_with_no_full_listing_and_both_misses_still_build_
 
     store.stop().await;
 }
+
+/// **The cheap signal [`Memory::write_summary`] answers, against the real
+/// store.**
+///
+/// The pair a caller must be able to trust: unmoved across two calls with
+/// nothing written between them, and moved by every kind of write this slice
+/// wires the log into — a fact write, and every shape of entity write
+/// (creation, prose, rename, archive, merge).
+#[tokio::test]
+async fn write_summary_answers_the_real_store() {
+    let scratch = Scratch::new("write-summary");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("write_summary")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool);
+
+    let empty = memory
+        .write_summary()
+        .await
+        .expect("write_summary ok")
+        .expect("the dolt store offers the signal");
+    assert_eq!(empty.entities.0, 0, "an empty store has written no entity");
+    assert_eq!(empty.facts.0, 0, "an empty store has written no fact");
+
+    // **The unchanged half of the pair.** Nothing wrote between these two
+    // calls, so a caller comparing them must see no difference.
+    let still_empty = memory
+        .write_summary()
+        .await
+        .expect("write_summary ok")
+        .expect("the signal");
+    assert_eq!(
+        still_empty, empty,
+        "nothing was written, so the signal must not move"
+    );
+
+    // `add_entity` moves the entity half and not the fact half.
+    let homer = EntityId::person("person:homer");
+    memory
+        .add_entity(NewEntity::new(homer.clone(), "Homer", "contract-fixture"))
+        .await
+        .expect("add_entity ok")
+        .written()
+        .expect("nothing collides with it");
+    let after_add = memory
+        .write_summary()
+        .await
+        .expect("write_summary ok")
+        .expect("the signal");
+    assert!(
+        after_add.entities.0 > empty.entities.0,
+        "add_entity did not move the entity count: {after_add:?}"
+    );
+    assert_eq!(
+        after_add.facts, empty.facts,
+        "add_entity must not move the fact half"
+    );
+
+    // `capture` moves the fact half and not the entity half.
+    memory
+        .capture(NewFact::about(
+            homer.clone(),
+            "keeps a duff in the fridge",
+            date(2026, 1, 1),
+        ))
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("nothing collides with it");
+    let after_capture = memory
+        .write_summary()
+        .await
+        .expect("write_summary ok")
+        .expect("the signal");
+    assert!(
+        after_capture.facts.0 > after_add.facts.0,
+        "capture did not move the fact count: {after_capture:?}"
+    );
+    assert_eq!(
+        after_capture.entities, after_add.entities,
+        "capture must not move the entity half"
+    );
+
+    // `set_prose` moves the entity half.
+    memory
+        .set_prose(&homer, "a page somebody wrote")
+        .await
+        .expect("set_prose ok");
+    let after_prose = memory
+        .write_summary()
+        .await
+        .expect("write_summary ok")
+        .expect("the signal");
+    assert!(
+        after_prose.entities.0 > after_capture.entities.0,
+        "set_prose did not move the entity count: {after_prose:?}"
+    );
+
+    // `rename_entity` moves the entity half.
+    let renamed = EntityId::person("person:homer-simpson");
+    memory
+        .rename_entity(&homer, &renamed, None, date(2026, 1, 1), None)
+        .await
+        .expect("rename_entity ok")
+        .written()
+        .expect("nothing collides with it");
+    let after_rename = memory
+        .write_summary()
+        .await
+        .expect("write_summary ok")
+        .expect("the signal");
+    assert!(
+        after_rename.entities.0 > after_prose.entities.0,
+        "rename_entity did not move the entity count: {after_rename:?}"
+    );
+
+    // `archive_entity` moves the entity half.
+    let alpha = EntityId::person("person:alpha");
+    memory
+        .add_entity(NewEntity::new(alpha.clone(), "Alpha", "contract-fixture"))
+        .await
+        .expect("add_entity ok")
+        .written()
+        .expect("nothing collides with it");
+    let before_archive = memory
+        .write_summary()
+        .await
+        .expect("write_summary ok")
+        .expect("the signal");
+    memory
+        .archive_entity(&alpha, "a mistaken write")
+        .await
+        .expect("archive_entity ok");
+    let after_archive = memory
+        .write_summary()
+        .await
+        .expect("write_summary ok")
+        .expect("the signal");
+    assert!(
+        after_archive.entities.0 > before_archive.entities.0,
+        "archive_entity did not move the entity count: {after_archive:?}"
+    );
+
+    // `merge` moves the entity half — one write, whatever the sweep's fan-out
+    // was (see append_entity_write's own call site in `merge`).
+    let beta = EntityId::person("person:beta");
+    let gamma = EntityId::person("person:gamma");
+    memory
+        .add_entity(NewEntity::new(beta.clone(), "Beta", "contract-fixture"))
+        .await
+        .expect("add_entity ok")
+        .written()
+        .expect("nothing collides with it");
+    memory
+        .add_entity(NewEntity::new(gamma.clone(), "Gamma", "contract-fixture"))
+        .await
+        .expect("add_entity ok")
+        .written()
+        .expect("nothing collides with it");
+    let before_merge = memory
+        .write_summary()
+        .await
+        .expect("write_summary ok")
+        .expect("the signal");
+    memory
+        .merge(&beta, &gamma, None, date(2026, 1, 1))
+        .await
+        .expect("merge ok");
+    let after_merge = memory
+        .write_summary()
+        .await
+        .expect("write_summary ok")
+        .expect("the signal");
+    assert!(
+        after_merge.entities.0 > before_merge.entities.0,
+        "merge did not move the entity count: {after_merge:?}"
+    );
+
+    store.stop().await;
+}

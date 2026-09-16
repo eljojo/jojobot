@@ -690,6 +690,12 @@ impl super::Memory for Mentioning {
         Ok(scanned)
     }
 
+    /// **Rendering handles into readable text changes no stored write**, so
+    /// the store underneath is the whole answer.
+    async fn write_summary(&self) -> Result<Option<super::WriteSummary>, super::MemoryError> {
+        self.inner.write_summary().await
+    }
+
     async fn scan_entity(
         &self,
         entity: &EntityId,

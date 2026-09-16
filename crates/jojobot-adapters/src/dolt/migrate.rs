@@ -435,6 +435,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0050_entity_archived_at.sql"),
         leaves: Leaves::Column("entity", "archived_at"),
     },
+    Migration {
+        version: "0051_entity_write",
+        sql: include_str!("../../migrations/0051_entity_write.sql"),
+        leaves: Leaves::Table("entity_write"),
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a
@@ -852,6 +857,7 @@ mod tests {
         "0048_session_served_chars",
         "0049_entity_archived",
         "0050_entity_archived_at",
+        "0051_entity_write",
     ];
 
     /// **A migration set of this test's own, carrying the shape no shipped

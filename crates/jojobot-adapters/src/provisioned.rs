@@ -40,7 +40,7 @@ use jojobot_domain::memory::owned::{Provisions, extended, guard_extension};
 use jojobot_domain::memory::{
     ClaimWrite, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactPatch,
     FieldBacking, FieldWrite, FormerHandle, Guarded, Memory, MemoryError, Merge, NewEntity,
-    NewFact, Retraction, guard, search, types,
+    NewFact, Retraction, WriteSummary, guard, search, types,
 };
 
 /// A store, plus what this build supplies over it.
@@ -125,6 +125,13 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
             // The store holds no row, so a supplied record is the whole answer.
             None => Ok(self.supplied_scan(entity)),
         }
+    }
+
+    /// **A supplied record is never stored and never changes while this
+    /// process runs** (rule 234's own build/store split), so it cannot move
+    /// this signal — the store underneath is the whole answer.
+    async fn write_summary(&self) -> Result<Option<WriteSummary>, MemoryError> {
+        self.inner.write_summary().await
     }
 
     // ── and the one write that reaches it ───────────────────────────────────

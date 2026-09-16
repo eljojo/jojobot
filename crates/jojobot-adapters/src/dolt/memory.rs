@@ -34,7 +34,7 @@ use jojobot_domain::memory::owned::Provisions;
 use jojobot_domain::memory::{
     Archived, ClaimWrite, Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact,
     FactAddress, FactId, FactPatch, FactStatus, FieldWrite, FormerHandle, Guarded, KeyWrite,
-    Memory, MemoryError, Merge, NewEntity, NewFact, Provenance, Retraction, Standing,
+    Memory, MemoryError, Merge, NewEntity, NewFact, Provenance, Retraction, Standing, WriteSummary,
     apply_entity_patch, apply_fact_patch, folded_fields, guard, guard_fit,
     kinds::{self, NotAKind},
     merge_account, normalize_content, normalize_details, normalize_prose, referenced_by,
@@ -180,6 +180,7 @@ impl DoltMemory {
                 .execute(&mut *tx)
                 .await
                 .map_err(store)?;
+            append_entity_write(&mut tx, &EntityId(handle.clone()), &self.clock).await?;
             tx.commit().await.map_err(store)?;
             given += 1;
         }
@@ -1774,7 +1775,7 @@ impl Memory for DoltMemory {
         } else {
             entity.clone()
         };
-        let badge = write_entity(&mut tx, &self.draw, &stored).await?;
+        let badge = write_entity(&mut tx, &self.draw, &stored, &self.clock).await?;
         tx.commit().await.map_err(store)?;
         Ok(Guarded::Written(Entity {
             badge: Some(badge),
@@ -1853,7 +1854,7 @@ impl Memory for DoltMemory {
         } else {
             entity.clone()
         };
-        write_entity(&mut tx, &self.draw, &stored).await?;
+        write_entity(&mut tx, &self.draw, &stored, &self.clock).await?;
         tx.commit().await.map_err(store)?;
         Ok(Guarded::Written(entity))
     }
@@ -1910,7 +1911,7 @@ impl Memory for DoltMemory {
         } else {
             entity.clone()
         };
-        write_entity(&mut tx, &self.draw, &stored).await?;
+        write_entity(&mut tx, &self.draw, &stored, &self.clock).await?;
         tx.commit().await.map_err(store)?;
         Ok(entity)
     }
@@ -2078,6 +2079,7 @@ impl Memory for DoltMemory {
         .execute(&mut *tx)
         .await
         .map_err(store)?;
+        append_entity_write(&mut tx, to, &self.clock).await?;
         tx.commit().await.map_err(store)?;
         Ok(Guarded::Written(renamed))
     }
@@ -2957,6 +2959,11 @@ impl Memory for DoltMemory {
             .execute(&mut *tx)
             .await
             .map_err(store)?;
+        // **One row, not one per entity the sweep above touched.** The log
+        // exists to answer "has anything changed", never "which entity" —
+        // see the migration's own doc — so a single write here is enough to
+        // make a merge visible to it, whatever the sweep's fan-out was.
+        append_entity_write(&mut tx, folded, &self.clock).await?;
 
         // **Read back rather than reconstructed.** The fold may have moved the
         // survivor's own row — a folded parent is re-pointed above — so the
@@ -3198,6 +3205,7 @@ impl Memory for DoltMemory {
             .execute(&mut *tx)
             .await
             .map_err(store)?;
+        append_entity_write(&mut tx, entity, &self.clock).await?;
         tx.commit().await.map_err(store)?;
         Ok(stored)
     }
@@ -3255,6 +3263,36 @@ impl Memory for DoltMemory {
         }
         tx.commit().await.map_err(store)?;
         Ok(scanned)
+    }
+
+    /// **Two aggregates, not a read of either table's rows.** [`Self::scan`]
+    /// pays for every entity and fact body it returns; this pays for neither
+    /// — `entity_write` and `fact_write` are written on every mutation to
+    /// each (see their own migrations' docs), so their count and newest
+    /// moment answer "has anything changed" without touching a body.
+    async fn write_summary(&self) -> Result<Option<WriteSummary>, MemoryError> {
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        let (entity_count, entity_latest): (i64, Option<String>) =
+            sqlx::query_as("SELECT COUNT(*), MAX(written_at) FROM entity_write")
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(store)?;
+        let (fact_count, fact_latest): (i64, Option<String>) =
+            sqlx::query_as("SELECT COUNT(*), MAX(written_at) FROM fact_write")
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(store)?;
+        tx.commit().await.map_err(store)?;
+        Ok(Some(WriteSummary {
+            entities: (
+                entity_count,
+                entity_latest.and_then(|at| at.parse::<jiff::Timestamp>().ok()),
+            ),
+            facts: (
+                fact_count,
+                fact_latest.and_then(|at| at.parse::<jiff::Timestamp>().ok()),
+            ),
+        }))
     }
 
     /// **One entity's document, by id — never the whole table.**
@@ -3617,6 +3655,7 @@ async fn write_entity(
     tx: &mut Transaction<'_, MySql>,
     draw: &Draw,
     entity: &Entity,
+    clock: &Clock,
 ) -> Result<String, MemoryError> {
     // **The prose is carried across rather than blanked.** A rewrite of an
     // entity's metadata is not a rewrite of what somebody wrote on its page,
@@ -3663,6 +3702,7 @@ async fn write_entity(
     .execute(&mut **tx)
     .await
     .map_err(store)?;
+    append_entity_write(tx, &entity.id, clock).await?;
     // **Keyed on the badge, not the handle.** An alias row is the same shape
     // `fact.entity` was before `ccc926f`: its own foreign key back to the
     // thing it belongs to, so a rename that left it on the handle would sever
@@ -3683,6 +3723,32 @@ async fn write_entity(
             .map_err(store)?;
     }
     Ok(badge)
+}
+
+/// **Keep that this entity was written, and when** — the cheap signal
+/// [`DoltMemory::write_summary`] reads, mirroring [`DoltMemory::append_fact_write`]'s
+/// role for facts. Never the row's content: nothing today asks what an
+/// entity used to say, only whether it has changed since a caller last
+/// looked, so a full copy here would be a second history nothing reads.
+async fn append_entity_write(
+    tx: &mut Transaction<'_, MySql>,
+    entity: &EntityId,
+    clock: &Clock,
+) -> Result<(), MemoryError> {
+    let highest: Option<i64> =
+        sqlx::query_scalar("SELECT MAX(ordinal) FROM entity_write WHERE entity = ?")
+            .bind(entity.as_str())
+            .fetch_one(&mut **tx)
+            .await
+            .map_err(store)?;
+    sqlx::query("INSERT INTO entity_write (entity, ordinal, written_at) VALUES (?, ?, ?)")
+        .bind(entity.as_str())
+        .bind(highest.unwrap_or(0) + 1)
+        .bind(clock.now().to_string())
+        .execute(&mut **tx)
+        .await
+        .map_err(store)?;
+    Ok(())
 }
 
 #[cfg(test)]
