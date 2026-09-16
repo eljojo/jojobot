@@ -466,6 +466,7 @@ const ROSTER: &[&str] = &[
     "person:contract-observed",
     "person:contract-omicron",
     "person:contract-oneway",
+    "person:contract-openended",
     "person:contract-orienteer",
     "person:contract-orjent",
     "person:contract-otto",

@@ -1611,6 +1611,26 @@ pub fn validate_content(content: &str) -> Result<(), MemoryError> {
     Ok(())
 }
 
+/// **An end with no start names a span nobody can read** — the same rule
+/// [`types::ValueType::DateRange`] enforces for a caller-declared key,
+/// applied to the two struct fields a NAMED date field holds instead of one
+/// slashed string. Called against the state a write would RESULT in, never
+/// against a patch's own arguments alone: a patch naming only the end is
+/// valid when a start already stands on the record it edits.
+pub fn validate_happened_span(
+    happened_at: Option<Date>,
+    happened_through: Option<Date>,
+) -> Result<(), MemoryError> {
+    if happened_through.is_some() && happened_at.is_none() {
+        return Err(MemoryError::InvalidFact(
+            "happened_through names an end with no start: send happened_at too, or leave \
+             happened_through off until it does"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
 /// Details ride in the same table row, so they are one line too — but may be
 /// absent.
 pub fn validate_details(details: Option<&str>) -> Result<(), MemoryError> {
@@ -1640,6 +1660,21 @@ pub fn apply_fact_patch(fact: &mut Fact, patch: &FactPatch) -> Result<(), Memory
     if let Some(edge) = &patch.edge {
         validate_edge(edge)?;
     }
+    // **Asked of the state this write would RESULT in**, not of the patch's
+    // own arguments — a patch naming only the end is valid when a start
+    // already stands, and a patch clearing the start while an end still
+    // stands is exactly the shape this refuses.
+    let resulting_happened_at = if patch.clear_happened_at {
+        None
+    } else {
+        patch.happened_at.or(fact.happened_at)
+    };
+    let resulting_happened_through = if patch.clear_happened_through {
+        None
+    } else {
+        patch.happened_through.or(fact.happened_through)
+    };
+    validate_happened_span(resulting_happened_at, resulting_happened_through)?;
     // The same gate the write path has, on the other verb that can reach a
     // record's fields — see [`reserved_key`]. **Both of the patch's key lists**:
     // the reserved key is as unwritable off a record as onto one.

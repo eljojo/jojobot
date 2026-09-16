@@ -922,6 +922,7 @@ impl Memory for InMemoryMemory {
         if let Some(edge) = &fact.edge {
             validate_edge(edge)?;
         }
+        validate_happened_span(fact.happened_at, fact.happened_through)?;
         validate_fields(&fact.fields)?;
         validate_provenance_source(fact.provenance, &fact.fields)?;
         let standing = standing_of(&fact);

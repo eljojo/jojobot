@@ -421,6 +421,86 @@ pub async fn a_claims_span_covers_every_day_it_ran<M: Memory>(store: &M) {
     }
 }
 
+/// **An end with no start names a span nobody can read, on a fresh claim.**
+///
+/// The same shape `ValueType::DateRange` was built to prevent for a
+/// caller-declared key — a range with no start half is refused there too.
+/// A NAMED field gets the same floor.
+pub async fn happened_through_with_no_start_is_refused<M: Memory>(store: &M) {
+    let subject = EntityId::person("person:contract-openended");
+    ensure(store, &subject).await;
+
+    let err = store
+        .capture(NewFact {
+            happened_through: Some(date(2026, 4, 20)),
+            ..NewFact::about(subject, "an end with no start", date(2026, 4, 22))
+        })
+        .await
+        .expect_err("an end with no start must be refused rather than written");
+    assert!(
+        matches!(&err, MemoryError::InvalidFact(said) if said.contains("happened_at")),
+        "the refusal must name the way forward: {err:?}",
+    );
+}
+
+/// **The hard half: whether the record's OWN state, not just the patch, is
+/// what a caller is held to.**
+///
+/// ⛔️ **PAIRED, and the positive is the one that matters most.** A strict fix
+/// that refuses whenever the patch's own `happened_at` argument is absent
+/// would break the ordinary case — learning a trip's end after its start was
+/// already on file — which this proves succeeds. The negative proves the
+/// other direction still catches what it must: clearing the start out from
+/// under a standing end.
+pub async fn a_patch_may_widen_a_standing_start_but_not_orphan_one<M: Memory>(store: &M) {
+    let subject = EntityId::person("person:contract-openended");
+    ensure(store, &subject).await;
+
+    let claim = capture(
+        store,
+        NewFact {
+            happened_at: Some(date(2026, 4, 18)),
+            ..NewFact::about(subject, "the trip started", date(2026, 4, 22))
+        },
+    )
+    .await;
+    let address = claim.address();
+
+    // The case that matters most: an end alone, against a start already on
+    // the record, is an ordinary edit and must succeed.
+    let widened = store
+        .update_fact(
+            &address,
+            FactPatch {
+                happened_through: Some(date(2026, 4, 20)),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("update_fact ok")
+        .written()
+        .expect("a start already stands, so an end alone is a valid edit");
+    assert_eq!(widened.happened_at, Some(date(2026, 4, 18)));
+    assert_eq!(widened.happened_through, Some(date(2026, 4, 20)));
+
+    // Taking the start off a claim that still carries an end would leave the
+    // end orphaned — refused, not silently accepted.
+    let err = store
+        .update_fact(
+            &address,
+            FactPatch {
+                clear_happened_at: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .expect_err("clearing the start out from under a standing end must be refused");
+    assert!(
+        matches!(&err, MemoryError::InvalidFact(said) if said.contains("happened_at")),
+        "the refusal must name the way forward: {err:?}",
+    );
+}
+
 /// **The day a thing happened is versioned with the rest of the claim.**
 ///
 /// A claim is a projection over its writes and each write carries the whole
@@ -9492,6 +9572,8 @@ pub async fn run_all<M: Memory>(store: &M) {
     preserves_all_fields(store).await;
     a_claim_can_say_nothing_about_when_the_thing_happened(store).await;
     a_claims_span_covers_every_day_it_ran(store).await;
+    happened_through_with_no_start_is_refused(store).await;
+    a_patch_may_widen_a_standing_start_but_not_orphan_one(store).await;
     the_day_a_thing_happened_is_versioned_like_the_rest_of_the_claim(store).await;
     derived_from_must_name_a_fact_that_exists(store).await;
     derived_from_on_an_edit_must_name_a_fact_that_exists(store).await;
