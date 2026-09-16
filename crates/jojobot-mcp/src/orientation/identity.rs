@@ -111,7 +111,23 @@ impl Jojobot {
                 .map(|doc| doc.prose)
                 .filter(|prose| !prose.trim().is_empty()),
         };
-        let rules = self.memory.recall(bot).await.map_err(memory_error)?;
+        // **A boot serves the rules that are IN FORCE.** `recall` itself
+        // stays unfiltered by status — going straight to a known address is
+        // the direct door, and an archived rule read that way is correct,
+        // reachable-by-digging behaviour. A boot is not that: nobody asked
+        // for this bot's history, and a retired instruction served beside
+        // the ones that bind reads as still governing when it does not. No
+        // marker is left for what this drops: a retired rule is not
+        // withheld information a session might want, and naming a count
+        // would invite fetching rules that no longer bind it.
+        let rules: Vec<_> = self
+            .memory
+            .recall(bot)
+            .await
+            .map_err(memory_error)?
+            .into_iter()
+            .filter(|rule| rule.status == jojobot_domain::memory::FactStatus::Active)
+            .collect();
         // **Unranked here, deliberately.** Ranking this identity's own prose
         // against the essay's needs the essay's own size, and that lives in
         // `orient()` — the one place that assembles the whole boot answer.

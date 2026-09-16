@@ -694,6 +694,64 @@ mod tests {
         assert_eq!(filled_rule["stale_after"], "2026-02-01", "{filled_rule}");
     }
 
+    /// 🚨 **A boot serves a bot's rules that are IN FORCE** (rule 301 landing
+    /// at the boot): a rule whose status is not active is not served at
+    /// all — not its statement, not its reasoning, not a marker beside it.
+    /// Paired against the positive on purpose: a boot that served no rules
+    /// at all would pass the negative half alone.
+    ///
+    /// **No elision marker for what was left out, deliberately.** A retired
+    /// instruction is not withheld information a session might want; naming
+    /// a count would invite fetching rules that do not bind this session.
+    #[tokio::test]
+    async fn a_boot_serves_only_the_rules_that_are_active() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+
+        let retiring = capture_ok(&jojobot, capture_args("bot:gamma", "an old instruction")).await;
+        let retiring_address = address_of(&retiring);
+        jojobot
+            .update_fact(Parameters(UpdateFactArgs {
+                status: Some("archived".into()),
+                details: Some("superseded, kept for history".into()),
+                ..update_args(&retiring_address)
+            }))
+            .await
+            .expect("update ok");
+
+        capture_ok(
+            &jojobot,
+            capture_args("bot:gamma", "the rule that still binds"),
+        )
+        .await;
+
+        let booted = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    timezone: None,
+                    bot: Some("gamma".into()),
+                    brief: Some(false),
+                    skill: None,
+                    resume: None,
+                    sid: None,
+                    today: None,
+                }))
+                .await
+                .expect("start_here ok"),
+        );
+        let rules = booted["identity"]["rules"].as_array().expect("rules");
+
+        assert!(
+            rules.iter().all(|r| r["address"] != retiring_address),
+            "a retired rule is still served: {rules:?}"
+        );
+        let active = rules
+            .iter()
+            .find(|r| r["content"] == "the rule that still binds")
+            .expect("the rule still in force is served whole");
+        assert_eq!(active["status"], "active", "{active}");
+    }
+
     /// 🚨 **A charter big enough, alone, to leave no room for anything else** —
     /// proving `charter` is still served whole regardless of what that costs
     /// the rest of the answer, and that a rule's own `details` is honestly
