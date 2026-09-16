@@ -284,6 +284,7 @@ const ROSTER: &[&str] = &[
     "project:kitchen-floor",
     "project:the-shed",
     "project:visa",
+    "rhythm:abseiling",
     "rhythm:call-gayle",
     "rhythm:chain-check",
     "rhythm:deep-clean",

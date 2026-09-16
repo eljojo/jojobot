@@ -1700,6 +1700,11 @@ async fn memory_with_views() -> Arc<dyn Memory> {
     for (handle, name) in [
         ("rhythm:descale", "Descale the machine"),
         ("rhythm:worming", "Worm the dog"),
+        // Alphabetically ahead of "descale", and overdue less long than it —
+        // the disagreement between handle order and staleness order is what
+        // makes an ordering case mean something. See
+        // `a_view_that_asks_for_what_is_overdue_renders_oldest_first`.
+        ("rhythm:abseiling", "Check the abseiling gear"),
     ] {
         let mut new = NewEntity::new(EntityId(handle.into()), name, "the fixture roster");
         new.parent = Some(EntityId("person:alpha".into()));
@@ -1710,11 +1715,13 @@ async fn memory_with_views() -> Arc<dyn Memory> {
             .written()
             .expect("nothing on this board collides with it");
     }
-    // The loop that has gone quiet, and the one that has not. Only the
-    // schedule differs.
+    // The loop that has gone quiet, one that has not, and one that went
+    // quiet more recently than the first — three points, so an ordering case
+    // can tell "sorted" from "sorted by something else".
     for (handle, counts_from) in [
         ("rhythm:descale", "2020-01-06"),
         ("rhythm:worming", "2400-01-06"),
+        ("rhythm:abseiling", "2024-01-06"),
     ] {
         memory
             .capture(NewFact {
@@ -2027,6 +2034,49 @@ async fn a_view_that_asks_for_what_is_overdue_leaves_out_what_is_not() {
     assert!(
         !answer.contains("rhythm:worming"),
         "…and the loop that is not due is left out, which is what `asks` narrows: {answer}"
+    );
+    ct.cancel();
+}
+
+/// **The overdue view renders oldest due first, not in whatever order the
+/// selection happened to find things.**
+///
+/// `rhythm:abseiling` sorts ahead of `rhythm:descale` alphabetically and is
+/// overdue since 2024; `rhythm:descale` has been overdue since 2020. A view
+/// that rendered in handle order — or in whatever order the store's own
+/// selection returns — would put abseiling first. Ordered by staleness, the
+/// more overdue one comes first. The disagreement between the two orderings
+/// is what makes finding descale before abseiling mean the sort ran, rather
+/// than passing on a page that was never reordered at all.
+#[tokio::test]
+async fn a_view_that_asks_for_what_is_overdue_renders_oldest_first() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct) = spawn_over_views(&idp, endpoints).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let page = read(&client, addr, "/view:my-week/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    let answer = page
+        .split_once("id=\"answer\"")
+        .expect("the page carries the view's answer")
+        .1;
+    let answer = answer.split_once("</table>").expect("…and it closes").0;
+
+    let descale_at = answer
+        .find("rhythm:descale")
+        .expect("the loop overdue since 2020 is in the answer");
+    let abseiling_at = answer
+        .find("rhythm:abseiling")
+        .expect("the loop overdue since 2024 is in the answer");
+    assert!(
+        descale_at < abseiling_at,
+        "the loop overdue longer must render first, even though its handle sorts after the \
+         other's alphabetically: {answer}"
     );
     ct.cancel();
 }
