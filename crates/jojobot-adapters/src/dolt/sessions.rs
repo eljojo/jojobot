@@ -42,6 +42,13 @@ pub struct DoltSessions {
     /// leave the session standing, and the only way to watch that happen is to
     /// break the marking and nothing else — see [`Self::snapshotting`].
     snapshots: MySqlPool,
+    /// **How many sessions have been read in full** — every entry, every
+    /// word — through [`sessions_of`](Sessions::sessions_of) or
+    /// [`all_sessions`](Sessions::all_sessions). Test-only instrumentation
+    /// for the one property nothing else here can observe: whether a
+    /// summary read paid for the text a full read carries. Shared across a
+    /// clone, exactly as the pool it counts against is.
+    full_reads: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl DoltSessions {
@@ -56,7 +63,15 @@ impl DoltSessions {
             snapshots: pool.clone(),
             pool,
             draw: ids::drawing(),
+            full_reads: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
+    }
+
+    /// How many sessions have been read in full since this store opened.
+    /// Test-only.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn full_reads(&self) -> usize {
+        self.full_reads.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// **Rewrite a handle written into a focus line or a journal beat before
@@ -177,6 +192,7 @@ impl DoltSessions {
             snapshots: pool.clone(),
             pool,
             draw,
+            full_reads: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
     }
 
@@ -191,6 +207,7 @@ impl DoltSessions {
             pool,
             draw: ids::drawing(),
             snapshots,
+            full_reads: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
     }
 
@@ -271,6 +288,31 @@ fn store(e: sqlx::Error) -> SessionError {
 }
 
 /// One row plus its entries, as the domain's record.
+/// One row of the summary query, as the domain's [`SessionSummary`] — the
+/// same field-by-field reading [`session_from`] does, minus the entries no
+/// query for this ever asked for.
+fn summary_from(
+    row: &sqlx::mysql::MySqlRow,
+) -> Result<jojobot_domain::session::SessionSummary, SessionError> {
+    let state: String = row.try_get("state").map_err(store)?;
+    let started: String = row.try_get("started_at").map_err(store)?;
+    let sid: Option<String> = row.try_get("sid").map_err(store)?;
+    let last_beat: String = row.try_get("last_beat").map_err(store)?;
+    Ok(jojobot_domain::session::SessionSummary {
+        id: SessionId(row.try_get::<String, _>("id").map_err(store)?),
+        sid: sid.map(Sid),
+        bot: EntityId(row.try_get::<String, _>("bot").map_err(store)?),
+        focus: row.try_get::<String, _>("focus").map_err(store)?,
+        started_at: instant(&started)?,
+        served_chars: row.try_get::<i64, _>("served_chars").map_err(store)? as u64,
+        state: SessionState::from_token(&state).ok_or_else(|| {
+            SessionError::Store(format!("a session row carries the state '{state}'"))
+        })?,
+        entry_count: row.try_get::<i64, _>("entry_count").map_err(store)? as usize,
+        last_beat: instant(&last_beat)?,
+    })
+}
+
 fn session_from(
     row: &sqlx::mysql::MySqlRow,
     entries: &[sqlx::mysql::MySqlRow],
@@ -361,6 +403,8 @@ impl Sessions for DoltSessions {
         let mut found = Vec::with_capacity(ids.len());
         for id in ids {
             found.push(Self::read_in(&mut tx, &SessionId(id)).await?);
+            self.full_reads
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
         tx.commit().await.map_err(store)?;
         Ok(found)
@@ -376,9 +420,43 @@ impl Sessions for DoltSessions {
         let mut found = Vec::with_capacity(ids.len());
         for id in ids {
             found.push(Self::read_in(&mut tx, &SessionId(id)).await?);
+            self.full_reads
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
         tx.commit().await.map_err(store)?;
         Ok(found)
+    }
+
+    /// **The count and the last beat, answered by the store rather than
+    /// measured after reading every entry.** `journal_entry`'s own `at` and
+    /// `touched` are read into an aggregate; its `text`, `beat` and
+    /// `happened_on` never leave the query at all — this is what
+    /// [`DoltSessions::full_reads`] proves nothing here increments.
+    ///
+    /// **A session with no entries counts zero and falls back to its own
+    /// `started_at`** — the `LEFT JOIN` leaves nothing for `MAX` to see, and
+    /// `COALESCE` is the same fallback [`Session::last_beat`] uses in Rust,
+    /// moved into the query.
+    async fn summaries_of(
+        &self,
+        bot: &EntityId,
+    ) -> Result<Vec<jojobot_domain::session::SessionSummary>, SessionError> {
+        let rows = sqlx::query(
+            "SELECT s.id, s.sid, s.bot, s.focus, s.started_at, s.state, s.served_chars,
+                    COUNT(j.id) AS entry_count,
+                    COALESCE(MAX(GREATEST(j.at, COALESCE(j.touched, j.at))), s.started_at)
+                        AS last_beat
+             FROM session s
+             LEFT JOIN journal_entry j ON j.session = s.id
+             WHERE s.bot = ?
+             GROUP BY s.id, s.sid, s.bot, s.focus, s.started_at, s.state, s.served_chars
+             ORDER BY s.started_at DESC, s.id DESC",
+        )
+        .bind(bot.as_str())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(store)?;
+        rows.iter().map(summary_from).collect()
     }
 
     async fn read_session(&self, id: &SessionId) -> Result<Session, SessionError> {
@@ -1383,6 +1461,112 @@ mod tests {
         assert_eq!(
             after_close.served_chars, 510,
             "accounting keeps running after the session closes: {after_close:?}"
+        );
+
+        store.stop().await;
+    }
+
+    /// 🚨 **The pair that proves `summaries_of` answers the same numbers
+    /// `sessions_of` would, without paying for the text.** The positive
+    /// alone (right numbers) would pass on a build that quietly went back to
+    /// reading everything; the negative alone (nothing extra fetched) would
+    /// pass on a build that answers zero for every count. Both, on the same
+    /// two sessions.
+    #[tokio::test]
+    async fn summaries_of_answers_sessions_ofs_own_numbers_without_the_full_read() {
+        let scratch = Scratch::new("session-summaries");
+        let path = scratch.0.clone();
+        std::mem::forget(scratch);
+        let mut store = Dolt::start(&path, free_port())
+            .await
+            .expect("the store comes up");
+        migrate::run(store.pool()).await.expect("the schema");
+        migrate::seed_kinds(store.pool())
+            .await
+            .expect("the kinds are seeded");
+        let sessions = DoltSessions::open(store.pool().clone());
+
+        let busy = sessions
+            .begin(NewSession {
+                timezone: None,
+                bot: EntityId("bot:gamma".into()),
+                sid: Sid("bz01".into()),
+                focus: "a busy run".into(),
+                started_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
+                started_on: None,
+            })
+            .await
+            .expect("begin ok");
+        for (text, at) in [
+            ("first beat", "2026-01-01T00:05:00Z"),
+            ("second beat", "2026-01-01T00:10:00Z"),
+            ("third and newest beat", "2026-01-01T00:15:00Z"),
+        ] {
+            sessions
+                .append(
+                    &busy.id,
+                    NewEntry::manual(text, at.parse().expect("a fixed instant"), None),
+                )
+                .await
+                .expect("append ok");
+        }
+        let quiet = sessions
+            .begin(NewSession {
+                timezone: None,
+                bot: EntityId("bot:gamma".into()),
+                sid: Sid("qt01".into()),
+                focus: "a run with nothing journalled".into(),
+                started_at: "2026-01-02T00:00:00Z".parse().expect("a fixed instant"),
+                started_on: None,
+            })
+            .await
+            .expect("begin ok");
+
+        let before = sessions.full_reads();
+        let summaries = sessions
+            .summaries_of(&EntityId("bot:gamma".into()))
+            .await
+            .expect("summaries_of ok");
+        assert_eq!(
+            sessions.full_reads(),
+            before,
+            "a summary read must not fall back to reading any session in full"
+        );
+
+        assert_eq!(summaries.len(), 2, "{summaries:?}");
+        let busy_summary = summaries
+            .iter()
+            .find(|s| s.id == busy.id)
+            .expect("the busy run is in the summary");
+        assert_eq!(busy_summary.entry_count, 3, "{busy_summary:?}");
+        assert_eq!(
+            busy_summary.last_beat,
+            "2026-01-01T00:15:00Z"
+                .parse::<Timestamp>()
+                .expect("a fixed instant"),
+            "the newest beat's own moment, not the run's start: {busy_summary:?}"
+        );
+        let quiet_summary = summaries
+            .iter()
+            .find(|s| s.id == quiet.id)
+            .expect("the quiet run is in the summary");
+        assert_eq!(quiet_summary.entry_count, 0, "{quiet_summary:?}");
+        assert_eq!(
+            quiet_summary.last_beat, quiet.started_at,
+            "a run with nothing journalled falls back to when it began: {quiet_summary:?}"
+        );
+
+        // **The positive the counter rests on.** Without this, `full_reads`
+        // staying flat above would say nothing — a counter that never moves
+        // proves the same thing a broken one does.
+        sessions
+            .sessions_of(&EntityId("bot:gamma".into()))
+            .await
+            .expect("sessions_of ok");
+        assert_eq!(
+            sessions.full_reads(),
+            before + 2,
+            "sessions_of must read both sessions in full, which is the cost this exists to avoid"
         );
 
         store.stop().await;

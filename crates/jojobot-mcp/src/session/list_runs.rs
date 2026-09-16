@@ -62,13 +62,16 @@ impl Jojobot {
             Err(refused) => return Ok(refused),
         };
         // **The one read on this port that never begins, closes or sweeps.**
-        // `sessions_of` is exactly what the sweep itself walks — never
-        // `sweep_and_find`, which would close a stale run, and never
-        // `session_for`, which materializes a run lazily on its first write.
-        // A caller asking what it has run is not the caller starting one.
+        // `summaries_of` is what this verb actually needs: which runs, in
+        // what state, and two numbers about their beats — never the
+        // sweep's own walk, which reads full sessions because it has to
+        // decide whether one has gone quiet, and never `session_for`, which
+        // materializes a run lazily on its first write. A caller asking
+        // what it has run is not the caller starting one, and is not the
+        // caller paying for the text of every beat either.
         let mut runs = self
             .sessions
-            .sessions_of(&caller.bot)
+            .summaries_of(&caller.bot)
             .await
             .map_err(session_error)?;
         // Already newest-start-first off the port; the cut below keeps that
@@ -93,8 +96,8 @@ impl Jojobot {
                     "working_on": session.focus,
                     "state": session.state.as_token(),
                     "started_at": session.started_at.to_string(),
-                    "last_beat": session.last_beat().to_string(),
-                    "entry_count": session.entries.len(),
+                    "last_beat": session.last_beat.to_string(),
+                    "entry_count": session.entry_count,
                     "served": served_json(session.served_chars),
                 })
             })

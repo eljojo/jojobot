@@ -494,6 +494,54 @@ pub struct Session {
     pub served_chars: u64,
 }
 
+/// **A run, without its chronology** — the fields [`list_runs`](crate) and
+/// anything like it actually renders: which run, what it was doing, in what
+/// state, and the two numbers about its beats that today cost reading every
+/// one of them to answer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionSummary {
+    /// The store-minted id.
+    pub id: SessionId,
+    /// The handle this run answers to, `None` only for a card predating
+    /// stored handles.
+    pub sid: Option<Sid>,
+    /// The bot this is one run of.
+    pub bot: EntityId,
+    /// What it was working on, last.
+    pub focus: String,
+    /// When it began.
+    pub started_at: Timestamp,
+    /// Which column it sits in.
+    pub state: SessionState,
+    /// How many entries the chronology holds — never the entries.
+    pub entry_count: usize,
+    /// The instant this session last had anything to show for itself — see
+    /// [`Session::last_beat`], the same computation, answered without the
+    /// text.
+    pub last_beat: Timestamp,
+    /// The running total of characters this session has been handed.
+    pub served_chars: u64,
+}
+
+impl SessionSummary {
+    /// A summary derived from a whole [`Session`] already in hand — the
+    /// fallback every store gets for free through
+    /// [`Sessions::summaries_of`]'s own default.
+    fn of(session: &Session) -> Self {
+        SessionSummary {
+            id: session.id.clone(),
+            sid: session.sid.clone(),
+            bot: session.bot.clone(),
+            focus: session.focus.clone(),
+            started_at: session.started_at,
+            state: session.state,
+            entry_count: session.entries.len(),
+            last_beat: session.last_beat(),
+            served_chars: session.served_chars,
+        }
+    }
+}
+
 impl Session {
     /// The instant this session last had anything to show for itself: its
     /// newest entry, or the moment it began if it never wrote one.
@@ -646,6 +694,26 @@ pub trait Sessions: Send + Sync {
     /// Every session of one bot, whatever its state, newest start first. What
     /// attaching reads, and what the sweep walks.
     async fn sessions_of(&self, bot: &EntityId) -> Result<Vec<Session>, SessionError>;
+
+    /// **The same runs, without their chronology** — what a caller asking
+    /// "which runs, in what state, when" needs, which is never the text of
+    /// a single beat.
+    ///
+    /// **Defaulted off [`sessions_of`](Sessions::sessions_of).** A store that
+    /// cannot answer the count and the last beat any cheaper than by reading
+    /// every entry is still correct read through here — it just does not
+    /// save anything. [`DoltSessions`] overrides this with a query that
+    /// never asks the store for a beat's own text at all, which is the
+    /// point: `list_runs` renders two numbers per run and today pays for
+    /// every word to get them.
+    async fn summaries_of(&self, bot: &EntityId) -> Result<Vec<SessionSummary>, SessionError> {
+        Ok(self
+            .sessions_of(bot)
+            .await?
+            .iter()
+            .map(SessionSummary::of)
+            .collect())
+    }
 
     /// **Every session on the board, whosever it is** — what the handle registry
     /// is rebuilt from at startup.
