@@ -728,6 +728,81 @@ mod tests {
         );
     }
 
+    /// 🚨 **What the code does today when the FLOOR ALONE — charter plus the
+    /// essay's core plus the fixed cost of everything else a named boot always
+    /// carries, with every rankable thing already elided — will not fit the
+    /// declared ceiling.** Nothing here endorses this as correct: it is a
+    /// pin on OBSERVED behaviour, established by running the call and reading
+    /// what it did rather than by assuming.
+    ///
+    /// **It answers `Ok`, whole, and over the ceiling — not a decline, not a
+    /// panic, not a truncation.** `remaining_for_prose` saturates to zero and
+    /// every rankable candidate (a rule's own reasoning, an anonymous boot's
+    /// essay) is elided as far as that can go, but the floor itself — charter
+    /// and core, both unconditional by existing rule — still ships whole,
+    /// and nothing downstream compares the final serialized size against
+    /// [`text::BOOT_ANSWER`] at all. A client that cannot read a payload this
+    /// large sees a boot that silently exceeded the one number the product
+    /// declares it holds to.
+    ///
+    /// **This is not hypothetical.** A real identity's own charter and rules
+    /// measure 33,992 characters against this same 28,000 budget — the
+    /// operator's own bot is in the condition this case pins today. Whether
+    /// that should keep shipping oversized, decline, or something else is a
+    /// design question this case does not answer — see the backpack model's
+    /// cap, in flight on another line. This case exists so that question is
+    /// answered on purpose rather than discovered by a client failing to
+    /// render an answer.
+    #[tokio::test]
+    async fn a_floor_that_alone_exceeds_the_ceiling_ships_oversized_rather_than_declining() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        // Large enough that charter plus today's ~10,218-character core plus
+        // the fixed cost of everything else already exceeds the ceiling with
+        // no rule and no reasoning competing for room at all — the floor
+        // alone is what overflows here, not a ranking outcome.
+        jojobot
+            .set_charter(Parameters(SetCharterArgs {
+                bot: "gamma".into(),
+                prose: "x".repeat(20_000),
+                sid: Some(crate::harness::TEST_SID.into()),
+            }))
+            .await
+            .expect("set_charter ok");
+
+        let result = jojobot
+            .start_here(Parameters(OrientArgs {
+                timezone: None,
+                bot: Some("gamma".into()),
+                brief: Some(false),
+                skill: None,
+                resume: None,
+                sid: None,
+                today: None,
+            }))
+            .await;
+
+        let booted = json_of(&result.expect("a floor that cannot fit still answers Ok today"));
+        assert!(
+            booted.get("status").is_none(),
+            "today's answer is an ordinary boot, not a decline: {booted}"
+        );
+        let charter = booted["identity"]["charter"]
+            .as_str()
+            .expect("the charter is still served whole even though nothing else fits beside it");
+        assert_eq!(charter.chars().count(), 20_000, "{charter:?}");
+
+        let whole = booted.to_string().chars().count();
+        assert!(
+            whole > jojobot_domain::text::BOOT_ANSWER.budget,
+            "this case exists because the floor alone does NOT fit today — a whole of {whole} \
+             at or under the {}-character budget means the condition this pins no longer \
+             reproduces, and the fix that closed it belongs in this case's own doc comment, not \
+             a silent pass: {booted}",
+            jojobot_domain::text::BOOT_ANSWER.budget,
+        );
+    }
+
     /// 🚨 **The positive half of the core/remainder bar, re-pointed at the
     /// boot that actually has this behaviour.**
     ///
