@@ -64,6 +64,13 @@ impl SpySearch {
             .clone()
             .expect("search must have reached the port")
     }
+
+    /// **Whether anything ever asked this port a question.** The same signal
+    /// [`SpySearch::query`] leans on, without the panic — for a case whose
+    /// whole point is that the port was never reached.
+    pub(crate) fn reached(&self) -> bool {
+        self.seen.lock().unwrap().is_some()
+    }
 }
 
 #[async_trait::async_trait]

@@ -394,6 +394,14 @@ pub struct OverdueArgs {
 /// stretch, short enough that the answer is still a neighbourhood.
 const NEAR_WINDOW: u32 = 7;
 
+/// **How many candidates the search-routed path asks for.** A ranked search
+/// caps its answer at a page a person reads; this is not a ranked answer, it
+/// is an existence question over every match a structural filter finds, so it
+/// asks for far more than [`DEFAULT_LIMIT`] — large enough that a personal
+/// graph's carrier hits never silently truncate, while still a real bound
+/// rather than none.
+const CARRIER_CANDIDATES_LIMIT: usize = 10_000;
+
 /// Which clock a neighbourhood read compares.
 fn parse_clock(raw: Option<&str>) -> Result<graph::Clock, McpError> {
     match raw.map(str::trim) {
@@ -1364,6 +1372,7 @@ impl Jojobot {
                 subject: args.subject.as_deref().map(EntityId::person),
                 kind: args.kind.as_deref().map(parse_kind).transpose()?,
                 answers_type,
+                candidates: None,
                 fields: match &args.fields {
                     Some(named) => key_filters(named)?,
                     None => view_filters,
@@ -1409,6 +1418,47 @@ impl Jojobot {
                 }
                 _ => {}
             }
+        }
+
+        // **Route through the search index when nothing else already makes
+        // the walk cheap.** A type-only selection — no handle, no kind — is
+        // exactly the shape `graph::walk` cannot answer without reading every
+        // entity's records to find the ones that carry the type's keys. The
+        // same structural match already answers cheaply through the index
+        // ingest already builds (search.rs's `type_clause`, a real query over
+        // the `meta_key` postings a document carries — not a scan). This asks
+        // that question first and hands the narrowed set in as `candidates`,
+        // which `graph::walk` then reads instead of reopening the full list.
+        //
+        // **Every other selection shape is untouched.** A kind or a subject
+        // already makes `graph::walk` itself cheap — existing callers,
+        // rhythms included, keep the path they have.
+        if let (Some(declared), None, None) = (
+            &query.select.answers_type,
+            &query.select.subject,
+            query.select.kind,
+        ) {
+            let candidates = match self
+                .search
+                .search(&SearchQuery {
+                    answers_type: Some(declared.clone()),
+                    limit: CARRIER_CANDIDATES_LIMIT,
+                    ..SearchQuery::default()
+                })
+                .await
+            {
+                Ok(hits) => hits,
+                Err(e) => return memory_declined("recall", e),
+            };
+            query.select.candidates = Some(
+                candidates
+                    .into_iter()
+                    .filter_map(|hit| match hit {
+                        Hit::Entity { entity, .. } => Some(entity.id),
+                        _ => None,
+                    })
+                    .collect(),
+            );
         }
 
         let graph::Selected {
@@ -1667,6 +1717,45 @@ mod tests {
     use super::*;
     use crate::harness::*;
     use crate::memory::testing::*;
+    use jojobot_domain::mailbox::testing::InMemoryMailboxes;
+    use jojobot_domain::session::testing::InMemorySessions;
+    use jojobot_domain::teaching::testing::InMemoryTeachings;
+
+    /// A fresh, empty store, shared across a setup handler and a test handler
+    /// so both see the same entities — the shape the search-routed path needs
+    /// proving against: a store real writes landed in, and a search port
+    /// configured separately from it.
+    fn shared_memory() -> Arc<InMemoryMemory> {
+        Arc::new(InMemoryMemory::booted())
+    }
+
+    /// A handler over a given store and a given search port — the two halves
+    /// [`shared_memory`] and a caller-configured [`SpySearch`] let a test hold
+    /// apart, where [`handler`] fixes both.
+    fn handler_on(memory: Arc<InMemoryMemory>, search: Arc<SpySearch>) -> Jojobot {
+        Jojobot::new(
+            memory,
+            search,
+            Arc::new(InMemoryMailboxes::knowing_any_owner()),
+            Arc::new(InMemorySessions::new()),
+            Arc::new(InMemoryTeachings::new()),
+            seeded_registry(),
+        )
+    }
+
+    /// **The real entity a setup pass captured**, read back off the shared
+    /// store rather than hand-built — so the `Hit` a configured [`SpySearch`]
+    /// answers with is the thing that was actually written, not a guess at
+    /// its shape.
+    async fn captured(memory: &InMemoryMemory, id: &str) -> Entity {
+        memory
+            .list_entities(None)
+            .await
+            .expect("list ok")
+            .into_iter()
+            .find(|e| e.id.as_str() == id)
+            .unwrap_or_else(|| panic!("{id} was not captured"))
+    }
 
     /// The whole-page query, spelled once: one handle, its records and nothing
     /// else. **It asks for the records**, which are off by default — a case
@@ -3645,6 +3734,146 @@ mod tests {
         );
     }
 
+    /// 🚨 **The routed path fires, and it fires only for the one shape that
+    /// needed it.**
+    ///
+    /// Both answers are correct whichever path served them — that is the
+    /// whole risk this pair exists to close: a case asserting only the
+    /// answer would pass identically whether the routing predicate has ever
+    /// fired once. `SpySearch::reached` is the observable that tells the two
+    /// apart, over the one port a routed query has to touch and a
+    /// kind-scoped one never does.
+    #[tokio::test]
+    async fn a_type_only_overdue_read_routes_through_search_and_a_kind_scoped_one_never_does() {
+        // **The positive: no kind, no subject, a declared type and overdue —
+        // exactly the shape `graph::walk` cannot answer without a full read.**
+        let memory = shared_memory();
+        let setup = handler_on(memory.clone(), Arc::new(SpySearch::default()));
+        // The real build ships "runs-out" at every boot (seed.rs); a bare
+        // test store starts with no declared types at all, so this declares
+        // the same shape by hand.
+        setup
+            .declare_type(Parameters(DeclareTypeArgs {
+                name: "runs-out".into(),
+                fields: vec![FieldArgs {
+                    key: attention::RUNS_OUT.into(),
+                    holds: Some("date".into()),
+                    folds: None,
+                    required: false,
+                    one_of: None,
+                }],
+                sid: Some(crate::harness::TEST_SID.into()),
+            }))
+            .await
+            .expect("declare_type ok");
+        ensure(&setup, "thing:battery").await;
+        capture_ok(
+            &setup,
+            CaptureArgs {
+                fields: Some(
+                    [(attention::RUNS_OUT.to_string(), "2026-01-01".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..capture_args("thing:battery", "the spare battery")
+            },
+        )
+        .await;
+        let battery = captured(&memory, "thing:battery").await;
+        let spy = Arc::new(SpySearch::answering(vec![Hit::Entity {
+            entity: battery,
+            doc_id: "doc-battery".into(),
+            edges: vec![],
+            answers: None,
+        }]));
+        let routed = handler_on(memory.clone(), spy.clone());
+        let found = json_of(
+            &routed
+                .recall(Parameters(RecallArgs {
+                    answers_type: Some("runs-out".into()),
+                    overdue: Some(OverdueArgs {
+                        as_of: Some("2026-06-01".into()),
+                    }),
+                    ..of_nothing()
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        assert_eq!(
+            found["objects"][0]["id"], "thing:battery",
+            "the routed read did not find what its own search port handed it: {found}",
+        );
+        assert!(
+            spy.reached(),
+            "a type-only, kind-less, subject-less query never asked the search port at all",
+        );
+        assert_eq!(
+            spy.query().answers_type.as_ref().map(|t| t.name.as_str()),
+            Some("runs-out"),
+            "the search port was asked, but not for the type the call actually named",
+        );
+
+        // **The negative that exercises the SAME guard**: the type is still
+        // named, but a kind is too — kind alone already makes `graph::walk`
+        // cheap, so this must stay on the old path exactly as a bare kind
+        // query does. This is what a "route everything with a type" break
+        // catches that the rhythm case below cannot, because the rhythm case
+        // never names a type at all. Same store as the positive half, so
+        // "runs-out" is already a declared type here.
+        let guarded = Arc::new(SpySearch::default());
+        let kind_and_type = handler_on(memory, guarded.clone());
+        let _ = json_of(
+            &kind_and_type
+                .recall(Parameters(RecallArgs {
+                    kind: Some("thing".into()),
+                    answers_type: Some("runs-out".into()),
+                    overdue: Some(OverdueArgs {
+                        as_of: Some("2026-06-01".into()),
+                    }),
+                    ..of_nothing()
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        assert!(
+            !guarded.reached(),
+            "a query naming both a kind and a type reached the search port anyway",
+        );
+
+        // **The negative, same case: a kind-scoped overdue read — every
+        // existing caller, rhythms included — must still never touch search
+        // at all.** A predicate that routes everything would pass the
+        // positive half above and this is the only thing that catches it.
+        let rhythm_memory = shared_memory();
+        let rhythm_setup = handler_on(rhythm_memory.clone(), Arc::new(SpySearch::default()));
+        make_bot(&rhythm_setup, "otto").await;
+        a_rhythm(&rhythm_setup, "descale", "7", "2026-01-01").await;
+        let untouched = Arc::new(SpySearch::default());
+        let kind_scoped = handler_on(rhythm_memory, untouched.clone());
+        let overdue = json_of(
+            &kind_scoped
+                .recall(Parameters(RecallArgs {
+                    kind: Some("rhythm".into()),
+                    overdue: Some(OverdueArgs {
+                        as_of: Some("2026-06-01".into()),
+                    }),
+                    ..of_nothing()
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        assert_eq!(
+            handles(&overdue),
+            vec!["rhythm:descale".to_string()],
+            "the kind-scoped read itself broke: {overdue}",
+        );
+        assert!(
+            !untouched.reached(),
+            "a kind-scoped overdue query reached the search port, which is the OLD path's job \
+             alone",
+        );
+    }
+
     /// **What a mistyped key WANTED is what the declaration says, including a
     /// narrowed set.**
     ///
@@ -3658,9 +3887,14 @@ mod tests {
     /// named, and the bare value type is NOT what the answer says it wanted.
     #[tokio::test]
     async fn a_narrowed_key_reports_the_set_it_wanted() {
-        let jojobot = handler();
-        ensure(&jojobot, "person:alpha").await;
-        jojobot
+        // **A type-only, kind-less, subject-less `answers_type` query routes
+        // through search** — see `type_clause` in search.rs. A setup handler
+        // does the writing; the store it wrote into is what the real handler
+        // reads, its search port told what that write produced.
+        let memory = shared_memory();
+        let setup = handler_on(memory.clone(), Arc::new(SpySearch::default()));
+        ensure(&setup, "person:alpha").await;
+        setup
             .declare_type(Parameters(DeclareTypeArgs {
                 name: "shift".into(),
                 fields: vec![FieldArgs {
@@ -3675,7 +3909,7 @@ mod tests {
             .await
             .expect("declaring a type is accepted");
         capture_ok(
-            &jojobot,
+            &setup,
             CaptureArgs {
                 fields: Some(
                     [("worked".to_string(), "overnight".to_string())]
@@ -3686,6 +3920,16 @@ mod tests {
             },
         )
         .await;
+        let alpha = captured(&memory, "person:alpha").await;
+        let jojobot = handler_on(
+            memory,
+            Arc::new(SpySearch::answering(vec![Hit::Entity {
+                entity: alpha,
+                doc_id: "doc-alpha".into(),
+                edges: vec![],
+                answers: None,
+            }])),
+        );
 
         let body = json_of(
             &jojobot
@@ -4668,9 +4912,14 @@ mod tests {
     /// rather than the things that answer it.
     #[tokio::test]
     async fn a_type_query_reaches_a_record_written_with_no_label() {
-        let jojobot = handler();
-        ensure(&jojobot, "alpha").await;
-        jojobot
+        // Same shape as `a_narrowed_key_reports_the_set_it_wanted`: a
+        // type-only query with no kind and no subject routes through search,
+        // so the setup writes and the search port that answers for them are
+        // built apart, over one shared store.
+        let memory = shared_memory();
+        let setup = handler_on(memory.clone(), Arc::new(SpySearch::default()));
+        ensure(&setup, "alpha").await;
+        setup
             .declare_type(Parameters(DeclareTypeArgs {
                 name: "service".into(),
                 fields: vec![FieldArgs {
@@ -4685,13 +4934,23 @@ mod tests {
             .await
             .expect("declare_type ok");
         capture_ok(
-            &jojobot,
+            &setup,
             CaptureArgs {
                 fields: Some([("odometer".to_string(), "18000".to_string())].into()),
                 ..capture_args("person:alpha", "the chain was replaced")
             },
         )
         .await;
+        let alpha = captured(&memory, "person:alpha").await;
+        let jojobot = handler_on(
+            memory,
+            Arc::new(SpySearch::answering(vec![Hit::Entity {
+                entity: alpha,
+                doc_id: "doc-alpha".into(),
+                edges: vec![],
+                answers: None,
+            }])),
+        );
 
         let found = json_of(
             &jojobot

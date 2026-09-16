@@ -307,6 +307,7 @@ const ROSTER: &[&str] = &[
     "thing:kettle",
     "thing:no-such-bike",
     "thing:bar-tape",
+    "thing:battery",
     "thing:bike-chain",
     "thing:bike-lock",
     "thing:blue-kite",

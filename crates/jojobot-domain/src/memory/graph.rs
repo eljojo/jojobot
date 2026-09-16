@@ -236,6 +236,24 @@ pub struct Selection {
     /// back saying which it lacks, because a filter that kept only whole ones
     /// would hide exactly the objects worth finding.
     pub answers_type: Option<types::DeclaredType>,
+    /// **A pre-narrowed set of objects, resolved by the caller before this
+    /// walk runs.** When present, this is the WHOLE of which objects get
+    /// their records read — `kind` and `answers_type` still narrow what the
+    /// answer says about them (a type carried here still reports what each
+    /// one lacks), but neither reopens the full entity list to decide who is
+    /// read.
+    ///
+    /// **What this exists for:** `answers_type` alone forces reading every
+    /// entity's records to find the ones that answer it — `filters_facts`'s
+    /// own reason for existing. A caller that already knows the answer from
+    /// an index built for exactly this question (a structural match over the
+    /// same keys, kept in memory) has no reason to pay for that read twice.
+    /// This is how it hands the narrowed set back in rather than asking this
+    /// walk to rediscover it.
+    ///
+    /// `None` — the ordinary case — changes nothing here: every existing
+    /// selection shape reads exactly as it did before this field existed.
+    pub candidates: Option<Vec<EntityId>>,
     /// Objects carrying these keys and the values named. **Each filter says
     /// what it is asked of** — what the thing holds, or what one record says
     /// (see [`Scope`]) — and the ones asked of a record must all hold on the
@@ -1928,13 +1946,22 @@ where
     // **Whose records are needed.** A walk cannot know where it will go, and a
     // filter over records cannot choose objects without reading theirs — both
     // need all of them. Everything else needs only what it named.
+    //
+    // **`candidates`, when the caller already resolved one, is the whole of
+    // this answer** — it does not merely add to `everyones`, it replaces the
+    // question. A caller handing in a candidate set already paid the cost
+    // `everyones` exists to avoid asking again; reopening the full list here
+    // would spend it a second time.
     let everyones = query.follow.is_some() || select.filters_facts();
     let wanted: Vec<&Entity> = entities
         .iter()
-        .filter(|e| {
-            everyones
-                || resolved_subject.as_ref() == Some(&e.id)
-                || (resolved_subject.is_none() && select.kind.is_none_or(|k| e.kind == k))
+        .filter(|e| match &select.candidates {
+            Some(candidates) => candidates.contains(&e.id),
+            None => {
+                everyones
+                    || resolved_subject.as_ref() == Some(&e.id)
+                    || (resolved_subject.is_none() && select.kind.is_none_or(|k| e.kind == k))
+            }
         })
         .collect();
 

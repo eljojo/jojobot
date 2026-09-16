@@ -117,6 +117,25 @@ pub fn shipped_types() -> Vec<DeclaredType> {
                 Field::required("returns_on", ValueType::Date),
             ],
         ),
+        // **The same keys the `RunsOut` and `DecideBy` carriers already
+        // match structurally** (see `jojobot_domain::attention`), named here
+        // so `answers_type`/`fits_type` can ask for them the way any other
+        // declared type is asked for. Declaring buys the name; the carrier
+        // itself is what makes a thing carrying the key answer `overdue`.
+        DeclaredType::shipped(
+            "runs-out",
+            vec![Field::new(
+                jojobot_domain::attention::RUNS_OUT,
+                ValueType::Date,
+            )],
+        ),
+        DeclaredType::shipped(
+            "decide-by",
+            vec![Field::new(
+                jojobot_domain::attention::DECIDE_BY,
+                ValueType::Date,
+            )],
+        ),
     ]
 }
 
@@ -260,7 +279,7 @@ mod tests {
             ensure_shipped_types(&memory)
                 .await
                 .expect("the store takes"),
-            2
+            4
         );
 
         // **`admits` holds a reference and names no kind**, so what a pass gets
@@ -301,6 +320,22 @@ mod tests {
             ],
         );
         assert_eq!(trip.origin, Origin::Shipped);
+
+        // The same keys `RunsOut` and `DecideBy` match structurally, now
+        // nameable the way every other declared type is.
+        let runs_out = stored(&memory, "runs-out").await;
+        assert_eq!(
+            keys(&runs_out),
+            vec![(jojobot_domain::attention::RUNS_OUT, "date")],
+        );
+        assert_eq!(runs_out.origin, Origin::Shipped);
+
+        let decide_by = stored(&memory, "decide-by").await;
+        assert_eq!(
+            keys(&decide_by),
+            vec![(jojobot_domain::attention::DECIDE_BY, "date")],
+        );
+        assert_eq!(decide_by.origin, Origin::Shipped);
     }
 
     /// **The seed is unconditional, and what that buys is the key a later build
