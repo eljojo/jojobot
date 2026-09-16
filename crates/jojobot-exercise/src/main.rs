@@ -23,7 +23,7 @@ use jojobot_exercise::run;
 #[tokio::main]
 async fn main() -> Result<()> {
     let asked = arguments()?;
-    let playbook = Playbook::read(std::path::Path::new(&asked.playbook))?;
+    let playbook = read_playbook(&asked.playbook)?;
     let agent = Agent::new(&asked.model);
     let expectations = expectations_for(&playbook)?;
     let seed = jojobot_exercise::expectations::seed_for(&playbook.source)?;
@@ -50,6 +50,24 @@ async fn main() -> Result<()> {
         std::process::exit(1);
     }
     Ok(())
+}
+
+/// **Read a playbook, resolving its source the way every other room path in
+/// this crate does.**
+///
+/// A name like `rooms/vault.md` is relative to the CRATE, because that is
+/// where the rooms table names it and where the document actually sits. The
+/// plain read is tried first — an explicit path, absolute or relative to
+/// wherever this binary happens to be run from, must keep working, since
+/// that is how a live run is driven today. Only when that fails is the name
+/// re-read through [`jojobot_exercise::expectations::room_document`], the
+/// same crate-relative resolver [`jojobot_exercise::expectations::seed_for`]
+/// and the lock reader already fall back to — so an omitted `--playbook`,
+/// resolved to the rooms table's bare default name, opens regardless of
+/// which directory this binary was started from.
+fn read_playbook(source: &str) -> Result<Playbook> {
+    Playbook::read(std::path::Path::new(source))
+        .or_else(|_| Playbook::read(&jojobot_exercise::expectations::room_document(source)))
 }
 
 struct Asked {
@@ -129,21 +147,38 @@ mod tests {
             .into_iter()
     }
 
-    /// **An omitted `--playbook` resolves to the table's own default room**,
-    /// never a hardcoded name here — decision log 299.
-    #[test]
-    fn an_omitted_playbook_resolves_to_the_default_room() {
-        let asked = resolve_arguments(args(&[])).unwrap();
-        assert_eq!(
-            asked.playbook,
-            jojobot_exercise::expectations::default_room(),
-        );
-    }
-
     /// **A named `--playbook` still wins over the default.**
     #[test]
     fn a_named_playbook_still_wins_over_the_default() {
         let asked = resolve_arguments(args(&["--playbook", "rooms/loop.md"])).unwrap();
         assert_eq!(asked.playbook, "rooms/loop.md");
+    }
+
+    /// **An omitted `--playbook` resolves to a document that actually opens.**
+    ///
+    /// The case this replaces compared the argument parser's output against
+    /// `default_room()` — the same string from the same function on both
+    /// sides, so it could not fail short of that function returning nothing
+    /// at all. This reads the room the resolved playbook actually names, the
+    /// same way `main` does, so a default naming a document nobody had
+    /// written would be caught here rather than only at the door of a paid
+    /// run.
+    #[test]
+    fn an_omitted_playbook_resolves_to_a_document_that_opens() {
+        let asked = resolve_arguments(args(&[])).unwrap();
+        // **The plain read must not be what saves this.** `cargo test` runs
+        // this binary's tests from the crate root, where `rooms/vault.md`
+        // already sits — so a fallback that silently did nothing would
+        // still pass here, exactly the blind-green shape a mutation probe
+        // exists to catch. Running from a directory with no `rooms/` of its
+        // own is what actually exercises the crate-relative resolver rather
+        // than coincidence. This is the only filesystem-touching test in
+        // this module; a second one added here would need to account for
+        // the same borrowed process-wide state.
+        let original = std::env::current_dir().expect("a cwd to restore");
+        std::env::set_current_dir(std::env::temp_dir()).expect("a scratch cwd");
+        let result = read_playbook(&asked.playbook);
+        std::env::set_current_dir(original).expect("the original cwd restores");
+        result.unwrap_or_else(|e| panic!("the default room does not open: {e:#}"));
     }
 }
