@@ -2503,6 +2503,47 @@ mod tests {
         );
     }
 
+    /// 🚨 **A browse that names no handle honours archived state.** The
+    /// direct door — naming the handle — stays open regardless, proved by
+    /// `an_archived_entitys_own_handle_still_returns_it_whole_with_its_reason`
+    /// in `list_entities.rs`: that case is untouched by this one and must
+    /// keep passing.
+    #[tokio::test]
+    async fn a_browse_with_no_handle_named_excludes_what_is_archived() {
+        let jojobot = handler();
+        ensure(&jojobot, "person:bart").await;
+        ensure(&jojobot, "person:milhouse").await;
+        jojobot
+            .memory
+            .archive_entity(&EntityId("person:bart".into()), "a mistaken write")
+            .await
+            .expect("archive_entity ok");
+
+        let body = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    kind: Some("person".into()),
+                    ..of_nothing()
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        let ids: Vec<&str> = body["objects"]
+            .as_array()
+            .expect("an answer carries objects")
+            .iter()
+            .map(|o| o["id"].as_str().expect("an object has a handle"))
+            .collect();
+        assert!(
+            !ids.contains(&"person:bart"),
+            "an archived entity crossed a kind browse that named no handle: {body}",
+        );
+        assert!(
+            ids.contains(&"person:milhouse"),
+            "a live entity is missing from the same browse: {body}",
+        );
+    }
+
     /// **A rhythm that cannot say when it is due is overdue**, which is the
     /// loud answer rather than the tidy one: the alternative is a half-built
     /// loop that surfaces at no boot ever and is never heard from again.

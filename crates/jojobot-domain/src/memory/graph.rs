@@ -1447,7 +1447,12 @@ impl<'a> Ctx<'a> {
         let Some(entity) = self.entities.get(id) else {
             return false;
         };
-        select.kind.is_none_or(|k| entity.kind == k)
+        // **Archived is out of a browse, same as `list_entities`.** Naming a
+        // handle already skipped this function above — this only ever runs
+        // for a selection that chose the object rather than being given it,
+        // and an archived thing is not something a browse chooses.
+        entity.archived.is_none()
+            && select.kind.is_none_or(|k| entity.kind == k)
             // **An owned object is its owner's alone.** Objects declaring no
             // owner are the whole store as it stands, and they answer everyone.
             && self.readable_by(id, select)
