@@ -1986,4 +1986,99 @@ mod tests {
         // as an ordinary update does.
         assert_eq!(edited["content_head"], "works at the new place", "{edited}");
     }
+
+    /// 🚨 **A record can carry a caller-chosen mark, riding the fields bag it
+    /// already has** — rule 149: a per-claim marker with no column of its own
+    /// goes in the hatch. No new column, no new type: `capture` sets it like
+    /// any other field, and `update_fact` changes it like any other field.
+    /// Paired against the positive on purpose: a record that always read
+    /// back marked would pass the negative half alone.
+    ///
+    /// **Nothing reads this key yet.** It rides the existing, generic fields
+    /// mechanism unchanged; this proves the round-trip a future cap will
+    /// need, and nothing more — no filtering, no ranking, no boot change.
+    #[tokio::test]
+    async fn a_record_can_be_marked_and_the_mark_can_be_changed() {
+        let jojobot = handler();
+        ensure(&jojobot, "person:alpha").await;
+
+        // A write's own receipt elides fields (never echoing what the caller
+        // just sent), so every check here reads the mark back through
+        // `recall` — the same door a later reader uses.
+        let marked = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                fields: Some(
+                    [("starred".to_string(), "true".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..capture_args("person:alpha", "carries the mark from the start")
+            },
+        )
+        .await;
+        let address = address_of(&marked);
+
+        capture_ok(
+            &jojobot,
+            capture_args("person:alpha", "an ordinary claim with no mark"),
+        )
+        .await;
+
+        let recall_fields = |recalled: &serde_json::Value, addr: &str| -> serde_json::Value {
+            recalled["objects"][0]["facts"]
+                .as_array()
+                .expect("facts")
+                .iter()
+                .find(|f| f["address"] == addr)
+                .unwrap_or_else(|| panic!("{addr} is there: {recalled}"))["fields"]
+                .clone()
+        };
+
+        let recalled = json_of(
+            &jojobot
+                .recall(Parameters(recall_args("person:alpha")))
+                .await
+                .expect("recall ok"),
+        );
+        assert_eq!(
+            recall_fields(&recalled, &address)["starred"],
+            "true",
+            "{recalled}"
+        );
+        let unmarked_facts = recalled["objects"][0]["facts"].as_array().expect("facts");
+        let unmarked = unmarked_facts
+            .iter()
+            .find(|f| f["content"] == "an ordinary claim with no mark")
+            .expect("the unmarked record is there");
+        assert!(
+            unmarked["fields"].get("starred").is_none(),
+            "a record nobody marked reads back marked: {unmarked}"
+        );
+
+        // The verb that corrects one changes it, like any other field.
+        update_ok(
+            &jojobot,
+            UpdateFactArgs {
+                fields: Some(
+                    [("starred".to_string(), "false".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..update_args(&address)
+            },
+        )
+        .await;
+        let recalled_again = json_of(
+            &jojobot
+                .recall(Parameters(recall_args("person:alpha")))
+                .await
+                .expect("recall ok"),
+        );
+        assert_eq!(
+            recall_fields(&recalled_again, &address)["starred"],
+            "false",
+            "{recalled_again}"
+        );
+    }
 }
