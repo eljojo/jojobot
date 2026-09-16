@@ -162,8 +162,17 @@ impl Jojobot {
         let index = self.memory.list_entities(None).await;
         let entities = match &index {
             Ok(entities) => {
+                // **The snapshot is a BROWSE, and a browse excludes an
+                // archived entity** — the same broad-door/direct-door split
+                // a claim's own archived state already has (`list_entities`
+                // holds it too). Offering an archived bot as one to boot as
+                // is the harm the operator's ruling is about; booting AS it
+                // by name is the direct door and is untouched by this — see
+                // `identity`, which reads `index` rather than this filtered
+                // view.
+                let browsable = || entities.iter().filter(|e| e.archived.is_none());
                 let mut by_kind = std::collections::BTreeMap::<&str, usize>::new();
-                for e in entities {
+                for e in browsable() {
                     let kind = e.id.as_str().split(':').next().unwrap_or("unknown");
                     *by_kind.entry(kind).or_default() += 1;
                 }
@@ -179,8 +188,7 @@ impl Jojobot {
                 // charters belong to a caller weighing its own work; this one
                 // owns nothing and is choosing an identity. `bots`, full
                 // handles, so one record has one shape wherever it appears.
-                let mut bots: Vec<&str> = entities
-                    .iter()
+                let mut bots: Vec<&str> = browsable()
                     .filter(|e| e.kind == EntityKind::BOT)
                     .map(|e| e.id.as_str())
                     .collect();
@@ -1476,6 +1484,71 @@ mod tests {
         // …and the name it hands over actually boots, which is the whole claim.
         let booted = boot(&jojobot, "delta").await;
         assert_eq!(booted["identity"]["bot"]["id"], "bot:delta", "{booted}");
+    }
+
+    /// 🚨 **The snapshot is a BROWSE and excludes an archived bot; booting AS
+    /// it is the DIRECT door and still works, carrying why and when** (rule
+    /// 301: the same broad-door/direct-door split a claim's archived state
+    /// already has). Paired against the positive on purpose: the negative
+    /// alone would pass on a snapshot that named nobody, and the positive
+    /// alone would pass on a snapshot that never filtered anything.
+    #[tokio::test]
+    async fn an_archived_bot_is_absent_from_the_snapshot_and_still_boots_direct() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        make_bot(&jojobot, "delta").await;
+
+        jojobot
+            .memory
+            .archive_entity(
+                &EntityId("bot:delta".into()),
+                "retired, superseded by gamma",
+            )
+            .await
+            .expect("archive ok");
+
+        let anonymous = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    timezone: None,
+                    bot: None,
+                    brief: None,
+                    skill: None,
+                    resume: None,
+                    sid: None,
+                    today: None,
+                }))
+                .await
+                .expect("start_here ok"),
+        );
+        let bots = anonymous["snapshot"]["entities"]["bots"]
+            .as_array()
+            .expect("a roster");
+        assert!(
+            bots.iter().all(|b| b["handle"] != "bot:delta"),
+            "an archived bot is still offered to boot as: {bots:?}"
+        );
+        assert!(
+            bots.iter().any(|b| b["handle"] == "bot:gamma"),
+            "the positive this depends on — a live bot is still listed: {bots:?}"
+        );
+        assert_eq!(
+            anonymous["snapshot"]["entities"]["by_kind"]["bot"], 1,
+            "the count excludes the archived one too: {anonymous}"
+        );
+
+        // The direct door: booting AS the archived bot still works, and says
+        // why and when.
+        let booted = boot(&jojobot, "delta").await;
+        assert_eq!(booted["identity"]["bot"]["id"], "bot:delta", "{booted}");
+        assert_eq!(
+            booted["identity"]["bot"]["archived"]["reason"], "retired, superseded by gamma",
+            "{booted}"
+        );
+        assert!(
+            booted["identity"]["bot"]["archived"]["at"].is_string(),
+            "{booted}"
+        );
     }
 
     /// **One response never contradicts itself about which boxes exist.**
