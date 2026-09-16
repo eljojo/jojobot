@@ -539,6 +539,63 @@ pub mod contract {
         );
     }
 
+    /// **The kind check is position-blind, proved rather than inferred.**
+    ///
+    /// The case above protects a manual entry that happens to be the newest
+    /// one — so it cannot tell "refused because it is not a beat" from
+    /// "refused because it is not the newest". Here neither the beat nor the
+    /// manual entry being tested is last: a third entry sits after both. The
+    /// beat succeeds and the manual entry is refused, at comparable
+    /// positions, so what decides it is the kind, not the age.
+    pub async fn an_older_manual_entry_is_refused_by_address_and_a_beat_at_the_same_age_is_not(
+        store: &dyn Sessions,
+    ) {
+        let session = begin(store, "gamma", "reading the hand-off", 0).await;
+        let beat = store
+            .append(
+                &session.id,
+                NewEntry::beat("capture", "captured facts: person:milhouse", at(60), None),
+            )
+            .await
+            .expect("append ok");
+        let older = journal(store, &session.id, "read the task", 120).await;
+        // Neither entry above is newest once this lands.
+        journal(store, &session.id, "wrote the domain module", 180).await;
+
+        // The beat, no more recent than the manual entry beside it, is still
+        // reached and rewritten in place.
+        let counted = store
+            .amend_beat(
+                &session.id,
+                &beat.id,
+                "captured facts: person:milhouse, person:otto (2)",
+                at(240),
+            )
+            .await
+            .expect("amend_beat ok on a beat that is not the newest entry");
+        assert_eq!(counted.id, beat.id, "the same entry, rewritten in place");
+
+        // The older manual entry, at a comparable age, is refused all the same.
+        let err = store
+            .amend_beat(&session.id, &older.id, "read the task properly", at(300))
+            .await
+            .expect_err("an older manual entry is append-only, exactly as the newest one is");
+        assert!(matches!(err, SessionError::NotABeat { .. }), "got {err:?}");
+
+        let read = store.read_session(&session.id).await.expect("read ok");
+        let texts: Vec<&str> = read.entries.iter().map(|e| e.text.as_str()).collect();
+        assert_eq!(
+            texts,
+            vec![
+                "captured facts: person:milhouse, person:otto (2)",
+                "read the task",
+                "wrote the domain module",
+            ],
+            "the beat's count moved, the older manual entry did not, and nothing was appended \
+             or reordered"
+        );
+    }
+
     /// **A session that is working is not idle.** A beat correction is a write,
     /// so it moves what the sweep measures — but it does NOT move the entry's
     /// place in the chronology, which is where it happened.
@@ -1195,6 +1252,8 @@ pub mod contract {
         a_beat_is_stored_beside_manual_entries_and_stays_distinguishable(&fresh()).await;
         an_amend_rewrites_the_last_entry_and_nothing_else(&fresh()).await;
         only_an_automatic_beat_is_amended_in_place(&fresh()).await;
+        an_older_manual_entry_is_refused_by_address_and_a_beat_at_the_same_age_is_not(&fresh())
+            .await;
         amending_a_beat_keeps_its_place_but_moves_the_clock(&fresh()).await;
         amending_with_no_entries_is_refused(&fresh()).await;
         focus_is_rewritten_in_place_and_leaves_the_chronology_alone(&fresh()).await;
