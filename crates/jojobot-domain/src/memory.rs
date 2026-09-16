@@ -3245,6 +3245,19 @@ pub enum MemoryError {
         /// The address that was aimed at.
         attempted: String,
     },
+    /// **An entity, not a claim — [`archive_entity`](Memory::archive_entity)'s
+    /// own answer to a second pass.** Same shape as
+    /// [`AlreadyRetracted`](Self::AlreadyRetracted) and the same reason: the
+    /// row jojobot holds is already the state the caller asked for, so a
+    /// second archive writes nothing rather than overwriting the reason
+    /// already on record. Archiving is one-way, matching a claim's own
+    /// archived state: nothing takes an entity back out of it over this
+    /// surface.
+    #[error("'{attempted}' is already archived")]
+    AlreadyArchived {
+        /// The handle that was aimed at.
+        attempted: String,
+    },
     /// **The addressed row cannot be taken back**, and `why` says which of the
     /// two remaining reasons it is: itself a retraction, or an ordinary fact —
     /// which is fixed in place rather than retracted.
@@ -3649,8 +3662,14 @@ pub trait Memory: Send + Sync {
     /// **Archive an entity: out of every default read, reachable by handle.**
     /// Mirrors [`FactStatus::Archived`] on a fact — one switch, the reason in
     /// the operator's own words rather than an enumerated category, nothing
-    /// deleted. Idempotent: archiving an already-archived entity overwrites
-    /// the reason and the moment.
+    /// deleted.
+    ///
+    /// **One-way, matching a claim's own archived state.** An entity already
+    /// archived refuses a second pass with
+    /// [`MemoryError::AlreadyArchived`] rather than overwriting the reason
+    /// already on record — the same answer
+    /// [`check_retractable`] gives a claim jojobot is already holding
+    /// archived.
     ///
     /// **Cascades to what hangs off the entity, never to the entity's own
     /// claims or edges — those are read exactly as recorded.** Archiving

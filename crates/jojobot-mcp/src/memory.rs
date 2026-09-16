@@ -14,6 +14,7 @@ use rmcp::{
 use crate::*;
 
 pub mod add_entity;
+pub mod archive_entity;
 pub mod capture;
 pub mod declare_type;
 pub mod declined;
@@ -60,6 +61,7 @@ pub(crate) use wire::*;
 /// in front of a new tool.
 pub(crate) fn router() -> ToolRouter<Jojobot> {
     Jojobot::add_entity_router()
+        + Jojobot::archive_entity_router()
         + Jojobot::capture_router()
         + Jojobot::declare_type_router()
         + Jojobot::list_entities_router()

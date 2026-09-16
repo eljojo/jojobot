@@ -5547,6 +5547,53 @@ pub async fn archive_entity_persists_the_reason_and_the_moment<M: Memory>(store:
     );
 }
 
+/// **A second archive is refused, never a silent overwrite** — the same
+/// one-way rule [`check_retractable`] holds for a claim jojobot is already
+/// holding archived.
+///
+/// **Paired with a fresh archive, which still lands** — the negative alone
+/// would pass on a store that refused every archive outright.
+pub async fn a_second_archive_is_refused_not_overwritten<M: Memory>(store: &M) {
+    let target = add(
+        store,
+        NewEntity::new(
+            EntityId("person:contract-marked-twice".into()),
+            "Marked Twice",
+            "contract-fixture",
+        ),
+    )
+    .await;
+    let first = store
+        .archive_entity(&target.id, "a mistaken write")
+        .await
+        .expect("the first archive should succeed")
+        .archived
+        .expect("the first archive must set archived");
+
+    let err = store
+        .archive_entity(&target.id, "somebody not relevant at all")
+        .await
+        .expect_err("a second archive must be refused, not silently accepted");
+    assert!(
+        matches!(&err, MemoryError::AlreadyArchived { attempted } if attempted == &target.id.to_string()),
+        "a second archive must say the entity is already archived: {err:?}",
+    );
+
+    let index = store
+        .list_entities(None)
+        .await
+        .expect("list_entities should succeed");
+    let reread = index
+        .iter()
+        .find(|e| e.id == target.id)
+        .expect("the entity must still be listed");
+    assert_eq!(
+        reread.archived.as_ref(),
+        Some(&first),
+        "a refused second archive must leave the first reason and moment untouched: {reread:?}",
+    );
+}
+
 /// **Naming a build-supplied record has no row to mark, and the refusal says
 /// so rather than reading as a bare miss** — the same shape
 /// `rename_entity`'s own supplied-handle refusal takes.
@@ -9439,4 +9486,5 @@ pub async fn run_all<M: Memory>(store: &M) {
     claim_histories_agrees_with_claim_history_per_fact(store).await;
 
     archive_entity_persists_the_reason_and_the_moment(store).await;
+    a_second_archive_is_refused_not_overwritten(store).await;
 }

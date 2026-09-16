@@ -525,6 +525,7 @@ const ROSTER: &[&str] = &[
     "person:contract-marked-target",
     "person:contract-marked-untouched",
     "person:contract-marked-supplied-stored",
+    "person:contract-marked-twice",
     "person:kind-set-reader",
     "pet:contract-field-migration-blocked-pet",
     "pet:contract-field-migration-pet",

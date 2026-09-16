@@ -783,6 +783,7 @@ pub const BEAT_CLASSES: &[(&str, &str)] = &[
     ("rename_entity", "renamed entities"),
     ("retract", "took back records"),
     ("merge_entities", "merged entities"),
+    ("archive_entity", "archived entities"),
 ];
 
 /// A running tally, as one line of chronology.
@@ -1183,6 +1184,7 @@ mod tests {
                 ("rename_entity", "renamed entities"),
                 ("retract", "took back records"),
                 ("merge_entities", "merged entities"),
+                ("archive_entity", "archived entities"),
             ],
             "a phrase here is the spelling of text the store already holds, so a \
              change to this table orphans every tally line written under the old one",

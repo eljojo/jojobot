@@ -193,6 +193,22 @@ pub(crate) fn memory_declined(
                  a new record."
             ),
         )),
+        // **Already done is not the same answer as cannot be done**, the same
+        // split `AlreadyRetracted` draws for a claim. The entity jojobot
+        // holds is already archived, whichever call did it, so a second
+        // archive writes nothing rather than overwriting the reason already
+        // on record.
+        MemoryError::AlreadyArchived { attempted } => Ok(blocked_body(
+            &EntityId(attempted.clone()),
+            &[],
+            format!(
+                "'{attempted}' is already archived — the entity jojobot holds is the one you \
+                 asked for. This call wrote nothing because there was nothing left to write, and \
+                 a further attempt would say the same. Archiving is one-way: nothing takes an \
+                 entity back out of it over this surface. Recall it by handle to read why and \
+                 when it was archived."
+            ),
+        )),
         // **Half an attribution is what is missing, and the caller has both
         // ways out** (rule 68): name where it was read, or file it as the
         // derivation it would otherwise be.
@@ -455,6 +471,7 @@ pub(crate) fn memory_error(e: MemoryError) -> McpError {
         | MemoryError::NotRetractable { .. }
         | MemoryError::UnsourcedObservation
         | MemoryError::AlreadyRetracted { .. }
+        | MemoryError::AlreadyArchived { .. }
         | MemoryError::NothingToMerge { .. }
         | MemoryError::AlreadyMerged { .. }
         | MemoryError::NothingToRename { .. }

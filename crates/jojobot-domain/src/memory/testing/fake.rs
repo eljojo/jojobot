@@ -759,6 +759,11 @@ impl Memory for InMemoryMemory {
                 into: into.to_string(),
             });
         }
+        if entity.archived.is_some() {
+            return Err(MemoryError::AlreadyArchived {
+                attempted: id.to_string(),
+            });
+        }
         entity.archived = Some(Archived {
             reason: reason.trim().to_string(),
             at: self.clock.now(),
