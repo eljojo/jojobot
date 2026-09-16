@@ -605,6 +605,95 @@ mod tests {
         assert!(newest["details_elided"].is_null(), "{newest}");
     }
 
+    /// 🚨 **`stale_after` is omitted from a rule's rendering when nothing set
+    /// it, never spelled out as `null`** (rule 300's first mechanical
+    /// instance: every field earns its place). Paired against the positive
+    /// on purpose: a rendering that always dropped the key would pass the
+    /// negative half alone, so a rule that actually carries it must still
+    /// render it whole.
+    ///
+    /// **`edge`, `derived_from` and `happened_at` are deliberately NOT
+    /// touched**, and this asserts they still are not: real user stories
+    /// (`unprompted`, `bikes`, `challenge`, `unsourced`) pin the literal
+    /// `"edge":null` / `"derived_from":null` / `"happened_at":null` on the
+    /// wire, so omitting them would break a reader that already exists.
+    /// `fields`, `refs` and `stands_for` carry the same always-present
+    /// requirement for the same reason (see
+    /// `a_capture_with_no_fields_answers_with_an_empty_bag` and the
+    /// `stands_for` ordinary-field case) and are out of scope here too.
+    #[tokio::test]
+    async fn a_rules_stale_after_is_omitted_when_empty_and_other_null_keys_stay_present() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        ensure(&jojobot, "milhouse").await;
+
+        let empty = capture_ok(&jojobot, capture_args("bot:gamma", "an ordinary rule")).await;
+        let empty_address = address_of(&empty);
+
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                shape: Some("about".into()),
+                object: Some("person:milhouse".into()),
+                derived_from: Some(empty_address.clone()),
+                happened_at: Some("2026-01-05".into()),
+                stale_after: Some("2026-02-01".into()),
+                ..capture_args("bot:gamma", "a rule with every optional key set")
+            },
+        )
+        .await;
+
+        let booted = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    timezone: None,
+                    bot: Some("gamma".into()),
+                    brief: Some(false),
+                    skill: None,
+                    resume: None,
+                    sid: None,
+                    today: None,
+                }))
+                .await
+                .expect("start_here ok"),
+        );
+        let rules = booted["identity"]["rules"].as_array().expect("rules");
+
+        let empty_rule = rules
+            .iter()
+            .find(|r| r["content"] == "an ordinary rule")
+            .expect("the empty rule is there");
+        assert!(
+            empty_rule.get("stale_after").is_none(),
+            "a rule with no expiry still spelled stale_after out as null: {empty_rule}"
+        );
+        // The positive control: edge/derived_from/happened_at stay present
+        // and null, exactly as the pinned user stories require. Checked on
+        // the object's own key set, not on equality — indexing a MISSING key
+        // also reads back as `Null`, so an equality check alone cannot tell
+        // "present and null" from "absent" apart.
+        let empty_rule_object = empty_rule.as_object().expect("a rule is a JSON object");
+        for key in ["edge", "derived_from", "happened_at"] {
+            assert!(
+                empty_rule_object.contains_key(key) && empty_rule[key].is_null(),
+                "a story pins `\"{key}\":null` on the wire; this rendering must still say so: \
+                 {empty_rule}"
+            );
+        }
+
+        let filled_rule = rules
+            .iter()
+            .find(|r| r["content"] == "a rule with every optional key set")
+            .expect("the filled rule is there");
+        assert_eq!(
+            filled_rule["edge"]["object"], "person:milhouse",
+            "{filled_rule}"
+        );
+        assert_eq!(filled_rule["derived_from"], empty_address, "{filled_rule}");
+        assert_eq!(filled_rule["happened_at"], "2026-01-05", "{filled_rule}");
+        assert_eq!(filled_rule["stale_after"], "2026-02-01", "{filled_rule}");
+    }
+
     /// 🚨 **A charter big enough, alone, to leave no room for anything else** —
     /// proving `charter` is still served whole regardless of what that costs
     /// the rest of the answer, and that a rule's own `details` is honestly

@@ -47,6 +47,11 @@ pub(crate) fn fact_json(
         // about the claim and this is about the thing the claim is about. A
         // claim that says nothing here is complete: nobody gave a day, and a
         // day nobody gave is not something jojobot invents.
+        //
+        // **Present as `null`, not omitted**, unlike `stale_after` below —
+        // `unprompted` and `bikes` (user stories) pin the literal
+        // `"happened_at":null` on the wire, so a consumer here does read the
+        // bare key rather than only its value.
         "happened_at": fact.happened_at.map(|day| day.to_string()),
         // **The other clock, and it is not the one above.** `date` says when
         // the claim is true OF; this says when jojobot took the record in. They
@@ -54,11 +59,6 @@ pub(crate) fn fact_json(
         // deciding how old a claim is needs the second one — with `null`
         // meaning a record from before the store kept it, never "just now".
         "inserted_at": fact.inserted_at.map(|at| at.to_string()),
-        // **The day this reading stops being good**, when its writer set one.
-        // `null` is not freshness and not staleness: it is a claim that made no
-        // promise, and reading absence as an assurance is the mistake this pair
-        // of keys exists to prevent.
-        "stale_after": fact.stale_after.map(|day| day.to_string()),
         "edge": fact.edge.as_ref().map(edge_json),
         // **The record's fields, flat on the record.** They are not a
         // sub-object about some other kind of thing: they are what this record
@@ -73,12 +73,24 @@ pub(crate) fn fact_json(
         "refs": fact.refs.iter().map(|r| r.as_str()).collect::<Vec<_>>(),
         // Same rule: most claims are not derived from another claim, and a
         // reader must not have to branch on a missing key to learn that.
+        // **Present as `null`, not omitted** — `challenge` and `unsourced`
+        // (user stories) pin the literal `"derived_from":null` on the wire.
         "derived_from": fact.derived_from.as_ref().map(|a| a.to_string()),
         // The synthesis mark: which claims this record stands for. Always
         // present, empty when the record carries no mark — same convention
         // as `refs`, because most records are not a synthesis of others.
         "stands_for": fact.stands_for.iter().map(|a| a.to_string()).collect::<Vec<_>>(),
     });
+    // **A key that holds nothing carries no information, so it is omitted
+    // rather than spelled out as its own name plus `null`** — a field earns
+    // its place (rule 300). `stale_after` is the one field of its shape with
+    // no consumer reading its bare presence: nothing in the build or the
+    // stories distinguishes "absent" from "null" for it, unlike `edge`,
+    // `derived_from` and `happened_at` above, which real user stories pin as
+    // present-and-null and so are left untouched.
+    if let Some(stale_after) = fact.stale_after {
+        rendered["stale_after"] = serde_json::json!(stale_after.to_string());
+    }
     // **Only when the day has passed, and only when somebody set one.** A key
     // that said `false` on every ordinary claim would spend a reader's
     // attention saying nothing, and absence must not read as staleness.
