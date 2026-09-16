@@ -98,6 +98,7 @@ entity  person:gayle | Gayle
 entity  person:tina | Tina | resembles: person:linda
 entity  person:louise | Louise
 entity  person:gene | Gene
+entity  person:hugo | Hugo
 
 entity  place:wagstaff-pool | The Wagstaff Pool
 entity  place:capital-city | Capital City
@@ -783,7 +784,7 @@ May and August; the floor went considering, doing, done.
 >
 > Nobody will answer you, but your answer is being read. You must answer.
 >
-> start jojobot as assistant — it is 13 December 2026, and I want to look back over the year. What have I let go quiet — and for each one, tell me why from what is actually on record, not a guess. Then: if it stopped because it could not happen, put down when it can again. If I have actually kept doing it and just stopped logging it, log it from whatever you can find. The one I have let something else crowd out — leave it; that is my call to make. And which of my projects have I been going round on without moving? Put `decide_by` on those — a date — and I will deal with them then or drop them.
+> start jojobot as assistant — it is 13 December 2026, and I want to look back over the year. What have I let go quiet — and for each one, tell me why from what is actually on record, not a guess. Then: if it stopped because it could not happen, put down when it can again. If I have actually kept doing it and just stopped logging it, log it from whatever you can find. The one I have let something else crowd out — leave it; that is my call to make. And which of my projects have I been going round on without moving? Put `decide_by` on those — a date — and I will deal with them then or drop them. Two more things while I am tidying up. Louise is going to keep me honest on the piano from now on — I don't need reminding for that one any more, so drop it. And there is a "Hugo" in here somewhere that I have no memory of at all — no idea who that was or why I wrote it down. Take him out; whoever he was, he is not real to me.
 
 ```locks
 # 🚨 **THE THIRD SILENCE, LOGGED FROM A RECORD THAT NEVER SAYS "PIANO".** The
@@ -830,6 +831,38 @@ recall {"subject": "project:kitchen-floor"}
 carries "status":"done"
 lacks   "decide_by"
 say     later December: the kitchen floor was given a decide_by, so a project that went considering, doing, done was treated like one that never left considering
+
+# 🚨 **THE FOURTH CASE, AND IT IS NOT QUIET.** The three loops above are
+# resumed, corroborated, or left alone on purpose — every one of them still
+# scheduled. The piano is asked to stop outright: Louise takes over reminding,
+# so this is not a turn to log and wait on, it is the schedule itself going
+# away. A loop that was only paused would fall due again on its own before
+# long; one that was actually dropped never will, however far forward the
+# question is asked — so the check is not today, it is next year.
+recall {"subject": "rhythm:sit-at-the-piano"}
+carries "Sit at the piano"
+lacks   "cadence_days"
+say     later December: the piano's loop still carries a cadence, so asking jojobot to stop reminding altogether left the schedule standing rather than dropping it
+
+# The positive control this needs: the CALL loop, never cleared and never
+# checked in again after September, must still read overdue at the same far
+# date — proving the selection finds a genuinely overdue loop rather than
+# coming back empty for every loop, which would pass the piano's absence for
+# the wrong reason.
+recall {"kind": "rhythm", "overdue": {"as_of": "2027-06-01"}}
+carries "parent":"person:gayle"
+lacks   "parent":"thing:piano"
+say     later December: the piano reads overdue again by next June, so today's turn only postponed the reminder rather than actually dropping the schedule that would have raised it
+
+# 🚨 **THE NAME NOBODY CAN PLACE, TAKEN OUT WITH THE REASON SAID.** Hugo was
+# in the vault from the first sitting, like the loops, and no sitting ever
+# used him for anything — the same kind of stale entry a folder kept for
+# years actually accumulates. The reason is the operator's own words, not a
+# guess this sitting invents on the operator's behalf.
+recall {"subject": "person:hugo"}
+carries "archived"
+carries "reason":"
+say     later December: Hugo carries no archived reason, so a name the operator does not recognise is still standing in the vault as if it belonged there
 ```
 
 ## What this room cannot measure
@@ -856,3 +889,12 @@ a weekday appearing on two records, and a weekday is not a key.
 **Whether anything here was easy to find.** Every lock says a question is
 answerable. None of them says the answer was near the surface, and a store
 nobody could work in still passes them all.
+
+**Whether Hugo's removal said a real reason or an empty one.** The lock only
+sees that a reason landed, not that it was honest. "Not real to me" is what
+the operator actually said; a sitting that wrote anything at all in that slot
+passes the same as one that copied the words.
+
+**Whether the piano's schedule was dropped for the reason given.** The lock
+sees that nothing is left to fall due; it cannot see whether the sitting
+believed Louise would actually do it.
