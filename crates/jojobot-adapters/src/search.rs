@@ -2594,9 +2594,23 @@ impl IndexedMailboxes {
 /// only reads them, so there is no verb to wrap. What it owns is the same job
 /// the other two halves own — filling its share of the index at boot, and
 /// refreshing it before an answer, from its own store.
+/// The signal [`jojobot_domain::session::Sessions::write_summary`] answers,
+/// paired with the read it was taken beside.
+type CachedSessionScan = (
+    (i64, Option<jiff::Timestamp>),
+    Vec<jojobot_domain::session::Session>,
+);
+
 pub struct IndexedSessions {
     inner: Arc<dyn jojobot_domain::session::Sessions>,
     index: Arc<FullTextIndex>,
+    /// **What the last real read saw, and the signal it saw it under.**
+    /// `None` until the first real read lands. Compared against a fresh
+    /// [`jojobot_domain::session::Sessions::write_summary`] on every call so
+    /// an unchanged store can be answered from here instead of paying for
+    /// [`jojobot_domain::session::Sessions::all_sessions`] again — the same
+    /// mechanism [`IndexedMemory::rescan`] uses, on this port's own signal.
+    last_scan: RwLock<Option<CachedSessionScan>>,
 }
 
 impl IndexedSessions {
@@ -2604,7 +2618,11 @@ impl IndexedSessions {
         inner: Arc<dyn jojobot_domain::session::Sessions>,
         index: Arc<FullTextIndex>,
     ) -> Self {
-        IndexedSessions { inner, index }
+        IndexedSessions {
+            inner,
+            index,
+            last_scan: RwLock::new(None),
+        }
     }
 
     /// Load every bot's runs — the boot path. Returns how many were indexed.
@@ -2613,11 +2631,35 @@ impl IndexedSessions {
     /// query asks; an index built per caller would let the first bot to search
     /// decide what the second one could find.
     pub async fn rebuild(&self) -> Result<usize, jojobot_domain::session::SessionError> {
+        Ok(self.sync().await?.len())
+    }
+
+    /// Replace the projection from a full read of the sessions store, and
+    /// hand back what it saw — skipping the read entirely when nothing has
+    /// changed. The one refresh: the boot path and the read path run the
+    /// same one, exactly as the memory half's `rescan` does.
+    async fn sync(
+        &self,
+    ) -> Result<Vec<jojobot_domain::session::Session>, jojobot_domain::session::SessionError> {
+        let summary = self.inner.write_summary().await?;
+        if let Some(summary) = &summary {
+            let cached = self.last_scan.read().expect("session scan cache poisoned");
+            if let Some((last_summary, sessions)) = cached.as_ref()
+                && last_summary == summary
+            {
+                return Ok(sessions.clone());
+            }
+        }
+
         let sessions = self.inner.all_sessions().await?;
         self.index
             .ingest_sessions(&sessions)
             .map_err(|e| jojobot_domain::session::SessionError::Store(e.to_string()))?;
-        Ok(sessions.len())
+        if let Some(summary) = summary {
+            *self.last_scan.write().expect("session scan cache poisoned") =
+                Some((summary, sessions.clone()));
+        }
+        Ok(sessions)
     }
 }
 
@@ -2627,9 +2669,7 @@ impl Refresh for IndexedSessions {
         // A read that cannot reach the store leaves the last good one standing.
         // The session half reports no coverage of its own, so an answer says
         // nothing about how far behind it is — see the note on the card.
-        if let Ok(sessions) = self.inner.all_sessions().await {
-            let _ = self.index.ingest_sessions(&sessions);
-        }
+        let _ = self.sync().await;
     }
 }
 
@@ -4608,6 +4648,213 @@ mod tests {
                 on: None,
             }],
         }
+    }
+
+    /// A [`jojobot_domain::session::Sessions`] that answers a settable
+    /// `write_summary` and counts how many times the real `all_sessions` ran
+    /// — the session half's version of [`SummarizedScan`].
+    struct SummarizedSessions {
+        sessions: RwLock<Vec<jojobot_domain::session::Session>>,
+        summary: RwLock<Option<(i64, Option<jiff::Timestamp>)>>,
+        reads: std::sync::atomic::AtomicUsize,
+    }
+
+    impl SummarizedSessions {
+        fn new(sessions: Vec<jojobot_domain::session::Session>) -> Arc<Self> {
+            Arc::new(SummarizedSessions {
+                sessions: RwLock::new(sessions),
+                summary: RwLock::new(None),
+                reads: std::sync::atomic::AtomicUsize::new(0),
+            })
+        }
+
+        /// What `write_summary` answers from here on.
+        fn set_summary(&self, summary: Option<(i64, Option<jiff::Timestamp>)>) {
+            *self.summary.write().expect("summary poisoned") = summary;
+        }
+
+        /// How many times the real `all_sessions` ran.
+        fn reads_ran(&self) -> usize {
+            self.reads.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    #[async_trait]
+    impl jojobot_domain::session::Sessions for SummarizedSessions {
+        async fn sessions_of(
+            &self,
+            _: &EntityId,
+        ) -> Result<Vec<jojobot_domain::session::Session>, jojobot_domain::session::SessionError>
+        {
+            unimplemented!("this double only answers all_sessions and write_summary")
+        }
+        async fn all_sessions(
+            &self,
+        ) -> Result<Vec<jojobot_domain::session::Session>, jojobot_domain::session::SessionError>
+        {
+            self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(self.sessions.read().expect("sessions poisoned").clone())
+        }
+        async fn write_summary(
+            &self,
+        ) -> Result<Option<(i64, Option<jiff::Timestamp>)>, jojobot_domain::session::SessionError>
+        {
+            Ok(*self.summary.read().expect("summary poisoned"))
+        }
+        async fn read_session(
+            &self,
+            _: &jojobot_domain::session::SessionId,
+        ) -> Result<jojobot_domain::session::Session, jojobot_domain::session::SessionError>
+        {
+            unimplemented!("this double only answers all_sessions and write_summary")
+        }
+        async fn begin(
+            &self,
+            _: jojobot_domain::session::NewSession,
+        ) -> Result<jojobot_domain::session::Session, jojobot_domain::session::SessionError>
+        {
+            unimplemented!("this double only answers all_sessions and write_summary")
+        }
+        async fn append(
+            &self,
+            _: &jojobot_domain::session::SessionId,
+            _: jojobot_domain::session::NewEntry,
+        ) -> Result<jojobot_domain::session::JournalEntry, jojobot_domain::session::SessionError>
+        {
+            unimplemented!("this double only answers all_sessions and write_summary")
+        }
+        async fn amend_last(
+            &self,
+            _: &jojobot_domain::session::SessionId,
+            _: &str,
+        ) -> Result<jojobot_domain::session::JournalEntry, jojobot_domain::session::SessionError>
+        {
+            unimplemented!("this double only answers all_sessions and write_summary")
+        }
+        async fn amend_beat(
+            &self,
+            _: &jojobot_domain::session::SessionId,
+            _: &jojobot_domain::session::EntryId,
+            _: &str,
+            _: jiff::Timestamp,
+        ) -> Result<jojobot_domain::session::JournalEntry, jojobot_domain::session::SessionError>
+        {
+            unimplemented!("this double only answers all_sessions and write_summary")
+        }
+        async fn set_focus(
+            &self,
+            _: &jojobot_domain::session::SessionId,
+            _: &str,
+        ) -> Result<jojobot_domain::session::Session, jojobot_domain::session::SessionError>
+        {
+            unimplemented!("this double only answers all_sessions and write_summary")
+        }
+        async fn set_timezone(
+            &self,
+            _: &jojobot_domain::session::SessionId,
+            _: Option<&str>,
+        ) -> Result<jojobot_domain::session::Session, jojobot_domain::session::SessionError>
+        {
+            unimplemented!("this double only answers all_sessions and write_summary")
+        }
+        async fn close(
+            &self,
+            _: &jojobot_domain::session::SessionId,
+            _: jojobot_domain::session::SessionState,
+        ) -> Result<jojobot_domain::session::Session, jojobot_domain::session::SessionError>
+        {
+            unimplemented!("this double only answers all_sessions and write_summary")
+        }
+        async fn add_served(
+            &self,
+            _: &jojobot_domain::session::SessionId,
+            _: u64,
+        ) -> Result<(), jojobot_domain::session::SessionError> {
+            unimplemented!("this double only answers all_sessions and write_summary")
+        }
+        async fn reopen(
+            &self,
+            _: &jojobot_domain::session::SessionId,
+        ) -> Result<jojobot_domain::session::Session, jojobot_domain::session::SessionError>
+        {
+            unimplemented!("this double only answers all_sessions and write_summary")
+        }
+    }
+
+    /// **An unchanged session store costs no re-read.** The session half's
+    /// pair to [`an_unchanged_store_costs_no_re_read`] — the same mechanism,
+    /// this port's own signal.
+    #[tokio::test]
+    async fn an_unchanged_session_store_costs_no_re_read() {
+        let spy = SummarizedSessions::new(vec![run(
+            "s-gamma",
+            "bot:gamma",
+            "the kiln slice",
+            "the damper is hand-cut",
+        )]);
+        spy.set_summary(Some((1, None)));
+        let index = Arc::new(FullTextIndex::open().expect("index opens"));
+        let sessions = Arc::new(IndexedSessions::new(spy.clone(), index));
+        sessions.rebuild().await.expect("rebuild");
+        assert_eq!(spy.reads_ran(), 1, "the boot rebuild always reads once");
+
+        Refresh::refresh(sessions.as_ref()).await;
+        assert_eq!(
+            spy.reads_ran(),
+            1,
+            "the signal did not move, so the refresh paid for no re-read"
+        );
+    }
+
+    /// **The positive control.** The same shape, except the signal DOES move
+    /// between the two refreshes.
+    #[tokio::test]
+    async fn a_changed_session_store_is_still_seen() {
+        let spy = SummarizedSessions::new(vec![run(
+            "s-gamma",
+            "bot:gamma",
+            "the kiln slice",
+            "the damper is hand-cut",
+        )]);
+        spy.set_summary(Some((1, None)));
+        let index = Arc::new(FullTextIndex::open().expect("index opens"));
+        let sessions = Arc::new(IndexedSessions::new(spy.clone(), index));
+        sessions.rebuild().await.expect("rebuild");
+        assert_eq!(spy.reads_ran(), 1, "the boot rebuild always reads once");
+
+        spy.set_summary(Some((2, None)));
+        Refresh::refresh(sessions.as_ref()).await;
+        assert_eq!(
+            spy.reads_ran(),
+            2,
+            "the signal moved, so the refresh paid for a real re-read"
+        );
+    }
+
+    /// **A session store with no signal is scanned every time** — the
+    /// fallback that keeps every store this slice does not touch exactly as
+    /// it was.
+    #[tokio::test]
+    async fn a_session_store_with_no_signal_is_scanned_every_refresh() {
+        let spy = SummarizedSessions::new(vec![run(
+            "s-gamma",
+            "bot:gamma",
+            "the kiln slice",
+            "the damper is hand-cut",
+        )]);
+        // `set_summary` never called: the double's own default is `None`,
+        // exactly the trait's default for a store that has not opted in.
+        let index = Arc::new(FullTextIndex::open().expect("index opens"));
+        let sessions = Arc::new(IndexedSessions::new(spy.clone(), index));
+        sessions.rebuild().await.expect("rebuild");
+        assert_eq!(spy.reads_ran(), 1);
+
+        Refresh::refresh(sessions.as_ref()).await;
+        assert_eq!(
+            spy.reads_ran(),
+            2,
+            "no signal means no cache to trust, so every refresh still reads"
+        );
     }
 
     /// **A bot finds its own run, does not find another bot's, and the second
