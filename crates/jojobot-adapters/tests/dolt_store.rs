@@ -1760,6 +1760,7 @@ async fn what_sits_under_a_supplied_record_answers_over_the_real_store() {
             boot: Default::default(),
             merged_into: None,
             badge: None,
+            archived: None,
         },
         std::collections::BTreeMap::new(),
     )]);
@@ -1885,6 +1886,7 @@ async fn dolt_satisfies_the_supplied_record_guard_contract() {
             boot: Default::default(),
             merged_into: None,
             badge: None,
+            archived: None,
         },
         std::collections::BTreeMap::new(),
     )]);
@@ -1894,6 +1896,7 @@ async fn dolt_satisfies_the_supplied_record_guard_contract() {
     memory::add_entity_guards_hold_for_stored_and_supplied(&bare, &known).await;
     memory::a_claim_on_a_supplied_record_reads_back(&known).await;
     memory::a_rename_of_a_supplied_handle_is_refused_not_a_silent_no_op(&known).await;
+    memory::an_archive_of_a_supplied_handle_is_refused_not_a_silent_no_op(&known).await;
     memory::a_merge_naming_a_supplied_handle_is_refused_not_a_silent_no_op(&known).await;
 
     store.stop().await;
@@ -1955,6 +1958,7 @@ async fn dolt_answers_every_entity_read_for_a_supplied_record() {
             boot: Default::default(),
             merged_into: None,
             badge: None,
+            archived: None,
         },
         std::collections::BTreeMap::new(),
     )]);
@@ -2134,6 +2138,7 @@ async fn a_record_the_build_ships_is_in_no_table_of_the_real_store() {
             boot: Default::default(),
             merged_into: None,
             badge: None,
+            archived: None,
         },
         std::collections::BTreeMap::from([("selects".to_string(), "rhythm".to_string())]),
     )]);
@@ -2250,6 +2255,7 @@ impl OwnerIndex for RosterOnly {
                     boot: Default::default(),
                     merged_into: None,
                     badge: None,
+                    archived: None,
                 }
             })
             .collect();

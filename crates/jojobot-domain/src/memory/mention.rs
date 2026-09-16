@@ -458,6 +458,13 @@ impl super::Memory for Mentioning {
             .rename_entity(from, to, parent, date, override_token)
             .await
     }
+    async fn archive_entity(
+        &self,
+        id: &EntityId,
+        reason: &str,
+    ) -> Result<Entity, super::MemoryError> {
+        self.inner.archive_entity(id, reason).await
+    }
     /// **Resolved on the way in.** Every handle an author wrote becomes the
     /// badge its row wears, so the claim keeps a pointer rather than a
     /// spelling.
@@ -758,6 +765,7 @@ mod tests {
             boot: Boot::OnDemand,
             merged_into: None,
             badge: badge.map(str::to_string),
+            archived: None,
         }
     }
 

@@ -136,6 +136,10 @@ impl Memory for Folded {
             .await
     }
 
+    async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
+        self.inner.archive_entity(id, reason).await
+    }
+
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
         match self.inner.capture(fact).await? {
             Guarded::Written(fact) => match self.refresh(&fact.home).await {
@@ -570,6 +574,9 @@ mod tests {
             patch: EntityPatch,
         ) -> Result<Guarded<Entity>, MemoryError> {
             self.0.update_entity(handle, patch).await
+        }
+        async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
+            self.0.archive_entity(id, reason).await
         }
         async fn rename_entity(
             &self,

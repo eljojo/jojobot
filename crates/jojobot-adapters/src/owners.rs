@@ -216,6 +216,9 @@ mod tests {
             ) -> Result<Guarded<Entity>, MemoryError> {
                 unimplemented!("the owner index only reads the index")
             }
+            async fn archive_entity(&self, _: &EntityId, _: &str) -> Result<Entity, MemoryError> {
+                unimplemented!("the owner index only reads the index")
+            }
             async fn capture(&self, _: NewFact) -> Result<Guarded<Fact>, MemoryError> {
                 unimplemented!("the owner index only reads the index")
             }

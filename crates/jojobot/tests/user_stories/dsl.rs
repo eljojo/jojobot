@@ -181,6 +181,13 @@ impl jojobot_domain::memory::Memory for Blindable {
             .rename_entity(from, to, parent, date, override_token)
             .await
     }
+    async fn archive_entity(
+        &self,
+        id: &jojobot_domain::memory::EntityId,
+        reason: &str,
+    ) -> Result<jojobot_domain::memory::Entity, jojobot_domain::memory::MemoryError> {
+        self.inner.archive_entity(id, reason).await
+    }
 
     async fn capture(
         &self,

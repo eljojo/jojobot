@@ -1390,6 +1390,7 @@ mod tests {
                     boot: Boot::OnDemand,
                     merged_into: None,
                     badge: None,
+                    archived: None,
                 },
                 doc_id: "doc-9".into(),
                 edges: Vec::new(),
@@ -1903,6 +1904,7 @@ mod tests {
             boot: Boot::OnDemand,
             merged_into: None,
             badge: None,
+            archived: None,
         };
         let fact = Fact {
             id: FactId("f3".into()),
@@ -1937,6 +1939,7 @@ mod tests {
             boot: Boot::OnDemand,
             merged_into: None,
             badge: None,
+            archived: None,
         };
         let guild = Edge::new(EdgeShape::Membership, EntityId("org:guild".into()));
         let spy = Arc::new(SpySearch::answering(vec![

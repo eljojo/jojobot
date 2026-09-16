@@ -527,6 +527,7 @@ mod tests {
             boot: Default::default(),
             merged_into: None,
             badge: None,
+            archived: None,
         }
     }
 
@@ -867,6 +868,7 @@ mod tests {
                 boot: Default::default(),
                 merged_into: None,
                 badge: None,
+                archived: None,
             };
             let incoming = EntityId((*incoming_handle).into());
             let decision = decide(

@@ -109,6 +109,7 @@ async fn memory_with_an_orphan() -> Arc<dyn Memory> {
         boot: Boot::default(),
         merged_into: None,
         badge: None,
+        archived: None,
     });
     store
 }

@@ -425,6 +425,16 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0048_session_served_chars.sql"),
         leaves: Leaves::Column("session", "served_chars"),
     },
+    Migration {
+        version: "0049_entity_archived",
+        sql: include_str!("../../migrations/0049_entity_archived.sql"),
+        leaves: Leaves::Column("entity", "archived_reason"),
+    },
+    Migration {
+        version: "0050_entity_archived_at",
+        sql: include_str!("../../migrations/0050_entity_archived_at.sql"),
+        leaves: Leaves::Column("entity", "archived_at"),
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a
@@ -840,6 +850,8 @@ mod tests {
         "0046_fact_status_archived",
         "0047_fact_write_status_archived",
         "0048_session_served_chars",
+        "0049_entity_archived",
+        "0050_entity_archived_at",
     ];
 
     /// **A migration set of this test's own, carrying the shape no shipped

@@ -379,6 +379,9 @@ impl Memory for DownMemory {
             .rename_entity(from, to, parent, date, override_token)
             .await
     }
+    async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
+        self.1.archive_entity(id, reason).await
+    }
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
         self.1.capture(fact).await
     }
@@ -502,6 +505,9 @@ impl Memory for FoldBehindMemory {
         self.0
             .rename_entity(from, to, parent, date, override_token)
             .await
+    }
+    async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
+        self.0.archive_entity(id, reason).await
     }
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
         match self.0.capture(fact).await? {

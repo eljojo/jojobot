@@ -1086,6 +1086,13 @@ pub(crate) mod tests {
         > {
             unimplemented!("migrate_permanent_ids only reads the entity world")
         }
+        async fn archive_entity(
+            &self,
+            _: &jojobot_domain::memory::EntityId,
+            _: &str,
+        ) -> Result<jojobot_domain::memory::Entity, jojobot_domain::memory::MemoryError> {
+            unimplemented!("migrate_permanent_ids only reads the entity world")
+        }
         async fn capture(
             &self,
             _: jojobot_domain::memory::NewFact,

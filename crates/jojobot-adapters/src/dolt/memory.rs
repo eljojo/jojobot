@@ -32,17 +32,17 @@ use jiff::civil::Date;
 use jojobot_domain::clock::Clock;
 use jojobot_domain::memory::owned::Provisions;
 use jojobot_domain::memory::{
-    ClaimWrite, Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress,
-    FactId, FactPatch, FactStatus, FieldWrite, FormerHandle, Guarded, KeyWrite, Memory,
-    MemoryError, Merge, NewEntity, NewFact, Provenance, Retraction, Standing, apply_entity_patch,
-    apply_fact_patch, folded_fields, guard, guard_fit,
+    Archived, ClaimWrite, Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact,
+    FactAddress, FactId, FactPatch, FactStatus, FieldWrite, FormerHandle, Guarded, KeyWrite,
+    Memory, MemoryError, Merge, NewEntity, NewFact, Provenance, Retraction, Standing,
+    apply_entity_patch, apply_fact_patch, folded_fields, guard, guard_fit,
     kinds::{self, NotAKind},
     merge_account, normalize_content, normalize_details, normalize_prose, referenced_by,
     retraction_of, screen_entity_patch, search, standing_of, stood_after, stood_after_capture,
     types::{DeclaredType, Field, Fold, Origin, ValueType, guard_replacement, validate_type},
-    validate_content, validate_details, validate_edge, validate_entity, validate_fields,
-    validate_prose, validate_provenance_source, validate_subject, validate_write_subject,
-    writes_of,
+    validate_content, validate_details, validate_edge, validate_entity, validate_field,
+    validate_fields, validate_prose, validate_provenance_source, validate_subject,
+    validate_write_subject, writes_of,
 };
 use sqlx::{MySql, MySqlPool, Row, Transaction};
 
@@ -882,7 +882,8 @@ impl DoltMemory {
         self.index_listings
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let rows = sqlx::query(
-            "SELECT id, kind, name, source, crm, parent, boot, merged_into, badge
+            "SELECT id, kind, name, source, crm, parent, boot, merged_into, badge,
+                    archived_reason, archived_at
              FROM entity ORDER BY id",
         )
         .fetch_all(&mut **tx)
@@ -1595,6 +1596,20 @@ fn entity_from(row: &sqlx::mysql::MySqlRow, aliases: Vec<String>) -> Result<Enti
         // `write_entity` and carried across every rewrite; this is the read
         // that lets the layer above resolve a mention both ways.
         badge: row.try_get::<Option<String>, _>("badge").map_err(store)?,
+        archived: {
+            let reason = row
+                .try_get::<Option<String>, _>("archived_reason")
+                .map_err(store)?;
+            let at = row
+                .try_get::<Option<String>, _>("archived_at")
+                .map_err(store)?
+                .and_then(|stamp| stamp.parse().ok());
+            // **Both halves or neither.** A row carrying one without the
+            // other is damage no caller's write can produce — `write_entity`
+            // always sets them together — so it reads as not archived rather
+            // than inventing the missing half.
+            reason.zip(at).map(|(reason, at)| Archived { reason, at })
+        },
     })
 }
 
@@ -1727,6 +1742,7 @@ impl Memory for DoltMemory {
             boot: new.boot,
             merged_into: None,
             badge: None,
+            archived: None,
         };
         // The entity this one sits under must already exist, and must not be
         // this one. Screened after the record is assembled because a
@@ -1840,6 +1856,58 @@ impl Memory for DoltMemory {
         write_entity(&mut tx, &self.draw, &stored).await?;
         tx.commit().await.map_err(store)?;
         Ok(Guarded::Written(entity))
+    }
+
+    async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
+        validate_write_subject(id)?;
+        validate_field("reason", reason)?;
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        // **A row, never a supplied record** — the same exception
+        // `update_entity` reads off: this mutates a stored row, and a
+        // build-shipped record has none to mutate.
+        let rows = self.index(&mut tx).await?;
+        let Some(mut entity) = rows.iter().find(|e| &e.id == id).cloned() else {
+            if self.supplied.record_for(id).is_some() {
+                return Err(MemoryError::SuppliedHandle {
+                    attempted: id.to_string(),
+                });
+            }
+            return Err(MemoryError::UnknownEntity {
+                attempted: id.to_string(),
+                nearest: guard::screen(id, &[], &rows),
+            });
+        };
+        // A forwarding row is not a thing to archive, for the same reason it
+        // is not a side to fold or a survivor to fold into.
+        if let Some(into) = &entity.merged_into {
+            return Err(MemoryError::AlreadyMerged {
+                attempted: id.to_string(),
+                into: into.to_string(),
+            });
+        }
+        entity.archived = Some(jojobot_domain::memory::Archived {
+            reason: reason.trim().to_string(),
+            at: self.clock.now(),
+        });
+        // **The badge rides on the record this edit was read from**, exactly
+        // as `update_entity` carries it — no name changed, so there is
+        // nothing for the guard to screen.
+        let stored = if let Some(parent) = &entity.parent {
+            let stored_parent = self
+                .resolve(&mut tx, parent)
+                .await?
+                .map(|(key, _)| key)
+                .unwrap_or_else(|| parent.clone());
+            Entity {
+                parent: Some(stored_parent),
+                ..entity.clone()
+            }
+        } else {
+            entity.clone()
+        };
+        write_entity(&mut tx, &self.draw, &stored).await?;
+        tx.commit().await.map_err(store)?;
+        Ok(entity)
     }
 
     async fn rename_entity(
@@ -3204,7 +3272,8 @@ impl Memory for DoltMemory {
     async fn scan_entity(&self, entity: &EntityId) -> Result<Option<search::DocScan>, MemoryError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
         let row = sqlx::query(
-            "SELECT id, kind, name, source, crm, parent, boot, merged_into, badge, prose
+            "SELECT id, kind, name, source, crm, parent, boot, merged_into, badge, prose,
+                    archived_reason, archived_at
              FROM entity WHERE id = ?",
         )
         .bind(entity.as_str())
@@ -3570,8 +3639,9 @@ async fn write_entity(
         None => mint_badge(tx, draw).await?,
     };
     sqlx::query(
-        "REPLACE INTO entity (id, kind, name, source, crm, parent, boot, prose, badge, merged_into)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "REPLACE INTO entity (id, kind, name, source, crm, parent, boot, prose, badge, \
+         merged_into, archived_reason, archived_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(entity.id.as_str())
     .bind(entity.kind.as_token())
@@ -3583,6 +3653,8 @@ async fn write_entity(
     .bind(prose.unwrap_or_default())
     .bind(&badge)
     .bind(entity.merged_into.as_ref().map(EntityId::as_str))
+    .bind(entity.archived.as_ref().map(|a| a.reason.as_str()))
+    .bind(entity.archived.as_ref().map(|a| a.at.to_string()))
     .execute(&mut **tx)
     .await
     .map_err(store)?;

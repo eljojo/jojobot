@@ -12,15 +12,15 @@
 //!   the two can't drift.
 
 use super::{
-    ClaimWrite, Edge, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactId,
-    FactPatch, FactStatus, FieldWrite, FormerHandle, Guarded, MAX_KEY_CHARS, MERGED_FROM, Memory,
-    MemoryError, Merge, NewEntity, NewFact, Retraction, Standing, apply_entity_patch,
+    Archived, ClaimWrite, Edge, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress,
+    FactId, FactPatch, FactStatus, FieldWrite, FormerHandle, Guarded, MAX_KEY_CHARS, MERGED_FROM,
+    Memory, MemoryError, Merge, NewEntity, NewFact, Retraction, Standing, apply_entity_patch,
     apply_fact_patch,
     guard::{self, Decision},
     merge_account, normalize_content, normalize_details, normalize_prose, resolve_handle,
     retraction_of, screen_entity_patch, search, standing_of, validate_content, validate_details,
-    validate_edge, validate_entity, validate_fields, validate_prose, validate_provenance_source,
-    validate_write_subject,
+    validate_edge, validate_entity, validate_field, validate_fields, validate_prose,
+    validate_provenance_source, validate_write_subject,
 };
 
 mod fake;

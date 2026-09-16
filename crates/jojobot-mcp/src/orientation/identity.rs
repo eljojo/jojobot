@@ -811,6 +811,7 @@ mod tests {
             boot: jojobot_domain::memory::Boot::OnDemand,
             merged_into: None,
             badge: None,
+            archived: None,
         };
         let is_a_bot_and_does_not_look_like_one = Entity {
             id: EntityId("thing:gamma".into()),
@@ -823,6 +824,7 @@ mod tests {
             boot: jojobot_domain::memory::Boot::OnDemand,
             merged_into: None,
             badge: None,
+            archived: None,
         };
         let index = [
             looks_like_a_bot_and_is_not,

@@ -643,6 +643,7 @@ impl Memory for InMemoryMemory {
             // the real store's column does. Drawn from the same alphabet, so a
             // case reasoning about the shape reads the same here.
             badge: Some(crate::handle::draw(6)),
+            archived: None,
         };
         // The entity this one sits under must already exist, and must not be
         // this one. Screened after the record is assembled because a
@@ -729,6 +730,40 @@ impl Memory for InMemoryMemory {
             );
         }
         Ok(Guarded::Written(served))
+    }
+
+    async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
+        validate_write_subject(id)?;
+        validate_field("reason", reason)?;
+        let mut entities = self.entities.lock().expect("fake mutex poisoned");
+        let Some(entity) = entities.iter_mut().find(|e| &e.id == id) else {
+            if self
+                .supplied
+                .lock()
+                .expect("fake mutex poisoned")
+                .record_for(id)
+                .is_some()
+            {
+                return Err(MemoryError::SuppliedHandle {
+                    attempted: id.to_string(),
+                });
+            }
+            return Err(MemoryError::UnknownEntity {
+                attempted: id.to_string(),
+                nearest: guard::screen(id, &[], &entities),
+            });
+        };
+        if let Some(into) = &entity.merged_into {
+            return Err(MemoryError::AlreadyMerged {
+                attempted: id.to_string(),
+                into: into.to_string(),
+            });
+        }
+        entity.archived = Some(Archived {
+            reason: reason.trim().to_string(),
+            at: self.clock.now(),
+        });
+        Ok(entity.clone())
     }
 
     async fn rename_entity(

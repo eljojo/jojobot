@@ -5119,6 +5119,7 @@ pub async fn a_supplied_record_colliding_with_a_stored_row_is_refused<M: Memory>
                 boot: Boot::default(),
                 merged_into: None,
                 badge: None,
+                archived: None,
             },
             std::collections::BTreeMap::new(),
         )]);
@@ -5474,6 +5475,112 @@ pub async fn a_rename_of_a_supplied_handle_is_refused_not_a_silent_no_op<M: Memo
             .iter()
             .any(|e| e.id == now),
         "a genuinely stored rename must land",
+    );
+}
+
+/// **Archiving persists the reason and the moment, and survives a read taken
+/// after the write** — the storage half of the caller-facing bar, which
+/// proves the same thing behaviourally through the served surface. Both the
+/// fake and the real store answer for this, through [`run_all`].
+///
+/// **Paired with a live entity, untouched by the same write** — the negative
+/// alone would pass on a store that answered `archived` for everything.
+pub async fn archive_entity_persists_the_reason_and_the_moment<M: Memory>(store: &M) {
+    let target = add(
+        store,
+        NewEntity::new(
+            EntityId("person:contract-marked-target".into()),
+            "Marked Target",
+            "contract-fixture",
+        ),
+    )
+    .await;
+    let untouched = add(
+        store,
+        NewEntity::new(
+            EntityId("person:contract-marked-untouched".into()),
+            "Marked Untouched",
+            "contract-fixture",
+        ),
+    )
+    .await;
+
+    let before = jiff::Timestamp::now();
+    let written = store
+        .archive_entity(&target.id, "a mistaken write")
+        .await
+        .expect("archive_entity should succeed");
+    let after = jiff::Timestamp::now();
+
+    let state = written
+        .archived
+        .as_ref()
+        .expect("archive_entity must set archived on what it returns");
+    assert_eq!(state.reason, "a mistaken write", "{state:?}");
+    assert!(
+        state.at >= before && state.at <= after,
+        "the moment must be stamped by the store, between the call's own bounds: {state:?}",
+    );
+
+    // Read-back, through the raw port rather than the answer the write
+    // handed back — the bar every other write on this port holds to.
+    let index = store
+        .list_entities(None)
+        .await
+        .expect("list_entities should succeed");
+    let reread = index
+        .iter()
+        .find(|e| e.id == target.id)
+        .expect("the archived entity must still be listed by the raw port");
+    assert_eq!(
+        reread.archived.as_ref(),
+        Some(state),
+        "archiving must survive a read taken after the write: {reread:?}",
+    );
+    let still_live = index
+        .iter()
+        .find(|e| e.id == untouched.id)
+        .expect("the untouched entity must still be listed");
+    assert!(
+        still_live.archived.is_none(),
+        "archiving one entity must not touch another: {still_live:?}",
+    );
+}
+
+/// **Naming a build-supplied record has no row to mark, and the refusal says
+/// so rather than reading as a bare miss** — the same shape
+/// `rename_entity`'s own supplied-handle refusal takes.
+///
+/// **Paired with a genuinely stored entity, which still archives** — a store
+/// that refused every archive outright would pass the negative alone.
+pub async fn an_archive_of_a_supplied_handle_is_refused_not_a_silent_no_op<M: Memory>(store: &M) {
+    let shipped = EntityId(SUPPLIED_VIEW_FOR_THE_GUARD_SPECS.into());
+    let err = store
+        .archive_entity(&shipped, "a mistaken write")
+        .await
+        .expect_err("archiving a build-supplied handle must be refused, not silently accepted");
+    assert!(
+        matches!(&err, MemoryError::SuppliedHandle { attempted } if attempted == &shipped.to_string()),
+        "a supplied handle's archive must say it is a supplied record with no row to mark, never \
+         a bare miss: {err:?}",
+    );
+
+    let stored = add(
+        store,
+        NewEntity::new(
+            EntityId("person:contract-marked-supplied-stored".into()),
+            "Marked Supplied Stored",
+            "contract-fixture",
+        ),
+    )
+    .await;
+    let written = store
+        .archive_entity(&stored.id, "a mistaken write")
+        .await
+        .expect("a genuinely stored entity's archive should succeed");
+    assert!(
+        written.archived.is_some(),
+        "a genuinely stored archive must land",
     );
 }
 
@@ -9330,4 +9437,6 @@ pub async fn run_all<M: Memory>(store: &M) {
     a_read_of_facts_says_how_many_times_each_was_written(store).await;
     a_walk_with_no_facts_carries_no_revision_counts(store).await;
     claim_histories_agrees_with_claim_history_per_fact(store).await;
+
+    archive_entity_persists_the_reason_and_the_moment(store).await;
 }

@@ -398,6 +398,37 @@ pub struct Entity {
     /// column look populated while saying nothing.
     #[serde(skip)]
     pub badge: Option<String>,
+    /// **Out of every default read, reachable by handle — mirrors
+    /// [`FactStatus::Archived`] on a fact.**
+    ///
+    /// `None` is the ordinary case. `Some` carries why, in the operator's own
+    /// words, never a fixed category, and when — one switch for every reason
+    /// an entity stops being current, the same shape a claim's own archived
+    /// state already has: the broad door excludes it, the direct one serves
+    /// it whole.
+    ///
+    /// **This is the entity's own state, and never a claim about it.**
+    /// Archiving says the SUBJECT is out of scope; it asserts nothing about
+    /// any claim already on record, which stand exactly as written.
+    ///
+    /// Absent in docs written before the field existed, which read as not
+    /// archived.
+    #[serde(default)]
+    pub archived: Option<Archived>,
+}
+
+/// **Why and when an entity was archived** — an entity's own analogue of a
+/// fact's [`FactStatus::Archived`], carried as data rather than a second
+/// enum: the reason is never a fixed category, and the day is the store's
+/// own stamp, not a caller's guess.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Archived {
+    /// Why, in the operator's own words. A mistaken write, one that should
+    /// not have happened, somebody not relevant at all — examples, never an
+    /// enumeration this type could exhaust.
+    pub reason: String,
+    /// When this entity was archived. Stamped by the store, never a caller.
+    pub at: jiff::Timestamp,
 }
 
 /// **One rename event: a handle a thing used to answer to, and the badge it
@@ -3615,6 +3646,26 @@ pub trait Memory: Send + Sync {
         override_token: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError>;
 
+    /// **Archive an entity: out of every default read, reachable by handle.**
+    /// Mirrors [`FactStatus::Archived`] on a fact — one switch, the reason in
+    /// the operator's own words rather than an enumerated category, nothing
+    /// deleted. Idempotent: archiving an already-archived entity overwrites
+    /// the reason and the moment.
+    ///
+    /// **Cascades to what hangs off the entity, never to the entity's own
+    /// claims or edges — those are read exactly as recorded.** Archiving
+    /// says the SUBJECT is out of scope; it is never a claim that anything
+    /// said about it was wrong.
+    ///
+    /// No near-miss screening: this does not touch what the entity is
+    /// called, so there is nothing to collide with. `id` naming a build-
+    /// supplied record, which has no row to mark, is
+    /// [`MemoryError::SuppliedHandle`]; naming a row already folded into
+    /// another is [`MemoryError::AlreadyMerged`], for the same reason a
+    /// forwarding row is not a thing to rename; naming nothing at all is
+    /// [`MemoryError::UnknownEntity`].
+    async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError>;
+
     /// Write a fact and return it with the id its home assigned, its content
     /// normalized. The returned fact must be visible — byte-identical — to a
     /// subsequent [`recall`](Memory::recall) of its subject. **Both entities it
@@ -3926,6 +3977,7 @@ mod tests {
             boot: Boot::OnDemand,
             merged_into: None,
             badge: badge.map(str::to_string),
+            archived: None,
         }
     }
 
@@ -4174,6 +4226,7 @@ mod tests {
                 boot: Default::default(),
                 merged_into: None,
                 badge: None,
+                archived: None,
             },
             BTreeMap::new(),
         )]))
@@ -4203,6 +4256,14 @@ mod tests {
     #[tokio::test]
     async fn a_rename_of_a_supplied_handle_is_refused_against_the_fake() {
         contract::a_rename_of_a_supplied_handle_is_refused_not_a_silent_no_op(
+            &fake_knowing_a_supplied_view(),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn an_archive_of_a_supplied_handle_is_refused_against_the_fake() {
+        contract::an_archive_of_a_supplied_handle_is_refused_not_a_silent_no_op(
             &fake_knowing_a_supplied_view(),
         )
         .await;
@@ -4643,6 +4704,7 @@ mod tests {
             boot: Boot::OnDemand,
             merged_into: None,
             badge: None,
+            archived: None,
         };
 
         apply_entity_patch(
@@ -4715,6 +4777,7 @@ mod tests {
             boot: Boot::OnDemand,
             merged_into: None,
             badge: None,
+            archived: None,
         };
         assert_eq!(
             entity("Alpha", vec!["Al".into(), "Alph".into()]).labels(),

@@ -2223,6 +2223,7 @@ mod tests {
             boot: Boot::OnDemand,
             merged_into: None,
             badge: None,
+            archived: None,
         }
     }
 

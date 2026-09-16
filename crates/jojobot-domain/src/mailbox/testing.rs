@@ -556,6 +556,7 @@ fn stand_in(owner: &EntityId) -> Result<crate::memory::Entity, MailboxError> {
         // is no row behind it to keep a name for.
         badge: None,
         merged_into: None,
+        archived: None,
     })
 }
 

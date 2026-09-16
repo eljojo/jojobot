@@ -88,6 +88,7 @@ mod tests {
             boot: Boot::default(),
             merged_into: None,
             badge: None,
+            archived: None,
         }
     }
 

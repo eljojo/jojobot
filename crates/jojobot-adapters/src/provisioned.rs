@@ -307,6 +307,18 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
             .rename_entity(from, to, parent, date, override_token)
             .await
     }
+    /// **The build's own half has no row to mark.** Same shape as
+    /// [`rename_entity`](Self::rename_entity), but there is no candidate to
+    /// hand back: archiving carries no near-miss screening, so
+    /// [`MemoryError::SuppliedHandle`] is the whole of the answer.
+    async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
+        if self.provisions.record_for(id).is_some() {
+            return Err(MemoryError::SuppliedHandle {
+                attempted: id.to_string(),
+            });
+        }
+        self.inner.archive_entity(id, reason).await
+    }
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
         self.inner.capture(fact).await
     }
@@ -784,6 +796,7 @@ mod tests {
                 boot: Default::default(),
                 merged_into: None,
                 badge: None,
+                archived: None,
             },
             BTreeMap::from([("selects".to_string(), "rhythm".to_string())]),
         )

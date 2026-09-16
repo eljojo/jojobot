@@ -2065,6 +2065,12 @@ impl Memory for IndexedMemory {
         Ok(written)
     }
 
+    async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
+        let entity = self.inner.archive_entity(id, reason).await?;
+        self.refresh(&entity.id).await;
+        Ok(entity)
+    }
+
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
         let written = self.inner.capture(fact).await?;
         if let Guarded::Written(fact) = &written {
@@ -2643,6 +2649,7 @@ mod tests {
                     boot: Default::default(),
                     merged_into: None,
                     badge: None,
+                    archived: None,
                 },
                 BTreeMap::new(),
             ),
@@ -2745,6 +2752,7 @@ mod tests {
             boot: Boot::OnDemand,
             merged_into: None,
             badge: None,
+            archived: None,
         }
     }
 
@@ -5278,6 +5286,21 @@ mod tests {
             doc.title = entity.name.clone();
             Ok(Guarded::Written(entity.clone()))
         }
+        /// Same shape as `update_entity` above: no guard, because archiving
+        /// carries none either.
+        async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
+            let mut docs = self.docs.write().expect("docs poisoned");
+            let doc = docs
+                .iter_mut()
+                .find(|d| d.entity.as_ref().is_some_and(|e| &e.id == id))
+                .ok_or_else(|| MemoryError::Store("this double edits pages it holds".into()))?;
+            let entity = doc.entity.as_mut().expect("found by its entity");
+            entity.archived = Some(jojobot_domain::memory::Archived {
+                reason: reason.to_string(),
+                at: jiff::Timestamp::now(),
+            });
+            Ok(entity.clone())
+        }
         /// Same shape as `update_entity` above: no guard, because what is
         /// under test is what the decorator does after the write, not
         /// whether it was allowed.
@@ -5455,6 +5478,9 @@ mod tests {
             _: Date,
             _: Option<&str>,
         ) -> Result<Guarded<Entity>, MemoryError> {
+            unimplemented!("this double answers the three reads a store owns")
+        }
+        async fn archive_entity(&self, _: &EntityId, _: &str) -> Result<Entity, MemoryError> {
             unimplemented!("this double answers the three reads a store owns")
         }
         async fn capture(&self, _: NewFact) -> Result<Guarded<Fact>, MemoryError> {

@@ -274,6 +274,13 @@ pub(crate) fn entity_json(entity: &Entity) -> serde_json::Value {
         // a parent has no other way to see the pointer landed, and a rhythm
         // cannot be read at all without knowing whose loop it is.
         "parent": entity.parent.as_ref().map(|p| p.as_str()),
+        // **Null while active; whole once archived.** The direct door — asking
+        // for this handle — serves everything, including why and when: the
+        // broad door excludes it instead of rendering half an answer.
+        "archived": entity.archived.as_ref().map(|a| serde_json::json!({
+            "reason": a.reason,
+            "at": a.at.to_string(),
+        })),
     })
 }
 
@@ -415,6 +422,7 @@ mod tests {
             boot: Default::default(),
             merged_into: None,
             badge: Some("zzzzzz".into()),
+            archived: None,
         };
         let served = entity_json(&entity).to_string();
         assert!(
