@@ -324,6 +324,17 @@ pub enum Clock {
     /// that says nothing about what it could not reach is the failure this
     /// whole read exists to avoid.
     TakenIn,
+    /// **The day the thing HAPPENED**, [`Fact::happened_at`] rather than
+    /// either clock above. *What was going on around then* asks this one:
+    /// a claim recorded in October about a summer trip sits in summer here,
+    /// which is where a caller asking what was happening that week expects
+    /// to find it — the opposite placement from [`Clock::RecordedOn`].
+    ///
+    /// ⚠️ **Not every claim carries one.** A claim with no event day of its
+    /// own cannot be placed on this clock, and is counted rather than
+    /// silently dropped — the same contract [`Clock::TakenIn`] already
+    /// keeps.
+    HappenedAt,
 }
 
 /// **What else was recorded around a day.**
@@ -354,6 +365,7 @@ impl Nearness {
             Clock::TakenIn => fact
                 .inserted_at
                 .map(|at| at.to_zoned(jiff::tz::TimeZone::UTC).date()),
+            Clock::HappenedAt => fact.happened_at,
         }
     }
 
@@ -2582,6 +2594,51 @@ mod tests {
                 .count(),
             0,
             "the day the thing HAPPENS placed the claim, so a booking sits in next year",
+        );
+
+        // 🚨 **`Clock::HappenedAt` is the clock that DOES place a claim by the
+        // day it happens.** Both halves, on the same booking: it comes back
+        // for a window around the day it happens, and it does NOT come back
+        // for a window around the day it was recorded — the mirror image of
+        // `RecordedOn` above, proving this clock reads its own field rather
+        // than falling back to another one.
+        let asking_happened_at = |day: &str| GraphQuery {
+            select: Selection {
+                near: Some(Nearness {
+                    day: day.parse().expect("a civil date"),
+                    within_days: 7,
+                    clock: Clock::HappenedAt,
+                }),
+                ..Selection::default()
+            },
+            include: Include {
+                facts: true,
+                ..GraphQuery::default().include
+            },
+            ..GraphQuery::default()
+        };
+        let near_the_event =
+            resolve(&with_booking, &[], &asking_happened_at("2027-06-04")).expect("a read");
+        assert_eq!(
+            near_the_event
+                .objects
+                .iter()
+                .flat_map(|o| o.facts.iter())
+                .count(),
+            1,
+            "a window around the day the booking HAPPENS did not find it",
+        );
+        let near_the_recording =
+            resolve(&with_booking, &[], &asking_happened_at("2026-08-18")).expect("a read");
+        assert_eq!(
+            near_the_recording
+                .objects
+                .iter()
+                .flat_map(|o| o.facts.iter())
+                .count(),
+            0,
+            "a window around the day the booking was RECORDED found it on the happened-at \
+             clock, so this clock is reading the wrong field",
         );
     }
 

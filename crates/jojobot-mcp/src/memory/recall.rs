@@ -399,8 +399,9 @@ fn parse_clock(raw: Option<&str>) -> Result<graph::Clock, McpError> {
     match raw.map(str::trim) {
         None | Some("") | Some("recorded_on") => Ok(graph::Clock::RecordedOn),
         Some("taken_in") => Ok(graph::Clock::TakenIn),
+        Some("happened_at") => Ok(graph::Clock::HappenedAt),
         Some(other) => Err(McpError::invalid_params(
-            format!("clock must be recorded_on or taken_in, got '{other}'"),
+            format!("clock must be recorded_on, taken_in or happened_at, got '{other}'"),
             None,
         )),
     }
@@ -427,17 +428,20 @@ pub struct NearArgs {
     #[serde(default)]
     pub(crate) within_days: Option<u32>,
     /// **Which clock to compare**: `recorded_on` — the day the claim was made,
-    /// the default — or `taken_in`, the day jojobot took the record in.
+    /// the default — `taken_in`, the day jojobot took the record in, or
+    /// `happened_at`, the day the thing itself happened.
     ///
     /// ⚠️ **They answer different questions.** *What did Milhouse say back in
     /// August* asks the first. *What was filed that week* asks the second.
-    /// ⛔️ **Neither is the day the thing happened** — that is `happened_at` on
-    /// the claim, and no window reads it.
+    /// *What was going on around then* asks the third — the day on the claim,
+    /// not the day it was said or filed.
     ///
-    /// 🚨 **A record written before the taken-in stamp existed carries none**,
-    /// so a read on that clock cannot place it. Those are counted in
+    /// 🚨 **A record with nothing on the chosen clock carries none**, so a
+    /// read on that clock cannot place it. Those are counted in
     /// `near_unplaced` rather than dropped: an answer that shrank silently
-    /// would be indistinguishable from a day with nothing around it.
+    /// would be indistinguishable from a day with nothing around it. Every
+    /// record carries a recorded day, so only `taken_in` and `happened_at`
+    /// can be unplaceable.
     #[serde(default)]
     pub(crate) clock: Option<String>,
 }
@@ -1559,6 +1563,7 @@ impl Jojobot {
             "near_clock": near.map(|n| match n.clock {
                 graph::Clock::RecordedOn => "recorded_on",
                 graph::Clock::TakenIn => "taken_in",
+                graph::Clock::HappenedAt => "happened_at",
             }),
             // 🚨 **How many records this clock could not place.**
             //
@@ -1684,6 +1689,74 @@ mod tests {
             built_on: None,
             backing: None,
         }
+    }
+
+    /// 🚨 **`near`'s `clock: "happened_at"` reaches the day a thing happened,
+    /// through the served surface** — not just the domain arithmetic
+    /// [`graph::tests`] already proves.
+    ///
+    /// One claim, recorded on one day and carrying a `happened_at` far from
+    /// it. Both halves, on the SAME claim: a window around the day it
+    /// happened finds it, and a window around the day it was recorded does
+    /// not — the positive half proves the clock reaches its own field
+    /// through `parse_clock` and `NearArgs`, not merely that nothing
+    /// crashed.
+    #[tokio::test]
+    async fn nears_happened_at_clock_reaches_the_served_surface() {
+        let jojobot = crate::harness::handler();
+        let sid = writing_as(&jojobot);
+        ensure(&jojobot, "person:milhouse").await;
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                sid: Some(sid.clone()),
+                recorded_at: Some("2026-08-16".into()),
+                happened_at: Some("2027-06-01".into()),
+                ..capture_args("person:milhouse", "booked the trip for next June")
+            },
+        )
+        .await;
+
+        let near_the_event = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    sid: Some(sid.clone()),
+                    near: Some(NearArgs {
+                        day: Some("2027-06-04".into()),
+                        within_days: Some(7),
+                        clock: Some("happened_at".into()),
+                    }),
+                    ..of("person:milhouse")
+                }))
+                .await
+                .expect("recall ok"),
+        )
+        .to_string();
+        assert!(
+            near_the_event.contains("booked the trip"),
+            "a window around the day the claim HAPPENED did not find it: {near_the_event}",
+        );
+
+        let near_the_recording = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    sid: Some(sid),
+                    near: Some(NearArgs {
+                        day: Some("2026-08-18".into()),
+                        within_days: Some(7),
+                        clock: Some("happened_at".into()),
+                    }),
+                    ..of("person:milhouse")
+                }))
+                .await
+                .expect("recall ok"),
+        )
+        .to_string();
+        assert!(
+            !near_the_recording.contains("booked the trip"),
+            "a window around the day the claim was RECORDED found it on the happened-at clock, \
+             so this clock is reading the wrong field: {near_the_recording}",
+        );
     }
 
     /// **A carrier the read has never seen appears in the same answer, and the
