@@ -243,7 +243,9 @@ pub(crate) fn memory_declined(
             &EntityId(String::new()),
             &[],
             format!(
-                "Nothing was written: {e}. The call is not what is wrong, and sending it                  again will not help: jojobot loaded no kinds when it started, and nothing                  a caller does re-reads them. This one needs the operator."
+                "Nothing was written: {e}. The call is not what is wrong, and sending it again \
+                 will not help: jojobot loaded no kinds when it started, and nothing a caller \
+                 does re-reads them. This one needs the operator."
             ),
         )),
         MemoryError::InvalidFact(_)
