@@ -277,6 +277,30 @@ impl DoltSessions {
         .map_err(store)?;
         row.try_get::<i32, _>(0).map_err(store)
     }
+
+    /// **Keep that this session was written, and once per write** — the
+    /// cheap signal [`DoltSessions::write_summary`] reads. See the
+    /// migration's own doc for why no moment rides along with it.
+    async fn append_session_write(
+        tx: &mut Transaction<'_, MySql>,
+        id: &SessionId,
+    ) -> Result<(), SessionError> {
+        let row = sqlx::query(
+            "SELECT COALESCE(MAX(ordinal), 0) + 1 FROM session_write WHERE session = ?",
+        )
+        .bind(id.as_str())
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(store)?;
+        let ordinal: i64 = row.try_get(0).map_err(store)?;
+        sqlx::query("INSERT INTO session_write (session, ordinal) VALUES (?, ?)")
+            .bind(id.as_str())
+            .bind(ordinal)
+            .execute(&mut **tx)
+            .await
+            .map_err(store)?;
+        Ok(())
+    }
 }
 
 /// A store failure, in the domain's own words. **The server's account never
@@ -427,6 +451,18 @@ impl Sessions for DoltSessions {
         Ok(found)
     }
 
+    /// **One aggregate, not a read of any run.** `session_write` is written
+    /// on every mutation of every session (see the migration's own doc), so
+    /// its count answers "has anything changed" without touching a run's
+    /// chronology. No moment rides along — see the same doc for why.
+    async fn write_summary(&self) -> Result<Option<(i64, Option<Timestamp>)>, SessionError> {
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM session_write")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(store)?;
+        Ok(Some((count, None)))
+    }
+
     /// **The count and the last beat, answered by the store rather than
     /// measured after reading every entry.** `journal_entry`'s own `at` and
     /// `touched` are read into an aggregate; its `text`, `beat` and
@@ -512,6 +548,7 @@ impl Sessions for DoltSessions {
         .execute(&mut *tx)
         .await
         .map_err(store)?;
+        Self::append_session_write(&mut tx, &id).await?;
         let session = Self::read_in(&mut tx, &id).await?;
         tx.commit().await.map_err(store)?;
         // **The near end of the run's span.** It fixes what the store looked
@@ -559,6 +596,7 @@ impl Sessions for DoltSessions {
         .execute(&mut *tx)
         .await
         .map_err(store)?;
+        Self::append_session_write(&mut tx, id).await?;
         let written = read_entry(&mut tx, id, &entry_id).await?;
         tx.commit().await.map_err(store)?;
         Ok(written)
@@ -586,6 +624,7 @@ impl Sessions for DoltSessions {
             .execute(&mut *tx)
             .await
             .map_err(store)?;
+        Self::append_session_write(&mut tx, id).await?;
         let written = read_entry(&mut tx, id, &entry_id).await?;
         tx.commit().await.map_err(store)?;
         Ok(written)
@@ -620,6 +659,7 @@ impl Sessions for DoltSessions {
             .execute(&mut *tx)
             .await
             .map_err(store)?;
+        Self::append_session_write(&mut tx, id).await?;
         let written = read_entry(&mut tx, id, entry).await?;
         tx.commit().await.map_err(store)?;
         Ok(written)
@@ -636,6 +676,7 @@ impl Sessions for DoltSessions {
             .execute(&mut *tx)
             .await
             .map_err(store)?;
+        Self::append_session_write(&mut tx, id).await?;
         let session = Self::read_in(&mut tx, id).await?;
         tx.commit().await.map_err(store)?;
         Ok(session)
@@ -655,6 +696,7 @@ impl Sessions for DoltSessions {
             .execute(&mut *tx)
             .await
             .map_err(store)?;
+        Self::append_session_write(&mut tx, id).await?;
         let session = Self::read_in(&mut tx, id).await?;
         tx.commit().await.map_err(store)?;
         Ok(session)
@@ -672,6 +714,7 @@ impl Sessions for DoltSessions {
             .execute(&mut *tx)
             .await
             .map_err(store)?;
+        Self::append_session_write(&mut tx, id).await?;
         let session = Self::read_in(&mut tx, id).await?;
         tx.commit().await.map_err(store)?;
         // The far end of the span, whichever ending this was: a run that told
@@ -701,6 +744,7 @@ impl Sessions for DoltSessions {
             .execute(&mut *tx)
             .await
             .map_err(store)?;
+        Self::append_session_write(&mut tx, id).await?;
         tx.commit().await.map_err(store)?;
         Ok(())
     }
@@ -720,6 +764,7 @@ impl Sessions for DoltSessions {
                     .execute(&mut *tx)
                     .await
                     .map_err(store)?;
+                Self::append_session_write(&mut tx, id).await?;
                 Self::read_in(&mut tx, id).await?
             }
             SessionState::Wrapped => {

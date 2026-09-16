@@ -37,6 +37,7 @@ use jojobot_domain::memory::{
     Edge, EdgeShape, EntityPatch, FactAddress, FactPatch, MemoryError, NewEntity, NewFact,
 };
 use jojobot_domain::session::testing::contract as sessions;
+use jojobot_domain::session::{NewEntry, NewSession, SessionState, Sessions, Sid};
 use jojobot_domain::teaching::testing::contract as teachings;
 
 /// A directory of this run's own, removed when it is done.
@@ -3609,5 +3610,187 @@ async fn write_summary_answers_the_real_store() {
         "merge did not move the entity count: {after_merge:?}"
     );
 
+    store.stop().await;
+}
+
+/// **The cheap signal `Sessions::write_summary` answers, against the real
+/// store.**
+///
+/// The pair a caller must be able to trust: unmoved across two calls with
+/// nothing written between them, and moved by every kind of write this
+/// slice wires the log into. The one pm's dispatch named by hand: a run
+/// swept from `active` to `abandoned` writes no journal entry at all, and
+/// the signal must still move for it.
+#[tokio::test]
+async fn session_write_summary_answers_the_real_store() {
+    let scratch = Scratch::new("session-write-summary");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("session_write_summary")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let sessions_store = DoltSessions::open(pool);
+
+    let empty = sessions_store
+        .write_summary()
+        .await
+        .expect("write_summary ok")
+        .expect("the dolt store offers the signal");
+    assert_eq!(empty.0, 0, "an empty store has written no session");
+
+    // **The unchanged half of the pair.** Nothing wrote between these two
+    // calls, so a caller comparing them must see no difference.
+    let still_empty = sessions_store
+        .write_summary()
+        .await
+        .expect("write_summary ok")
+        .expect("the signal");
+    assert_eq!(
+        still_empty, empty,
+        "nothing was written, so the signal must not move"
+    );
+
+    // `begin` moves it.
+    let bot = EntityId("bot:gamma".into());
+    let started = sessions::epoch();
+    let session = sessions_store
+        .begin(NewSession {
+            bot: bot.clone(),
+            sid: Sid("s-session-write-summary".into()),
+            focus: "working".into(),
+            started_at: started,
+            timezone: None,
+            started_on: None,
+        })
+        .await
+        .expect("begin ok");
+    let after_begin = sessions_store
+        .write_summary()
+        .await
+        .expect("write_summary ok")
+        .expect("the signal");
+    assert!(
+        after_begin.0 > empty.0,
+        "begin did not move the count: {after_begin:?}"
+    );
+
+    // `append` moves it.
+    let entry = sessions_store
+        .append(
+            &session.id,
+            NewEntry {
+                text: "found the door".into(),
+                at: started,
+                beat: None,
+                on: None,
+            },
+        )
+        .await
+        .expect("append ok");
+    let after_append = sessions_store
+        .write_summary()
+        .await
+        .expect("write_summary ok")
+        .expect("the signal");
+    assert!(
+        after_append.0 > after_begin.0,
+        "append did not move the count: {after_append:?}"
+    );
+
+    // `amend_last` moves it.
+    sessions_store
+        .amend_last(&session.id, "found the door, the box and the route")
+        .await
+        .expect("amend_last ok");
+    let after_amend = sessions_store
+        .write_summary()
+        .await
+        .expect("write_summary ok")
+        .expect("the signal");
+    assert!(
+        after_amend.0 > after_append.0,
+        "amend_last did not move the count: {after_amend:?}"
+    );
+
+    // `set_focus` moves it.
+    sessions_store
+        .set_focus(&session.id, "idle, polling the box")
+        .await
+        .expect("set_focus ok");
+    let after_focus = sessions_store
+        .write_summary()
+        .await
+        .expect("write_summary ok")
+        .expect("the signal");
+    assert!(
+        after_focus.0 > after_amend.0,
+        "set_focus did not move the count: {after_focus:?}"
+    );
+
+    // `set_timezone` moves it.
+    sessions_store
+        .set_timezone(&session.id, Some("America/New_York"))
+        .await
+        .expect("set_timezone ok");
+    let after_timezone = sessions_store
+        .write_summary()
+        .await
+        .expect("write_summary ok")
+        .expect("the signal");
+    assert!(
+        after_timezone.0 > after_focus.0,
+        "set_timezone did not move the count: {after_timezone:?}"
+    );
+
+    // `add_served` moves it.
+    sessions_store
+        .add_served(&session.id, 42)
+        .await
+        .expect("add_served ok");
+    let after_served = sessions_store
+        .write_summary()
+        .await
+        .expect("write_summary ok")
+        .expect("the signal");
+    assert!(
+        after_served.0 > after_timezone.0,
+        "add_served did not move the count: {after_served:?}"
+    );
+
+    // **The one pm called out by name: a sweep, with no entry of its own.**
+    // `close` to `Abandoned` is exactly the write the staleness sweep makes
+    // (see `sweep_and_find` in jojobot-domain), and it inserts no
+    // `journal_entry` row — only `UPDATE session SET state = ?`.
+    sessions_store
+        .close(&session.id, SessionState::Abandoned)
+        .await
+        .expect("close ok");
+    let after_sweep = sessions_store
+        .write_summary()
+        .await
+        .expect("write_summary ok")
+        .expect("the signal");
+    assert!(
+        after_sweep.0 > after_served.0,
+        "the sweep-to-abandoned transition did not move the count, and it must: {after_sweep:?}"
+    );
+
+    // `reopen` moves it.
+    sessions_store.reopen(&session.id).await.expect("reopen ok");
+    let after_reopen = sessions_store
+        .write_summary()
+        .await
+        .expect("write_summary ok")
+        .expect("the signal");
+    assert!(
+        after_reopen.0 > after_sweep.0,
+        "reopen did not move the count: {after_reopen:?}"
+    );
+
+    let _ = entry;
     store.stop().await;
 }

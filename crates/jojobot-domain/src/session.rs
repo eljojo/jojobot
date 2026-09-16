@@ -726,6 +726,21 @@ pub trait Sessions: Send + Sync {
     /// second, which is the kind of difference nobody can reproduce.
     async fn all_sessions(&self) -> Result<Vec<Session>, SessionError>;
 
+    /// A cheap signal for whether any run has been written since a caller
+    /// last looked, so a refresh can skip paying for
+    /// [`all_sessions`](Sessions::all_sessions) when nothing changed —
+    /// [`jojobot_domain::memory::Memory::write_summary`]'s own shape, one
+    /// count and one moment, carried over to this port rather than answered
+    /// by a second mechanism.
+    ///
+    /// **`None` means this store offers no such signal**, exactly as the
+    /// memory port's own default: a caller that cannot tell "unchanged"
+    /// from "I don't know" must treat every refresh as if something
+    /// changed.
+    async fn write_summary(&self) -> Result<Option<(i64, Option<Timestamp>)>, SessionError> {
+        Ok(None)
+    }
+
     /// One session by id, chronology and all.
     async fn read_session(&self, id: &SessionId) -> Result<Session, SessionError>;
 
