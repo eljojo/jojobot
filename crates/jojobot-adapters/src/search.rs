@@ -172,6 +172,12 @@ struct Fields {
     /// `message_id` is not `doc_id`: three stores, three id spaces, and one
     /// shared field would let a page id evict a run.
     session_id: Field,
+    /// **One journal entry's own id** — its own namespace again, for the same
+    /// reason `session_id` is not `doc_id`. This is what lets an eviction
+    /// target one beat instead of a whole run: without it, the only term a
+    /// beat's document could be deleted by was the run it belonged to, so
+    /// clearing one beat meant clearing all of them.
+    entry_id: Field,
     /// **The bot a session belongs to**, and the only field any query scopes an
     /// answer by. Entities, facts and prose are the operator's and carry none.
     owner: Field,
@@ -215,6 +221,7 @@ impl Fields {
             edge_pair: b.add_text_field("edge_pair", STRING),
             meta_key: b.add_text_field("meta_key", STRING),
             session_id: b.add_text_field("session_id", STRING),
+            entry_id: b.add_text_field("entry_id", STRING),
             owner: b.add_text_field("owner", STRING),
             payload: b.add_text_field("payload", STORED),
         };
@@ -398,6 +405,17 @@ pub struct FullTextIndex {
     /// answer, so what it is compared against decides whether an ordinary
     /// search commits the shared index or touches nothing.
     sessions: RwLock<Vec<jojobot_domain::session::Session>>,
+    /// How many session-entry documents [`ingest_sessions`](Self::ingest_sessions)
+    /// has written, test-only. Counts a write regardless of whether the entry
+    /// was new or a replacement — see [`session_entries_deleted`](Self::session_entries_deleted)
+    /// for the other half of that distinction.
+    session_entries_written: std::sync::atomic::AtomicUsize,
+    /// How many session-entry documents [`ingest_sessions`](Self::ingest_sessions)
+    /// has deleted, test-only — one entry's own document replaced or removed
+    /// counts once; a run evicted outright counts once per entry it held. What
+    /// proves the eviction is scoped to what changed rather than to the whole
+    /// run: siblings of a changed entry must not move this number.
+    session_entries_deleted: std::sync::atomic::AtomicUsize,
 }
 
 impl FullTextIndex {
@@ -438,7 +456,23 @@ impl FullTextIndex {
             messages: RwLock::new(Vec::new()),
             mail_refresh_failed_at: std::sync::atomic::AtomicU64::new(0),
             sessions: RwLock::new(Vec::new()),
+            session_entries_written: std::sync::atomic::AtomicUsize::new(0),
+            session_entries_deleted: std::sync::atomic::AtomicUsize::new(0),
         })
+    }
+
+    /// How many session-entry documents have been written. Test-only.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn session_entries_written(&self) -> usize {
+        self.session_entries_written
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// How many session-entry documents have been deleted. Test-only.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn session_entries_deleted(&self) -> usize {
+        self.session_entries_deleted
+            .load(std::sync::atomic::Ordering::Acquire)
     }
 
     /// Record that the board read behind this answer could not reach the store,
@@ -680,6 +714,7 @@ impl FullTextIndex {
                 f.class => CLASS_SESSION,
                 f.text => format!("{} {}", entry.text, session.focus),
                 f.session_id => session.id.0.as_str(),
+                f.entry_id => entry.id.0.as_str(),
                 f.owner => session.bot.to_string(),
                 f.payload => payload_json(&Payload::Session {
                     session: session.id.clone(),
@@ -689,6 +724,8 @@ impl FullTextIndex {
                 })?,
             ))
             .map_err(store_err)?;
+        self.session_entries_written
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
         Ok(())
     }
 
@@ -711,13 +748,30 @@ impl FullTextIndex {
     /// The comparison is of two full readings, keyed by run: a run is rewritten
     /// when this reading and the mirror disagree about it, and evicted when the
     /// reading no longer holds it at all.
+    ///
+    /// **A rewritten run is not rewritten whole.** Which run changed is still
+    /// decided by comparing the whole record — that is the detection cost, and
+    /// it is unchanged here. What changed is what happens next: each of that
+    /// run's own beats is compared against what it held before, by the beat's
+    /// own id, so a run with one new beat writes one document rather than
+    /// deleting and re-adding every beat it has ever had. A run evicted
+    /// outright still goes by its own id — the whole run is gone, so nothing
+    /// is left for a beat-level comparison to save.
     pub fn ingest_sessions(
         &self,
         sessions: &[jojobot_domain::session::Session],
     ) -> Result<usize, MemoryError> {
-        let (rewrite, evict) = {
+        use std::collections::{HashMap, HashSet};
+
+        enum EntryChange {
+            Add(jojobot_domain::session::JournalEntry),
+            Replace(jojobot_domain::session::JournalEntry),
+            Remove(String),
+        }
+
+        let (rewrite, evict, evicted_entry_counts, entry_changes) = {
             let mirror = self.sessions.read().expect("session mirror poisoned");
-            changed_and_gone(
+            let (rewrite, evict) = changed_and_gone(
                 &sessions
                     .iter()
                     .map(|s| (s.id.0.as_str(), s))
@@ -726,7 +780,40 @@ impl FullTextIndex {
                     .iter()
                     .map(|s| (s.id.0.as_str(), s))
                     .collect::<Vec<_>>(),
-            )
+            );
+            let old_by_id: HashMap<&str, &jojobot_domain::session::Session> =
+                mirror.iter().map(|s| (s.id.0.as_str(), s)).collect();
+            let evicted_entry_counts: Vec<usize> = evict
+                .iter()
+                .map(|id| old_by_id.get(id.as_str()).map_or(0, |s| s.entries.len()))
+                .collect();
+            let entry_changes: Vec<(jojobot_domain::session::Session, Vec<EntryChange>)> = rewrite
+                .iter()
+                .map(|session| {
+                    let old_entries: HashMap<&str, &jojobot_domain::session::JournalEntry> =
+                        old_by_id
+                            .get(session.id.0.as_str())
+                            .map(|s| s.entries.iter().map(|e| (e.id.0.as_str(), e)).collect())
+                            .unwrap_or_default();
+                    let new_ids: HashSet<&str> =
+                        session.entries.iter().map(|e| e.id.0.as_str()).collect();
+                    let mut changes = Vec::new();
+                    for entry in &session.entries {
+                        match old_entries.get(entry.id.0.as_str()) {
+                            Some(old) if **old == *entry => {}
+                            Some(_) => changes.push(EntryChange::Replace(entry.clone())),
+                            None => changes.push(EntryChange::Add(entry.clone())),
+                        }
+                    }
+                    for id in old_entries.keys() {
+                        if !new_ids.contains(id) {
+                            changes.push(EntryChange::Remove((*id).to_string()));
+                        }
+                    }
+                    (session.clone(), changes)
+                })
+                .collect();
+            (rewrite, evict, evicted_entry_counts, entry_changes)
         };
         let changed = rewrite.len() + evict.len();
         if changed == 0 {
@@ -734,15 +821,37 @@ impl FullTextIndex {
         }
 
         let mut writer = self.writer.write().expect("index writer poisoned");
-        // **By run id, never by class.** A whole-class delete is what made this
-        // a rewrite of everything; a run's own id is the key its entries were
-        // written under, so evicting one leaves the others in place.
-        for id in evict.iter().chain(rewrite.iter().map(|s| &s.id.0)) {
+        // **A whole run gone deletes by the run's own id**, the one term every
+        // one of its beats carries — nothing survives a run's own eviction for
+        // a beat-level comparison to save.
+        for (id, held) in evict.iter().zip(evicted_entry_counts) {
             writer.delete_term(Term::from_field_text(self.fields.session_id, id));
+            self.session_entries_deleted
+                .fetch_add(held, std::sync::atomic::Ordering::AcqRel);
         }
-        for session in &rewrite {
-            for entry in &session.entries {
-                self.write_session_entry(&writer, session, entry)?;
+        // **A changed run touches only the beats that moved**, by each beat's
+        // own id — an unrelated sibling keeps the document it already has.
+        for (session, changes) in &entry_changes {
+            for change in changes {
+                match change {
+                    EntryChange::Add(entry) => {
+                        self.write_session_entry(&writer, session, entry)?;
+                    }
+                    EntryChange::Replace(entry) => {
+                        writer.delete_term(Term::from_field_text(
+                            self.fields.entry_id,
+                            entry.id.0.as_str(),
+                        ));
+                        self.session_entries_deleted
+                            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+                        self.write_session_entry(&writer, session, entry)?;
+                    }
+                    EntryChange::Remove(id) => {
+                        writer.delete_term(Term::from_field_text(self.fields.entry_id, id));
+                        self.session_entries_deleted
+                            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+                    }
+                }
             }
         }
         writer.commit().map_err(store_err)?;
@@ -4604,6 +4713,197 @@ mod tests {
         assert!(
             !gone.iter().any(|h| matches!(h, Hit::Session { .. })),
             "an evicted run is no longer served: {gone:?}",
+        );
+    }
+
+    /// A run with three named beats, for the per-entry eviction cases below.
+    fn run_of(id: &str, bot: &str, beats: &[(&str, &str)]) -> jojobot_domain::session::Session {
+        use jojobot_domain::session::{EntryId, JournalEntry, Session, SessionId, SessionState};
+        Session {
+            started_on: None,
+            timezone: None,
+            served_chars: 0,
+            id: SessionId(id.into()),
+            sid: None,
+            bot: EntityId(bot.into()),
+            focus: "the kiln slice".into(),
+            started_at: jiff::Timestamp::from_second(1_780_000_000).expect("a fixed instant"),
+            state: SessionState::Active,
+            entries: beats
+                .iter()
+                .map(|(id, text)| JournalEntry {
+                    id: EntryId((*id).into()),
+                    at: jiff::Timestamp::from_second(1_780_000_000).expect("a fixed instant"),
+                    text: (*text).into(),
+                    touched: None,
+                    beat: None,
+                    on: None,
+                })
+                .collect(),
+        }
+    }
+
+    fn finds(index: &FullTextIndex, bot: &str, needle: &str) -> bool {
+        index
+            .search(&SearchQuery {
+                text: Some(needle.into()),
+                asked_by: Some(EntityId(bot.into())),
+                ..SearchQuery::default()
+            })
+            .expect("search ok")
+            .iter()
+            .any(|h| matches!(h, Hit::Session { .. }))
+    }
+
+    /// **A new beat writes one document and touches none of its siblings.**
+    ///
+    /// Paired with a positive control: the same instrument, run over a run
+    /// evicted outright, moves by that run's whole entry count rather than by
+    /// one — proving the counter distinguishes the two rather than reading the
+    /// same number regardless of what happened.
+    #[test]
+    fn appending_one_beat_writes_only_that_beat_and_leaves_its_siblings_alone() {
+        let index = FullTextIndex::open().expect("index opens");
+        index
+            .ingest_sessions(&[run_of(
+                "s-gamma",
+                "bot:gamma",
+                &[
+                    ("e1", "the damper is hand-cut"),
+                    ("e2", "the flue draws clean"),
+                ],
+            )])
+            .expect("sessions ingested");
+        let written_before = index.session_entries_written();
+        let deleted_before = index.session_entries_deleted();
+
+        assert_eq!(
+            index
+                .ingest_sessions(&[run_of(
+                    "s-gamma",
+                    "bot:gamma",
+                    &[
+                        ("e1", "the damper is hand-cut"),
+                        ("e2", "the flue draws clean"),
+                        ("e3", "the glaze is mixed"),
+                    ],
+                )])
+                .expect("sessions ingested"),
+            1,
+            "one run changed, so one run is reported rewritten",
+        );
+
+        assert_eq!(
+            index.session_entries_written() - written_before,
+            1,
+            "only the new beat's own document should be written"
+        );
+        assert_eq!(
+            index.session_entries_deleted() - deleted_before,
+            0,
+            "nothing existing changed or left, so nothing should be deleted"
+        );
+        assert!(
+            finds(&index, "bot:gamma", "damper") && finds(&index, "bot:gamma", "flue"),
+            "the untouched siblings must still be findable"
+        );
+        assert!(
+            finds(&index, "bot:gamma", "glaze"),
+            "the new beat must be findable"
+        );
+    }
+
+    /// **Amending the newest beat replaces only its own document.**
+    ///
+    /// The deleted count is the assertion that matters: two, not one, would
+    /// mean a sibling was rewritten it did not have to be; three would mean
+    /// the old whole-run wipe survived under a different name.
+    #[test]
+    fn amending_a_beat_replaces_only_its_own_document_and_leaves_its_siblings_alone() {
+        let index = FullTextIndex::open().expect("index opens");
+        index
+            .ingest_sessions(&[run_of(
+                "s-gamma",
+                "bot:gamma",
+                &[
+                    ("e1", "the damper is hand-cut"),
+                    ("e2", "the flue draws clean"),
+                    ("e3", "the glaze is mixed"),
+                ],
+            )])
+            .expect("sessions ingested");
+        let written_before = index.session_entries_written();
+        let deleted_before = index.session_entries_deleted();
+
+        assert_eq!(
+            index
+                .ingest_sessions(&[run_of(
+                    "s-gamma",
+                    "bot:gamma",
+                    &[
+                        ("e1", "the damper is hand-cut"),
+                        ("e2", "the flue draws hot"),
+                        ("e3", "the glaze is mixed"),
+                    ],
+                )])
+                .expect("sessions ingested"),
+            1,
+            "one run changed, so one run is reported rewritten",
+        );
+
+        assert_eq!(
+            index.session_entries_written() - written_before,
+            1,
+            "only the amended beat's replacement document should be written"
+        );
+        assert_eq!(
+            index.session_entries_deleted() - deleted_before,
+            1,
+            "only the amended beat's stale document should be deleted"
+        );
+        assert!(
+            !finds(&index, "bot:gamma", "clean"),
+            "the beat's superseded wording must not still be found"
+        );
+        assert!(
+            finds(&index, "bot:gamma", "hot"),
+            "the beat's new wording must be found"
+        );
+        assert!(
+            finds(&index, "bot:gamma", "damper") && finds(&index, "bot:gamma", "glaze"),
+            "the untouched siblings must still be findable"
+        );
+    }
+
+    /// **The positive control: a run evicted outright deletes every entry it
+    /// had**, moving the same counter the two cases above move by exactly one.
+    /// A counter that never moved would have passed both cases above for the
+    /// wrong reason.
+    #[test]
+    fn evicting_a_run_deletes_every_entry_it_held() {
+        let index = FullTextIndex::open().expect("index opens");
+        index
+            .ingest_sessions(&[run_of(
+                "s-gamma",
+                "bot:gamma",
+                &[
+                    ("e1", "the damper is hand-cut"),
+                    ("e2", "the flue draws clean"),
+                    ("e3", "the glaze is mixed"),
+                ],
+            )])
+            .expect("sessions ingested");
+        let deleted_before = index.session_entries_deleted();
+
+        assert_eq!(
+            index.ingest_sessions(&[]).expect("sessions ingested"),
+            1,
+            "the one run the store no longer holds is evicted",
+        );
+        assert_eq!(
+            index.session_entries_deleted() - deleted_before,
+            3,
+            "an evicted run must account for every entry it held, not just one"
         );
     }
 
