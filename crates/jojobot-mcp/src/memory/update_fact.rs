@@ -56,6 +56,14 @@ pub struct UpdateFactArgs {
     /// guess comes off rather than being replaced by another guess.
     #[serde(default)]
     pub clear_happened_at: Option<bool>,
+    /// **The far end**, `YYYY-MM-DD`, when the thing happened is a stretch of
+    /// days rather than one. Leaving it off keeps whatever the record says.
+    #[serde(default)]
+    pub happened_through: Option<String>,
+    /// **Take the far end off**, leaving a single-day claim (or an undated
+    /// one, alongside `clear_happened_at`) rather than a span.
+    #[serde(default)]
+    pub clear_happened_through: Option<bool>,
     /// `active` or `archived`. **Archive a claim that changed or was never
     /// true — do not negate it.** Rewriting `content` into its own denial
     /// ("the club does NOT meet on Tuesdays" replacing "the club meets on
@@ -279,6 +287,8 @@ impl Jojobot {
             recorded_at: parse_date(args.recorded_at.as_deref())?,
             happened_at: parse_date(args.happened_at.as_deref())?,
             clear_happened_at: args.clear_happened_at.unwrap_or(false),
+            happened_through: parse_date(args.happened_through.as_deref())?,
+            clear_happened_through: args.clear_happened_through.unwrap_or(false),
             status: args.status.as_deref().map(parse_status).transpose()?,
             // **jojobot's own arithmetic is jojobot's, exactly as a
             // check-in's is on `capture`.** A moved due moment overrides

@@ -343,6 +343,84 @@ pub async fn a_claim_can_say_nothing_about_when_the_thing_happened<M: Memory>(st
     assert_eq!(read_back(store, &subject, &dated.id).await, dated);
 }
 
+/// **A claim's span covers every day it ran, and a single day still covers
+/// only itself.**
+///
+/// ⛔️ **PAIRED, for the same reason [`a_claim_can_say_nothing_about_when_the_thing_happened`]
+/// is:** a span read back wrong would pass this on its own if nothing also
+/// proved the ordinary single-day shape is untouched by the column beside it.
+/// Without the single-day half, a store that always answered `true` — or
+/// that dropped `happened_at` down to the day range 101 started reading —
+/// would still look correct here.
+pub async fn a_claims_span_covers_every_day_it_ran<M: Memory>(store: &M) {
+    let subject = EntityId::person("person:contract-spanned");
+    ensure(store, &subject).await;
+
+    let festival = capture(
+        store,
+        NewFact {
+            happened_at: Some(date(2026, 4, 18)),
+            happened_through: Some(date(2026, 4, 20)),
+            ..NewFact::about(subject.clone(), "ran the whole weekend", date(2026, 4, 22))
+        },
+    )
+    .await;
+    assert_eq!(festival.happened_at, Some(date(2026, 4, 18)));
+    assert_eq!(
+        festival.happened_through,
+        Some(date(2026, 4, 20)),
+        "the far end of the span was dropped",
+    );
+    assert_eq!(
+        read_back(store, &subject, &festival.id).await,
+        festival,
+        "the span did not survive the journey back out of the store",
+    );
+
+    // The positive: every day from the start through the end.
+    for day in [date(2026, 4, 18), date(2026, 4, 19), date(2026, 4, 20)] {
+        assert!(
+            festival.happened_covers(day),
+            "{day} is inside the span and must be covered",
+        );
+    }
+    // The negative: a window that misses the span entirely must not find it —
+    // the day before it opened and the day after it closed.
+    for day in [date(2026, 4, 17), date(2026, 4, 21)] {
+        assert!(
+            !festival.happened_covers(day),
+            "{day} is outside the span and must not be covered",
+        );
+    }
+
+    // **Unchanged**: a single-day claim, no far end at all, covers only that
+    // one day — before this column existed and after, the same answer.
+    let errand = capture(
+        store,
+        NewFact {
+            happened_at: Some(date(2026, 4, 18)),
+            ..NewFact::about(subject.clone(), "picked up the badges", date(2026, 4, 22))
+        },
+    )
+    .await;
+    assert_eq!(
+        errand.happened_through, None,
+        "an ordinary single-day claim must not grow a far end nobody gave it",
+    );
+    assert_eq!(
+        read_back(store, &subject, &errand.id).await,
+        errand,
+        "a single-day claim did not survive the journey back out of the store",
+    );
+    assert!(errand.happened_covers(date(2026, 4, 18)));
+    for day in [date(2026, 4, 17), date(2026, 4, 19)] {
+        assert!(
+            !errand.happened_covers(day),
+            "a single-day claim must not cover {day}",
+        );
+    }
+}
+
 /// **The day a thing happened is versioned with the rest of the claim.**
 ///
 /// A claim is a projection over its writes and each write carries the whole
@@ -436,6 +514,7 @@ pub async fn preserves_all_fields<M: Memory>(store: &M) {
         status: FactStatus::Active,
         recorded_at: date(2026, 3, 9),
         happened_at: Some(date(2026, 3, 7)),
+        happened_through: Some(date(2026, 3, 8)),
         edge: None,
         fields: [("seats".to_string(), "2".to_string())]
             .into_iter()
@@ -455,6 +534,7 @@ pub async fn preserves_all_fields<M: Memory>(store: &M) {
     // value.** A store that kept one column would answer this with the
     // claim's own day and look correct until somebody read it.
     assert_eq!(captured.happened_at, Some(date(2026, 3, 7)));
+    assert_eq!(captured.happened_through, Some(date(2026, 3, 8)));
     assert_eq!(captured.fields.get("seats").map(String::as_str), Some("2"));
     assert_eq!(captured.refs, vec![subject.clone()]);
     assert_eq!(captured.derived_from, Some(source));
@@ -9411,6 +9491,7 @@ pub async fn run_all<M: Memory>(store: &M) {
     capture_reads_back(store).await;
     preserves_all_fields(store).await;
     a_claim_can_say_nothing_about_when_the_thing_happened(store).await;
+    a_claims_span_covers_every_day_it_ran(store).await;
     the_day_a_thing_happened_is_versioned_like_the_rest_of_the_claim(store).await;
     derived_from_must_name_a_fact_that_exists(store).await;
     derived_from_on_an_edit_must_name_a_fact_that_exists(store).await;

@@ -76,6 +76,12 @@ pub struct CaptureArgs {
     /// fills this in.**
     #[serde(default)]
     pub(crate) happened_at: Option<String>,
+    /// **The far end, when the thing happened is a stretch of days rather
+    /// than one** — a trip, a festival, a course — `YYYY-MM-DD`. Send it
+    /// alongside `happened_at`, which is the start; an end with no start
+    /// names a span nobody can read.
+    #[serde(default)]
+    pub(crate) happened_through: Option<String>,
     /// The shape of the edge this fact draws: `location` (object is a place) ·
     /// `membership` (an org) · `attendance` (an event) · `about` (any kind) ·
     /// `connection` (any kind — a link is there and how it relates was not
@@ -623,6 +629,7 @@ impl Jojobot {
             // claim that says nothing about when the thing happened says
             // nothing, which is the whole reason this field is separate.
             happened_at: parse_date(args.happened_at.as_deref())?,
+            happened_through: parse_date(args.happened_through.as_deref())?,
             edge,
             fields,
             refs: args

@@ -230,6 +230,7 @@ mod tests {
             status: FactStatus::Active,
             recorded_at: date(2026, 8, 1),
             happened_at: None,
+            happened_through: None,
             edge: None,
             derived_from: None,
             stands_for: Vec::new(),

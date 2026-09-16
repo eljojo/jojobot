@@ -506,6 +506,7 @@ const ROSTER: &[&str] = &[
     "person:contract-superseded-wording",
     "person:contract-silent-standing",
     "person:contract-solo",
+    "person:contract-spanned",
     "person:contract-spoken",
     "person:contract-stamped",
     "person:contract-tallied",

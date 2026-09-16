@@ -626,6 +626,14 @@ pub struct FactPatch {
     /// end** — a day somebody approximated is taken off rather than replaced
     /// with another guess.
     pub clear_happened_at: bool,
+    /// **The far end of the span, when an edit names one** — see
+    /// [`Fact::happened_through`]. `None` leaves whatever the record already
+    /// says, exactly as [`FactPatch::happened_at`] does.
+    pub happened_through: Option<Date>,
+    /// **Take the far end off**, leaving a single-day claim (or an
+    /// undated one, if [`FactPatch::clear_happened_at`] is also set) rather
+    /// than a span. Its own flag for the reason `clear_happened_at` is one.
+    pub clear_happened_through: bool,
     /// New provenance. Promoting inference → testimony additionally requires
     /// [`FactPatch::confirmed_by_user`].
     pub provenance: Option<Provenance>,
@@ -1661,6 +1669,11 @@ pub fn apply_fact_patch(fact: &mut Fact, patch: &FactPatch) -> Result<(), Memory
     } else if let Some(day) = patch.happened_at {
         fact.happened_at = Some(day);
     }
+    if patch.clear_happened_through {
+        fact.happened_through = None;
+    } else if let Some(day) = patch.happened_through {
+        fact.happened_through = Some(day);
+    }
     if let Some(provenance) = patch.provenance {
         fact.provenance = provenance;
     }
@@ -2186,6 +2199,10 @@ pub struct NewFact {
     /// **The day the thing happened**, when the caller says. `None` is the
     /// ordinary case and says nothing — see [`Fact::happened_at`].
     pub happened_at: Option<Date>,
+    /// **The far end of the span**, when the thing happened is a stretch of
+    /// days rather than one — see [`Fact::happened_through`]. `None` is the
+    /// ordinary case, exactly as `happened_at` being `None` is.
+    pub happened_through: Option<Date>,
     /// The typed edge this fact draws, if it draws one. Written atomically with
     /// the fact: an edge is never a second, separately-failing write.
     ///
@@ -2221,6 +2238,7 @@ impl NewFact {
             status: FactStatus::default(),
             recorded_at,
             happened_at: None,
+            happened_through: None,
             edge: None,
             fields: BTreeMap::new(),
             refs: Vec::new(),
@@ -2275,6 +2293,20 @@ pub struct Fact {
     /// It is the caller's, always: jojobot never derives it, never defaults it,
     /// and never fills it in from the day the claim was made.
     pub happened_at: Option<Date>,
+    /// **The far end of the span, when the thing happened is a stretch of days
+    /// rather than one** — a trip, a festival, a course. `None` is the
+    /// ordinary case: a claim about a single day, or one that says nothing
+    /// about when at all.
+    ///
+    /// ⛔️ **Meaningless without [`Fact::happened_at`], and never the far end
+    /// of nothing.** A span is the pair or it is not a span — the same reason
+    /// [`super::types::ValueType::DateRange`] is one key rather than two. This
+    /// field is what a NAMED date gets that the caller-declared escape hatch
+    /// already had.
+    ///
+    /// It is the caller's, exactly as `happened_at` is: never derived, never
+    /// defaulted.
+    pub happened_through: Option<Date>,
     /// **When jojobot took this record in.** Written by the store, never by a
     /// caller, and never edited afterwards.
     ///
@@ -2380,6 +2412,22 @@ impl Fact {
         found.sort_by(|a, b| a.as_str().cmp(b.as_str()));
         found.dedup();
         found
+    }
+
+    /// **Whether this claim's own span covers a day** — the read a window
+    /// asking about `happened_at` needs, because a span is not one date to
+    /// compare against, it is every date from [`Fact::happened_at`] through
+    /// [`Fact::happened_through`].
+    ///
+    /// A single-day claim (`happened_through` absent) covers only that day,
+    /// exactly as it always has. A claim that says nothing about when the
+    /// thing happened covers nothing — there is no date here to ask about.
+    pub fn happened_covers(&self, day: Date) -> bool {
+        match (self.happened_at, self.happened_through) {
+            (Some(start), Some(end)) => start <= day && day <= end,
+            (Some(start), None) => start == day,
+            (None, _) => false,
+        }
     }
 
     /// Whether this record IS a retraction — the question [`check_retractable`]
@@ -2881,6 +2929,10 @@ pub struct ClaimWrite {
     /// an event day in a later edit would read as one that always had it, and
     /// correcting a guessed day would read as correcting nothing.
     pub happened_at: Option<Date>,
+    /// **The far end of the span, as this write had it** — see
+    /// [`Fact::happened_through`]. Versioned for the same reason
+    /// `happened_at` is.
+    pub happened_through: Option<Date>,
     /// The edge it drew then, if it drew one.
     pub edge: Option<Edge>,
     /// What it was worked out from, as this write had it.
@@ -2907,6 +2959,7 @@ impl ClaimWrite {
             status: fact.status,
             recorded_at: fact.recorded_at,
             happened_at: fact.happened_at,
+            happened_through: fact.happened_through,
             edge: fact.edge.clone(),
             derived_from: fact.derived_from.clone(),
             stale_after: fact.stale_after,

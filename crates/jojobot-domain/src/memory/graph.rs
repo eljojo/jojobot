@@ -2244,6 +2244,7 @@ mod tests {
             status: FactStatus::Active,
             recorded_at: "2026-08-10".parse().expect("a civil date"),
             happened_at: None,
+            happened_through: None,
             edge: None,
             fields: Default::default(),
             refs: Vec::new(),

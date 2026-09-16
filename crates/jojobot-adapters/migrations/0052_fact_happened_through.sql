@@ -1,0 +1,13 @@
+-- The far end of the span, when the thing a claim is about happened across
+-- more than one day, rather than the one happened_at already carries.
+--
+-- **Nullable, and it starts empty on every existing row.** A row written
+-- before this column existed said nothing about a span; it still says
+-- nothing, and reads back exactly as a single-day claim does. No backfill is
+-- wanted: nothing distinguishes a single day from a span nobody named an end
+-- for, so filling this from happened_at would assert a fact nobody stated.
+--
+-- **Meaningless without happened_at**, the same way an end with no start is
+-- meaningless on the caller-declared date_range type — this column is what a
+-- NAMED date field gets of that same shape.
+ALTER TABLE fact ADD COLUMN happened_through VARCHAR(16) NULL;
