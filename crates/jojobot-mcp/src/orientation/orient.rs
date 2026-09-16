@@ -61,7 +61,7 @@ fn rank_rule_details(identity: &mut serde_json::Value, budget: usize) {
         }
     }
     let kept_rules: std::collections::HashSet<usize> = (text::Capped { budget })
-        .head(&rule_slots, |(_, len)| *len)
+        .head_or_none(&rule_slots, |(_, len)| *len)
         .kept()
         .iter()
         .map(|(i, _)| *i)
@@ -605,11 +605,24 @@ mod tests {
         assert!(newest["details_elided"].is_null(), "{newest}");
     }
 
-    /// 🚨 **A charter big enough to be the dominant weight on its own**, with
-    /// modest rules — proving `charter` and a rule's own `details` are still
-    /// ranked and served exactly as before; none of that changed when the
-    /// essay stopped being a ranking candidate for a named boot (see
-    /// `essay_for_boot`).
+    /// 🚨 **A charter big enough, alone, to leave no room for anything else** —
+    /// proving `charter` is still served whole regardless of what that costs
+    /// the rest of the answer, and that a rule's own `details` is honestly
+    /// elided rather than forced through when there is no room left: a
+    /// claim's reasoning is what the backpack model leaves at home — reachable
+    /// by digging (`recall … facts: true`), never carried at a cost to the
+    /// ceiling every other answer holds to.
+    ///
+    /// **13,000, not a rounder or larger number, because today's core alone is
+    /// 10,218 characters** — this charter plus the core plus the fixed cost of
+    /// everything else this boot always carries (snapshot, skills, session,
+    /// identity metadata) is chosen to clear the 28,000 ceiling with room to
+    /// spare, once the rule's reasoning is honestly elided rather than forced
+    /// through. **This is not the same claim as "any charter this size fits"**:
+    /// a real identity's own charter and rules can still exceed the ceiling
+    /// once the core competes with them too — measured against a real 25-rule
+    /// charter at 35,508 characters against this same 28,000 budget — and that
+    /// is an open question this test does not answer and does not hide.
     ///
     /// **The core is never null, whatever the charter costs** — a named
     /// boot's orientation is the core by rule, not by a ranking this charter
@@ -618,13 +631,13 @@ mod tests {
     /// is the same claim, cheaper to construct; this one exists for the
     /// charter and rule-ranking behaviour beside it.
     #[tokio::test]
-    async fn a_boot_ranked_heavy_in_charter_still_serves_charter_rule_and_core_whole() {
+    async fn a_boot_ranked_heavy_in_charter_still_serves_charter_and_core_whole() {
         let jojobot = handler();
         make_bot(&jojobot, "gamma").await;
         jojobot
             .set_charter(Parameters(SetCharterArgs {
                 bot: "gamma".into(),
-                prose: "x".repeat(15_000),
+                prose: "x".repeat(13_000),
                 sid: Some(crate::harness::TEST_SID.into()),
             }))
             .await
@@ -658,14 +671,24 @@ mod tests {
         let charter = booted["identity"]["charter"]
             .as_str()
             .expect("charter is never dropped by this cut");
-        assert_eq!(charter.chars().count(), 15_000, "{charter:?}");
+        assert_eq!(charter.chars().count(), 13_000, "{charter:?}");
 
-        // The one rule is small enough to survive beside a 15,000-character
-        // charter — proving the essay's own placement, not the rule's.
+        // **The rule's own reasoning has no room left beside a 13,000-character
+        // charter and the essay's own core, and it is left at home rather
+        // than forced through: elided, marked, and pointed at the dig that
+        // reaches it whole.**
         let rules = booted["identity"]["rules"].as_array().expect("rules");
+        assert!(rules[0]["details"].is_null(), "{rules:?}");
+        assert_eq!(rules[0]["details_elided"], true, "{rules:?}");
         assert_eq!(
-            rules[0]["details"].as_str().map(|d| d.chars().count()),
-            Some(2_000 + "rule 0 reasoning: ".chars().count()),
+            rules[0]["details_bytes"],
+            "rule 0 reasoning: ".len() + 2_000,
+            "{rules:?}"
+        );
+        assert!(
+            rules[0]["details_note"]
+                .as_str()
+                .is_some_and(|n| n.contains("recall") && n.contains("bot:gamma")),
             "{rules:?}"
         );
 
