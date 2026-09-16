@@ -1344,7 +1344,7 @@ pub fn validate_entity(
     crm: Option<&str>,
     parent: Option<&EntityId>,
 ) -> Result<(), MemoryError> {
-    validate_subject(id)?;
+    validate_write_subject(id)?;
     validate_field("name", name)?;
     validate_aliases(aliases)?;
     validate_field("source", source)?;

@@ -9346,6 +9346,67 @@ pub async fn a_fold_repoints_a_pointer_wearing_a_former_handle_of_the_folded_sid
     );
 }
 
+/// **A session-kind handle is refused by `add_entity`, never written.**
+///
+/// `validate_write_subject` already refuses a memory write onto a session's
+/// handle at six other call sites — this is the seventh, and the one that
+/// stops the row from existing in the first place. Without it, a session-kind
+/// entity `add_entity` creates is permanently inert the moment it lands: every
+/// gated verb refuses to touch it again, and it is indistinguishable in the
+/// store from a genuine session except by trying to write to it.
+pub async fn add_entity_refuses_a_session_kind_handle<M: Memory>(store: &M) {
+    let attempted = EntityId("session:contract-add-entity-session-gap".into());
+    let err = store
+        .add_entity(NewEntity::new(
+            attempted.clone(),
+            "Contract Session Gap",
+            "contract-fixture",
+        ))
+        .await
+        .expect_err("a session-kind handle must be refused by add_entity, not written");
+    assert!(
+        matches!(&err, MemoryError::InvalidSubject(message) if message.contains("session")),
+        "expected InvalidSubject naming the session, got {err:?}",
+    );
+}
+
+/// **A session-kind handle is refused on either side of a merge.**
+///
+/// `merge` moves rows directly rather than through `capture`, so it never
+/// passed through the gate the other six call sites share. The check runs
+/// before either side's existence is resolved — a fold naming a session is
+/// wrong by its kind alone, whether or not a row for that handle exists.
+pub async fn merge_refuses_a_session_kind_handle_on_either_side<M: Memory>(store: &M) {
+    let ordinary = add(
+        store,
+        NewEntity::new(
+            EntityId::person("person:contract-merge-session-gap-ordinary"),
+            "Contract Merge Session Gap Ordinary",
+            "contract-fixture",
+        ),
+    )
+    .await;
+    let session = EntityId("session:contract-merge-session-gap".into());
+
+    let folded_err = store
+        .merge(&session, &ordinary.id, None, date(2026, 5, 3))
+        .await
+        .expect_err("a session named as the folded side must be refused, not merged away");
+    assert!(
+        matches!(&folded_err, MemoryError::InvalidSubject(message) if message.contains("session")),
+        "expected InvalidSubject naming the session on the folded side, got {folded_err:?}",
+    );
+
+    let survivor_err = store
+        .merge(&ordinary.id, &session, None, date(2026, 5, 3))
+        .await
+        .expect_err("a session named as the survivor must be refused, not written into");
+    assert!(
+        matches!(&survivor_err, MemoryError::InvalidSubject(message) if message.contains("session")),
+        "expected InvalidSubject naming the session on the survivor side, got {survivor_err:?}",
+    );
+}
+
 pub async fn run_all<M: Memory>(store: &M) {
     capture_reads_back(store).await;
     preserves_all_fields(store).await;
@@ -9487,4 +9548,7 @@ pub async fn run_all<M: Memory>(store: &M) {
 
     archive_entity_persists_the_reason_and_the_moment(store).await;
     a_second_archive_is_refused_not_overwritten(store).await;
+
+    add_entity_refuses_a_session_kind_handle(store).await;
+    merge_refuses_a_session_kind_handle_on_either_side(store).await;
 }

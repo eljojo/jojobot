@@ -2784,6 +2784,11 @@ impl Memory for DoltMemory {
         reason: Option<&str>,
         date: Date,
     ) -> Result<Merge, MemoryError> {
+        // **Wrong by kind alone, before either side's existence is even
+        // asked.** A fold naming a session steps past the same three things
+        // any other memory write onto its handle would.
+        validate_write_subject(folded)?;
+        validate_write_subject(survivor)?;
         if folded == survivor {
             return Err(MemoryError::NothingToMerge {
                 attempted: folded.to_string(),
