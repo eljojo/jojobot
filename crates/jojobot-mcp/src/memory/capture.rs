@@ -12,8 +12,8 @@ use jojobot_domain::memory::graph;
 
 use super::*;
 use crate::teaching::{
-    CLAIM_DIRECTION_DOMAIN, CLAIM_DIRECTION_TEACHING, CLAIM_SUBJECT_DOMAIN, CLAIM_SUBJECT_TEACHING,
-    CLAIMS_DOMAIN, CLAIMS_TEACHING,
+    CHECK_IN_DATE_DOMAIN, CHECK_IN_DATE_TEACHING, CLAIM_DIRECTION_DOMAIN, CLAIM_DIRECTION_TEACHING,
+    CLAIM_SUBJECT_DOMAIN, CLAIM_SUBJECT_TEACHING, CLAIMS_DOMAIN, CLAIMS_TEACHING,
 };
 
 /// Arguments to `capture`.
@@ -642,6 +642,12 @@ impl Jojobot {
             derived_from,
             stale_after: parse_date(args.stale_after.as_deref())?,
         };
+        // **Disagreement, not presence alone.** A check-in with no
+        // `happened_at` has asked no question, and one where both fields
+        // name the same day already got the schedule right, whichever the
+        // caller believed was doing the work — see [`CHECK_IN_DATE_TEACHING`].
+        let check_in_dates_disagree =
+            checked_in && new.happened_at.is_some_and(|day| day != new.recorded_at);
         // Routed through the declined path rather than straight to the mapper:
         // a fact the validators refuse is a caller mistake, and it comes back
         // as an answer with a way forward (rule 68).
@@ -700,6 +706,13 @@ impl Jojobot {
                         .await
                 {
                     crate::answer::note_teaching(&mut body, CLAIM_DIRECTION_TEACHING);
+                }
+                if check_in_dates_disagree
+                    && self
+                        .first_contact(CHECK_IN_DATE_DOMAIN, Some(&caller))
+                        .await
+                {
+                    crate::answer::note_teaching(&mut body, CHECK_IN_DATE_TEACHING);
                 }
                 json_result(&body)
             }

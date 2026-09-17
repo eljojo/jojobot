@@ -128,6 +128,27 @@ pub(crate) const RHYTHM_ARCHIVE_TEACHING: &str = "Archiving a claim does not sto
     is still the right move when a claim about the rhythm was wrong or is no longer worth \
     keeping — it is simply not what stops the cadence.";
 
+/// **The sixth domain — a check-in's schedule is dated by `recorded_at`,
+/// never by `happened_at`.** Named on the call that actually raises the
+/// question: a check-in that also sends `happened_at`, and the two
+/// disagree. A check-in with no `happened_at` at all has asked nothing;
+/// one where both name the same day already got it right, whichever field
+/// the caller believed was doing the work.
+pub(crate) const CHECK_IN_DATE_DOMAIN: &str = "check-in-date";
+
+/// **Ships in the binary, exactly as the other teachings do.** `happened_at`
+/// reads as the field for "this happened on an earlier day," and for an
+/// ordinary claim it is — but a check-in's schedule never reads it: the
+/// basis a rhythm's cadence counts from is the check-in's own `recorded_at`,
+/// the same day `capture`'s own receipt already names when a check-in opens
+/// a loop.
+pub(crate) const CHECK_IN_DATE_TEACHING: &str = "A check-in's schedule is dated by recorded_at, \
+    never by happened_at. recorded_at is the day this check-in was made — for a check-in, the \
+    day the turn happened — and it is what a rhythm's counts_from and every later cycle derive \
+    from; happened_at never reaches the scheduling engine at all. To record a check-in for a \
+    turn that happened on an earlier day, send that day as recorded_at. happened_at is still \
+    fine on an ordinary claim; it is simply inert here.";
+
 impl Jojobot {
     /// Whether this call is the first time `domain` has reached this
     /// session's handle.
@@ -680,6 +701,154 @@ mod tests {
                 .is_some_and(|t| t.contains(&serde_json::json!(RHYTHM_ARCHIVE_TEACHING))),
             "thing:kettle is not a rhythm, and the teaching's own words are about a rhythm's \
              cadence: {archived}"
+        );
+    }
+
+    /// A rhythm ready to take a check-in, with no basis of its own yet —
+    /// the same shape `capture`'s own version of this fixture builds,
+    /// inlined here because that one is private to `capture`'s test module.
+    async fn a_cadenced_rhythm_ready_for_a_check_in(jojobot: &Jojobot, handle: &str) {
+        ensure(jojobot, "thing:kettle").await;
+        jojobot
+            .add_entity(Parameters(AddEntityArgs {
+                parent: Some("thing:kettle".into()),
+                ..add_args("rhythm", handle, handle)
+            }))
+            .await
+            .expect("add ok");
+        capture_ok(
+            jojobot,
+            CaptureArgs {
+                fields: Some(
+                    [
+                        ("cadence_days".to_string(), "7".to_string()),
+                        ("advances_from".to_string(), "check_in_date".to_string()),
+                    ]
+                    .into_iter()
+                    .collect(),
+                ),
+                ..capture_args(&format!("rhythm:{handle}"), "every week")
+            },
+        )
+        .await;
+    }
+
+    /// **The gate is disagreement, not presence alone.** A check-in whose
+    /// `happened_at` names a day OTHER than the one dating its schedule has
+    /// raised the exact question this teaches: `recorded_at`, not
+    /// `happened_at`, is what a rhythm's cadence counts from, and the two
+    /// having different answers means whichever one the caller trusted is
+    /// wrong about what actually happened to the schedule.
+    #[tokio::test]
+    async fn a_check_in_whose_happened_at_disagrees_with_recorded_at_teaches_once() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+        a_cadenced_rhythm_ready_for_a_check_in(&jojobot, "descale").await;
+
+        let mistaken = capture_as(
+            &jojobot,
+            &sid,
+            CaptureArgs {
+                check_in: Some("ran".into()),
+                recorded_at: Some("2026-06-14".into()),
+                happened_at: Some("2026-06-10".into()),
+                ..capture_args("rhythm:descale", "did it a few days before logging it")
+            },
+        )
+        .await;
+        assert!(
+            mistaken["teaching"]
+                .as_array()
+                .expect("a list")
+                .contains(&serde_json::json!(CHECK_IN_DATE_TEACHING)),
+            "recorded_at and happened_at name different days on a check-in: {mistaken}"
+        );
+
+        a_cadenced_rhythm_ready_for_a_check_in(&jojobot, "water-the-fern").await;
+        let mistaken_again = capture_as(
+            &jojobot,
+            &sid,
+            CaptureArgs {
+                check_in: Some("ran".into()),
+                recorded_at: Some("2026-06-20".into()),
+                happened_at: Some("2026-06-18".into()),
+                ..capture_args("rhythm:water-the-fern", "same mix-up, a different loop")
+            },
+        )
+        .await;
+        assert!(
+            !mistaken_again
+                .get("teaching")
+                .and_then(|t| t.as_array())
+                .is_some_and(|t| t.contains(&serde_json::json!(CHECK_IN_DATE_TEACHING))),
+            "the same session hitting the same mix-up again is not taught twice: {mistaken_again}"
+        );
+    }
+
+    /// **A check-in that never mentions `happened_at` has asked nothing.**
+    /// Most check-ins log the day they happened through `recorded_at` alone
+    /// and never touch the inert field, so this is the common case and it
+    /// must not spend the session's one teaching.
+    #[tokio::test]
+    async fn a_check_in_with_no_happened_at_does_not_teach_check_in_date() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+        a_cadenced_rhythm_ready_for_a_check_in(&jojobot, "descale").await;
+
+        let ordinary = capture_as(
+            &jojobot,
+            &sid,
+            CaptureArgs {
+                check_in: Some("ran".into()),
+                recorded_at: Some("2026-06-14".into()),
+                ..capture_args("rhythm:descale", "logged it the same day")
+            },
+        )
+        .await;
+        assert!(
+            !ordinary
+                .get("teaching")
+                .and_then(|t| t.as_array())
+                .is_some_and(|t| t.contains(&serde_json::json!(CHECK_IN_DATE_TEACHING))),
+            "this check-in never named happened_at, so nothing disagreed with anything: \
+             {ordinary}"
+        );
+    }
+
+    /// **The two fields naming the SAME day already got it right.** Whether
+    /// the caller believes `recorded_at` or `happened_at` is doing the
+    /// work, the schedule lands on the correct date either way, so there is
+    /// nothing to warn about.
+    #[tokio::test]
+    async fn a_check_in_whose_happened_at_matches_recorded_at_does_not_teach_check_in_date() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+        a_cadenced_rhythm_ready_for_a_check_in(&jojobot, "descale").await;
+
+        let agreeing = capture_as(
+            &jojobot,
+            &sid,
+            CaptureArgs {
+                check_in: Some("ran".into()),
+                recorded_at: Some("2026-06-14".into()),
+                happened_at: Some("2026-06-14".into()),
+                ..capture_args(
+                    "rhythm:descale",
+                    "logged it the same day, and said so twice",
+                )
+            },
+        )
+        .await;
+        assert!(
+            !agreeing
+                .get("teaching")
+                .and_then(|t| t.as_array())
+                .is_some_and(|t| t.contains(&serde_json::json!(CHECK_IN_DATE_TEACHING))),
+            "recorded_at and happened_at name the same day, so the schedule is already right: \
+             {agreeing}"
         );
     }
 
