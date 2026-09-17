@@ -106,12 +106,30 @@ impl Observed<'_> {
     /// or nothing when the run has no such boundary — which is a failure to
     /// report rather than one to swallow.
     pub fn across(&self, phase: &str) -> Option<(&Boundary, &Boundary)> {
-        let at = self
-            .boundaries
-            .iter()
-            .position(|b| b.before.starts_with(phase))?;
-        Some((self.boundaries.get(at)?, self.boundaries.get(at + 1)?))
+        boundary_pair(self.boundaries, phase)
     }
+}
+
+/// **The lookup `across` performs, free of `Observed` so it can be measured
+/// without a live room.**
+///
+/// A bare `starts_with` would let `"Phase 1"` match `"Phase 10 — ..."` or
+/// `"Phase 12 — ..."` — the phase number is a prefix of the other's, and a
+/// lookup that stops at the first character match rather than the number's
+/// own end reads a January question against December's evidence. So the
+/// match only counts when nothing right after it is another digit —
+/// `"Phase 1 — ..."` and bare `"Phase 1"` both still match; `"Phase 10"`
+/// and `"Phase 12"` no longer can.
+fn boundary_pair<'a>(
+    boundaries: &'a [Boundary],
+    phase: &str,
+) -> Option<(&'a Boundary, &'a Boundary)> {
+    let at = boundaries.iter().position(|b| {
+        b.before
+            .strip_prefix(phase)
+            .is_some_and(|rest| !rest.starts_with(|c: char| c.is_ascii_digit()))
+    })?;
+    Some((boundaries.get(at)?, boundaries.get(at + 1)?))
 }
 
 /// What one phase printed.
@@ -1150,7 +1168,41 @@ pub async fn starting_identity(room: &Surface) -> Result<serde_json::Value> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Results, Said, phase_is_covered};
+    use super::{Boundary, Results, Said, boundary_pair, phase_is_covered};
+
+    fn boundary_labelled(before: &str) -> Boundary {
+        Boundary {
+            before: before.to_string(),
+            mail: String::new(),
+            world: String::new(),
+            runs_offered: 0,
+            board: String::new(),
+        }
+    }
+
+    /// 🚨 **A bare prefix match lets "Phase 1" find "Phase 10"'s boundary.**
+    /// Both boundaries carry a label starting with "Phase 1", and a lookup
+    /// that stops at the first character match rather than the phase
+    /// number's own end reads the wrong day's evidence — a January question
+    /// silently answered from December, which is the exact class this
+    /// mechanism exists to eliminate, inside the mechanism itself.
+    #[test]
+    fn a_phase_lookup_is_not_fooled_by_a_longer_phase_number_sharing_its_prefix() {
+        let boundaries = vec![
+            boundary_labelled("Phase 10 — a rule of thumb"),
+            boundary_labelled("Phase 11 — four days before the trip"),
+            boundary_labelled("Phase 1 — the vault moves in"),
+            boundary_labelled("Phase 2 — a desk, a storm"),
+        ];
+        let (before, after) =
+            boundary_pair(&boundaries, "Phase 1").expect("Phase 1 has a boundary either side");
+        assert_eq!(
+            before.before, "Phase 1 — the vault moves in",
+            "\"Phase 1\" matched \"Phase 10\"'s boundary instead of its own: {}",
+            before.before,
+        );
+        assert_eq!(after.before, "Phase 2 — a desk, a storm");
+    }
 
     /// A run with two phases and nothing else — the smallest thing that has a
     /// beginning and an end.
