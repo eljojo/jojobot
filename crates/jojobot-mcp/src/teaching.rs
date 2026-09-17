@@ -76,16 +76,29 @@ pub(crate) const CLAIM_SUBJECT_TEACHING: &str = "A claim's fields may carry two 
 /// (`Blocked::MustExist`), so the entity always precedes that capture — this
 /// domain is taught at `add_entity` instead, which is a teaching landing
 /// before the mistake rather than after it.
+///
+/// **Shared with the check-in-date question, deliberately.** A rhythm
+/// created with history behind it and a check-in whose `happened_at`
+/// disagrees with `recorded_at` used to be two domains stating the same
+/// underlying fact — that a check-in's own `recorded_at` is what a
+/// schedule counts from — one implicitly, one by field name. A session
+/// that creates a loop and then backdates its first check-in with the
+/// wrong field meets both, and telling it twice is the defect this domain
+/// now closes by construction: whichever site reaches the session first
+/// spends the one row, and the other notes nothing.
 pub(crate) const RHYTHM_HISTORY_DOMAIN: &str = "rhythm-history";
 
-/// **Ships in the binary, exactly as the other teachings do.** Says what the
-/// case is — a loop with a history already behind it — rather than listing
-/// the keys a schedule is made of; the rhythms procedure and the engine's own
-/// refusals are where those are named.
+/// **Ships in the binary, exactly as the other teachings do.** The fuller
+/// of the domain's two texts, for the site a caller usually meets first:
+/// creating the rhythm, before any check-in has been sent. States the
+/// opening mechanism AND which field dates it, so a caller who reads this
+/// has nothing left to get wrong on the check-in that follows.
 pub(crate) const RHYTHM_HISTORY_TEACHING: &str = "A rhythm's schedule is jojobot's arithmetic, never a caller's to type in — even for the \
     first cycle. A loop whose last run already happened, before this session opened it, is \
-    opened the same way an ordinary cycle is closed: capture a check-in on it, dated the day it \
-    last ran, and jojobot works the rest of the schedule out from there.";
+    opened the same way an ordinary cycle is closed: capture a check-in on it, and jojobot works \
+    the rest of the schedule out from there. The day that check-in dates the schedule from is \
+    recorded_at, never happened_at — send the day the turn actually happened as recorded_at, and \
+    jojobot derives the rest.";
 
 /// **The fourth domain — which entity a claim with an edge hangs on.** Named
 /// on the call that actually raises the question: a `capture` drawing an
@@ -128,26 +141,20 @@ pub(crate) const RHYTHM_ARCHIVE_TEACHING: &str = "Archiving a claim does not sto
     is still the right move when a claim about the rhythm was wrong or is no longer worth \
     keeping — it is simply not what stops the cadence.";
 
-/// **The sixth domain — a check-in's schedule is dated by `recorded_at`,
-/// never by `happened_at`.** Named on the call that actually raises the
-/// question: a check-in that also sends `happened_at`, and the two
-/// disagree. A check-in with no `happened_at` at all has asked nothing;
-/// one where both name the same day already got it right, whichever field
-/// the caller believed was doing the work.
-pub(crate) const CHECK_IN_DATE_DOMAIN: &str = "check-in-date";
-
-/// **Ships in the binary, exactly as the other teachings do.** `happened_at`
-/// reads as the field for "this happened on an earlier day," and for an
-/// ordinary claim it is — but a check-in's schedule never reads it: the
-/// basis a rhythm's cadence counts from is the check-in's own `recorded_at`,
-/// the same day `capture`'s own receipt already names when a check-in opens
-/// a loop.
+/// **The narrower half of [`RHYTHM_HISTORY_DOMAIN`], for the site a caller
+/// reaches when the fuller text never landed first.** A check-in that also
+/// sends `happened_at`, and the two disagree, raises the same question the
+/// fuller text already answers for whoever met it at rhythm-creation — this
+/// is what a session gets when a check-in is its FIRST contact with the
+/// domain instead: a resumed session, one that never created the rhythm
+/// itself, or a rhythm old enough to predate the fuller text. A check-in
+/// with no `happened_at` at all has asked nothing; one where both name the
+/// same day already got it right, whichever field the caller believed was
+/// doing the work — neither spends this domain's one row.
 pub(crate) const CHECK_IN_DATE_TEACHING: &str = "A check-in's schedule is dated by recorded_at, \
-    never by happened_at. recorded_at is the day this check-in was made — for a check-in, the \
-    day the turn happened — and it is what a rhythm's counts_from and every later cycle derive \
-    from; happened_at never reaches the scheduling engine at all. To record a check-in for a \
-    turn that happened on an earlier day, send that day as recorded_at. happened_at is still \
-    fine on an ordinary claim; it is simply inert here.";
+    never by happened_at — happened_at never reaches the scheduling engine at all. This check-in \
+    named both, for different days: to record a turn that happened on an earlier day, send that \
+    day as recorded_at.";
 
 impl Jojobot {
     /// Whether this call is the first time `domain` has reached this
@@ -849,6 +856,78 @@ mod tests {
                 .is_some_and(|t| t.contains(&serde_json::json!(CHECK_IN_DATE_TEACHING))),
             "recorded_at and happened_at name the same day, so the schedule is already right: \
              {agreeing}"
+        );
+    }
+
+    /// **The case nobody had.** `RHYTHM_HISTORY_TEACHING` (creating a
+    /// rhythm) and `CHECK_IN_DATE_TEACHING` (a mismatched check-in) used to
+    /// be two domains stating the same underlying fact — that a check-in's
+    /// own `recorded_at` is what a rhythm's schedule is built from — one
+    /// implicitly, one by field name. A session that creates a loop and
+    /// then backdates its first check-in with the wrong field, the exact
+    /// workflow this whole day's work was about, met both. They now share
+    /// one domain, so this is no longer a property of the wording to keep
+    /// in sync by hand: whichever site reaches the session first spends the
+    /// row, and the other notes nothing.
+    #[tokio::test]
+    async fn a_session_that_creates_a_rhythm_then_mis_dates_its_check_in_is_told_once() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+        ensure(&jojobot, "thing:kettle").await;
+
+        let created = json_of(
+            &jojobot
+                .add_entity(Parameters(AddEntityArgs {
+                    sid: Some(sid.clone()),
+                    parent: Some("thing:kettle".into()),
+                    ..add_args("rhythm", "descale", "descale")
+                }))
+                .await
+                .expect("add ok"),
+        );
+        assert!(
+            created["teaching"]
+                .as_array()
+                .expect("a list")
+                .contains(&serde_json::json!(RHYTHM_HISTORY_TEACHING)),
+            "creating the rhythm is this session's first contact with the shared domain: {created}"
+        );
+
+        capture_as(
+            &jojobot,
+            &sid,
+            CaptureArgs {
+                fields: Some(
+                    [
+                        ("cadence_days".to_string(), "7".to_string()),
+                        ("advances_from".to_string(), "check_in_date".to_string()),
+                    ]
+                    .into_iter()
+                    .collect(),
+                ),
+                ..capture_args("rhythm:descale", "every week")
+            },
+        )
+        .await;
+        let checked_in = capture_as(
+            &jojobot,
+            &sid,
+            CaptureArgs {
+                check_in: Some("ran".into()),
+                recorded_at: Some("2026-06-14".into()),
+                happened_at: Some("2026-06-10".into()),
+                ..capture_args("rhythm:descale", "did it a few days before logging it")
+            },
+        )
+        .await;
+        assert!(
+            !checked_in
+                .get("teaching")
+                .and_then(|t| t.as_array())
+                .is_some_and(|t| t.contains(&serde_json::json!(CHECK_IN_DATE_TEACHING))),
+            "rhythm-history already told this session the date basis — the mismatched check-in \
+             must not tell it again: {checked_in}"
         );
     }
 

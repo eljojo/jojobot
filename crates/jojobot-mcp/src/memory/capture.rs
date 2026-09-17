@@ -12,8 +12,8 @@ use jojobot_domain::memory::graph;
 
 use super::*;
 use crate::teaching::{
-    CHECK_IN_DATE_DOMAIN, CHECK_IN_DATE_TEACHING, CLAIM_DIRECTION_DOMAIN, CLAIM_DIRECTION_TEACHING,
-    CLAIM_SUBJECT_DOMAIN, CLAIM_SUBJECT_TEACHING, CLAIMS_DOMAIN, CLAIMS_TEACHING,
+    CHECK_IN_DATE_TEACHING, CLAIM_DIRECTION_DOMAIN, CLAIM_DIRECTION_TEACHING, CLAIM_SUBJECT_DOMAIN,
+    CLAIM_SUBJECT_TEACHING, CLAIMS_DOMAIN, CLAIMS_TEACHING, RHYTHM_HISTORY_DOMAIN,
 };
 
 /// Arguments to `capture`.
@@ -707,9 +707,14 @@ impl Jojobot {
                 {
                     crate::answer::note_teaching(&mut body, CLAIM_DIRECTION_TEACHING);
                 }
+                // **Shares its domain with `add_entity`'s rhythm-history
+                // teaching, deliberately.** Both state that a check-in's own
+                // `recorded_at` is what the schedule counts from; sharing the
+                // row means whichever site reaches a session first is the one
+                // that tells it, never both — see `RHYTHM_HISTORY_DOMAIN`.
                 if check_in_dates_disagree
                     && self
-                        .first_contact(CHECK_IN_DATE_DOMAIN, Some(&caller))
+                        .first_contact(RHYTHM_HISTORY_DOMAIN, Some(&caller))
                         .await
                 {
                     crate::answer::note_teaching(&mut body, CHECK_IN_DATE_TEACHING);
