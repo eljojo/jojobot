@@ -87,6 +87,23 @@ pub(crate) const RHYTHM_HISTORY_TEACHING: &str = "A rhythm's schedule is jojobot
     opened the same way an ordinary cycle is closed: capture a check-in on it, dated the day it \
     last ran, and jojobot works the rest of the schedule out from there.";
 
+/// **The fourth domain — which entity a claim with an edge hangs on.** Named
+/// on the call that actually raises the question: a `capture` drawing an
+/// edge, never one that does not, because a claim naming no other entity has
+/// no side to get wrong.
+pub(crate) const CLAIM_DIRECTION_DOMAIN: &str = "claim-direction";
+
+/// **Ships in the binary, exactly as the other teachings do.** The two
+/// entities an edge touches are not interchangeable: one carries the claim's
+/// content, the other is named by the edge, and nothing about the verb
+/// stops a caller filing either side as the subject.
+pub(crate) const CLAIM_DIRECTION_TEACHING: &str = "A claim hangs on the thing it is ABOUT; the \
+    edge names the other party. Ask which entity the sentence itself describes, and put the \
+    claim there — the edge then points at whichever other entity it also involves. Filing it on \
+    the wrong side stores a claim that is true and finds nothing: a read scoped to the entity \
+    the claim should have been about never sees it, because that read returns what it was \
+    asked for and an inbound edge grants the other party nothing.";
+
 impl Jojobot {
     /// Whether this call is the first time `domain` has reached this
     /// session's handle.
@@ -158,6 +175,64 @@ mod tests {
         assert!(
             second.get("teaching").is_none(),
             "the same session touching claims again is not taught twice: {second}"
+        );
+    }
+
+    /// **The trigger is an edge, not a capture.** A claim naming no other
+    /// entity has no side to get wrong, so the session's first plain capture
+    /// must not spend this domain's one teaching. The first capture that
+    /// DOES draw an edge is the one that raises the question, whichever
+    /// number capture it is — and the same session drawing a second edge is
+    /// not taught twice.
+    #[tokio::test]
+    async fn only_a_capture_that_draws_an_edge_teaches_claim_direction_and_only_once() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+
+        let plain = capture_as(&jojobot, &sid, capture_args("alpha", "plays go")).await;
+        assert!(
+            !plain
+                .get("teaching")
+                .and_then(|t| t.as_array())
+                .is_some_and(|t| t.contains(&serde_json::json!(CLAIM_DIRECTION_TEACHING))),
+            "a claim with no edge has no side to get wrong: {plain}"
+        );
+
+        let with_edge = capture_as(
+            &jojobot,
+            &sid,
+            CaptureArgs {
+                shape: Some("membership".into()),
+                object: Some("org:globex".into()),
+                ..capture_args("alpha", "rides with the club")
+            },
+        )
+        .await;
+        assert!(
+            with_edge["teaching"]
+                .as_array()
+                .expect("a list")
+                .contains(&serde_json::json!(CLAIM_DIRECTION_TEACHING)),
+            "the first edge this session drew must carry the direction teaching: {with_edge}"
+        );
+
+        let second_edge = capture_as(
+            &jojobot,
+            &sid,
+            CaptureArgs {
+                shape: Some("membership".into()),
+                object: Some("org:mr-plow".into()),
+                ..capture_args("alpha", "also sponsors mr plow")
+            },
+        )
+        .await;
+        assert!(
+            !second_edge
+                .get("teaching")
+                .and_then(|t| t.as_array())
+                .is_some_and(|t| t.contains(&serde_json::json!(CLAIM_DIRECTION_TEACHING))),
+            "the same session drawing a second edge is not taught twice: {second_edge}"
         );
     }
 

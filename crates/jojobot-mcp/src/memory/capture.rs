@@ -12,7 +12,8 @@ use jojobot_domain::memory::graph;
 
 use super::*;
 use crate::teaching::{
-    CLAIM_SUBJECT_DOMAIN, CLAIM_SUBJECT_TEACHING, CLAIMS_DOMAIN, CLAIMS_TEACHING,
+    CLAIM_DIRECTION_DOMAIN, CLAIM_DIRECTION_TEACHING, CLAIM_SUBJECT_DOMAIN, CLAIM_SUBJECT_TEACHING,
+    CLAIMS_DOMAIN, CLAIMS_TEACHING,
 };
 
 /// Arguments to `capture`.
@@ -689,6 +690,16 @@ impl Jojobot {
                     .await
                 {
                     crate::answer::note_teaching(&mut body, CLAIM_SUBJECT_TEACHING);
+                }
+                // **Gated on the edge, not the capture.** A claim naming no
+                // other entity has no side to get wrong, so a plain capture
+                // must not spend this domain's one teaching.
+                if fact.edge.is_some()
+                    && self
+                        .first_contact(CLAIM_DIRECTION_DOMAIN, Some(&caller))
+                        .await
+                {
+                    crate::answer::note_teaching(&mut body, CLAIM_DIRECTION_TEACHING);
                 }
                 json_result(&body)
             }
