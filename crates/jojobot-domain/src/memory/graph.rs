@@ -1264,6 +1264,11 @@ pub struct Selected {
     /// **Zero is the ordinary answer** and it is a claim of its own: every
     /// record was placed, so an empty result means nothing was near.
     pub unplaced: usize,
+    /// **How many this browse matched and archival took out**, the same
+    /// shape `list_entities`'s own count uses: zero when nothing was
+    /// archived, and zero for a selection naming a handle directly, since
+    /// naming one never browses and archival never took it out of anything.
+    pub archived_excluded: usize,
 }
 
 pub fn resolve(
@@ -1285,6 +1290,7 @@ pub fn resolve(
             .collect(),
         withheld: ctx.withheld(&query.select),
         unplaced: ctx.unplaced(&query.select),
+        archived_excluded: ctx.archived_excluded(&query.select),
     })
 }
 
@@ -1481,22 +1487,28 @@ impl<'a> Ctx<'a> {
         // handle already skipped this function above — this only ever runs
         // for a selection that chose the object rather than being given it,
         // and an archived thing is not something a browse chooses.
-        entity.archived.is_none()
-            && select.kind.is_none_or(|k| entity.kind == k)
+        entity.archived.is_none() && self.admits_ignoring_archived(entity, select)
+    }
+
+    /// **Every filter `admits` asks except archival** — one definition, so
+    /// [`Ctx::admits`] and [`Ctx::archived_excluded`] cannot drift apart
+    /// about what "everything else matched" means.
+    fn admits_ignoring_archived(&self, entity: &Entity, select: &Selection) -> bool {
+        select.kind.is_none_or(|k| entity.kind == k)
             // **An owned object is its owner's alone.** Objects declaring no
             // owner are the whole store as it stands, and they answer everyone.
-            && self.readable_by(id, select)
+            && self.readable_by(&entity.id, select)
             // **The type is asked of the thing and the keys of its records.**
             // Two units, because they are two questions: whether this thing
             // carries a type's keys across everything said about it, and
             // whether one record describes what the caller is looking for.
-            && (select.answers_type.is_none() || self.answers(id, select).is_some())
+            && (select.answers_type.is_none() || self.answers(&entity.id, select).is_some())
             // **A key filter is asked of the thing's folded fields by default,
             // which is the same map the type question is asked of.** Asked of
             // one record instead, "which of these have eaten three" misses the
             // thing that ate three one at a time and returns the thing that
             // recorded three at once — an answer that looks like an answer.
-            && holds_all(self.held(id), select.fields.iter())
+            && holds_all(self.held(&entity.id), select.fields.iter())
     }
 
     /// **What this selection matched and kept back as another identity's.**
@@ -1509,6 +1521,21 @@ impl<'a> Ctx<'a> {
             .values()
             .filter(|e| select.kind.is_none_or(|k| e.kind == k))
             .filter(|e| !self.readable_by(&e.id, select))
+            .count()
+    }
+
+    /// **What this selection matched and archival took out.** Naming a
+    /// handle directly never browses — [`Ctx::admits`] returns on the
+    /// handle alone — so nothing here was excluded and this reports zero
+    /// rather than guessing at a browse that never ran.
+    fn archived_excluded(&self, select: &Selection) -> usize {
+        if select.subject.is_some() {
+            return 0;
+        }
+        self.entities
+            .values()
+            .filter(|e| e.archived.is_some())
+            .filter(|e| self.admits_ignoring_archived(e, select))
             .count()
     }
 

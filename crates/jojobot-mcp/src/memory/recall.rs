@@ -1472,6 +1472,7 @@ impl Jojobot {
             objects: mut found,
             withheld,
             unplaced,
+            archived_excluded,
         } = match graph::walk(self.memory.as_ref(), &query).await {
             Ok(answer) => answer,
             Err(e) => return memory_declined("recall", e),
@@ -1646,6 +1647,12 @@ impl Jojobot {
             // colleague may see; which identity holds them is a directory of
             // who is busy, and the caller named no handle to earn it.
             "withheld": withheld,
+            // 🚨 **How many this browse matched and archival took out** — the
+            // same field, the same meaning, as `list_entities`'s own count.
+            // A browse naming no handle drops archived entities exactly as
+            // `list_entities` does; without this a caller cannot tell "only
+            // two exist" from "one was hidden".
+            "archived_excluded": archived_excluded,
             "objects": found
                 .iter()
                 .zip(held)
@@ -2753,6 +2760,67 @@ mod tests {
         assert!(
             ids.contains(&"person:milhouse"),
             "a live entity is missing from the same browse: {body}",
+        );
+    }
+
+    /// 🚨 **The count `list_entities` already carries, on `recall`'s own
+    /// browse.** The exclusion above and this count are two different
+    /// fixes, and only one of them used to reach `recall` — a caller could
+    /// tell an archived entity was gone from the objects list but never how
+    /// many, so "only one exists" and "one was hidden" read alike.
+    #[tokio::test]
+    async fn a_browse_with_no_handle_named_reports_how_many_archival_excluded() {
+        let jojobot = handler();
+        ensure(&jojobot, "person:bart").await;
+        ensure(&jojobot, "person:milhouse").await;
+        jojobot
+            .memory
+            .archive_entity(&EntityId("person:bart".into()), "a mistaken write")
+            .await
+            .expect("archive_entity ok");
+
+        let body = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    kind: Some("person".into()),
+                    ..of_nothing()
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        assert_eq!(
+            body["archived_excluded"], 1,
+            "one archived person did not count against a kind browse: {body}",
+        );
+    }
+
+    /// **The direct door excludes nothing, so it counts nothing.** Naming
+    /// the archived entity's own handle returns it whole — untouched by
+    /// this change — and the count reads zero rather than being left off,
+    /// the same way `overdue_excluded` is null only when no overdue
+    /// question was asked at all, never when the answer is zero.
+    #[tokio::test]
+    async fn a_direct_handle_on_an_archived_entity_reports_nothing_excluded() {
+        let jojobot = handler();
+        ensure(&jojobot, "person:bart").await;
+        jojobot
+            .memory
+            .archive_entity(&EntityId("person:bart".into()), "a mistaken write")
+            .await
+            .expect("archive_entity ok");
+
+        let body = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    subject: Some("person:bart".into()),
+                    ..of_nothing()
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        assert_eq!(
+            body["archived_excluded"], 0,
+            "a direct-handle read excluded nothing, so it should count nothing: {body}",
         );
     }
 
