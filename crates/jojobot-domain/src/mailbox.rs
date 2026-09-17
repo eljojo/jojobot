@@ -139,10 +139,21 @@ fn is_slug_byte(b: u8) -> bool {
 }
 
 /// Validate a mailbox name before it is written or looked up anywhere.
+///
+/// **Length is checked apart from the charset**, and named when it is the
+/// fault: folding both into one boolean left a name refused purely for being
+/// too long indistinguishable from one refused for a bad character, telling a
+/// caller only "names are [a-z0-9-]+" and nothing about the cap it also has
+/// to write under.
 pub fn validate_mailbox_name(name: &MailboxName) -> Result<(), MailboxError> {
     let n = name.as_str();
+    if n.chars().count() > 64 {
+        return Err(MailboxError::InvalidMessage(format!(
+            "a mailbox name may be 64 characters and this one is {}",
+            n.chars().count()
+        )));
+    }
     let ok = !n.is_empty()
-        && n.len() <= 64
         && n.bytes().all(is_slug_byte)
         && n.starts_with(|c: char| c.is_ascii_alphanumeric())
         && n.ends_with(|c: char| c.is_ascii_alphanumeric());
@@ -156,9 +167,19 @@ pub fn validate_mailbox_name(name: &MailboxName) -> Result<(), MailboxError> {
 /// Validate a message id arriving from a client. Same narrow token as a mailbox
 /// name: an id is used to select a card to rewrite, so it never carries free
 /// text.
+///
+/// **Length is checked apart from the charset**, for the same reason
+/// [`validate_mailbox_name`] does: a caller past the cap gets told the cap and
+/// the length it sent, not the charset rule alone.
 pub fn validate_message_id(id: &MessageId) -> Result<(), MailboxError> {
     let i = id.as_str();
-    let ok = !i.is_empty() && i.len() <= 64 && i.bytes().all(is_slug_byte);
+    if i.chars().count() > 64 {
+        return Err(MailboxError::InvalidMessage(format!(
+            "a message id may be 64 characters and this one is {}",
+            i.chars().count()
+        )));
+    }
+    let ok = !i.is_empty() && i.bytes().all(is_slug_byte);
     if ok {
         Ok(())
     } else {
@@ -1011,6 +1032,43 @@ mod tests {
         assert!(
             said.contains("120"),
             "the refusal must name the limit a caller has to write under: {said}"
+        );
+    }
+
+    /// 🚨 **The same refusal names the same two things.** A mailbox name and a
+    /// message id fold their length check into the same boolean as the
+    /// charset check, so a name refused purely for being too long is told
+    /// nothing past "names are [a-z0-9-]+" — the same guess the sender and
+    /// subject refusals used to invite.
+    #[test]
+    fn a_mailbox_name_past_the_limit_is_told_the_limit_and_the_length_it_sent() {
+        assert!(validate_mailbox_name(&MailboxName("a".repeat(64))).is_ok());
+        let refused =
+            validate_mailbox_name(&MailboxName("a".repeat(65))).expect_err("and it is capped");
+        let said = refused.to_string();
+        assert!(
+            said.contains("64"),
+            "must name the cap a caller writes under: {said}"
+        );
+        assert!(
+            said.contains("65"),
+            "must name the length actually sent: {said}"
+        );
+    }
+
+    #[test]
+    fn a_message_id_past_the_limit_is_told_the_limit_and_the_length_it_sent() {
+        assert!(validate_message_id(&MessageId("a".repeat(64))).is_ok());
+        let refused =
+            validate_message_id(&MessageId("a".repeat(65))).expect_err("and it is capped");
+        let said = refused.to_string();
+        assert!(
+            said.contains("64"),
+            "must name the cap a caller writes under: {said}"
+        );
+        assert!(
+            said.contains("65"),
+            "must name the length actually sent: {said}"
         );
     }
 
