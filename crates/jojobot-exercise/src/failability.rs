@@ -52,10 +52,21 @@ pub struct NegativeControl<'a> {
 
 /// **Every lock this build has actually proven failable, so far.**
 ///
-/// Empty. Nothing in this slice retrofits a control onto a shipped lock —
-/// see the module doc. An entry moves here from [`PENDING`] the day
-/// somebody writes the sabotage that proves it, never before.
-pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[];
+/// One entry. Nothing in this slice retrofits a control onto a lock that
+/// shipped before it — see the module doc — but this lock and its control
+/// landed together: `tests/desk_lock.rs` replays Run 23's exact real
+/// regression (a `clear_fields` write nobody asked for, wiping the desk's
+/// return window) and proves the lock reddens for it, then proves it holds
+/// when the window is left alone. An entry moves here from [`PENDING`] the
+/// day somebody writes the sabotage that proves it, never before.
+pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[NegativeControl {
+    room: expectations::VAULT_ROOM,
+    lock: "Phase 3 — March: the desk's return window was cleared outright rather than left on \
+           record once the operator said only that the desk stays, so nothing later can find \
+           the deadline that closed",
+    proof: "jojobot-exercise/tests/desk_lock.rs: \
+            the_desk_history_lock_reds_when_the_window_is_cleared_outright",
+}];
 
 /// **One lock shipped with no negative control yet**, named rather than left
 /// to a silent gap. Owed work, not an accepted risk: there is nothing here

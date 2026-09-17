@@ -320,6 +320,20 @@ say     March: no thing carries the day the boots' guarantee ends, so a window t
 recall {"subject": "pet:snowball", "facts": true}
 carries "recorded_at":"2026-03-15"
 say     March: nothing on the cat carries this sitting's own day, so the constraint that decides who can look after her in November is not on record
+
+# 🚨 **THE DESK'S DEADLINE, READ FROM ITS OWN WRITE HISTORY.** "The desk
+# stays" settles what to DO about the window; it says nothing about the
+# window itself, which is a closed but still-true historical fact — the
+# December trap lock above depends on it still being findable by the exact
+# day it ran out. Clearing the key that carries it, rather than simply
+# adding today's note, is the wrong move this lock watches for: a write
+# that takes a key off leaves a `cleared` write behind rather than no
+# trace at all, so the act is directly readable rather than merely
+# inferred from an absence.
+recall {"subject": "thing:standing-desk", "history": "runs_out"}
+carries "value":"2026-03-08"
+lacks   "cleared":true
+say     March: the desk's return window was cleared outright rather than left on record once the operator said only that the desk stays, so nothing later can find the deadline that closed
 ```
 
 ## Phase 4 — April, a yes, a drive and a floor
