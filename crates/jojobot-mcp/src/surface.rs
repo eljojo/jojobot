@@ -291,6 +291,29 @@ fn every_kind_the_store_accepts_is_listed_where_a_caller_reads() {
     }
 }
 
+/// **The `overdue` argument tells a caller not to read a write's success off
+/// this filter.** A model that just edited something and checked it against
+/// this list, rather than reading the record back, took a coincidence as
+/// confirmation — the failure this sentence exists to head off, at the one
+/// place a caller stands right before making that mistake.
+#[test]
+fn the_overdue_argument_says_absence_is_not_a_writes_confirmation() {
+    let tools = Jojobot::tool_router().list_all();
+    let recall = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "recall")
+        .expect("the surface offers recall");
+    let schema = serde_json::to_value(&recall.input_schema).expect("the schema serializes");
+    let described = schema["properties"]["overdue"]["description"]
+        .as_str()
+        .expect("the overdue argument carries its own description");
+    assert!(
+        described.contains("not proof a write landed"),
+        "the overdue argument does not say that leaving this list is not the same claim as a \
+         write taking effect: {described}"
+    );
+}
+
 /// **The `@kind:slug` mention spelling reaches a caller where they are
 /// already standing, not only in the domain crate that resolves it.**
 ///

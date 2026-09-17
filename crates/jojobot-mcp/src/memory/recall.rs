@@ -341,6 +341,13 @@ pub struct RecallArgs {
     /// carrying its fields so you can see which key it is short of. That is
     /// deliberate: a half-built loop that surfaced at no read ever would never
     /// be heard from again.
+    ///
+    /// **Absence here is not proof a write landed.** This asks whether
+    /// something is owed as of the date named — never whether an edit you
+    /// just made took effect, and a write can succeed while leaving the very
+    /// thing it was meant to change untouched. To confirm an edit worked,
+    /// recall the thing by its own handle and read the field back directly;
+    /// leaving a filtered list is not the same claim as a field changing.
     #[serde(default)]
     pub(crate) overdue: Option<OverdueArgs>,
     /// **What else was recorded around a day.** See [`NearArgs`].
