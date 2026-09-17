@@ -8,7 +8,7 @@ use jojobot_domain::attention;
 use super::*;
 use crate::teaching::{
     CLAIM_DIRECTION_DOMAIN, CLAIM_DIRECTION_TEACHING, CLAIM_SUBJECT_DOMAIN, CLAIM_SUBJECT_TEACHING,
-    CLAIMS_DOMAIN, CLAIMS_TEACHING,
+    CLAIMS_DOMAIN, CLAIMS_TEACHING, RHYTHM_ARCHIVE_DOMAIN, RHYTHM_ARCHIVE_TEACHING,
 };
 
 /// Arguments to `update_fact`.
@@ -338,6 +338,10 @@ impl Jojobot {
         // result — an edit naming neither `shape` nor `object` has no side
         // to get wrong and must not spend the session's one teaching.
         let drew_or_replaced_an_edge = patch.edge.is_some();
+        // **Captured before the move, exactly as the edge flag above is.**
+        // Whether the rhythm still shows a due moment AFTER this write is
+        // read once the write lands — see [`Jojobot::still_has_a_due_moment`].
+        let archives_this_write = patch.status == Some(FactStatus::Archived);
         // **A write that landed is never reported as failed** (rule 130): see
         // `capture`'s own note on the same shape.
         let (written, fold_behind) = match self.memory.update_fact(&address, patch).await {
@@ -381,6 +385,20 @@ impl Jojobot {
                         .await
                 {
                     crate::answer::note_teaching(&mut body, CLAIM_DIRECTION_TEACHING);
+                }
+                // **The gate is the aftermath, not the act.** Archiving most
+                // things has nothing to do with a schedule, and archiving a
+                // rhythm claim that never carried an open one leaves
+                // nothing standing — so this reads the rhythm's own fields
+                // AFTER the write, rather than assuming from the act alone.
+                if archives_this_write
+                    && fact.subject.kind() == Some(EntityKind::RHYTHM)
+                    && self.still_has_a_due_moment(&fact.subject).await
+                    && self
+                        .first_contact(RHYTHM_ARCHIVE_DOMAIN, Some(&caller))
+                        .await
+                {
+                    crate::answer::note_teaching(&mut body, RHYTHM_ARCHIVE_TEACHING);
                 }
                 json_result(&body)
             }
@@ -596,6 +614,23 @@ impl Jojobot {
              beside it. If it was true and has changed, archive it and capture the new claim; \
              overwriting it here loses the day it stopped being true.",
         )
+    }
+
+    /// **Reads the rhythm's own fields, after this write landed.** A
+    /// schedule is fields folded from whichever of a rhythm's records last
+    /// wrote them, so this asks the thing itself rather than the record
+    /// just archived — the same question `moved_due_moment` computes
+    /// forward, asked backward: is a due moment still standing now.
+    ///
+    /// A store failure reads as no due moment, for the same reason
+    /// [`Jojobot::first_contact`] answers `false` on one: a teaching that
+    /// cannot confirm its own premise must not spend the session's one
+    /// contact on a guess.
+    async fn still_has_a_due_moment(&self, subject: &EntityId) -> bool {
+        self.memory
+            .fields(subject)
+            .await
+            .is_ok_and(|fields| fields.contains_key(attention::DUE_ON))
     }
 }
 

@@ -104,6 +104,30 @@ pub(crate) const CLAIM_DIRECTION_TEACHING: &str = "A claim hangs on the thing it
     the claim should have been about never sees it, because that read returns what it was \
     asked for and an inbound edge grants the other party nothing.";
 
+/// **The fifth domain — archiving a rhythm's claim does not stop its
+/// cadence.** Named on the call that actually raises the question: an
+/// update_fact that archives a claim on a rhythm AND the rhythm still shows
+/// a due moment afterward. Archiving most things has nothing to do with a
+/// schedule, and archiving a rhythm claim that was never carrying an open
+/// one leaves nothing standing to warn about — the gate checks the
+/// aftermath rather than the act, so neither spends the one teaching.
+pub(crate) const RHYTHM_ARCHIVE_DOMAIN: &str = "rhythm-archive";
+
+/// **Ships in the binary, exactly as the other teachings do.** A thing's
+/// fields are its writes, the newest write of each key winning, from
+/// whichever active record made it — archiving one claim about a rhythm
+/// takes only that record's own writes out of the running, and a schedule
+/// key last written on a different, still-active record keeps counting.
+pub(crate) const RHYTHM_ARCHIVE_TEACHING: &str = "Archiving a claim does not stop a rhythm's \
+    cadence. The schedule is fields — cadence_days, counts_from — and a thing's fields are its \
+    writes, the newest write of each key winning, from whichever active record made it. \
+    Archiving one claim takes only that record's own writes out of the running; a schedule key \
+    last written on a different, still-active record keeps counting. To silence it, clear \
+    counts_from with update_fact: the rhythm reads NotYetOpened and nothing computes a next due \
+    date, while the loop itself, its name and its history stay exactly as they were. Archiving \
+    is still the right move when a claim about the rhythm was wrong or is no longer worth \
+    keeping — it is simply not what stops the cadence.";
+
 impl Jojobot {
     /// Whether this call is the first time `domain` has reached this
     /// session's handle.
@@ -412,6 +436,175 @@ mod tests {
                 .is_some_and(|t| t.contains(&serde_json::json!(CLAIM_DIRECTION_TEACHING))),
             "capture must not re-teach a domain update_fact already spent for this session: \
              {drawn_by_capture}"
+        );
+    }
+
+    /// **The gate is the aftermath, not the act.** A rhythm's schedule is
+    /// fields folded from whichever of its records last wrote them, so
+    /// archiving one claim about a rhythm leaves a schedule opened on a
+    /// DIFFERENT, still-active record exactly as it was — the paid-run
+    /// failure this teaching answers. The first such archive this session
+    /// makes teaches it; a second does not.
+    #[tokio::test]
+    async fn archiving_a_rhythm_claim_that_leaves_the_schedule_running_teaches_once() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+        ensure(&jojobot, "thing:kettle").await;
+        jojobot
+            .add_entity(Parameters(AddEntityArgs {
+                parent: Some("thing:kettle".into()),
+                ..add_args("rhythm", "descale", "descale")
+            }))
+            .await
+            .expect("add ok");
+
+        // Opens the schedule, on its own record.
+        capture_as(
+            &jojobot,
+            &sid,
+            CaptureArgs {
+                fields: Some(
+                    [
+                        ("cadence_days".to_string(), "7".to_string()),
+                        ("advances_from".to_string(), "check_in_date".to_string()),
+                        ("counts_from".to_string(), "2026-08-01".to_string()),
+                    ]
+                    .into_iter()
+                    .collect(),
+                ),
+                ..capture_args("rhythm:descale", "we should descale this regularly")
+            },
+        )
+        .await;
+
+        // A SEPARATE claim on the same rhythm — the one this session archives.
+        let aside = capture_as(
+            &jojobot,
+            &sid,
+            capture_args("rhythm:descale", "the filter is due too"),
+        )
+        .await;
+        let address = address_of(&aside);
+
+        let archived = json_of(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    sid: Some(sid.clone()),
+                    status: Some("archived".into()),
+                    details: Some("no longer relevant".into()),
+                    ..update_args(&address)
+                }))
+                .await
+                .expect("update ok"),
+        );
+        assert!(
+            archived["teaching"]
+                .as_array()
+                .expect("a list")
+                .contains(&serde_json::json!(RHYTHM_ARCHIVE_TEACHING)),
+            "the schedule is still standing on another record, and archiving this one did not \
+             touch it: {archived}"
+        );
+
+        let aside_two = capture_as(
+            &jojobot,
+            &sid,
+            capture_args("rhythm:descale", "the seal is worn"),
+        )
+        .await;
+        let address_two = address_of(&aside_two);
+        let archived_again = json_of(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    sid: Some(sid.clone()),
+                    status: Some("archived".into()),
+                    ..update_args(&address_two)
+                }))
+                .await
+                .expect("update ok"),
+        );
+        assert!(
+            !archived_again
+                .get("teaching")
+                .and_then(|t| t.as_array())
+                .is_some_and(|t| t.contains(&serde_json::json!(RHYTHM_ARCHIVE_TEACHING))),
+            "the same session archiving a second claim on the same rhythm is not taught twice: \
+             {archived_again}"
+        );
+    }
+
+    /// **A rhythm that never opened has no schedule to leave standing.**
+    /// Archiving its only claim raises no question this teaching answers.
+    #[tokio::test]
+    async fn archiving_a_rhythm_claim_with_no_open_schedule_does_not_teach() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+        ensure(&jojobot, "thing:kettle").await;
+        jojobot
+            .add_entity(Parameters(AddEntityArgs {
+                parent: Some("thing:kettle".into()),
+                ..add_args("rhythm", "water-the-fern", "water the fern")
+            }))
+            .await
+            .expect("add ok");
+
+        let plain = capture_as(
+            &jojobot,
+            &sid,
+            capture_args("rhythm:water-the-fern", "the fern likes a weekly soak"),
+        )
+        .await;
+        let address = address_of(&plain);
+
+        let archived = json_of(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    sid: Some(sid.clone()),
+                    status: Some("archived".into()),
+                    ..update_args(&address)
+                }))
+                .await
+                .expect("update ok"),
+        );
+        assert!(
+            !archived
+                .get("teaching")
+                .and_then(|t| t.as_array())
+                .is_some_and(|t| t.contains(&serde_json::json!(RHYTHM_ARCHIVE_TEACHING))),
+            "this rhythm never had an open schedule, so nothing was left standing: {archived}"
+        );
+    }
+
+    /// **Most archivals have nothing to do with a schedule.** Archiving an
+    /// ordinary entity's claim never touches the rhythm-archive domain,
+    /// whatever else is true of the session.
+    #[tokio::test]
+    async fn archiving_an_ordinary_entitys_claim_never_teaches_rhythm_archive() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+
+        let plain = capture_as(&jojobot, &sid, capture_args("alpha", "plays go")).await;
+        let address = address_of(&plain);
+
+        let archived = json_of(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    sid: Some(sid.clone()),
+                    status: Some("archived".into()),
+                    ..update_args(&address)
+                }))
+                .await
+                .expect("update ok"),
+        );
+        assert!(
+            !archived
+                .get("teaching")
+                .and_then(|t| t.as_array())
+                .is_some_and(|t| t.contains(&serde_json::json!(RHYTHM_ARCHIVE_TEACHING))),
+            "alpha is a person, not a rhythm: {archived}"
         );
     }
 
