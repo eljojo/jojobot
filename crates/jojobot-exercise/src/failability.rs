@@ -38,15 +38,16 @@
 //! wanted later, it starts with that rule and the operator, not with a
 //! quiet refactor here.
 //!
-//! **This slice does not retrofit a control onto any shipped lock.** It
-//! lands the registry and the gate with every one of this build's 128
-//! shipped locks named as [`PENDING`] — nobody had yet written the negative
+//! **This gate first landed with every one of this build's 128 shipped
+//! locks named as [`PENDING`]** — nobody had yet written the negative
 //! control that would move a given entry to [`NEGATIVE_CONTROLS`]. That
 //! count was the finding: the number of locks nobody had yet proven
 //! failable, and it was not a number anybody had before this gate walked
-//! every shipped room and counted. One lock has since shipped with its
-//! control already proven — see [`NEGATIVE_CONTROLS`] — so the backlog now
-//! stands at 128 of 129.
+//! every shipped room and counted. Since then, one lock shipped with its
+//! control already proven, and 62 more turned out to be proven ALREADY —
+//! see [`NEGATIVE_CONTROLS`]'s own doc for both. The backlog now stands at
+//! 66 of 129, and every one of those 66 is a `vault.md` lock, because
+//! `vault.md` is the one shipped room with no driver proving its own locks.
 
 use crate::expectations::{BIKE_ROOM, HANDOVER_ROOM, LOOP_ROOM, VAULT_ROOM, YEAR_ROOM};
 use crate::{expectations, lock};
@@ -73,21 +74,409 @@ pub struct NegativeControl<'a> {
 
 /// **Every lock this build has actually proven failable, so far.**
 ///
-/// One entry. Nothing in this slice retrofits a control onto a lock that
-/// shipped before it — see the module doc — but this lock and its control
-/// landed together: `tests/desk_lock.rs` replays Run 23's exact real
+/// 63 entries, of two different shapes.
+///
+/// One is the desk's own: `tests/desk_lock.rs` replays Run 23's exact real
 /// regression (a `clear_fields` write nobody asked for, wiping the desk's
 /// return window) and proves the lock reddens for it, then proves it holds
-/// when the window is left alone. An entry moves here from [`PENDING`] the
-/// day somebody writes the sabotage that proves it, never before.
-pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[NegativeControl {
-    room: expectations::VAULT_ROOM,
-    lock: "Phase 3 — March: the desk's return window was cleared outright rather than left on \
-           record once the operator said only that the desk stays, so nothing later can find \
-           the deadline that closed",
-    file: "tests/desk_lock.rs",
-    function: "the_desk_history_lock_reds_when_the_window_is_cleared_outright",
-}];
+/// when the window is left alone. This lock and its control landed together;
+/// nothing was retrofit.
+///
+/// The other 62 were already proven and simply never registered.
+/// `bike_room.rs`, `loop_room.rs`, `handover_room.rs` and `year_room.rs` each
+/// carry a pair of cases that already do exactly what a control is for —
+/// `every_check_fails_on_a_room_nobody_worked_in` (or, in `year_room.rs`,
+/// `a_year_nobody_worked_in_fails_every_lock`) proves EVERY lock the room
+/// ships reddens on a real, furnished, untouched room, and its sibling
+/// (`every_check_holds_once_both_phases_are_worked` /
+/// `every_lock_holds_once_the_year_is_worked`) proves every one holds once
+/// the room's own goal is actually worked. Both run for real, through the
+/// served surface, on every `cargo test` — the proof simply was not named
+/// here. `vault.md` has no such driver yet — `vault_room.rs` proves one
+/// lock, not all sixty-six — which is why every one of its locks is still
+/// in [`PENDING`].
+pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
+    NegativeControl {
+        room: expectations::VAULT_ROOM,
+        lock: "Phase 3 — March: the desk's return window was cleared outright rather than left \
+               on record once the operator said only that the desk stays, so nothing later can \
+               find the deadline that closed",
+        file: "tests/desk_lock.rs",
+        function: "the_desk_history_lock_reds_when_the_window_is_cleared_outright",
+    },
+    NegativeControl {
+        room: BIKE_ROOM,
+        lock: "Phase 1 — the brief is still sitting new in the box, so the occupant never learnt what the work is",
+        file: "tests/bike_room.rs",
+        function: "every_check_fails_on_a_room_nobody_worked_in",
+    },
+    NegativeControl {
+        room: BIKE_ROOM,
+        lock: "Phase 1 — the service day went onto the bike as prose, so what has been done to it cannot be asked for",
+        file: "tests/bike_room.rs",
+        function: "every_check_fails_on_a_room_nobody_worked_in",
+    },
+    NegativeControl {
+        room: BIKE_ROOM,
+        lock: "Phase 1 — the distance key does not carry a third write with this year's number, so the year went somewhere a question cannot reach",
+        file: "tests/bike_room.rs",
+        function: "every_check_fails_on_a_room_nobody_worked_in",
+    },
+    NegativeControl {
+        room: BIKE_ROOM,
+        lock: "Phase 1 — the bike's distance does not read as this year's number, so the newest thing recorded about how far it goes is not this year",
+        file: "tests/bike_room.rs",
+        function: "every_check_fails_on_a_room_nobody_worked_in",
+    },
+    NegativeControl {
+        room: BIKE_ROOM,
+        lock: "Phase 1 — no message was left and no open run says what it was doing, so the next session arrives at what the occupant found and not at what it did",
+        file: "tests/bike_room.rs",
+        function: "every_check_fails_on_a_room_nobody_worked_in",
+    },
+    NegativeControl {
+        room: LOOP_ROOM,
+        lock: "Phase 1 — the brief is still sitting new in the box, so the occupant never learnt what the work is",
+        file: "tests/loop_room.rs",
+        function: "every_check_fails_on_a_room_nobody_worked_in",
+    },
+    NegativeControl {
+        room: LOOP_ROOM,
+        lock: "Phase 1 — one of the two jobs the brief named does not stand as a loop under the thing it belongs to",
+        file: "tests/loop_room.rs",
+        function: "every_check_fails_on_a_room_nobody_worked_in",
+    },
+    NegativeControl {
+        room: LOOP_ROOM,
+        lock: "Phase 1 — no loop with a sixty-day frequency hangs under the kettle carrying the day the brief gave it",
+        file: "tests/loop_room.rs",
+        function: "every_check_fails_on_a_room_nobody_worked_in",
+    },
+    NegativeControl {
+        room: LOOP_ROOM,
+        lock: "Phase 1 — the loop the operator keeps no schedule for was given one, which nobody said — or it is not under the filter at all",
+        file: "tests/loop_room.rs",
+        function: "every_check_fails_on_a_room_nobody_worked_in",
+    },
+    NegativeControl {
+        room: LOOP_ROOM,
+        lock: "Phase 2 — the cold session moved a loop that was not due, or left the one that was where it stood",
+        file: "tests/loop_room.rs",
+        function: "every_check_fails_on_a_room_nobody_worked_in",
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 1 — January: the brief is still sitting new, so nobody took delivery of what the year is built on",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 1 — January: no loop carries the ninety days and the day it was last done, so nothing can ever fall due",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 1 — January: nothing on Milhouse points at Springfield, so the move was recorded somewhere a later sitting will not look",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 2 — February: the pump the operator lent is not a thing jojobot knows, so September has nothing to ask about",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 2 — February: nothing on the pump reaches Ralph, so who has it is only in the prose of a sitting that is gone",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 2 — February: the club cannot be walked to its members, so August's question has no answer but a guess",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 2 — February: nothing on the canoe carries this sitting's own day, so the soft spot the operator noticed today is not on record for December to draw on",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 3 — March: nothing says the club meets on Tuesdays, so July has nothing to take back",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 3 — March: nothing on the canoe carries this sitting's own day, so the patch the operator made today is not on record for December to draw on",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 4 — April: nothing on Milhouse points at Shelbyville, so the move was recorded somewhere a later sitting will not look",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 4 — April: the Springfield claim is either gone or still standing as current, and it should be there and marked as no longer true",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 5 — May: the washout was not filed against the trail that already existed — either nothing was filed, or a second trail was stood up to carry it",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 5 — May: nothing on the canoe carries this sitting's own day, so the varnish the operator put on today is not on record for December to draw on",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 6 — June: the survey cannot be walked to who was at it, so August's question is answerable only by reading prose",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 6 — June: the chain check does not say it was done on the day this sitting claims, so it is either untouched or stamped with the day the run happened",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 6 — June: no single record points at two different kinds of thing as handles, so the sitting wrote words where it could have written pointers and a later sitting has nothing to follow",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 7 — July: no retraction appeared on the club in this sitting's own window, so the March claim about Tuesdays was either left standing or rewritten in place instead of withdrawn",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 7 — July: nothing on the canoe carries this sitting's own day, so the foot brace the operator replaced today is not on record for December to draw on",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 8 — August: somebody who was never at the survey is now recorded as having been there",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 8 — August: nothing on the club carries this sitting's own day, so the one thing it was asked to record is not there",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 9 — nothing on the pump currently carries the day it came back, so a reader is left with no day to find — whether it was never recorded, or a later, legitimate correction cleared the only trace of it",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 9 — September: nothing on the canoe carries this sitting's own day, so the crack the operator patched today is not on record for December to draw on",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 10 — October: September's account of the pump was not corrected in place — either it still stands unrevised, or it was retracted rather than rewritten",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 10 — October: the survey cannot be walked to the place it was held at, so where it happened is in one sitting's sentence and nowhere a later reader of the event will look",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 11 — October (again): Nelson's survey attendance is not marked taken back, so a session reading his page later still finds him at an event he never went to",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 11 — October (again): Bart cannot be walked to the club, so he is a name in a transcript and nothing on the roster",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 11 — October (again): somebody who was never at the survey was put there by this sitting, which was asked to take an attendance away rather than add one",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 11 — October (again): June's own claim still renders the survey under the handle it wore before October's reason to rename it, so a stored mention is not resolving to what the thing is called now",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 13 — late November: the year's turns are not on file as derivations, so they were written by hand rather than checked in, and December has nothing to notice about what the loop's standing rests on",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 13 — late November: this sitting's day is not on the loop January opened — either a question asked in the operator's own words reached nothing and the turn went unrecorded, or it was filed on a second loop standing beside the first, and neither one can say when the chain was last done",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 14 — December: the loop that has gone quiet by now did not gain a record on this sitting's own day, so nothing here shows the sitting noticing what jojobot's own arithmetic already knows",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 14 — December: the overdue note does not name what it was worked out from, so a later reader has no way back to the claim that makes it arithmetic rather than a guess",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 14 — December: the walk back from the loop's own cadence does not reach the overdue note, so a later reader who follows the lineage forward finds nothing",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 15 — later December: what the bike lock's claim used to say is not on the record, so either the sitting never reached the correction's own history or it answered from the claim as it stands",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 15 — later December: a record's trace does not agree with what the run actually wrote to it, so the history read is inventing or losing a write and a reader is told jojobot changed its mind about something it never did",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 15 — later December: nothing marks a record as standing for the canoe's year of small repairs, so nobody folded the pile even though this sitting asked for exactly that",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 15 — later December: the fold either lost one of the canoe's five repairs, left it retracted, or the mark does not actually name it — the full picture is supposed to still be one recall away",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 15 — later December: the folded record states a date that appears in none of the five repairs it is supposed to be drawn from, which is the fabrication this mark exists to prevent",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 15 — later December: the bike lock's correction did not land as one record with two writes, so either this sitting never corrected it or it split the correction into a retraction and a fresh claim instead of a plain rewrite",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 15 — later December: a plain read of the canoe — no stood_for — still hands back the pile behind the fold, so an agent that never learns the flag exists sees every repair the synthesis was supposed to shorten",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 15 — later December: the canoe's own sources are not reachable even by name, so the lock above proves nothing about elision — only that nothing here works",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 15 — later December: the bike's distance does not read as the year's two figures summed, so either they were never joined under a key jojobot folds, or one replaced the other instead of adding to it",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 15 — later December: the survey's own planning claim does not read as still open, so either it was never recorded as a hedge or something settled it that had no business doing so",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 15 — later December: the drivetrain job does not read as fixed to the operator's own word, so either the declaration was never kept past its own sitting or nothing here reached it",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 15 — later December: the March job no longer reads as paid, so a word that was already right was painted over",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 15 — later December: the floor pump's job does not read as fixed to the operator's own word, so the fold-in's second off-vocabulary word was never caught",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 15 — later December: the bike lock's own job does not read as waived, so either it was never filed under the operator's own word or this sitting repainted it while fixing the others",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 15 — later December: the bike does not carry what is actually invoiced across the year's jobs, so either the sitting did not select on the operator's own word or it summed something other than what the record says",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+    },
+    NegativeControl {
+        room: HANDOVER_ROOM,
+        lock: "Phase 1 — the brief is still sitting new in the box, so the occupant never learnt what the work is",
+        file: "tests/handover_room.rs",
+        function: "every_check_fails_on_a_room_nobody_worked_in",
+    },
+    NegativeControl {
+        room: HANDOVER_ROOM,
+        lock: "Phase 1 — there is no second identity carrying a box of its own, so there is nobody to hand anything to",
+        file: "tests/handover_room.rs",
+        function: "every_check_fails_on_a_room_nobody_worked_in",
+    },
+    NegativeControl {
+        room: HANDOVER_ROOM,
+        lock: "Phase 1 — the reading pile is not waiting in the colleague's box as three separate things sent by the assistant",
+        file: "tests/handover_room.rs",
+        function: "every_check_fails_on_a_room_nobody_worked_in",
+    },
+    NegativeControl {
+        room: HANDOVER_ROOM,
+        lock: "Phase 2 — nothing on the colleague says how much of the pile is still waiting, so a later session has to go and find out again",
+        file: "tests/handover_room.rs",
+        function: "every_check_fails_on_a_room_nobody_worked_in",
+    },
+];
 
 /// **One lock shipped with no negative control yet**, named rather than left
 /// to a silent gap. Owed work, not an accepted risk: there is nothing here
@@ -98,259 +487,12 @@ pub struct Pending<'a> {
     pub lock: &'a str,
 }
 
-/// **The backlog, as of this gate landing.** Every shipped lock, because
-/// [`NEGATIVE_CONTROLS`] is empty — see the module doc for why this slice
-/// does not close any of them. As a control gets written for one, move its
-/// entry from here to [`NEGATIVE_CONTROLS`].
+/// **The backlog.** Every lock `vault.md` ships: it has no driver proving
+/// its own locks the way `bike_room.rs`, `loop_room.rs`, `handover_room.rs`
+/// and `year_room.rs` each prove theirs — see [`NEGATIVE_CONTROLS`]'s own
+/// doc — so nobody has yet written a control for any of them. As a control
+/// gets written for one, move its entry from here to [`NEGATIVE_CONTROLS`].
 pub const PENDING: &[Pending<'static>] = &[
-    Pending {
-        room: BIKE_ROOM,
-        lock: "Phase 1 — the brief is still sitting new in the box, so the occupant never learnt what the work is",
-    },
-    Pending {
-        room: BIKE_ROOM,
-        lock: "Phase 1 — the service day went onto the bike as prose, so what has been done to it cannot be asked for",
-    },
-    Pending {
-        room: BIKE_ROOM,
-        lock: "Phase 1 — the distance key does not carry a third write with this year's number, so the year went somewhere a question cannot reach",
-    },
-    Pending {
-        room: BIKE_ROOM,
-        lock: "Phase 1 — the bike's distance does not read as this year's number, so the newest thing recorded about how far it goes is not this year",
-    },
-    Pending {
-        room: BIKE_ROOM,
-        lock: "Phase 1 — no message was left and no open run says what it was doing, so the next session arrives at what the occupant found and not at what it did",
-    },
-    Pending {
-        room: LOOP_ROOM,
-        lock: "Phase 1 — the brief is still sitting new in the box, so the occupant never learnt what the work is",
-    },
-    Pending {
-        room: LOOP_ROOM,
-        lock: "Phase 1 — one of the two jobs the brief named does not stand as a loop under the thing it belongs to",
-    },
-    Pending {
-        room: LOOP_ROOM,
-        lock: "Phase 1 — no loop with a sixty-day frequency hangs under the kettle carrying the day the brief gave it",
-    },
-    Pending {
-        room: LOOP_ROOM,
-        lock: "Phase 1 — the loop the operator keeps no schedule for was given one, which nobody said — or it is not under the filter at all",
-    },
-    Pending {
-        room: LOOP_ROOM,
-        lock: "Phase 2 — the cold session moved a loop that was not due, or left the one that was where it stood",
-    },
-    Pending {
-        room: YEAR_ROOM,
-        lock: "Phase 1 — January: the brief is still sitting new, so nobody took delivery of what the year is built on",
-    },
-    Pending {
-        room: YEAR_ROOM,
-        lock: "Phase 1 — January: no loop carries the ninety days and the day it was last done, so nothing can ever fall due",
-    },
-    Pending {
-        room: YEAR_ROOM,
-        lock: "Phase 1 — January: nothing on Milhouse points at Springfield, so the move was recorded somewhere a later sitting will not look",
-    },
-    Pending {
-        room: YEAR_ROOM,
-        lock: "Phase 2 — February: the pump the operator lent is not a thing jojobot knows, so September has nothing to ask about",
-    },
-    Pending {
-        room: YEAR_ROOM,
-        lock: "Phase 2 — February: nothing on the pump reaches Ralph, so who has it is only in the prose of a sitting that is gone",
-    },
-    Pending {
-        room: YEAR_ROOM,
-        lock: "Phase 2 — February: the club cannot be walked to its members, so August's question has no answer but a guess",
-    },
-    Pending {
-        room: YEAR_ROOM,
-        lock: "Phase 2 — February: nothing on the canoe carries this sitting's own day, so the soft spot the operator noticed today is not on record for December to draw on",
-    },
-    Pending {
-        room: YEAR_ROOM,
-        lock: "Phase 3 — March: nothing says the club meets on Tuesdays, so July has nothing to take back",
-    },
-    Pending {
-        room: YEAR_ROOM,
-        lock: "Phase 3 — March: nothing on the canoe carries this sitting's own day, so the patch the operator made today is not on record for December to draw on",
-    },
-    Pending {
-        room: YEAR_ROOM,
-        lock: "Phase 4 — April: nothing on Milhouse points at Shelbyville, so the move was recorded somewhere a later sitting will not look",
-    },
-    Pending {
-        room: YEAR_ROOM,
-        lock: "Phase 4 — April: the Springfield claim is either gone or still standing as current, and it should be there and marked as no longer true",
-    },
-    Pending {
-        room: YEAR_ROOM,
-        lock: "Phase 5 — May: the washout was not filed against the trail that already existed — either nothing was filed, or a second trail was stood up to carry it",
-    },
-    Pending {
-        room: YEAR_ROOM,
-        lock: "Phase 5 — May: nothing on the canoe carries this sitting's own day, so the varnish the operator put on today is not on record for December to draw on",
-    },
-    Pending {
-        room: YEAR_ROOM,
-        lock: "Phase 6 — June: the survey cannot be walked to who was at it, so August's question is answerable only by reading prose",
-    },
-    Pending {
-        room: YEAR_ROOM,
-        lock: "Phase 6 — June: the chain check does not say it was done on the day this sitting claims, so it is either untouched or stamped with the day the run happened",
-    },
-    Pending {
-        room: YEAR_ROOM,
-        lock: "Phase 6 — June: no single record points at two different kinds of thing as handles, so the sitting wrote words where it could have written pointers and a later sitting has nothing to follow",
-    },
-    Pending {
-        room: YEAR_ROOM,
-        lock: "Phase 7 — July: no retraction appeared on the club in this sitting's own window, so the March claim about Tuesdays was either left standing or rewritten in place instead of withdrawn",
-    },
-    Pending {
-        room: YEAR_ROOM,
-        lock: "Phase 7 — July: nothing on the canoe carries this sitting's own day, so the foot brace the operator replaced today is not on record for December to draw on",
-    },
-    Pending {
-        room: YEAR_ROOM,
-        lock: "Phase 8 — August: somebody who was never at the survey is now recorded as having been there",
-    },
-    Pending {
-        room: YEAR_ROOM,
-        lock: "Phase 8 — August: nothing on the club carries this sitting's own day, so the one thing it was asked to record is not there",
-    },
-    Pending {
-        room: YEAR_ROOM,
-        lock: "Phase 9 — nothing on the pump currently carries the day it came back, so a reader is left with no day to find — whether it was never recorded, or a later, legitimate correction cleared the only trace of it",
-    },
-    Pending {
-        room: YEAR_ROOM,
-        lock: "Phase 9 — September: nothing on the canoe carries this sitting's own day, so the crack the operator patched today is not on record for December to draw on",
-    },
-    Pending {
-        room: YEAR_ROOM,
-        lock: "Phase 10 — October: September's account of the pump was not corrected in place — either it still stands unrevised, or it was retracted rather than rewritten",
-    },
-    Pending {
-        room: YEAR_ROOM,
-        lock: "Phase 10 — October: the survey cannot be walked to the place it was held at, so where it happened is in one sitting's sentence and nowhere a later reader of the event will look",
-    },
-    Pending {
-        room: YEAR_ROOM,
-        lock: "Phase 11 — October (again): Nelson's survey attendance is not marked taken back, so a session reading his page later still finds him at an event he never went to",
-    },
-    Pending {
-        room: YEAR_ROOM,
-        lock: "Phase 11 — October (again): Bart cannot be walked to the club, so he is a name in a transcript and nothing on the roster",
-    },
-    Pending {
-        room: YEAR_ROOM,
-        lock: "Phase 11 — October (again): somebody who was never at the survey was put there by this sitting, which was asked to take an attendance away rather than add one",
-    },
-    Pending {
-        room: YEAR_ROOM,
-        lock: "Phase 11 — October (again): June's own claim still renders the survey under the handle it wore before October's reason to rename it, so a stored mention is not resolving to what the thing is called now",
-    },
-    Pending {
-        room: YEAR_ROOM,
-        lock: "Phase 13 — late November: the year's turns are not on file as derivations, so they were written by hand rather than checked in, and December has nothing to notice about what the loop's standing rests on",
-    },
-    Pending {
-        room: YEAR_ROOM,
-        lock: "Phase 13 — late November: this sitting's day is not on the loop January opened — either a question asked in the operator's own words reached nothing and the turn went unrecorded, or it was filed on a second loop standing beside the first, and neither one can say when the chain was last done",
-    },
-    Pending {
-        room: YEAR_ROOM,
-        lock: "Phase 14 — December: the loop that has gone quiet by now did not gain a record on this sitting's own day, so nothing here shows the sitting noticing what jojobot's own arithmetic already knows",
-    },
-    Pending {
-        room: YEAR_ROOM,
-        lock: "Phase 14 — December: the overdue note does not name what it was worked out from, so a later reader has no way back to the claim that makes it arithmetic rather than a guess",
-    },
-    Pending {
-        room: YEAR_ROOM,
-        lock: "Phase 14 — December: the walk back from the loop's own cadence does not reach the overdue note, so a later reader who follows the lineage forward finds nothing",
-    },
-    Pending {
-        room: YEAR_ROOM,
-        lock: "Phase 15 — later December: what the bike lock's claim used to say is not on the record, so either the sitting never reached the correction's own history or it answered from the claim as it stands",
-    },
-    Pending {
-        room: YEAR_ROOM,
-        lock: "Phase 15 — later December: a record's trace does not agree with what the run actually wrote to it, so the history read is inventing or losing a write and a reader is told jojobot changed its mind about something it never did",
-    },
-    Pending {
-        room: YEAR_ROOM,
-        lock: "Phase 15 — later December: nothing marks a record as standing for the canoe's year of small repairs, so nobody folded the pile even though this sitting asked for exactly that",
-    },
-    Pending {
-        room: YEAR_ROOM,
-        lock: "Phase 15 — later December: the fold either lost one of the canoe's five repairs, left it retracted, or the mark does not actually name it — the full picture is supposed to still be one recall away",
-    },
-    Pending {
-        room: YEAR_ROOM,
-        lock: "Phase 15 — later December: the folded record states a date that appears in none of the five repairs it is supposed to be drawn from, which is the fabrication this mark exists to prevent",
-    },
-    Pending {
-        room: YEAR_ROOM,
-        lock: "Phase 15 — later December: the bike lock's correction did not land as one record with two writes, so either this sitting never corrected it or it split the correction into a retraction and a fresh claim instead of a plain rewrite",
-    },
-    Pending {
-        room: YEAR_ROOM,
-        lock: "Phase 15 — later December: a plain read of the canoe — no stood_for — still hands back the pile behind the fold, so an agent that never learns the flag exists sees every repair the synthesis was supposed to shorten",
-    },
-    Pending {
-        room: YEAR_ROOM,
-        lock: "Phase 15 — later December: the canoe's own sources are not reachable even by name, so the lock above proves nothing about elision — only that nothing here works",
-    },
-    Pending {
-        room: YEAR_ROOM,
-        lock: "Phase 15 — later December: the bike's distance does not read as the year's two figures summed, so either they were never joined under a key jojobot folds, or one replaced the other instead of adding to it",
-    },
-    Pending {
-        room: YEAR_ROOM,
-        lock: "Phase 15 — later December: the survey's own planning claim does not read as still open, so either it was never recorded as a hedge or something settled it that had no business doing so",
-    },
-    Pending {
-        room: YEAR_ROOM,
-        lock: "Phase 15 — later December: the drivetrain job does not read as fixed to the operator's own word, so either the declaration was never kept past its own sitting or nothing here reached it",
-    },
-    Pending {
-        room: YEAR_ROOM,
-        lock: "Phase 15 — later December: the March job no longer reads as paid, so a word that was already right was painted over",
-    },
-    Pending {
-        room: YEAR_ROOM,
-        lock: "Phase 15 — later December: the floor pump's job does not read as fixed to the operator's own word, so the fold-in's second off-vocabulary word was never caught",
-    },
-    Pending {
-        room: YEAR_ROOM,
-        lock: "Phase 15 — later December: the bike lock's own job does not read as waived, so either it was never filed under the operator's own word or this sitting repainted it while fixing the others",
-    },
-    Pending {
-        room: YEAR_ROOM,
-        lock: "Phase 15 — later December: the bike does not carry what is actually invoiced across the year's jobs, so either the sitting did not select on the operator's own word or it summed something other than what the record says",
-    },
-    Pending {
-        room: HANDOVER_ROOM,
-        lock: "Phase 1 — the brief is still sitting new in the box, so the occupant never learnt what the work is",
-    },
-    Pending {
-        room: HANDOVER_ROOM,
-        lock: "Phase 1 — there is no second identity carrying a box of its own, so there is nobody to hand anything to",
-    },
-    Pending {
-        room: HANDOVER_ROOM,
-        lock: "Phase 1 — the reading pile is not waiting in the colleague's box as three separate things sent by the assistant",
-    },
-    Pending {
-        room: HANDOVER_ROOM,
-        lock: "Phase 2 — nothing on the colleague says how much of the pile is still waiting, so a later session has to go and find out again",
-    },
     Pending {
         room: VAULT_ROOM,
         lock: "Phase 1 — January: the brief is still sitting new, so nobody took delivery of the vault",
