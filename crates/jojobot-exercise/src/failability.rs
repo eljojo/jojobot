@@ -43,10 +43,10 @@
 //! control that would move a given entry to [`NEGATIVE_CONTROLS`]. That
 //! count was the finding: the number of locks nobody had yet proven
 //! failable, and it was not a number anybody had before this gate walked
-//! every shipped room and counted. Since then: two locks shipped with a
+//! every shipped room and counted. Since then: three locks shipped with a
 //! control freshly written for them, and 63 more turned out to be proven
 //! ALREADY — see [`NEGATIVE_CONTROLS`]'s own doc for all three shapes. The
-//! backlog now stands at 64 of 129, and every one of those 64 is a
+//! backlog now stands at 63 of 129, and every one of those 63 is a
 //! `vault.md` lock with no existing proof of its own.
 
 use crate::expectations::{BIKE_ROOM, HANDOVER_ROOM, LOOP_ROOM, VAULT_ROOM, YEAR_ROOM};
@@ -96,15 +96,17 @@ pub enum Strength {
 
 /// **Every lock this build has actually proven failable, so far.**
 ///
-/// 65 entries, of four different shapes.
+/// 66 entries, of four different shapes.
 ///
-/// Two are freshly written, landing with their lock in the same slice:
+/// Three are freshly written, landing with their lock in the same slice:
 /// `tests/desk_lock.rs` replays Run 23's exact real regression (a
-/// `clear_fields` write nobody asked for, wiping the desk's return window),
-/// and `tests/wharf_lock.rs` replays another — a timing filed on an
-/// invented entity rather than the furniture that already represents it.
-/// Each proves its lock reddens for the real mistake, then proves it holds
-/// when filed correctly. Nothing here was retrofit onto an older lock.
+/// `clear_fields` write nobody asked for, wiping the desk's return window);
+/// `tests/wharf_lock.rs` replays another — a timing filed on an invented
+/// entity rather than the furniture that already represents it; and
+/// `tests/furnace_lock.rs` replays a third — a deadline filed on the
+/// service company rather than the thing it services. Each proves its lock
+/// reddens for the real mistake, then proves it holds when filed correctly.
+/// Nothing here was retrofit onto an older lock.
 ///
 /// One is `vault_room.rs`'s own: the everyday-listing count lock, already
 /// proven by three real cases (nobody archived, the wrong two archived,
@@ -147,6 +149,15 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
                the key, so October cannot see that the verdict rests on one morning",
         file: "tests/wharf_lock.rs",
         function: "the_wharf_timing_lock_reds_when_filed_on_an_invented_entity",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::VAULT_ROOM,
+        lock: "Phase 5 — May: the furnace does not carry the day its free service lapses, so \
+               the one window nobody would think to call a deadline is not on record as a \
+               date",
+        file: "tests/furnace_lock.rs",
+        function: "the_furnace_deadline_lock_reds_when_filed_on_the_service_company",
         strength: Strength::Discriminating,
     },
     NegativeControl {
@@ -680,10 +691,6 @@ pub const PENDING: &[Pending<'static>] = &[
     Pending {
         room: VAULT_ROOM,
         lock: "Phase 4 — April: no loop carries the twelfth as a check-in, so the piano's record of being played is short a turn",
-    },
-    Pending {
-        room: VAULT_ROOM,
-        lock: "Phase 5 — May: the furnace does not carry the day its free service lapses, so the one window nobody would think to call a deadline is not on record as a date",
     },
     Pending {
         room: VAULT_ROOM,
