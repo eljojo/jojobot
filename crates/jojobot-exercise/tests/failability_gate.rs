@@ -78,3 +78,24 @@ fn every_registered_controls_proof_still_exists() {
         );
     }
 }
+
+/// **The registry's two populations, reported apart — never as one
+/// number.** A blanket proof (the lock notices an unworked room) and a
+/// discriminating one (the lock notices one specific wrong act, with
+/// everything else right) answer different questions. Collapsing them into
+/// a single count would say "N locks are proven" and leave a reader with
+/// no way to tell which bar was actually cleared — which is exactly the
+/// number a `NEGATIVE_CONTROLS.len()` would report if this pinned that
+/// instead.
+#[test]
+fn the_registry_reports_blanket_and_discriminating_counts_apart() {
+    let (blanket, discriminating) = failability::tally(failability::NEGATIVE_CONTROLS);
+    assert_eq!(
+        blanket, 62,
+        "the blanket population drifted without this test noticing",
+    );
+    assert_eq!(
+        discriminating, 3,
+        "the discriminating population drifted without this test noticing",
+    );
+}
