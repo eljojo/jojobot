@@ -276,6 +276,7 @@ const ROSTER: &[&str] = &[
     "place:trail-spot",
     // Bob's Burgers.
     "place:wagstaff-pool",
+    "place:wharf-road",
     "place:wonder-wharf",
     "place:x",
     "project:atlas",

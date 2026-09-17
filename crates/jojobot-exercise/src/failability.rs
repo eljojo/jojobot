@@ -43,11 +43,11 @@
 //! control that would move a given entry to [`NEGATIVE_CONTROLS`]. That
 //! count was the finding: the number of locks nobody had yet proven
 //! failable, and it was not a number anybody had before this gate walked
-//! every shipped room and counted. Since then, one lock shipped with its
-//! control already proven, and 63 more turned out to be proven ALREADY —
-//! see [`NEGATIVE_CONTROLS`]'s own doc for both. The backlog now stands at
-//! 65 of 129, and every one of those 65 is a `vault.md` lock with no
-//! existing proof of its own.
+//! every shipped room and counted. Since then: two locks shipped with a
+//! control freshly written for them, and 63 more turned out to be proven
+//! ALREADY — see [`NEGATIVE_CONTROLS`]'s own doc for all three shapes. The
+//! backlog now stands at 64 of 129, and every one of those 64 is a
+//! `vault.md` lock with no existing proof of its own.
 
 use crate::expectations::{BIKE_ROOM, HANDOVER_ROOM, LOOP_ROOM, VAULT_ROOM, YEAR_ROOM};
 use crate::{expectations, lock};
@@ -74,13 +74,15 @@ pub struct NegativeControl<'a> {
 
 /// **Every lock this build has actually proven failable, so far.**
 ///
-/// 64 entries, of three different shapes.
+/// 65 entries, of four different shapes.
 ///
-/// One is the desk's own: `tests/desk_lock.rs` replays Run 23's exact real
-/// regression (a `clear_fields` write nobody asked for, wiping the desk's
-/// return window) and proves the lock reddens for it, then proves it holds
-/// when the window is left alone. This lock and its control landed together;
-/// nothing was retrofit.
+/// Two are freshly written, landing with their lock in the same slice:
+/// `tests/desk_lock.rs` replays Run 23's exact real regression (a
+/// `clear_fields` write nobody asked for, wiping the desk's return window),
+/// and `tests/wharf_lock.rs` replays another — a timing filed on an
+/// invented entity rather than the furniture that already represents it.
+/// Each proves its lock reddens for the real mistake, then proves it holds
+/// when filed correctly. Nothing here was retrofit onto an older lock.
 ///
 /// One is `vault_room.rs`'s own: the everyday-listing count lock, already
 /// proven by three real cases (nobody archived, the wrong two archived,
@@ -114,6 +116,13 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
                to tell an empty vault from one quietly missing a name",
         file: "tests/vault_room.rs",
         function: "the_count_lock_reds_when_nobody_was_archived",
+    },
+    NegativeControl {
+        room: expectations::VAULT_ROOM,
+        lock: "Phase 2 — February: the wharf road does not carry the one timing as a write of \
+               the key, so October cannot see that the verdict rests on one morning",
+        file: "tests/wharf_lock.rs",
+        function: "the_wharf_timing_lock_reds_when_filed_on_an_invented_entity",
     },
     NegativeControl {
         room: BIKE_ROOM,
@@ -536,10 +545,6 @@ pub const PENDING: &[Pending<'static>] = &[
     Pending {
         room: VAULT_ROOM,
         lock: "Phase 2 — February: no thing carries the day the desk's return period ends, so a window the operator can still act on this month is not on record as a date",
-    },
-    Pending {
-        room: VAULT_ROOM,
-        lock: "Phase 2 — February: the wharf road does not carry the one timing as a write of the key, so October cannot see that the verdict rests on one morning",
     },
     Pending {
         room: VAULT_ROOM,
