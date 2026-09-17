@@ -59,3 +59,22 @@ fn every_pending_entry_still_names_a_shipped_lock() {
         );
     }
 }
+
+/// **A registered control's proof has to still name something real.** An
+/// entry naming a file or a function that was renamed or removed since is a
+/// dangling pointer that rots in silence — the same class of rot the check
+/// above holds against `PENDING`, checked here for `NEGATIVE_CONTROLS`. This
+/// checks only that the file and the function still exist; it never runs
+/// the function — see `failability`'s own module doc for why.
+#[test]
+fn every_registered_controls_proof_still_exists() {
+    for control in failability::NEGATIVE_CONTROLS {
+        assert!(
+            failability::proof_exists(control).is_ok(),
+            "{}/{:?}: {}",
+            control.room,
+            control.lock,
+            failability::proof_exists(control).unwrap_err(),
+        );
+    }
+}

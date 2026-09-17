@@ -13,25 +13,40 @@
 //!
 //! **A negative control is a real demonstration, elsewhere in this crate's
 //! test suite, that a specific lock reddens under a specific sabotage.**
-//! Registering one here is a name and a pointer to where that proof lives —
-//! it is a claim about this crate's other tests, not something this module
-//! executes. **That is this gate's stated boundary**: it checks that every
-//! lock is NAMED — by a proof already written, or by an entry admitting none
-//! exists yet — never that a named proof still actually reddens the lock it
-//! claims to. Verifying a `NegativeControl`'s own claim would mean running
-//! the proof it points at as part of the gate, which needs the proof
-//! expressed as callable Rust the gate can invoke rather than a name a
-//! reader has to go and check; nothing here does that yet, and
-//! [`NEGATIVE_CONTROLS`] is empty, so the gap costs nothing today. The day
-//! the first real entry lands is the day to revisit this rather than before.
+//! Registering one here names the file and the function where that proof
+//! lives — it is a claim about this crate's other tests, not something this
+//! module executes. **This gate's stated boundary is deliberate, not a gap
+//! waiting to close**: it checks that a registered proof's file and function
+//! still EXIST — mechanically, by reading the named file for the named
+//! function — never that the proof still reddens the lock it claims to.
+//! Running the proof itself would buy a second copy of a failure that is
+//! already loud: that proof runs on every `cargo test`, independently of
+//! this gate, and a broken one already fails there. What is genuinely
+//! unguarded without this check is the DANGLING NAME — rename or delete the
+//! function and the registry's claim rots in silence, the same class of rot
+//! `tests/failability_gate.rs`'s own
+//! `every_pending_entry_still_names_a_shipped_lock` already guards against
+//! for [`PENDING`].
+//!
+//! **Executing the proof is excluded on purpose, not left for later.** A
+//! hatch — the mechanism that would have to run it — is read-only by
+//! design: [`crate::lock`]'s own doc says a lock carrying a session is the
+//! harness coaching the occupant, which is the failure that rule exists to
+//! prevent. A control's proof is not read-only — it boots an identity and
+//! writes, to set the scenario up — so granting it a session to make this
+//! gate tidier would be the worst trade on this board. If execution is
+//! wanted later, it starts with that rule and the operator, not with a
+//! quiet refactor here.
 //!
 //! **This slice does not retrofit a control onto any shipped lock.** It
 //! lands the registry and the gate with every one of this build's 128
-//! shipped locks named as [`PENDING`] — nobody has yet written the negative
+//! shipped locks named as [`PENDING`] — nobody had yet written the negative
 //! control that would move a given entry to [`NEGATIVE_CONTROLS`]. That
-//! count is the finding: it is the number of locks nobody has yet proven
+//! count was the finding: the number of locks nobody had yet proven
 //! failable, and it was not a number anybody had before this gate walked
-//! every shipped room and counted.
+//! every shipped room and counted. One lock has since shipped with its
+//! control already proven — see [`NEGATIVE_CONTROLS`] — so the backlog now
+//! stands at 128 of 129.
 
 use crate::expectations::{BIKE_ROOM, HANDOVER_ROOM, LOOP_ROOM, VAULT_ROOM, YEAR_ROOM};
 use crate::{expectations, lock};
@@ -44,10 +59,16 @@ use crate::{expectations, lock};
 pub struct NegativeControl<'a> {
     pub room: &'a str,
     pub lock: &'a str,
-    /// The test that proves it, named so a reader can go and run it —
-    /// never executed by this module itself. See the module's own doc
-    /// comment for why.
-    pub proof: &'a str,
+    /// **Where the proof lives**, relative to this crate's own manifest
+    /// directory — `"tests/desk_lock.rs"`, never a workspace-rooted path.
+    /// [`proof_exists`] resolves it the same way [`expectations::room_document`]
+    /// resolves a room.
+    pub file: &'a str,
+    /// **The function that proves it**, bare — no `fn`, no arguments, no
+    /// module path. [`proof_exists`] checks only that a function of this
+    /// name is defined in `file`; it never runs it. See the module's own
+    /// doc comment for why.
+    pub function: &'a str,
 }
 
 /// **Every lock this build has actually proven failable, so far.**
@@ -64,8 +85,8 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[NegativeControl {
     lock: "Phase 3 — March: the desk's return window was cleared outright rather than left on \
            record once the operator said only that the desk stays, so nothing later can find \
            the deadline that closed",
-    proof: "jojobot-exercise/tests/desk_lock.rs: \
-            the_desk_history_lock_reds_when_the_window_is_cleared_outright",
+    file: "tests/desk_lock.rs",
+    function: "the_desk_history_lock_reds_when_the_window_is_cleared_outright",
 }];
 
 /// **One lock shipped with no negative control yet**, named rather than left
@@ -623,6 +644,49 @@ pub fn shipped_locks() -> Vec<(String, String)> {
         .collect()
 }
 
+/// **Whether a registered control's proof still names something real** —
+/// mechanically, by reading the file it names for a function of the name it
+/// also names. This never runs that function; see the module doc for why.
+///
+/// Two ways to fail, and they are told apart because they send a reader to
+/// different places: the file itself is gone, or the file is there but
+/// nothing in it is called that.
+pub fn proof_exists(control: &NegativeControl<'_>) -> Result<(), String> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(control.file);
+    let text = std::fs::read_to_string(&path).map_err(|e| {
+        format!(
+            "{}: the proof names a file that does not exist: {e}",
+            control.file,
+        )
+    })?;
+    if !defines_function(&text, control.function) {
+        return Err(format!(
+            "{}: the proof names no function called {} in that file",
+            control.file, control.function,
+        ));
+    }
+    Ok(())
+}
+
+/// **Whether `text` defines a function called exactly `name`.**
+///
+/// `text.contains("fn {name}")` is not this: a function renamed by APPENDING
+/// to it — `..._reds_when_the_window_is_cleared_outright_v2` — still contains
+/// the old name as its own prefix, so a bare substring test would read a
+/// renamed function as the one that was renamed away. This checks the
+/// character right after the match too, and only counts it when that
+/// character cannot continue an identifier — the boundary a real rename
+/// actually crosses.
+fn defines_function(text: &str, name: &str) -> bool {
+    let needle = format!("fn {name}");
+    text.match_indices(&needle).any(|(at, _)| {
+        text[at + needle.len()..]
+            .chars()
+            .next()
+            .is_none_or(|c| !(c.is_alphanumeric() || c == '_'))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -652,11 +716,70 @@ mod tests {
         let controls = [NegativeControl {
             room,
             lock: name,
-            proof: "planted for the gate's own proof, not a real control",
+            file: "not-a-real-file.rs",
+            function: "not_a_real_function",
         }];
         assert!(
             is_named(room, name, &controls, &[]),
             "naming the lock with a registered control did not clear it",
+        );
+    }
+
+    /// **A dangling proof fails for the reason that is actually wrong**, not
+    /// merely "some error" — a file that is not there and a function that is
+    /// not in a real file send a reader to different places, and a check
+    /// that collapsed them would leave a reader hunting for a missing file
+    /// that is really a missing function, or the other way round. The
+    /// positive is a real, currently-shipped control: [`NEGATIVE_CONTROLS`]'s
+    /// only entry, which must resolve, or nothing here would be measuring
+    /// anything.
+    #[test]
+    fn a_dangling_proof_fails_for_the_reason_that_is_actually_wrong() {
+        let missing_file = NegativeControl {
+            room: "not-a-shipped-room",
+            lock: "not a real lock",
+            file: "tests/this_file_does_not_exist_anywhere.rs",
+            function: "whatever",
+        };
+        let err = proof_exists(&missing_file).expect_err("a missing file must fail");
+        assert!(
+            err.contains("does not exist"),
+            "a missing file did not fail for that reason: {err}",
+        );
+
+        let missing_function = NegativeControl {
+            room: "not-a-shipped-room",
+            lock: "not a real lock",
+            file: "tests/desk_lock.rs",
+            function: "a_function_that_is_not_actually_there",
+        };
+        let err = proof_exists(&missing_function).expect_err("a missing function must fail");
+        assert!(
+            err.contains("no function called"),
+            "a missing function did not fail for that reason: {err}",
+        );
+
+        assert!(
+            proof_exists(&NEGATIVE_CONTROLS[0]).is_ok(),
+            "the one real registered control does not even resolve",
+        );
+    }
+
+    /// **A function renamed by appending to it is not the function that was
+    /// renamed away**, and this is the case a bare substring test gets
+    /// wrong: `"fn the_original".contains("fn the_original")` is true of
+    /// `"fn the_original_v2"` too, because the old name is that new name's
+    /// own prefix. Both halves: the exact name still matches, and a longer
+    /// name that merely starts with it does not.
+    #[test]
+    fn a_name_extended_by_a_suffix_is_not_a_match_for_the_original() {
+        assert!(
+            defines_function("async fn the_original() {}", "the_original"),
+            "the exact name was not found",
+        );
+        assert!(
+            !defines_function("async fn the_original_v2() {}", "the_original"),
+            "a longer name that only starts with the searched one was read as a match",
         );
     }
 }
