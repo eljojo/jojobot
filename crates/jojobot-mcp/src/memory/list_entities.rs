@@ -51,10 +51,7 @@ impl Jojobot {
         // inventory — the same broad-door/direct-door split a claim's own
         // archived state already has.
         let before = entities.len();
-        let entities: Vec<_> = entities
-            .into_iter()
-            .filter(|e| e.archived.is_none())
-            .collect();
+        let entities: Vec<_> = entities.into_iter().filter(Entity::browsable).collect();
         let body = serde_json::json!({
             "count": entities.len(),
             // 🚨 **How many this read excluded as archived** — a total, the

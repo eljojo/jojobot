@@ -114,6 +114,23 @@ async fn memory_with_an_orphan() -> Arc<dyn Memory> {
     store
 }
 
+/// The seeded roster with one root and one child archived, through the real
+/// verb rather than a hand-built record — archiving is a write, not a shape
+/// this store would otherwise produce.
+async fn memory_with_an_archived_entity() -> Arc<dyn Memory> {
+    let store = Arc::new(InMemoryMemory::booted());
+    seed(store.as_ref()).await;
+    store
+        .archive_entity(&EntityId("place:shelbyville".into()), "a mistaken write")
+        .await
+        .expect("archive_entity ok");
+    store
+        .archive_entity(&EntityId("topic:widgets".into()), "a mistaken write")
+        .await
+        .expect("archive_entity ok");
+    store
+}
+
 async fn seed(store: &dyn Memory) {
     for new in [
         NewEntity::new(
@@ -1349,6 +1366,54 @@ async fn an_entity_whose_parent_is_missing_is_shown_as_damaged_rather_than_hidde
     assert!(
         section(&body, "roots").contains("href=\"/person:alpha/\""),
         "a genuine root is still a root: {body}"
+    );
+    ct.cancel();
+}
+
+#[tokio::test]
+async fn an_archived_entity_is_excluded_from_every_browse_but_still_serves_its_own_page() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct, _board) = spawn_jojobot_over(
+        endpoints,
+        &[READER],
+        &idp,
+        seeded_board_over(memory_with_an_archived_entity().await).await,
+    )
+    .await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let roots = read(&client, addr, "/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        !section(&roots, "roots").contains("shelbyville"),
+        "an archived root must not be on the default browse: {roots}"
+    );
+    // The pairing: a live root is still listed in the same read.
+    assert!(
+        section(&roots, "roots").contains("href=\"/person:alpha/\""),
+        "a live root is still a root: {roots}"
+    );
+
+    let parent = read(&client, addr, "/person:alpha/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        !parent.contains("topic:widgets"),
+        "an archived child must not be listed below its parent: {parent}"
+    );
+
+    let direct = read(&client, addr, "/place:shelbyville/", &cookie).await;
+    assert_eq!(
+        direct.status(),
+        reqwest::StatusCode::OK,
+        "a direct handle still serves an archived entity whole"
     );
     ct.cancel();
 }

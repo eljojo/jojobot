@@ -33,7 +33,7 @@ pub async fn index(State(state): State<AppState>) -> Response {
 
     let mut roots: Vec<&Entity> = Vec::new();
     let mut unreachable: Vec<&Entity> = Vec::new();
-    for entity in &entities {
+    for entity in entities.iter().filter(|e| e.browsable()) {
         match &entity.parent {
             None => roots.push(entity),
             // It is filed under a handle no entity has, so it is nobody's
@@ -156,7 +156,7 @@ pub async fn node(
 
     let mut children: Vec<&Entity> = entities
         .iter()
-        .filter(|candidate| candidate.parent.as_ref() == Some(&entity.id))
+        .filter(|candidate| candidate.parent.as_ref() == Some(&entity.id) && candidate.browsable())
         .collect();
     children.sort_by(|a, b| a.id.cmp(&b.id));
 

@@ -1080,7 +1080,12 @@ impl FullTextIndex {
             .map(|e| e.labels().join(" "))
             .unwrap_or_default();
 
-        if let Some(entity) = &scan.entity {
+        // **Out of the ordinary browse, mirroring `list_entities`'s own
+        // default read.** An archived entity gets no ENTITY-class document,
+        // so a query can never surface it — the same broad-door/direct-door
+        // split its own field declares. Its facts are indexed regardless,
+        // below: archiving is the SUBJECT's state, never a claim about it.
+        if let Some(entity) = scan.entity.as_ref().filter(|e| e.browsable()) {
             let mut document = doc!(
                 f.class => CLASS_ENTITY,
                 f.text => format!("{} {} {}", entity.id, owner_labels, entity.kind),
@@ -1483,7 +1488,15 @@ impl FullTextIndex {
         if query.is_fact_scoped() {
             return Vec::new();
         }
-        let index: Vec<Entity> = mirror.iter().filter_map(|d| d.entity.clone()).collect();
+        // **Pinning is a second path to the same `Hit::Entity` `write_doc`
+        // guards on the way into the index** — this one reads the mirror
+        // directly rather than a query, so the same archived-exclusion has
+        // to be repeated here rather than inherited from there.
+        let index: Vec<Entity> = mirror
+            .iter()
+            .filter_map(|d| d.entity.clone())
+            .filter(Entity::browsable)
+            .collect();
         let matches = guard::screen(&EntityId(text.to_string()), &[text], &index);
 
         matches
@@ -2810,8 +2823,8 @@ mod tests {
     use jojobot_domain::memory::search::{DEFAULT_LIMIT, EdgeFilter, EntityRef, SourceStanding};
     use jojobot_domain::memory::testing::{InMemoryMemory, contract};
     use jojobot_domain::memory::{
-        Boot, Edge, EdgeShape, FactStatus, KeyWrite, NewEntity, NewFact, Provenance, Standing,
-        folded_fields, validate_subject,
+        Archived, Boot, Edge, EdgeShape, FactStatus, KeyWrite, NewEntity, NewFact, Provenance,
+        Standing, folded_fields, validate_subject,
     };
 
     use super::*;
@@ -3294,6 +3307,47 @@ mod tests {
                 .iter()
                 .any(|h| matches!(h, Hit::Entity { entity, .. } if entity.id == homer.id)),
             "the entity record itself is indexed under every name it answers to"
+        );
+    }
+
+    /// **Out of ordinary search, mirroring `list_entities`'s own default read
+    /// (rule 60): a browse never surfaces an archived entity.** An entity's
+    /// facts are a different question — archiving says the SUBJECT is out of
+    /// scope, never that anything said about it was wrong — so this leaves
+    /// them untouched and asks only about the entity document itself.
+    #[tokio::test]
+    async fn an_archived_entity_is_out_of_ordinary_search() {
+        let bart = Entity {
+            archived: Some(Archived {
+                reason: "a mistaken write".into(),
+                at: jiff::Timestamp::constant(1_780_000_000, 0),
+            }),
+            ..entity("person:bart", "Bart Simpson")
+        };
+        let milhouse = entity("person:milhouse", "Milhouse Van Houten");
+        let index = index_of(vec![
+            scan("doc-1", Some(bart.clone()), "", vec![]),
+            scan("doc-2", Some(milhouse.clone()), "", vec![]),
+        ]);
+
+        let hits = index
+            .search(&SearchQuery::text("Bart Simpson"))
+            .expect("search ok");
+        assert!(
+            !hits
+                .iter()
+                .any(|h| matches!(h, Hit::Entity { entity, .. } if entity.id == bart.id)),
+            "an archived entity must not surface as an ordinary search hit: {hits:?}"
+        );
+
+        // The pairing: a live entity in the same index still surfaces.
+        let hits = index
+            .search(&SearchQuery::text("Milhouse Van Houten"))
+            .expect("search ok");
+        assert!(
+            hits.iter()
+                .any(|h| matches!(h, Hit::Entity { entity, .. } if entity.id == milhouse.id)),
+            "a live entity in the same index still surfaces: {hits:?}"
         );
     }
 

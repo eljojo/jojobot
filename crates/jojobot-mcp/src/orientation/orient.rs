@@ -170,7 +170,7 @@ impl Jojobot {
                 // by name is the direct door and is untouched by this — see
                 // `identity`, which reads `index` rather than this filtered
                 // view.
-                let browsable = || entities.iter().filter(|e| e.archived.is_none());
+                let browsable = || entities.iter().filter(|e| e.browsable());
                 let mut by_kind = std::collections::BTreeMap::<&str, usize>::new();
                 for e in browsable() {
                     let kind = e.id.as_str().split(':').next().unwrap_or("unknown");

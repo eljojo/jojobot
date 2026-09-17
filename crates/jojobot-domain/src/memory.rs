@@ -505,6 +505,13 @@ impl Entity {
             .filter(|l| !l.is_empty())
             .collect()
     }
+
+    /// **The one definition of "belongs in a default browse."** `false` once
+    /// archived. Every listing that browses rather than names a handle
+    /// filters on this; a direct read by handle never calls it.
+    pub fn browsable(&self) -> bool {
+        self.archived.is_none()
+    }
 }
 
 /// An entity about to be created. `override_token` is the token the write
