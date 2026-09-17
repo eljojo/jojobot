@@ -932,6 +932,18 @@ recall {"kind": "person"}
 lacks   person:hugo
 carries person:gayle
 say     later December: an ordinary browse of every person still turns up Hugo after he was taken out, so archiving him did not actually remove him from the everyday read that finds everyone else
+
+# 🚨 **THE COUNT, NOT ONLY THE SHAPE.** The browse above proves Hugo is out
+# and Gayle is in; neither line says how MANY the browse silently left out.
+# An inventory that only ever says who is missing cannot tell an empty vault
+# from one quietly short a name — `list_entities` is the verb that counts
+# what it excluded as archived, and a session with no reason to know Hugo
+# ever existed still sees the number.
+list_entities {"kind": "person"}
+carries "archived_excluded":1
+lacks   person:hugo
+carries person:gayle
+say     later December: the everyday listing of people does not say it left exactly one out, so a browse with no reason to know Hugo ever existed has no way to tell an empty vault from one quietly missing a name
 ```
 
 ## What this room cannot measure
