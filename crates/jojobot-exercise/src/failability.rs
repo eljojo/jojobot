@@ -222,17 +222,17 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
     },
     NegativeControl {
         room: expectations::VAULT_ROOM,
-        lock: "Phase 4 — April: no loop carries the twelfth as a check-in, so the piano's \
-               record of being played is short a turn",
+        lock: "Phase 4 — April: the piano's own check-in history does not carry the twelfth, \
+               so its record of being played is short a turn",
         file: "tests/piano_lock.rs",
         function: "aprils_lock_reds_when_the_check_in_was_never_written",
         strength: Strength::Discriminating,
     },
     NegativeControl {
         room: expectations::VAULT_ROOM,
-        lock: "Phase 8 — August: no loop carries the eleventh as a check-in, so the last \
-               logged turn at the piano is missing and December's third silence starts on the \
-               wrong day",
+        lock: "Phase 8 — August: the piano's own check-in history does not carry the eleventh, \
+               so the last logged turn at the piano is missing and December's third silence \
+               starts on the wrong day",
         file: "tests/piano_lock.rs",
         function: "augusts_lock_reds_when_the_check_in_was_never_written",
         strength: Strength::Discriminating,
@@ -733,7 +733,7 @@ pub const PENDING: &[Pending<'static>] = &[
     },
     Pending {
         room: VAULT_ROOM,
-        lock: "Phase 1 — January: the kitchen floor does not hold considering under the operator's own key, so it cannot be told apart from the shed when December asks which one moved",
+        lock: "Phase 1 — January: the kitchen floor's status history does not carry a considering write, so it cannot be told apart from the shed when December asks which one moved",
     },
     Pending {
         room: VAULT_ROOM,
@@ -785,7 +785,7 @@ pub const PENDING: &[Pending<'static>] = &[
     },
     Pending {
         room: VAULT_ROOM,
-        lock: "Phase 4 — April: the kitchen floor does not hold doing, so the one project that moves this year does not read as having moved",
+        lock: "Phase 4 — April: the kitchen floor's status history does not carry a doing write, so the one project that moves this year does not read as having moved",
     },
     Pending {
         room: VAULT_ROOM,
@@ -901,7 +901,7 @@ pub const PENDING: &[Pending<'static>] = &[
     },
     Pending {
         room: VAULT_ROOM,
-        lock: "Phase 13 — later December: no loop carries the day of the party, so the one silence the operator did not actually let happen was not logged from the record that proves it",
+        lock: "Phase 13 — later December: the piano's own loop does not carry the day of the party, so the one silence the operator did not actually let happen was not logged from the record that proves it",
     },
     Pending {
         room: VAULT_ROOM,

@@ -87,7 +87,7 @@ fn the_april_lock() -> lock::Lock {
         .find(|found| {
             found
                 .name()
-                .contains("so the piano's record of being played is short a turn")
+                .contains("so its record of being played is short a turn")
         })
         .expect("the vault ships April's piano lock")
 }
