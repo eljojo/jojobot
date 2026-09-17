@@ -3908,6 +3908,25 @@ pub trait Memory: Send + Sync {
     /// answers with different repairs.
     async fn fields(&self, entity: &EntityId) -> Result<BTreeMap<String, String>, MemoryError>;
 
+    /// **The same answer as [`fields`](Memory::fields), carrying a monotone
+    /// marker for the writes it reflects.**
+    ///
+    /// Defaulted to `0` from every adapter that has no cheaper way to say
+    /// which of two reads is newer — a marker that can never beat another and
+    /// never refuses one, so a caller with no version to compare against
+    /// falls back to trusting whichever read lands last, exactly as before
+    /// this existed. An adapter whose writes are already counted (`fact_write`
+    /// never removes a row) overrides this so a slower read of an earlier
+    /// state cannot land after, and overwrite, one already answering for a
+    /// later state — the write already happened either way; only which
+    /// snapshot a cache keeps is at stake.
+    async fn fields_versioned(
+        &self,
+        entity: &EntityId,
+    ) -> Result<(BTreeMap<String, String>, u64), MemoryError> {
+        Ok((self.fields(entity).await?, 0))
+    }
+
     /// **Take back an event** — one way, never reversed, and still a write.
     ///
     /// Nothing is removed: the addressed row keeps its id, its content and its

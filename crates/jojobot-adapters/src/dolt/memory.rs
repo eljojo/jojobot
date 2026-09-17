@@ -2357,6 +2357,39 @@ impl Memory for DoltMemory {
         Ok(held)
     }
 
+    /// **The same read as [`fields`](Self::fields), plus a count from the
+    /// ledger nothing here ever removes a row from.**
+    ///
+    /// `fact_write` keeps every write of every claim, forever — a
+    /// correction is a new row beside the one it corrects, never an edit in
+    /// place. So `COUNT(*)` for one entity only grows, and it grows by at
+    /// least one for every write that could have changed what
+    /// [`fields`](Self::fields) answers. Read in the SAME transaction as the
+    /// fields it counts for, so the two halves of the answer describe the
+    /// same instant rather than two reads a write could land between.
+    async fn fields_versioned(
+        &self,
+        entity: &EntityId,
+    ) -> Result<(std::collections::BTreeMap<String, String>, u64), MemoryError> {
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        let Some((key, _)) = self.resolve(&mut tx, entity).await? else {
+            let index = self.known(&mut tx).await?;
+            return Err(MemoryError::UnknownEntity {
+                attempted: entity.to_string(),
+                nearest: guard::screen(entity, &[], &index),
+            });
+        };
+        let mut held = Self::held_by(&mut tx, &key).await?;
+        self.compose_reference_fields(&mut tx, &mut held).await?;
+        let written: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM fact_write WHERE entity = ?")
+            .bind(key.as_str())
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(store)?;
+        tx.commit().await.map_err(store)?;
+        Ok((held, written as u64))
+    }
+
     async fn claim_history(&self, address: &FactAddress) -> Result<Vec<ClaimWrite>, MemoryError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
         // A miss on the HANDLE is an entity miss, exactly as every other

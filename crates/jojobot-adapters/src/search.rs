@@ -2356,28 +2356,39 @@ impl Memory for IndexedMemory {
         self.inner.scan_entity(entity).await
     }
 
-    // **Nothing is refreshed on either of these.** A declaration is not a
-    // document: it says which keys a writer should fill and is carried by no
-    // entity, so there is no doc for the projection to re-read. Refreshing
-    // something here would be this wrapper inventing a document the store does
-    // not hold.
+    // **No document is re-read on either of these** — a declaration is not
+    // a document: it says which keys a writer should fill and is carried by
+    // no entity, so there is no ONE doc for `refresh` to re-scan.
+    //
+    // **The scan CACHE is still dropped.** Every doc's fields are folded
+    // against the CURRENT declarations at scan time (`folded_fields`), so a
+    // declaration that changes how a key folds changes what every affected
+    // doc's fields answer — not one doc, and not zero. `write_summary`
+    // never counts a declaration write, so the ordinary skip-if-unchanged
+    // check in `rescan` cannot see this on its own; dropping the cache
+    // forces the NEXT read to take a real scan rather than serve one taken
+    // under the old declarations.
     async fn declare_type(&self, declared: DeclaredType) -> Result<DeclaredType, MemoryError> {
-        self.inner.declare_type(declared).await
+        let written = self.inner.declare_type(declared).await?;
+        *self.last_scan.write().expect("scan cache poisoned") = None;
+        Ok(written)
     }
 
     async fn declared_types(&self) -> Result<Vec<DeclaredType>, MemoryError> {
         self.inner.declared_types().await
     }
 
-    // The kinds are not in the index: a kind is what a handle carries, and the
-    // projection reads handles rather than declaring them.
+    /// The same reason [`declare_type`](Self::declare_type) drops the
+    /// cache: a kind's keys fold exactly like a declared type's.
     async fn declare_kind(
         &self,
         token: &str,
         origin: jojobot_domain::memory::types::Origin,
         fields: Vec<jojobot_domain::memory::types::Field>,
     ) -> Result<(), MemoryError> {
-        self.inner.declare_kind(token, origin, fields).await
+        self.inner.declare_kind(token, origin, fields).await?;
+        *self.last_scan.write().expect("scan cache poisoned") = None;
+        Ok(())
     }
 
     async fn declared_kinds(
@@ -2386,10 +2397,13 @@ impl Memory for IndexedMemory {
         self.inner.declared_kinds().await
     }
 
-    // A kind is a row rather than a document, so reclaiming one touches no
-    // projection: the index holds entities, facts and prose.
+    /// **Reclaiming changes folding too**: a key that summed while the kind
+    /// held it falls back to newest-write-wins once reclaimed, for every doc
+    /// answering to it.
     async fn reclaim_kind(&self, token: &str) -> Result<(), MemoryError> {
-        self.inner.reclaim_kind(token).await
+        self.inner.reclaim_kind(token).await?;
+        *self.last_scan.write().expect("scan cache poisoned") = None;
+        Ok(())
     }
 }
 
@@ -8391,6 +8405,209 @@ mod tests {
                 source: None,
             }],
             "got {hits:?}"
+        );
+    }
+
+    /// [`InMemoryMemory`] with a FIXED [`Memory::write_summary`], so a test
+    /// can drive the ordinary skip-if-unchanged path on purpose.
+    /// [`InMemoryMemory`] alone offers no such signal (`None`, the default,
+    /// answers "no signal" and is scanned every time regardless of what
+    /// changed) — this is what makes the cache worth clearing at all.
+    struct FixedWriteSummary(Arc<InMemoryMemory>);
+
+    #[async_trait]
+    impl Memory for FixedWriteSummary {
+        async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
+            self.0.add_entity(new).await
+        }
+        async fn list_entities(
+            &self,
+            kind: Option<EntityKind>,
+        ) -> Result<Vec<Entity>, MemoryError> {
+            self.0.list_entities(kind).await
+        }
+        async fn former_handles(&self) -> Result<Vec<FormerHandle>, MemoryError> {
+            self.0.former_handles().await
+        }
+        async fn update_entity(
+            &self,
+            handle: &EntityId,
+            patch: EntityPatch,
+        ) -> Result<Guarded<Entity>, MemoryError> {
+            self.0.update_entity(handle, patch).await
+        }
+        async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
+            self.0.archive_entity(id, reason).await
+        }
+        async fn rename_entity(
+            &self,
+            from: &EntityId,
+            to: &EntityId,
+            parent: Option<EntityId>,
+            date: Date,
+            override_token: Option<&str>,
+        ) -> Result<Guarded<Entity>, MemoryError> {
+            self.0
+                .rename_entity(from, to, parent, date, override_token)
+                .await
+        }
+        async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
+            self.0.capture(fact).await
+        }
+        async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
+            self.0.recall(subject).await
+        }
+        async fn history(
+            &self,
+            entity: &EntityId,
+            key: &str,
+        ) -> Result<Vec<FieldWrite>, MemoryError> {
+            self.0.history(entity, key).await
+        }
+        async fn claim_history(
+            &self,
+            address: &FactAddress,
+        ) -> Result<Vec<ClaimWrite>, MemoryError> {
+            self.0.claim_history(address).await
+        }
+        async fn update_fact(
+            &self,
+            address: &FactAddress,
+            patch: FactPatch,
+        ) -> Result<Guarded<Fact>, MemoryError> {
+            self.0.update_fact(address, patch).await
+        }
+        async fn fields(&self, entity: &EntityId) -> Result<BTreeMap<String, String>, MemoryError> {
+            self.0.fields(entity).await
+        }
+        async fn retract(
+            &self,
+            address: &FactAddress,
+            reason: Option<&str>,
+            date: Date,
+        ) -> Result<Retraction, MemoryError> {
+            self.0.retract(address, reason, date).await
+        }
+        async fn merge(
+            &self,
+            folded: &EntityId,
+            survivor: &EntityId,
+            reason: Option<&str>,
+            date: Date,
+        ) -> Result<Merge, MemoryError> {
+            self.0.merge(folded, survivor, reason, date).await
+        }
+        async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
+            self.0.set_prose(entity, prose).await
+        }
+        async fn scan(&self) -> Result<Vec<DocScan>, MemoryError> {
+            self.0.scan().await
+        }
+        /// **The one method this double exists for.** Fixed and never
+        /// derived from the store underneath, so nothing about a capture or
+        /// a declaration ever changes it — a caller relying on it alone can
+        /// never see a difference, which is the point.
+        async fn write_summary(&self) -> Result<Option<WriteSummary>, MemoryError> {
+            Ok(Some(WriteSummary {
+                entities: (1, None),
+                facts: (1, None),
+            }))
+        }
+        async fn declare_type(&self, declared: DeclaredType) -> Result<DeclaredType, MemoryError> {
+            self.0.declare_type(declared).await
+        }
+        async fn declared_types(&self) -> Result<Vec<DeclaredType>, MemoryError> {
+            self.0.declared_types().await
+        }
+        async fn declare_kind(
+            &self,
+            token: &str,
+            origin: jojobot_domain::memory::types::Origin,
+            fields: Vec<jojobot_domain::memory::types::Field>,
+        ) -> Result<(), MemoryError> {
+            self.0.declare_kind(token, origin, fields).await
+        }
+        async fn declared_kinds(
+            &self,
+        ) -> Result<Vec<(String, jojobot_domain::memory::types::Origin)>, MemoryError> {
+            self.0.declared_kinds().await
+        }
+        async fn reclaim_kind(&self, token: &str) -> Result<(), MemoryError> {
+            self.0.reclaim_kind(token).await
+        }
+    }
+
+    /// **A declaration changes what an already-scanned doc's fields
+    /// answer, and `write_summary` never counts a declaration write.**
+    ///
+    /// Two captures, no declaration in between: the scan's own fold is
+    /// newest-write-wins, which `rescan`'s cache then serves as-is. Declare
+    /// the key a counter and ask again with NOTHING else written — the
+    /// store wears a FIXED `write_summary` (see [`FixedWriteSummary`]) so
+    /// the ordinary skip-if-unchanged path genuinely fires: without
+    /// `declare_type` dropping the cache itself, this would serve the same
+    /// stale scan it served before.
+    #[tokio::test]
+    async fn a_declaration_forces_a_real_rescan_even_when_write_summary_is_unchanged() {
+        let inner = Arc::new(InMemoryMemory::booted());
+        let alpha = EntityId::person("person:alpha");
+        inner
+            .add_entity(NewEntity::new(alpha.clone(), "Alpha", "user-named"))
+            .await
+            .expect("add ok")
+            .written()
+            .expect("not blocked");
+        inner
+            .capture(NewFact {
+                fields: BTreeMap::from([("laps".to_string(), "1".to_string())]),
+                ..NewFact::about(alpha.clone(), "lap one", date(2026, 9, 1))
+            })
+            .await
+            .expect("capture ok")
+            .written()
+            .expect("not blocked");
+        inner
+            .capture(NewFact {
+                fields: BTreeMap::from([("laps".to_string(), "1".to_string())]),
+                ..NewFact::about(alpha.clone(), "lap two", date(2026, 9, 2))
+            })
+            .await
+            .expect("capture ok")
+            .written()
+            .expect("not blocked");
+
+        let indexed = IndexedMemory::new(Arc::new(FixedWriteSummary(inner))).expect("index opens");
+        let scanned = indexed.rescan().await.expect("rescan ok");
+        let doc = scanned
+            .iter()
+            .find(|d| d.entity.as_ref().is_some_and(|e| e.id == alpha))
+            .expect("alpha is scanned");
+        assert_eq!(
+            doc.fields.get("laps"),
+            Some(&"1".to_string()),
+            "undeclared, laps folds newest-write-wins: the second write alone"
+        );
+
+        indexed
+            .declare_type(DeclaredType::new(
+                "running",
+                vec![jojobot_domain::memory::types::Field::summing("laps")],
+            ))
+            .await
+            .expect("declare ok");
+
+        // Nothing else was written since the first rescan, so `write_summary`
+        // reports exactly what it reported before — the signal declare_type
+        // does not touch.
+        let scanned = indexed.rescan().await.expect("rescan ok");
+        let doc = scanned
+            .iter()
+            .find(|d| d.entity.as_ref().is_some_and(|e| e.id == alpha))
+            .expect("alpha is scanned");
+        assert_eq!(
+            doc.fields.get("laps"),
+            Some(&"2".to_string()),
+            "declared a counter, the same two writes now sum to two, with write_summary unchanged"
         );
     }
 }

@@ -40,9 +40,19 @@ use jojobot_domain::memory::{
 /// `merge` — the only ones that can move a field, see [`Memory::fields`]'s
 /// own doc) forwards straight to the store underneath and touches nothing
 /// here.
+/// One entity's folded fields, beside the version
+/// [`Memory::fields_versioned`] read them under.
+type VersionedFields = (u64, BTreeMap<String, String>);
+
 pub struct Folded {
     inner: Arc<dyn Memory>,
-    cache: RwLock<HashMap<EntityId, BTreeMap<String, String>>>,
+    /// **Each entry carries the version [`Memory::fields_versioned`] read it
+    /// under, beside the fields themselves.** The version is what
+    /// [`refresh`](Folded::refresh) compares against before installing a new
+    /// read, so two concurrent refreshes for the same entity cannot have the
+    /// slower one — carrying an earlier version — land after the faster one
+    /// and overwrite what it correctly installed.
+    cache: RwLock<HashMap<EntityId, VersionedFields>>,
 }
 
 impl Folded {
@@ -64,11 +74,25 @@ impl Folded {
         let entities = self.inner.list_entities(None).await?;
         let mut fresh = HashMap::with_capacity(entities.len());
         for entity in &entities {
-            fresh.insert(entity.id.clone(), self.inner.fields(&entity.id).await?);
+            let (fields, version) = self.inner.fields_versioned(&entity.id).await?;
+            fresh.insert(entity.id.clone(), (version, fields));
         }
         let folded = fresh.len();
         *self.cache.write().expect("fold lock") = fresh;
         Ok(folded)
+    }
+
+    /// [`rebuild`](Folded::rebuild), for a caller that already knows what it
+    /// wrote and only needs the fold to catch up — never silently. A rebuild
+    /// that fails here is reported rather than swallowed: the write already
+    /// landed in the store, so this is the one thing left that can still go
+    /// wrong.
+    async fn rebuild_or_explain(&self, verb: &str) -> Result<(), MemoryError> {
+        self.rebuild().await.map(|_| ()).map_err(|source| {
+            MemoryError::Store(format!(
+                "{verb} landed, but the fold could not rebuild to reflect it: {source}"
+            ))
+        })
     }
 
     /// Re-read one thing's fields from the store underneath and replace what
@@ -78,12 +102,21 @@ impl Folded {
     /// [`Memory::fields`]'s newest-write-wins, per-key, retraction-aware fold
     /// already lives, so this asks it again instead of a second copy of the
     /// same arithmetic learning to disagree with it.
+    ///
+    /// **The read happens before the lock is ever taken**, so a slow read for
+    /// one entity blocks nobody's read of another and nobody's read of this
+    /// one either — only the two lines below, deciding whether to install,
+    /// hold it. A read carrying a version behind what is already installed
+    /// is refused rather than applied: the write it reflects still happened,
+    /// exactly as fresh a moment ago as the one that beat it here, but a
+    /// cache can hold only one answer and the newer one is that answer.
     async fn refresh(&self, entity: &EntityId) -> Result<(), MemoryError> {
-        let fields = self.inner.fields(entity).await?;
-        self.cache
-            .write()
-            .expect("fold lock")
-            .insert(entity.clone(), fields);
+        let (fields, version) = self.inner.fields_versioned(entity).await?;
+        let mut cache = self.cache.write().expect("fold lock");
+        let current = cache.get(entity).map(|(v, _)| *v).unwrap_or(0);
+        if version >= current {
+            cache.insert(entity.clone(), (version, fields));
+        }
         Ok(())
     }
 }
@@ -123,6 +156,16 @@ impl Memory for Folded {
         self.inner.update_entity(handle, patch).await
     }
 
+    /// **The cache is keyed by the literal handle, and `fields` checks no
+    /// freshness on a hit.** The store's own `fields` resolves a stale
+    /// handle through its rename history and answers current data (see
+    /// [`Memory::fields`]'s own adapters); this cache would go on answering
+    /// whatever it held under the OLD handle at the moment of the rename,
+    /// for ever, since nothing ever writes a field under that handle again
+    /// to trigger an ordinary refresh. So a successful rename drops the old
+    /// handle's entry: the next read under it is a cache miss, which falls
+    /// through to the store and gets the current answer, exactly as a miss
+    /// always has.
     async fn rename_entity(
         &self,
         from: &EntityId,
@@ -131,9 +174,14 @@ impl Memory for Folded {
         date: Date,
         override_token: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
-        self.inner
+        let renamed = self
+            .inner
             .rename_entity(from, to, parent, date, override_token)
-            .await
+            .await?;
+        if matches!(renamed, Guarded::Written(_)) {
+            self.cache.write().expect("fold lock").remove(from);
+        }
+        Ok(renamed)
     }
 
     async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
@@ -182,7 +230,7 @@ impl Memory for Folded {
     /// created — falls through to the store, exactly what an unwrapped
     /// `Memory` would answer.
     async fn fields(&self, entity: &EntityId) -> Result<BTreeMap<String, String>, MemoryError> {
-        if let Some(fields) = self.cache.read().expect("fold lock").get(entity) {
+        if let Some((_, fields)) = self.cache.read().expect("fold lock").get(entity) {
             return Ok(fields.clone());
         }
         self.inner.fields(entity).await
@@ -242,29 +290,45 @@ impl Memory for Folded {
         self.inner.write_summary().await
     }
 
+    /// **A declaration can change how EVERY entity's existing writes fold**
+    /// — `newest` against a counter — so there is no one handle to refresh
+    /// the way a capture refreshes its own home. The whole cache is rebuilt
+    /// from the store instead, the same read [`rebuild`](Folded::rebuild)
+    /// runs at boot. The write already landed; only the rebuild is what
+    /// this can fail to report.
     async fn declare_type(&self, declared: DeclaredType) -> Result<DeclaredType, MemoryError> {
-        self.inner.declare_type(declared).await
+        let written = self.inner.declare_type(declared).await?;
+        self.rebuild_or_explain("declare_type").await?;
+        Ok(written)
     }
 
     async fn declared_types(&self) -> Result<Vec<DeclaredType>, MemoryError> {
         self.inner.declared_types().await
     }
 
+    /// **The same reason [`declare_type`](Self::declare_type) rebuilds
+    /// rather than refreshes**: a kind's keys fold exactly like a declared
+    /// type's, over every entity that answers to it.
     async fn declare_kind(
         &self,
         token: &str,
         origin: types::Origin,
         fields: Vec<types::Field>,
     ) -> Result<(), MemoryError> {
-        self.inner.declare_kind(token, origin, fields).await
+        self.inner.declare_kind(token, origin, fields).await?;
+        self.rebuild_or_explain("declare_kind").await
     }
 
     async fn declared_kinds(&self) -> Result<Vec<(String, types::Origin)>, MemoryError> {
         self.inner.declared_kinds().await
     }
 
+    /// **Taking a kind back changes folding too**: a key that summed while
+    /// the kind held it falls back to newest-write-wins once reclaimed, for
+    /// every entity that answered to it.
     async fn reclaim_kind(&self, token: &str) -> Result<(), MemoryError> {
-        self.inner.reclaim_kind(token).await
+        self.inner.reclaim_kind(token).await?;
+        self.rebuild_or_explain("reclaim_kind").await
     }
 }
 
@@ -716,6 +780,389 @@ mod tests {
             recalled.iter().any(|f| f.id == fact.id),
             "the write must be visible in the store even though the fold refresh failed: \
              {recalled:?}",
+        );
+    }
+
+    /// **A double whose write count is its own, and whose `fields_versioned`
+    /// stalls once, right after taking its snapshot.**
+    ///
+    /// An in-memory store never yields inside the span a refresh runs, so two
+    /// futures against it on one runtime run one after the other and never
+    /// interleave — a race written against it would pass on the BROKEN code
+    /// for the same reason it never watches anything race. This stalls the
+    /// FIRST `fields_versioned` call after its snapshot is already taken, so
+    /// a test can let a second, faster write-and-refresh land entirely while
+    /// the first is still holding an early snapshot open — the exact
+    /// interleaving [`Folded::refresh`]'s version guard exists for.
+    struct StallFirstVersionedRead {
+        inner: Arc<InMemoryMemory>,
+        written: std::sync::atomic::AtomicU64,
+        stalled: Arc<tokio::sync::Notify>,
+        released: Arc<tokio::sync::Notify>,
+        first: std::sync::atomic::AtomicBool,
+    }
+
+    #[async_trait]
+    impl Memory for StallFirstVersionedRead {
+        async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
+            self.inner.add_entity(new).await
+        }
+        async fn list_entities(
+            &self,
+            kind: Option<EntityKind>,
+        ) -> Result<Vec<Entity>, MemoryError> {
+            self.inner.list_entities(kind).await
+        }
+        async fn former_handles(&self) -> Result<Vec<FormerHandle>, MemoryError> {
+            self.inner.former_handles().await
+        }
+        async fn update_entity(
+            &self,
+            handle: &EntityId,
+            patch: EntityPatch,
+        ) -> Result<Guarded<Entity>, MemoryError> {
+            self.inner.update_entity(handle, patch).await
+        }
+        async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
+            self.inner.archive_entity(id, reason).await
+        }
+        async fn rename_entity(
+            &self,
+            from: &EntityId,
+            to: &EntityId,
+            parent: Option<EntityId>,
+            date: Date,
+            override_token: Option<&str>,
+        ) -> Result<Guarded<Entity>, MemoryError> {
+            self.inner
+                .rename_entity(from, to, parent, date, override_token)
+                .await
+        }
+        /// **The counter moves here, before the write is even reported back**
+        /// — a write nobody has refreshed for yet still counts, because what
+        /// this counts is "how many writes has the store taken," never "how
+        /// many the fold has caught up with."
+        async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
+            let written = self.inner.capture(fact).await?;
+            if matches!(written, Guarded::Written(_)) {
+                self.written
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+            Ok(written)
+        }
+        async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
+            self.inner.recall(subject).await
+        }
+        async fn history(
+            &self,
+            entity: &EntityId,
+            key: &str,
+        ) -> Result<Vec<FieldWrite>, MemoryError> {
+            self.inner.history(entity, key).await
+        }
+        async fn claim_history(
+            &self,
+            address: &FactAddress,
+        ) -> Result<Vec<ClaimWrite>, MemoryError> {
+            self.inner.claim_history(address).await
+        }
+        async fn update_fact(
+            &self,
+            address: &FactAddress,
+            patch: FactPatch,
+        ) -> Result<Guarded<Fact>, MemoryError> {
+            let written = self.inner.update_fact(address, patch).await?;
+            if matches!(written, Guarded::Written(_)) {
+                self.written
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+            Ok(written)
+        }
+        async fn fields(&self, entity: &EntityId) -> Result<BTreeMap<String, String>, MemoryError> {
+            self.inner.fields(entity).await
+        }
+        /// **The one method this double exists to control.** The snapshot is
+        /// taken immediately — exactly as fresh as an unstalled read would be
+        /// — and only the RETURN is held back, on the first call alone.
+        async fn fields_versioned(
+            &self,
+            entity: &EntityId,
+        ) -> Result<(BTreeMap<String, String>, u64), MemoryError> {
+            let fields = self.inner.fields(entity).await?;
+            let version = self.written.load(std::sync::atomic::Ordering::SeqCst);
+            if self.first.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                self.stalled.notify_one();
+                self.released.notified().await;
+            }
+            Ok((fields, version))
+        }
+        async fn retract(
+            &self,
+            address: &FactAddress,
+            reason: Option<&str>,
+            date: Date,
+        ) -> Result<Retraction, MemoryError> {
+            let retracted = self.inner.retract(address, reason, date).await?;
+            self.written
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(retracted)
+        }
+        async fn merge(
+            &self,
+            folded: &EntityId,
+            survivor: &EntityId,
+            reason: Option<&str>,
+            date: Date,
+        ) -> Result<Merge, MemoryError> {
+            self.inner.merge(folded, survivor, reason, date).await
+        }
+        async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
+            self.inner.set_prose(entity, prose).await
+        }
+        async fn scan(&self) -> Result<Vec<DocScan>, MemoryError> {
+            self.inner.scan().await
+        }
+        async fn declare_type(&self, declared: DeclaredType) -> Result<DeclaredType, MemoryError> {
+            self.inner.declare_type(declared).await
+        }
+        async fn declared_types(&self) -> Result<Vec<DeclaredType>, MemoryError> {
+            self.inner.declared_types().await
+        }
+        async fn declare_kind(
+            &self,
+            token: &str,
+            origin: types::Origin,
+            fields: Vec<types::Field>,
+        ) -> Result<(), MemoryError> {
+            self.inner.declare_kind(token, origin, fields).await
+        }
+        async fn declared_kinds(&self) -> Result<Vec<(String, types::Origin)>, MemoryError> {
+            self.inner.declared_kinds().await
+        }
+        async fn reclaim_kind(&self, token: &str) -> Result<(), MemoryError> {
+            self.inner.reclaim_kind(token).await
+        }
+    }
+
+    /// **The race itself, driven rather than merely asserted possible.**
+    ///
+    /// A writes `due_on = A`; its refresh takes an early snapshot (version 1,
+    /// `due_on = A`) and stalls. While it is stalled, B writes `due_on = B`
+    /// end to end — its own refresh is not the first call, so it runs
+    /// straight through, installing version 2. Only then is A's stalled
+    /// snapshot released to attempt its own install, carrying version 1.
+    ///
+    /// Without the version guard, A's install runs unconditionally and the
+    /// fold ends up serving `due_on = A` — the earlier value — even though
+    /// the store itself has moved on to `B` and nothing will touch this
+    /// entity again to correct it. Both writes succeeded; only which one the
+    /// CACHE remembers is what a version compares.
+    #[tokio::test]
+    async fn a_slower_refresh_carrying_an_earlier_version_does_not_undo_a_faster_ones_install() {
+        let inner = Arc::new(InMemoryMemory::booted());
+        inner
+            .add_entity(NewEntity::new(alpha(), "Alpha", "user-named"))
+            .await
+            .expect("add ok")
+            .written()
+            .expect("not blocked");
+
+        let stalled = Arc::new(tokio::sync::Notify::new());
+        let released = Arc::new(tokio::sync::Notify::new());
+        let double = Arc::new(StallFirstVersionedRead {
+            inner,
+            written: std::sync::atomic::AtomicU64::new(0),
+            stalled: stalled.clone(),
+            released: released.clone(),
+            first: std::sync::atomic::AtomicBool::new(true),
+        });
+        let folded = Arc::new(Folded::new(double));
+
+        let a_folded = folded.clone();
+        let a_task = tokio::spawn(async move {
+            a_folded
+                .capture(NewFact {
+                    fields: BTreeMap::from([("due_on".to_string(), "A".to_string())]),
+                    ..NewFact::about(alpha(), "A writes first", date(2026, 9, 1))
+                })
+                .await
+        });
+
+        // A's write has landed and its refresh is holding an early snapshot
+        // open — exactly the window the bug lived in.
+        stalled.notified().await;
+
+        folded
+            .capture(NewFact {
+                fields: BTreeMap::from([("due_on".to_string(), "B".to_string())]),
+                ..NewFact::about(
+                    alpha(),
+                    "B writes second, while A is stalled",
+                    date(2026, 9, 2),
+                )
+            })
+            .await
+            .expect("capture ok")
+            .written()
+            .expect("not blocked");
+        assert_eq!(
+            folded
+                .fields(&alpha())
+                .await
+                .expect("fields ok")
+                .get("due_on"),
+            Some(&"B".to_string()),
+            "B's install lands correctly while A is still stalled"
+        );
+
+        // Release A's stalled, now-stale snapshot to attempt its install.
+        released.notify_one();
+        a_task
+            .await
+            .expect("the task did not panic")
+            .expect("capture ok")
+            .written()
+            .expect("not blocked");
+
+        assert_eq!(
+            folded
+                .fields(&alpha())
+                .await
+                .expect("fields ok")
+                .get("due_on"),
+            Some(&"B".to_string()),
+            "a slower refresh carrying an earlier version must not undo a fresher install"
+        );
+    }
+
+    /// **Declaring a fold changes what already-cached writes answer, not
+    /// only writes made afterwards.** `folded_fields` interprets a thing's
+    /// existing writes against the CURRENT declarations every time it runs;
+    /// a cache that answered from a snapshot taken under the old
+    /// declaration would go on answering wrongly for ever, since nothing
+    /// ever touches this entity's own key again to trigger a normal
+    /// refresh.
+    ///
+    /// The worked example: write, write, read (newest-write-wins, since
+    /// nothing is declared), declare `laps` a counter, read again (the SAME
+    /// two writes now sum).
+    #[tokio::test]
+    async fn declaring_a_counter_changes_what_the_same_two_writes_already_fold_to() {
+        let inner = Arc::new(InMemoryMemory::booted());
+        let folded = Folded::new(inner);
+        seeded(&folded, &alpha(), "Alpha").await;
+
+        folded
+            .capture(NewFact {
+                fields: BTreeMap::from([("laps".to_string(), "1".to_string())]),
+                ..NewFact::about(alpha(), "lap one", date(2026, 9, 1))
+            })
+            .await
+            .expect("capture ok")
+            .written()
+            .expect("not blocked");
+        folded
+            .capture(NewFact {
+                fields: BTreeMap::from([("laps".to_string(), "1".to_string())]),
+                ..NewFact::about(alpha(), "lap two", date(2026, 9, 2))
+            })
+            .await
+            .expect("capture ok")
+            .written()
+            .expect("not blocked");
+
+        assert_eq!(
+            folded
+                .fields(&alpha())
+                .await
+                .expect("fields ok")
+                .get("laps"),
+            Some(&"1".to_string()),
+            "undeclared, laps folds newest-write-wins: the second write alone",
+        );
+
+        folded
+            .declare_type(types::DeclaredType::new(
+                "running",
+                vec![types::Field::summing("laps")],
+            ))
+            .await
+            .expect("declare ok");
+
+        assert_eq!(
+            folded
+                .fields(&alpha())
+                .await
+                .expect("fields ok")
+                .get("laps"),
+            Some(&"2".to_string()),
+            "declared a counter, the same two writes now sum to two",
+        );
+    }
+
+    /// **The store resolves a stale handle through its own rename history;
+    /// the cache answered first, and answered wrong.** Read once under a
+    /// handle, rename, write again under the new one, then ask by the OLD
+    /// handle again: the answer must be what the thing holds NOW, not a
+    /// photograph of what it held the moment before the rename — with no
+    /// error and no notice, since the miss this relies on is silent by
+    /// design.
+    #[tokio::test]
+    async fn a_rename_drops_the_old_handles_entry_so_it_answers_current_data() {
+        let inner = Arc::new(InMemoryMemory::booted());
+        let folded = Folded::new(inner);
+        seeded(&folded, &alpha(), "Alpha").await;
+
+        folded
+            .capture(NewFact {
+                fields: BTreeMap::from([("due_on".to_string(), "before".to_string())]),
+                ..NewFact::about(alpha(), "before the rename", date(2026, 9, 1))
+            })
+            .await
+            .expect("capture ok")
+            .written()
+            .expect("not blocked");
+
+        // Read under the old handle before the rename — the same read a
+        // caller holding it would make, and what populates the cache entry
+        // this fix has to drop.
+        assert_eq!(
+            folded
+                .fields(&alpha())
+                .await
+                .expect("fields ok")
+                .get("due_on"),
+            Some(&"before".to_string()),
+        );
+
+        let gamma = EntityId::person("person:gamma");
+        folded
+            .rename_entity(&alpha(), &gamma, None, date(2026, 9, 2), None)
+            .await
+            .expect("rename ok")
+            .written()
+            .expect("not blocked");
+
+        // A write under the CURRENT handle, after the rename.
+        folded
+            .capture(NewFact {
+                fields: BTreeMap::from([("due_on".to_string(), "after".to_string())]),
+                ..NewFact::about(gamma.clone(), "after the rename", date(2026, 9, 3))
+            })
+            .await
+            .expect("capture ok")
+            .written()
+            .expect("not blocked");
+
+        assert_eq!(
+            folded
+                .fields(&alpha())
+                .await
+                .expect("fields ok")
+                .get("due_on"),
+            Some(&"after".to_string()),
+            "the old handle must resolve through history to CURRENT data, not the snapshot the \
+             cache took before the rename",
         );
     }
 }
