@@ -194,9 +194,14 @@ recall {"subject": "project:the-shed"}
 carries "status":"considering"
 say     January: the shed does not hold considering under the operator's own key, so December cannot see how long it has been going round
 
-recall {"subject": "project:kitchen-floor"}
-carries "status":"considering"
-say     January: the kitchen floor does not hold considering under the operator's own key, so it cannot be told apart from the shed when December asks which one moved
+# 🚨 **Asked of the key's OWN HISTORY, not the folded value.** The floor is
+# the one project the room moves on: April sends it to doing and July to
+# done, so a lock on the folded value can never hold once the year finishes
+# moving it — a fact true in January and superseded on purpose is not a
+# fact this lock may forget. `history` reads every write, not the newest.
+recall {"subject": "project:kitchen-floor", "history": "status"}
+carries "value":"considering"
+say     January: the kitchen floor's status history does not carry a considering write, so it cannot be told apart from the shed when December asks which one moved
 
 # The first timing on the usual road. October needs to count these — four on
 # this road against one on the other — and a number in prose is not a write of
@@ -347,18 +352,27 @@ carries "for":"machine:omicron"
 say     April: no thing is on record as being for Omicron, so what gets packed off with the server in October cannot be asked
 
 # The floor moved. December tells the project that moved from the project that
-# did not by the history of this one key.
-recall {"subject": "project:kitchen-floor"}
-carries "status":"doing"
-say     April: the kitchen floor does not hold doing, so the one project that moves this year does not read as having moved
+# did not by the history of this one key — so this asks the history
+# directly, the same reason January's own lock on this key now does: July
+# sends the floor on to done, and a lock on the folded value cannot survive
+# a project finishing what this lock is checking it started.
+recall {"subject": "project:kitchen-floor", "history": "status"}
+carries "value":"doing"
+say     April: the kitchen floor's status history does not carry a doing write, so the one project that moves this year does not read as having moved
 
 recall {"subject": "place:ocean-avenue", "history": "minutes"}
 carries "value":"41"
 say     April: the road does not carry the April timing, so the count October needs is short
 
-recall {"kind": "rhythm", "history": "last_check_in"}
+# 🚨 **Asked of the piano's OWN handle, not a kind-scoped browse.** Later
+# December drops the loop outright — the operator's own word, "stop
+# reminding altogether" — and an archived entity is out of a kind-scoped
+# browse the same way `list_entities` excludes one, taking every check-in
+# it ever held out of a `kind: "rhythm"` read with it. The room already
+# established which loop this is, so naming it directly survives that.
+recall {"subject": "rhythm:sit-at-the-piano", "history": "last_check_in"}
 carries "value":"2026-04-12"
-say     April: no loop carries the twelfth as a check-in, so the piano's record of being played is short a turn
+say     April: the piano's own check-in history does not carry the twelfth, so its record of being played is short a turn
 ```
 
 ## Phase 5 — May, the furnace, and a man in the hall
@@ -487,9 +501,12 @@ say     August: nothing on the shed carries this sitting's own day, so the fourt
 
 # ⚠️ **The LAST logged turn at the piano.** The operator keeps playing and
 # stops saying so; December has to tell that from the other two silences.
-recall {"kind": "rhythm", "history": "last_check_in"}
+# 🚨 **Asked of the piano's own handle, for the same reason April's lock
+# now is:** later December archives the loop, and a kind-scoped browse
+# cannot see an archived entity's history at all, whatever it once held.
+recall {"subject": "rhythm:sit-at-the-piano", "history": "last_check_in"}
 carries "value":"2026-08-11"
-say     August: no loop carries the eleventh as a check-in, so the last logged turn at the piano is missing and December's third silence starts on the wrong day
+say     August: the piano's own check-in history does not carry the eleventh, so the last logged turn at the piano is missing and December's third silence starts on the wrong day
 ```
 
 ## Phase 9 — September, a trip booked and a month looked ahead to
@@ -815,12 +832,18 @@ May and August; the floor went considering, doing, done.
 ```locks
 # 🚨 **THE THIRD SILENCE, LOGGED FROM A RECORD THAT NEVER SAYS "PIANO".** The
 # party is on the record from last week; the loop is under the piano; nothing
-# joins them but a reader. What is locked is that some loop now carries the
-# party's day as a value — as the day the turn happened, or as the day the
-# check-in is dated — and nothing else on any loop carries that day.
-recall {"kind": "rhythm", "facts": true}
+# joins them but a reader. What is locked is that the piano's own loop now
+# carries the party's day as a value — as the day the turn happened, or as
+# the day the check-in is dated. **Asked of the piano's own handle, not a
+# kind-scoped browse:** this same sitting is asked to drop the loop
+# outright, and an archived entity is out of a kind-scoped browse, taking
+# a check-in logged the moment before archival out of `kind: "rhythm"`
+# with it. The room never actually enforced "and nothing else on any loop
+# carries that day" — no `lacks` line asked it — so naming the piano loses
+# nothing that was checked.
+recall {"subject": "rhythm:sit-at-the-piano", "facts": true}
 carries "2026-12-05"
-say     later December: no loop carries the day of the party, so the one silence the operator did not actually let happen was not logged from the record that proves it
+say     later December: the piano's own loop does not carry the day of the party, so the one silence the operator did not actually let happen was not logged from the record that proves it
 
 # 🚨 **JOJOBOT'S OWN ARITHMETIC, READ AFTER THE SITTING.** Three loops were
 # quiet this morning. The piano's is not quiet any more — a turn logged from
