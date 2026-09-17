@@ -44,10 +44,12 @@
 //! count was the finding: the number of locks nobody had yet proven
 //! failable, and it was not a number anybody had before this gate walked
 //! every shipped room and counted. Since then: five locks shipped with a
-//! control freshly written for them, and 63 more turned out to be proven
-//! ALREADY — see [`NEGATIVE_CONTROLS`]'s own doc for all three shapes. The
-//! backlog now stands at 61 of 129, and every one of those 61 is a
-//! `vault.md` lock with no existing proof of its own.
+//! control freshly written for them; two more existing locks were REWRITTEN
+//! (kind-scoped to subject-scoped, fixing a false failure) and proven by a
+//! control in the same move; and 63 more turned out to be proven ALREADY —
+//! see [`NEGATIVE_CONTROLS`]'s own doc for all shapes. The backlog now
+//! stands at 59 of 129, and every one of those 59 is a `vault.md` lock with
+//! no existing proof of its own.
 
 use crate::expectations::{BIKE_ROOM, HANDOVER_ROOM, LOOP_ROOM, VAULT_ROOM, YEAR_ROOM};
 use crate::{expectations, lock};
@@ -96,7 +98,10 @@ pub enum Strength {
 
 /// **Every lock this build has actually proven failable, so far.**
 ///
-/// 68 entries, of four different shapes.
+/// 70 entries, of five different shapes: 62 blanket and 8 discriminating.
+/// Quote the discriminating count as eight, with one constructed positive —
+/// never as a bare eight; see the note on `tests/fair_lock.rs` below for
+/// why.
 ///
 /// Five are freshly written, landing with their lock in the same slice:
 /// `tests/desk_lock.rs` replays Run 23's exact real regression (a
@@ -123,6 +128,21 @@ pub enum Strength {
 /// the lock demonstrably tells the two states apart either way — but they
 /// are different claims about how much of the scenario is observed versus
 /// inferred, and `Strength::Discriminating` collapses that difference.
+/// Carded rather than split into a third variant: one entry needing the
+/// distinction is prose; a second would be evidence it belongs in the type.
+///
+/// Two are locks that were REWRITTEN rather than born here.
+/// `tests/piano_lock.rs` covers both: April's and August's own check-in
+/// locks used to read `{"kind": "rhythm", ...}` — a listing over every
+/// rhythm — and a later, unrelated, entirely correct act (the operator
+/// dropping the reminder, archived in December) silently excluded the
+/// piano from that listing by the time every lock runs against the
+/// finished room, failing a question that was actually settled on its own
+/// day. Rewritten to name `rhythm:sit-at-the-piano` directly, the same way
+/// this room's own December lock on this rhythm already does. The fix and
+/// the control are one move: each rewritten lock is proven to hold once
+/// archived (the false failure is gone) and to still redden when the
+/// check-in genuinely was never written (the real failure still works).
 ///
 /// One is `vault_room.rs`'s own: the everyday-listing count lock, already
 /// proven by three real cases (nobody archived, the wrong two archived,
@@ -192,6 +212,23 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
                it wrote the answer where the fair cannot be walked to it",
         file: "tests/fair_lock.rs",
         function: "the_fair_college_lock_reds_when_no_connection_is_drawn",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::VAULT_ROOM,
+        lock: "Phase 4 — April: no loop carries the twelfth as a check-in, so the piano's \
+               record of being played is short a turn",
+        file: "tests/piano_lock.rs",
+        function: "aprils_lock_reds_when_the_check_in_was_never_written",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::VAULT_ROOM,
+        lock: "Phase 8 — August: no loop carries the eleventh as a check-in, so the last \
+               logged turn at the piano is missing and December's third silence starts on the \
+               wrong day",
+        file: "tests/piano_lock.rs",
+        function: "augusts_lock_reds_when_the_check_in_was_never_written",
         strength: Strength::Discriminating,
     },
     NegativeControl {
@@ -724,10 +761,6 @@ pub const PENDING: &[Pending<'static>] = &[
     },
     Pending {
         room: VAULT_ROOM,
-        lock: "Phase 4 — April: no loop carries the twelfth as a check-in, so the piano's record of being played is short a turn",
-    },
-    Pending {
-        room: VAULT_ROOM,
         lock: "Phase 5 — May: nothing on Teddy carries this sitting's own day, so the one fact that rules him out as the cat's sitter is not on record",
     },
     Pending {
@@ -769,10 +802,6 @@ pub const PENDING: &[Pending<'static>] = &[
     Pending {
         room: VAULT_ROOM,
         lock: "Phase 8 — August: nothing on the shed carries this sitting's own day, so the fourth month of going round on it is not on record for December to count",
-    },
-    Pending {
-        room: VAULT_ROOM,
-        lock: "Phase 8 — August: no loop carries the eleventh as a check-in, so the last logged turn at the piano is missing and December's third silence starts on the wrong day",
     },
     Pending {
         room: VAULT_ROOM,
