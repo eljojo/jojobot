@@ -388,6 +388,42 @@ impl Jojobot {
                          the software ships none",
             }),
         };
+        // **A declared type, named beside the kinds — the same block, because
+        // it is the one place that answers what vocabulary this instance
+        // has.** A declared type was invisible from where a cold agent
+        // stands: the boot named every shipped kind and not one declared
+        // type, and every phase of a long-running session is deliberately
+        // fresh, so an earlier session's own catalogue fetch buys a later one
+        // nothing. The only path back was guessing a type name that does not
+        // exist and reading the refusal's own candidate list — which
+        // presupposes already suspecting one exists. Read independently of
+        // `kinds`: a type roster outage must not read as a kind vocabulary
+        // outage, or the other way round.
+        let mut vocabulary = vocabulary;
+        match self.memory.declared_types().await {
+            Ok(types) => {
+                let mut named: Vec<serde_json::Value> = types
+                    .iter()
+                    .map(|declared| {
+                        serde_json::json!({
+                            "type": declared.name,
+                            "origin": declared.origin.as_token(),
+                        })
+                    })
+                    .collect();
+                named.sort_by_key(|t| t["type"].as_str().unwrap_or("").to_string());
+                vocabulary["types_available"] = serde_json::json!(true);
+                vocabulary["types"] = serde_json::json!(named);
+            }
+            Err(_) => {
+                vocabulary["types_available"] = serde_json::json!(false);
+                vocabulary["types"] = serde_json::json!([]);
+                vocabulary["types_note"] = serde_json::json!(
+                    "the declared types are not readable right now, so this is not a claim \
+                     that the software declares none"
+                );
+            }
+        }
         let snapshot =
             serde_json::json!({ "entities": entities, "mail": mail, "vocabulary": vocabulary });
         // **Only after the identity resolved.** A name that is no bot boots
@@ -1172,6 +1208,96 @@ mod tests {
                 .is_some_and(|note| !note.trim().is_empty()),
             "an unreadable vocabulary came back as a bare marker, so nothing tells a caller \
              this is not a build that ships none: {unread}"
+        );
+    }
+
+    /// **A declared type is named beside the kinds, at a cold boot.** Before
+    /// this, a declared type was invisible from where a cold agent stands:
+    /// the boot named every shipped kind and not one declared type, so a
+    /// session with no memory of another session's own catalogue fetch had
+    /// no proactive path back to a name like `trip` — only a reactive one,
+    /// guessing a type name that does not exist and reading the refusal's
+    /// own candidate list.
+    #[tokio::test]
+    async fn a_cold_boot_names_every_declared_type_beside_the_kinds() {
+        let memory = Arc::new(InMemoryMemory::booted());
+        crate::seed::ensure_kinds(&(memory.clone() as Arc<dyn Memory>))
+            .await
+            .expect("the build's kinds are written");
+        crate::seed::ensure_shipped_types(&(memory.clone() as Arc<dyn Memory>))
+            .await
+            .expect("the build's shipped types are written");
+        let boxes = Arc::new(InMemoryMailboxes::knowing_any_owner());
+        let jojobot = Jojobot::new(
+            memory,
+            Arc::new(SpySearch::default()),
+            boxes,
+            Arc::new(InMemorySessions::new()),
+            Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+            crate::harness::seeded_registry(),
+        );
+        make_box(&jojobot, "dev").await;
+        let read = boot(&jojobot, "dev").await;
+        assert_eq!(
+            read["snapshot"]["vocabulary"]["types_available"], true,
+            "a store that answers did not read its declared types as available: {read}"
+        );
+        let types = read["snapshot"]["vocabulary"]["types"]
+            .as_array()
+            .expect("a types array");
+        assert!(
+            types.iter().any(|t| t["type"] == "trip"),
+            "the shipped trip type is not named among the boot's declared types: {read}"
+        );
+    }
+
+    /// **The two vocabularies are read independently, and a sabotage of one
+    /// must not redden the other.** `Down::Vocabulary` fails only
+    /// `declared_kinds`; `Down::TypeRoster` fails only `declared_types` — a
+    /// shared flag would have one outage silently pass for the other.
+    #[tokio::test]
+    async fn a_type_roster_outage_does_not_read_as_a_kind_vocabulary_outage_or_the_reverse() {
+        let memory = Arc::new(InMemoryMemory::booted());
+        crate::seed::ensure_kinds(&(memory.clone() as Arc<dyn Memory>))
+            .await
+            .expect("the build's kinds and types are written");
+        let boxes = Arc::new(InMemoryMailboxes::knowing_any_owner());
+
+        let types_down = Jojobot::new(
+            Arc::new(DownMemory(Down::TypeRoster, memory.clone())),
+            Arc::new(SpySearch::default()),
+            boxes.clone(),
+            Arc::new(InMemorySessions::new()),
+            Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+            crate::harness::seeded_registry(),
+        );
+        make_box(&types_down, "dev").await;
+        let read = boot(&types_down, "dev").await;
+        assert_eq!(
+            read["snapshot"]["vocabulary"]["types_available"], false,
+            "a down type roster did not read as unavailable: {read}"
+        );
+        assert_eq!(
+            read["snapshot"]["vocabulary"]["available"], true,
+            "a down type roster took the kind vocabulary down with it: {read}"
+        );
+
+        let kinds_down = Jojobot::new(
+            Arc::new(DownMemory(Down::Vocabulary, memory)),
+            Arc::new(SpySearch::default()),
+            boxes,
+            Arc::new(InMemorySessions::new()),
+            Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+            crate::harness::seeded_registry(),
+        );
+        let read = boot(&kinds_down, "dev").await;
+        assert_eq!(
+            read["snapshot"]["vocabulary"]["available"], false,
+            "a down kind vocabulary did not read as unavailable: {read}"
+        );
+        assert_eq!(
+            read["snapshot"]["vocabulary"]["types_available"], true,
+            "a down kind vocabulary took the declared types down with it: {read}"
         );
     }
 
