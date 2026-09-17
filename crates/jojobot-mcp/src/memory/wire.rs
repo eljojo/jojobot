@@ -53,6 +53,14 @@ pub(crate) fn fact_json(
         // `"happened_at":null` on the wire, so a consumer here does read the
         // bare key rather than only its value.
         "happened_at": fact.happened_at.map(|day| day.to_string()),
+        // **The far end of the same span, and it is meaningless without the
+        // key above.** `happened_through` is never the far end of nothing —
+        // see [`Fact::happened_through`] — so it earns the same present-and-
+        // null treatment `happened_at` gets rather than the omit-when-empty
+        // treatment `stale_after` gets below: a caller that wrote a span's
+        // end must be able to read it back, through this same key, beside
+        // its start.
+        "happened_through": fact.happened_through.map(|day| day.to_string()),
         // **The other clock, and it is not the one above.** `date` says when
         // the claim is true OF; this says when jojobot took the record in. They
         // disagree on every backfill and on every booking, and a reader
@@ -453,6 +461,48 @@ mod tests {
         assert!(
             !serialised.contains("zzzzzz") && !serialised.contains("badge"),
             "serde carries the badge out: {serialised}",
+        );
+    }
+
+    /// 🚨 **A span's far end reaches the caller, beside its start.**
+    ///
+    /// `happened_through` is a real, stored, domain-correct field — migrated
+    /// into its own column, round-tripped through the store, covered by the
+    /// domain's own contract tests — and until now this renderer never put
+    /// it on the wire at all: a caller could write the end of a span and
+    /// never read it back, through any verb. Proven the same way
+    /// `happened_at` already is above it: both ends present when both were
+    /// given.
+    #[test]
+    fn a_facts_happened_through_reaches_the_caller_beside_happened_at() {
+        let fact = Fact {
+            id: jojobot_domain::memory::FactId("f1".into()),
+            home: EntityId::person("person:alpha"),
+            subject: EntityId::person("person:alpha"),
+            content: "A festival that ran more than one day".into(),
+            details: None,
+            provenance: Provenance::Testimony,
+            standing: Standing::Settled,
+            status: FactStatus::Active,
+            recorded_at: jiff::civil::date(2026, 4, 20),
+            happened_at: Some(jiff::civil::date(2026, 4, 18)),
+            happened_through: Some(jiff::civil::date(2026, 4, 20)),
+            inserted_at: None,
+            stale_after: None,
+            edge: None,
+            fields: Default::default(),
+            refs: Vec::new(),
+            derived_from: None,
+            stands_for: Vec::new(),
+        };
+        let served = fact_json(&fact, jiff::civil::date(2026, 4, 20), None).to_string();
+        assert!(
+            served.contains("\"happened_at\":\"2026-04-18\""),
+            "the span's start did not reach the caller: {served}",
+        );
+        assert!(
+            served.contains("\"happened_through\":\"2026-04-20\""),
+            "the span's far end did not reach the caller: {served}",
         );
     }
 }
