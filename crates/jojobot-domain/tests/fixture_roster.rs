@@ -335,6 +335,7 @@ const ROSTER: &[&str] = &[
     "thing:the-furnace",
     "thing:torque-wrench",
     "thing:trail-email",
+    "topic:the-five-words",
     "topic:widgets",
     "work:first-mix",
     "work:phi",
