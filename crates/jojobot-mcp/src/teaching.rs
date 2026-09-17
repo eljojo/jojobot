@@ -608,6 +608,81 @@ mod tests {
         );
     }
 
+    /// **The kind check is load-bearing, not decorative.** A cadence is
+    /// fields, and fields are not restricted to a rhythm — a thing answers
+    /// whatever keys it carries whether or not anybody declared a type for
+    /// them, and `carriers()` names no kind either. So a non-rhythm thing
+    /// holding a due moment is not a hypothetical this product forbids; it
+    /// is exactly what the model permits, and the teaching's own words —
+    /// "a rhythm's cadence" — would be wrong about it.
+    #[tokio::test]
+    async fn archiving_a_non_rhythm_things_claim_with_a_due_moment_does_not_teach_rhythm_archive() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+        ensure(&jojobot, "thing:kettle").await;
+
+        // Opens a schedule directly on an ordinary thing — not a rhythm.
+        capture_as(
+            &jojobot,
+            &sid,
+            CaptureArgs {
+                fields: Some(
+                    [
+                        ("cadence_days".to_string(), "7".to_string()),
+                        ("advances_from".to_string(), "check_in_date".to_string()),
+                        ("counts_from".to_string(), "2026-08-01".to_string()),
+                    ]
+                    .into_iter()
+                    .collect(),
+                ),
+                ..capture_args("thing:kettle", "descale it regularly")
+            },
+        )
+        .await;
+
+        // The premise the rest of the case depends on: the due moment is
+        // actually there before anything gets archived.
+        let opened = json_of(
+            &jojobot
+                .recall(Parameters(recall_args("thing:kettle")))
+                .await
+                .expect("recall ok"),
+        );
+        assert_eq!(
+            opened["objects"][0]["fields"]["due_on"], "2026-08-08",
+            "the fixture has to actually carry an open schedule before archiving proves \
+             anything: {opened}"
+        );
+
+        let aside = capture_as(
+            &jojobot,
+            &sid,
+            capture_args("thing:kettle", "the handle is loose"),
+        )
+        .await;
+        let address = address_of(&aside);
+
+        let archived = json_of(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    sid: Some(sid.clone()),
+                    status: Some("archived".into()),
+                    ..update_args(&address)
+                }))
+                .await
+                .expect("update ok"),
+        );
+        assert!(
+            !archived
+                .get("teaching")
+                .and_then(|t| t.as_array())
+                .is_some_and(|t| t.contains(&serde_json::json!(RHYTHM_ARCHIVE_TEACHING))),
+            "thing:kettle is not a rhythm, and the teaching's own words are about a rhythm's \
+             cadence: {archived}"
+        );
+    }
+
     /// **The trigger is a claim reaching the session, not the call.** A
     /// search that matches nothing has not touched the domain, so it must
     /// not spend the session's one teaching on an empty answer.
