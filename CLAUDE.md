@@ -333,7 +333,11 @@ Shipped and live:
 > the engine checks. A session's chronology comes back as its newest entries
 > under a character budget, sized on what an entry renders as rather than on
 > its text alone; **both the boot and the wrap answer through that budget**,
-> and the response states the full length and what it left out. And
+> and the response states the full length and what it left out. **A bot's own
+> records are capped by COUNT rather than by length**: a writer marks which ones
+> it wants carried, a boot serves at most a fixed number of those, and it names
+> what it left behind rather than shortening any of them — a cut record reads
+> like a whole one, so truncating is the one thing the cap must not do. And
 > **mailbox counts are scoped to the caller** — the boxes a bot drains come back
 > with their per-state counts, every other box by name only, so existence stays
 > visible (a writer needs it) while somebody else's queue stops posing "is that
