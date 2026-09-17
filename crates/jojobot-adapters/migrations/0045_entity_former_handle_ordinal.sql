@@ -10,17 +10,13 @@
 --
 -- `ordinal` is this table's own per-key sequence, the same shape
 -- `field_write` and `fact_stands_for` already keep: the primary key moves
--- to (former_handle, ordinal), so every event is kept, and a lookup reads
--- the highest ordinal for a former handle to get the newest one — the same
--- newest-write-wins rule every other repeated write in this store follows.
+-- to (former_handle, ordinal) in the two migrations after this one, so
+-- every event is kept, and a lookup reads the highest ordinal for a
+-- former handle to get the newest one — the same newest-write-wins rule
+-- every other repeated write in this store follows.
 --
--- `former_handle` is also widened from VARCHAR(64) to VARCHAR(191): the
--- domain accepts a handle up to 128 characters, and 191 is the width every
--- other indexed handle-or-badge column already uses (`entity.id`,
--- `fact.edge_object`). At 64, a rename to or from a handle over that length
--- failed outright under the store's strict mode.
-ALTER TABLE entity_former_handle
-    MODIFY COLUMN former_handle VARCHAR(191) NOT NULL,
-    ADD COLUMN ordinal INT NOT NULL DEFAULT 1,
-    DROP PRIMARY KEY,
-    ADD PRIMARY KEY (former_handle, ordinal);
+-- This clause alone, split from three more that used to ride in the same
+-- ALTER (rule 106): see 0045_entity_former_handle_width and the two
+-- 0045_entity_former_handle_key_* files for the rest of what this comment
+-- used to describe in one statement.
+ALTER TABLE entity_former_handle ADD COLUMN ordinal INT NOT NULL DEFAULT 1;

@@ -1,0 +1,11 @@
+-- `former_handle` widened from VARCHAR(64) to VARCHAR(191): the domain
+-- accepts a handle up to 128 characters, and 191 is the width every other
+-- indexed handle-or-badge column already uses (`entity.id`,
+-- `fact.edge_object`). At 64, a rename to or from a handle over that length
+-- failed outright under the store's strict mode.
+--
+-- One clause on its own, split out of what used to be one ALTER carrying
+-- this and three more (rule 106): this store applies DDL clause by clause
+-- and does not roll it back, so a death between clauses left the ledger
+-- saying a change had landed when only part of it had.
+ALTER TABLE entity_former_handle MODIFY COLUMN former_handle VARCHAR(191) NOT NULL;

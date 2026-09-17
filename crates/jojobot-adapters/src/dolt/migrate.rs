@@ -110,6 +110,17 @@ enum Leaves {
     /// over that pair is the first migration here that leaves an index rather
     /// than a table or a column.
     Index(&'static str, &'static str),
+    /// The index this statement removes. **The same question as [`Index`],
+    /// asked the other way round** — the same pairing [`NoTable`] is to
+    /// [`Table`].
+    ///
+    /// A `DROP` before an `ADD` of the same name needs this: `Index` alone
+    /// answers "yes" for the old index that is still there when the drop has
+    /// not landed, so a start after an interruption cannot tell "not yet
+    /// dropped" from "already dropped, and the add is what is missing." This
+    /// asks the one the add's own [`Index`] check cannot: whether the name is
+    /// gone.
+    NoIndex(&'static str, &'static str),
     /// The type this statement leaves that column declared as — the shape of a
     /// statement that changes a column rather than adding one.
     ///
@@ -136,6 +147,7 @@ impl Leaves {
             | Leaves::Column(t, _)
             | Leaves::NoRows(t, _)
             | Leaves::Index(t, _)
+            | Leaves::NoIndex(t, _)
             | Leaves::ColumnType(t, _, _) => t,
         }
     }
@@ -148,6 +160,7 @@ impl Leaves {
             Leaves::Column(t, c) => column_exists(pool, t, c).await?,
             Leaves::NoRows(t, condition) => !any_row_answers(pool, t, condition).await?,
             Leaves::Index(t, i) => index_exists(pool, t, i).await?,
+            Leaves::NoIndex(t, i) => !index_exists(pool, t, i).await?,
             Leaves::ColumnType(t, c, declared) => column_is(pool, t, c, declared).await?,
         })
     }
@@ -403,9 +416,24 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         leaves: Leaves::Table("fact_stands_for"),
     },
     Migration {
+        version: "0045_entity_former_handle_width",
+        sql: include_str!("../../migrations/0045_entity_former_handle_width.sql"),
+        leaves: Leaves::ColumnType("entity_former_handle", "former_handle", "varchar(191)"),
+    },
+    Migration {
         version: "0045_entity_former_handle_ordinal",
         sql: include_str!("../../migrations/0045_entity_former_handle_ordinal.sql"),
         leaves: Leaves::Column("entity_former_handle", "ordinal"),
+    },
+    Migration {
+        version: "0045_entity_former_handle_key_drop",
+        sql: include_str!("../../migrations/0045_entity_former_handle_key_drop.sql"),
+        leaves: Leaves::NoIndex("entity_former_handle", "PRIMARY"),
+    },
+    Migration {
+        version: "0045_entity_former_handle_key_add",
+        sql: include_str!("../../migrations/0045_entity_former_handle_key_add.sql"),
+        leaves: Leaves::Index("entity_former_handle", "PRIMARY"),
     },
     Migration {
         version: "0046_fact_status_archived",
@@ -866,7 +894,10 @@ mod tests {
         "0042_entity_former_handle",
         "0043_message_sender_mail_waiting",
         "0044_fact_stands_for",
+        "0045_entity_former_handle_width",
         "0045_entity_former_handle_ordinal",
+        "0045_entity_former_handle_key_drop",
+        "0045_entity_former_handle_key_add",
         "0046_fact_status_archived",
         "0047_fact_write_status_archived",
         "0048_session_served_chars",
@@ -2304,6 +2335,95 @@ mod tests {
         .execute(&pool)
         .await
         .expect("…and the cell takes the token the old width refused");
+
+        store.stop().await;
+    }
+
+    /// **The shape `0045_entity_former_handle_key_add` declares is the one
+    /// that recovers it.**
+    ///
+    /// The old `0045` was one `ALTER` carrying four clauses — a width change,
+    /// a new column, and a primary key swap — and its own landed-check asked
+    /// only about the column. A death after the column landed but before the
+    /// key swap left the table on the single-column key behind a ledger
+    /// saying the whole change was in.
+    ///
+    /// Split into one clause per file, the riskiest pair is the key swap
+    /// itself: MySQL refuses `ADD PRIMARY KEY` while one already stands, so
+    /// the drop and the add are two files, and the table carries no primary
+    /// key between them. This drives the real list, the way `0018`'s own
+    /// test does. The schema is put back to the state a death between the
+    /// drop and the add leaves — the key already dropped, the add's ledger
+    /// row gone, its marker committed — and the start has to finish the swap
+    /// alone: nothing but the add migration can put a `PRIMARY` index back
+    /// once the drop has run, so [`Leaves::Index`] answers "not yet reached"
+    /// here rather than the false "already reached" the old single-column
+    /// check would have given `Leaves::Column("entity_former_handle",
+    /// "ordinal")`.
+    #[tokio::test]
+    async fn an_interrupted_primary_key_swap_is_recognized_by_whether_the_key_is_there() {
+        let scratch = Scratch::new("migrate-interrupted-key-swap");
+        let path = scratch.0.clone();
+        std::mem::forget(scratch);
+        let mut store = crate::dolt::Dolt::start(&path, free_port())
+            .await
+            .expect("the store comes up");
+        let pool = store
+            .database("keyswappartway")
+            .await
+            .expect("a database of its own");
+
+        run(&pool).await.expect("the schema");
+
+        // The state a death in the window leaves when the add did NOT take
+        // effect: the drop already landed (no primary key stands), the add's
+        // ledger row taken away, its marker committed.
+        sqlx::raw_sql("ALTER TABLE entity_former_handle DROP PRIMARY KEY")
+            .execute(&pool)
+            .await
+            .expect("the key goes back to dropped");
+        sqlx::query("DELETE FROM schema_migration WHERE version = ?")
+            .bind("0045_entity_former_handle_key_add")
+            .execute(&pool)
+            .await
+            .expect("the ledger row goes");
+        mark_begun(&pool, "0045_entity_former_handle_key_add")
+            .await
+            .expect("the marker lands");
+
+        assert_eq!(
+            run(&pool).await.expect("the start completes the schema"),
+            vec!["0045_entity_former_handle_key_add".to_string()],
+            "the key add that did NOT land is applied on its own, not the whole 0045 replayed",
+        );
+
+        // **Read by a route that is not the probe**: the composite key is
+        // what the swap is FOR, so the store enforcing it is the evidence. A
+        // former handle past the old sixty-four-byte width, written twice at
+        // two different ordinals, proves the width and the key together —
+        // either one still wrong and this fails: too narrow refuses the
+        // insert outright, and a key that never moved off `former_handle`
+        // alone refuses the second row as a duplicate.
+        let long_handle = format!("person:{}", "a".repeat(100));
+        sqlx::query(
+            "INSERT INTO entity_former_handle (former_handle, badge, changed_at, ordinal)
+             VALUES (?, 'badge0001', '2026-01-01', 1)",
+        )
+        .bind(&long_handle)
+        .execute(&pool)
+        .await
+        .expect("the first event lands at the widened former_handle");
+        sqlx::query(
+            "INSERT INTO entity_former_handle (former_handle, badge, changed_at, ordinal)
+             VALUES (?, 'badge0002', '2026-01-02', 2)",
+        )
+        .bind(&long_handle)
+        .execute(&pool)
+        .await
+        .expect(
+            "…and a second event under the same former handle, at a different ordinal, is kept \
+             rather than colliding on a key that never moved",
+        );
 
         store.stop().await;
     }
