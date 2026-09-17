@@ -183,7 +183,10 @@ impl Jojobot {
                 format!(
                     "{carried_count} of {total_in_force} rules in force are carried here — the \
                      ones marked to carry. The rest are at home, not lost, and some of them may \
-                     still bind this bot: recall {} with facts: true to read them all.",
+                     still bind this bot: recall {} with facts: true to read them all. To mark a \
+                     rule so a future boot carries it, write it with fields: {{\"starred\": \
+                     \"true\"}} — that is the only thing a boot checks, and the cap above is how \
+                     many marked seats fit, never a selector among them.",
                     bot.as_str()
                 )
                 .into(),

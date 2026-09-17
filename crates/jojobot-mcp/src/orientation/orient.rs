@@ -1793,6 +1793,11 @@ mod tests {
             note.contains("1 of 2") && note.contains("bot:gamma") && note.contains("facts"),
             "{note}"
         );
+        assert!(
+            note.contains("starred"),
+            "the note that says rules were left home never names the key that keeps one, so the \
+             only path to it is the diff: {note}"
+        );
     }
 
     /// **One response never contradicts itself about which boxes exist.**
