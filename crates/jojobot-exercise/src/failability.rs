@@ -44,10 +44,10 @@
 //! count was the finding: the number of locks nobody had yet proven
 //! failable, and it was not a number anybody had before this gate walked
 //! every shipped room and counted. Since then, one lock shipped with its
-//! control already proven, and 62 more turned out to be proven ALREADY —
+//! control already proven, and 63 more turned out to be proven ALREADY —
 //! see [`NEGATIVE_CONTROLS`]'s own doc for both. The backlog now stands at
-//! 66 of 129, and every one of those 66 is a `vault.md` lock, because
-//! `vault.md` is the one shipped room with no driver proving its own locks.
+//! 65 of 129, and every one of those 65 is a `vault.md` lock with no
+//! existing proof of its own.
 
 use crate::expectations::{BIKE_ROOM, HANDOVER_ROOM, LOOP_ROOM, VAULT_ROOM, YEAR_ROOM};
 use crate::{expectations, lock};
@@ -74,13 +74,17 @@ pub struct NegativeControl<'a> {
 
 /// **Every lock this build has actually proven failable, so far.**
 ///
-/// 63 entries, of two different shapes.
+/// 64 entries, of three different shapes.
 ///
 /// One is the desk's own: `tests/desk_lock.rs` replays Run 23's exact real
 /// regression (a `clear_fields` write nobody asked for, wiping the desk's
 /// return window) and proves the lock reddens for it, then proves it holds
 /// when the window is left alone. This lock and its control landed together;
 /// nothing was retrofit.
+///
+/// One is `vault_room.rs`'s own: the everyday-listing count lock, already
+/// proven by three real cases (nobody archived, the wrong two archived,
+/// exactly the right one archived) that were simply never registered.
 ///
 /// The other 62 were already proven and simply never registered.
 /// `bike_room.rs`, `loop_room.rs`, `handover_room.rs` and `year_room.rs` each
@@ -92,9 +96,8 @@ pub struct NegativeControl<'a> {
 /// `every_lock_holds_once_the_year_is_worked`) proves every one holds once
 /// the room's own goal is actually worked. Both run for real, through the
 /// served surface, on every `cargo test` — the proof simply was not named
-/// here. `vault.md` has no such driver yet — `vault_room.rs` proves one
-/// lock, not all sixty-six — which is why every one of its locks is still
-/// in [`PENDING`].
+/// here. `vault.md` has no such driver — its own locks stay in [`PENDING`]
+/// except the one `vault_room.rs` already covers.
 pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
     NegativeControl {
         room: expectations::VAULT_ROOM,
@@ -103,6 +106,14 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
                find the deadline that closed",
         file: "tests/desk_lock.rs",
         function: "the_desk_history_lock_reds_when_the_window_is_cleared_outright",
+    },
+    NegativeControl {
+        room: expectations::VAULT_ROOM,
+        lock: "Phase 13 — later December: the everyday listing of people does not say it left \
+               exactly one out, so a browse with no reason to know Hugo ever existed has no way \
+               to tell an empty vault from one quietly missing a name",
+        file: "tests/vault_room.rs",
+        function: "the_count_lock_reds_when_nobody_was_archived",
     },
     NegativeControl {
         room: BIKE_ROOM,
@@ -487,11 +498,12 @@ pub struct Pending<'a> {
     pub lock: &'a str,
 }
 
-/// **The backlog.** Every lock `vault.md` ships: it has no driver proving
-/// its own locks the way `bike_room.rs`, `loop_room.rs`, `handover_room.rs`
-/// and `year_room.rs` each prove theirs — see [`NEGATIVE_CONTROLS`]'s own
-/// doc — so nobody has yet written a control for any of them. As a control
-/// gets written for one, move its entry from here to [`NEGATIVE_CONTROLS`].
+/// **The backlog.** Every `vault.md` lock nobody has proven yet. `vault.md`
+/// has no driver proving its own locks the way `bike_room.rs`,
+/// `loop_room.rs`, `handover_room.rs` and `year_room.rs` each prove theirs
+/// — see [`NEGATIVE_CONTROLS`]'s own doc — and `vault_room.rs` covers only
+/// one lock, already moved there. As a control gets written for one, move
+/// its entry from here to [`NEGATIVE_CONTROLS`].
 pub const PENDING: &[Pending<'static>] = &[
     Pending {
         room: VAULT_ROOM,
@@ -752,10 +764,6 @@ pub const PENDING: &[Pending<'static>] = &[
     Pending {
         room: VAULT_ROOM,
         lock: "Phase 13 — later December: an ordinary browse of every person still turns up Hugo after he was taken out, so archiving him did not actually remove him from the everyday read that finds everyone else",
-    },
-    Pending {
-        room: VAULT_ROOM,
-        lock: "Phase 13 — later December: the everyday listing of people does not say it left exactly one out, so a browse with no reason to know Hugo ever existed has no way to tell an empty vault from one quietly missing a name",
     },
 ];
 
