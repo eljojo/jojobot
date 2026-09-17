@@ -128,6 +128,7 @@ const ROSTER: &[&str] = &[
     "event:the-jotting",
     "event:the-june-trail-day",
     "event:erosion-review",
+    "event:kitchen-safety-course-oct-2026",
     "event:moe-open-mic",
     "event:otto-benefit-show",
     "event:leaving-party",

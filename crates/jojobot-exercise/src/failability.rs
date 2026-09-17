@@ -43,12 +43,12 @@
 //! control that would move a given entry to [`NEGATIVE_CONTROLS`]. That
 //! count was the finding: the number of locks nobody had yet proven
 //! failable, and it was not a number anybody had before this gate walked
-//! every shipped room and counted. Since then: seven locks shipped with a
+//! every shipped room and counted. Since then: eight locks shipped with a
 //! control freshly written for them; two more existing locks were REWRITTEN
 //! (kind-scoped to subject-scoped, fixing a false failure) and proven by a
 //! control in the same move; and 63 more turned out to be proven ALREADY —
 //! see [`NEGATIVE_CONTROLS`]'s own doc for all shapes. The backlog now
-//! stands at 57 of 129, and every one of those 57 is a `vault.md` lock with
+//! stands at 56 of 129, and every one of those 56 is a `vault.md` lock with
 //! no existing proof of its own.
 
 use crate::expectations::{BIKE_ROOM, HANDOVER_ROOM, LOOP_ROOM, VAULT_ROOM, YEAR_ROOM};
@@ -98,11 +98,12 @@ pub enum Strength {
 
 /// **Every lock this build has actually proven failable, so far.**
 ///
-/// 72 entries, of five different shapes: 62 blanket and 10 discriminating.
-/// Quote the discriminating count as ten, with one constructed positive —
-/// never as a bare ten; see the note on `tests/fair_lock.rs` below for why.
+/// 73 entries, of five different shapes: 62 blanket and 11 discriminating.
+/// Quote the discriminating count as eleven, with one constructed positive
+/// — never as a bare eleven; see the note on `tests/fair_lock.rs` below for
+/// why.
 ///
-/// Seven are freshly written, landing with their lock in the same slice:
+/// Eight are freshly written, landing with their lock in the same slice:
 /// `tests/desk_lock.rs` replays Run 23's exact real regression (a
 /// `clear_fields` write nobody asked for, wiping the desk's return window);
 /// `tests/wharf_lock.rs` replays another — a timing filed on an invented
@@ -113,18 +114,22 @@ pub enum Strength {
 /// claim's own timing (`happened_at`/`happened_through`) rather than the
 /// shipped `trip` type's own fields (`leaves_on`/`returns_on`);
 /// `tests/fair_lock.rs` proves a fifth, with a real half and a constructed
-/// one — see its own module doc; and `tests/spares_lock.rs` proves a sixth
+/// one — see its own module doc; `tests/spares_lock.rs` proves a sixth
 /// and seventh from one real call — a summary about two things filed on a
-/// topic, rather than a fresh touch on either thing itself. Each proves its
-/// lock reddens for the real mistake, then proves it holds when filed
-/// correctly. Nothing here was retrofit onto an older lock.
+/// topic, rather than a fresh touch on either thing itself; and
+/// `tests/course_lock.rs` proves an eighth — a course's span filed on an
+/// invented event rather than the college three months of facts already
+/// point to, provable only once `wire.rs`'s fact renderer actually put
+/// `happened_through` on the answer. Each proves its lock reddens for the
+/// real mistake, then proves it holds when filed correctly. Nothing here
+/// was retrofit onto an older lock.
 ///
-/// **`tests/fair_lock.rs` is not quite the same claim as the other six,
+/// **`tests/fair_lock.rs` is not quite the same claim as the other seven,
 /// and `Strength` does not currently say so.** Its negative is a verbatim
 /// replay — the real run's own capture call, unchanged. Its positive is
 /// constructed: no sitting in the real run ever drew the connection this
 /// room wants, so what the lock holds against is a plausible correct call
-/// nobody actually made, not an observed one. The other six replay both
+/// nobody actually made, not an observed one. The other seven replay both
 /// sides from the real run. Both are legitimate discriminating proofs —
 /// the lock demonstrably tells the two states apart either way — but they
 /// are different claims about how much of the scenario is observed versus
@@ -247,6 +252,15 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
                where a question about Teddy will not reach it",
         file: "tests/spares_lock.rs",
         function: "the_keys_lock_reds_when_only_the_summary_is_filed_on_the_topic",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::VAULT_ROOM,
+        lock: "Phase 10 — October: the course the operator actually started is not on record \
+               as a span with both ends, so a stretch of many Tuesdays reads as a single day \
+               or as prose a later question cannot compare a date against",
+        file: "tests/course_lock.rs",
+        function: "the_course_span_lock_reds_when_filed_on_an_invented_event",
         strength: Strength::Discriminating,
     },
     NegativeControl {
@@ -848,10 +862,6 @@ pub const PENDING: &[Pending<'static>] = &[
     Pending {
         room: VAULT_ROOM,
         lock: "Phase 10 — October: no loop carries the twenty-ninth as a check-in, so the last call before the course took Tuesdays is not on record and December cannot see what crowded it out",
-    },
-    Pending {
-        room: VAULT_ROOM,
-        lock: "Phase 10 — October: the course the operator actually started is not on record as a span with both ends, so a stretch of many Tuesdays reads as a single day or as prose a later question cannot compare a date against",
     },
     Pending {
         room: VAULT_ROOM,
