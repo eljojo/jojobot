@@ -43,10 +43,10 @@
 //! control that would move a given entry to [`NEGATIVE_CONTROLS`]. That
 //! count was the finding: the number of locks nobody had yet proven
 //! failable, and it was not a number anybody had before this gate walked
-//! every shipped room and counted. Since then: four locks shipped with a
+//! every shipped room and counted. Since then: five locks shipped with a
 //! control freshly written for them, and 63 more turned out to be proven
 //! ALREADY — see [`NEGATIVE_CONTROLS`]'s own doc for all three shapes. The
-//! backlog now stands at 62 of 129, and every one of those 62 is a
+//! backlog now stands at 61 of 129, and every one of those 61 is a
 //! `vault.md` lock with no existing proof of its own.
 
 use crate::expectations::{BIKE_ROOM, HANDOVER_ROOM, LOOP_ROOM, VAULT_ROOM, YEAR_ROOM};
@@ -96,20 +96,33 @@ pub enum Strength {
 
 /// **Every lock this build has actually proven failable, so far.**
 ///
-/// 67 entries, of four different shapes.
+/// 68 entries, of four different shapes.
 ///
-/// Four are freshly written, landing with their lock in the same slice:
+/// Five are freshly written, landing with their lock in the same slice:
 /// `tests/desk_lock.rs` replays Run 23's exact real regression (a
 /// `clear_fields` write nobody asked for, wiping the desk's return window);
 /// `tests/wharf_lock.rs` replays another — a timing filed on an invented
 /// entity rather than the furniture that already represents it;
 /// `tests/furnace_lock.rs` replays a third — a deadline filed on the
-/// service company rather than the thing it services; and
+/// service company rather than the thing it services;
 /// `tests/trip_lock.rs` replays a fourth — a trip's dates filed as a
 /// claim's own timing (`happened_at`/`happened_through`) rather than the
-/// shipped `trip` type's own fields (`leaves_on`/`returns_on`). Each proves
-/// its lock reddens for the real mistake, then proves it holds when filed
-/// correctly. Nothing here was retrofit onto an older lock.
+/// shipped `trip` type's own fields (`leaves_on`/`returns_on`); and
+/// `tests/fair_lock.rs` proves a fifth, with a real half and a constructed
+/// one — see its own module doc. Each proves its lock reddens for the real
+/// mistake, then proves it holds when filed correctly. Nothing here was
+/// retrofit onto an older lock.
+///
+/// **`tests/fair_lock.rs` is not quite the same claim as the other four,
+/// and `Strength` does not currently say so.** Its negative is a verbatim
+/// replay — the real run's own capture call, unchanged. Its positive is
+/// constructed: no sitting in the real run ever drew the connection this
+/// room wants, so what the lock holds against is a plausible correct call
+/// nobody actually made, not an observed one. The other four replay both
+/// sides from the real run. Both are legitimate discriminating proofs —
+/// the lock demonstrably tells the two states apart either way — but they
+/// are different claims about how much of the scenario is observed versus
+/// inferred, and `Strength::Discriminating` collapses that difference.
 ///
 /// One is `vault_room.rs`'s own: the everyday-listing count lock, already
 /// proven by three real cases (nobody archived, the wrong two archived,
@@ -170,6 +183,15 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
                question \"when am I next away\"",
         file: "tests/trip_lock.rs",
         function: "the_trip_dates_lock_reds_when_filed_as_happened_at_and_through",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::VAULT_ROOM,
+        lock: "Phase 9 — September: the fair carries no note from this sitting pointing at the \
+               college, so either the sitting never found where the certificate comes from or \
+               it wrote the answer where the fair cannot be walked to it",
+        file: "tests/fair_lock.rs",
+        function: "the_fair_college_lock_reds_when_no_connection_is_drawn",
         strength: Strength::Discriminating,
     },
     NegativeControl {
@@ -751,10 +773,6 @@ pub const PENDING: &[Pending<'static>] = &[
     Pending {
         room: VAULT_ROOM,
         lock: "Phase 8 — August: no loop carries the eleventh as a check-in, so the last logged turn at the piano is missing and December's third silence starts on the wrong day",
-    },
-    Pending {
-        room: VAULT_ROOM,
-        lock: "Phase 9 — September: the fair carries no note from this sitting pointing at the college, so either the sitting never found where the certificate comes from or it wrote the answer where the fair cannot be walked to it",
     },
     Pending {
         room: VAULT_ROOM,
