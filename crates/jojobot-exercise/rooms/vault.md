@@ -621,6 +621,17 @@ say     October: the thing that only works with Theta was either lost or given a
 recall {"kind": "rhythm", "history": "last_check_in"}
 carries "value":"2026-09-29"
 say     October: no loop carries the twenty-ninth as a check-in, so the last call before the course took Tuesdays is not on record and December cannot see what crowded it out
+
+# 🚨 **A SPAN, GIVEN AS ONE BREATH WITH BOTH ENDS IN IT.** The operator names
+# a start and a finish together — Tuesday evenings from the 6th to 10
+# November — which is `happened_at` and `happened_through` on one claim
+# rather than a start typed into prose and an end that never lands anywhere
+# a later read can compare against. Filed on the college, the same subject
+# June already used for what the course takes and when an intake begins.
+recall {"subject": "org:quahog-community-college", "facts": true}
+carries "happened_at":"2026-10-06"
+carries "happened_through":"2026-11-10"
+say     October: the course the operator actually started is not on record as a span with both ends, so a stretch of many Tuesdays reads as a single day or as prose a later question cannot compare a date against
 ```
 
 ## Phase 11 — November, four days before the trip
@@ -759,6 +770,21 @@ say     December: the phone's cover runs to 2028 and was given a note anyway, so
 recall {"fields": [{"key": "runs_out", "compare": "after", "value": "2026-12-06"}]}
 carries "runs_out":"2027-02-01"
 say     December: the key the operator dates windows by cannot be compared as a date, so the question "what runs out by the end of March" is unaskable and was answered, if at all, by reading every thing there is
+
+# 🚨 **THE SAME FIVE WINDOWS, ASKED FOR WITHOUT A KIND OR A HANDLE — BY THE
+# TYPE THE SOFTWARE SHIPS FOR THIS SHAPE, AND WITH THE ARITHMETIC DONE
+# RATHER THAN FIVE DATES ALREADY KNOWN.** Every lock above finds a window by
+# the exact day the operator gave it in the entry. This asks the plainer
+# question a real assistant actually gets — *what is overdue* — over
+# whatever kind each of the five happens to be filed under, and the answer
+# has to do the arithmetic itself: only the desk's return period has
+# actually passed by today, and the read has to leave the other four out
+# and say how many it dropped rather than shrinking silently.
+recall {"answers_type": "runs-out", "overdue": {"as_of": "2026-12-06"}}
+carries "runs_out":"2026-03-08"
+lacks   "runs_out":"2027-02-01"
+carries "overdue_excluded":4
+say     December: asking what is overdue across every runs_out thing, naming no kind, either misses the one window that has already passed or fails to say how many of the rest it correctly left out
 ```
 
 ## Phase 13 — later in December, what went quiet and why
@@ -863,6 +889,26 @@ recall {"subject": "person:hugo"}
 carries "archived"
 carries "reason":"
 say     later December: Hugo carries no archived reason, so a name the operator does not recognise is still standing in the vault as if it belonged there
+
+# 🚨 **THE OTHER CARRIER, FOUND THE SAME WAY — BY TYPE, NEVER BY KIND.** The
+# shed's own lock above proves `decide_by` landed by naming the project
+# outright; this proves the same record answers the shipped question that
+# names no project and no kind at all, over whatever kind a `decide_by`
+# thing happens to be filed under. The floor is the control: it moved to
+# done and got no `decide_by`, so it must not answer the type either.
+recall {"answers_type": "decide-by"}
+carries project:the-shed
+lacks   project:kitchen-floor
+say     later December: the shed cannot be found by the shipped decide-by question without naming it directly, so a general "what have I been putting off" would reach nothing where the operator's own key actually landed
+
+# 🚨 **AN ORDINARY BROWSE, READ AFTER THE FACT.** Hugo is taken out above;
+# this asks whether an everyday kind-only read — the one a session with no
+# reason to know he ever existed would make — still turns him up. Gayle is
+# the control: still standing, and the browse must still find her.
+recall {"kind": "person"}
+lacks   person:hugo
+carries person:gayle
+say     later December: an ordinary browse of every person still turns up Hugo after he was taken out, so archiving him did not actually remove him from the everyday read that finds everyone else
 ```
 
 ## What this room cannot measure
