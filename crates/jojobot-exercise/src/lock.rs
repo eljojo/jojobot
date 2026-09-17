@@ -99,6 +99,20 @@ pub enum Expect {
     AtLeast(usize, String),
 }
 
+/// **When a lock's query runs.** `Live` is every lock this format has ever
+/// had: the query goes to the room as it stands when the run finishes.
+/// `OwnPhase` is new and opt-in per lock (`window own-phase`, right beside
+/// `say`): the query is never sent live at all — the needles are matched
+/// against the boundary text taken right after the lock's OWN phase, sliced
+/// to the query's own subject when it names one. A lock silent about this
+/// is `Live`, unconditionally — nothing about an existing lock's behaviour
+/// changes by this variant existing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum When {
+    Live,
+    OwnPhase,
+}
+
 /// One lock.
 pub struct Lock {
     pub(crate) asks: Asks,
@@ -120,6 +134,13 @@ pub struct Lock {
     /// knowing which checks a build ships are different jobs, and the reader
     /// does not do the second.
     hatch: Option<Box<dyn crate::run::Checks>>,
+    pub(crate) when: When,
+    /// **The bare phase key**, kept apart from `name` because `OwnPhase`
+    /// needs to ask [`crate::run::Observed::across`] for it and `name`
+    /// already carries the authored sentence fused to it. `None` for a lock
+    /// written under no heading — `window own-phase` on one of those is
+    /// refused at parse time, since there is no boundary to name.
+    pub(crate) phase_key: Option<String>,
 }
 
 impl std::fmt::Debug for Lock {
@@ -130,6 +151,7 @@ impl std::fmt::Debug for Lock {
             .field("say", &self.say)
             .field("name", &self.name)
             .field("resolved", &self.hatch.is_some())
+            .field("when", &self.when)
             .finish()
     }
 }
@@ -235,6 +257,7 @@ fn one(lines: &[String], phase: Option<&str>) -> Result<Lock> {
     };
     let mut expects = Vec::new();
     let mut say = None;
+    let mut when = When::Live;
     for line in &lines[1..] {
         let (word, rest) = line
             .split_once(char::is_whitespace)
@@ -259,8 +282,28 @@ fn one(lines: &[String], phase: Option<&str>) -> Result<Lock> {
                 ));
             }
             "say" => say = Some(rest),
+            "window" => {
+                if rest != "own-phase" {
+                    bail!(
+                        "{rest:?} is not a window this format knows — the one word it takes is `own-phase`"
+                    );
+                }
+                if phase.is_none() {
+                    bail!(
+                        "a lock written under no phase heading has no boundary to name — \
+                         `window own-phase` only means something under a `## Phase N` heading",
+                    );
+                }
+                if !matches!(asks, Asks::Query { .. }) {
+                    bail!(
+                        "a lock naming a check has no query to window — `window own-phase` is for a verb-naming lock"
+                    );
+                }
+                when = When::OwnPhase;
+            }
             other => bail!(
-                "{other:?} asserts nothing — a lock says carries, lacks, at least N of, and say",
+                "{other:?} asserts nothing — a lock says carries, lacks, at least N of, say, or \
+                 window",
             ),
         }
     }
@@ -289,6 +332,8 @@ fn one(lines: &[String], phase: Option<&str>) -> Result<Lock> {
         say,
         name,
         hatch: None,
+        when,
+        phase_key: phase.map(str::to_string),
     })
 }
 
@@ -356,7 +401,33 @@ impl crate::run::Expectation for Lock {
                 };
             }
         };
-        let answer = seen.room.call(verb, args).await;
+        let answer = match self.when {
+            When::Live => seen.room.call(verb, args).await,
+            // **Never sent live at all.** The needles are matched against the
+            // boundary taken right after this lock's own phase, sliced to
+            // the query's own subject when it names one — see
+            // `crate::isolate::boundary_text` for why the slicing matters.
+            When::OwnPhase => {
+                let phase_key = self
+                    .phase_key
+                    .as_deref()
+                    .expect("window own-phase is refused at parse time under no phase heading");
+                let Some((_before, after)) = seen.across(phase_key) else {
+                    return crate::run::Outcome {
+                        name: self.name.clone(),
+                        held: false,
+                        applies: true,
+                        refused: true,
+                        saying: format!(
+                            "{}: this lock asks for its own phase's boundary, and none was \
+                             recorded for {phase_key:?}",
+                            self.say,
+                        ),
+                    };
+                };
+                crate::isolate::boundary_text(&after.world, args["subject"].as_str())
+            }
+        };
 
         // 🚨 **A REFUSED QUERY IS NOT AN ANSWER, AND COUNTING IN IT IS A
         // VERDICT ABOUT NOTHING.**
@@ -502,6 +573,89 @@ mod tests {
         )
         .expect("a negative with its positive is a real lock");
         assert_eq!(paired[0].expects.len(), 2);
+    }
+
+    /// **`window own-phase` parses, under a phase heading, and carries the
+    /// bare phase key rather than the fused name.**
+    #[test]
+    fn a_lock_may_window_its_own_phase_under_a_heading() {
+        let read = read(
+            "## Phase 1 — the room\n\n\
+             ```locks\n\
+             recall {\"subject\": \"person:milhouse\", \"facts\": true}\n\
+             carries \"one-marker\"\n\
+             say     phase 1 should not see a later write\n\
+             window  own-phase\n\
+             ```\n",
+        )
+        .expect("a windowed lock reads");
+        assert_eq!(read.len(), 1);
+        assert_eq!(read[0].when, When::OwnPhase);
+        assert_eq!(read[0].phase_key.as_deref(), Some("Phase 1"));
+    }
+
+    /// **A lock silent about `window` is `Live`, unconditionally** — the
+    /// default every existing lock in every shipped room already relies on.
+    #[test]
+    fn a_lock_that_never_mentions_window_is_live() {
+        let read = read(
+            "## Phase 1 — the room\n\n\
+             ```locks\n\
+             recall {\"subject\": \"person:milhouse\"}\n\
+             carries \"one-marker\"\n\
+             say     an ordinary lock\n\
+             ```\n",
+        )
+        .expect("an ordinary lock reads");
+        assert_eq!(read[0].when, When::Live);
+    }
+
+    /// 🚨 **`window own-phase` under no phase heading is refused**, because
+    /// there is no boundary to name — an unheaded lock has never had a phase.
+    #[test]
+    fn windowing_a_lock_under_no_phase_heading_is_refused() {
+        let refused = read(
+            "```locks\n\
+             recall {\"subject\": \"person:milhouse\"}\n\
+             carries \"one-marker\"\n\
+             say     an unheaded lock\n\
+             window  own-phase\n\
+             ```\n",
+        )
+        .expect_err("a windowed lock needs a phase to window to");
+        assert!(format!("{refused:#}").contains("no boundary"));
+    }
+
+    /// 🚨 **A word other than `own-phase` is refused, named.**
+    #[test]
+    fn windowing_on_an_unknown_word_is_refused() {
+        let refused = read(
+            "## Phase 1 — the room\n\n\
+             ```locks\n\
+             recall {\"subject\": \"person:milhouse\"}\n\
+             carries \"one-marker\"\n\
+             say     an unheaded lock\n\
+             window  every-phase\n\
+             ```\n",
+        )
+        .expect_err("only own-phase is a window this format knows");
+        assert!(format!("{refused:#}").contains("every-phase"));
+    }
+
+    /// 🚨 **A hatch has no query to window**, so `window own-phase` on one is
+    /// refused rather than silently ignored.
+    #[test]
+    fn windowing_a_named_check_is_refused() {
+        let refused = read(
+            "## Phase 1 — the room\n\n\
+             ```locks\n\
+             check   the_cost_reads_as_a_number\n\
+             say     what the pump cost did not normalise\n\
+             window  own-phase\n\
+             ```\n",
+        )
+        .expect_err("a named check has no query to window");
+        assert!(format!("{refused:#}").contains("check"));
     }
 
     /// **A lock with no sentence is refused.** A boolean sends a reader to the

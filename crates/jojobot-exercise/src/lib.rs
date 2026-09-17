@@ -30,6 +30,7 @@ pub mod agent;
 pub mod calls;
 pub mod checks;
 pub mod expectations;
+pub mod isolate;
 pub mod lock;
 pub mod playbook;
 pub mod room;
