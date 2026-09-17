@@ -7,7 +7,8 @@ use jojobot_domain::attention;
 
 use super::*;
 use crate::teaching::{
-    CLAIM_SUBJECT_DOMAIN, CLAIM_SUBJECT_TEACHING, CLAIMS_DOMAIN, CLAIMS_TEACHING,
+    CLAIM_DIRECTION_DOMAIN, CLAIM_DIRECTION_TEACHING, CLAIM_SUBJECT_DOMAIN, CLAIM_SUBJECT_TEACHING,
+    CLAIMS_DOMAIN, CLAIMS_TEACHING,
 };
 
 /// Arguments to `update_fact`.
@@ -331,6 +332,12 @@ impl Jojobot {
                 Err(refused) => return Ok(refused),
             },
         };
+        // **What THIS write sent, not what the fact ends up carrying.** The
+        // fact's own edge can already be set from an earlier write this call
+        // never touched, so the gate below reads the patch rather than the
+        // result — an edit naming neither `shape` nor `object` has no side
+        // to get wrong and must not spend the session's one teaching.
+        let drew_or_replaced_an_edge = patch.edge.is_some();
         // **A write that landed is never reported as failed** (rule 130): see
         // `capture`'s own note on the same shape.
         let (written, fold_behind) = match self.memory.update_fact(&address, patch).await {
@@ -367,6 +374,13 @@ impl Jojobot {
                     .await
                 {
                     crate::answer::note_teaching(&mut body, CLAIM_SUBJECT_TEACHING);
+                }
+                if drew_or_replaced_an_edge
+                    && self
+                        .first_contact(CLAIM_DIRECTION_DOMAIN, Some(&caller))
+                        .await
+                {
+                    crate::answer::note_teaching(&mut body, CLAIM_DIRECTION_TEACHING);
                 }
                 json_result(&body)
             }

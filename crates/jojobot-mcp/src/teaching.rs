@@ -150,6 +150,7 @@ mod tests {
     use jojobot_domain::memory::testing::InMemoryMemory;
     use jojobot_domain::session::testing::InMemorySessions;
     use jojobot_domain::teaching::testing::InMemoryTeachings;
+    use rmcp::handler::server::wrapper::Parameters;
 
     /// **Both halves in one case.** The first claim a session ever captures
     /// carries the teaching; the same session capturing a second one does
@@ -233,6 +234,184 @@ mod tests {
                 .and_then(|t| t.as_array())
                 .is_some_and(|t| t.contains(&serde_json::json!(CLAIM_DIRECTION_TEACHING))),
             "the same session drawing a second edge is not taught twice: {second_edge}"
+        );
+    }
+
+    /// **The same convention, reached through the verb that EDITS a claim.**
+    /// `update_fact` can also draw or replace an edge (`shape` with
+    /// `object`), and the question is identical: which side does the claim
+    /// belong on. The first such edit this session makes teaches it; the
+    /// second does not.
+    #[tokio::test]
+    async fn update_fact_drawing_an_edge_teaches_claim_direction_and_only_once() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+        ensure(&jojobot, "org:globex").await;
+        ensure(&jojobot, "org:mr-plow").await;
+
+        let first = capture_as(&jojobot, &sid, capture_args("alpha", "plays go")).await;
+        let address = address_of(&first);
+
+        let drawn = json_of(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    sid: Some(sid.clone()),
+                    shape: Some("membership".into()),
+                    object: Some("org:globex".into()),
+                    ..update_args(&address)
+                }))
+                .await
+                .expect("update ok"),
+        );
+        assert!(
+            drawn["teaching"]
+                .as_array()
+                .expect("a list")
+                .contains(&serde_json::json!(CLAIM_DIRECTION_TEACHING)),
+            "the first edge this session drew, through update_fact, must carry the direction \
+             teaching: {drawn}"
+        );
+
+        let redrawn = json_of(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    sid: Some(sid.clone()),
+                    shape: Some("membership".into()),
+                    object: Some("org:mr-plow".into()),
+                    ..update_args(&address)
+                }))
+                .await
+                .expect("update ok"),
+        );
+        assert!(
+            !redrawn
+                .get("teaching")
+                .and_then(|t| t.as_array())
+                .is_some_and(|t| t.contains(&serde_json::json!(CLAIM_DIRECTION_TEACHING))),
+            "the same session replacing an edge a second time is not taught twice: {redrawn}"
+        );
+    }
+
+    /// **The trigger is what THIS write sends, not what the fact ends up
+    /// carrying.** Unlike a fresh capture, an edited fact's edge can already
+    /// be set before this call runs, by an edit that named neither `shape`
+    /// nor `object` and so left it exactly as it was. Gating on the
+    /// resulting fact's edge would spend the teaching on a call that never
+    /// raised the question; gating on the write itself does not.
+    #[tokio::test]
+    async fn an_edit_that_leaves_the_edge_alone_does_not_teach_claim_direction() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+        ensure(&jojobot, "org:globex").await;
+        ensure(&jojobot, "org:mr-plow").await;
+
+        // A different session draws the edge, so THIS session's own contact
+        // with the domain has not happened yet.
+        let edged = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                shape: Some("membership".into()),
+                object: Some("org:globex".into()),
+                ..capture_args("beta", "rides with the club")
+            },
+        )
+        .await;
+        let address = address_of(&edged);
+
+        let content_only = json_of(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    sid: Some(sid.clone()),
+                    content: Some("rides with the club every week".into()),
+                    ..update_args(&address)
+                }))
+                .await
+                .expect("update ok"),
+        );
+        assert!(
+            !content_only
+                .get("teaching")
+                .and_then(|t| t.as_array())
+                .is_some_and(|t| t.contains(&serde_json::json!(CLAIM_DIRECTION_TEACHING))),
+            "the fact already carried an edge, but this edit named neither shape nor object: \
+             {content_only}"
+        );
+
+        // The domain is still unspent for this session: a genuine
+        // edge-drawing write still teaches.
+        let drawn = json_of(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    sid: Some(sid.clone()),
+                    shape: Some("membership".into()),
+                    object: Some("org:mr-plow".into()),
+                    ..update_args(&address)
+                }))
+                .await
+                .expect("update ok"),
+        );
+        assert!(
+            drawn["teaching"]
+                .as_array()
+                .expect("a list")
+                .contains(&serde_json::json!(CLAIM_DIRECTION_TEACHING)),
+            "the content-only edit must not have spent this session's one teaching: {drawn}"
+        );
+    }
+
+    /// **The one-teaching-per-session property holds ACROSS the two verbs,
+    /// not once per verb.** The domain is keyed by session and name alone;
+    /// whichever verb a session meets it through first spends it.
+    #[tokio::test]
+    async fn claim_direction_is_spent_once_across_update_fact_and_capture() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+        ensure(&jojobot, "org:globex").await;
+        ensure(&jojobot, "org:mr-plow").await;
+
+        let first = capture_as(&jojobot, &sid, capture_args("alpha", "plays go")).await;
+        let address = address_of(&first);
+
+        let drawn_by_update = json_of(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    sid: Some(sid.clone()),
+                    shape: Some("membership".into()),
+                    object: Some("org:globex".into()),
+                    ..update_args(&address)
+                }))
+                .await
+                .expect("update ok"),
+        );
+        assert!(
+            drawn_by_update["teaching"]
+                .as_array()
+                .expect("a list")
+                .contains(&serde_json::json!(CLAIM_DIRECTION_TEACHING)),
+            "update_fact must be able to spend the domain as the session's first edge: \
+             {drawn_by_update}"
+        );
+
+        let drawn_by_capture = capture_as(
+            &jojobot,
+            &sid,
+            CaptureArgs {
+                shape: Some("membership".into()),
+                object: Some("org:mr-plow".into()),
+                ..capture_args("alpha", "also sponsors mr plow")
+            },
+        )
+        .await;
+        assert!(
+            !drawn_by_capture
+                .get("teaching")
+                .and_then(|t| t.as_array())
+                .is_some_and(|t| t.contains(&serde_json::json!(CLAIM_DIRECTION_TEACHING))),
+            "capture must not re-teach a domain update_fact already spent for this session: \
+             {drawn_by_capture}"
         );
     }
 
