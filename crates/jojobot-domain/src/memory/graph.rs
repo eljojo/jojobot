@@ -388,7 +388,26 @@ impl Nearness {
     }
 
     /// Is this fact inside the window.
+    ///
+    /// **On [`Clock::HappenedAt`], a fact carrying [`Fact::happened_through`]
+    /// occupies the whole closed range from `happened_at` to it** — the day
+    /// asked about is near when it falls inside that range, or within the
+    /// window of whichever end it is closer to. A fact with no
+    /// `happened_through` has a range of one day, which is
+    /// [`Fact::happened_at`] alone: the single-day case is unchanged.
     fn holds(&self, fact: &Fact) -> bool {
+        if self.clock == Clock::HappenedAt {
+            if fact.happened_covers(self.day) {
+                return true;
+            }
+            let Some(start) = fact.happened_at else {
+                return false;
+            };
+            let end = fact.happened_through.unwrap_or(start);
+            let nearest = if self.day < start { start } else { end };
+            let span = self.day.since(nearest).map(|s| s.get_days().abs());
+            return span.is_ok_and(|days| days <= i64::from(self.within_days) as i32);
+        }
         let Some(at) = self.placed(fact) else {
             return false;
         };
@@ -2693,6 +2712,105 @@ mod tests {
             0,
             "a window around the day the booking was RECORDED found it on the happened-at \
              clock, so this clock is reading the wrong field",
+        );
+    }
+
+    /// 🚨 **A span is near across its whole length, not only at its start.**
+    ///
+    /// A fact whose `happened_through` names an end used to be placed by
+    /// `happened_at` alone, so a day squarely inside the recorded span read as
+    /// far from it once the window no longer reached back to the start.
+    ///
+    /// **Four states in one case**: a day inside the span, the span's own end
+    /// day, a day genuinely outside the window on either side, and a
+    /// single-day fact with no span at all — any of the first three passing
+    /// alone is what a window widened until everything matches would also
+    /// produce, and the fourth is the regression the fix must not cause.
+    #[test]
+    fn a_happened_at_window_reaches_the_whole_span_not_only_its_start() {
+        let _booted = crate::memory::testing::InMemoryMemory::booted();
+        let spanning = Fact {
+            happened_at: Some("2027-06-01".parse().expect("a civil date")),
+            happened_through: Some("2027-06-10".parse().expect("a civil date")),
+            ..fact(
+                "person:milhouse",
+                "f1",
+                "the conference ran a stretch of June",
+            )
+        };
+        let scanned = vec![doc(
+            entity("person:milhouse", "Milhouse"),
+            "His page.",
+            vec![spanning],
+        )];
+        let asking = |day: &str| GraphQuery {
+            select: Selection {
+                near: Some(Nearness {
+                    day: day.parse().expect("a civil date"),
+                    within_days: 1,
+                    clock: Clock::HappenedAt,
+                }),
+                ..Selection::default()
+            },
+            include: Include {
+                facts: true,
+                ..GraphQuery::default().include
+            },
+            ..GraphQuery::default()
+        };
+        let found = |scanned: &[DocScan], day: &str| {
+            resolve(scanned, &[], &asking(day))
+                .expect("a read")
+                .objects
+                .iter()
+                .flat_map(|o| o.facts.iter())
+                .count()
+        };
+
+        assert_eq!(
+            found(&scanned, "2027-06-05"),
+            1,
+            "a day squarely inside the recorded span was not found near it",
+        );
+        assert_eq!(
+            found(&scanned, "2027-06-10"),
+            1,
+            "the span's own end day was not found near it",
+        );
+        assert_eq!(
+            found(&scanned, "2027-06-11"),
+            1,
+            "a day just past the span's END, inside the window of that end, was measured from \
+             the START instead and read as far away",
+        );
+        assert_eq!(
+            found(&scanned, "2027-06-12"),
+            0,
+            "a day outside the span by more than the window came back anyway",
+        );
+        assert_eq!(
+            found(&scanned, "2027-05-30"),
+            0,
+            "a day before the span by more than the window came back anyway",
+        );
+
+        let single_day = vec![doc(
+            entity("person:homer", "Homer"),
+            "His page.",
+            vec![Fact {
+                happened_at: Some("2027-06-01".parse().expect("a civil date")),
+                ..fact("person:homer", "f2", "a claim about one day, no span")
+            }],
+        )];
+        assert_eq!(
+            found(&single_day, "2027-06-01"),
+            1,
+            "a single-day fact stopped being found on its own day",
+        );
+        assert_eq!(
+            found(&single_day, "2027-06-12"),
+            0,
+            "a single-day fact was found eleven days from the only day it names",
         );
     }
 
