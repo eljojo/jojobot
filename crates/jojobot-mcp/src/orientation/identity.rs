@@ -166,7 +166,7 @@ impl Jojobot {
                 .iter()
                 .map(|rule| fact_json(rule, as_of, None))
                 .collect::<Vec<_>>(),
-            "owned_mailbox": self.owned_mailbox(&entity.id).await?,
+            "owned_mailbox": self.owned_mailbox(entity).await?,
         });
         // **Not truncate-then-hunt.** A retired rule (filtered above) is not
         // withheld information a session might want, and gets no marker —
@@ -229,8 +229,9 @@ impl Jojobot {
     /// delivered for a box existing that nobody has booted to read.
     pub(crate) async fn owned_mailbox(
         &self,
-        bot: &EntityId,
+        entity: &Entity,
     ) -> Result<serde_json::Value, McpError> {
+        let bot = &entity.id;
         // The mailbox half degrades on its own, exactly as the snapshot's does.
         // Hard-erroring here made every box-owning identity unbootable over an
         // outage in the *other* world — while its charter and its rules, the
@@ -296,7 +297,10 @@ impl Jojobot {
                 }
                 Ok(body)
             }
-            0 => Ok(self.heal_missing_box(bot).await),
+            0 => match self.box_under_a_former_handle(entity).await? {
+                Some(found) => Ok(found),
+                None => Ok(self.heal_missing_box(bot).await),
+            },
             _ => {
                 let mut body = several_boxes_json(owned.iter());
                 if let Some(obj) = body.as_object_mut() {
@@ -310,6 +314,94 @@ impl Jojobot {
                 Ok(body)
             }
         }
+    }
+
+    /// **Follow the bot's former handles before `owned_mailbox` decides its
+    /// box is missing.**
+    ///
+    /// A rename's mailbox repoint (`rename_entity.rs`'s own
+    /// `repoint_mailbox`) is a second write, after the entity move has
+    /// already committed, and the two are not one transaction. A store
+    /// error in the window between them, or anything else that keeps the
+    /// second write from running, leaves the box standing under the OLD
+    /// handle while this bot already answers to a new one. Read as
+    /// "missing" by the caller above, that would heal a fresh, empty box —
+    /// and the real mail, still sitting under the old handle, would go
+    /// unmentioned from then on: the next boot finds the healed box, reads
+    /// it as fine, and never looks under the name that moved.
+    ///
+    /// **Idempotent, and it repairs an instance that already happened, not
+    /// only a future one.** A rename whose repoint landed cleanly finds
+    /// nothing here — its box already answers to the current handle, so
+    /// `owned_mailbox`'s fast path above already returned. This only fires
+    /// when the mailbox world is genuinely behind the entity world, and
+    /// running it twice against an already-repointed box finds no former
+    /// handle owning one, exactly as if nothing had ever gone wrong.
+    ///
+    /// **Exactly one candidate, or none.** More than one former handle
+    /// owning a box is a different, rarer shape of damage — which former
+    /// owner is the right one to repoint is not derivable the way "the box
+    /// under MY one former handle" is — and this declines to guess, leaving
+    /// the caller to fall through to the ordinary heal.
+    async fn box_under_a_former_handle(
+        &self,
+        entity: &Entity,
+    ) -> Result<Option<serde_json::Value>, McpError> {
+        let Some(badge) = &entity.badge else {
+            // No badge is a row from before the fill, or a build-supplied
+            // record — either way, nothing it used to be called was ever
+            // recorded.
+            return Ok(None);
+        };
+        let Ok(boxes) = self.mailboxes.list_mailboxes().await else {
+            // The board already answered "unreachable" to the caller above,
+            // through its own degrade path — nothing new to say here.
+            return Ok(None);
+        };
+        let former = self.memory.former_handles().await.map_err(memory_error)?;
+        // **Deduplicated by handle, not one entry per former-handle row.**
+        // A handle vacated and reclaimed writes the SAME former handle more
+        // than once (0045's own doc: renaming A to B, back to A, then to B
+        // again writes "A" twice) — a raw filter-map over those rows would
+        // count one real candidate as two and read as ambiguous.
+        let old_handles: std::collections::HashSet<&EntityId> = former
+            .iter()
+            .filter(|f| &f.badge == badge)
+            .map(|f| &f.former)
+            .collect();
+        let candidates: Vec<&EntityId> = old_handles
+            .into_iter()
+            .filter(|old| boxes.iter().any(|b| &b.owner == *old))
+            .collect();
+        let [old] = candidates.as_slice() else {
+            return Ok(None);
+        };
+        let Some(mailbox) = self
+            .mailboxes
+            .repoint_owner(old, &entity.id)
+            .await
+            .map_err(crate::mailboxes::mailbox_error)?
+        else {
+            // Listed a moment ago, gone by the repoint — another run of this
+            // same bot already repaired it. Nothing left to do here.
+            return Ok(None);
+        };
+        let mut body = mailbox_json(&mailbox);
+        if let Some(obj) = body.as_object_mut() {
+            obj.insert("available".into(), true.into());
+            obj.insert("healed".into(), true.into());
+            obj.insert(
+                "note".into(),
+                format!(
+                    "YOUR BOX was found under a former handle ('{old}') and has been repointed \
+                     to '{}'. A rename's own mailbox repoint should have done this at the time \
+                     and did not; this boot finished it. Nothing posted to you was lost.",
+                    entity.id,
+                )
+                .into(),
+            );
+        }
+        Ok(Some(body))
     }
 
     /// Open the box this bot should have had, and **say that it was missing.**
@@ -916,6 +1008,175 @@ mod tests {
         assert!(
             !roster.contains(&"bot:milhouse"),
             "a handle that merely looks like a bot's is not one: {roster:?}",
+        );
+    }
+
+    /// **Case 1 — the state left behind is consistent and self-repairing.**
+    ///
+    /// The entity moves through `Memory::rename_entity` directly, bypassing
+    /// `rename_entity.rs`'s own `repoint_mailbox` call — the exact state a
+    /// death between the two writes leaves, reproduced directly rather than
+    /// raced into, the same way `a_heal_that_lost_the_race_reports_the_box_
+    /// rather_than_its_absence` above is. The box still answers to the OLD
+    /// handle; the entity already answers to the new one.
+    ///
+    /// A boot right after must not open a second, empty box beside the one
+    /// still sitting under the old handle. That alone is not the whole fix —
+    /// a fix that only noticed the old box and left a note about it would
+    /// pass this case too — which is what the next one is for.
+    #[tokio::test]
+    async fn an_incomplete_renames_mailbox_is_not_duplicated_by_the_next_boot() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+
+        jojobot
+            .memory
+            .rename_entity(
+                &EntityId("bot:gamma".into()),
+                &EntityId("bot:sigma".into()),
+                None,
+                jiff::civil::date(2026, 9, 1),
+                None,
+            )
+            .await
+            .expect("rename ok")
+            .written()
+            .expect("not blocked");
+
+        let owned = boot(&jojobot, "sigma").await["identity"]["owned_mailbox"].clone();
+        assert_eq!(owned["available"], true, "{owned}");
+        assert_eq!(
+            owned["name"], "sigma",
+            "the box was found under the old handle and repointed, not left there: {owned}"
+        );
+
+        let boxes = jojobot.mailboxes.list_mailboxes().await.expect("list ok");
+        assert_eq!(
+            boxes.len(),
+            1,
+            "no fresh, empty box was opened beside the one that was repointed: {boxes:?}"
+        );
+    }
+
+    /// **Case 2 — the point of the fix.** The same incomplete rename, but
+    /// with real mail posted before it. A boot afterward has to find it
+    /// through the ORDINARY served surface (`read_mailbox`), not merely
+    /// report a box whose name looks right — proving the repair repoints
+    /// the box for real rather than only recognizing it.
+    #[tokio::test]
+    async fn a_boot_after_an_incomplete_rename_finds_the_real_mail_not_a_fresh_empty_box() {
+        use crate::mailboxes::post_message::PostMessageArgs;
+
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        let writer = booted(&jojobot, "gamma").await;
+        jojobot
+            .post_message(Parameters(PostMessageArgs {
+                to: "gamma".into(),
+                body: "mail that has to survive an incomplete rename".into(),
+                sid: writer,
+                subject: None,
+                in_reply_to: None,
+            }))
+            .await
+            .expect("post ok");
+
+        jojobot
+            .memory
+            .rename_entity(
+                &EntityId("bot:gamma".into()),
+                &EntityId("bot:sigma".into()),
+                None,
+                jiff::civil::date(2026, 9, 1),
+                None,
+            )
+            .await
+            .expect("rename ok")
+            .written()
+            .expect("not blocked");
+
+        // The boot itself is what runs the repair — this is not a second,
+        // separate healing step.
+        let reader = booted(&jojobot, "sigma").await;
+        let mail = json_of(
+            &jojobot
+                .read_mailbox(Parameters(ReadMailboxArgs {
+                    counts_only: Some(true),
+                    new_only: None,
+                    sid: Some(reader),
+                }))
+                .await
+                .expect("read_mailbox ok"),
+        );
+        assert_eq!(
+            mail["counts"]["new"], 1,
+            "the message posted before the incomplete rename must still be found: {mail}"
+        );
+    }
+
+    /// 🚨 **A handle vacated and reclaimed is not two candidates.**
+    ///
+    /// 0045's own doc: renaming A to B, then B back to A, then A to B again
+    /// writes the former handle "A" TWICE, under two different ordinals —
+    /// the whole reason that migration moved the primary key. A repair that
+    /// counted rows instead of distinct handles would see two entries for
+    /// "bot:gamma" and read that as ambiguous, declining to repair a case
+    /// it should handle.
+    ///
+    /// gamma → sigma → gamma (both through the handler, repointing cleanly
+    /// each time) → sigma again, this time bypassing the repoint exactly as
+    /// the other two cases do. "bot:gamma" is now a former handle twice
+    /// over for the same badge, and it is the one candidate that still owns
+    /// a box.
+    #[tokio::test]
+    async fn a_handle_vacated_and_reclaimed_is_still_one_candidate_not_an_ambiguous_two() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        let sid = writing_as(&jojobot);
+
+        let rename_of = |handle: &str, to: &str, sid: &str| crate::memory::RenameEntityArgs {
+            handle: handle.into(),
+            to: to.into(),
+            parent: None,
+            recorded_at: None,
+            override_token: None,
+            sid: Some(sid.into()),
+        };
+        jojobot
+            .rename_entity(Parameters(rename_of("bot:gamma", "bot:sigma", &sid)))
+            .await
+            .expect("rename ok");
+        jojobot
+            .rename_entity(Parameters(rename_of("bot:sigma", "bot:gamma", &sid)))
+            .await
+            .expect("rename ok");
+
+        // The incomplete rename: bypasses the mailbox world entirely, the
+        // same way the other two cases in this cluster do.
+        jojobot
+            .memory
+            .rename_entity(
+                &EntityId("bot:gamma".into()),
+                &EntityId("bot:sigma".into()),
+                None,
+                jiff::civil::date(2026, 9, 1),
+                None,
+            )
+            .await
+            .expect("rename ok")
+            .written()
+            .expect("not blocked");
+
+        let owned = boot(&jojobot, "sigma").await["identity"]["owned_mailbox"].clone();
+        assert_eq!(
+            owned["name"], "sigma",
+            "the one real candidate is still found and repointed, not read as ambiguous: {owned}"
+        );
+        let boxes = jojobot.mailboxes.list_mailboxes().await.expect("list ok");
+        assert_eq!(
+            boxes.len(),
+            1,
+            "no second box was opened over a false ambiguity: {boxes:?}"
         );
     }
 }
