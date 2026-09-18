@@ -28,22 +28,65 @@
 //! `InMemoryMemory::knowing` are two different inherent methods with no
 //! shared trait to call through generically, and unifying that would mean
 //! adding it to the `Memory` trait for every adapter, a larger and separate
-//! change. A caller does that step, and the `Provisioned::new` wrap around
-//! it, before calling [`assemble_memory`]. Everything from there on is
-//! composition over trait objects, which is what this file shares.
+//! change. A caller does that step before calling [`open_provisioned`].
+//! Everything from there on is composition over trait objects, which is what
+//! this file shares.
 
 use std::sync::Arc;
 
 use anyhow::Context;
 use jojobot_adapters::fold::Folded;
+use jojobot_adapters::provisioned::Provisioned;
 use jojobot_adapters::search::{IndexedMailboxes, IndexedMemory, IndexedSessions, Retrieval};
 use jojobot_domain::mailbox::Mailboxes;
 use jojobot_domain::mailbox::mention as mailbox_mention;
 use jojobot_domain::memory::Memory;
 use jojobot_domain::memory::mention;
+use jojobot_domain::memory::owned::Provisions;
 use jojobot_domain::memory::search::Search;
 use jojobot_domain::session::Sessions;
 use jojobot_domain::session::mention as session_mention;
+
+/// **Stage zero: seed the kinds this build ships, then guard, then wrap in
+/// `Provisioned`.**
+///
+/// **The order is enforced here rather than left to the caller.**
+/// `guard_supplied_records` reads every stored entity, and reading one means
+/// parsing its handle's kind — which a process that has not yet loaded the
+/// kind set cannot do (`kinds::resolve` answers `SetNeverLoaded`). So the
+/// kinds are seeded first, against the bare store, before anything reads a
+/// row. Getting this backwards once took the whole server down at boot: the
+/// guard's `list_entities` hit the first stored row before any kind was
+/// loaded, and every read since the process began refused with "the kind set
+/// was never loaded".
+///
+/// `bare` must already carry `.knowing(supplied)` — see the module doc for
+/// why that step stays with the caller.
+pub async fn open_provisioned<M: Memory + Clone + 'static>(
+    bare: M,
+    supplied: Provisions,
+) -> anyhow::Result<Arc<dyn Memory>> {
+    match jojobot_domain::memory::kinds::seed(&bare).await {
+        Ok(kinds) => tracing::info!(kinds, "loaded the kinds this instance holds"),
+        Err(e) => tracing::error!(
+            error = %e,
+            "KINDS NOT LOADED — the store could not be reached at startup, so no handle can be \
+             read and every write is refused. Nothing was written and nothing was lost; a restart \
+             once the store is reachable puts it right."
+        ),
+    }
+    // **Read against the bare store, before it is wrapped in `Provisioned`.**
+    // A whole-record provision at an address a real row already occupies
+    // breaks `Supplies::Record`'s own contract — a record the store holds
+    // NOTHING of — and every existence check that reads what the build
+    // supplies would see the address as already provisioned, never learning
+    // the real row needs creating or re-creating. Refuse to start rather
+    // than serve on a misconfiguration that silent.
+    jojobot_domain::memory::owned::guard_supplied_records(&bare, &supplied)
+        .await
+        .context("a shipped provision collides with a stored row")?;
+    Ok(Arc::new(Provisioned::new(bare, supplied)))
+}
 
 /// **Stage one: wrap memory, and open the fold and the index over it.**
 ///

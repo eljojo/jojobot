@@ -11,7 +11,6 @@ use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::sessions::DoltSessions;
 use jojobot_adapters::dolt::teaching::DoltTeachings;
 use jojobot_adapters::owners::MemoryOwners;
-use jojobot_adapters::provisioned::Provisioned;
 use jojobot_domain::mailbox::{Mailboxes, OwnerIndex};
 use jojobot_domain::memory::Memory;
 use jojobot_domain::teaching::Teachings;
@@ -252,31 +251,7 @@ async fn main() -> anyhow::Result<()> {
     let bare_memory = DoltMemory::open(store.pool().clone())
         .knowing(supplied.clone())
         .on_clock(config.clock);
-    // **Read against the bare store, before it is wrapped in `Provisioned`.**
-    // A whole-record provision at an address a real row already occupies
-    // breaks `Supplies::Record`'s own contract — a record the store holds
-    // NOTHING of — and every existence check that reads what the build
-    // supplies would see the address as already provisioned, never learning
-    // the real row needs creating or re-creating. Refuse to start rather
-    // than serve on a misconfiguration that silent.
-    jojobot_domain::memory::owned::guard_supplied_records(&bare_memory, &supplied)
-        .await
-        .context("a shipped provision collides with a stored row")?;
-    let resolved: Arc<dyn Memory> = Arc::new(Provisioned::new(bare_memory, supplied));
-    // **The kinds, before anything reads a handle.** Every kind this instance
-    // holds is written and then read back, and what comes back is the set this
-    // process parses handles against. A store that cannot be reached leaves
-    // that set empty, and an empty set refuses every handle in its own words
-    // rather than pretending the ten are there.
-    match jojobot_mcp::seed::ensure_kinds(&resolved).await {
-        Ok(kinds) => tracing::info!(kinds, "loaded the kinds this instance holds"),
-        Err(e) => tracing::error!(
-            error = %e,
-            "KINDS NOT LOADED — the store could not be reached at startup, so no handle can be \
-             read and every write is refused. Nothing was written and nothing was lost; a restart \
-             once the store is reachable puts it right."
-        ),
-    }
+    let resolved = jojobot::wiring::open_provisioned(bare_memory, supplied).await?;
 
     // **Wrapped in the decorators the story harness shares too** — see
     // `jojobot::wiring`'s own doc for why this is two stages rather than

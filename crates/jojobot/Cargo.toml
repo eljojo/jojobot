@@ -39,6 +39,11 @@ tracing-subscriber.workspace = true
 # The fake store behind the domain's `testing` feature: the end-to-end tests
 # need a store that actually holds a write, with no network.
 jojobot-domain = { workspace = true, features = ["testing"] }
+# `free_port`, for a test that spins up its own real Dolt store to prove the
+# boot's seed-before-guard ordering against the real adapter, not a fake that
+# cannot reproduce the failure (the fake never re-parses a kind from a stored
+# row, so it is not hostile where the real store is).
+jojobot-adapters = { workspace = true, features = ["testing"] }
 # The Memory port is async and dyn-compatible through async-trait, so a story
 # fixture that wraps a store to make it unreachable implements it the same way.
 async-trait = { workspace = true }
