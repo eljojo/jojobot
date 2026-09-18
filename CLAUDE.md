@@ -327,13 +327,16 @@ Shipped and live:
 > stops re-shipping a deliberately held-open message on every poll, and
 > `start_here` takes `brief` so a caller who does not need the orientation
 > essay can skip it and withholds the charter from a resume, marked so that
-> *withheld* cannot be read as *absent* — the charter is the largest block a
-> boot carries, and the answer names the call that returns it rather than
-> claiming anything about what its reader already holds, which is not something
-> the engine checks. A session's chronology comes back as its newest entries
-> under a character budget, sized on what an entry renders as rather than on
-> its text alone; **both the boot and the wrap answer through that budget**,
-> and the response states the full length and what it left out. **A bot's own
+> *withheld* cannot be read as *absent*, and the answer names the call that
+> returns it rather than claiming anything about what its reader already holds,
+> which is not something the engine checks. **One ceiling bounds the WHOLE
+> serialized boot answer rather than any single block inside it.** What must
+> ship is measured first, and everything else is ranked against what is left,
+> so an identity too heavy to serve whole gets its core and is told what did
+> not fit. A session's chronology comes back as its newest entries under the
+> same discipline, sized on what an entry renders as rather than on its text
+> alone; **both the boot and the wrap answer through a budget**, and the
+> response states the full length and what it left out. **A bot's own
 > records are capped by COUNT rather than by length**: a writer marks which ones
 > it wants carried, a boot serves at most a fixed number of those, and it names
 > what it left behind rather than shortening any of them — a cut record reads
