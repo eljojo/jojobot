@@ -185,6 +185,15 @@ pub struct CaptureArgs {
 const WHY_A_CHECK_IN_DERIVES: &str = "a check-in stores the schedule jojobot worked out beside your sentence, and a record \
      carrying both is a derivation";
 
+/// **The other trigger for the same demotion.** The provenance downgrade
+/// above fires on a check-in OR a plain capture that moves a stored due
+/// moment on its own — see `due_on_set` — but until now the receipt's
+/// explanation covered only the check-in case. A capture that never asked
+/// for one got the identical substitution with no reason on the wire.
+const WHY_A_MOVED_DUE_MOMENT_DERIVES: &str = "this capture moved the stored due moment on its own, without a check-in — the same \
+     arithmetic a check-in does, run because a field it reads just changed — and a record \
+     carrying both jojobot's schedule and your sentence is a derivation";
+
 /// **The other direction of [`WHY_A_CHECK_IN_DERIVES`].** That sentence
 /// explains why a check-in's computed schedule overrides a caller's own
 /// value; it rides only when a check-in was asked for, so it says nothing on
@@ -679,10 +688,18 @@ impl Jojobot {
                 if let Some(behind) = fold_behind {
                     crate::answer::note_fold_behind(&mut body, behind);
                 }
-                crate::answer::note_delta(
-                    &mut body,
-                    declared.not_stored(&fact, checked_in.then_some(WHY_A_CHECK_IN_DERIVES)),
-                );
+                // **Either trigger for the provenance demotion gets its own
+                // reason.** `checked_in` and `due_on_set` fire the same
+                // substitution above; the explanation used to ride only with
+                // the first.
+                let why_demoted = if checked_in {
+                    Some(WHY_A_CHECK_IN_DERIVES)
+                } else if due_on_set {
+                    Some(WHY_A_MOVED_DUE_MOMENT_DERIVES)
+                } else {
+                    None
+                };
+                crate::answer::note_delta(&mut body, declared.not_stored(&fact, why_demoted));
                 crate::answer::note_postcondition(
                     &mut body,
                     self.what_a_capture_left_standing(&fact, checked_in, opened_the_loop)
@@ -862,6 +879,24 @@ mod tests {
             edited["provenance"], "inference",
             "a moved due moment overrides the caller's own provenance, same as a check-in's: \
              {edited}",
+        );
+        // 🚨 **The demotion fires on this path too, and the receipt's own
+        // explanation used to be gated on the check-in case alone.** A caller
+        // that never asked for a check-in got the substitution with no reason
+        // on the wire — the exact silence a difference-with-no-reason is
+        // built to avoid.
+        let because = edited["delta"]
+            .as_array()
+            .unwrap_or_else(|| panic!("a demoted provenance is a difference: {edited}"))
+            .iter()
+            .find(|d| d["field"] == "provenance")
+            .unwrap_or_else(|| panic!("the provenance difference is missing: {edited}"))["because"]
+            .clone();
+        assert_ne!(
+            because,
+            serde_json::Value::Null,
+            "the demotion happened with no reason on the wire, on the one path whose own \
+             explanation was gated on a different trigger: {edited}",
         );
         let held = fields_of(&jojobot, "rhythm:descale").await;
         assert_eq!(
