@@ -409,6 +409,15 @@ const NEAR_WINDOW: u32 = 7;
 /// rather than none.
 const CARRIER_CANDIDATES_LIMIT: usize = 10_000;
 
+/// **Whether the type-only search path's own ceiling was reached.** A count
+/// at the ceiling cannot be told apart from a store that holds exactly that
+/// many things and no more — but treating it as capped is the caller-safe
+/// read: the wrong guess costs nothing, and the other one lets a truncated
+/// answer read as complete.
+fn hit_candidate_ceiling(hit_count: usize, limit: usize) -> bool {
+    hit_count >= limit
+}
+
 /// Which clock a neighbourhood read compares.
 fn parse_clock(raw: Option<&str>) -> Result<graph::Clock, McpError> {
     match raw.map(str::trim) {
@@ -1443,6 +1452,12 @@ impl Jojobot {
         // **Every other selection shape is untouched.** A kind or a subject
         // already makes `graph::walk` itself cheap — existing callers,
         // rhythms included, keep the path they have.
+        //
+        // **`None` when this call took no path that could ever hit the
+        // ceiling** — the same shape `overdue_excluded` uses, because a
+        // question never asked and a question answered zero are different
+        // claims.
+        let mut candidates_capped: Option<bool> = None;
         if let (Some(declared), None, None) = (
             &query.select.answers_type,
             &query.select.subject,
@@ -1460,6 +1475,10 @@ impl Jojobot {
                 Ok(hits) => hits,
                 Err(e) => return memory_declined("recall", e),
             };
+            candidates_capped = Some(hit_candidate_ceiling(
+                candidates.len(),
+                CARRIER_CANDIDATES_LIMIT,
+            ));
             query.select.candidates = Some(
                 candidates
                     .into_iter()
@@ -1656,6 +1675,16 @@ impl Jojobot {
             // `list_entities` does; without this a caller cannot tell "only
             // two exist" from "one was hidden".
             "archived_excluded": archived_excluded,
+            // 🚨 **The type-only search path has its own ceiling, and this is
+            // the only place a caller can learn it was reached.** A structural
+            // query naming no handle and no kind routes through the search
+            // index with a bound far above what a ranked answer would ever
+            // need — see `CARRIER_CANDIDATES_LIMIT` — and a store holding more
+            // than that many things answering the type still only ever gets
+            // the first slice. `true` when the search sat at its own ceiling,
+            // `false` when it did not, `null` when this call took no path
+            // that could ever reach it.
+            "candidates_capped": candidates_capped,
             "objects": found
                 .iter()
                 .zip(held)
@@ -1735,6 +1764,7 @@ mod tests {
     use crate::harness::*;
     use crate::memory::testing::*;
     use jojobot_domain::mailbox::testing::InMemoryMailboxes;
+    use jojobot_domain::memory::Boot;
     use jojobot_domain::session::testing::InMemorySessions;
     use jojobot_domain::teaching::testing::InMemoryTeachings;
 
@@ -3949,6 +3979,89 @@ mod tests {
             !untouched.reached(),
             "a kind-scoped overdue query reached the search port, which is the OLD path's job \
              alone",
+        );
+    }
+
+    /// 🚨 **The type-only search path has its own ceiling, and nothing on the
+    /// wire ever said so.** `CARRIER_CANDIDATES_LIMIT` bounds the routed
+    /// search itself; a store holding more things than that ceiling still
+    /// only ever gets the first slice, and the answer reads as complete
+    /// either way.
+    ///
+    /// **Both directions, on the same shape of query, through the real
+    /// surface** — a flag that is never `false` is not measuring anything.
+    #[tokio::test]
+    async fn a_type_only_recall_says_when_it_hit_its_own_candidate_ceiling() {
+        let memory = shared_memory();
+        let setup = handler_on(memory.clone(), Arc::new(SpySearch::default()));
+        setup
+            .declare_type(Parameters(DeclareTypeArgs {
+                name: "runs-out".into(),
+                fields: vec![FieldArgs {
+                    key: attention::RUNS_OUT.into(),
+                    holds: Some("date".into()),
+                    folds: None,
+                    required: false,
+                    one_of: None,
+                }],
+                sid: Some(crate::harness::TEST_SID.into()),
+            }))
+            .await
+            .expect("declare_type ok");
+
+        let one_hit = || Hit::Entity {
+            entity: Entity {
+                id: EntityId("thing:battery".into()),
+                kind: EntityKind::THING,
+                name: "the spare battery".into(),
+                aliases: Vec::new(),
+                source: "user-named".into(),
+                crm: None,
+                parent: None,
+                boot: Boot::OnDemand,
+                merged_into: None,
+                badge: None,
+                archived: None,
+            },
+            doc_id: "doc-battery".into(),
+            edges: Vec::new(),
+            answers: None,
+        };
+
+        let at_ceiling: Vec<Hit> = std::iter::repeat_with(one_hit)
+            .take(CARRIER_CANDIDATES_LIMIT)
+            .collect();
+        let capped_reader = handler_on(memory.clone(), Arc::new(SpySearch::answering(at_ceiling)));
+        let capped = json_of(
+            &capped_reader
+                .recall(Parameters(RecallArgs {
+                    answers_type: Some("runs-out".into()),
+                    ..of_nothing()
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        assert_eq!(
+            capped["candidates_capped"], true,
+            "a search answer sitting exactly at the ceiling was not reported as capped: {capped}"
+        );
+
+        let under_ceiling: Vec<Hit> = std::iter::repeat_with(one_hit)
+            .take(CARRIER_CANDIDATES_LIMIT - 1)
+            .collect();
+        let plain_reader = handler_on(memory, Arc::new(SpySearch::answering(under_ceiling)));
+        let plain = json_of(
+            &plain_reader
+                .recall(Parameters(RecallArgs {
+                    answers_type: Some("runs-out".into()),
+                    ..of_nothing()
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        assert_eq!(
+            plain["candidates_capped"], false,
+            "an answer one short of the ceiling was reported as capped anyway: {plain}"
         );
     }
 
