@@ -1036,8 +1036,11 @@ fn object_json(
             if via.retracted {
                 fields.insert(
                     "retracted".into(),
-                    "every claim drawing this link was taken back — the link is here so it can be \
-                     told from one nobody ever drew, and it is not something to act on"
+                    "the claim drawing this link is archived now — taken back outright, or \
+                     replaced by one that changed what it said; the record's own note says \
+                     which. The link is here so it can be told from one nobody ever drew. A \
+                     replacement, if there is one, is an ordinary fact naming this one as \
+                     derived_from."
                         .into(),
                 );
             }

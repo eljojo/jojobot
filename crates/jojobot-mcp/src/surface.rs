@@ -623,6 +623,30 @@ fn the_mark_processed_description_states_the_crash_contract() {
     );
 }
 
+/// **`update_fact`'s own description sends every caller to the same rewrite,
+/// even the one case the build warns against at runtime.** A rewrite that
+/// turns a past-event claim into its negation is not an ordinary edit — the
+/// receipt says so when it happens — but the door that hands out the
+/// instruction in the first place never carves that case out.
+#[test]
+fn the_update_fact_description_carves_out_the_past_event_case() {
+    let tools = Jojobot::tool_router().list_all();
+    let update_fact = tools
+        .iter()
+        .find(|t| t.name == "update_fact")
+        .expect("update_fact is a tool");
+    let description = update_fact.description.as_deref().unwrap_or_default();
+    assert!(
+        description.contains("state the negative truth"),
+        "the ordinary case is still the rewrite instruction: {description}"
+    );
+    assert!(
+        description.contains("NOT FOR A PAST EVENT"),
+        "a past-event negation is never this rewrite, and the door that hands the rewrite \
+         instruction to every caller never carves that case out: {description}"
+    );
+}
+
 /// 🚨 **The colleagues view's one-liner key names itself nowhere a bot would
 /// meet it.** `view:colleagues` reads `fields.one_liner`, but nothing
 /// agent-facing ever told a bot the key exists or how to write it — a caller

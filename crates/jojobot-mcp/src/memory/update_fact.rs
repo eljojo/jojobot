@@ -195,6 +195,9 @@ impl Jojobot {
                        (content/details/date/status/provenance/standing). To record that something \
                        is NOT so, rewrite content to state the negative truth — that is an \
                        ordinary edit and the fact stays active; there is no negated status. \
+                       NOT FOR A PAST EVENT: turning a claim about one into its negation is \
+                       never this rewrite — archive it instead (status: archived, with a note \
+                       saying why), or retract it. \
                        DATE REWRITES THE DAY THIS CLAIM WAS MADE — the day it was said, decided \
                        or worked out, YYYY-MM-DD — the same argument retract carries, and it is \
                        never the day the call happens to be made on. Omit it and the record \
@@ -653,6 +656,7 @@ fn adds_a_negation(before: &str, after: &str) -> bool {
 mod tests {
     use super::*;
     use crate::harness::*;
+    use crate::memory::recall::FollowArgs;
     use crate::memory::testing::*;
     use jojobot_domain::memory::types::{Field, ValueType};
 
@@ -1531,6 +1535,12 @@ mod tests {
             "the error must say what to do instead: {}",
             err.message
         );
+        assert!(
+            err.message.contains("retract"),
+            "a past-event negation is retract's case, and the refusal that hands out the \
+             rewrite instruction to every caller never carves that out: {}",
+            err.message
+        );
 
         let updated = json_of(
             &jojobot
@@ -1567,6 +1577,80 @@ mod tests {
         assert_eq!(
             read["objects"][0]["facts"][0]["content"], "NOT a close contact — do not re-infer",
             "the refutation is what the record says now: {read}"
+        );
+    }
+
+    /// 🚨 **`archived` covers a claim that was merely edited, not only one
+    /// taken back — so a walk's `retracted` marker now fires on both, and its
+    /// wording has to stop claiming to know which.** When a replacement is
+    /// reachable through `derived_from`, the note has to say so rather than
+    /// telling a reader there is nothing to act on.
+    #[tokio::test]
+    async fn a_walks_retracted_note_names_the_path_to_a_replacement_when_one_exists() {
+        let jojobot = handler();
+        let sid = writing_as(&jojobot);
+        ensure(&jojobot, "event:birthday-party").await;
+        ensure(&jojobot, "person:beta").await;
+        let original = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                sid: Some(sid.clone()),
+                shape: Some("attendance".into()),
+                object: Some("event:birthday-party".into()),
+                ..capture_args("person:beta", "was at the party")
+            },
+        )
+        .await;
+        let address = address_of(&original);
+        update_ok(
+            &jojobot,
+            UpdateFactArgs {
+                status: Some("archived".into()),
+                ..update_args(&address)
+            },
+        )
+        .await;
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                sid: Some(sid.clone()),
+                derived_from: Some(address.clone()),
+                ..capture_args("person:beta", "actually only stopped by for cake")
+            },
+        )
+        .await;
+
+        let walked = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    follow: Some(FollowArgs {
+                        shape: Some("attendance".into()),
+                        relation: None,
+                        direction: Some("in".into()),
+                        depth: None,
+                        keeping: None,
+                        fits_type: None,
+                    }),
+                    sid: Some(sid.clone()),
+                    ..recall_args("event:birthday-party")
+                }))
+                .await
+                .expect("a walk from the party"),
+        );
+        let note = walked["objects"][0]["connected"]
+            .as_array()
+            .unwrap_or_else(|| panic!("the walk reached its guest: {walked}"))
+            .iter()
+            .find(|o| o["id"] == "person:beta")
+            .unwrap_or_else(|| panic!("person:beta was not reached at all: {walked}"))["via"]
+            ["retracted"]
+            .as_str()
+            .unwrap_or_else(|| panic!("the edited claim's link carries no note at all: {walked}"))
+            .to_string();
+        assert!(
+            note.contains("derived_from"),
+            "a replacement is reachable through derived_from and the note gives no path to it: \
+             {note}"
         );
     }
 

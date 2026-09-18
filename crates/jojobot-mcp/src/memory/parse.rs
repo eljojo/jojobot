@@ -194,7 +194,9 @@ pub(crate) fn parse_status(raw: &str) -> Result<FactStatus, McpError> {
         "negated" => Err(McpError::invalid_params(
             "there is no 'negated' status: to record that something is NOT so, rewrite the \
              fact's content to state the negative truth — it stays 'active', because that is \
-             the current truth. Use 'archived' only for a claim that stopped being current."
+             the current truth. Use 'archived' only for a claim that stopped being current. \
+             NOT FOR A PAST EVENT: turning a claim about one into its negation is never that \
+             rewrite — archive it instead, with a note saying why, or retract it."
                 .to_string(),
             None,
         )),
