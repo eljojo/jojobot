@@ -3610,6 +3610,245 @@ async fn write_summary_answers_the_real_store() {
         "merge did not move the entity count: {after_merge:?}"
     );
 
+    // **The hashes are a real store's own answer, not the audit log read
+    // twice.** `DOLT_HASHOF_TABLE` is present and has moved across the
+    // whole run above, the same shape the counts already proved.
+    assert!(
+        empty.entity_hash.is_some() && empty.fact_hash.is_some(),
+        "the real store offers both table hashes: {empty:?}"
+    );
+    assert_ne!(
+        empty.entity_hash, after_merge.entity_hash,
+        "the entity table's own hash did not move across every write above"
+    );
+    assert_ne!(
+        empty.fact_hash, after_capture.fact_hash,
+        "the fact table's own hash did not move when a fact was captured"
+    );
+
+    store.stop().await;
+}
+
+/// 🚨 **An entity removed directly against the store — never through the
+/// application — still stops being served.**
+///
+/// Rule 60 makes this the ONE supported way a record leaves at all, and
+/// `Retrieval::search`'s own doc promises it is noticed on the read path.
+/// `entity_write` is written only by this application's own code, so a raw
+/// `DELETE` against `entity` — exactly what an operator or an admin tool
+/// does — moves neither aggregate `write_summary` used to answer with
+/// alone. Before `DOLT_HASHOF_TABLE` joined that signal, the cached scan
+/// taken before the delete went on being served forever, because nothing
+/// after that first search caused a real re-read.
+///
+/// **No fact touched here, on purpose.** `WriteSummary` compares both
+/// halves together, so a case that moved both the entity and the fact
+/// hash at once would pass even with only one of the two actually wired
+/// in — this is the entity hash's own case, and
+/// [`a_fact_deleted_directly_against_the_store_stops_being_served`] is the
+/// fact hash's, so each can fail on its own.
+///
+/// **Only a real store can express this case.** A fake that models
+/// `entity` as ordinary application-owned data has nothing underneath the
+/// application to delete FROM — there is no second door into it — so this
+/// is the real-dependency suite's own case to carry, not the shared
+/// contract's.
+///
+/// Both halves in the same read: the entity that survives is asserted
+/// present in the SAME search that asserts the deleted one absent — a bare
+/// negative would pass against a search wired to nothing.
+#[tokio::test]
+async fn an_entity_deleted_directly_against_the_store_stops_being_served() {
+    let scratch = Scratch::new("direct-delete-entity");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("directdeleteentity")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+
+    let indexed = Arc::new(
+        IndexedMemory::new(Arc::new(DoltMemory::open(pool.clone())))
+            .expect("the search index opens"),
+    );
+    let retrieval = Retrieval::new(indexed.index(), vec![indexed.clone()]);
+
+    let doomed = EntityId::person("person:bart");
+    let kept = EntityId::person("person:milhouse");
+    indexed
+        .add_entity(NewEntity::new(doomed.clone(), "Doomed", "contract-fixture"))
+        .await
+        .expect("add_entity ok")
+        .written()
+        .expect("nothing collides with it");
+    indexed
+        .add_entity(NewEntity::new(kept.clone(), "Kept", "contract-fixture"))
+        .await
+        .expect("add_entity ok")
+        .written()
+        .expect("nothing collides with it");
+
+    let before = retrieval
+        .search(&SearchQuery::text("Doomed"))
+        .await
+        .expect("search ok");
+    assert!(
+        before
+            .iter()
+            .any(|h| matches!(h, Hit::Entity { entity, .. } if entity.id == doomed)),
+        "the entity is served before anything is deleted: {before:?}"
+    );
+
+    // The direct write: never through `indexed`, never through `DoltMemory`
+    // — the shape a person running SQL by hand, or an admin tool, takes.
+    sqlx::query("DELETE FROM entity WHERE id = ?")
+        .bind(doomed.as_str())
+        .execute(&pool)
+        .await
+        .expect("the direct delete lands");
+
+    let after = retrieval
+        .search(&SearchQuery::text("Doomed"))
+        .await
+        .expect("search ok");
+    assert!(
+        !after
+            .iter()
+            .any(|h| matches!(h, Hit::Entity { entity, .. } if entity.id == doomed)),
+        "an entity deleted directly against the store must stop being served: {after:?}"
+    );
+    let survivor = retrieval
+        .search(&SearchQuery::text("Kept"))
+        .await
+        .expect("search ok");
+    assert!(
+        survivor
+            .iter()
+            .any(|h| matches!(h, Hit::Entity { entity, .. } if entity.id == kept)),
+        "the entity that was not deleted must still be served: {survivor:?}"
+    );
+
+    store.stop().await;
+}
+
+/// 🚨 **A fact edited directly against the store — never through the
+/// application — still stops answering its old content.**
+///
+/// **An UPDATE, not a DELETE, and that is the point.** `fact_write`'s
+/// count and its newest moment are also what `write_summary`'s existing
+/// aggregate already reads — deleting a row would move THAT signal too,
+/// which would let this case pass even with the hash wired to nothing
+/// (found by sabotage: the DELETE this test used to run did exactly that).
+/// An in-place edit changes neither the row count nor `written_at`, so it
+/// is the one write only the hash can see — the fact half of
+/// [`an_entity_deleted_directly_against_the_store_stops_being_served`],
+/// proven the way that one is: `WriteSummary` compares its entity and fact
+/// hashes together, so a case that moved both could pass with only one
+/// actually wired in.
+///
+/// `fact_write`, not `fact`: a claim read answers from the newest write,
+/// never from the claim's own row (`facts_projected`'s own doc), so the
+/// table a direct edit has to be noticed against is the one reads actually
+/// come from.
+#[tokio::test]
+async fn a_fact_edited_directly_against_the_store_stops_answering_its_old_content() {
+    let scratch = Scratch::new("direct-edit-fact");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("directeditfact")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+
+    let indexed = Arc::new(
+        IndexedMemory::new(Arc::new(DoltMemory::open(pool.clone())))
+            .expect("the search index opens"),
+    );
+    let retrieval = Retrieval::new(indexed.index(), vec![indexed.clone()]);
+
+    let kept = EntityId::person("person:gamma");
+    indexed
+        .add_entity(NewEntity::new(
+            kept.clone(),
+            "Fact Kept",
+            "contract-fixture",
+        ))
+        .await
+        .expect("add_entity ok")
+        .written()
+        .expect("nothing collides with it");
+    let edited_fact = indexed
+        .capture(NewFact::about(
+            kept.clone(),
+            "a claim that is about to be edited underneath jojobot",
+            date(2026, 1, 1),
+        ))
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("nothing collides with it");
+    indexed
+        .capture(NewFact::about(
+            kept.clone(),
+            "a claim that survives untouched",
+            date(2026, 1, 2),
+        ))
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("nothing collides with it");
+
+    let before_fact = retrieval
+        .search(&SearchQuery::text("about to be edited underneath"))
+        .await
+        .expect("search ok");
+    assert!(
+        !before_fact.is_empty(),
+        "the fact is served with its original content before anything is edited: {before_fact:?}"
+    );
+
+    // Keyed by the entity's BADGE, not its handle — the storage key every
+    // write on this rail resolves to first. The row count and `written_at`
+    // are both left exactly as they were: this is an edit, not a write.
+    let kept_badge = badge_of(&pool, kept.as_str()).await;
+    let rewritten =
+        sqlx::query("UPDATE fact_write SET content = ? WHERE entity = ? AND fact_id = ?")
+            .bind("this content was rewritten directly against the store")
+            .bind(&kept_badge)
+            .bind(edited_fact.id.as_str())
+            .execute(&pool)
+            .await
+            .expect("the direct edit lands");
+    assert_eq!(
+        rewritten.rows_affected(),
+        1,
+        "exactly the one row this case is about, never more"
+    );
+
+    let after_fact = retrieval
+        .search(&SearchQuery::text("about to be edited underneath"))
+        .await
+        .expect("search ok");
+    assert!(
+        after_fact.is_empty(),
+        "a fact edited directly against the store must stop answering its OLD content: \
+         {after_fact:?}"
+    );
+    let surviving_fact = retrieval
+        .search(&SearchQuery::text("a claim that survives untouched"))
+        .await
+        .expect("search ok");
+    assert!(
+        !surviving_fact.is_empty(),
+        "the fact that was not touched must still be served: {surviving_fact:?}"
+    );
+
     store.stop().await;
 }
 

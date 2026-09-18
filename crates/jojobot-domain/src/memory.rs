@@ -3502,6 +3502,17 @@ pub struct WriteSummary {
     pub entities: (i64, Option<jiff::Timestamp>),
     /// The same pair, for fact writes.
     pub facts: (i64, Option<jiff::Timestamp>),
+    /// **The entity table's own content, hashed — never derived from
+    /// `entities` above.** `entity_write` is written only on the path THIS
+    /// application takes; a row removed or edited directly against the
+    /// table it mirrors changes neither its count nor its latest moment,
+    /// so a signal built from it alone cannot see rule 60's own supported
+    /// path for a record to leave. `None` from a store with no cheap way
+    /// to ask the table itself, which is what every store answered before
+    /// this field existed.
+    pub entity_hash: Option<String>,
+    /// The same, for the fact table.
+    pub fact_hash: Option<String>,
 }
 
 /// The Memory port — six verbs over entities and the facts about them. One real

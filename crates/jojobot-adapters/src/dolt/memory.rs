@@ -3317,11 +3317,22 @@ impl Memory for DoltMemory {
         Ok(scanned)
     }
 
-    /// **Two aggregates, not a read of either table's rows.** [`Self::scan`]
-    /// pays for every entity and fact body it returns; this pays for neither
-    /// — `entity_write` and `fact_write` are written on every mutation to
+    /// **Two aggregates, not a read of either table's rows — plus two
+    /// hashes, which are not either.** [`Self::scan`] pays for every entity
+    /// and fact body it returns; the aggregates pay for neither —
+    /// `entity_write` and `fact_write` are written on every mutation to
     /// each (see their own migrations' docs), so their count and newest
-    /// moment answer "has anything changed" without touching a body.
+    /// moment answer "has anything changed through this application"
+    /// without touching a body.
+    ///
+    /// **The hashes answer the question the aggregates cannot: has anything
+    /// changed at all.** `DOLT_HASHOF_TABLE` is the table's own
+    /// content-addressed root — maintained on every write to the table
+    /// itself, application or not, and read as a lookup of an already-
+    /// current value rather than recomputed by scanning. It is what makes a
+    /// row removed or edited directly against `entity` or `fact` — rule 60's
+    /// own supported path for a record to leave — visible to a signal built
+    /// from an audit log that write never touches.
     async fn write_summary(&self) -> Result<Option<WriteSummary>, MemoryError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
         let (entity_count, entity_latest): (i64, Option<String>) =
@@ -3334,6 +3345,19 @@ impl Memory for DoltMemory {
                 .fetch_one(&mut *tx)
                 .await
                 .map_err(store)?;
+        let entity_hash: String = sqlx::query_scalar("SELECT DOLT_HASHOF_TABLE('entity')")
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(store)?;
+        // `fact_write` rather than `fact`: `facts_projected`'s own doc says
+        // a claim read answers from the newest write, never from the
+        // claim's own row — so `fact_write` is the table a direct delete
+        // has to be noticed against, and hashing `fact` would watch a table
+        // nothing reads.
+        let fact_hash: String = sqlx::query_scalar("SELECT DOLT_HASHOF_TABLE('fact_write')")
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(store)?;
         tx.commit().await.map_err(store)?;
         Ok(Some(WriteSummary {
             entities: (
@@ -3344,6 +3368,8 @@ impl Memory for DoltMemory {
                 fact_count,
                 fact_latest.and_then(|at| at.parse::<jiff::Timestamp>().ok()),
             ),
+            entity_hash: Some(entity_hash),
+            fact_hash: Some(fact_hash),
         }))
     }
 

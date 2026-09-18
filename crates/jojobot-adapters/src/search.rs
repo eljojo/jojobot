@@ -6478,6 +6478,8 @@ mod tests {
         spy.set_summary(Some(WriteSummary {
             entities: (1, Some(jiff::Timestamp::now())),
             facts: (0, None),
+            entity_hash: None,
+            fact_hash: None,
         }));
         let store = Arc::new(IndexedMemory::new(spy.clone()).expect("index opens"));
         store.rebuild().await.expect("rebuild");
@@ -6504,6 +6506,8 @@ mod tests {
         spy.set_summary(Some(WriteSummary {
             entities: (1, Some(jiff::Timestamp::now())),
             facts: (0, None),
+            entity_hash: None,
+            fact_hash: None,
         }));
         let store = Arc::new(IndexedMemory::new(spy.clone()).expect("index opens"));
         store.rebuild().await.expect("rebuild");
@@ -6512,6 +6516,8 @@ mod tests {
         spy.set_summary(Some(WriteSummary {
             entities: (1, Some(jiff::Timestamp::now())),
             facts: (1, Some(jiff::Timestamp::now())),
+            entity_hash: None,
+            fact_hash: None,
         }));
         store
             .search_via_port(&SearchQuery::text("Alpha"))
@@ -6540,6 +6546,8 @@ mod tests {
         let summary = WriteSummary {
             entities: (1, Some(jiff::Timestamp::now())),
             facts: (0, None),
+            entity_hash: None,
+            fact_hash: None,
         };
         spy.set_summary(Some(summary.clone()));
         let store = Arc::new(IndexedMemory::new(spy.clone()).expect("index opens"));
@@ -8511,6 +8519,8 @@ mod tests {
             Ok(Some(WriteSummary {
                 entities: (1, None),
                 facts: (1, None),
+                entity_hash: None,
+                fact_hash: None,
             }))
         }
         async fn declare_type(&self, declared: DeclaredType) -> Result<DeclaredType, MemoryError> {
