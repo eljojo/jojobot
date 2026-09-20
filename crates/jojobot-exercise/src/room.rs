@@ -45,6 +45,12 @@ pub struct Room {
     /// **Set when THIS server says it is listening on this room's address.**
     /// The port answering says only that somebody is there; this says who.
     serving: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// **Every line the server has printed, kept beside forwarding it live to
+    /// this process's stderr.** A failure this room reports quotes the
+    /// server's own words directly rather than pointing at output that may
+    /// already have scrolled past, or arrived interleaved with every other
+    /// room running beside it.
+    log: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
     dir: PathBuf,
     endpoint: String,
 }
@@ -228,13 +234,20 @@ impl Room {
             .with_context(|| format!("spawning {}", binary.display()))?;
 
         let serving = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        if let Some(log) = server.stdout.take() {
-            watch_the_log(log, endpoint.clone(), std::sync::Arc::clone(&serving));
+        let log = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        if let Some(stdout) = server.stdout.take() {
+            watch_the_log(
+                stdout,
+                endpoint.clone(),
+                std::sync::Arc::clone(&serving),
+                std::sync::Arc::clone(&log),
+            );
         }
 
         let mut room = Room {
             server,
             serving,
+            log,
             dir,
             endpoint,
         };
@@ -277,7 +290,10 @@ impl Room {
             // going to answer, and waiting out the timeout to say so buries the
             // reason in two minutes of silence.
             if let Some(status) = self.server.try_wait().context("checking the server")? {
-                anyhow::bail!("the server exited before it served ({status}) — its log is above");
+                anyhow::bail!(
+                    "the server for {address} exited before it served ({status}){}",
+                    self.log_tail(),
+                );
             }
             // 🚨 **This server said it is listening on this address — not
             // that the address answers.** A room tests a port, lets it go, and
@@ -293,12 +309,24 @@ impl Room {
             }
             if std::time::Instant::now() >= deadline {
                 anyhow::bail!(
-                    "the server did not say it was listening on {address} within {}s — its log \
-                     is above",
+                    "the server did not say it was listening on {address} within {}s{}",
                     READY_TIMEOUT.as_secs(),
+                    self.log_tail(),
                 );
             }
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    }
+
+    /// Everything the server has printed so far, formatted for an error.
+    /// Empty is its own sentence, so a room that died with nothing on stdout
+    /// is told apart from one whose words simply did not reach this message.
+    fn log_tail(&self) -> String {
+        let lines = self.log.lock().expect("room log mutex poisoned");
+        if lines.is_empty() {
+            " — it printed nothing".to_string()
+        } else {
+            format!(" — it said:\n{}", lines.join("\n"))
         }
     }
 }
@@ -722,6 +750,7 @@ fn watch_the_log(
     log: std::process::ChildStdout,
     endpoint: String,
     serving: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    lines: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
 ) {
     let serving_line = serving_line(&endpoint);
     std::thread::spawn(move || {
@@ -731,6 +760,7 @@ fn watch_the_log(
                 serving.store(true, std::sync::atomic::Ordering::Relaxed);
             }
             eprintln!("{line}");
+            lines.lock().expect("room log mutex poisoned").push(line);
         }
     });
 }
@@ -1009,6 +1039,57 @@ mod tests {
         );
     }
 
+    /// A binary that prints one line to stdout and exits at once — a stand-in
+    /// for a server that failed before it could serve anything, without
+    /// depending on any particular way the real one can fail.
+    fn a_binary_that_says_and_exits(says: &str, status: i32) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "jojobot-dies-at-once-{}-{status}",
+            std::process::id(),
+        ));
+        std::fs::write(&path, format!("#!/bin/sh\necho '{says}'\nexit {status}\n"))
+            .expect("the throwaway script");
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+            .expect("the executable bit");
+        path
+    }
+
+    /// 🚨 **A room that dies before serving names its own port, the child's
+    /// exit status, and whatever it said — in the error itself, not in a log
+    /// a reader has to go find.**
+    ///
+    /// The room's own log-watching thread used to only forward each line to
+    /// this process's stderr, which scrolls, interleaves with every other
+    /// room running beside it, and is gone by the time anybody reads the
+    /// panic. **This is deliberately not the real jojobot binary**: the
+    /// failure is a binary that never gets far enough to bind a port at all,
+    /// which is what a port already taken or a crash on startup both reduce
+    /// to from this room's point of view.
+    #[tokio::test]
+    async fn a_room_that_dies_before_serving_names_its_port_status_and_words() {
+        let binary = a_binary_that_says_and_exits("the store could not be reached", 7);
+        let err = match super::Room::spawn_once(&binary, &super::DeathSignal::Skip, None).await {
+            Ok(_) => panic!("a binary that exits at once must not read as a room"),
+            Err(e) => e,
+        };
+        let message = format!("{err:#}");
+        let _ = std::fs::remove_file(&binary);
+
+        assert!(
+            message.contains("the store could not be reached"),
+            "the server's own words are missing from the error: {message}",
+        );
+        assert!(
+            message.contains("127.0.0.1:"),
+            "the port this room tried is missing from the error: {message}",
+        );
+        assert!(
+            message.contains('7'),
+            "the child's exit status is missing from the error: {message}",
+        );
+    }
+
     /// 🚨 **A room is ready when ITS OWN server answers, never when the port
     /// answers.**
     ///
@@ -1047,6 +1128,7 @@ mod tests {
             server,
             // Never set, because this room's server never says it is serving.
             serving: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            log: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             dir: super::scratch().expect("a room directory"),
             endpoint: format!("http://127.0.0.1:{port}/mcp"),
         };
