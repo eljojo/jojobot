@@ -155,7 +155,8 @@ impl Sessions for Mentioning {
             .inner
             .begin(NewSession {
                 bot,
-                focus: mention::resolved(&new.focus, &known),
+                focus: mention::resolved(&new.focus, &known)
+                    .map_err(|_| SessionError::KindsNeverLoaded)?,
                 ..new
             })
             .await?;
@@ -170,7 +171,8 @@ impl Sessions for Mentioning {
             .append(
                 id,
                 NewEntry {
-                    text: mention::resolved(&entry.text, &known),
+                    text: mention::resolved(&entry.text, &known)
+                        .map_err(|_| SessionError::KindsNeverLoaded)?,
                     ..entry
                 },
             )
@@ -183,7 +185,10 @@ impl Sessions for Mentioning {
         let known = self.known().await?;
         let mut written = self
             .inner
-            .amend_last(id, &mention::resolved(text, &known))
+            .amend_last(
+                id,
+                &mention::resolved(text, &known).map_err(|_| SessionError::KindsNeverLoaded)?,
+            )
             .await?;
         Self::render_entry(&mut written, &known);
         Ok(written)
@@ -199,7 +204,12 @@ impl Sessions for Mentioning {
         let known = self.known().await?;
         let mut written = self
             .inner
-            .amend_beat(id, entry, &mention::resolved(text, &known), at)
+            .amend_beat(
+                id,
+                entry,
+                &mention::resolved(text, &known).map_err(|_| SessionError::KindsNeverLoaded)?,
+                at,
+            )
             .await?;
         Self::render_entry(&mut written, &known);
         Ok(written)
@@ -210,7 +220,10 @@ impl Sessions for Mentioning {
         let known = self.known().await?;
         let mut session = self
             .inner
-            .set_focus(id, &mention::resolved(focus, &known))
+            .set_focus(
+                id,
+                &mention::resolved(focus, &known).map_err(|_| SessionError::KindsNeverLoaded)?,
+            )
             .await?;
         Self::render_session(&mut session, &known);
         Ok(session)

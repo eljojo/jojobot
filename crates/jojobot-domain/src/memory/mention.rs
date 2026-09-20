@@ -52,18 +52,36 @@ use super::{Entity, EntityId, kinds};
 /// cannot fail a test.
 pub const MARK: &str = "@#";
 
+/// **A mention this process cannot tell from ordinary text**, because it has
+/// loaded no kinds at all.
+///
+/// [`kinds::resolve`] already tells this apart from *no kind by that name* —
+/// [`NotAKind::SetNeverLoaded`](kinds::NotAKind::SetNeverLoaded) versus
+/// [`NotAKind::NotDeclared`](kinds::NotAKind::NotDeclared) — and this is that
+/// same distinction, carried to the one place a lost mention is a lost link
+/// rather than a lost lookup: a caller who wrote `@person:milhouse` gets no
+/// answer telling them it did not take, only text that reads as though it
+/// meant nothing else, forever, once stored that way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KindsUnloaded;
+
 /// Every entity an author named in this text, in the order they wrote them.
 ///
 /// **Shape and kind only.** Whether the handle names anything is the caller's
 /// question, asked against the store: this says what was written, and a write
 /// guard says whether it is there.
+///
+/// **Silent on an unloaded set, on purpose.** This answers "what did the
+/// author mean," and on an unloaded set that question has no answer at all —
+/// callers that need to know whether the set was even readable ask
+/// [`resolved`], which refuses rather than guesses.
 pub fn named(text: &str) -> Vec<EntityId> {
     let mut found = Vec::new();
     for (at, _) in text.match_indices('@') {
         // **A stored mark needs no skip of its own.** What follows it is a
         // badge rather than a kind, so the read below turns it down for the
         // reason it turns down any other word.
-        if let Some((handle, _)) = handle_at(text, at) {
+        if let Attempt::Mention(handle, _) = handle_at(text, at) {
             found.push(handle);
         }
     }
@@ -75,9 +93,19 @@ pub fn named(text: &str) -> Vec<EntityId> {
 /// A mention of something wearing no badge is left exactly as written. That is
 /// the record the build supplies, which is in no table — there is no row to
 /// rename, so its handle is as permanent as anything here.
-pub fn resolved(text: &str, known: &[Entity]) -> String {
-    rewrite(text, |at| {
-        let (handle, end) = handle_at(text, at)?;
+///
+/// **Refuses rather than guesses when this process has loaded no kinds.** An
+/// unloaded set cannot tell `@person:milhouse` from an ordinary word, and
+/// guessing "not a mention" would store the author's link as the words they
+/// typed — silently, and for good, since nothing rewrites stored text later.
+pub fn resolved(text: &str, known: &[Entity]) -> Result<String, KindsUnloaded> {
+    if any_unknowable(&[text]) {
+        return Err(KindsUnloaded);
+    }
+    Ok(rewrite(text, |at| {
+        let Attempt::Mention(handle, end) = handle_at(text, at) else {
+            return None;
+        };
         let badge = known
             .iter()
             .find(|e| e.id == handle)?
@@ -85,7 +113,7 @@ pub fn resolved(text: &str, known: &[Entity]) -> String {
             .as_deref()
             .filter(|badge| !badge.is_empty())?;
         Some((format!("{MARK}{badge}"), end))
-    })
+    }))
 }
 
 /// **What a reader sees**: every stored mention becomes the handle its badge
@@ -116,7 +144,9 @@ pub fn rendered(text: &str, known: &[Entity]) -> String {
                 None => (format!("{MARK}{badge} {GONE}"), end),
             });
         }
-        let (handle, end) = handle_at(text, at)?;
+        let Attempt::Mention(handle, end) = handle_at(text, at) else {
+            return None;
+        };
         match known.iter().any(|e| e.id == handle) {
             // It reads as a link and it names something that is here. Nothing
             // to say: marking it would be reporting damage that is not there.
@@ -142,7 +172,7 @@ pub fn followable(text: &str) -> Vec<(std::ops::Range<usize>, EntityId)> {
         // **A stored mark parses as no handle at all**, so it is already
         // excluded — `handle_at` needs `kind:` right after the `@`, and `#`
         // is never that.
-        let Some((handle, end)) = handle_at(text, at) else {
+        let Attempt::Mention(handle, end) = handle_at(text, at) else {
             continue;
         };
         if text[end..].starts_with(&format!(" {UNKNOWN}")) {
@@ -188,26 +218,66 @@ fn rewrite(text: &str, at: impl Fn(usize) -> Option<(String, usize)>) -> String 
     out
 }
 
+/// What trying to read a mention at `at` turned up.
+enum Attempt {
+    /// A real mention: the handle and where it ends.
+    Mention(EntityId, usize),
+    /// This shape is not a mention, whatever the kind set holds — no colon,
+    /// no slug, or a kind this process has loaded and does not declare.
+    NotAMention,
+    /// This shapes exactly like a mention, and this process cannot say
+    /// whether it is one: it has loaded no kinds at all, so every token
+    /// fails to resolve the same way a typo would.
+    Unknowable,
+}
+
 /// The handle written at `at`, and where it ends.
 ///
 /// **A kind this instance does not hold is not a mention at all**, so `@` in
 /// front of an ordinary word is ordinary text. That is the discriminator: a
 /// mention names a kind, and the set of kinds is data this process loaded.
-fn handle_at(text: &str, at: usize) -> Option<(EntityId, usize)> {
+///
+/// **A process that has loaded no kinds cannot draw that line.**
+/// [`kinds::resolve`] fails every token the same way then — the same
+/// ambiguity `resolve` itself refuses rather than guesses at — so this says
+/// so explicitly instead of quietly picking the answer that looks safest.
+fn handle_at(text: &str, at: usize) -> Attempt {
     let rest = &text[at + 1..];
-    let (kind, _) = rest.split_once(':')?;
-    if kinds::resolve(kind).is_err() {
-        return None;
-    }
+    let Some((kind, _)) = rest.split_once(':') else {
+        return Attempt::NotAMention;
+    };
     // **The run of slug bytes, whole.** A trailing hyphen is not trimmed: a
     // slug may end in one, so trimming would read a mention as naming a
-    // different thing than the author wrote.
+    // different thing than the author wrote. Checked before the kind
+    // resolves: a shape with no slug at all is not a mention regardless of
+    // what the kind set holds, so it is never ambiguous either.
     let slug = run_of(text, at + 1 + kind.len() + 1, is_slug_byte);
     if slug.is_empty() {
-        return None;
+        return Attempt::NotAMention;
     }
-    let end = at + 1 + kind.len() + 1 + slug.len();
-    Some((EntityId(format!("{kind}:{slug}")), end))
+    match kinds::resolve(kind) {
+        Ok(_) => {
+            let end = at + 1 + kind.len() + 1 + slug.len();
+            Attempt::Mention(EntityId(format!("{kind}:{slug}")), end)
+        }
+        Err(kinds::NotAKind::SetNeverLoaded) => Attempt::Unknowable,
+        Err(kinds::NotAKind::NotDeclared { .. }) => Attempt::NotAMention,
+    }
+}
+
+/// The error a write reaches for when [`resolved`] refuses. A single spelling
+/// so every call site names the same failure the same way.
+fn unloaded(_: KindsUnloaded) -> super::MemoryError {
+    super::MemoryError::KindsNeverLoaded { attempted: None }
+}
+
+/// Whether any of this text holds a mention-shaped substring this process
+/// cannot resolve because it has loaded no kinds.
+fn any_unknowable(text: &[&str]) -> bool {
+    text.iter().any(|part| {
+        part.match_indices('@')
+            .any(|(at, _)| matches!(handle_at(part, at), Attempt::Unknowable))
+    })
 }
 
 /// The run of bytes from `from` that `keeps` accepts.
@@ -377,6 +447,13 @@ impl Mentioning {
     /// words rather than the link changes the words; a caller that meant the
     /// link creates the thing, which is two deliberate steps exactly as it is
     /// everywhere else here.
+    ///
+    /// **Says nothing about a mention this process cannot resolve at all** —
+    /// an unloaded set makes `named` see no mentions rather than an absent
+    /// one, so this never finds anything to block over it. That refusal
+    /// belongs to [`resolved`], which every caller of this also calls on the
+    /// same text right after: one property, checked once, rather than a copy
+    /// here that would only ever agree with it.
     fn screen<T>(text: &[&str], known: &[Entity]) -> Option<super::Guarded<T>> {
         Self::first_unresolved(text, known).map(|(attempted, candidates)| super::Guarded::Blocked {
             attempted,
@@ -482,8 +559,13 @@ impl super::Memory for Mentioning {
         let written = self
             .inner
             .capture(super::NewFact {
-                content: resolved(&fact.content, &known),
-                details: fact.details.as_deref().map(|d| resolved(d, &known)),
+                content: resolved(&fact.content, &known).map_err(unloaded)?,
+                details: fact
+                    .details
+                    .as_deref()
+                    .map(|d| resolved(d, &known))
+                    .transpose()
+                    .map_err(unloaded)?,
                 ..fact
             })
             .await?;
@@ -525,8 +607,18 @@ impl super::Memory for Mentioning {
             .update_fact(
                 address,
                 super::FactPatch {
-                    content: patch.content.as_deref().map(|c| resolved(c, &known)),
-                    details: patch.details.as_deref().map(|d| resolved(d, &known)),
+                    content: patch
+                        .content
+                        .as_deref()
+                        .map(|c| resolved(c, &known))
+                        .transpose()
+                        .map_err(unloaded)?,
+                    details: patch
+                        .details
+                        .as_deref()
+                        .map(|d| resolved(d, &known))
+                        .transpose()
+                        .map_err(unloaded)?,
                     ..patch
                 },
             )
@@ -632,7 +724,10 @@ impl super::Memory for Mentioning {
         }
         let former = self.former().await?;
         let declared = self.declared().await?;
-        let reason = reason.map(|r| resolved(r, &known));
+        let reason = reason
+            .map(|r| resolved(r, &known))
+            .transpose()
+            .map_err(unloaded)?;
         let mut done = self.inner.retract(address, reason.as_deref(), date).await?;
         self.render_fact(&mut done.retracted, &known, &former, &declared);
         self.render_fact(&mut done.record, &known, &former, &declared);
@@ -653,7 +748,10 @@ impl super::Memory for Mentioning {
         }
         let former = self.former().await?;
         let declared = self.declared().await?;
-        let reason = reason.map(|r| resolved(r, &known));
+        let reason = reason
+            .map(|r| resolved(r, &known))
+            .transpose()
+            .map_err(unloaded)?;
         let mut done = self
             .inner
             .merge(folded, survivor, reason.as_deref(), date)
@@ -672,7 +770,7 @@ impl super::Memory for Mentioning {
         let known = self.known().await?;
         let stored = self
             .inner
-            .set_prose(entity, &resolved(prose, &known))
+            .set_prose(entity, &resolved(prose, &known).map_err(unloaded)?)
             .await?;
         Ok(rendered(&stored, &known))
     }
@@ -787,7 +885,7 @@ mod tests {
         let known = [thing("person:milhouse", Some("k7h2mn"))];
         assert_eq!(
             resolved("ask @person:milhouse about it", &known),
-            "ask @#k7h2mn about it",
+            Ok("ask @#k7h2mn about it".to_string()),
         );
     }
 
@@ -799,7 +897,7 @@ mod tests {
         let _booted = crate::memory::testing::InMemoryMemory::booted();
         let known = [thing("person:milhouse", Some("k7h2mn"))];
         let plain = "mail me @ home, or @sandwich:cheese, or @person";
-        assert_eq!(resolved(plain, &known), plain);
+        assert_eq!(resolved(plain, &known), Ok(plain.to_string()));
         assert_eq!(rendered(plain, &known), plain);
     }
 
@@ -812,7 +910,7 @@ mod tests {
         let known = [thing("person:milhouse", Some("k7h2mn"))];
         assert_eq!(
             resolved("saw @person:milhouse, then @person:milhouse.", &known),
-            "saw @#k7h2mn, then @#k7h2mn.",
+            Ok("saw @#k7h2mn, then @#k7h2mn.".to_string()),
         );
         assert_eq!(
             rendered("saw @#k7h2mn, then @#k7h2mn.", &known),
@@ -829,7 +927,7 @@ mod tests {
         let known = [thing("view:loops", None)];
         assert_eq!(
             resolved("run @view:loops again", &known),
-            "run @view:loops again",
+            Ok("run @view:loops again".to_string()),
         );
         assert_eq!(
             rendered("run @view:loops again", &known),

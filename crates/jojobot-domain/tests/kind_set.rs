@@ -11,7 +11,25 @@
 
 use jojobot_domain::mailbox::testing::InMemoryMailboxes;
 use jojobot_domain::memory::kinds::{self, NotAKind};
-use jojobot_domain::memory::{EntityId, EntityKind, validate_subject};
+use jojobot_domain::memory::mention::{self, KindsUnloaded};
+use jojobot_domain::memory::{Boot, Entity, EntityId, EntityKind, validate_subject};
+
+/// A minimal entity a mention can resolve against.
+fn thing(handle: &str, badge: Option<&str>) -> Entity {
+    Entity {
+        id: EntityId(handle.into()),
+        merged_into: None,
+        kind: EntityId(handle.into()).kind().expect("a loaded kind"),
+        name: handle.into(),
+        aliases: Vec::new(),
+        source: "the roster".into(),
+        crm: None,
+        parent: None,
+        boot: Boot::OnDemand,
+        badge: badge.map(str::to_string),
+        archived: None,
+    }
+}
 
 /// These two share the one set even here, so they take turns.
 fn in_turn() -> std::sync::MutexGuard<'static, ()> {
@@ -358,4 +376,123 @@ fn a_bare_mail_double_seeds_nothing_and_the_construction_sites_own_token_does() 
         Some(EntityKind::BOT),
         "…well enough to parse a handle, which is what a construction site needs it for",
     );
+}
+
+/// **An unloaded set turns a mention from a rewrite into a refusal.**
+///
+/// A loaded process tells a real mention from an ordinary word by asking the
+/// kind set (rule 68's own shape, one layer down). An unloaded one cannot ask
+/// anything, so treating `@person:milhouse` as plain text would silently drop
+/// the very thing the author asked jojobot to remember — a mention stored as
+/// the words that were typed rather than the badge that does not move. This
+/// pins the refusal against the loaded column as the control.
+#[test]
+fn an_unloaded_set_turns_a_mention_into_a_refusal_rather_than_leaving_it_as_words() {
+    let _turn = in_turn();
+    kinds::load_shipped();
+    let known = [thing("person:milhouse", Some("k7h2mn"))];
+
+    assert_eq!(
+        mention::resolved("ask @person:milhouse about it", &known),
+        Ok("ask @#k7h2mn about it".to_string()),
+        "on a loaded process the mention resolves — the control",
+    );
+
+    kinds::load::<[&str; 0], &str>([]);
+    assert_eq!(
+        mention::resolved("ask @person:milhouse about it", &known),
+        Err(KindsUnloaded),
+        "on an unloaded one the same text is a refusal, not a silent no-op",
+    );
+
+    kinds::load_shipped();
+}
+
+/// **The same refusal, through a verb a caller actually calls.**
+///
+/// [`mention::resolved`] proves the discriminator; this proves it reaches a
+/// real write. `retract` is the one that isolates it: unlike `capture`,
+/// `update_fact`, `merge` and `set_prose` — which all validate their own
+/// subject's kind before this text is ever reached, and so would refuse on
+/// an unloaded set for a reason that has nothing to do with the mention in
+/// its `reason` — `retract` resolves its address by a plain handle lookup
+/// that does not ask the kind set anything. So this is the one call where a
+/// green result actually depends on the mention fix rather than on a
+/// different guard nobody touched agreeing by coincidence.
+#[test]
+fn an_unloaded_set_refuses_a_retract_naming_a_mention_in_its_reason_rather_than_writing_it_silently()
+ {
+    let _turn = in_turn();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("a runtime for this one case");
+
+    kinds::load_shipped();
+    let store: std::sync::Arc<dyn jojobot_domain::memory::Memory> =
+        std::sync::Arc::new(jojobot_domain::memory::testing::InMemoryMemory::booted());
+    let subject = EntityId("person:homer".into());
+    let other = EntityId("person:milhouse".into());
+    for id in [&subject, &other] {
+        runtime
+            .block_on(jojobot_domain::memory::Memory::add_entity(
+                store.as_ref(),
+                jojobot_domain::memory::NewEntity::new(id.clone(), id.slug(), "test"),
+            ))
+            .expect("add_entity ok")
+            .written()
+            .expect("not blocked");
+    }
+    let mentioning = mention::Mentioning::new(store.clone());
+    // Two facts, one for each retract below — a second retract on the same
+    // address would refuse as already-retracted, which is a different
+    // failure than the one this case means to isolate.
+    let capture = |content: &'static str| {
+        runtime
+            .block_on(jojobot_domain::memory::Memory::capture(
+                &mentioning,
+                jojobot_domain::memory::NewFact::about(
+                    subject.clone(),
+                    content,
+                    jiff::civil::date(2026, 1, 1),
+                ),
+            ))
+            .expect("capture ok")
+            .written()
+            .expect("not blocked")
+            .address()
+    };
+    let first = capture("a claim to retract while loaded");
+    let second = capture("a claim to retract while unloaded");
+
+    let retracted = runtime
+        .block_on(jojobot_domain::memory::Memory::retract(
+            &mentioning,
+            &first,
+            Some("ask @person:milhouse about it"),
+            jiff::civil::date(2026, 1, 2),
+        ))
+        .expect("retracts while loaded — the control");
+    assert_eq!(
+        retracted.retracted.status,
+        jojobot_domain::memory::FactStatus::Archived,
+        "a loaded process retracts the claim",
+    );
+
+    kinds::load::<[&str; 0], &str>([]);
+    let refused = runtime.block_on(jojobot_domain::memory::Memory::retract(
+        &mentioning,
+        &second,
+        Some("ask @person:milhouse about it"),
+        jiff::civil::date(2026, 1, 2),
+    ));
+    assert!(
+        matches!(
+            refused,
+            Err(jojobot_domain::memory::MemoryError::KindsNeverLoaded { .. })
+        ),
+        "an unloaded process refuses the write rather than storing the mention as plain words: \
+         {refused:?}",
+    );
+
+    kinds::load_shipped();
 }

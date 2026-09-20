@@ -710,6 +710,13 @@ pub enum MailboxError {
         /// Who already holds it.
         held_by: String,
     },
+    /// **A mention this process cannot tell from an ordinary word**, because
+    /// it has loaded no kinds at all. The same failure
+    /// [`crate::memory::MemoryError::KindsNeverLoaded`] names on the memory
+    /// rail, carried here because a message body, subject and notes hold
+    /// mentions on the same terms a claim's words do.
+    #[error("{}", crate::memory::kinds::NotAKind::SetNeverLoaded)]
+    KindsNeverLoaded,
 }
 
 /// The Mailboxes port — five verbs over boxes and the messages in them. A

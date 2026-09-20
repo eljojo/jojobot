@@ -160,11 +160,14 @@ impl Mailboxes for Mentioning {
         let written = self
             .inner
             .post_message(NewMessage {
-                body: mention::resolved(&message.body, &known),
+                body: mention::resolved(&message.body, &known)
+                    .map_err(|_| MailboxError::KindsNeverLoaded)?,
                 subject: message
                     .subject
                     .as_deref()
-                    .map(|s| mention::resolved(s, &known)),
+                    .map(|s| mention::resolved(s, &known))
+                    .transpose()
+                    .map_err(|_| MailboxError::KindsNeverLoaded)?,
                 sender,
                 ..message
             })
@@ -212,7 +215,10 @@ impl Mailboxes for Mentioning {
         notes: Option<&str>,
     ) -> Result<Message, MailboxError> {
         let known = self.known().await?;
-        let resolved_notes = notes.map(|n| mention::resolved(n, &known));
+        let resolved_notes = notes
+            .map(|n| mention::resolved(n, &known))
+            .transpose()
+            .map_err(|_| MailboxError::KindsNeverLoaded)?;
         let mut message = self
             .inner
             .mark_processed(id, resolved_notes.as_deref())
