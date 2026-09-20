@@ -458,7 +458,7 @@ impl DoltMemory {
         .fetch_all(&self.pool)
         .await
         .map_err(store)?;
-        let declared = gather_types(&type_rows);
+        let declared = gather_types(&type_rows)?;
         let reference_keys: std::collections::HashSet<&str> = declared
             .iter()
             .flat_map(|d| &d.fields)
@@ -1463,7 +1463,7 @@ impl DoltMemory {
         .fetch_all(&mut **tx)
         .await
         .map_err(store)?;
-        Ok(gather_types(&rows))
+        Ok(gather_types(&rows)?)
     }
 
     /// **The keys a KIND names, read as the kind's own.**
@@ -1490,7 +1490,7 @@ impl DoltMemory {
         .fetch_all(&mut **tx)
         .await
         .map_err(store)?;
-        Ok(gather_types(&rows))
+        Ok(gather_types(&rows)?)
     }
 
     /// The addresses a page already holds, which is what a fact miss carries so
@@ -3518,7 +3518,7 @@ impl Memory for DoltMemory {
         .fetch_all(&self.pool)
         .await
         .map_err(store)?;
-        Ok(gather_types(&rows))
+        Ok(gather_types(&rows)?)
     }
 
     async fn declare_kind(
@@ -3680,6 +3680,24 @@ async fn owned_by_the_other_half(
     Ok(())
 }
 
+/// **Whether `holds` names a reference to a kind this process cannot tell
+/// from a typo, because it has loaded no kinds at all.**
+///
+/// Distinct from `holds` simply being malformed (an unknown value type, a
+/// kind suffix on a type that takes none): those stay [`gather_types`]'s
+/// existing fallback, unrelated to this rule and not what this asks about.
+/// Only a reference whose kind fails with
+/// [`NotAKind::SetNeverLoaded`](kinds::NotAKind::SetNeverLoaded) is this.
+fn unresolvable_only_because_unloaded(token: &str) -> bool {
+    let held = token.trim().strip_prefix("list:").unwrap_or(token.trim());
+    match held.split_once(':') {
+        Some((holds, kind)) if holds.trim() == ValueType::Reference.as_token() => {
+            matches!(kinds::resolve(kind.trim()), Err(NotAKind::SetNeverLoaded))
+        }
+        _ => false,
+    }
+}
+
 /// Rows into the types they are — **one reader**, so the roster a write is
 /// screened against and the roster a caller lists cannot come to be assembled
 /// two different ways.
@@ -3692,17 +3710,27 @@ async fn owned_by_the_other_half(
 /// **A row whose `folds` names no fold reads as newest-wins**, which is the
 /// unconfigured behaviour and the one every key had before there was a choice.
 /// A token this build does not know must not turn a key into a counter.
-fn gather_types(rows: &[sqlx::mysql::MySqlRow]) -> Vec<DeclaredType> {
+///
+/// **Refuses rather than retyping a reference this process cannot resolve
+/// because it has loaded no kinds.** The fallback above is for a token that
+/// is genuinely malformed; an unloaded set is a different failure; retyping
+/// it to text would silently hand back a type's schema as something other
+/// than what was declared, with nothing saying so.
+fn gather_types(rows: &[sqlx::mysql::MySqlRow]) -> Result<Vec<DeclaredType>, MemoryError> {
     let mut types: Vec<DeclaredType> = Vec::new();
     for row in rows {
         let name: String = row.get("type_name");
         let key: String = row.get("key_name");
+        let holds_token: String = row.get("holds");
+        let held = Field::of_token(&key, &holds_token);
+        if held.is_none() && unresolvable_only_because_unloaded(&holds_token) {
+            return Err(MemoryError::KindsNeverLoaded { attempted: None });
+        }
         let field = Field {
             folds: Fold::of_token(&row.get::<String, _>("folds")).unwrap_or_default(),
             required: row.get::<bool, _>("required"),
             one_of: Field::one_of_from_cell(row.get::<Option<String>, _>("one_of").as_deref()),
-            ..Field::of_token(&key, &row.get::<String, _>("holds"))
-                .unwrap_or_else(|| Field::new(&key, ValueType::Text))
+            ..held.unwrap_or_else(|| Field::new(&key, ValueType::Text))
         };
         match types.last_mut() {
             Some(last) if last.name == name => last.fields.push(field),
@@ -3712,7 +3740,7 @@ fn gather_types(rows: &[sqlx::mysql::MySqlRow]) -> Vec<DeclaredType> {
             }),
         }
     }
-    types
+    Ok(types)
 }
 
 /// Write one whole entity — the row and the aliases under it — replacing
