@@ -928,6 +928,55 @@ mod tests {
         );
     }
 
+    /// **A stored thing's scan answers alike a supplied one's, through the one
+    /// layer that resolves both.**
+    ///
+    /// [`a_record_the_build_ships_answers_like_a_stored_one_and_is_stored_nowhere`]
+    /// names the claim in its own title and proves only the supplied half;
+    /// this is the stored half beside it, in one call, so the two cannot
+    /// drift the way the listing question already had. `scan_entity` derives
+    /// from `list_entities`, so this is asked here — the one place it
+    /// actually resolves what the build supplies — rather than of the bare
+    /// store, which answers rows alone by design.
+    #[tokio::test]
+    async fn a_stored_things_scan_answers_like_a_supplied_ones() {
+        let supplied = Provisions::new(vec![shipped_record("loops")]);
+        let over = Provisioned::new(InMemoryMemory::booted().knowing(supplied.clone()), supplied);
+
+        let stored_id = EntityId("thing:contract-scan-stored".into());
+        over.add_entity(NewEntity::new(
+            stored_id.clone(),
+            "Scan Stored",
+            "user-named",
+        ))
+        .await
+        .expect("add_entity should succeed")
+        .written()
+        .expect("nothing collides with it");
+        assert_eq!(
+            over.scan_entity(&stored_id)
+                .await
+                .expect("the scan reads")
+                .expect("the record is there")
+                .entity
+                .map(|e| e.name),
+            Some("Scan Stored".to_string()),
+            "a stored thing must scan through this layer exactly as a supplied one does",
+        );
+
+        let supplied_id = EntityId("view:loops".into());
+        assert_eq!(
+            over.scan_entity(&supplied_id)
+                .await
+                .expect("the scan reads")
+                .expect("the record is there")
+                .entity
+                .map(|e| e.name),
+            Some("The loops view".to_string()),
+            "…and the supplied record still scans beside it",
+        );
+    }
+
     /// The shared contract's listing case (rule 234), asked of a stored row
     /// and, over this layer — the one place `list_entities` actually
     /// resolves what the build supplies — a record the build ships, in one

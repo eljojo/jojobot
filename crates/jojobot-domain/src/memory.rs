@@ -4449,6 +4449,18 @@ mod tests {
             .await;
     }
 
+    /// **Every existence-gated read answers alike, stored and supplied, against
+    /// the fake.**
+    #[tokio::test]
+    async fn a_captured_claim_reads_through_every_gated_read_stored_and_supplied_against_the_fake()
+    {
+        contract::a_captured_claim_reads_through_every_gated_read_stored_and_supplied(
+            &InMemoryMemory::booted(),
+            &fake_knowing_a_supplied_view(),
+        )
+        .await;
+    }
+
     #[tokio::test]
     async fn a_rename_of_a_supplied_handle_is_refused_against_the_fake() {
         contract::a_rename_of_a_supplied_handle_is_refused_not_a_silent_no_op(

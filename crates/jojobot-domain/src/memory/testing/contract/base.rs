@@ -5577,6 +5577,118 @@ pub async fn every_entity_read_answers_for_a_supplied_record<M: Memory>(store: &
     );
 }
 
+/// **Every existence-gated read answers alike for a stored record and a
+/// supplied one — the pairing [`every_entity_read_answers_for_a_supplied_record`]
+/// does not carry.** That one proves the supplied side and the miss side,
+/// never that the two answer alike; this closes the gap the same way
+/// [`an_existing_thing_appears_in_its_kinds_listing_stored_and_supplied`]
+/// already does for `list_entities` — one assertion body, run once against
+/// each backing, through [`support::Backing`].
+///
+/// **Not a rewrite of [`a_claim_on_a_supplied_record_reads_back`]**, which
+/// stays the wider single-store proof; this is the doubled contract's own
+/// case, so the parity question cannot drift from the supplied one the same
+/// way the listing question already had.
+pub async fn a_captured_claim_reads_through_every_gated_read_stored_and_supplied<
+    M: Memory,
+    S: Memory,
+>(
+    stored: &M,
+    supplied: &S,
+) {
+    a_captured_claim_reads_through_every_gated_read(
+        stored,
+        &support::Stored {
+            handle: EntityId("thing:contract-gated-read-stored".into()),
+            name: "Gated Read Stored",
+            source: "user-named",
+        },
+    )
+    .await;
+    a_captured_claim_reads_through_every_gated_read(supplied, &support::Supplied).await;
+}
+
+/// One backing's half of
+/// [`a_captured_claim_reads_through_every_gated_read_stored_and_supplied`]:
+/// capture a claim, then read it back through every existence-gated read
+/// this port has — `recall`, `fields`, `history`, `claim_history`,
+/// `claim_histories` and `backing` — asserting each answers with exactly
+/// what was just written.
+async fn a_captured_claim_reads_through_every_gated_read<M: Memory, B: support::Backing<M>>(
+    store: &M,
+    backing: &B,
+) {
+    let (existing, _source) = backing.existing(store).await;
+    // **`store.capture` directly, never the `ensure`-then-capture helper.**
+    // `ensure` provisions through `list_entities`, which is rows-only by
+    // design (rule 234) — a supplied backing exists nowhere else, so
+    // `ensure` would read it as absent and collide with it on `add_entity`.
+    // The write path's own existence gate already reads the rows plus what
+    // the build supplies, so the plain capture is what a caller really
+    // sends against either backing.
+    let written = store
+        .capture(NewFact {
+            fields: [("contract-gate-probe".to_string(), "held".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(
+                existing.clone(),
+                "the operator wrote on it",
+                date(2026, 5, 21),
+            )
+        })
+        .await
+        .expect("a claim on either backing is a write the gate allows")
+        .written()
+        .expect("nothing blocks it");
+
+    let recalled = store.recall(&existing).await.expect("recall answers");
+    assert!(
+        recalled.iter().any(|f| f.id == written.id),
+        "recall does not answer alike for this backing: {recalled:?}",
+    );
+    assert_eq!(
+        store
+            .fields(&existing)
+            .await
+            .expect("the keys read")
+            .get("contract-gate-probe"),
+        Some(&"held".to_string()),
+        "fields does not answer alike for this backing",
+    );
+    assert_eq!(
+        store
+            .history(&existing, "contract-gate-probe")
+            .await
+            .expect("the writes behind the key read")
+            .len(),
+        1,
+        "history does not answer alike for this backing",
+    );
+    assert_eq!(
+        store
+            .claim_history(&written.address())
+            .await
+            .expect("the claim's own chain reads")
+            .len(),
+        1,
+        "claim_history does not answer alike for this backing",
+    );
+    assert!(
+        store
+            .claim_histories(&existing)
+            .await
+            .expect("the chains read")
+            .contains_key(&written.id),
+        "claim_histories does not answer alike for this backing",
+    );
+    let backed = store.backing(&existing).await.expect("the backing reads");
+    assert!(
+        backed.contains_key("contract-gate-probe"),
+        "backing does not answer alike for this backing: {backed:?}",
+    );
+}
+
 /// **Renaming a record the build supplies is refused, never a silent
 /// no-op — and never a claim that it moved to itself.**
 /// `rename_entity`'s existence check reads stored rows only,
