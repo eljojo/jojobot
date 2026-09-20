@@ -110,7 +110,7 @@ message assistant | the things I keep having to do | The fern is already on here
 
     The kettle needs descaling every sixty days. I last did it on 2026-06-15.
 
-    The air filter I swap when it looks bad, so there is no schedule for that one at all. The last swap was 2026-09-20.
+    The air filter I swap when it looks bad, so there is no schedule for that one at all. The last swap was 2020-01-01.
 
     Leave it so whoever comes next can pick it up.
 ```
@@ -163,7 +163,13 @@ say     no loop with a sixty-day frequency hangs under the kettle carrying the d
 # On the fold, a cold phase that moved this loop would empty the selection and
 # this lock would report phase 1 never recording it — blaming the phase that did
 # its job. The lock below is what says the filter must stay where it stands.
-recall {"kind": "rhythm", "fields": [{"key": "last_check_in", "value": "2026-09-20", "scope": "record"}]}
+#
+# 🚨 This selector's date is the furnished last-swap date above, and it must
+# stay a date no check-in this room ever writes: the cold phase dates a
+# check-in with no day of its own to the real clock, and a selector that
+# collided with that day would pull in whatever loop was just checked in,
+# on whatever day this room happened to run.
+recall {"kind": "rhythm", "fields": [{"key": "last_check_in", "value": "2020-01-01", "scope": "record"}]}
 carries "parent":"thing:the-air-filter"
 lacks   cadence_days
 say     the loop the operator keeps no schedule for was given one, which nobody said — or it is not under the filter at all
@@ -186,7 +192,7 @@ behind.
 # All three loops in one answer, each read by what it HOLDS now. A session that
 # checked everything in did not answer the question, it painted the wall.
 recall {"kind": "rhythm"}
-carries "last_check_in":"2026-09-20"
+carries "last_check_in":"2020-01-01"
 carries "last_check_in":"2026-08-01"
 lacks   "last_check_in":"2026-06-15"
 say     the cold session moved a loop that was not due, or left the one that was where it stood

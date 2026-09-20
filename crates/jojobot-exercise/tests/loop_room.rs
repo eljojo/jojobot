@@ -29,20 +29,38 @@ async fn furnished() -> (Room, Surface, String) {
     let (room, surface) = Room::open_with_client(&server_binary().expect("a jojobot binary"))
         .await
         .expect("a room");
+    let sid = boot_the_occupant(&surface).await;
+    (room, surface, sid)
+}
+
+/// The same furnished room, with the server's own clock forced to `today`
+/// instead of the real one — for a reproduction that must not depend on when
+/// the suite happens to run.
+async fn furnished_stating(today: &str) -> (Room, Surface, String) {
+    let (room, surface) =
+        Room::open_with_client_stating(&server_binary().expect("a jojobot binary"), today)
+            .await
+            .expect("a room");
+    let sid = boot_the_occupant(&surface).await;
+    (room, surface, sid)
+}
+
+/// Furniture, then the shipped identity's boot — the setup every room variant
+/// shares, so a day forced on the server is the only difference between them.
+async fn boot_the_occupant(surface: &Surface) -> String {
     expectations::seed_for(expectations::LOOP_ROOM)
         .expect("the room has furniture")
-        .furnish(&surface)
+        .furnish(surface)
         .await
         .expect("the room is furnished");
     let booted = surface
         .must("start_here", json!({"bot": "assistant", "brief": true}))
         .await
         .expect("the shipped identity boots");
-    let sid = booted["session"]["sid"]
+    booted["session"]["sid"]
         .as_str()
         .expect("a handle")
-        .to_string();
-    (room, surface, sid)
+        .to_string()
 }
 
 /// A call the occupant would make.
@@ -125,8 +143,8 @@ async fn worked_the_first_phase(room: &Surface, sid: &str) {
         json!({
             "subject": "rhythm:swap-the-air-filter",
             "content": "swap the filter when it looks bad — no schedule",
-            "provenance": "testimony", "recorded_at": "2026-09-20",
-            "fields": {"name": "Swap the air filter", "last_check_in": "2026-09-20"},
+            "provenance": "testimony", "recorded_at": "2020-01-01",
+            "fields": {"name": "Swap the air filter", "last_check_in": "2020-01-01"},
         }),
     )
     .await;
@@ -323,7 +341,7 @@ async fn the_locks_fail_on_a_room_written_in_prose() {
         "capture",
         json!({
             "subject": "thing:the-air-filter",
-            "content": "swapped on 2026-09-20, and there is no schedule for it",
+            "content": "swapped on 2020-01-01, and there is no schedule for it",
             "provenance": "testimony",
         }),
     )
@@ -406,4 +424,38 @@ async fn no_lock_here_rests_on_a_needle_that_matches_somewhere_else() {
          only its own sitting could satisfy: {:?}",
         summary.findings,
     );
+}
+
+/// 🚨 **A same-day check-in must not make the filter's own selector match the
+/// kettle too.**
+///
+/// The room's Phase 1 selects the unscheduled loop by a literal date — the
+/// air filter's own furnished `last_check_in` — because that is the only way
+/// to name "the one loop the operator keeps no schedule for" without pinning
+/// its handle. The cold phase's own check-in on the kettle carries no date of
+/// its own, so it lands on whatever day the server is having. If that day
+/// ever equalled the filter's furnished date, the selector would return both
+/// records, and the kettle's `cadence_days` would leak into a lock built to
+/// prove the filter has none.
+///
+/// **The day is forced rather than waited for**, because the collision this
+/// guards is a calendar coincidence: it went green on its own, by the
+/// calendar turning over, and a fix confirmed only by a later clock proves
+/// nothing. Forcing the exact day that once collided is what tells a real fix
+/// apart from one the clock is still hiding.
+#[tokio::test]
+async fn a_same_day_check_in_does_not_collide_with_the_filters_furnished_date() {
+    let (_room, surface, sid) = furnished_stating("2026-09-20").await;
+    worked_the_first_phase(&surface, &sid).await;
+    worked_the_cold_phase(&surface, &sid).await;
+
+    let outcomes = judge_all(&surface).await;
+    for outcome in &outcomes {
+        assert!(
+            outcome.held,
+            "a check-in landing on the filter's own furnished date must not turn its selector \
+             into a match for the kettle too: {}",
+            saying(&outcomes),
+        );
+    }
 }

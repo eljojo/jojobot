@@ -81,6 +81,25 @@ impl Room {
     /// with the count in it, and the message says the ROOM could not be opened
     /// rather than saying anything about what the room holds.
     pub async fn open_with_client(binary: &Path) -> Result<(Room, crate::surface::Surface)> {
+        Room::open_with_client_on(binary, None).await
+    }
+
+    /// **The same room, on a day of the caller's naming** — for a reproduction
+    /// that must not wait for the real clock to agree with it. `today` is
+    /// carried to the server the way an operator carries it: `JOJOBOT_TODAY`,
+    /// set on the child alone, so no global or process-wide state is touched
+    /// and nothing else spawned beside it is affected.
+    pub async fn open_with_client_stating(
+        binary: &Path,
+        today: &str,
+    ) -> Result<(Room, crate::surface::Surface)> {
+        Room::open_with_client_on(binary, Some(today)).await
+    }
+
+    async fn open_with_client_on(
+        binary: &Path,
+        today: Option<&str>,
+    ) -> Result<(Room, crate::surface::Surface)> {
         sweep_once();
         anyhow::ensure!(
             binary.is_file(),
@@ -89,7 +108,7 @@ impl Room {
         );
         let mut last = None;
         for _ in 0..ATTEMPTS {
-            let room = match Room::spawn_once(binary, &DeathSignal::Ask).await {
+            let room = match Room::spawn_once(binary, &DeathSignal::Ask, today).await {
                 Ok(room) => room,
                 Err(e) => {
                     last = Some(e);
@@ -148,7 +167,7 @@ impl Room {
         );
         let mut last = None;
         for _ in 0..ATTEMPTS {
-            match Room::spawn_once(binary, &signal).await {
+            match Room::spawn_once(binary, &signal, None).await {
                 Ok(room) => return Ok(room),
                 Err(e) => last = Some(e),
             }
@@ -161,7 +180,11 @@ impl Room {
     }
 
     /// One attempt: fresh ports, a fresh directory, one spawn.
-    async fn spawn_once(binary: &Path, signal: &DeathSignal) -> Result<Room> {
+    ///
+    /// `today`, when named, is carried to the child alone as `JOJOBOT_TODAY` —
+    /// nothing process-wide, so a room forcing a day cannot leak it to a room
+    /// spawned beside it.
+    async fn spawn_once(binary: &Path, signal: &DeathSignal, today: Option<&str>) -> Result<Room> {
         let dir = scratch()?;
         // **Held until the spawn, then let go.** Nothing else in this process
         // can take these numbers while the command is being built, which is
@@ -192,6 +215,9 @@ impl Room {
             // Whatever the server writes when it cannot start at all goes
             // straight through, as it always did.
             .stderr(Stdio::inherit());
+        if let Some(day) = today {
+            spawning.env("JOJOBOT_TODAY", day);
+        }
         if let DeathSignal::Ask = signal {
             die_with_this_run(&mut spawning);
         }
