@@ -9,6 +9,7 @@
 //!
 //! **If you add a case that calls `load`, add it here.**
 
+use jojobot_domain::mailbox::testing::InMemoryMailboxes;
 use jojobot_domain::memory::kinds::{self, NotAKind};
 use jojobot_domain::memory::{EntityId, EntityKind, validate_subject};
 
@@ -312,4 +313,49 @@ fn a_value_type_answers_about_a_handle_only_when_the_set_is_loaded() {
          wrong rather than absent, which is what this case exists to record",
     );
     kinds::load_shipped();
+}
+
+/// **A mailbox store holds no kinds, so its double must not stand one up
+/// either.** The mail double's own constructor used to load the set as a
+/// side effect of being built — the memory double's hazard, one rail over.
+/// Seeding is now the caller's job, done with the same token the memory
+/// double's own boot step uses, at each place a mail double is constructed.
+///
+/// **Both halves, mirroring
+/// [`a_store_stood_up_loads_nothing_and_a_booted_one_loads_what_it_holds`]:**
+/// building the double alone must leave the set exactly as it found it, and
+/// naming the boundary beside it must fill the set well enough to parse a
+/// handle. Neither half alone would tell a seeding constructor from a
+/// caller that never seeds at all.
+///
+/// It lives here because it empties the set, which reaches every test beside
+/// it.
+#[test]
+fn a_bare_mail_double_seeds_nothing_and_the_construction_sites_own_token_does() {
+    let _turn = in_turn();
+    kinds::load::<[&str; 0], &str>([]);
+
+    let _bare = InMemoryMailboxes::new();
+    assert!(
+        !kinds::known("bot"),
+        "building a mail double must not fill the set this process parses against — a \
+         constructor that does it makes every case beside it depend on the order they ran",
+    );
+    assert_eq!(
+        EntityId("bot:gamma".into()).kind(),
+        None,
+        "…so a handle naming a shipped kind does not parse yet",
+    );
+
+    kinds::load_shipped();
+    let _seeded = InMemoryMailboxes::new();
+    assert!(
+        kinds::known("bot"),
+        "the token a construction site adds beside the double does fill the set",
+    );
+    assert_eq!(
+        EntityId("bot:gamma".into()).kind(),
+        Some(EntityKind::BOT),
+        "…well enough to parse a handle, which is what a construction site needs it for",
+    );
 }

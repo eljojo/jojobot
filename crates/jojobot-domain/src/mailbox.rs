@@ -857,6 +857,7 @@ mod tests {
     /// store's own adapter runs against, so the two answer alike.
     #[tokio::test]
     async fn the_fake_satisfies_the_contract() {
+        crate::memory::kinds::load_shipped();
         contract::run_all(|| async { InMemoryMailboxes::new() }).await;
     }
 

@@ -7862,6 +7862,7 @@ mod tests {
     /// processed, the hit says so, because a reader acts on that word.
     #[tokio::test]
     async fn a_posted_message_is_findable_at_once_and_its_state_follows_it() {
+        jojobot_domain::memory::kinds::load_shipped();
         let index = Arc::new(FullTextIndex::open().expect("index opens"));
         let store = IndexedMailboxes::new(Arc::new(InMemoryMailboxes::new()), index.clone());
         mail_contract::create(&store, "pm").await;
@@ -7898,6 +7899,7 @@ mod tests {
     /// A board with two messages behind the `search` port, ready to lose one.
     /// Two rather than one so every negative below has a survivor to pair with.
     async fn a_board_of_two() -> (Arc<InMemoryMailboxes>, Arc<IndexedMailboxes>, Retrieval) {
+        jojobot_domain::memory::kinds::load_shipped();
         let inner = Arc::new(InMemoryMailboxes::new());
         mail_contract::create(inner.as_ref(), "pm").await;
         mail_contract::post(inner.as_ref(), "pm", "dev", "the kiln is relined", 0).await;
@@ -8095,6 +8097,7 @@ mod tests {
     /// blocked post leaves nothing behind, exactly as a blocked capture does.
     #[tokio::test]
     async fn a_rebuild_loads_the_board_and_a_blocked_post_indexes_nothing() {
+        jojobot_domain::memory::kinds::load_shipped();
         let inner = Arc::new(InMemoryMailboxes::new());
         mail_contract::create(inner.as_ref(), "pm").await;
         mail_contract::post(
