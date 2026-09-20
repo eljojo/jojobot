@@ -80,8 +80,10 @@ pub async fn open_provisioned<M: Memory + Clone + 'static>(
         Err(e) => tracing::error!(
             error = %e,
             "KINDS NOT LOADED — the store could not be reached at startup, so no handle can be \
-             read and every write is refused. Nothing was written and nothing was lost; a restart \
-             once the store is reachable puts it right."
+             read. A write or a read that has to resolve one — a subject, a mention written into \
+             free text, a reference-typed field — is refused rather than guessed at; a write that \
+             names no handle at all is not stopped by this alone. A restart once the store is \
+             reachable puts it right."
         ),
     }
     // **Read against the bare store, before it is wrapped in `Provisioned`.**
