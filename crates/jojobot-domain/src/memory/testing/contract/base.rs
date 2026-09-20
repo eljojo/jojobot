@@ -5415,9 +5415,12 @@ pub async fn a_claim_on_a_supplied_record_reads_back<M: Memory>(store: &M) {
 ///   and a handle nobody has is still a miss.
 /// * **Rows only, deliberately.** `list_entities` is the base the layer
 ///   above extends, so a store resolving supplied records here would
-///   resolve them twice; `children` and `scan_entity` derive from it and
-///   inherit that. What they answer for a supplied record is the layer
-///   above's claim and is asked where that layer is wired.
+///   resolve them twice; `children` derives from it and inherits that.
+///   **`scan_entity` does not** — `Provisioned::scan_entity` answers for a
+///   supplied record through its own fallback (`supplied_scan`),
+///   independent of `list_entities`'s own injection. What either answers
+///   for a supplied record is the layer above's claim and is asked where
+///   that layer is wired.
 /// * **Not a lookup at all.** `built_on` and `referring_to` select claims
 ///   by a pointer rather than resolving a handle, so a handle nobody has
 ///   selects nothing. **An empty answer is right here and a miss would be
