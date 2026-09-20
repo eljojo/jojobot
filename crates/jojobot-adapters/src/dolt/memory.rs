@@ -1463,7 +1463,7 @@ impl DoltMemory {
         .fetch_all(&mut **tx)
         .await
         .map_err(store)?;
-        Ok(gather_types(&rows)?)
+        gather_types(&rows)
     }
 
     /// **The keys a KIND names, read as the kind's own.**
@@ -1490,7 +1490,7 @@ impl DoltMemory {
         .fetch_all(&mut **tx)
         .await
         .map_err(store)?;
-        Ok(gather_types(&rows)?)
+        gather_types(&rows)
     }
 
     /// The addresses a page already holds, which is what a fact miss carries so
@@ -3518,7 +3518,7 @@ impl Memory for DoltMemory {
         .fetch_all(&self.pool)
         .await
         .map_err(store)?;
-        Ok(gather_types(&rows)?)
+        gather_types(&rows)
     }
 
     async fn declare_kind(
