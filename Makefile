@@ -110,11 +110,17 @@ narrow: ## The inner loop: one crate's tests and lint, plus the format check
 # ⚠️ **A target that fails to COMPILE still stops the run.** Compilation is not
 # a test failure. That run reports no suites rather than a plausible count,
 # which is the same defect arriving in a shape a reader cannot misread.
+# **`--locked` asks the question the deploy build already asks.** The nix
+# package builds with `cargoLock.lockFile = ./Cargo.lock`, which can neither
+# rewrite the lock nor reach the network — so a manifest and a lock that
+# disagree fail there. Without this flag, `cargo` repairs the disagreement
+# silently and the bar never sees it: this is the boundary bar, so it asks
+# the same question the artifact it gates is built from.
 test: ## Every fast suite (no network)
-	$(CARGO) test --workspace --no-fail-fast
+	$(CARGO) test --workspace --no-fail-fast --locked
 
 lint: ## Clippy, warnings fatal
-	$(CARGO) clippy --workspace --all-targets -- -D warnings
+	$(CARGO) clippy --workspace --all-targets --locked -- -D warnings
 
 fmt: ## Reformat the workspace
 	$(CARGO) fmt --all
