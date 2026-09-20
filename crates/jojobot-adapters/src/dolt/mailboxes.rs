@@ -81,9 +81,18 @@ impl DoltMailboxes {
                 .await
                 .map_err(store)?;
         for (id, body, subject, notes) in rows {
-            let updated_body = mention::resolved(&body, known);
-            let updated_subject = subject.as_deref().map(|s| mention::resolved(s, known));
-            let updated_notes = notes.as_deref().map(|n| mention::resolved(n, known));
+            let updated_body =
+                mention::resolved(&body, known).map_err(|_| MailboxError::KindsNeverLoaded)?;
+            let updated_subject = subject
+                .as_deref()
+                .map(|s| mention::resolved(s, known))
+                .transpose()
+                .map_err(|_| MailboxError::KindsNeverLoaded)?;
+            let updated_notes = notes
+                .as_deref()
+                .map(|n| mention::resolved(n, known))
+                .transpose()
+                .map_err(|_| MailboxError::KindsNeverLoaded)?;
             if updated_body == body && updated_subject == subject && updated_notes == notes {
                 continue;
             }

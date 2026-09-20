@@ -122,6 +122,19 @@ pub(crate) fn session_declined(e: SessionError, sid: &str) -> Result<CallToolRes
             )
             .into(),
         ),
+        // **A refusal nothing in the call can reach** (rule 68), the same
+        // shape `memory_declined` gives `MemoryError::KindsNeverLoaded`: the
+        // kind set is loaded at startup and no verb re-reads it, so "send it
+        // again" is advice that cannot succeed. This says who repairs it.
+        SessionError::KindsNeverLoaded => blocked(
+            "",
+            format!(
+                "Nothing was written: {e}. The call is not what is wrong, and sending it again \
+                 will not help: jojobot loaded no kinds when it started, and nothing a caller \
+                 does re-reads them. This one needs the operator."
+            )
+            .into(),
+        ),
         other => Err(session_error(other)),
     }
 }
@@ -140,7 +153,8 @@ pub(crate) fn session_error(e: SessionError) -> McpError {
         | SessionError::UnknownSession { .. }
         | SessionError::Closed { .. }
         | SessionError::NoEntries { .. }
-        | SessionError::NotABeat { .. } => McpError::invalid_params(e.to_string(), None),
+        | SessionError::NotABeat { .. }
+        | SessionError::KindsNeverLoaded => McpError::invalid_params(e.to_string(), None),
         // **The adapter's own account does not cross.** It names pages and
         // tables, which is its business and never a caller's — logged instead,
         // where an operator debugging a real failure wants it. See

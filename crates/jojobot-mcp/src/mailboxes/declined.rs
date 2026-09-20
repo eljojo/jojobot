@@ -184,6 +184,19 @@ pub(crate) fn mailbox_declined(e: MailboxError) -> Result<CallToolResult, McpErr
         // The same answer, with nothing to put in `attempted`: what this
         // refuses is the message the call carried, not something it named.
         MailboxError::InvalidMessage(_) => Ok(mailbox_malformed("", &e)),
+        // **A refusal nothing in the call can reach** (rule 68), the same
+        // shape `memory_declined` gives `MemoryError::KindsNeverLoaded`: the
+        // kind set is loaded at startup and no verb re-reads it, so "send it
+        // again" is advice that cannot succeed. This says who repairs it.
+        MailboxError::KindsNeverLoaded => Ok(mailbox_blocked_body(
+            "",
+            None,
+            format!(
+                "Nothing was written: {e}. The call is not what is wrong, and sending it again \
+                 will not help: jojobot loaded no kinds when it started, and nothing a caller \
+                 does re-reads them. This one needs the operator."
+            ),
+        )),
         other => Err(mailbox_error(other)),
     }
 }
@@ -225,7 +238,8 @@ pub(crate) fn mailbox_error(e: MailboxError) -> McpError {
         | MailboxError::UnknownMessage { .. }
         | MailboxError::Quarantined { .. }
         | MailboxError::OwnerHasMultipleBoxes { .. }
-        | MailboxError::NameTaken { .. } => McpError::invalid_params(e.to_string(), None),
+        | MailboxError::NameTaken { .. }
+        | MailboxError::KindsNeverLoaded => McpError::invalid_params(e.to_string(), None),
         // Not a caller mistake, and not something a caller can fix by calling
         // differently: the store failed, which is a condition on the server
         // side.

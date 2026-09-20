@@ -100,7 +100,8 @@ impl DoltSessions {
             .await
             .map_err(store)?;
         for (id, focus) in focuses {
-            let updated = mention::resolved(&focus, known);
+            let updated =
+                mention::resolved(&focus, known).map_err(|_| SessionError::KindsNeverLoaded)?;
             if updated == focus {
                 continue;
             }
@@ -118,7 +119,8 @@ impl DoltSessions {
                 .await
                 .map_err(store)?;
         for (session, id, text) in entries {
-            let updated = mention::resolved(&text, known);
+            let updated =
+                mention::resolved(&text, known).map_err(|_| SessionError::KindsNeverLoaded)?;
             if updated == text {
                 continue;
             }
