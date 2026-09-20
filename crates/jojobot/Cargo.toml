@@ -57,3 +57,6 @@ rmcp = { workspace = true, features = [
 rsa = { version = "0.9", features = ["pem"] }
 rand = "0.8"
 base64 = "0.22"
+# A boot test breaks one table by hand, against the real store's own pool, to
+# prove a downstream read failing does not refuse the boot.
+sqlx = { workspace = true }
