@@ -2018,6 +2018,47 @@ async fn dolt_answers_every_gated_read_alike_stored_and_supplied() {
     store.stop().await;
 }
 
+/// **…and an edit on a claim lands alike for a stored record and a supplied
+/// one, over the real store.**
+///
+/// A database of its own, for the same reason the two cases above get one.
+#[tokio::test]
+async fn dolt_lands_an_edit_alike_stored_and_supplied() {
+    let scratch = Scratch::new("edit-lands-paired");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("editlandspaired")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+
+    let supplied = Provisions::new(vec![Provision::record(
+        jojobot_domain::memory::Entity {
+            id: EntityId(memory::SUPPLIED_VIEW_FOR_THE_GUARD_SPECS.into()),
+            kind: jojobot_domain::memory::EntityKind::VIEW,
+            name: "The Loops".into(),
+            aliases: Vec::new(),
+            source: "jojobot".into(),
+            crm: None,
+            parent: None,
+            boot: Default::default(),
+            merged_into: None,
+            badge: None,
+            archived: None,
+        },
+        std::collections::BTreeMap::new(),
+    )]);
+    let stored = DoltMemory::open(pool.clone());
+    let known = DoltMemory::open(pool).knowing(supplied);
+
+    memory::an_edit_on_a_captured_claim_lands_stored_and_supplied(&stored, &known).await;
+
+    store.stop().await;
+}
+
 /// **…and a fact address minted before a fold, over the real store's own
 /// renumbering** — a database of its own, not the shared `run_all` mount,
 /// because the fold's renumbering is exactly the state a case sharing a

@@ -5689,6 +5689,78 @@ async fn a_captured_claim_reads_through_every_gated_read<M: Memory, B: support::
     );
 }
 
+/// **Editing a claim filed on a supplied record's subject lands, exactly as
+/// it does on a stored one.**
+///
+/// `update_fact` addresses by `FactAddress` and never re-touches the record
+/// the claim is filed on except to resolve `address.home` — which it does
+/// through the same rows-plus-supplied set every other gated read asks (rule
+/// 234). The claim row itself is a real row regardless of what its subject
+/// is, so no special case is needed here and none is missing; this pins
+/// that so a later refactor cannot quietly narrow the resolution `update_fact`
+/// shares with the reads above.
+///
+/// **Both halves, run once each**, the same way the reads above do: a store
+/// that refused every edit on a handle it did not itself create would pass
+/// the supplied half alone identically to one that resolves it correctly.
+pub async fn an_edit_on_a_captured_claim_lands_stored_and_supplied<M: Memory, S: Memory>(
+    stored: &M,
+    supplied: &S,
+) {
+    an_edit_on_a_captured_claim_lands(
+        stored,
+        &support::Stored {
+            handle: EntityId("thing:contract-edit-lands-stored".into()),
+            name: "Edit Lands Stored",
+            source: "user-named",
+        },
+    )
+    .await;
+    an_edit_on_a_captured_claim_lands(supplied, &support::Supplied).await;
+}
+
+async fn an_edit_on_a_captured_claim_lands<M: Memory, B: support::Backing<M>>(
+    store: &M,
+    backing: &B,
+) {
+    let (existing, _source) = backing.existing(store).await;
+    let written = store
+        .capture(NewFact::about(
+            existing.clone(),
+            "before the edit",
+            date(2026, 5, 22),
+        ))
+        .await
+        .expect("a claim on either backing is a write the gate allows")
+        .written()
+        .expect("nothing blocks it");
+
+    let edited = store
+        .update_fact(
+            &written.address(),
+            FactPatch {
+                content: Some("after the edit".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("an edit on either backing's claim is a write the gate allows")
+        .written()
+        .unwrap_or_else(|| panic!("nothing should block editing the claim on {existing}"));
+    assert_eq!(
+        edited.content, "after the edit",
+        "the edit did not land on the claim's own record",
+    );
+
+    let recalled = store.recall(&existing).await.expect("recall answers");
+    assert!(
+        recalled
+            .iter()
+            .any(|f| f.id == written.id && f.content == "after the edit"),
+        "the edit is not visible through the ordinary read: {recalled:?}",
+    );
+}
+
 /// **Renaming a record the build supplies is refused, never a silent
 /// no-op — and never a claim that it moved to itself.**
 /// `rename_entity`'s existence check reads stored rows only,
