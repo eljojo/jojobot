@@ -2378,6 +2378,14 @@ pub struct NewFact {
     /// whenever `drop` is; archived onto the dropped claim as its own
     /// `details`, the same field an ordinary archive already carries one in.
     pub drop_because: Option<String>,
+    /// **The moment before which a thought in the room this write joins
+    /// counts as aged out** — [`aging_cutoff`]'s own answer, computed by the
+    /// caller from the bot's own run-start moments, since a session's own
+    /// clock is a different bounded context this record never reaches into
+    /// itself. `None` when the bot has not run enough times to ask the
+    /// question, or when this write is not a thought at all: ageing never
+    /// applies to anything else this record could be.
+    pub aged_before: Option<jiff::Timestamp>,
 }
 
 impl NewFact {
@@ -2401,6 +2409,7 @@ impl NewFact {
             stale_after: None,
             drop: None,
             drop_because: None,
+            aged_before: None,
         }
     }
 }
@@ -3378,6 +3387,13 @@ pub enum MemoryError {
         /// The room's own contents, so the caller can choose without
         /// reading it separately.
         room: Vec<Fact>,
+        /// **How many thoughts aged out of this count** — still there, still
+        /// active, excluded from `live` and `room` alike. Named rather than
+        /// silently absent: a caller comparing this refusal against what it
+        /// captured before must be able to tell "the room is genuinely this
+        /// small" from "some of it aged out of the count and is still
+        /// there."
+        aged_out: usize,
     },
     /// The named entity doesn't exist. Same rule: report, never create.
     #[error("no entity '{attempted}'{}", nearest_handles(nearest))]

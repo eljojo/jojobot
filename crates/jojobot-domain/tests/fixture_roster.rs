@@ -106,6 +106,7 @@ const ROSTER: &[&str] = &[
     "bot:contract-no-box-owner",
     "bot:contract-repointed",
     "bot:contract-still-no-box",
+    "bot:contract-thought-aging",
     "bot:contract-thought-archive",
     "bot:contract-thought-capacity",
     "bot:contract-thought-rename",
@@ -121,6 +122,7 @@ const ROSTER: &[&str] = &[
     // which is the whole point of that capture. It names no instance and
     // nobody's life, so it sits here on the same terms as `bot:assistant`.
     "bot:jojobot",
+    "bot:mcp-thought-aging",
     "bot:milhouse",
     "bot:nobody",
     "bot:otto",
@@ -308,6 +310,7 @@ const ROSTER: &[&str] = &[
     "rhythm:weekly-review",
     "rhythm:worming",
     "thing:jukebox",
+    "thing:the-couch",
     "thing:the-fern",
     "thing:the-air-filter",
     "thing:kettl",

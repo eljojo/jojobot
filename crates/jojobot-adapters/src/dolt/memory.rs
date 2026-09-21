@@ -1423,6 +1423,51 @@ impl DoltMemory {
         Ok(())
     }
 
+    /// **Each named claim's own last write moment, inside the ongoing
+    /// transaction.**
+    ///
+    /// A minimal cousin of [`Self::claim_history`]: that reads the whole
+    /// chain through the shared assembler, for a caller showing one claim's
+    /// past. This reads one column, for as many claims as the cap check is
+    /// weighing, and never opens a transaction of its own — the room's own
+    /// count and each thought's own touch must agree on the instant they
+    /// were read as of, and a second transaction cannot promise that.
+    /// A claim with no write behind it, or one written before this column
+    /// existed, is simply absent from the answer.
+    async fn touched_moments(
+        tx: &mut Transaction<'_, MySql>,
+        home: &EntityId,
+        ids: &[FactId],
+    ) -> Result<std::collections::HashMap<FactId, jiff::Timestamp>, MemoryError> {
+        let mut touched = std::collections::HashMap::with_capacity(ids.len());
+        if ids.is_empty() {
+            return Ok(touched);
+        }
+        let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT w.fact_id, w.written_at FROM fact_write w
+             WHERE w.entity = ? AND w.fact_id IN ({placeholders})
+               AND w.ordinal = (SELECT MAX(ordinal) FROM fact_write
+                                 WHERE entity = w.entity AND fact_id = w.fact_id)"
+        );
+        let mut query = sqlx::query(&sql).bind(home.as_str());
+        for id in ids {
+            query = query.bind(id.as_str());
+        }
+        let rows = query.fetch_all(&mut **tx).await.map_err(store)?;
+        for row in rows {
+            let fact_id: String = row.try_get("fact_id").map_err(store)?;
+            let written_at = row
+                .try_get::<Option<String>, _>("written_at")
+                .map_err(store)?
+                .and_then(|at| at.parse::<jiff::Timestamp>().ok());
+            if let Some(at) = written_at {
+                touched.insert(FactId(fact_id), at);
+            }
+        }
+        Ok(touched)
+    }
+
     /// The next local id on this page: `f` and the highest number already
     /// there, plus one.
     ///
@@ -2237,52 +2282,70 @@ impl Memory for DoltMemory {
                 .and_then(|v| v.trim().parse::<usize>().ok());
             if let Some(capacity) = capacity {
                 let existing = self.facts_of(&mut tx, &home).await?;
-                let room = jojobot_domain::memory::thought_room(&existing);
-                if room.len() >= capacity {
-                    let refuse = |room: Vec<Fact>| MemoryError::RoomFull {
-                        bot: home.to_string(),
-                        live: room.len(),
-                        capacity,
-                        room,
-                    };
-                    match (&fact.drop, &fact.drop_because) {
-                        (Some(victim), Some(reason)) => {
-                            // **The victim must resolve to a live thought IN
-                            // THIS ROOM** — not merely to a fact that exists.
-                            // Anything else is answered exactly as an empty
-                            // drop is: refused, with the room shown, because
-                            // a caller that named the wrong thing still
-                            // needs to see what it could have named.
-                            let in_room = self
-                                .resolve(&mut tx, &victim.home)
-                                .await?
-                                .filter(|(key, _)| *key == home)
-                                .and_then(|_| room.iter().find(|f| f.id == victim.local).cloned());
-                            let Some(mut victim_fact) = in_room else {
-                                return Err(refuse(room));
-                            };
-                            // **`facts_of` serves under the current handle,
-                            // never the storage key** (see `assemble`'s own
-                            // comment) — exactly right for a reader, and
-                            // exactly wrong for a row about to be written
-                            // again. `lower_pointers` is the one seam
-                            // `update_fact` and `retract` both already call
-                            // for this: every pointer-bearing field at
-                            // once — `.home`, `.subject`, `.edge`,
-                            // `.derived_from`, `.refs` — never two of them
-                            // by hand while the rest stay served.
-                            self.lower_pointers(&mut tx, &mut victim_fact, &home)
-                                .await?;
-                            // **Archived, through the one writer every
-                            // archive goes through** — `write_fact` is what
-                            // appends the claim's own write history; a
-                            // status flip that skipped it would read back
-                            // changed with nothing behind it saying when.
-                            victim_fact.status = FactStatus::Archived;
-                            victim_fact.details = Some(reason.clone());
-                            Self::write_fact(&mut tx, &victim_fact, &self.clock).await?;
+                let nominal_room = jojobot_domain::memory::thought_room(&existing);
+                // **Ageing's own cost is paid only when the room might
+                // actually be full** — a bot nowhere near capacity never
+                // pays for a touch-moment lookup on every write.
+                if nominal_room.len() >= capacity {
+                    let ids: Vec<FactId> = nominal_room.iter().map(|f| f.id.clone()).collect();
+                    let touched = Self::touched_moments(&mut tx, &home, &ids).await?;
+                    let split = jojobot_domain::memory::split_by_age(
+                        nominal_room,
+                        &touched,
+                        fact.aged_before,
+                    );
+                    if split.live.len() >= capacity {
+                        let aged_out = split.aged_out.len();
+                        let refuse = |room: Vec<Fact>| MemoryError::RoomFull {
+                            bot: home.to_string(),
+                            live: room.len(),
+                            capacity,
+                            room,
+                            aged_out,
+                        };
+                        let room = split.live;
+                        match (&fact.drop, &fact.drop_because) {
+                            (Some(victim), Some(reason)) => {
+                                // **The victim must resolve to a live thought IN
+                                // THIS ROOM** — not merely to a fact that exists,
+                                // and not to one aged out of the count. Anything
+                                // else is answered exactly as an empty drop is:
+                                // refused, with the room shown, because a caller
+                                // that named the wrong thing still needs to see
+                                // what it could have named.
+                                let in_room = self
+                                    .resolve(&mut tx, &victim.home)
+                                    .await?
+                                    .filter(|(key, _)| *key == home)
+                                    .and_then(|_| {
+                                        room.iter().find(|f| f.id == victim.local).cloned()
+                                    });
+                                let Some(mut victim_fact) = in_room else {
+                                    return Err(refuse(room));
+                                };
+                                // **`facts_of` serves under the current handle,
+                                // never the storage key** (see `assemble`'s own
+                                // comment) — exactly right for a reader, and
+                                // exactly wrong for a row about to be written
+                                // again. `lower_pointers` is the one seam
+                                // `update_fact` and `retract` both already call
+                                // for this: every pointer-bearing field at
+                                // once — `.home`, `.subject`, `.edge`,
+                                // `.derived_from`, `.refs` — never two of them
+                                // by hand while the rest stay served.
+                                self.lower_pointers(&mut tx, &mut victim_fact, &home)
+                                    .await?;
+                                // **Archived, through the one writer every
+                                // archive goes through** — `write_fact` is what
+                                // appends the claim's own write history; a
+                                // status flip that skipped it would read back
+                                // changed with nothing behind it saying when.
+                                victim_fact.status = FactStatus::Archived;
+                                victim_fact.details = Some(reason.clone());
+                                Self::write_fact(&mut tx, &victim_fact, &self.clock).await?;
+                            }
+                            _ => return Err(refuse(room)),
                         }
-                        _ => return Err(refuse(room)),
                     }
                 }
             }

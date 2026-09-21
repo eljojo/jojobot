@@ -1073,44 +1073,69 @@ impl Memory for InMemoryMemory {
             if let Some(capacity) = capacity {
                 let existing_owned: Vec<Fact> =
                     facts.iter().filter(|f| f.home == home).cloned().collect();
-                let room = super::super::thought_room(&existing_owned);
-                if room.len() >= capacity {
-                    let refuse = |room: Vec<Fact>| MemoryError::RoomFull {
-                        bot: home.to_string(),
-                        live: room.len(),
-                        capacity,
-                        room,
+                let nominal_room = super::super::thought_room(&existing_owned);
+                // **Ageing's own cost is paid only when the room might
+                // actually be full** — a bot nowhere near capacity never
+                // pays for a touch-moment lookup on every write.
+                if nominal_room.len() >= capacity {
+                    let touched: std::collections::HashMap<FactId, jiff::Timestamp> = {
+                        let writes = self.claim_writes.lock().expect("fake mutex poisoned");
+                        nominal_room
+                            .iter()
+                            .filter_map(|f| {
+                                writes
+                                    .iter()
+                                    .filter(|(h, id, _)| *h == home && id == &f.id)
+                                    .filter_map(|(_, _, w)| w.written_at)
+                                    .max()
+                                    .map(|at| (f.id.clone(), at))
+                            })
+                            .collect()
                     };
-                    match (&fact.drop, &fact.drop_because) {
-                        (Some(victim), Some(reason)) => {
-                            // **The victim must resolve to a live thought IN
-                            // THIS ROOM** — not merely to a fact that
-                            // exists. Anything else answers exactly as an
-                            // empty drop does: refused, with the room shown.
-                            let victim_home = self.storage_key(&victim.home);
-                            let in_room = victim_home.filter(|key| *key == home).is_some()
-                                && room.iter().any(|f| f.id == victim.local);
-                            let Some(victim_index) = in_room
-                                .then(|| {
-                                    facts
-                                        .iter()
-                                        .position(|f| f.home == home && f.id == victim.local)
-                                })
-                                .flatten()
-                            else {
-                                return Err(refuse(room));
-                            };
-                            // **Archived, through the one writer every
-                            // archive goes through** — `append_claim_write`
-                            // is what leaves a write behind; a status flip
-                            // that skipped it would read back changed with
-                            // nothing behind it saying when.
-                            facts[victim_index].status = FactStatus::Archived;
-                            facts[victim_index].details = Some(reason.clone());
-                            let archived = facts[victim_index].clone();
-                            self.append_claim_write(&archived);
+                    let split =
+                        super::super::split_by_age(nominal_room, &touched, fact.aged_before);
+                    if split.live.len() >= capacity {
+                        let aged_out = split.aged_out.len();
+                        let refuse = |room: Vec<Fact>| MemoryError::RoomFull {
+                            bot: home.to_string(),
+                            live: room.len(),
+                            capacity,
+                            room,
+                            aged_out,
+                        };
+                        match (&fact.drop, &fact.drop_because) {
+                            (Some(victim), Some(reason)) => {
+                                // **The victim must resolve to a live thought
+                                // IN THIS ROOM** — not merely to a fact that
+                                // exists, and not to one aged out of the
+                                // count. Anything else answers exactly as an
+                                // empty drop does: refused, with the room
+                                // shown.
+                                let victim_home = self.storage_key(&victim.home);
+                                let in_room = victim_home.filter(|key| *key == home).is_some()
+                                    && split.live.iter().any(|f| f.id == victim.local);
+                                let Some(victim_index) = in_room
+                                    .then(|| {
+                                        facts
+                                            .iter()
+                                            .position(|f| f.home == home && f.id == victim.local)
+                                    })
+                                    .flatten()
+                                else {
+                                    return Err(refuse(split.live));
+                                };
+                                // **Archived, through the one writer every
+                                // archive goes through** — `append_claim_write`
+                                // is what leaves a write behind; a status flip
+                                // that skipped it would read back changed with
+                                // nothing behind it saying when.
+                                facts[victim_index].status = FactStatus::Archived;
+                                facts[victim_index].details = Some(reason.clone());
+                                let archived = facts[victim_index].clone();
+                                self.append_claim_write(&archived);
+                            }
+                            _ => return Err(refuse(split.live)),
                         }
-                        _ => return Err(refuse(room)),
                     }
                 }
             }

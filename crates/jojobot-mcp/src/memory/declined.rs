@@ -453,6 +453,7 @@ pub(crate) fn memory_declined(
             live,
             capacity,
             ref room,
+            aged_out,
         } => {
             let body = serde_json::json!({
                 "status": "blocked",
@@ -465,6 +466,12 @@ pub(crate) fn memory_declined(
                         "content": f.content,
                     }))
                     .collect::<Vec<_>>(),
+                // **Said, not silently withheld** — a thought aged out of
+                // this count is still there and still active, just not
+                // counted against the room. A caller weighing whether to
+                // wait instead of dropping needs to know that count is
+                // already excluding some.
+                "aged_out": aged_out,
                 "how_to_proceed": format!(
                     "Nothing was written: bot:{bot}'s room already holds {live} of {capacity} \
                      thoughts. Re-call {verb} naming drop (one of the addresses above) and \

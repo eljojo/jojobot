@@ -606,6 +606,7 @@ pub async fn preserves_all_fields<M: Memory>(store: &M) {
         stale_after: None,
         drop: None,
         drop_because: None,
+        aged_before: None,
     };
     let captured = capture(store, new).await;
     assert_eq!(captured.subject, subject);
@@ -3380,6 +3381,94 @@ pub async fn a_bots_room_enforces_its_capacity<M: Memory>(store: &M) {
         room.iter().any(|f| f.id == landed.id),
         "the new thought is in the room: {room:?}"
     );
+}
+
+/// 🚨 **An aged thought frees a room's slot without archiving anything.**
+/// `aged_before` is an ordinary [`NewFact`] field — the caller's own
+/// arithmetic, supplied directly here, since this test asks whether the
+/// STORE'S OWN wiring (the touched-moment lookup and `split_by_age`) reads
+/// it correctly, not whether `Sessions` computes it. A thought written
+/// before the cutoff is excluded from the live count; one written after it
+/// is not, and neither is ever archived by ageing alone.
+pub async fn an_aged_thought_frees_the_room<M: Memory>(store: &M) {
+    let bot = EntityId("bot:contract-thought-aging".into());
+    let a = EntityId("thing:the-couch".into());
+    let b = EntityId("thing:the-air-filter".into());
+    ensure(store, &bot).await;
+
+    capture(
+        store,
+        NewFact {
+            fields: [(THOUGHT_CAPACITY.to_string(), "1".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(bot.clone(), "capacity is one", date(2026, 7, 1))
+        },
+    )
+    .await;
+
+    let old = capture(
+        store,
+        NewFact {
+            edge: Some(Edge::new(EdgeShape::Connection, a.clone())),
+            ..NewFact::about(bot.clone(), "the couch needs a leg fixed", date(2026, 7, 2))
+        },
+    )
+    .await;
+
+    let cutoff = jiff::Timestamp::now();
+
+    // The room holds one, capacity is one — a plain count would refuse
+    // this. The old thought was written before the cutoff, so it ages out
+    // and the write lands with nothing dropped.
+    ensure(store, &b).await;
+    let fresh = store
+        .capture(NewFact {
+            edge: Some(Edge::new(EdgeShape::Connection, b.clone())),
+            aged_before: Some(cutoff),
+            ..NewFact::about(bot.clone(), "the fern needs water", date(2026, 7, 3))
+        })
+        .await
+        .expect("capture should succeed")
+        .written()
+        .unwrap_or_else(|| panic!("the aged thought must free the room without a drop"));
+    assert_eq!(fresh.content, "the fern needs water");
+
+    // **Not archived.** An aged-out thought is excluded from the count,
+    // never touched.
+    let after = store.recall(&bot).await.expect("recall ok");
+    let old_read = after
+        .iter()
+        .find(|f| f.id == old.id)
+        .expect("the aged thought is still there");
+    assert_eq!(
+        old_read.status,
+        FactStatus::Active,
+        "ageing must not archive a row: {old_read:?}"
+    );
+
+    // The room now nominally holds two, capacity is still one — a third
+    // is refused, and the refusal must say one thought aged out of the
+    // count.
+    let c = EntityId("thing:the-furnace".into());
+    ensure(store, &c).await;
+    let refused = store
+        .capture(NewFact {
+            edge: Some(Edge::new(EdgeShape::Connection, c.clone())),
+            aged_before: Some(cutoff),
+            ..NewFact::about(bot.clone(), "the furnace needs a filter", date(2026, 7, 4))
+        })
+        .await
+        .expect_err("capacity one, with the fresh thought still live, must refuse a third");
+    match refused {
+        MemoryError::RoomFull { aged_out, .. } => {
+            assert_eq!(
+                aged_out, 1,
+                "the refusal must say the aged thought is not counted against the room"
+            );
+        }
+        other => panic!("expected RoomFull, got {other:?}"),
+    }
 }
 
 /// 🚨 **An archived thought stops occupying a slot the moment it is
@@ -10204,6 +10293,7 @@ pub async fn run_all<M: Memory>(store: &M) {
     capture_writes_an_edge_that_reads_back(store).await;
     reading_a_bots_thoughts_never_touches_their_history(store).await;
     a_bots_room_enforces_its_capacity(store).await;
+    an_aged_thought_frees_the_room(store).await;
     an_archived_thought_frees_its_slot(store).await;
     a_dropped_thoughts_edge_survives_the_pointers_own_rename(store).await;
     every_edge_shape_reads_back(store).await;

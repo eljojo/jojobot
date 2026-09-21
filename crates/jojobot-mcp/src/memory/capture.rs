@@ -11,6 +11,7 @@ use jojobot_domain::attention;
 use jojobot_domain::memory::graph;
 
 use super::*;
+use crate::session::session_declined;
 use crate::teaching::{
     CHECK_IN_DATE_TEACHING, CLAIM_DIRECTION_DOMAIN, CLAIM_DIRECTION_TEACHING, CLAIM_SUBJECT_DOMAIN,
     CLAIM_SUBJECT_TEACHING, CLAIMS_DOMAIN, CLAIMS_TEACHING, RHYTHM_HISTORY_DOMAIN,
@@ -669,6 +670,27 @@ impl Jojobot {
             provenance
         };
 
+        // **The cutoff is computed here, never inside `Memory`** — a
+        // session's own clock is a different bounded context this record
+        // never reaches into itself (rule: `Sessions` and `Memory` share no
+        // relationship). Asked only when this write could possibly be a
+        // thought: the kind check is a string parse, no store reached, so a
+        // capture on anything else pays nothing for it.
+        let aged_before = if subject.kind() == Some(EntityKind::BOT)
+            && edge
+                .as_ref()
+                .is_some_and(|e| e.shape == EdgeShape::Connection)
+        {
+            match self.sessions.summaries_of(&subject).await {
+                Ok(runs) => jojobot_domain::memory::aging_cutoff(
+                    &runs.iter().map(|r| r.started_at).collect::<Vec<_>>(),
+                ),
+                Err(e) => return session_declined(e, caller.sid.as_str()),
+            }
+        } else {
+            None
+        };
+
         let new = NewFact {
             subject,
             content: args.content,
@@ -694,6 +716,7 @@ impl Jojobot {
             stale_after: parse_date(args.stale_after.as_deref())?,
             drop,
             drop_because: args.drop_because,
+            aged_before,
         };
         // **Disagreement, not presence alone.** A check-in with no
         // `happened_at` has asked no question, and one where both fields
@@ -2679,5 +2702,130 @@ mod tests {
         // allowed to swallow what the write actually produced.
         assert_eq!(receipt["subject"], "person:alpha", "{receipt}");
         assert_ne!(receipt["status"], "blocked", "{receipt}");
+    }
+
+    /// **Ageing frees a room's slot through `capture`'s own served path** —
+    /// the one seam where `Memory` and `Sessions` meet, so this is the one
+    /// case that has to go through both real ports rather than calling the
+    /// domain directly. A bot that has run `AGES_AFTER_RUNS` times ages an
+    /// old thought out of its own room: a write that a plain capacity count
+    /// would refuse instead lands with nothing dropped, and a write that
+    /// would still be refused after that says how many aged thoughts it is
+    /// not counting.
+    #[tokio::test]
+    async fn an_aged_thought_frees_the_room_and_the_refusal_still_counts_it() {
+        let sessions = Arc::new(jojobot_domain::session::testing::InMemorySessions::new());
+        let jojobot = Jojobot::new(
+            Arc::new(InMemoryMemory::booted()),
+            Arc::new(SpySearch::default()),
+            Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
+            sessions.clone(),
+            Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+            seeded_registry(),
+        );
+        let bot = "bot:mcp-thought-aging";
+        ensure(&jojobot, bot).await;
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                fields: Some(
+                    [(
+                        jojobot_domain::memory::THOUGHT_CAPACITY.to_string(),
+                        "1".to_string(),
+                    )]
+                    .into_iter()
+                    .collect(),
+                ),
+                ..capture_args(bot, "capacity is one")
+            },
+        )
+        .await;
+
+        let old = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                shape: Some("connection".into()),
+                object: Some("thing:the-couch".into()),
+                ..capture_args(bot, "the couch needs a leg fixed")
+            },
+        )
+        .await;
+        let old_address = address_of(&old);
+
+        // **Twenty runs, all begun after the old thought's own write** —
+        // enough for the bot to have run `AGES_AFTER_RUNS` times, which is
+        // what makes the question askable at all. Seeded straight onto the
+        // real `Sessions` double rather than through a boot, because the
+        // question here is what `capture` does with the answer, not how a
+        // run begins.
+        for n in 0..20 {
+            sessions
+                .begin(jojobot_domain::session::NewSession {
+                    bot: EntityId(bot.to_string()),
+                    sid: jojobot_domain::session::Sid(format!("aging-run-{n}")),
+                    focus: "working".into(),
+                    started_at: jiff::Timestamp::now(),
+                    timezone: None,
+                    started_on: None,
+                })
+                .await
+                .expect("seeding a run");
+        }
+
+        // The room nominally holds one, capacity is one — a plain count
+        // would refuse this. The old thought has aged out, so it lands.
+        let fresh = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                shape: Some("connection".into()),
+                object: Some("thing:the-fern".into()),
+                ..capture_args(bot, "the fern needs water")
+            },
+        )
+        .await;
+        assert_ne!(
+            fresh["status"], "blocked",
+            "the old thought aged out of a room at capacity one, so a fresh one must land \
+             with nothing dropped: {fresh}"
+        );
+
+        // The room now nominally holds two — the aged one and the fresh
+        // one — and capacity is still one, so a third is refused. The
+        // refusal must name how many aged thoughts it is not counting,
+        // rather than folding them silently into `live`.
+        ensure(&jojobot, "thing:the-air-filter").await;
+        let refused = blocked(
+            &jojobot
+                .capture(Parameters(CaptureArgs {
+                    shape: Some("connection".into()),
+                    object: Some("thing:the-air-filter".into()),
+                    ..capture_args(bot, "the air filter is due")
+                }))
+                .await
+                .expect("capture answers rather than failing the protocol"),
+        );
+        assert_eq!(
+            refused["aged_out"], 1,
+            "the refusal must say one thought aged out of the count: {refused}"
+        );
+
+        // **Not silently dropped.** The aged thought is still there, still
+        // active, exactly as it stood — findable by its own address.
+        let recalled = json_of(
+            &jojobot
+                .recall(Parameters(recall_args(bot)))
+                .await
+                .expect("recall ok"),
+        );
+        let old_fact = recalled["objects"][0]["facts"]
+            .as_array()
+            .expect("facts asked for")
+            .iter()
+            .find(|f| f["address"] == old_address)
+            .unwrap_or_else(|| panic!("the aged thought must still be readable: {recalled}"));
+        assert_eq!(
+            old_fact["status"], "active",
+            "an aged thought is excluded from the count, never archived: {old_fact}"
+        );
     }
 }
