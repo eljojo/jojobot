@@ -1168,7 +1168,15 @@ impl Jojobot {
                        about whether anybody may go: that is a judgement and jojobot makes \
                        none. Nothing pointing here at all and nothing gating it are different \
                        answers and the block says which. It is bounded, and when it does not \
-                       fit it names the walk that returns the rest. WHICH EDGES: follow {shape, direction, depth}, and \
+                       fit it names the walk that returns the rest. A BOT'S OWN THOUGHTS AGE \
+                       QUIETLY, AND FACTS SAYS SO UNASKED: asking facts of a bot carrying \
+                       thought_capacity (capture's connection edges drawn on the bot's own \
+                       handle — see capture's shape) adds a room block naming the capacity, how \
+                       many count against it now, and how many have gone quiet from being untouched \
+                       too long — still there, marked aged_out on the fact itself, excluded from \
+                       the count rather than hidden. A write that would go over the capacity is \
+                       refused the same way; this is the same room, read rather than written. \
+                       WHICH EDGES: follow {shape, direction, depth}, and \
                        THE ANSWER NESTS — a walked object carries the objects it reached, each \
                        carrying its own. NARROW A WALK WITH follow.fits_type, which is the \
                        stricter half of the pair: answers_type selects objects carrying SOME of \

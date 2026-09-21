@@ -88,6 +88,16 @@ pub struct CaptureArgs {
     /// `membership` (an org) · `attendance` (an event) · `about` (any kind) ·
     /// `connection` (any kind — a link is there and how it relates was not
     /// recorded). Requires `object`; neither works alone.
+    ///
+    /// **Draw `connection` with the subject as YOUR OWN bot handle and the
+    /// claim becomes a thought of yours, not an ordinary claim about an
+    /// entity.** A bot carrying `thought_capacity` holds only that many
+    /// thoughts at once. A write that would go over is refused, naming how
+    /// many are held and asking you to name one to drop and why — see
+    /// `drop`, below. One nobody touches for long enough goes quiet on its
+    /// own: still there, just no longer counted. `update_fact`'s
+    /// `keep: true` is the designed way to say one still matters, on
+    /// purpose, without changing a word of it.
     #[serde(default)]
     pub(crate) shape: Option<String>,
     /// The entity the edge points at, as `kind:slug`. **It must already exist**,
@@ -168,7 +178,9 @@ pub struct CaptureArgs {
     #[serde(default)]
     pub(crate) stale_after: Option<String>,
     /// **The address of a thought to drop, when this capture is what fills
-    /// the last free slot in a bot's own room.** `kind:slug#local-id`,
+    /// the last free slot in a bot's own room** — the capped set of live
+    /// thoughts `thought_capacity` bounds; see `shape`, above, for what
+    /// makes a claim one. `kind:slug#local-id`,
     /// exactly as `recall` serves one. Archived in the SAME act as this
     /// fact is written — never a separate call — because a drop with
     /// nothing yet written in its place is a state the room must never

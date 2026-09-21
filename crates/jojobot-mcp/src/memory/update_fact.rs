@@ -182,7 +182,10 @@ pub struct UpdateFactArgs {
     #[serde(default)]
     pub(crate) clear_edge: Option<bool>,
     /// **Keep this claim exactly as it stands — the designed way to bump when
-    /// it was last touched without changing anything else.** The one call
+    /// it was last touched without changing anything else.** Worth reaching
+    /// for on a thought (`capture`'s `connection` on your own bot handle):
+    /// one nobody touches for long enough goes quiet on its own, and this is
+    /// how you say, on purpose, that one still matters. The one call
     /// this verb refuses when nothing else is named: naming no change at all
     /// is refused unless this is `true`, and this is refused if anything
     /// else here would actually change the claim. There is no partial keep —
