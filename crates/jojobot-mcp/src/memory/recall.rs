@@ -1655,6 +1655,70 @@ impl Jojobot {
                 elided_bot_charters.insert(object.entity.id.clone(), has_charter);
             }
         }
+        // **A bot's own room, read without writing.** A capacity refusal
+        // already says how many of a bot's own thoughts aged out
+        // (`MemoryError::RoomFull`); a caller that only reads its own
+        // room — the common case — got told nothing until now, and an aged
+        // thought never stops appearing here (ageing never archives), so
+        // silence would read as "the room has no opinion" rather than
+        // "nobody asked". Computed only for a bot carrying
+        // `THOUGHT_CAPACITY` whose facts were asked for and hold at least
+        // one thought: the touch-moment read this needs, once per
+        // candidate, is the same shape `built_on`/`record_history` already
+        // pay. Any trouble computing it — `Sessions` or `claim_history`
+        // erroring — leaves the object unenriched rather than failing the
+        // read: this is an addition to an ordinary recall, never a
+        // condition of one.
+        struct RoomView {
+            capacity: usize,
+            live: usize,
+            aged: std::collections::HashSet<jojobot_domain::memory::FactId>,
+        }
+        let mut room_views: std::collections::HashMap<EntityId, RoomView> =
+            std::collections::HashMap::new();
+        if include.facts {
+            for object in &found {
+                if object.entity.id.kind() != Some(EntityKind::BOT) {
+                    continue;
+                }
+                let Some(capacity) = object
+                    .fields
+                    .get(jojobot_domain::memory::THOUGHT_CAPACITY)
+                    .and_then(|v| v.trim().parse::<usize>().ok())
+                else {
+                    continue;
+                };
+                let nominal_room = jojobot_domain::memory::thought_room(&object.facts);
+                if nominal_room.is_empty() {
+                    continue;
+                }
+                let mut touched = std::collections::HashMap::new();
+                for fact in &nominal_room {
+                    if let Ok(chain) = self.memory.claim_history(&fact.address()).await
+                        && let Some(at) = chain.last().and_then(|w| w.written_at)
+                    {
+                        touched.insert(fact.id.clone(), at);
+                    }
+                }
+                let Ok(runs) = self.sessions.summaries_of(&object.entity.id).await else {
+                    continue;
+                };
+                let cutoff = jojobot_domain::memory::aging_cutoff(
+                    &runs.iter().map(|r| r.started_at).collect::<Vec<_>>(),
+                );
+                let split = jojobot_domain::memory::split_by_age(nominal_room, &touched, cutoff);
+                if !split.aged_out.is_empty() {
+                    room_views.insert(
+                        object.entity.id.clone(),
+                        RoomView {
+                            capacity,
+                            live: split.live.len(),
+                            aged: split.aged_out.iter().map(|f| f.id.clone()).collect(),
+                        },
+                    );
+                }
+            }
+        }
         // **A claim reached this session** — computed before `found` is
         // consumed below, the same trigger `search` uses: a read that asked
         // for facts and got none never touched the domain.
@@ -1736,6 +1800,25 @@ impl Jojobot {
                         asked_prose,
                         elided_bot_has_charter,
                     );
+                    // **The room's own count, and the pointer that needs no
+                    // second call.** Nothing here is a new verb: the facts
+                    // above already carry the aged thought, this only
+                    // names which one, alongside the same total a capacity
+                    // refusal already reports.
+                    if let Some(view) = room_views.get(&o.entity.id) {
+                        rendered["room"] = serde_json::json!({
+                            "capacity": view.capacity,
+                            "live": view.live,
+                            "aged_out": view.aged.len(),
+                        });
+                        if let Some(facts) = rendered["facts"].as_array_mut() {
+                            for (fact, raw) in facts.iter_mut().zip(&o.facts) {
+                                if view.aged.contains(&raw.id) {
+                                    fact["aged_out"] = serde_json::Value::Bool(true);
+                                }
+                            }
+                        }
+                    }
                     rendered["held"] = held;
                     match backing {
                         Some(backing) => {
@@ -5678,6 +5761,102 @@ mod tests {
         assert!(
             !refused.contains("a beat that belongs to bot:otto alone"),
             "a different bot's run leaked into a caller that does not own it: {refused}",
+        );
+    }
+
+    /// **A bot reading its own room, adding nothing, still learns what aged
+    /// out of it.** Ageing's own refusal already says how many aged out;
+    /// this is the other half — an ordinary `recall`, no write at all, over
+    /// a room already at capacity with one thought aged past the cutoff.
+    /// The answer must carry the room's own count AND let a caller pick the
+    /// aged thought out of the facts already in front of it, since nothing
+    /// here is a new verb: the pointer rides the answer that already
+    /// exists.
+    #[tokio::test]
+    async fn a_bots_room_read_says_what_aged_out_without_a_write() {
+        let sessions = Arc::new(jojobot_domain::session::testing::InMemorySessions::new());
+        let jojobot = Jojobot::new(
+            Arc::new(InMemoryMemory::booted()),
+            Arc::new(SpySearch::default()),
+            Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
+            sessions.clone(),
+            Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+            seeded_registry(),
+        );
+        let bot = "bot:mcp-thought-aging";
+        ensure(&jojobot, bot).await;
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                fields: Some(
+                    [(
+                        jojobot_domain::memory::THOUGHT_CAPACITY.to_string(),
+                        "1".to_string(),
+                    )]
+                    .into_iter()
+                    .collect(),
+                ),
+                ..capture_args(bot, "capacity is one")
+            },
+        )
+        .await;
+
+        let old = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                shape: Some("connection".into()),
+                object: Some("thing:the-couch".into()),
+                ..capture_args(bot, "the couch needs a leg fixed")
+            },
+        )
+        .await;
+        let old_address = address_of(&old);
+
+        for n in 0..20 {
+            sessions
+                .begin(jojobot_domain::session::NewSession {
+                    bot: EntityId(bot.to_string()),
+                    sid: jojobot_domain::session::Sid(format!("room-read-run-{n}")),
+                    focus: "working".into(),
+                    started_at: jiff::Timestamp::now(),
+                    timezone: None,
+                    started_on: None,
+                })
+                .await
+                .expect("seeding a run");
+        }
+
+        // Nothing captured since the runs — a plain read, adding nothing.
+        let recalled = json_of(
+            &jojobot
+                .recall(Parameters(recall_args(bot)))
+                .await
+                .expect("recall ok"),
+        );
+        let object = &recalled["objects"][0];
+        assert_eq!(object["room"]["capacity"], 1, "{object}");
+        assert_eq!(
+            object["room"]["live"], 0,
+            "the only thought in the room aged out, so live must read zero: {object}"
+        );
+        assert_eq!(
+            object["room"]["aged_out"], 1,
+            "a read that adds nothing must still say one thought aged out: {object}"
+        );
+
+        let facts = object["facts"].as_array().expect("facts asked for");
+        let old_fact = facts
+            .iter()
+            .find(|f| f["address"] == old_address)
+            .expect("the aged thought is still an ordinary fact on the answer");
+        assert_eq!(
+            old_fact["aged_out"], true,
+            "the aged thought must be pickable out of the facts already returned, with no \
+             second call: {old_fact}"
+        );
+        assert_eq!(
+            old_fact["status"], "active",
+            "ageing must not archive a row a plain read passes over: {old_fact}"
         );
     }
 }
