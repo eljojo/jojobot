@@ -4106,7 +4106,8 @@ async fn session_write_summary_answers_the_real_store() {
         "set_focus did not move the count: {after_focus:?}"
     );
 
-    // `set_timezone` moves it.
+    // `set_timezone` must NOT move it — a timezone is never indexed, the
+    // same reasoning `add_served` already established.
     sessions_store
         .set_timezone(&session.id, Some("America/New_York"))
         .await
@@ -4116,9 +4117,10 @@ async fn session_write_summary_answers_the_real_store() {
         .await
         .expect("write_summary ok")
         .expect("the signal");
-    assert!(
-        after_timezone.0 > after_focus.0,
-        "set_timezone did not move the count: {after_timezone:?}"
+    assert_eq!(
+        after_timezone.0, after_focus.0,
+        "set_timezone moved the count, and it must not: a timezone is never part of what the \
+         search index reads: {after_timezone:?}"
     );
 
     // `add_served` must NOT move it — `served_chars` is never indexed.
@@ -4137,10 +4139,11 @@ async fn session_write_summary_answers_the_real_store() {
          search index reads: {after_served:?}"
     );
 
-    // **The one pm called out by name: a sweep, with no entry of its own.**
-    // `close` to `Abandoned` is exactly the write the staleness sweep makes
-    // (see `sweep_and_find` in jojobot-domain), and it inserts no
-    // `journal_entry` row — only `UPDATE session SET state = ?`.
+    // **A sweep, with no entry of its own, must NOT move it.** `close` to
+    // `Abandoned` is exactly the write the staleness sweep makes (see
+    // `sweep_and_find` in jojobot-domain), and it inserts no `journal_entry`
+    // row — only `UPDATE session SET state = ?`, and `state` is never part
+    // of what the search index reads either.
     sessions_store
         .close(&session.id, SessionState::Abandoned)
         .await
@@ -4150,21 +4153,84 @@ async fn session_write_summary_answers_the_real_store() {
         .await
         .expect("write_summary ok")
         .expect("the signal");
-    assert!(
-        after_sweep.0 > after_served.0,
-        "the sweep-to-abandoned transition did not move the count, and it must: {after_sweep:?}"
+    assert_eq!(
+        after_sweep.0, after_served.0,
+        "closing to abandoned moved the count, and it must not: state is never part of what \
+         the search index reads: {after_sweep:?}"
     );
 
-    // `reopen` moves it.
+    // `reopen` must NOT move it either — walking a run back to `active`
+    // writes no content of its own, same as the sweep's own close.
     sessions_store.reopen(&session.id).await.expect("reopen ok");
     let after_reopen = sessions_store
         .write_summary()
         .await
         .expect("write_summary ok")
         .expect("the signal");
-    assert!(
-        after_reopen.0 > after_sweep.0,
-        "reopen did not move the count: {after_reopen:?}"
+    assert_eq!(
+        after_reopen.0, after_sweep.0,
+        "reopen moved the count, and it must not: {after_reopen:?}"
+    );
+
+    // **`wrap_session`'s own shape: an append, then a close to `Wrapped`.**
+    // The closing story is an ordinary entry, appended before `close` ever
+    // runs (see `wrap_session.rs`) — so the count must move exactly once
+    // here, from the append alone. A `close` that still signalled on top of
+    // that would not be WRONG in the sense of missing anything (the append
+    // already covers it), only wasteful — signalling twice for one logical
+    // write.
+    let wrap_bot = EntityId("bot:gamma".into());
+    let to_wrap = sessions_store
+        .begin(NewSession {
+            bot: wrap_bot,
+            sid: Sid("s-session-write-summary-wrap".into()),
+            focus: "working".into(),
+            started_at: started,
+            timezone: None,
+            started_on: None,
+        })
+        .await
+        .expect("begin ok");
+    let before_wrap = sessions_store
+        .write_summary()
+        .await
+        .expect("write_summary ok")
+        .expect("the signal");
+    sessions_store
+        .append(
+            &to_wrap.id,
+            NewEntry {
+                text: "wrapped: found the door".into(),
+                at: started,
+                beat: None,
+                on: None,
+            },
+        )
+        .await
+        .expect("append ok");
+    let after_wrap_append = sessions_store
+        .write_summary()
+        .await
+        .expect("write_summary ok")
+        .expect("the signal");
+    assert_eq!(
+        after_wrap_append.0,
+        before_wrap.0 + 1,
+        "the closing story's own append must move the count by exactly one: {after_wrap_append:?}"
+    );
+    sessions_store
+        .close(&to_wrap.id, SessionState::Wrapped)
+        .await
+        .expect("close ok");
+    let after_wrap_close = sessions_store
+        .write_summary()
+        .await
+        .expect("write_summary ok")
+        .expect("the signal");
+    assert_eq!(
+        after_wrap_close.0, after_wrap_append.0,
+        "close moved the count on top of the append that already covered this write, and it \
+         must not: {after_wrap_close:?}"
     );
 
     let _ = entry;

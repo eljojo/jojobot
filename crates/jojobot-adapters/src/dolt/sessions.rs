@@ -743,7 +743,15 @@ impl Sessions for DoltSessions {
             .execute(&mut *tx)
             .await
             .map_err(store)?;
-        Self::append_session_write(&mut tx, id).await?;
+        // **No `append_session_write` here** — the same exemption
+        // `add_served` already carries, for the same reason: a timezone is
+        // no more indexed than `served_chars` is (`write_session_entry`
+        // reads an entry's text and a session's focus, never this column),
+        // so signalling on it would invalidate every bot's sessions for a
+        // rescan with nothing new to find. Unlike `add_served`, there is no
+        // second saving to make here: this call already needs the full read
+        // below for its own answer, so there is no cheap existence check to
+        // swap in.
         let session = self.read_in(&mut tx, id).await?;
         tx.commit().await.map_err(store)?;
         Ok(session)
@@ -761,7 +769,16 @@ impl Sessions for DoltSessions {
             .execute(&mut *tx)
             .await
             .map_err(store)?;
-        Self::append_session_write(&mut tx, id).await?;
+        // **No `append_session_write` here** — `state` is never indexed
+        // either (the same column `write_session_entry` never reads). A
+        // sweep's own close to `Abandoned` writes no content at all: the
+        // one signal that case ever had was this one, and it was pure
+        // overhead. Closing to `Wrapped` writes no content here either —
+        // `wrap_session` (the only production caller) always appends the
+        // closing story as an ordinary entry FIRST, which already signals
+        // on its own, before this call ever runs. Signalling twice for one
+        // logical write is the same overhead `add_served` was built to
+        // avoid, just reached from the other end.
         let session = self.read_in(&mut tx, id).await?;
         tx.commit().await.map_err(store)?;
         // The far end of the span, whichever ending this was: a run that told
@@ -819,7 +836,9 @@ impl Sessions for DoltSessions {
                     .execute(&mut *tx)
                     .await
                     .map_err(store)?;
-                Self::append_session_write(&mut tx, id).await?;
+                // **No `append_session_write` here** — same reasoning as
+                // `close`'s own: `state` is never indexed, and walking a run
+                // back to `active` writes no content of its own.
                 self.read_in(&mut tx, id).await?
             }
             SessionState::Wrapped => {
