@@ -1,0 +1,21 @@
+SABOTAGE crates/jojobot-domain/src/attention.rs: kept at /mnt/easy_files/claude/tmp/sabotage-8tnb8sxcattention.rs
+SABOTAGE APPLIED to the one site in crates/jojobot-domain/src/attention.rs
+fetching git input 'git+file:///home/claude/code/jojobot2'
+warning: Git tree '/home/claude/code/jojobot2' is dirty
+   Compiling jojobot-domain v0.1.0 (/home/claude/code/jojobot2/crates/jojobot-domain)
+error: expected one of `(`, `[`, or `{`, found `!`
+   --> crates/jojobot-domain/src/attention.rs:645:61
+    |
+645 | pub fn half_cleared_schedule(this_is_not_valid_rust_syntax !!!
+    |                                                             ^ expected one of `(`, `[`, or `{`
+
+error[E0425]: cannot find value `cleared` in this scope
+   --> crates/jojobot-domain/src/attention.rs:649:33
+    |
+649 |     let cleared_a_trigger_key = cleared
+    |                                 ^^^^^^^ not found in this scope
+
+For more information about this error, try `rustc --explain E0425`.
+error: could not compile `jojobot-domain` (lib) due to 2 previous errors
+SABOTAGE VERDICT RED: nix develop -c cargo test -p jojobot-domain --lib exited 101
+SABOTAGE RESTORED crates/jojobot-domain/src/attention.rs

@@ -1,0 +1,176 @@
+fetching git input 'git+file:///home/claude/code/jojobot2'
+warning: Git tree '/home/claude/code/jojobot2' is dirty
+cargo fmt --all --check
+cargo test --workspace --no-fail-fast --locked
+   Compiling jojobot-domain v0.1.0 (/home/claude/code/jojobot2/crates/jojobot-domain)
+   Compiling jojobot-adapters v0.1.0 (/home/claude/code/jojobot2/crates/jojobot-adapters)
+   Compiling jojobot-mcp v0.1.0 (/home/claude/code/jojobot2/crates/jojobot-mcp)
+   Compiling jojobot v0.1.0 (/home/claude/code/jojobot2/crates/jojobot)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 04s
+     Running unittests src/lib.rs (/mnt/easy_files/claude/cargo-target/jojobot2/debug/deps/jojobot-39cd64ad2149f13e)
+
+running 58 tests
+test config::tests::allows_no_auth_on_loopback_with_optin ... ok
+test auth::tests::parses_bearer_header ... ok
+test config::tests::allows_public_bind_when_auth_enabled ... ok
+test config::tests::origin_passthrough_without_scheme ... ok
+test config::tests::refuses_a_client_secret_the_login_cannot_use ... ok
+test config::tests::refuses_allowlist_set_but_empty ... ok
+test config::tests::refuses_allowlist_without_issuer ... ok
+test config::tests::a_stated_day_that_is_no_day_refuses_to_start ... ok
+test config::tests::refuses_no_auth_without_explicit_optin ... ok
+test config::tests::authority_strips_scheme_and_path ... ok
+test config::tests::accepts_a_valid_allowlist ... ok
+test config::tests::allowed_subjects_parse_contract ... ok
+test config::tests::refuses_no_auth_on_public_bind_even_with_optin ... ok
+test config::tests::the_redirect_uri_is_the_callback_on_the_configured_origin ... ok
+test config::tests::the_ui_is_off_unless_a_client_id_names_it ... ok
+test config::tests::the_ui_refuses_to_guess_its_own_origin ... ok
+test config::tests::unset_allowlist_allows_all ... ok
+test config::tests::the_ui_refuses_to_be_served_without_an_issuer ... ok
+test ui::login::tests::only_a_path_on_this_server_is_followed_after_a_login ... ok
+test ui::login::tests::a_next_carrying_a_stripped_byte_is_not_a_path_on_this_server ... ok
+test ui::login::tests::a_next_longer_than_a_path_is_not_carried ... ok
+test config::tests::origin_strips_path ... ok
+test ui::pages::tests::a_name_a_person_wrote_cannot_close_a_tag ... ok
+test ui::tests::a_cookie_is_read_by_name_and_not_by_prefix ... ok
+test ui::tests::a_redirect_uri_survives_being_a_query_value ... ok
+test ui::pages::tests::a_block_folds_only_when_the_digest_left_something_out ... ok
+test ui::tree::tests::a_deep_ancestry_keeps_every_handle ... ok
+test ui::tree::tests::a_loop_longer_than_the_old_depth_limit_still_ends ... ok
+test ui::tree::tests::a_parent_chain_that_loops_stops_rather_than_hangs ... ok
+test ui::tree::tests::a_path_is_the_ancestry_root_first ... ok
+test ui::tree::tests::a_parent_that_is_not_there_ends_the_path ... ok
+test ui::tree::tests::a_path_is_handles_and_nothing_else ... ok
+test ui::tests::the_pkce_challenge_matches_the_rfc_example ... ok
+test wiring::tests::a_write_through_the_assembled_stack_reaches_the_fold_underneath ... ok
+test ui::tests::a_full_table_evicts_rather_than_refusing_a_login ... ok
+test ui::tests::the_login_a_full_table_evicts_is_the_oldest ... ok
+test auth::tests::allowlist_matches_subject_case_sensitively ... ok
+test auth::tests::allowlist_trims_config_entries ... ok
+test auth::tests::rejects_wrong_issuer ... ok
+test auth::tests::allowlist_rejects_an_unlisted_subject ... ok
+test auth::tests::rejects_expired ... ok
+test auth::tests::allowlist_admits_a_listed_subject ... ok
+test auth::tests::discovery_failure_is_an_error ... ok
+test auth::tests::no_allowlist_admits_any_subject ... ok
+test auth::tests::accepts_a_well_formed_token ... ok
+test auth::tests::a_claim_jojobot_does_not_read_is_ignored_rather_than_refused ... ok
+test auth::tests::rejects_wrong_audience ... ok
+test auth::tests::discover_for_audience_carries_the_allowlist ... ok
+test auth::tests::rejects_not_yet_valid_nbf ... ok
+test auth::tests::from_config_carries_the_allowlist_through ... ok
+test auth::tests::with_allowed_subjects_empty_stays_open ... ok
+test auth::tests::discover_for_audience_binds_the_audience_it_is_passed ... ok
+test auth::tests::rejects_signature_from_a_different_key ... ok
+test auth::tests::rejects_tampered_signature ... ok
+test auth::tests::rejects_hmac_algorithm_confusion ... ok
+test auth::tests::rejects_unknown_kid ... ok
+test auth::tests::keyset_excludes_non_signing_keys ... ok
+test auth::tests::discover_endpoints_needs_both_endpoints_published ... ok
+
+test result: ok. 58 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 26.27s
+
+     Running unittests src/main.rs (/mnt/easy_files/claude/cargo-target/jojobot2/debug/deps/jojobot-9f56db4a4859180d)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/boot_store_refuses_when_the_store_cannot_come_up.rs (/mnt/easy_files/claude/cargo-target/jojobot2/debug/deps/boot_store_refuses_when_the_store_cannot_come_up-c8981689b9c31c65)
+
+running 1 test
+test boot_store_refuses_when_the_port_is_already_taken ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.23s
+
+     Running tests/boot_store_survives_a_downstream_read_failure.rs (/mnt/easy_files/claude/cargo-target/jojobot2/debug/deps/boot_store_survives_a_downstream_read_failure-0b8c4fc62d9678b9)
+
+running 1 test
+test boot_store_does_not_refuse_when_a_downstream_read_fails_on_an_otherwise_healthy_store ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.16s
+
+     Running tests/ci.rs (/mnt/easy_files/claude/cargo-target/jojobot2/debug/deps/ci-7afc67809a061210)
+
+running 4 tests
+test the_bar_reports_every_target_and_not_only_the_ones_before_a_failure ... ok
+test the_automated_bar_is_the_same_command_the_house_rules_name ... ok
+test the_bar_runs_on_every_branch_and_not_only_on_the_mainline ... ok
+test an_unset_playbook_reaches_the_binary_with_no_flag_and_a_set_one_still_passes_through ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/real_binary_serves_a_store_with_existing_rows.rs (/mnt/easy_files/claude/cargo-target/jojobot2/debug/deps/real_binary_serves_a_store_with_existing_rows-0762f026b9f01c07)
+
+running 1 test
+test the_real_server_binary_serves_a_store_a_previous_process_already_wrote_to ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.18s
+
+     Running tests/sabotage.rs (/mnt/easy_files/claude/cargo-target/jojobot2/debug/deps/sabotage-297099d50558efaa)
+
+running 4 tests
+test a_run_asked_to_stop_mid_flight_still_puts_the_file_back ... ok
+test a_site_that_is_not_there_is_refused_as_an_absence ... ok
+test a_site_that_appears_twice_is_refused_and_a_unique_one_is_not ... ok
+test a_run_that_passes_and_a_run_that_fails_both_leave_the_file_as_it_was ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.34s
+
+     Running tests/server.rs (/mnt/easy_files/claude/cargo-target/jojobot2/debug/deps/server-3241acc3f1c1b6c5)
+
+running 17 tests
+test metadata_advertises_the_issuer ... ok
+test health_endpoint_is_public_and_ok ... ok
+test mcp_rejects_unauthenticated_when_auth_enabled ... ok
+test an_unmounted_path_is_not_found_rather_than_unauthorized ... ok
+test mcp_accepts_public_host_but_still_guards_dns_rebinding ... ok
+test mcp_is_open_when_auth_disabled ... ok
+test mcp_guard_covers_path_and_method_variants ... ok
+test a_request_declaring_a_revision_jojobot_cannot_serve_is_refused_too ... ok
+test the_handshake_names_jojobot_and_agrees_with_what_ping_reports ... ok
+test surface_changed::a_connected_client_is_told_the_tool_list_can_move ... ok
+test a_revision_jojobot_cannot_serve_is_refused_with_the_ones_it_can ... ok
+test ping_tool_round_trips_end_to_end ... ok
+test the_newest_revision_is_served_whole_and_not_merely_agreed ... ok
+test the_body_rides_where_the_agreed_revision_reads_it ... ok
+test a_fact_captured_through_the_front_door_is_findable_there ... ok
+test allowlist_admits_a_listed_token_to_the_handler ... ok
+test allowlist_forbids_a_validated_but_unlisted_token ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 11.24s
+
+     Running tests/ui.rs (/mnt/easy_files/claude/cargo-target/jojobot2/debug/deps/ui-f5818849b4c0d002)
+
+running 36 tests
+test a_view_that_matches_nothing_says_so ... ok
+test a_view_that_asks_for_what_is_overdue_leaves_out_what_is_not ... ok
+test a_mention_in_served_text_becomes_a_followable_link ... ok
+test a_view_short_of_a_key_names_the_key_rather_than_reading_as_empty ... ok
+... [fixture truncated: real workspace run has 61 suites total; this keeps the first several plus the doc-test and clippy tail, verbatim] ...
+
+   Doc-tests jojobot_domain
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests jojobot_exercise
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests jojobot_mcp
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+cargo clippy --workspace --all-targets --locked -- -D warnings
+    Checking jojobot-domain v0.1.0 (/home/claude/code/jojobot2/crates/jojobot-domain)
+    Checking jojobot-adapters v0.1.0 (/home/claude/code/jojobot2/crates/jojobot-adapters)
+    Checking jojobot-mcp v0.1.0 (/home/claude/code/jojobot2/crates/jojobot-mcp)
+    Checking jojobot v0.1.0 (/home/claude/code/jojobot2/crates/jojobot)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 13.18s

@@ -24,7 +24,17 @@ help: ## List the targets
 # It is the default and it stays the default: the whole workspace, every
 # suite, every target. The narrow target below covers less, and it is the
 # override rather than the rule.
-check: fmt-check test lint ## The DONE bar: formatted, green, clippy-clean
+#
+# **Runs through `jojobot-bar` rather than calling cargo here directly.**
+# `cargo test --workspace` prints thousands of lines, and a caller who pipes
+# that through `tail`/`head` to fit its own context keeps the doc-tests and
+# the clippy banner — the part that always looks fine — while the suite
+# counts, the failing names and the compile status are above the cut.
+# `jojobot-bar` runs the same phases with the same flags, writes the whole
+# thing to `target/bar/check.log`, and prints a short verdict built from what
+# it captured directly rather than from a pipe.
+check: ## The DONE bar: formatted, green, clippy-clean
+	CARGO=$(CARGO) $(CARGO) run -q -p jojobot-bar -- check
 
 # **The inner loop, scoped to one crate.** Run it between edits.
 #
@@ -70,24 +80,15 @@ check: fmt-check test lint ## The DONE bar: formatted, green, clippy-clean
 # rather than one covering for the other.
 #
 #     make narrow CRATE=<name> [FILTER=<substring>]
+#
+# **Runs through `jojobot-bar` too**, for the same reason `check` does: one
+# short verdict and the full output at a known path, same suites, same
+# flags, same zero-selection guard, only what is printed changes.
 CRATE ?=
 FILTER ?=
 narrow: ## The inner loop: one crate's tests and lint, plus the format check
 	@test -n "$(CRATE)" || { echo "make narrow needs a crate: make narrow CRATE=<name>"; exit 2; }
-	$(CARGO) fmt --all --check
-	$(CARGO) build --workspace
-	@n=$$($(CARGO) test -p $(CRATE) $(FILTER) -- --list 2>/dev/null | grep -c ': test$$' || true); \
-	test "$$n" -gt 0 || { \
-		if [ -n "$(FILTER)" ]; then \
-			echo "make narrow: FILTER='$(FILTER)' selected no tests in $(CRATE), so the run would have reported a pass over nothing."; \
-			echo "FILTER is a SUBSTRING of a test's full path, not a regex. Name one substring, or drop FILTER to run the whole crate."; \
-		else \
-			echo "make narrow: $(CRATE) has no tests, so the run would have reported a pass over nothing."; \
-		fi; \
-		exit 2; \
-	}
-	$(CARGO) test -p $(CRATE) $(FILTER)
-	$(CARGO) clippy -p $(CRATE) --all-targets -- -D warnings
+	CARGO=$(CARGO) $(CARGO) run -q -p jojobot-bar -- narrow --crate $(CRATE) $(if $(FILTER),--filter $(FILTER),)
 
 # 🚨 **Every target reports, and the count is what a reader takes from it.**
 #

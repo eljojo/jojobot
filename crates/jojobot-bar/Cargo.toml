@@ -1,0 +1,13 @@
+[package]
+name = "jojobot-bar"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+# Dev tooling: wraps `cargo test`/`cargo clippy`/`cargo fmt` and prints a
+# short verdict instead of the raw stream. No dependency on the domain or the
+# adapters — it reads cargo's own text output and nothing else.
+[dependencies]
+
+[dev-dependencies]

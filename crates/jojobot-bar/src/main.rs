@@ -1,0 +1,308 @@
+//! `bar` — runs the green-bar phases (`fmt-check`, `test`, `lint`) and prints
+//! a short verdict instead of the raw stream, with the full output kept at a
+//! known path.
+//!
+//! **Why this exists rather than the Makefile calling cargo directly**: a
+//! `cargo test --workspace` run prints thousands of lines, and a caller who
+//! pipes that through `tail`/`head` to stay within its own context keeps only
+//! the doc-tests and the clippy banner — the part that always looks fine —
+//! while the suite counts, the failing names and the compile status are all
+//! above the cut. This never pipes the run: it spawns cargo itself, writes
+//! everything to the log, and prints the short version from what it captured
+//! directly, so there is no pipe for an exit code to go missing in.
+//!
+//! **Deliberately silent while a phase runs.** `scripts/sabotage` tees its
+//! run live because a person is watching ONE file mutate for a few seconds.
+//! This wraps a run that can take minutes and whose whole point is that
+//! nobody should have to read it as it happens — the summary at the end is
+//! the answer, not a live feed of it.
+
+use std::fs::{self, File, OpenOptions};
+use std::io::Write as _;
+use std::path::{Path, PathBuf};
+use std::process::{Command, ExitCode, Stdio};
+
+use jojobot_bar::{Summary, summarize_test_output};
+
+/// **The cargo binary the outer `make` recipe was told to use.** The
+/// Makefile's own `CARGO ?= cargo` is an override hook, and this reads the
+/// same variable so a phase this build spawns honours it too rather than
+/// hardcoding a second, silently different default.
+fn cargo_bin() -> String {
+    std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string())
+}
+
+fn main() -> ExitCode {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let result = match args.first().map(String::as_str) {
+        Some("check") => run_check(),
+        Some("narrow") => run_narrow(&args[1..]),
+        _ => {
+            eprintln!("usage: bar check | bar narrow --crate <name> [--filter <substring>]");
+            return ExitCode::from(2);
+        }
+    };
+    match result {
+        Ok(code) => code,
+        Err(e) => {
+            eprintln!("bar: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// **One phase's own slice of the log** — written and read back so the
+/// summary is built from what actually landed on disk, never from a copy
+/// kept only in memory.
+fn run_phase(
+    log_path: &Path,
+    header: &str,
+    program: &str,
+    args: &[&str],
+) -> std::io::Result<(bool, String)> {
+    {
+        let mut f = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(log_path)?;
+        writeln!(f, "\n$ {header}")?;
+    }
+    let start = fs::metadata(log_path)?.len();
+    let out = OpenOptions::new().append(true).open(log_path)?;
+    let err = out.try_clone()?;
+    let status = Command::new(program)
+        .args(args)
+        .stdout(Stdio::from(out))
+        .stderr(Stdio::from(err))
+        .status()?;
+    let bytes = fs::read(log_path)?;
+    let phase_text = String::from_utf8_lossy(&bytes[start as usize..]).into_owned();
+    Ok((status.success(), phase_text))
+}
+
+fn fresh_log(path: &Path) -> std::io::Result<()> {
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir)?;
+    }
+    File::create(path)?;
+    Ok(())
+}
+
+fn finish(summary: &mut Summary, log_path: &Path) {
+    let line_count = fs::read_to_string(log_path)
+        .map(|s| s.lines().count())
+        .unwrap_or(0);
+    summary.log(&log_path.display().to_string(), line_count);
+    print!("{}", summary.render());
+}
+
+fn run_check() -> std::io::Result<ExitCode> {
+    let cargo = cargo_bin();
+    let log_path = PathBuf::from("target/bar/check.log");
+    fresh_log(&log_path)?;
+    let mut summary = Summary::new();
+
+    let (ok, _) = run_phase(
+        &log_path,
+        "cargo fmt --all --check",
+        &cargo,
+        &["fmt", "--all", "--check"],
+    )?;
+    if !ok {
+        summary.phase_failed("fmt-check", "not formatted — see log");
+        summary.phase_skipped("test");
+        summary.phase_skipped("lint");
+        finish(&mut summary, &log_path);
+        return Ok(ExitCode::FAILURE);
+    }
+    summary.phase_ok("fmt-check", "formatted");
+
+    let (_, text) = run_phase(
+        &log_path,
+        "cargo test --workspace --no-fail-fast --locked",
+        &cargo,
+        &["test", "--workspace", "--no-fail-fast", "--locked"],
+    )?;
+    let verdict = summarize_test_output(&text);
+    summary.test_phase(&verdict);
+    if !verdict.ok() {
+        summary.phase_skipped("lint");
+        finish(&mut summary, &log_path);
+        return Ok(ExitCode::FAILURE);
+    }
+
+    let (ok, _) = run_phase(
+        &log_path,
+        "cargo clippy --workspace --all-targets --locked -- -D warnings",
+        &cargo,
+        &[
+            "clippy",
+            "--workspace",
+            "--all-targets",
+            "--locked",
+            "--",
+            "-D",
+            "warnings",
+        ],
+    )?;
+    if ok {
+        summary.phase_ok("lint", "clean");
+    } else {
+        summary.phase_failed("lint", "see log");
+    }
+
+    finish(&mut summary, &log_path);
+    Ok(if summary.green {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    })
+}
+
+fn run_narrow(args: &[String]) -> std::io::Result<ExitCode> {
+    let cargo = cargo_bin();
+    let mut krate: Option<String> = None;
+    let mut filter: Option<String> = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--crate" => {
+                krate = args.get(i + 1).cloned();
+                i += 2;
+            }
+            "--filter" => {
+                filter = args.get(i + 1).cloned();
+                i += 2;
+            }
+            other => {
+                eprintln!("bar narrow: unrecognised argument '{other}'");
+                return Ok(ExitCode::from(2));
+            }
+        }
+    }
+    let Some(krate) = krate else {
+        eprintln!("bar narrow needs a crate: bar narrow --crate <name>");
+        return Ok(ExitCode::from(2));
+    };
+
+    let log_path = PathBuf::from(format!("target/bar/narrow-{krate}.log"));
+    fresh_log(&log_path)?;
+    let mut summary = Summary::new();
+
+    let (ok, _) = run_phase(
+        &log_path,
+        "cargo fmt --all --check",
+        &cargo,
+        &["fmt", "--all", "--check"],
+    )?;
+    if !ok {
+        summary.phase_failed("fmt-check", "not formatted — see log");
+        summary.phase_skipped("build");
+        summary.phase_skipped("test");
+        summary.phase_skipped("lint");
+        finish(&mut summary, &log_path);
+        return Ok(ExitCode::FAILURE);
+    }
+    summary.phase_ok("fmt-check", "formatted");
+
+    let (ok, text) = run_phase(
+        &log_path,
+        "cargo build --workspace",
+        &cargo,
+        &["build", "--workspace"],
+    )?;
+    if !ok {
+        let verdict = summarize_test_output(&text);
+        if verdict.compiled {
+            summary.phase_failed("build", "see log");
+        } else {
+            summary.phase_failed("build", "DID NOT COMPILE — see log");
+        }
+        summary.phase_skipped("test");
+        summary.phase_skipped("lint");
+        finish(&mut summary, &log_path);
+        return Ok(ExitCode::FAILURE);
+    }
+    summary.phase_ok("build", "compiled");
+
+    // **The zero-selection guard, unchanged**: FILTER is a substring of a
+    // test's full path, and a mistyped one selects nothing rather than
+    // failing outright — `cargo test` reports a pass over an empty
+    // selection, so the count is read before the run and decides.
+    let mut list_args: Vec<&str> = vec!["test", "-p", &krate];
+    if let Some(f) = &filter {
+        list_args.push(f);
+    }
+    list_args.extend(["--", "--list"]);
+    let (_, list_text) = run_phase(
+        &log_path,
+        "cargo test -p <crate> [filter] -- --list",
+        &cargo,
+        &list_args,
+    )?;
+    let selected = list_text
+        .lines()
+        .filter(|l| l.trim_end().ends_with(": test"))
+        .count();
+    if selected == 0 {
+        let detail = match &filter {
+            Some(f) => format!(
+                "FILTER='{f}' selected no tests in {krate} — FILTER is a substring of a test's \
+                 full path, not a regex"
+            ),
+            None => format!("{krate} has no tests"),
+        };
+        summary.phase_failed("test", &detail);
+        summary.phase_skipped("lint");
+        finish(&mut summary, &log_path);
+        // **The same exit code the old inline guard used** (rule: same
+        // exit codes) — 2, not the generic failure code, so a caller
+        // scripted against the old refusal still recognises it.
+        return Ok(ExitCode::from(2));
+    }
+
+    let mut test_args: Vec<&str> = vec!["test", "-p", &krate];
+    if let Some(f) = &filter {
+        test_args.push(f);
+    }
+    let (_, text) = run_phase(
+        &log_path,
+        "cargo test -p <crate> [filter]",
+        &cargo,
+        &test_args,
+    )?;
+    let verdict = summarize_test_output(&text);
+    summary.test_phase(&verdict);
+    if !verdict.ok() {
+        summary.phase_skipped("lint");
+        finish(&mut summary, &log_path);
+        return Ok(ExitCode::FAILURE);
+    }
+
+    let (ok, _) = run_phase(
+        &log_path,
+        "cargo clippy -p <crate> --all-targets -- -D warnings",
+        &cargo,
+        &[
+            "clippy",
+            "-p",
+            &krate,
+            "--all-targets",
+            "--",
+            "-D",
+            "warnings",
+        ],
+    )?;
+    if ok {
+        summary.phase_ok("lint", "clean");
+    } else {
+        summary.phase_failed("lint", "see log");
+    }
+
+    finish(&mut summary, &log_path);
+    Ok(if summary.green {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    })
+}
