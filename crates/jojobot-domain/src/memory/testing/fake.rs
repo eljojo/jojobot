@@ -1096,7 +1096,12 @@ impl Memory for InMemoryMemory {
                     if split.live.len() >= capacity {
                         let aged_out = split.aged_out.len();
                         let refuse = |room: Vec<Fact>| MemoryError::RoomFull {
-                            subject: home.to_string(),
+                            // **The handle the caller reached this thing
+                            // by, never `home`** — `home` is the badge
+                            // every entity wears from creation, and a
+                            // refusal naming it hands back a token the
+                            // caller cannot address anything by.
+                            subject: subject_entity.id.to_string(),
                             live: room.len(),
                             capacity,
                             room,
