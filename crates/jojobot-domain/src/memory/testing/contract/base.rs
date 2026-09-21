@@ -3313,6 +3313,44 @@ pub async fn a_thought_pointing_at_a_thread_is_in_the_room<M: Memory>(store: &M)
     );
 }
 
+/// **A thing carrying no ceiling is refused nothing.** The positive
+/// [`a_bots_room_enforces_its_capacity`] and
+/// [`a_non_bots_room_enforces_its_capacity_too`] rest on: the room mechanism
+/// only ever reads a capacity that is THERE, so a thing that never had one
+/// written stays uncapped no matter how many connection-edged claims land
+/// on it — never refused, never forced through `drop` or `borrow`.
+pub async fn an_uncapped_thing_is_refused_nothing<M: Memory>(store: &M) {
+    let bot = EntityId("bot:contract-thought-uncapped".into());
+    ensure(store, &bot).await;
+
+    for (n, pointer) in [
+        EntityId("thing:jukebox".into()),
+        EntityId("thing:battery".into()),
+        EntityId("thing:the-fern".into()),
+        EntityId("thing:the-air-filter".into()),
+        EntityId("thing:the-couch".into()),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        ensure(store, &pointer).await;
+        store
+            .capture(NewFact {
+                edge: Some(Edge::new(EdgeShape::Connection, pointer.clone())),
+                ..NewFact::about(bot.clone(), format!("thought number {n}"), date(2026, 7, 1))
+            })
+            .await
+            .unwrap_or_else(|e| panic!("an uncapped thing must refuse nothing: {e}"));
+    }
+
+    let after = store.recall(&bot).await.expect("recall ok");
+    assert_eq!(
+        thought_room(&after).len(),
+        5,
+        "every one of the five must have landed, none dropped and none refused"
+    );
+}
+
 /// **A ceiling is a property of any thing, never a bot's alone.** The same
 /// mechanism [`a_bots_room_enforces_its_capacity`] proves on a bot, proven
 /// here on a `pet` — structurally, on the same key and the same edge shape,
@@ -10519,6 +10557,7 @@ pub async fn run_all<M: Memory>(store: &M) {
     a_thought_pointing_at_a_thread_is_in_the_room(store).await;
     a_room_fulls_subject_is_never_a_bare_badge(store).await;
     a_bots_room_enforces_its_capacity(store).await;
+    an_uncapped_thing_is_refused_nothing(store).await;
     a_non_bots_room_enforces_its_capacity_too(store).await;
     a_borrow_crosses_the_ceiling_exactly_once(store).await;
     an_aged_thought_frees_the_room(store).await;
