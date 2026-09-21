@@ -3948,6 +3948,12 @@ async fn a_fact_edited_directly_against_the_store_stops_answering_its_old_conten
 /// slice wires the log into. The one pm's dispatch named by hand: a run
 /// swept from `active` to `abandoned` writes no journal entry at all, and
 /// the signal must still move for it.
+///
+/// **One exception, added later: `add_served` must NOT move it.** The
+/// signal exists to tell the session half of the search index when a full
+/// re-read is worth paying for, and `served_chars` is never part of what
+/// that index reads — moving the count for it would invalidate every bot's
+/// sessions, on every served answer, for a rescan with nothing new to find.
 #[tokio::test]
 async fn session_write_summary_answers_the_real_store() {
     let scratch = Scratch::new("session-write-summary");
@@ -4115,7 +4121,7 @@ async fn session_write_summary_answers_the_real_store() {
         "set_timezone did not move the count: {after_timezone:?}"
     );
 
-    // `add_served` moves it.
+    // `add_served` must NOT move it — `served_chars` is never indexed.
     sessions_store
         .add_served(&session.id, 42)
         .await
@@ -4125,9 +4131,10 @@ async fn session_write_summary_answers_the_real_store() {
         .await
         .expect("write_summary ok")
         .expect("the signal");
-    assert!(
-        after_served.0 > after_timezone.0,
-        "add_served did not move the count: {after_served:?}"
+    assert_eq!(
+        after_served.0, after_timezone.0,
+        "add_served moved the count, and it must not: served_chars is never part of what the \
+         search index reads: {after_served:?}"
     );
 
     // **The one pm called out by name: a sweep, with no entry of its own.**

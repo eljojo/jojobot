@@ -267,6 +267,30 @@ impl DoltSessions {
         session_from(&row, &entries)
     }
 
+    /// **The row exists, without paying for its chronology.** What
+    /// [`Self::add_served`] needs and [`Self::read_in`] costs more than: a
+    /// session an accounting write may touch does not have to be open, so
+    /// this asks existence alone, the same question a foreign key would ask
+    /// if this table had one to lean on. Never counted against `full_reads`
+    /// or `entries_read` — it reads neither a session row's every column nor
+    /// any of its chronology.
+    async fn exists(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        id: &SessionId,
+    ) -> Result<(), SessionError> {
+        let found: Option<i64> = sqlx::query_scalar("SELECT 1 FROM session WHERE id = ?")
+            .bind(id.as_str())
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(store)?;
+        found
+            .map(|_| ())
+            .ok_or_else(|| SessionError::UnknownSession {
+                attempted: id.to_string(),
+            })
+    }
+
     /// The session a write is allowed to touch: it exists, and it is open.
     ///
     /// One helper for every write verb, so they cannot come to disagree about
@@ -759,15 +783,23 @@ impl Sessions for DoltSessions {
         validate_session_id(id)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
         // Existence only, never refused on a closed session — see the
-        // trait's own doc.
-        self.read_in(&mut tx, id).await?;
+        // trait's own doc. Never a full read: this never touches the
+        // chronology and has no state to check.
+        self.exists(&mut tx, id).await?;
         sqlx::query("UPDATE session SET served_chars = served_chars + ? WHERE id = ?")
             .bind(chars as i64)
             .bind(id.as_str())
             .execute(&mut *tx)
             .await
             .map_err(store)?;
-        Self::append_session_write(&mut tx, id).await?;
+        // **No `append_session_write` here.** That signal exists to tell the
+        // search half of the index when to pay for a full re-read of every
+        // session — see its own migration doc — and `served_chars` is never
+        // part of what gets indexed (search.rs's `write_session_entry` reads
+        // an entry's text and a session's focus, never this column). Signalling
+        // on a change nothing searches for would invalidate every bot's
+        // sessions on every served answer, for a rescan with nothing new to
+        // find.
         tx.commit().await.map_err(store)?;
         Ok(())
     }
@@ -1529,6 +1561,91 @@ mod tests {
         assert_eq!(
             after_close.served_chars, 510,
             "accounting keeps running after the session closes: {after_close:?}"
+        );
+
+        store.stop().await;
+    }
+
+    /// 🚨 **`add_served` needs to know the row is there, never its
+    /// chronology, and never has to say anything happened that a search
+    /// reindex should care about.** A correctness assertion on `served_chars`
+    /// alone passes whether this reads one row or the whole run, so this
+    /// asserts on the WORK: `entries_read` must not move at all, on a session
+    /// carrying beats, and `write_summary`'s count — the signal the search
+    /// half of the index rescans everything on — must not move either, since
+    /// `served_chars` is not a word anything is ever searched for.
+    #[tokio::test]
+    async fn add_served_neither_parses_the_chronology_nor_signals_the_search_index() {
+        let scratch = Scratch::new("session-served-chars-cost");
+        let path = scratch.0.clone();
+        std::mem::forget(scratch);
+        let mut store = Dolt::start(&path, free_port())
+            .await
+            .expect("the store comes up");
+        migrate::run(store.pool()).await.expect("the schema");
+        migrate::seed_kinds(store.pool())
+            .await
+            .expect("the kinds are seeded");
+        let sessions = DoltSessions::open(store.pool().clone());
+
+        let busy = sessions
+            .begin(NewSession {
+                timezone: None,
+                bot: EntityId("bot:epsilon".into()),
+                sid: Sid("sv01".into()),
+                focus: "a sitting with real beats".into(),
+                started_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
+                started_on: None,
+            })
+            .await
+            .expect("begin ok");
+        for (text, at) in [
+            ("first beat", "2026-01-01T00:05:00Z"),
+            ("second beat", "2026-01-01T00:10:00Z"),
+            ("third beat", "2026-01-01T00:15:00Z"),
+        ] {
+            sessions
+                .append(
+                    &busy.id,
+                    NewEntry::manual(text, at.parse().expect("a fixed instant"), None),
+                )
+                .await
+                .expect("append ok");
+        }
+
+        let entries_before = sessions.entries_read();
+        let writes_before = sessions
+            .write_summary()
+            .await
+            .expect("write_summary ok")
+            .map(|(count, _)| count);
+
+        sessions
+            .add_served(&busy.id, 120)
+            .await
+            .expect("add_served ok");
+
+        assert_eq!(
+            sessions.entries_read(),
+            entries_before,
+            "add_served only needs to know the row exists — it must not parse a chronology to \
+             find out"
+        );
+        let writes_after = sessions
+            .write_summary()
+            .await
+            .expect("write_summary ok")
+            .map(|(count, _)| count);
+        assert_eq!(
+            writes_after, writes_before,
+            "served_chars is not indexed, so an accounting-only write must not signal the \
+             session search index to rescan every run"
+        );
+
+        let read_back = sessions.read_session(&busy.id).await.expect("read ok");
+        assert_eq!(
+            read_back.served_chars, 120,
+            "the accounting itself must still run: {read_back:?}"
         );
 
         store.stop().await;
