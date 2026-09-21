@@ -2362,6 +2362,13 @@ impl Memory for DoltMemory {
                                 victim_fact.details = Some(reason.clone());
                                 Self::write_fact(&mut tx, &victim_fact, &self.clock).await?;
                             }
+                            // **The emergency reserve, spent — never twice
+                            // in a row.** Only honoured at the exact
+                            // threshold: a room already OVER capacity means
+                            // a borrow already landed and was not repaid,
+                            // and the ceiling's answer to that is steering
+                            // back, not borrowing again.
+                            _ if fact.borrow && room.len() == capacity => {}
                             _ => return Err(refuse(room)),
                         }
                     }

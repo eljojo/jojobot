@@ -124,6 +124,7 @@ pub(crate) fn capture_args(subject: &str, content: &str) -> CaptureArgs {
         stale_after: None,
         drop: None,
         drop_because: None,
+        borrow: None,
     }
 }
 

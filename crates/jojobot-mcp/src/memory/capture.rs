@@ -183,7 +183,7 @@ pub struct CaptureArgs {
     #[serde(default)]
     pub(crate) stale_after: Option<String>,
     /// **The address of a thought to drop, when this capture is what fills
-    /// the last free slot in a bot's own room** — the capped set of live
+    /// the last free slot in a thing's own room** — the capped set of live
     /// thoughts `thought_capacity` bounds; see `shape`, above, for what
     /// makes a claim one. `kind:slug#local-id`,
     /// exactly as `recall` serves one. Archived in the SAME act as this
@@ -199,6 +199,19 @@ pub struct CaptureArgs {
     /// the dropped claim as its own `details`. Required whenever `drop` is.
     #[serde(default)]
     pub(crate) drop_because: Option<String>,
+    /// **The emergency reserve — usable once, and only once.** Set this
+    /// instead of `drop` and a write that would take a full room over its
+    /// ceiling lands anyway, over capacity, rather than being refused. A
+    /// room already over capacity — a borrow already outstanding — refuses
+    /// this exactly as it would with `borrow` unset: the priority once
+    /// you're over is steering back to a clean state, never borrowing
+    /// again on top of it. Bring the room back at or under capacity first
+    /// — archive a live thought with `update_fact`, not a `drop` here,
+    /// which swaps one in for one out and leaves the debt exactly where it
+    /// was. Ignored wherever `drop` already lands the write, or the room is
+    /// not at capacity to begin with.
+    #[serde(default)]
+    pub(crate) borrow: Option<bool>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
     /// every call — it is what tells jojobot which bot is asking. Reads are
     /// attributed, never journalled.
@@ -348,11 +361,9 @@ impl Jojobot {
         checked_in: bool,
         opened_the_loop: bool,
     ) -> String {
-        let standing = self
-            .memory
-            .recall(&fact.subject)
-            .await
-            .ok()
+        let after = self.memory.recall(&fact.subject).await.ok();
+        let standing = after
+            .as_ref()
             .map(|facts| {
                 facts
                     .iter()
@@ -362,6 +373,44 @@ impl Jojobot {
             .map_or_else(String::new, |n| {
                 format!(" {n} accounts now stand on {}.", fact.subject.as_str())
             });
+        // **The emergency reserve is a VISIBLE debt, not a silent one.** A
+        // thought landing while its own room already holds more than its
+        // ceiling is the one moment this receipt can say so — a later read
+        // of the room shows the overage structurally, but only this call
+        // knows it JUST happened. Asked only when this fact could be a
+        // room's own member at all, the same gate the write itself ran on.
+        let debt = if fact
+            .edge
+            .as_ref()
+            .is_some_and(|e| e.shape == EdgeShape::Connection)
+        {
+            let capacity = self
+                .memory
+                .fields(&fact.subject)
+                .await
+                .ok()
+                .and_then(|f| f.get(jojobot_domain::memory::THOUGHT_CAPACITY).cloned())
+                .and_then(|v| v.trim().parse::<usize>().ok());
+            match (capacity, &after) {
+                (Some(capacity), Some(facts)) => {
+                    let live = jojobot_domain::memory::thought_room(facts).len();
+                    if live > capacity {
+                        format!(
+                            " This used {}'s emergency reserve: its room now holds {live} of \
+                             {capacity}, over its own ceiling. Bring it back by archiving a live \
+                             thought with update_fact — the priority now is steering back to a \
+                             clean state, not borrowing again.",
+                            fact.subject.as_str()
+                        )
+                    } else {
+                        String::new()
+                    }
+                }
+                _ => String::new(),
+            }
+        } else {
+            String::new()
+        };
         let keys = if fact.fields.is_empty() {
             String::new()
         } else {
@@ -411,7 +460,7 @@ impl Jojobot {
         };
         format!(
             "Recorded as an additional claim.{standing} No record was edited and none was \
-             removed.{keys}{basis}{source_note}"
+             removed.{keys}{basis}{source_note}{debt}"
         )
     }
 
@@ -742,6 +791,7 @@ impl Jojobot {
             stale_after: parse_date(args.stale_after.as_deref())?,
             drop,
             drop_because: args.drop_because,
+            borrow: args.borrow.unwrap_or(false),
             aged_before,
         };
         // **Disagreement, not presence alone.** A check-in with no
@@ -2932,6 +2982,122 @@ mod tests {
             after[jojobot_domain::memory::THOUGHT_CAPACITY],
             "5",
             "a different identity's write must land: {after}"
+        );
+    }
+
+    /// **The emergency reserve, spent through the served verb — and the
+    /// receipt says so.** A refusal at exactly capacity offers `borrow`; a
+    /// refusal once the debt is outstanding does not offer it again — two
+    /// different sentences for two different states, not one refusal reused.
+    #[tokio::test]
+    async fn a_borrow_lands_visibly_and_a_second_one_is_refused() {
+        let jojobot = handler();
+        let bot = "bot:mcp-thought-borrow";
+        ensure(&jojobot, bot).await;
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                fields: Some(
+                    [(
+                        jojobot_domain::memory::THOUGHT_CAPACITY.to_string(),
+                        "1".to_string(),
+                    )]
+                    .into_iter()
+                    .collect(),
+                ),
+                ..capture_args(bot, "capacity is one")
+            },
+        )
+        .await;
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                shape: Some("connection".into()),
+                object: Some("thing:jukebox".into()),
+                ..capture_args(bot, "the jukebox needs a needle")
+            },
+        )
+        .await;
+
+        // At exactly capacity, with no borrow: refused, and the refusal
+        // offers borrowing as a way forward.
+        ensure(&jojobot, "thing:battery").await;
+        let refused_at_capacity = json_of(
+            &jojobot
+                .capture(Parameters(CaptureArgs {
+                    shape: Some("connection".into()),
+                    object: Some("thing:battery".into()),
+                    ..capture_args(bot, "the battery needs replacing")
+                }))
+                .await
+                .expect("a refusal is an answer, not a failure"),
+        );
+        assert_eq!(
+            refused_at_capacity["status"], "blocked",
+            "{refused_at_capacity}"
+        );
+        let how_at_capacity = refused_at_capacity["how_to_proceed"]
+            .as_str()
+            .expect("a blocked answer says how to proceed");
+        assert!(
+            how_at_capacity.contains("borrow"),
+            "at exactly capacity, borrowing must be offered as a way forward: \
+             {how_at_capacity}"
+        );
+
+        // Borrowing lands — over the ceiling, visibly, in this receipt.
+        let borrowed = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                shape: Some("connection".into()),
+                object: Some("thing:battery".into()),
+                borrow: Some(true),
+                ..capture_args(bot, "the battery needs replacing")
+            },
+        )
+        .await;
+        let receipt = borrowed["postcondition"]
+            .as_str()
+            .expect("a capture answers with a postcondition");
+        assert!(
+            receipt.contains("2 of 1"),
+            "the receipt must say the room is now over its own capacity, in numbers: {receipt}"
+        );
+
+        let after = fields_of(&jojobot, bot).await;
+        // The write landed as an ordinary claim — nothing about the bound
+        // thing's own capacity field moved.
+        assert_eq!(
+            after[jojobot_domain::memory::THOUGHT_CAPACITY],
+            "1",
+            "borrowing does not raise the ceiling itself: {after}"
+        );
+
+        // The debt is outstanding — a second borrow is refused, and this
+        // refusal does NOT invite borrowing again.
+        ensure(&jojobot, "thing:the-fern").await;
+        let refused_over_capacity = json_of(
+            &jojobot
+                .capture(Parameters(CaptureArgs {
+                    shape: Some("connection".into()),
+                    object: Some("thing:the-fern".into()),
+                    borrow: Some(true),
+                    ..capture_args(bot, "the fern needs water")
+                }))
+                .await
+                .expect("a refusal is an answer, not a failure"),
+        );
+        assert_eq!(
+            refused_over_capacity["status"], "blocked",
+            "{refused_over_capacity}"
+        );
+        let how_over_capacity = refused_over_capacity["how_to_proceed"]
+            .as_str()
+            .expect("a blocked answer says how to proceed");
+        assert!(
+            !how_over_capacity.contains("borrow: true"),
+            "once the debt is outstanding, the refusal must not invite spending the reserve \
+             again: {how_over_capacity}"
         );
     }
 }

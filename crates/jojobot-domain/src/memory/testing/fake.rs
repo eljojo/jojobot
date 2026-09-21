@@ -1138,6 +1138,12 @@ impl Memory for InMemoryMemory {
                                 let archived = facts[victim_index].clone();
                                 self.append_claim_write(&archived);
                             }
+                            // **The emergency reserve, spent — never twice
+                            // in a row**, the same rule the real store's
+                            // copy carries. Only honoured at the exact
+                            // threshold: a room already over capacity means
+                            // a borrow already landed and was not repaid.
+                            _ if fact.borrow && split.live.len() == capacity => {}
                             _ => return Err(refuse(split.live)),
                         }
                     }

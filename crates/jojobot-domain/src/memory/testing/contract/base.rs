@@ -606,6 +606,7 @@ pub async fn preserves_all_fields<M: Memory>(store: &M) {
         stale_after: None,
         drop: None,
         drop_because: None,
+        borrow: false,
         aged_before: None,
     };
     let captured = capture(store, new).await;
@@ -3526,6 +3527,84 @@ pub async fn a_bots_room_enforces_its_capacity<M: Memory>(store: &M) {
         room.iter().any(|f| f.id == landed.id),
         "the new thought is in the room: {room:?}"
     );
+}
+
+/// **The emergency reserve — usable once, and only once.** A full room with
+/// no drop named is ordinarily refused (proven by
+/// [`a_bots_room_enforces_its_capacity`], this case's own positive twin);
+/// naming `borrow` instead lets that write land anyway, over the ceiling —
+/// visibly, since the room the very next read returns now holds one more
+/// than its own capacity. A second write that also tries to borrow, with
+/// the debt still outstanding, is refused exactly as an ordinary full room
+/// is: the reserve does not stack.
+pub async fn a_borrow_crosses_the_ceiling_exactly_once<M: Memory>(store: &M) {
+    let bot = EntityId("bot:contract-thought-borrow".into());
+    let a = EntityId("thing:jukebox".into());
+    let b = EntityId("thing:battery".into());
+    let c = EntityId("thing:the-fern".into());
+    ensure(store, &bot).await;
+
+    capture(
+        store,
+        NewFact {
+            fields: [(THOUGHT_CAPACITY.to_string(), "1".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(bot.clone(), "capacity is one", date(2026, 7, 1))
+        },
+    )
+    .await;
+    capture(
+        store,
+        NewFact {
+            edge: Some(Edge::new(EdgeShape::Connection, a.clone())),
+            ..NewFact::about(bot.clone(), "the jukebox needs a needle", date(2026, 7, 2))
+        },
+    )
+    .await;
+
+    // The room holds one, capacity is one — borrowed rather than refused.
+    ensure(store, &b).await;
+    let borrowed = store
+        .capture(NewFact {
+            edge: Some(Edge::new(EdgeShape::Connection, b.clone())),
+            borrow: true,
+            ..NewFact::about(bot.clone(), "the battery needs replacing", date(2026, 7, 3))
+        })
+        .await
+        .expect("a borrow at exactly capacity must land, not refuse")
+        .written()
+        .expect("the guard must not block a genuine borrow");
+    assert_eq!(borrowed.content, "the battery needs replacing");
+
+    let after = store.recall(&bot).await.expect("recall ok");
+    let room = thought_room(&after);
+    assert_eq!(
+        room.len(),
+        2,
+        "the room is visibly over its own capacity of one: {room:?}"
+    );
+
+    // The debt is outstanding — a second borrow is refused, not honoured.
+    ensure(store, &c).await;
+    let refused = store
+        .capture(NewFact {
+            edge: Some(Edge::new(EdgeShape::Connection, c.clone())),
+            borrow: true,
+            ..NewFact::about(bot.clone(), "the fern needs water", date(2026, 7, 4))
+        })
+        .await
+        .expect_err("a room already over capacity must refuse a second borrow");
+    match refused {
+        MemoryError::RoomFull { live, capacity, .. } => {
+            assert_eq!(
+                (live, capacity),
+                (2, 1),
+                "the refusal must show the debt still outstanding"
+            );
+        }
+        other => panic!("expected RoomFull, got {other:?}"),
+    }
 }
 
 /// 🚨 **An aged thought frees a room's slot without archiving anything.**
@@ -10441,6 +10520,7 @@ pub async fn run_all<M: Memory>(store: &M) {
     a_room_fulls_subject_is_never_a_bare_badge(store).await;
     a_bots_room_enforces_its_capacity(store).await;
     a_non_bots_room_enforces_its_capacity_too(store).await;
+    a_borrow_crosses_the_ceiling_exactly_once(store).await;
     an_aged_thought_frees_the_room(store).await;
     an_archived_thought_frees_its_slot(store).await;
     a_dropped_thoughts_edge_survives_the_pointers_own_rename(store).await;

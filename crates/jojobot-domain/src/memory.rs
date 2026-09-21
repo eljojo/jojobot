@@ -2421,6 +2421,18 @@ pub struct NewFact {
     /// whenever `drop` is; archived onto the dropped claim as its own
     /// `details`, the same field an ordinary archive already carries one in.
     pub drop_because: Option<String>,
+    /// **The emergency reserve — usable once, and only once, until a drop
+    /// brings the room back at or under capacity.** When this write would be
+    /// the one that takes a full room over its ceiling and names no drop,
+    /// `true` lets it land anyway, over capacity, rather than refusing it.
+    /// **Never honoured twice in a row**: a room already over its capacity
+    /// (a borrow already outstanding) refuses this write exactly as it
+    /// would with `borrow` unset — the ceiling's own answer to "what next"
+    /// is steering back to a clean state, not borrowing again. Ignored
+    /// wherever `drop` already lands the write, or the room is not at
+    /// capacity to begin with: a borrow is only ever spent, never merely
+    /// offered.
+    pub borrow: bool,
     /// **The moment before which a thought in the room this write joins
     /// counts as aged out** — [`aging_cutoff`]'s own answer, computed by the
     /// caller from the bot's own run-start moments, since a session's own
@@ -2452,6 +2464,7 @@ impl NewFact {
             stale_after: None,
             drop: None,
             drop_because: None,
+            borrow: false,
             aged_before: None,
         }
     }

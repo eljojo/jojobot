@@ -6531,6 +6531,7 @@ mod tests {
             stale_after: None,
             drop: None,
             drop_because: None,
+            borrow: false,
             aged_before: None,
         }
     }

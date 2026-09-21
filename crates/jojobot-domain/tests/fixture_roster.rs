@@ -110,6 +110,7 @@ const ROSTER: &[&str] = &[
     "bot:contract-thought-aging",
     "bot:contract-thought-archive",
     "bot:contract-thought-badge",
+    "bot:contract-thought-borrow",
     "bot:contract-thought-capacity",
     "bot:contract-thought-rename",
     "bot:contract-thought-touch",
@@ -126,6 +127,7 @@ const ROSTER: &[&str] = &[
     // nobody's life, so it sits here on the same terms as `bot:assistant`.
     "bot:jojobot",
     "bot:mcp-thought-aging",
+    "bot:mcp-thought-borrow",
     "bot:milhouse",
     "bot:nobody",
     "bot:otto",

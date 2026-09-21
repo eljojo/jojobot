@@ -472,12 +472,31 @@ pub(crate) fn memory_declined(
                 // wait instead of dropping needs to know that count is
                 // already excluding some.
                 "aged_out": aged_out,
-                "how_to_proceed": format!(
-                    "Nothing was written: '{subject}'s room already holds {live} of {capacity}. \
-                     Re-call {verb} naming drop (one of the addresses above) and drop_because \
-                     (why it no longer earns its slot) — or wait, and let this one go unwritten \
-                     for now."
-                ),
+                // **The offer names the state it is actually in.** A room
+                // already OVER its capacity is a borrow already outstanding
+                // — offering another would stack debt the ceiling exists to
+                // bound, so the way forward is repaying it, never spending
+                // the reserve again. Exactly at capacity is the one moment
+                // `borrow` is genuinely on the table, so it is the one
+                // moment the refusal names it.
+                "how_to_proceed": if live > capacity {
+                    format!(
+                        "Nothing was written: '{subject}'s room already holds {live} of \
+                         {capacity} — its emergency reserve is already spent. Re-call {verb} \
+                         naming drop (one of the addresses above) and drop_because (why it no \
+                         longer earns its slot), or archive a live thought with update_fact to \
+                         bring it back at or under {capacity} first. Borrowing again is not on \
+                         offer while this debt stands."
+                    )
+                } else {
+                    format!(
+                        "Nothing was written: '{subject}'s room already holds {live} of \
+                         {capacity}. Re-call {verb} naming drop (one of the addresses above) and \
+                         drop_because (why it no longer earns its slot) — or, once and only \
+                         once, borrow: true to let this one land over the ceiling anyway — or \
+                         wait, and let this one go unwritten for now."
+                    )
+                },
             });
             Ok(CallToolResult::success(vec![ContentBlock::text(
                 body.to_string(),
