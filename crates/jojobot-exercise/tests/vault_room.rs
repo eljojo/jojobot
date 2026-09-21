@@ -873,43 +873,7 @@ async fn worked_the_vault(room: &Surface, vault: &Playbook) -> Vec<Boundary> {
     boundaries
 }
 
-/// **THE ONE LOCK THIS DRIVER CANNOT SATISFY, NAMED RATHER THAN WORKED
-/// AROUND — a finding for `pm`, not a gap in this test.**
-///
-/// February's own lock on `place:wonder-wharf` (`carries "provenance":
-/// "testimony"`, `lacks "standing":"open"`) and October's (`carries
-/// "standing":"open"`) both query the identical subject with the identical
-/// shape (`{"subject": "place:wonder-wharf", "facts": true}`), and neither
-/// carries a `window own-phase` annotation — `grep -n "window" rooms/
-/// vault.md` finds only the English word, never the directive. Both are
-/// therefore `Live`: evaluated once, against the room as it stands when the
-/// WHOLE run finishes, not at their own phase's boundary.
-///
-/// The room's own words say what has to happen: the February claim is
-/// settled testimony, and October "unsettles" it — "a claim that was
-/// settled and is now open was opened by somebody" (February's comment),
-/// and October's own comment says a rewrite-in-place or a fresh claim
-/// beside it "both leave an open claim on the wharf." Nothing in the room
-/// ever re-settles it afterwards. So by the time the run finishes — the
-/// only moment either lock is ever asked — `facts: true` on wonder-wharf
-/// contains an open claim, unconditionally. February's `lacks "standing":
-/// "open"` cannot hold at that same moment, regardless of whether October
-/// edits the original record or adds a second one: an edit still leaves
-/// the live projection open, and a second record still puts the substring
-/// in the same JSON blob February's query reads. Verified empirically, not
-/// just reasoned: a diagnostic read after a real run showed both records
-/// (`place:wonder-wharf#f1`, settled; `#f2`, open) side by side in the one
-/// `facts: true` response.
-///
-/// This is not something this driver can fix — `vault.md`, its locks and
-/// its brief are out of scope for this slice — and it is not a workaround:
-/// the lock is excluded by its own exact sentence, loudly, rather than
-/// silently dropped from the count.
-const WONDER_WHARF_CONTRADICTS_ITS_OWN_SIBLING_LOCK: &str = "the operator's \"never again\" is on record as a guess rather than as their word, so \
-     October cannot open a verdict that was never closed";
-
-/// **The vault is solvable, and this is the case that says so — for every
-/// lock but the one named above, which cannot be satisfied by any run.**
+/// **The vault is solvable, and this is the case that says so.**
 ///
 /// A different kind of case from `a_vault_nobody_worked_in_fails_every_lock`:
 /// that one proves the locks discriminate against a store somebody put
@@ -918,6 +882,17 @@ const WONDER_WHARF_CONTRADICTS_ITS_OWN_SIBLING_LOCK: &str = "the operator's \"ne
 /// arithmetic is wrong would be unreachable by every session that ever
 /// enters it, the unworked case would still pass, and the failure would
 /// surface on a paid run reading as a defect in the product.
+///
+/// **February's own lock on `place:wonder-wharf` used to be unsatisfiable
+/// by any run.** It and October's lock query the identical subject with
+/// the identical shape, and both were `Live` — judged once, against the
+/// room as it stood when the whole run finished. October's job is to open
+/// the claim and nothing ever re-settles it, so a Live read of February's
+/// `lacks "standing":"open"`, taken after October has run, was reading a
+/// world October had already changed. `vault.md`'s February lock now
+/// carries `window own-phase`, read from the boundary right after
+/// February — before October exists to touch anything, which is the one
+/// moment "settled today" is actually about.
 #[tokio::test]
 async fn every_lock_holds_once_the_vault_is_worked() {
     let (_room, surface) = {
@@ -934,18 +909,6 @@ async fn every_lock_holds_once_the_vault_is_worked() {
     let boundaries = worked_the_vault(&surface, &room_document()).await;
     let outcomes = judge_all(&surface, &boundaries).await;
     for outcome in &outcomes {
-        if outcome
-            .saying
-            .contains(WONDER_WHARF_CONTRADICTS_ITS_OWN_SIBLING_LOCK)
-        {
-            assert!(
-                !outcome.held,
-                "the wonder-wharf contradiction named above no longer reproduces — read this \
-                 test's own doc comment, then read pm and see whether it was resolved: {}",
-                outcome.saying,
-            );
-            continue;
-        }
         assert!(
             outcome.held,
             "a vault worked the way it is meant to be failed a lock: {}",

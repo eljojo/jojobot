@@ -257,9 +257,20 @@ say     February: the wharf road does not carry the one timing as a write of the
 # nobody said the operator said it. This lock is what gives October's
 # positive its meaning: a claim that was settled and is now open was opened by
 # somebody.
+#
+# 🚨 **`window own-phase`, and it is load-bearing.** This lock and October's
+# query the identical subject with the identical shape, and October's own job
+# is to open the claim — so a Live read of either, taken after the whole run,
+# reads whatever October left standing. Asked live, this lock and October's
+# cannot both hold in any correctly-played year: settled-then-opened is a
+# claim about February's OWN moment, not about how the room ends. Windowed
+# here, it is read from the boundary right after February — before October
+# exists to touch anything — which is the one moment "settled today" is
+# actually about.
 recall {"subject": "place:wonder-wharf", "facts": true}
 carries "provenance":"testimony"
 lacks   "standing":"open"
+window  own-phase
 say     February: the operator's "never again" is on record as a guess rather than as their word, so October cannot open a verdict that was never closed
 
 # 🚨 **The CONDITION, on a different subject, in the same sitting.** The bridge
