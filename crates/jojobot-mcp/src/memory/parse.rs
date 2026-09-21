@@ -584,6 +584,8 @@ mod tests {
         );
 
         // ── update_fact: every date argument, empty ──────────────────────
+        // Three blank date arguments and nothing else names no change at
+        // all — a keep, from the caller's side, not an ordinary edit.
         let address = address_of(&blank);
         let patched = json_of(
             &jojobot
@@ -591,6 +593,7 @@ mod tests {
                     recorded_at: Some(String::new()),
                     happened_at: Some(String::new()),
                     stale_after: Some("  ".into()),
+                    keep: Some(true),
                     ..update_args(&address)
                 }))
                 .await

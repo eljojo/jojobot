@@ -182,6 +182,7 @@ pub(crate) fn update_args(address: &str) -> UpdateFactArgs {
         stands_for: None,
         clear_stands_for: None,
         clear_edge: None,
+        keep: None,
         sid: Some(crate::harness::TEST_SID.into()),
     }
 }

@@ -181,6 +181,14 @@ pub struct UpdateFactArgs {
     /// un-retract.
     #[serde(default)]
     pub(crate) clear_edge: Option<bool>,
+    /// **Keep this claim exactly as it stands — the designed way to bump when
+    /// it was last touched without changing anything else.** The one call
+    /// this verb refuses when nothing else is named: naming no change at all
+    /// is refused unless this is `true`, and this is refused if anything
+    /// else here would actually change the claim. There is no partial keep —
+    /// it is this alone, or an ordinary edit naming what changes.
+    #[serde(default)]
+    pub(crate) keep: Option<bool>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
     /// every call — it is what tells jojobot which bot is asking. Reads are
     /// attributed, never journalled.
@@ -248,7 +256,14 @@ impl Jojobot {
                        readable — recall the subject with history_record: the address, and you \
                        get every version of it, oldest first. So a claim you disagree with is \
                        safe to correct: you are not deciding whether the old wording survives, \
-                       only what the claim says now.")]
+                       only what the claim says now. \
+                       NAMING NOTHING TO CHANGE IS REFUSED, NOT SILENTLY HONOURED: a call that \
+                       sets none of the arguments above still reaches this verb, and a claim is \
+                       never re-asserted by accident. keep IS THE DESIGNED WAY TO DO IT ON \
+                       PURPOSE — set keep: true and nothing else to keep this claim exactly as it \
+                       stands while moving when it was last touched. keep IS REFUSED IF ANYTHING \
+                       ELSE HERE WOULD ACTUALLY CHANGE THE CLAIM: there is no partial keep, only \
+                       this alone or an ordinary edit naming what changes.")]
     pub(crate) async fn update_fact(
         &self,
         Parameters(args): Parameters<UpdateFactArgs>,
@@ -335,6 +350,42 @@ impl Jojobot {
                 Err(refused) => return Ok(refused),
             },
         };
+        // **`keep` is the one designed way to re-assert a claim on purpose,
+        // and the one thing this call refuses rather than silently
+        // honouring: naming nothing at all.** A patch equal to its own
+        // default changes nothing, and reaching the store with one used to
+        // still append a write to the claim's history — a real
+        // re-assertion nothing on the receipt named as one, discoverable
+        // only by trying it and noticing the moment moved. There is no
+        // partial keep: it is this alone, or an ordinary edit naming what
+        // changes, never both.
+        let patch_names_no_change = patch == FactPatch::default();
+        let keep = args.keep.unwrap_or(false);
+        match (keep, patch_names_no_change) {
+            (true, false) => {
+                return memory_declined(
+                    "update_fact",
+                    MemoryError::InvalidQuery(
+                        "keep means keeping this claim exactly as it stands — a call naming a \
+                         change is not a keep. Drop keep, or drop the change and send keep: true \
+                         alone."
+                            .into(),
+                    ),
+                );
+            }
+            (false, true) => {
+                return memory_declined(
+                    "update_fact",
+                    MemoryError::InvalidQuery(
+                        "this call names no change, and one is never made by accident. To \
+                         re-assert this claim on purpose — keeping it exactly as it stands and \
+                         moving when it was last touched — call again with keep: true."
+                            .into(),
+                    ),
+                );
+            }
+            (true, true) | (false, false) => {}
+        }
         // **What THIS write sent, not what the fact ends up carrying.** The
         // fact's own edge can already be set from an earlier write this call
         // never touched, so the gate below reads the patch rather than the
@@ -371,7 +422,8 @@ impl Jojobot {
                 crate::answer::note_delta(&mut body, declared.not_stored(&fact));
                 crate::answer::note_postcondition(
                     &mut body,
-                    self.what_an_update_left_standing(&fact, &cleared).await,
+                    self.what_an_update_left_standing(&fact, &cleared, keep)
+                        .await,
                 );
                 if self.first_contact(CLAIMS_DOMAIN, Some(&caller)).await {
                     crate::answer::note_teaching(&mut body, CLAIMS_TEACHING);
@@ -478,8 +530,26 @@ impl Jojobot {
     /// The count is read for this line and left out when the store cannot
     /// answer, since a number nobody can stand behind is worse than the
     /// sentence without one.
-    async fn what_an_update_left_standing(&self, fact: &Fact, cleared: &[String]) -> String {
+    async fn what_an_update_left_standing(
+        &self,
+        fact: &Fact,
+        cleared: &[String],
+        keep: bool,
+    ) -> String {
         let address = fact.address().to_string();
+        // **A keep is not an edit with nothing to say about — it is its own
+        // shape**, and the other sentences below (what moved beside it,
+        // what a clear removed, the archive-only path) all answer questions
+        // that only make sense for a write that changed something. Answered
+        // once, plainly, and never falls through to the rest.
+        if keep {
+            return format!(
+                "{address} is unchanged: this call kept it exactly as it stood and moved when \
+                 it was last touched. Recall {} with history_record: {address} to see the new \
+                 write beside every one before it.",
+                fact.subject.as_str(),
+            );
+        }
         let beside = self
             .memory
             .recall(&fact.subject)
@@ -2109,6 +2179,32 @@ mod tests {
         );
     }
 
+    /// 🚨 **Discoverability: the verb's own description names `keep`.** A
+    /// capability whose only path is that somebody read the diff has no
+    /// path — and this is the one capability this verb has that exists
+    /// specifically to replace an undiscoverable accident.
+    #[test]
+    fn keep_is_named_on_the_verbs_own_description() {
+        let tools = Jojobot::tool_router().list_all();
+        let update_fact = tools
+            .iter()
+            .find(|t| t.name.as_ref() == "update_fact")
+            .expect("update_fact is a tool");
+        let tool_description = update_fact.description.as_deref().unwrap_or_default();
+        assert!(
+            tool_description.contains("keep"),
+            "the tool-level description does not name the argument: {tool_description}"
+        );
+        let schema =
+            serde_json::to_value(&update_fact.input_schema).expect("the schema serializes");
+        assert!(
+            schema["properties"]["keep"]["description"]
+                .as_str()
+                .is_some_and(|d| !d.is_empty()),
+            "keep carries no schema description of its own: {schema}"
+        );
+    }
+
     /// **The write says it landed, never that it failed, when only the fold
     /// behind it could not confirm it** (rule 130) — `update_fact`'s own
     /// catch of `MemoryError::FoldBehind`, the same shape `capture`'s own
@@ -2237,6 +2333,110 @@ mod tests {
             recall_fields(&recalled_again, &address)["starred"],
             "false",
             "{recalled_again}"
+        );
+    }
+
+    /// 🚨 **A patch that names nothing is refused, not silently honoured.**
+    ///
+    /// Before this, an entirely empty call still reached the store and
+    /// appended a write to the claim's own history — a real, permanent
+    /// re-assertion nothing on the receipt named as one, discoverable only
+    /// by trying it and noticing the moment moved. Naming nothing is now
+    /// refused, and the refusal names the real act.
+    #[tokio::test]
+    async fn a_patch_naming_nothing_is_refused_and_names_keep() {
+        let jojobot = handler();
+        ensure(&jojobot, "person:alpha").await;
+        let captured = capture_ok(&jojobot, capture_args("person:alpha", "the kiln is lit")).await;
+        let address = address_of(&captured);
+
+        let refused = blocked(
+            &jojobot
+                .update_fact(Parameters(update_args(&address)))
+                .await
+                .expect("update_fact answers rather than failing the protocol"),
+        )
+        .to_string();
+        assert!(
+            refused.contains("keep"),
+            "a patch naming nothing must name the real act in its refusal: {refused}"
+        );
+    }
+
+    /// 🚨 **`keep` bumps the moment and changes nothing — proven on the
+    /// claim's own write history, not merely on its receipt.** This is the
+    /// designed act the refusal above points a caller toward.
+    #[tokio::test]
+    async fn keep_bumps_the_moment_and_changes_nothing() {
+        let jojobot = handler();
+        ensure(&jojobot, "person:alpha").await;
+        let captured = capture_ok(&jojobot, capture_args("person:alpha", "the kiln is lit")).await;
+        let address = address_of(&captured);
+
+        let kept = update_ok(
+            &jojobot,
+            UpdateFactArgs {
+                keep: Some(true),
+                ..update_args(&address)
+            },
+        )
+        .await;
+        assert!(
+            postcondition_line(&kept)
+                .to_lowercase()
+                .contains("unchanged"),
+            "a keep's own receipt must say it changed nothing on purpose, distinctly from the \
+             ordinary edit line's own ambient use of the word \"kept\": {kept}"
+        );
+
+        let history = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    history_record: Some(address.clone()),
+                    ..recall_args("person:alpha")
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        let record = &history["objects"][0]["record_history"];
+        assert_eq!(record["count"], 2, "the capture plus one keep: {record}");
+        let writes = record["writes"].as_array().expect("writes");
+        assert_eq!(
+            writes[0]["content"], writes[1]["content"],
+            "a keep must change no content: {record}"
+        );
+        assert_ne!(
+            writes[0]["written_at"], writes[1]["written_at"],
+            "a keep must still move the moment, or it kept nothing: {record}"
+        );
+    }
+
+    /// 🚨 **`keep` combined with an actual change is refused — there is no
+    /// partial keep.**
+    #[tokio::test]
+    async fn keep_combined_with_a_change_is_refused() {
+        let jojobot = handler();
+        ensure(&jojobot, "person:alpha").await;
+        let captured = capture_ok(&jojobot, capture_args("person:alpha", "the kiln is lit")).await;
+        let address = address_of(&captured);
+
+        let refused = blocked(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    keep: Some(true),
+                    content: Some("the kiln is out".into()),
+                    provenance: Some("inference".into()),
+                    ..update_args(&address)
+                }))
+                .await
+                .expect("update_fact answers rather than failing the protocol"),
+        )
+        .to_string();
+        assert!(
+            refused.contains("naming a change is not a keep"),
+            "a keep combined with a change must be refused for THAT reason specifically — not \
+             merely refused, and not the reason an empty patch with no keep is refused, which \
+             also happens to mention the word \"keep\": {refused}"
         );
     }
 }
