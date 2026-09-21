@@ -599,6 +599,25 @@ impl Jojobot {
                 fact.subject.as_str(),
             )
         };
+        // **A clear that took off part of a rhythm's schedule, not all of
+        // it, does not quiet the loop — it leaves the loop reading overdue
+        // instead.** Say what is left and the act that finishes the job,
+        // rather than letting the caller believe a half-clear silenced it.
+        let half_cleared = match self.memory.fields(&fact.subject).await {
+            Ok(current) => attention::half_cleared_schedule(cleared, &current)
+                .map(|remaining| {
+                    format!(
+                        " This cleared part of {}'s schedule, not all of it: it still carries \
+                         {}, which reads overdue rather than never-due. Clear {} too to stop it \
+                         falling due at all.",
+                        fact.subject.as_str(),
+                        remaining.join(", "),
+                        remaining.join(", "),
+                    )
+                })
+                .unwrap_or_default(),
+            Err(_) => String::new(),
+        };
         // **What this write did NOT destroy.** A session that met a
         // conflicting claim, would not overwrite it on a guess, and wrote
         // nothing at all had good reason while the old words were gone. They
@@ -633,7 +652,7 @@ impl Jojobot {
         };
         format!(
             "{address} now states what this call sent, in place of what it said before.{kept}\
-             {beside}{removed}{instead}{source_note}"
+             {beside}{removed}{half_cleared}{instead}{source_note}"
         )
     }
 
@@ -1416,6 +1435,176 @@ mod tests {
                 .is_empty(),
             "a rhythm with no schedule is never owed, whatever a stale field used to say: \
              {overdue}",
+        );
+    }
+
+    /// **Clearing `cadence_days` alone does not quiet the loop — it leaves
+    /// `advances_from` and `counts_from` behind, which reads overdue rather
+    /// than never-due.** The postcondition names exactly those two keys, and
+    /// clearing them too, as the receipt says to, actually reaches
+    /// never-due — proven here rather than asserted.
+    #[tokio::test]
+    async fn a_half_cleared_schedule_names_what_is_left_and_the_act_that_finishes_it() {
+        let jojobot = handler();
+        ensure(&jojobot, "thing:kettle").await;
+        jojobot
+            .add_entity(Parameters(AddEntityArgs {
+                parent: Some("thing:kettle".into()),
+                ..add_args("rhythm", "descale", "descale")
+            }))
+            .await
+            .expect("add ok");
+        let captured = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                provenance: Some("testimony".into()),
+                ..capture_args("rhythm:descale", "we should descale this regularly")
+            },
+        )
+        .await;
+        let address = address_of(&captured);
+
+        update_ok(
+            &jojobot,
+            UpdateFactArgs {
+                fields: Some(
+                    [
+                        ("cadence_days".to_string(), "7".to_string()),
+                        ("advances_from".to_string(), "check_in_date".to_string()),
+                        ("counts_from".to_string(), "2026-08-01".to_string()),
+                    ]
+                    .into_iter()
+                    .collect(),
+                ),
+                ..update_args(&address)
+            },
+        )
+        .await;
+
+        let half_cleared = json_of(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    clear_fields: Some(vec!["cadence_days".into()]),
+                    ..update_args(&address)
+                }))
+                .await
+                .expect("update ok"),
+        );
+        let said = postcondition_line(&half_cleared);
+        assert!(
+            said.contains("advances_from") && said.contains("counts_from"),
+            "the postcondition must name the two schedule keys this write left behind: {said}",
+        );
+
+        // The rhythm now reads overdue with the fields it still holds,
+        // exactly as a half-built schedule always has — not the quiet shape
+        // the caller likely meant to reach.
+        let after_half_clear = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    overdue: Some(super::recall::OverdueArgs {
+                        as_of: Some("2026-08-02".into()),
+                    }),
+                    ..recall_args("rhythm:descale")
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        assert!(
+            !after_half_clear["objects"]
+                .as_array()
+                .expect("objects is an array")
+                .is_empty(),
+            "half a schedule reads overdue rather than quiet: {after_half_clear}",
+        );
+
+        // The finishing act the postcondition points at: clear what is left.
+        update_ok(
+            &jojobot,
+            UpdateFactArgs {
+                clear_fields: Some(vec!["advances_from".into(), "counts_from".into()]),
+                ..update_args(&address)
+            },
+        )
+        .await;
+        let finished = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    overdue: Some(super::recall::OverdueArgs {
+                        as_of: Some("2026-08-02".into()),
+                    }),
+                    ..recall_args("rhythm:descale")
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        assert!(
+            finished["objects"]
+                .as_array()
+                .expect("objects is an array")
+                .is_empty(),
+            "clearing the keys the postcondition named actually reaches never-due: {finished}",
+        );
+    }
+
+    /// **`counts_from` is not a trigger key.** Clearing it alone reaches
+    /// `Due::NotYetOpened` — the correct, quiet shape a declared,
+    /// not-yet-opened loop takes — and the postcondition must stay silent
+    /// about it, exactly as [`clearing_a_schedule_key_removes_the_stale_due_moment`]
+    /// already proves the due moment itself is removed rather than left
+    /// stale.
+    #[tokio::test]
+    async fn clearing_counts_from_alone_gets_no_half_cleared_advisory() {
+        let jojobot = handler();
+        ensure(&jojobot, "thing:kettle").await;
+        jojobot
+            .add_entity(Parameters(AddEntityArgs {
+                parent: Some("thing:kettle".into()),
+                ..add_args("rhythm", "descale", "descale")
+            }))
+            .await
+            .expect("add ok");
+        let captured = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                provenance: Some("testimony".into()),
+                ..capture_args("rhythm:descale", "we should descale this regularly")
+            },
+        )
+        .await;
+        let address = address_of(&captured);
+
+        update_ok(
+            &jojobot,
+            UpdateFactArgs {
+                fields: Some(
+                    [
+                        ("cadence_days".to_string(), "7".to_string()),
+                        ("advances_from".to_string(), "check_in_date".to_string()),
+                        ("counts_from".to_string(), "2026-08-01".to_string()),
+                    ]
+                    .into_iter()
+                    .collect(),
+                ),
+                ..update_args(&address)
+            },
+        )
+        .await;
+
+        let cleared = json_of(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    clear_fields: Some(vec!["counts_from".into()]),
+                    ..update_args(&address)
+                }))
+                .await
+                .expect("update ok"),
+        );
+        let said = postcondition_line(&cleared);
+        assert!(
+            !said.contains("cadence_days") && !said.contains("advances_from"),
+            "counts_from alone reaches the correct quiet NotYetOpened shape, so the \
+             half-cleared advisory must not fire: {said}",
         );
     }
 

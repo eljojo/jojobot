@@ -619,6 +619,50 @@ pub fn moved_due_moment(
     }
 }
 
+/// **What a write leaves behind when it clears part of a rhythm's
+/// schedule.**
+///
+/// Clearing [`CADENCE_DAYS`] or [`ADVANCES_FROM`] is a legal write and stays
+/// legal — but on its own it does not quiet the loop. Every combination of
+/// the three schedule keys except the empty one and the
+/// [`Due::NotYetOpened`] shape (`CADENCE_DAYS` and `ADVANCES_FROM` alone)
+/// reads [`Due::Unreadable`]: loud, and overdue from the day of the write. A
+/// caller who cleared one key meaning to switch the loop off has just made
+/// it shout instead, and nothing about an ordinary write's own receipt says
+/// so on its own.
+///
+/// **Only [`CADENCE_DAYS`] and [`ADVANCES_FROM`] trigger this.** Clearing
+/// [`COUNTS_FROM`] alone already reads [`Due::NotYetOpened`] — the correct,
+/// quiet shape a declared, not-yet-opened loop takes — and flagging it would
+/// be noise about a state that is already right.
+///
+/// `cleared` is the keys this write took off; `current` is the thing's
+/// fields as they read once the write has landed. The schedule keys still on
+/// the thing come back in a fixed order, so a message built from them reads
+/// the same way every time — or `None`, when this write did not touch a
+/// trigger key, or when it cleared the whole schedule and the thing already
+/// reads quiet.
+pub fn half_cleared_schedule(
+    cleared: &[String],
+    current: &BTreeMap<String, String>,
+) -> Option<Vec<&'static str>> {
+    let cleared_a_trigger_key = cleared
+        .iter()
+        .any(|key| key == CADENCE_DAYS || key == ADVANCES_FROM);
+    if !cleared_a_trigger_key {
+        return None;
+    }
+    let remaining: Vec<&'static str> = [CADENCE_DAYS, ADVANCES_FROM, COUNTS_FROM]
+        .into_iter()
+        .filter(|key| current.contains_key(*key))
+        .collect();
+    if remaining.is_empty() {
+        None
+    } else {
+        Some(remaining)
+    }
+}
+
 /// **Whether this check-in is the one that opens the loop.**
 ///
 /// Only the basis is ever derived, and only when nobody has written one: the
@@ -1220,6 +1264,87 @@ mod tests {
             moved_due_moment(&[&Rhythms], None, &declared),
             DueMove::Unchanged,
             "a declared, never-checked-in loop is not due, and this must not invent a date for it",
+        );
+    }
+
+    /// **Clearing `cadence_days` alone leaves the other two keys behind, and
+    /// they read [`Due::Unreadable`] rather than quiet.** The advisory names
+    /// exactly those two, in the fixed order a reader expects.
+    #[test]
+    fn clearing_cadence_days_alone_names_the_two_keys_left_behind() {
+        let mut current = weekly(date(2026, 8, 1), AdvancesFrom::CheckInDate);
+        current.remove(CADENCE_DAYS);
+        let remaining = half_cleared_schedule(&[CADENCE_DAYS.to_string()], &current)
+            .expect("clearing cadence_days leaves two keys behind — that is exactly the case");
+        assert_eq!(remaining, vec![ADVANCES_FROM, COUNTS_FROM]);
+        assert_eq!(
+            Rhythms.due(&current),
+            Due::Unreadable,
+            "the fixture must actually read unreadable, or this case tests nothing: {current:?}",
+        );
+    }
+
+    /// **The other trigger key, same shape.** Clearing `advances_from`
+    /// leaves `cadence_days` and `counts_from` behind.
+    #[test]
+    fn clearing_advances_from_alone_names_the_two_keys_left_behind() {
+        let mut current = weekly(date(2026, 8, 1), AdvancesFrom::CheckInDate);
+        current.remove(ADVANCES_FROM);
+        let remaining = half_cleared_schedule(&[ADVANCES_FROM.to_string()], &current)
+            .expect("clearing advances_from leaves two keys behind — that is exactly the case");
+        assert_eq!(remaining, vec![CADENCE_DAYS, COUNTS_FROM]);
+        assert_eq!(Rhythms.due(&current), Due::Unreadable, "{current:?}");
+    }
+
+    /// **`counts_from` is not a trigger key.** Clearing it alone already
+    /// reads [`Due::NotYetOpened`] — the correct, quiet shape a declared,
+    /// not-yet-opened loop takes — and an advisory here would be noise about
+    /// a state that is already right.
+    #[test]
+    fn clearing_counts_from_alone_is_the_correct_quiet_shape_and_gets_no_advisory() {
+        let mut current = weekly(date(2026, 8, 1), AdvancesFrom::CheckInDate);
+        current.remove(COUNTS_FROM);
+        assert_eq!(
+            half_cleared_schedule(&[COUNTS_FROM.to_string()], &current),
+            None,
+            "clearing counts_from alone reaches NotYetOpened, which is already right",
+        );
+        assert_eq!(Rhythms.due(&current), Due::NotYetOpened);
+    }
+
+    /// **Clearing every schedule key together already finishes the job.**
+    /// Nothing remains, the loop reads [`Due::Never`], and there is nothing
+    /// left to warn about.
+    #[test]
+    fn clearing_the_whole_schedule_together_needs_no_advisory() {
+        let current = BTreeMap::new();
+        let cleared = vec![
+            CADENCE_DAYS.to_string(),
+            ADVANCES_FROM.to_string(),
+            COUNTS_FROM.to_string(),
+        ];
+        assert_eq!(
+            half_cleared_schedule(&cleared, &current),
+            None,
+            "the finishing act is already done, so there is nothing left to name",
+        );
+        // `Rhythms::due` alone is never reached over none of the schedule —
+        // `owed` is what screens that, exactly as the module's other
+        // empty-fields cases go through it rather than the carrier directly.
+        let carriers: Vec<Box<dyn Carrier>> = shipped();
+        let asked: Vec<&dyn Carrier> = carriers.iter().map(AsRef::as_ref).collect();
+        assert_eq!(owed(&asked, &current), Due::Never);
+    }
+
+    /// **A write that clears something other than a schedule key is not this
+    /// case at all**, whatever else the thing still carries.
+    #[test]
+    fn clearing_an_unrelated_key_never_triggers_the_advisory() {
+        let current = weekly(date(2026, 8, 1), AdvancesFrom::CheckInDate);
+        assert_eq!(
+            half_cleared_schedule(&["outcome".to_string()], &current),
+            None,
+            "outcome is not a schedule key, so clearing it says nothing about the schedule",
         );
     }
 
