@@ -117,6 +117,16 @@ impl Jojobot {
         // reachable-by-digging behaviour. A boot is not that: nobody asked
         // for this bot's history, and a retired instruction served beside
         // the ones that bind reads as still governing when it does not.
+        //
+        // **A thought is never a rule, whatever it carries.** The floor is
+        // outside the room: a rule is a standing constraint on the bot
+        // itself, uncapped and never aged, while a thought is about a
+        // situation, capped by `THOUGHT_CAPACITY` and subject to ageing.
+        // The mark (`fields.starred == "true"`) buys a rule a seat here; it
+        // does not turn a thought into one, so a claim drawing a
+        // `connection` edge — the same shape the capacity gate already
+        // reads as "this is a thought" — is excluded before the mark is
+        // ever asked about.
         let in_force: Vec<_> = self
             .memory
             .recall(bot)
@@ -124,6 +134,12 @@ impl Jojobot {
             .map_err(memory_error)?
             .into_iter()
             .filter(|rule| rule.status == jojobot_domain::memory::FactStatus::Active)
+            .filter(|rule| {
+                !rule
+                    .edge
+                    .as_ref()
+                    .is_some_and(|e| e.shape == jojobot_domain::memory::EdgeShape::Connection)
+            })
             .collect();
         let total_in_force = in_force.len();
         // **A boot carries at most `CARRIED_RULES_CAP` of a bot's own
@@ -703,6 +719,66 @@ mod tests {
         assert!(
             stale_in(None).await,
             "a run that stated no day is answered on the clock, where April is past",
+        );
+    }
+
+    /// 🚨 **The floor is outside the room.** A boot carries the standing
+    /// constraints on a bot's own conduct — rules, about the bot, uncapped,
+    /// never aged — never a thought about a situation, capped and aged. The
+    /// mark (`fields.starred == "true"`) buys a rule a seat; it does not
+    /// turn a thought into one, whatever the mark says on it. Both halves in
+    /// one case: a starred ORDINARY rule still rides, so this is not a
+    /// blanket "marking does nothing" regression wearing the shape of the
+    /// fix — only a starred THOUGHT is excluded.
+    #[tokio::test]
+    async fn a_starred_thought_never_rides_the_boot_but_a_starred_rule_does() {
+        let jojobot = handler();
+        make_bot(&jojobot, "otto").await;
+
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                fields: Some(
+                    [("starred".to_string(), "true".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..capture_args("bot:otto", "checks the board before starting")
+            },
+        )
+        .await;
+
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                shape: Some("connection".into()),
+                object: Some("thing:battery".into()),
+                fields: Some(
+                    [("starred".to_string(), "true".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..capture_args("bot:otto", "the kettle needs descaling")
+            },
+        )
+        .await;
+
+        let booted = boot(&jojobot, "otto").await;
+        let rules = booted["identity"]["rules"]
+            .as_array()
+            .expect("rules is always an array");
+        assert!(
+            rules
+                .iter()
+                .any(|r| r["content"] == "checks the board before starting"),
+            "a starred ordinary rule must still ride the boot: {rules:?}"
+        );
+        assert!(
+            !rules
+                .iter()
+                .any(|r| r["content"] == "the kettle needs descaling"),
+            "a starred THOUGHT must not ride the boot — the floor is outside the room: \
+             {rules:?}"
         );
     }
 
