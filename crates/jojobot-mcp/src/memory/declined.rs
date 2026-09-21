@@ -449,7 +449,7 @@ pub(crate) fn memory_declined(
         // this, so this is its own small body rather than a fourth
         // parameter every other caller would carry and never use.
         MemoryError::RoomFull {
-            ref bot,
+            ref subject,
             live,
             capacity,
             ref room,
@@ -457,7 +457,7 @@ pub(crate) fn memory_declined(
         } => {
             let body = serde_json::json!({
                 "status": "blocked",
-                "attempted": bot,
+                "attempted": subject,
                 "wrote": false,
                 "room": room
                     .iter()
@@ -473,10 +473,10 @@ pub(crate) fn memory_declined(
                 // already excluding some.
                 "aged_out": aged_out,
                 "how_to_proceed": format!(
-                    "Nothing was written: bot:{bot}'s room already holds {live} of {capacity} \
-                     thoughts. Re-call {verb} naming drop (one of the addresses above) and \
-                     drop_because (why it no longer earns its slot) — or wait, and let this one \
-                     go unwritten for now."
+                    "Nothing was written: '{subject}'s room already holds {live} of {capacity}. \
+                     Re-call {verb} naming drop (one of the addresses above) and drop_because \
+                     (why it no longer earns its slot) — or wait, and let this one go unwritten \
+                     for now."
                 ),
             });
             Ok(CallToolResult::success(vec![ContentBlock::text(

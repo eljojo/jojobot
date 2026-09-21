@@ -565,6 +565,7 @@ const ROSTER: &[&str] = &[
     "pet:contract-santas-little-helper",
     "pet:contract-scope-pet",
     "pet:contract-the-heavy-one",
+    "pet:contract-thought-capacity-not-a-bot",
     "place:contract-faraway",
     "place:contract-mention-inn",
     "place:contract-mention-yard",

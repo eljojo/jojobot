@@ -2823,6 +2823,17 @@ mod tests {
             refused["aged_out"], 1,
             "the refusal must say one thought aged out of the count: {refused}"
         );
+        let how = refused["how_to_proceed"]
+            .as_str()
+            .expect("a blocked answer says how to proceed");
+        let attempted = refused["attempted"]
+            .as_str()
+            .expect("a blocked answer names what it attempted");
+        assert!(
+            how.contains(&format!("'{attempted}'s room")),
+            "the sentence must name the room with the SAME value 'attempted' carries, not a \
+             prefixed variant of it: {how}"
+        );
 
         // **Not silently dropped.** The aged thought is still there, still
         // active, exactly as it stood — findable by its own address.

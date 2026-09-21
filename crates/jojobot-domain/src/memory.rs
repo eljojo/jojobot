@@ -3413,16 +3413,19 @@ pub enum MemoryError {
         /// The identity it belongs to.
         owner: String,
     },
-    /// **A bot's room is at capacity, and the write named nothing to drop.**
+    /// **A thing's room is at capacity, and the write named nothing to
+    /// drop.**
     ///
     /// Never the oldest thought silently pushed out: the point of a cap is
     /// that something must give when something arrives, and giving is the
-    /// bot's own act, not jojobot's guess. The room rides on the refusal so
-    /// naming a drop never costs a second round trip to see what is in it.
-    #[error("bot:{bot}'s room already holds {live} of {capacity}: name a thought to drop")]
+    /// bound thing's own act, not jojobot's guess. The room rides on the
+    /// refusal so naming a drop never costs a second round trip to see what
+    /// is in it.
+    #[error("'{subject}'s room already holds {live} of {capacity}: name one to drop")]
     RoomFull {
-        /// The bot whose room is full.
-        bot: String,
+        /// The thing whose room is full — its own full handle, already
+        /// carrying its kind, so nothing here assumes it is a bot.
+        subject: String,
         /// How many live thoughts the room already holds.
         live: usize,
         /// The capacity itself.

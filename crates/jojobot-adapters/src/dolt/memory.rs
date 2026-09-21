@@ -2276,17 +2276,18 @@ impl Memory for DoltMemory {
             .find(|e| e.id == subject_handle)
             .expect("resolved above")
             .kind;
-        // **A thought's cardinality is enforced here, atomically with the
+        // **A ceiling's cardinality is enforced here, atomically with the
         // write it gates** — never as a separate call, because a drop with
         // nothing yet written in its place is a state the room must never
-        // reach. A thought is an ordinary claim on a bot's own handle
-        // drawing a `connection` edge; the room is the bot's own active
-        // ones, and capacity is an ordinary field on the bot, folded like
-        // any other. A bot carrying none is uncapped.
-        if subject_kind == EntityKind::BOT
-            && edge
-                .as_ref()
-                .is_some_and(|e| e.shape == EdgeShape::Connection)
+        // reach. **Structural, never a kind question**: a room's member is
+        // an ordinary claim on the bound thing's own handle drawing a
+        // `connection` edge, and capacity is an ordinary field on that
+        // thing, folded like any other. A thing carrying none is uncapped —
+        // this reaches every kind identically, the same rule the interface
+        // above it already runs on.
+        if edge
+            .as_ref()
+            .is_some_and(|e| e.shape == EdgeShape::Connection)
         {
             let capacity = Self::held_by(&mut tx, &home)
                 .await?
@@ -2309,7 +2310,7 @@ impl Memory for DoltMemory {
                     if split.live.len() >= capacity {
                         let aged_out = split.aged_out.len();
                         let refuse = |room: Vec<Fact>| MemoryError::RoomFull {
-                            bot: home.to_string(),
+                            subject: home.to_string(),
                             live: room.len(),
                             capacity,
                             room,

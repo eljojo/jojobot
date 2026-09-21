@@ -3312,6 +3312,59 @@ pub async fn a_thought_pointing_at_a_thread_is_in_the_room<M: Memory>(store: &M)
     );
 }
 
+/// **A ceiling is a property of any thing, never a bot's alone.** The same
+/// mechanism [`a_bots_room_enforces_its_capacity`] proves on a bot, proven
+/// here on a `pet` — structurally, on the same key and the same edge shape,
+/// with no kind check anywhere in between. A room at capacity with no drop
+/// named is refused exactly as a bot's is.
+pub async fn a_non_bots_room_enforces_its_capacity_too<M: Memory>(store: &M) {
+    let pet = EntityId("pet:contract-thought-capacity-not-a-bot".into());
+    let a = EntityId("thing:jukebox".into());
+    let b = EntityId("thing:battery".into());
+    ensure(store, &pet).await;
+
+    capture(
+        store,
+        NewFact {
+            fields: [(THOUGHT_CAPACITY.to_string(), "1".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(pet.clone(), "capacity is one", date(2026, 7, 1))
+        },
+    )
+    .await;
+
+    capture(
+        store,
+        NewFact {
+            edge: Some(Edge::new(EdgeShape::Connection, a.clone())),
+            ..NewFact::about(pet.clone(), "the jukebox needs a needle", date(2026, 7, 2))
+        },
+    )
+    .await;
+
+    // The room holds one, capacity is one — a second with no drop is
+    // refused, exactly as it would be for a bot.
+    ensure(store, &b).await;
+    let refused = store
+        .capture(NewFact {
+            edge: Some(Edge::new(EdgeShape::Connection, b.clone())),
+            ..NewFact::about(pet.clone(), "the battery needs replacing", date(2026, 7, 3))
+        })
+        .await
+        .expect_err("a full room on a non-bot thing must be refused too, not written");
+    match refused {
+        MemoryError::RoomFull { live, capacity, .. } => {
+            assert_eq!(
+                (live, capacity),
+                (1, 1),
+                "the refusal must say what the room holds, on a thing that is not a bot"
+            );
+        }
+        other => panic!("expected RoomFull, got {other:?}"),
+    }
+}
+
 /// **A room at capacity, with a live thought and a way to name what leaves
 /// would exceed it.** A write into a full room with no drop named is
 /// refused, and the refusal carries the room so a caller can choose without
@@ -10330,6 +10383,7 @@ pub async fn run_all<M: Memory>(store: &M) {
     reading_a_bots_thoughts_never_touches_their_history(store).await;
     a_thought_pointing_at_a_thread_is_in_the_room(store).await;
     a_bots_room_enforces_its_capacity(store).await;
+    a_non_bots_room_enforces_its_capacity_too(store).await;
     an_aged_thought_frees_the_room(store).await;
     an_archived_thought_frees_its_slot(store).await;
     a_dropped_thoughts_edge_survives_the_pointers_own_rename(store).await;

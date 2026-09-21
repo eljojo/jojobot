@@ -1055,16 +1055,15 @@ impl Memory for InMemoryMemory {
         };
         let existing: Vec<&Fact> = facts.iter().filter(|f| f.home == home).collect();
         let id = FactId(format!("f{}", existing.len() + 1));
-        // **A thought's cardinality is enforced here, atomically with the
+        // **A ceiling's cardinality is enforced here, atomically with the
         // write it gates** — the same rule and the same reasons the real
-        // store's copy carries. A thought is an ordinary claim on a bot's
-        // own handle drawing a `connection` edge; the room is the bot's own
-        // active ones, and capacity is an ordinary field on the bot. A bot
-        // carrying none is uncapped.
-        if subject_entity.kind == EntityKind::BOT
-            && edge
-                .as_ref()
-                .is_some_and(|e| e.shape == crate::memory::EdgeShape::Connection)
+        // store's copy carries. **Structural, never a kind question**: a
+        // room's member is an ordinary claim on the bound thing's own
+        // handle drawing a `connection` edge, and capacity is an ordinary
+        // field on that thing. A thing carrying none is uncapped.
+        if edge
+            .as_ref()
+            .is_some_and(|e| e.shape == crate::memory::EdgeShape::Connection)
         {
             let capacity =
                 super::super::folded_fields(&self.writes_on(&home, &facts), &self.declarations())
@@ -1097,7 +1096,7 @@ impl Memory for InMemoryMemory {
                     if split.live.len() >= capacity {
                         let aged_out = split.aged_out.len();
                         let refuse = |room: Vec<Fact>| MemoryError::RoomFull {
-                            bot: home.to_string(),
+                            subject: home.to_string(),
                             live: room.len(),
                             capacity,
                             room,
