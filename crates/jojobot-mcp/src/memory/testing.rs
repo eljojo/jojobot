@@ -256,6 +256,17 @@ pub(crate) async fn capture_ok(jojobot: &Jojobot, args: CaptureArgs) -> serde_js
     body
 }
 
+/// What a thing holds, folded, as `recall` renders it.
+pub(crate) async fn fields_of(jojobot: &Jojobot, subject: &str) -> serde_json::Value {
+    let body = json_of(
+        &jojobot
+            .recall(Parameters(recall_args(subject)))
+            .await
+            .expect("recall ok"),
+    );
+    body["objects"][0]["fields"].clone()
+}
+
 /// The `address` field of a rendered fact — every read carries one.
 pub(crate) fn address_of(fact: &serde_json::Value) -> String {
     fact["address"]

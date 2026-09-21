@@ -281,6 +281,14 @@ impl Jojobot {
         let declared = Declared::of(&args);
         let mut cleared = args.clear_fields.clone().unwrap_or_default();
         let mut fields = args.fields.unwrap_or_default();
+        // **The thing a ceiling binds cannot write that ceiling.** Same
+        // guard `capture` runs, on the same identity comparison — a patch
+        // is a write like any other, and this one can reach the same key.
+        if let Some(refused) =
+            jojobot_domain::memory::refuses_own_ceiling(&address.home, &caller.bot, &fields)
+        {
+            return memory_declined("update_fact", refused);
+        }
         // **Kept current here too.** An edit that moves a cadence, a policy or
         // a basis is a write like any other write that could move the due
         // moment — the mechanism does not care that this one is a patch
@@ -2440,6 +2448,84 @@ mod tests {
             "a keep combined with a change must be refused for THAT reason specifically — not \
              merely refused, and not the reason an empty patch with no keep is refused, which \
              also happens to mention the word \"keep\": {refused}"
+        );
+    }
+
+    /// **The thing a ceiling binds cannot write that ceiling — through a
+    /// patch, exactly as through a fresh capture.** A patch is a write like
+    /// any other, and this one can reach the same key: bot:otto (this
+    /// harness's default caller) editing its own fact cannot add
+    /// `thought_capacity` to it.
+    #[tokio::test]
+    async fn a_bot_cannot_raise_its_own_thought_capacity_by_patch() {
+        let jojobot = handler();
+        ensure(&jojobot, "bot:otto").await;
+        let captured = capture_ok(&jojobot, capture_args("bot:otto", "a claim about myself")).await;
+        let address = address_of(&captured);
+
+        let refused = json_of(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    fields: Some(
+                        [(
+                            jojobot_domain::memory::THOUGHT_CAPACITY.to_string(),
+                            "5".to_string(),
+                        )]
+                        .into_iter()
+                        .collect(),
+                    ),
+                    ..update_args(&address)
+                }))
+                .await
+                .expect("a refusal is an answer, not a failure"),
+        );
+        assert_eq!(refused["status"], "blocked", "{refused}");
+        assert_eq!(refused["wrote"], false, "{refused}");
+
+        let after = fields_of(&jojobot, "bot:otto").await;
+        assert!(
+            after
+                .get(jojobot_domain::memory::THOUGHT_CAPACITY)
+                .is_none(),
+            "the refused patch must not be readable back: {after}"
+        );
+    }
+
+    /// **The positive half.** A different identity patching the same key
+    /// onto the same kind of subject lands.
+    #[tokio::test]
+    async fn a_different_bot_can_raise_this_bots_thought_capacity_by_patch() {
+        let jojobot = handler();
+        let captured = capture_ok(
+            &jojobot,
+            capture_args("bot:milhouse", "a claim about milhouse"),
+        )
+        .await;
+        let address = address_of(&captured);
+
+        let edited = json_of(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    fields: Some(
+                        [(
+                            jojobot_domain::memory::THOUGHT_CAPACITY.to_string(),
+                            "5".to_string(),
+                        )]
+                        .into_iter()
+                        .collect(),
+                    ),
+                    ..update_args(&address)
+                }))
+                .await
+                .expect("update ok"),
+        );
+        assert_ne!(edited["status"], "blocked", "{edited}");
+
+        let after = fields_of(&jojobot, "bot:milhouse").await;
+        assert_eq!(
+            after[jojobot_domain::memory::THOUGHT_CAPACITY],
+            "5",
+            "a different identity's patch must land: {after}"
         );
     }
 }

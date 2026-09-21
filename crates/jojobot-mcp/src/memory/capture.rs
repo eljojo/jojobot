@@ -91,13 +91,18 @@ pub struct CaptureArgs {
     ///
     /// **Draw `connection` with the subject as YOUR OWN bot handle and the
     /// claim becomes a thought of yours, not an ordinary claim about an
-    /// entity.** A bot carrying `thought_capacity` holds only that many
+    /// entity.** A thing carrying `thought_capacity` holds only that many
     /// thoughts at once. A write that would go over is refused, naming how
     /// many are held and asking you to name one to drop and why — see
     /// `drop`, below. One nobody touches for long enough goes quiet on its
     /// own: still there, just no longer counted. `update_fact`'s
     /// `keep: true` is the designed way to say one still matters, on
     /// purpose, without changing a word of it.
+    ///
+    /// **`thought_capacity` is a ceiling, and the thing it binds cannot set
+    /// it.** Send this key about your own handle and the write is refused,
+    /// whatever else the call carries — only a different identity may raise
+    /// or lower it.
     #[serde(default)]
     pub(crate) shape: Option<String>,
     /// The entity the edge points at, as `kind:slug`. **It must already exist**,
@@ -635,6 +640,15 @@ impl Jojobot {
         }
 
         let mut fields = args.fields.unwrap_or_default();
+        // **The thing a ceiling binds cannot write that ceiling.** Checked
+        // before anything else about this write, on the caller's own
+        // identity against the subject it is about to write — never a kind
+        // question, see `refuses_own_ceiling`.
+        if let Some(refused) =
+            jojobot_domain::memory::refuses_own_ceiling(&subject, &caller.bot, &fields)
+        {
+            return memory_declined("capture", refused);
+        }
         let mut opened_the_loop = false;
         if let Some(outcome) = args.check_in.as_deref() {
             match self
@@ -861,17 +875,6 @@ mod tests {
             },
         )
         .await;
-    }
-
-    /// What a thing holds, folded, as `recall` renders it.
-    async fn fields_of(jojobot: &Jojobot, subject: &str) -> serde_json::Value {
-        let body = json_of(
-            &jojobot
-                .recall(Parameters(recall_args(subject)))
-                .await
-                .expect("recall ok"),
-        );
-        body["objects"][0]["fields"].clone()
     }
 
     /// **A schedule jojobot worked out is not something the user said.**
@@ -2838,6 +2841,86 @@ mod tests {
         assert_eq!(
             old_fact["status"], "active",
             "an aged thought is excluded from the count, never archived: {old_fact}"
+        );
+    }
+
+    /// **The thing a ceiling binds cannot write that ceiling.** A bot
+    /// capturing `thought_capacity` about its own handle is refused,
+    /// naming why and who has to do it instead — never a state the store
+    /// is left holding.
+    #[tokio::test]
+    async fn a_bot_cannot_raise_its_own_thought_capacity() {
+        let jojobot = handler();
+        // `capture_args`'s own sid resolves to bot:otto — so this is
+        // bot:otto capturing about bot:otto, deliberately.
+        ensure(&jojobot, "bot:otto").await;
+
+        let refused = blocked(
+            &jojobot
+                .capture(Parameters(CaptureArgs {
+                    fields: Some(
+                        [(
+                            jojobot_domain::memory::THOUGHT_CAPACITY.to_string(),
+                            "5".to_string(),
+                        )]
+                        .into_iter()
+                        .collect(),
+                    ),
+                    ..capture_args("bot:otto", "raising my own ceiling")
+                }))
+                .await
+                .expect("a refusal is an answer, not a failure"),
+        );
+        assert_eq!(refused["status"], "blocked", "{refused}");
+        assert_eq!(refused["wrote"], false, "{refused}");
+        let how = refused["how_to_proceed"]
+            .as_str()
+            .expect("a blocked answer says how to proceed");
+        assert!(
+            how.contains("different identity"),
+            "the refusal must say who has to do it instead: {how}"
+        );
+
+        let after = fields_of(&jojobot, "bot:otto").await;
+        assert!(
+            after
+                .get(jojobot_domain::memory::THOUGHT_CAPACITY)
+                .is_none(),
+            "the refused write must not be readable back: {after}"
+        );
+    }
+
+    /// **The positive half of [`a_bot_cannot_raise_its_own_thought_capacity`].**
+    /// A DIFFERENT identity setting the same key, on the same kind of
+    /// subject, lands — proving the guard is about who is asking, never
+    /// about the key or the kind.
+    #[tokio::test]
+    async fn a_different_bot_can_raise_this_bots_thought_capacity() {
+        let jojobot = handler();
+        // bot:otto (this harness's default caller) sets a capacity on a
+        // DIFFERENT bot's own handle.
+        let landed = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                fields: Some(
+                    [(
+                        jojobot_domain::memory::THOUGHT_CAPACITY.to_string(),
+                        "5".to_string(),
+                    )]
+                    .into_iter()
+                    .collect(),
+                ),
+                ..capture_args("bot:milhouse", "capacity is five")
+            },
+        )
+        .await;
+        assert_ne!(landed["status"], "blocked", "{landed}");
+
+        let after = fields_of(&jojobot, "bot:milhouse").await;
+        assert_eq!(
+            after[jojobot_domain::memory::THOUGHT_CAPACITY],
+            "5",
+            "a different identity's write must land: {after}"
         );
     }
 }

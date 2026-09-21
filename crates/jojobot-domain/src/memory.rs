@@ -1815,6 +1815,32 @@ pub fn apply_fact_patch(fact: &mut Fact, patch: &FactPatch) -> Result<(), Memory
 /// every other carrier in this store already follows.
 pub const THOUGHT_CAPACITY: &str = "thought_capacity";
 
+/// **The thing a ceiling binds cannot write that ceiling.**
+///
+/// `subject` is who the write is about; `caller` is who is making it. A
+/// write naming [`THOUGHT_CAPACITY`] in its own fields, about the caller's
+/// own handle, is refused — never a kind question, because the field is
+/// freeform on every subject already and the only fact that matters is
+/// whether the one setting the number is the one it would bind.
+///
+/// `None` is not "allowed" so much as "not this write's business": a write
+/// naming no capacity key, or naming one about somebody else, has nothing
+/// here to refuse.
+pub fn refuses_own_ceiling(
+    subject: &EntityId,
+    caller: &EntityId,
+    fields: &BTreeMap<String, String>,
+) -> Option<MemoryError> {
+    if subject == caller && fields.contains_key(THOUGHT_CAPACITY) {
+        Some(MemoryError::SelfCeiling {
+            subject: subject.to_string(),
+            key: THOUGHT_CAPACITY.to_string(),
+        })
+    } else {
+        None
+    }
+}
+
 /// **A bot's own live thoughts, out of everything captured about it.**
 ///
 /// A thought is an ordinary claim on a bot's own handle drawing a
@@ -3411,6 +3437,22 @@ pub enum MemoryError {
         /// small" from "some of it aged out of the count and is still
         /// there."
         aged_out: usize,
+    },
+    /// **The thing a ceiling binds cannot write that ceiling.**
+    ///
+    /// Never a kind question: the field is freeform on every subject
+    /// already, and what makes this write refused is that the identity
+    /// naming the number and the identity it would bind are the same one.
+    /// A ceiling only holds if raising it costs something other than
+    /// asking — see [`refuses_own_ceiling`].
+    #[error(
+        "'{subject}' cannot set its own {key}: only a different identity may raise or lower it"
+    )]
+    SelfCeiling {
+        /// The handle that tried to set its own ceiling.
+        subject: String,
+        /// The key it tried to set.
+        key: String,
     },
     /// The named entity doesn't exist. Same rule: report, never create.
     #[error("no entity '{attempted}'{}", nearest_handles(nearest))]

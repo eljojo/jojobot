@@ -483,6 +483,22 @@ pub(crate) fn memory_declined(
                 body.to_string(),
             )]))
         }
+        // **The thing a ceiling binds cannot write that ceiling.** A
+        // refusal, not a failure — the caller named a real subject and a
+        // real key, and jojobot is declining to let it raise or lower its
+        // own bound rather than reporting anything wrong with the call's
+        // shape.
+        MemoryError::SelfCeiling {
+            ref subject,
+            ref key,
+        } => Ok(blocked_body(
+            &EntityId(subject.clone()),
+            &[],
+            format!(
+                "Nothing was written: {e}. A different identity has to set '{key}' on \
+                 '{subject}' — ask another bot, or the operator, to raise or lower it instead."
+            ),
+        )),
         other => Err(memory_error(other)),
     }
 }
@@ -523,6 +539,7 @@ pub(crate) fn memory_error(e: MemoryError) -> McpError {
         | MemoryError::UnconfirmedPromotion
         | MemoryError::UnconfirmedSettling
         | MemoryError::RoomFull { .. }
+        | MemoryError::SelfCeiling { .. }
         | MemoryError::UnstatedProvenance => McpError::invalid_params(e.to_string(), None),
         MemoryError::Store(msg) => {
             McpError::internal_error(crate::boundary::store_failed("this call", &msg), None)
