@@ -3272,6 +3272,60 @@ pub async fn capture_writes_an_edge_that_reads_back<M: Memory>(store: &M) {
     assert_eq!(seen.edge.map(|e| e.object), Some(edge.object));
 }
 
+/// 🚨 **Reading a bot's own thoughts must never touch one.** A thought is an
+/// ordinary claim on a bot's own handle drawing a `connection` edge at its
+/// pointer — no new field, no new shape. What a future aging pass needs is
+/// that a claim's own write history (`claim_history`'s `written_at`, stamped
+/// by the store at the append, never copied off the claim) tells a real
+/// re-assertion from one that never happened — and that a READ can never be
+/// mistaken for one. If a read ever re-stamped a claim, a boot that merely
+/// looks at a bot's thoughts would touch all of them, nothing would ever age,
+/// and the whole mechanism would be a no-op that looks like it works. This
+/// reads the same claim's history twice, around two ordinary reads of the
+/// bot, and asserts nothing about it moved — not the count of writes, not the
+/// moment of the newest one.
+pub async fn reading_a_bots_thoughts_never_touches_their_history<M: Memory>(store: &M) {
+    let bot = EntityId("bot:milhouse".into());
+    let pointer = EntityId("thing:jukebox".into());
+    let thought = capture(
+        store,
+        NewFact {
+            edge: Some(Edge::new(EdgeShape::Connection, pointer.clone())),
+            ..NewFact::about(
+                bot.clone(),
+                "the jukebox needs a new needle",
+                date(2026, 7, 1),
+            )
+        },
+    )
+    .await;
+    let address = thought.address();
+
+    let before = store
+        .claim_history(&address)
+        .await
+        .expect("the claim's history reads");
+
+    // "Reading the room" — twice, the way a boot or a search would.
+    store.recall(&bot).await.expect("recall ok");
+    store.recall(&bot).await.expect("recall ok");
+
+    let after = store
+        .claim_history(&address)
+        .await
+        .expect("the claim's history reads");
+    assert_eq!(
+        after.len(),
+        before.len(),
+        "a read appended a write to a claim nobody asked to change: {after:?}"
+    );
+    assert_eq!(
+        after.last().map(|w| w.written_at),
+        before.last().map(|w| w.written_at),
+        "a read moved the newest write's own moment, which only a real write may do: {after:?}"
+    );
+}
+
 /// Every shape survives the trip, each with an object of the kind it requires.
 pub async fn every_edge_shape_reads_back<M: Memory>(store: &M) {
     let shapes = [
@@ -9893,6 +9947,7 @@ pub async fn run_all<M: Memory>(store: &M) {
     add_entity_screens_every_name_an_entity_answers_to(store).await;
 
     capture_writes_an_edge_that_reads_back(store).await;
+    reading_a_bots_thoughts_never_touches_their_history(store).await;
     every_edge_shape_reads_back(store).await;
     a_wrong_kind_edge_object_is_refused(store).await;
     an_edge_object_is_screened_by_the_guard(store).await;
