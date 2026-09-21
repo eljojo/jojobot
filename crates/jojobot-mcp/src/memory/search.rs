@@ -772,7 +772,9 @@ mod tests {
     use super::*;
     use crate::harness::*;
     use crate::memory::testing::*;
+    use jojobot_domain::mailbox::testing::InMemoryMailboxes;
     use jojobot_domain::memory::{Boot, FactId};
+    use jojobot_domain::teaching::testing::InMemoryTeachings;
 
     /// **Each query-driven exclusion is reachable, and by the query the note
     /// gathering uses to reach it.**
@@ -2257,6 +2259,109 @@ mod tests {
         assert_eq!(
             by_happened_at["rank_fallbacks"], 2,
             "two of the three facts had no happened_at: {by_happened_at}"
+        );
+    }
+
+    /// **Search's session route, travelling the caller's own path.**
+    /// `jojobot_adapters::search::Retrieval` wired in for real, over a real
+    /// `FullTextIndex` and a real `IndexedSessions` half, rather than the
+    /// `SpySearch` fake every other case in this file uses — the adapter
+    /// already proves its owner term correct in isolation
+    /// (`a_bot_finds_its_own_run_and_not_another_bots`); this proves the
+    /// SAME guard still holds when reached through `Jojobot::search`, the
+    /// surface a caller actually calls.
+    ///
+    /// Three assertions from one query, sharing one corpus, so each is
+    /// meaningful rather than merely true: otto finds its own beat (the
+    /// corpus is real and matchable), otto does not find milhouse's beat
+    /// (owner scoping, not an empty index), and an anonymous caller finds
+    /// neither (the constraint applies with no identity at all, which the
+    /// first assertion already proved is not the same as nothing being
+    /// there).
+    #[tokio::test]
+    async fn search_finds_a_bots_own_run_never_anothers_and_never_anonymously() {
+        let sessions = Arc::new(jojobot_domain::session::testing::InMemorySessions::new());
+        let index = Arc::new(jojobot_adapters::search::FullTextIndex::open().expect("index opens"));
+        let indexed_sessions = Arc::new(jojobot_adapters::search::IndexedSessions::new(
+            sessions.clone() as Arc<dyn jojobot_domain::session::Sessions>,
+            index.clone(),
+        ));
+        let retrieval: Arc<dyn Search> = Arc::new(jojobot_adapters::search::Retrieval::new(
+            index,
+            vec![indexed_sessions as Arc<dyn jojobot_adapters::search::Refresh>],
+        ));
+
+        let jojobot = Jojobot::new(
+            Arc::new(InMemoryMemory::booted()),
+            retrieval,
+            Arc::new(InMemoryMailboxes::knowing_any_owner()),
+            sessions as Arc<dyn jojobot_domain::session::Sessions>,
+            Arc::new(InMemoryTeachings::new()),
+            seeded_registry(),
+        );
+
+        let otto_sid = writing_as(&jojobot);
+        crate::session::testing::journal_entry(
+            &jojobot,
+            &otto_sid,
+            "otto's own beat: the damper is hand-cut",
+        )
+        .await;
+
+        let milhouse_sid = jojobot
+            .registry
+            .mint(&EntityId("bot:milhouse".into()), None)
+            .expect("a free handle in a fresh registry")
+            .to_string();
+        crate::session::testing::journal_entry(
+            &jojobot,
+            &milhouse_sid,
+            "milhouse's own beat: the damper is hand-cut",
+        )
+        .await;
+
+        let session_owners = |answer: &serde_json::Value| -> Vec<String> {
+            answer["results"]
+                .as_array()
+                .expect("a results array")
+                .iter()
+                .filter(|hit| hit["hit"] == "session")
+                .map(|hit| hit["bot"].as_str().expect("a bot handle").to_string())
+                .collect()
+        };
+
+        let query = |sid: Option<String>| SearchArgs {
+            query: Some("damper".into()),
+            sid,
+            ..search_args()
+        };
+
+        let mine = json_of(
+            &jojobot
+                .search(Parameters(query(Some(otto_sid))))
+                .await
+                .expect("search answers rather than failing the protocol"),
+        );
+        let owners = session_owners(&mine);
+        assert!(
+            owners.contains(&"bot:otto".to_string()),
+            "a bot must find its own run: {mine}"
+        );
+        assert!(
+            !owners.contains(&"bot:milhouse".to_string()),
+            "another bot's run is not this bot's to read: {mine}"
+        );
+
+        let anonymous = json_of(
+            &jojobot
+                .search(Parameters(query(None)))
+                .await
+                .expect("search answers rather than failing the protocol"),
+        );
+        assert!(
+            session_owners(&anonymous).is_empty(),
+            "a caller with no identity must find no session hits at all, not merely fewer: \
+             {anonymous}"
         );
     }
 }
