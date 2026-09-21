@@ -10,6 +10,7 @@
 use jojobot_domain::attention;
 
 use super::*;
+use crate::session::session_declined;
 use crate::teaching::{CLAIMS_DOMAIN, CLAIMS_TEACHING};
 use jojobot_domain::memory::{entitlement, graph};
 use jojobot_domain::text;
@@ -1490,12 +1491,45 @@ impl Jojobot {
             );
         }
 
+        // **A session joins the walk only when the query could reach one** —
+        // kept off the ordinary path so a lookup that never mentions a
+        // session does not pay for a `Sessions` read it did not ask for.
+        // **Scoped to the caller's own runs at the fetch**: `sessions_of`
+        // never asks the store for another bot's sessions in the first
+        // place, so one never reaches the entity index for this call to
+        // resolve a handle against. `graph::walk`'s owner check (an owned
+        // object answers its owner alone) is a second, redundant guard behind
+        // this one, for a caller that ever widens the fetch to every session.
+        let wants_sessions = query.select.kind == Some(EntityKind::SESSION)
+            || query
+                .select
+                .subject
+                .as_ref()
+                .is_some_and(|s| s.kind() == Some(EntityKind::SESSION));
+        let session_docs: Vec<jojobot_domain::memory::search::DocScan> = if wants_sessions {
+            match &caller {
+                // A caller with no identity owns no runs, and `graph::walk`'s
+                // own owner check would exclude every session anyway — this
+                // just saves the read.
+                None => Vec::new(),
+                Some(caller) => match self.sessions.sessions_of(&caller.bot).await {
+                    Ok(runs) => runs
+                        .iter()
+                        .map(jojobot_domain::session::projected)
+                        .collect(),
+                    Err(e) => return session_declined(e, caller.sid.as_str()),
+                },
+            }
+        } else {
+            Vec::new()
+        };
+
         let graph::Selected {
             objects: mut found,
             withheld,
             unplaced,
             archived_excluded,
-        } = match graph::walk(self.memory.as_ref(), &query).await {
+        } = match graph::walk(self.memory.as_ref(), &session_docs, &query).await {
             Ok(answer) => answer,
             Err(e) => return memory_declined("recall", e),
         };
@@ -1763,6 +1797,7 @@ mod tests {
     use super::*;
     use crate::harness::*;
     use crate::memory::testing::*;
+    use crate::session::testing::journal_entry;
     use jojobot_domain::mailbox::testing::InMemoryMailboxes;
     use jojobot_domain::memory::Boot;
     use jojobot_domain::session::testing::InMemorySessions;
@@ -5537,6 +5572,112 @@ mod tests {
                 .as_str()
                 .is_some_and(|d| !d.is_empty()),
             "stood_for carries no schema description of its own: {schema}"
+        );
+    }
+
+    /// **A session's chronology is recalled, and capture onto its handle
+    /// stays refused — the read half and the protecting half proved in one
+    /// case.**
+    ///
+    /// The read half is new: `session::projected` builds the object, but
+    /// nothing in `graph::walk` reads it yet, so this fails at the recall
+    /// step until that wiring lands. The protecting half is not new — `capture`
+    /// already refuses a session-kind subject through `validate_write_subject`
+    /// — and this is what proves that refusal keeps holding once the same
+    /// session is a reachable object rather than an invisible one.
+    #[tokio::test]
+    async fn a_sessions_chronology_is_recalled_and_capture_onto_it_stays_refused() {
+        let jojobot = crate::harness::handler();
+        let sid = writing_as(&jojobot);
+        let receipt = journal_entry(
+            &jojobot,
+            &sid,
+            "traced the boot slowdown to a synchronous reindex on every capture",
+        )
+        .await;
+        let session_id = receipt["session"]
+            .as_str()
+            .expect("journal answers with the session it landed in")
+            .to_string();
+        let handle = format!("session:{session_id}");
+
+        let found = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    sid: Some(sid.clone()),
+                    ..of(&handle)
+                }))
+                .await
+                .expect("recall answers rather than failing the protocol"),
+        )
+        .to_string();
+        assert!(
+            found.contains("traced the boot slowdown"),
+            "a session's own chronology did not come back through the ordinary lookup: {found}",
+        );
+
+        let refused = blocked(
+            &jojobot
+                .capture(Parameters(CaptureArgs {
+                    sid: Some(sid),
+                    ..capture_args(
+                        &handle,
+                        "a claim about the run, not written through journal",
+                    )
+                }))
+                .await
+                .expect("capture answers rather than failing the protocol"),
+        )
+        .to_string();
+        assert!(
+            refused.contains("session") && refused.contains("journal"),
+            "a session reachable by recall must still refuse an ordinary write onto its \
+             handle, and name the way forward: {refused}",
+        );
+    }
+
+    /// **A session answers its own bot alone.** `recall` fetches only the
+    /// CALLING bot's own runs (`sessions_of(&caller.bot)`), so a second bot
+    /// naming the first bot's session never has it in its own entity index at
+    /// all — the handle reads as unknown, the same refusal an unrelated typo
+    /// gets, rather than a hit belonging to somebody else. `graph::walk`'s
+    /// owner check (`session::projected` sets `owner`) is a second, redundant
+    /// guard behind this one, for a caller that ever widens the fetch to
+    /// every session rather than one bot's own.
+    #[tokio::test]
+    async fn a_bots_session_is_not_readable_by_a_different_bot() {
+        let jojobot = crate::harness::handler();
+        let sid = writing_as(&jojobot);
+        let receipt = journal_entry(&jojobot, &sid, "a beat that belongs to bot:otto alone").await;
+        let session_id = receipt["session"]
+            .as_str()
+            .expect("journal answers with the session it landed in")
+            .to_string();
+        let handle = format!("session:{session_id}");
+
+        let other_sid = jojobot
+            .registry
+            .mint(&EntityId("bot:milhouse".into()), None)
+            .expect("a free handle in a fresh registry")
+            .to_string();
+
+        let refused = blocked(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    sid: Some(other_sid),
+                    ..of(&handle)
+                }))
+                .await
+                .expect("recall answers rather than failing the protocol"),
+        )
+        .to_string();
+        assert!(
+            refused.contains("is not an entity jojobot knows"),
+            "a different bot's session must read as unknown, not merely unreadable: {refused}",
+        );
+        assert!(
+            !refused.contains("a beat that belongs to bot:otto alone"),
+            "a different bot's run leaked into a caller that does not own it: {refused}",
         );
     }
 }

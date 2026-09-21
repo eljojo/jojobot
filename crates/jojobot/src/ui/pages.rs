@@ -550,7 +550,7 @@ async fn view_section(
         follow: None,
         history: None,
     };
-    let mut found = match graph::walk(&*state.memory, &query).await {
+    let mut found = match graph::walk(&*state.memory, &[], &query).await {
         Ok(selected) => selected.objects,
         Err(err) => {
             return blind(

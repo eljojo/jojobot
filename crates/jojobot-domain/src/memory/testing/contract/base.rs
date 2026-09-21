@@ -67,6 +67,7 @@ async fn thing_fields<M: Memory>(
 ) -> std::collections::BTreeMap<String, String> {
     graph::walk(
         store,
+        &[],
         &graph::GraphQuery {
             select: graph::Selection {
                 subject: Some(id.clone()),
@@ -6578,6 +6579,7 @@ pub async fn a_graph_query_selects_a_kind_and_returns_its_prose<M: Memory>(store
 
     let found = graph::walk(
         store,
+        &[],
         &graph::GraphQuery {
             select: graph::Selection {
                 kind: Some(EntityKind::BOT),
@@ -6654,6 +6656,7 @@ pub async fn a_graph_query_filters_on_a_stored_value_and_walks_an_edge<M: Memory
         async move {
             let found = graph::walk(
                 store,
+                &[],
                 &graph::GraphQuery {
                     select: graph::Selection {
                         fields: vec![graph::FieldFilter::holding("answer", &answer)],
@@ -6690,6 +6693,7 @@ pub async fn a_graph_query_filters_on_a_stored_value_and_walks_an_edge<M: Memory
     // guests were never named in this query: they are reached.
     let walked = graph::walk(
         store,
+        &[],
         &graph::GraphQuery {
             select: graph::Selection {
                 subject: Some(gathering.clone()),
@@ -6844,6 +6848,7 @@ pub async fn a_value_is_found_without_naming_the_key_it_is_under<M: Memory>(stor
         async move {
             graph::walk(
                 store,
+                &[],
                 &graph::GraphQuery {
                     select: graph::Selection {
                         fields: vec![graph::FieldFilter::anywhere(&value)],
@@ -6962,6 +6967,7 @@ pub async fn a_rewrite_can_take_the_edge_off_and_leaves_it_alone_otherwise<M: Me
     // is still reached.
     let reached = graph::walk(
         store,
+        &[],
         &graph::GraphQuery {
             select: graph::Selection {
                 subject: Some(fair.clone()),
@@ -7031,6 +7037,7 @@ pub async fn a_walk_marks_a_link_whose_claim_the_store_took_back<M: Memory>(stor
 
     let walked = graph::walk(
         store,
+        &[],
         &graph::GraphQuery {
             select: graph::Selection {
                 subject: Some(gathering.clone()),
@@ -7317,6 +7324,7 @@ pub async fn a_trip_records_who_came_and_answers_from_either_end<M: Memory>(stor
     .await;
     let read = graph::walk(
         store,
+        &[],
         &graph::GraphQuery {
             select: graph::Selection {
                 subject: Some(alone.clone()),
@@ -7351,6 +7359,7 @@ async fn walked_from<M: Memory>(
 ) -> Vec<EntityId> {
     let walked = graph::walk(
         store,
+        &[],
         &graph::GraphQuery {
             select: graph::Selection {
                 subject: Some(from.clone()),
@@ -7419,6 +7428,7 @@ pub async fn a_declared_reference_key_is_walkable_against_the_store<M: Memory>(s
         async move {
             graph::walk(
                 store,
+                &[],
                 &graph::GraphQuery {
                     select: graph::Selection {
                         subject: Some(subject),
@@ -7461,6 +7471,7 @@ pub async fn a_declared_reference_key_is_walkable_against_the_store<M: Memory>(s
     // survived storage rather than one this test still holds.
     let older = graph::walk(
         store,
+        &[],
         &graph::GraphQuery {
             select: graph::Selection {
                 fields: vec![graph::FieldFilter::comparing(
@@ -8430,6 +8441,7 @@ pub async fn a_walk_flags_a_link_drawn_by_a_claim_archived_through_an_ordinary_e
 
     let guests = graph::walk(
         store,
+        &[],
         &graph::GraphQuery {
             select: graph::Selection {
                 subject: Some(party.clone()),
@@ -8574,6 +8586,7 @@ pub async fn a_thing_reads_back_as_its_fields_folded<M: Memory>(store: &M) {
 
     let dense = graph::walk(
         store,
+        &[],
         &graph::GraphQuery {
             select: graph::Selection {
                 subject: Some(subject.clone()),
@@ -8613,6 +8626,7 @@ pub async fn a_thing_reads_back_as_its_fields_folded<M: Memory>(store: &M) {
     // for the records still gets every one of them, each addressed.
     let whole = graph::walk(
         store,
+        &[],
         &graph::GraphQuery {
             select: graph::Selection {
                 subject: Some(subject.clone()),
@@ -8864,6 +8878,7 @@ pub async fn a_long_history_is_cut_to_its_newest_and_says_how_many<M: Memory>(st
         async move {
             graph::walk(
                 store,
+                &[],
                 &graph::GraphQuery {
                     select: graph::Selection {
                         subject: Some(subject),
@@ -8931,6 +8946,7 @@ pub async fn a_long_history_is_cut_to_its_newest_and_says_how_many<M: Memory>(st
     }
     let found = graph::walk(
         store,
+        &[],
         &graph::GraphQuery {
             select: graph::Selection {
                 subject: Some(short.clone()),
@@ -8988,6 +9004,7 @@ pub async fn a_read_of_facts_says_how_many_times_each_was_written<M: Memory>(sto
 
     let found = graph::walk(
         store,
+        &[],
         &graph::GraphQuery {
             select: graph::Selection {
                 subject: Some(subject.clone()),
@@ -9033,6 +9050,7 @@ pub async fn a_walk_with_no_facts_carries_no_revision_counts<M: Memory>(store: &
 
     let found = graph::walk(
         store,
+        &[],
         &graph::GraphQuery {
             select: graph::Selection {
                 subject: Some(subject.clone()),

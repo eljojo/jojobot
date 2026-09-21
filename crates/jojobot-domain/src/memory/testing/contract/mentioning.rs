@@ -622,7 +622,7 @@ pub async fn a_reference_typed_field_value_resolves_in_thing_scope_after_a_renam
         history: None,
     };
 
-    let found_by_new = graph::walk(mentioning, &query(now.as_str()))
+    let found_by_new = graph::walk(mentioning, &[], &query(now.as_str()))
         .await
         .expect("a thing-scope filter on a reference key must resolve");
     assert_eq!(
@@ -636,7 +636,7 @@ pub async fn a_reference_typed_field_value_resolves_in_thing_scope_after_a_renam
          {found_by_new:?}",
     );
 
-    let found_by_old = graph::walk(mentioning, &query(was.as_str()))
+    let found_by_old = graph::walk(mentioning, &[], &query(was.as_str()))
         .await
         .expect("a thing-scope filter on a reference key must resolve");
     assert!(
@@ -921,6 +921,7 @@ pub async fn a_rename_moves_the_handle_and_every_reference_still_resolves<
     // caller sees.
     let walked_by_old_name = graph::walk(
         bare,
+        &[],
         &graph::GraphQuery {
             select: graph::Selection {
                 subject: Some(was.clone()),
@@ -944,6 +945,7 @@ pub async fn a_rename_moves_the_handle_and_every_reference_still_resolves<
     );
     let walked_never = graph::walk(
         bare,
+        &[],
         &graph::GraphQuery {
             select: graph::Selection {
                 subject: Some(never.clone()),
@@ -1169,6 +1171,7 @@ pub async fn a_former_handle_reused_after_a_rename_resolves_to_the_newest_event<
 
     let walked = graph::walk(
         bare,
+        &[],
         &graph::GraphQuery {
             select: graph::Selection {
                 subject: Some(shared.clone()),

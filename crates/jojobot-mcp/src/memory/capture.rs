@@ -434,6 +434,7 @@ impl Jojobot {
 
         let held = match graph::walk(
             self.memory.as_ref(),
+            &[],
             &graph::GraphQuery {
                 select: graph::Selection {
                     subject: Some(subject.clone()),

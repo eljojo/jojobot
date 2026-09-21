@@ -110,6 +110,7 @@ async fn a_kinds_keys_are_a_schema_and_the_two_questions_differ() {
 async fn selected<M: Memory>(store: &M, select: graph::Selection) -> Vec<EntityId> {
     graph::walk(
         store,
+        &[],
         &graph::GraphQuery {
             select,
             include: graph::Include {
@@ -1114,6 +1115,7 @@ async fn the_required_keys_are_the_ones_the_loop_actually_writes() {
 
     let objects = graph::walk(
         &store,
+        &[],
         &graph::GraphQuery {
             select: graph::Selection {
                 subject: Some(descale),

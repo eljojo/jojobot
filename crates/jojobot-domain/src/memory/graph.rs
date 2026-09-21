@@ -1948,14 +1948,31 @@ impl<'a> Ctx<'a> {
 /// and that handle's records. A walk costs every entity's records, because
 /// which objects it reaches is not known until it has been walked, and an
 /// inbound walk has to ask who points here.
-pub async fn walk<M>(store: &M, query: &GraphQuery) -> Result<Selected, MemoryError>
+///
+/// **`sessions` is pre-projected, never read here.** A session carries no row
+/// the store's own scan would find, so a caller that wants one reachable
+/// fetches it through the `Sessions` port and turns it into a [`DocScan`] with
+/// [`super::super::session::projected`] before calling this — the same shape
+/// [`list_entities`](super::Memory::list_entities) hands every ordinary
+/// entity, so the rest of this walk (subject resolution, kind filtering,
+/// owner scoping) does not have to know sessions exist at all. Empty for
+/// every caller that is not asking about sessions.
+pub async fn walk<M>(
+    store: &M,
+    sessions: &[DocScan],
+    query: &GraphQuery,
+) -> Result<Selected, MemoryError>
 where
     M: super::Memory + ?Sized,
 {
     query.validate()?;
     // The entity index: what exists, what a kind selects, and what a handle
     // that names nothing is screened against.
-    let entities = store.list_entities(None).await?;
+    let mut entities = store.list_entities(None).await?;
+    // **Sessions join the same index they are selected and resolved from.**
+    // A subject naming one has to find it here to resolve at all, and a kind
+    // filter has to see it to select it — both read `entities`, below.
+    entities.extend(sessions.iter().filter_map(|doc| doc.entity.clone()));
     let select = &query.select;
     // **Three tiers (decision log 272): a current handle answers directly, a
     // handle the subject used to wear resolves to what it is called now, and
@@ -2016,6 +2033,18 @@ where
     // entities this query actually reads.
     let mut scanned: Vec<DocScan> = Vec::with_capacity(entities.len());
     for entity in &entities {
+        // **A session is projected whole, never scanned.** It carries no row
+        // any of the calls below could read; the caller already built its
+        // document, and this only has to find the one that matches.
+        if entity.kind == super::EntityKind::SESSION {
+            if let Some(doc) = sessions
+                .iter()
+                .find(|doc| doc.entity.as_ref().map(|e| &e.id) == Some(&entity.id))
+            {
+                scanned.push(doc.clone());
+            }
+            continue;
+        }
         let read = wanted.iter().any(|w| w.id == entity.id);
         let facts = if read {
             store.recall(&entity.id).await?
