@@ -1819,6 +1819,73 @@ pub fn thought_room(captured: &[Fact]) -> Vec<Fact> {
         .collect()
 }
 
+/// **How many runs a bot's own thought may go untouched before it ages out
+/// of the room a capacity write counts against.**
+///
+/// ⚠️ **A placeholder, not a ruling.** Nobody has decided this number; it
+/// lives here, once, so a ruling changes one line rather than a
+/// search-and-replace across every caller.
+pub const AGES_AFTER_RUNS: usize = 20;
+
+/// **The moment before which a thought counts as aged out**, given a bot's
+/// own run-start moments in any order. `None` when the bot has not yet run
+/// [`AGES_AFTER_RUNS`] times — the question is not askable yet, so nothing
+/// is ever aged before it is.
+///
+/// **Counted in runs, never in days** — a worker booting once per task and
+/// an assistant booting once a day age at their own pace, and neither reads
+/// a clock to do it.
+pub fn aging_cutoff(run_starts: &[jiff::Timestamp]) -> Option<jiff::Timestamp> {
+    if run_starts.len() < AGES_AFTER_RUNS {
+        return None;
+    }
+    let mut starts = run_starts.to_vec();
+    starts.sort_unstable_by(|a, b| b.cmp(a));
+    Some(starts[AGES_AFTER_RUNS - 1])
+}
+
+/// **A bot's own room, split by age.**
+///
+/// An aged-out thought is neither archived nor written — see
+/// [`aging_cutoff`]'s own note on what fires and what does not. It is
+/// **named, never silently dropped**: a capacity write must say how many it
+/// left out and why, or a bot could never tell "the room is genuinely
+/// small" from "the room emptied itself while nobody was told."
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThoughtRoom {
+    /// Active, connection-edged, and touched within the window — what a
+    /// capacity write counts against.
+    pub live: Vec<Fact>,
+    /// Active, connection-edged, and untouched past the window — still
+    /// there, still active, excluded from the count.
+    pub aged_out: Vec<Fact>,
+}
+
+/// Split an already-computed [`thought_room`] by age.
+///
+/// `touched` is each candidate's own last-write moment (`ClaimWrite`'s
+/// `written_at`, keyed by the fact's local id) — **never the claim's own
+/// `recorded_at`**, which answers a different question. A thought `touched`
+/// carries no entry for (a write kept before the substrate recorded one) is
+/// never aged: absence is not evidence of age. `aged_before` is
+/// [`aging_cutoff`]'s own answer; `None` ages nothing.
+pub fn split_by_age(
+    room: Vec<Fact>,
+    touched: &std::collections::HashMap<FactId, jiff::Timestamp>,
+    aged_before: Option<jiff::Timestamp>,
+) -> ThoughtRoom {
+    let Some(cutoff) = aged_before else {
+        return ThoughtRoom {
+            live: room,
+            aged_out: Vec::new(),
+        };
+    };
+    let (aged_out, live) = room
+        .into_iter()
+        .partition(|f| touched.get(&f.id).is_some_and(|at| *at < cutoff));
+    ThoughtRoom { live, aged_out }
+}
+
 /// **The writes an edit makes on a record's keys**, in the order
 /// [`apply_fact_patch`] applies them: a cleared key carries no value, and a set
 /// key carries what it puts there.
@@ -4241,6 +4308,121 @@ mod tests {
             badge: badge.map(str::to_string),
             archived: None,
         }
+    }
+
+    fn at(s: &str) -> jiff::Timestamp {
+        s.parse().expect("a fixed instant")
+    }
+
+    fn thought(id: &str, pointer: &str) -> Fact {
+        Fact {
+            id: FactId(id.into()),
+            home: EntityId("bot:contract-thought-capacity".into()),
+            subject: EntityId("bot:contract-thought-capacity".into()),
+            content: format!("a thought pointing at {pointer}"),
+            details: None,
+            provenance: Provenance::Inference,
+            standing: Standing::Open,
+            status: FactStatus::Active,
+            recorded_at: Date::constant(2026, 1, 1),
+            happened_at: None,
+            happened_through: None,
+            edge: Some(Edge::new(EdgeShape::Connection, EntityId(pointer.into()))),
+            fields: Default::default(),
+            refs: Vec::new(),
+            derived_from: None,
+            stands_for: Vec::new(),
+            inserted_at: None,
+            stale_after: None,
+        }
+    }
+
+    /// 🚨 **Fewer runs than the threshold asks no question at all** — a
+    /// true absence looks exactly like this: `None`, not a cutoff computed
+    /// from whatever runs do exist. A cutoff answered from too few runs
+    /// would age a thought no bot has had the chance to even reach.
+    #[test]
+    fn fewer_runs_than_the_threshold_answers_no_cutoff() {
+        let starts: Vec<_> = (0..AGES_AFTER_RUNS - 1)
+            .map(|_| at("2026-01-01T00:00:00Z"))
+            .collect();
+        assert_eq!(aging_cutoff(&starts), None, "{starts:?}");
+    }
+
+    /// **Exactly the threshold answers the oldest of them** — the run that,
+    /// counting back from today, is the [`AGES_AFTER_RUNS`]th.
+    #[test]
+    fn exactly_the_threshold_answers_the_oldest_run() {
+        let starts: Vec<jiff::Timestamp> = (0..AGES_AFTER_RUNS)
+            .map(|i| at(&format!("2026-01-{:02}T00:00:00Z", i + 1)))
+            .collect();
+        let oldest = starts[0];
+        assert_eq!(aging_cutoff(&starts), Some(oldest), "{starts:?}");
+    }
+
+    /// 🚨 **More than the threshold answers the Nth-newest, never the
+    /// oldest of all of them** — extra runs beyond the window do not push
+    /// the cutoff back further, or a bot that has run for years would never
+    /// age anything.
+    #[test]
+    fn more_than_the_threshold_answers_the_nth_newest_not_the_oldest() {
+        let extra = 5;
+        let starts: Vec<jiff::Timestamp> = (0..AGES_AFTER_RUNS + extra)
+            .map(|i| at(&format!("2026-02-{:02}T00:00:00Z", i + 1)))
+            .collect();
+        let nth_newest = starts[extra];
+        let oldest = starts[0];
+        let cutoff = aging_cutoff(&starts).expect("more than enough runs");
+        assert_eq!(cutoff, nth_newest, "{starts:?}");
+        assert_ne!(
+            cutoff, oldest,
+            "the extra runs must not push the cutoff back: {starts:?}"
+        );
+    }
+
+    /// 🚨 **A thought touched before the cutoff is aged out, and one touched
+    /// at or after it stays live** — the boundary itself counts as live, so
+    /// a run that touches something in its own window never ages it.
+    #[test]
+    fn split_by_age_separates_on_the_cutoff_boundary() {
+        let cutoff = at("2026-03-10T00:00:00Z");
+        let old = thought("f1", "thing:contract-thought-pointer-v1");
+        let boundary = thought("f2", "thing:contract-thought-pointer-v2");
+        let touched = std::collections::HashMap::from([
+            (old.id.clone(), at("2026-03-09T23:59:59Z")),
+            (boundary.id.clone(), cutoff),
+        ]);
+        let split = split_by_age(vec![old.clone(), boundary.clone()], &touched, Some(cutoff));
+        assert_eq!(split.aged_out, vec![old], "{split:?}");
+        assert_eq!(split.live, vec![boundary], "{split:?}");
+    }
+
+    /// 🚨 **A thought nobody ever recorded a touch for is never aged** —
+    /// absence in `touched` is not evidence of age, and treating it as one
+    /// would age exactly the rows a write predating this feature left
+    /// behind.
+    #[test]
+    fn a_thought_with_no_recorded_touch_stays_live() {
+        let cutoff = at("2026-03-10T00:00:00Z");
+        let untouched = thought("f1", "thing:contract-thought-pointer-v1");
+        let split = split_by_age(
+            vec![untouched.clone()],
+            &std::collections::HashMap::new(),
+            Some(cutoff),
+        );
+        assert_eq!(split.live, vec![untouched], "{split:?}");
+        assert!(split.aged_out.is_empty(), "{split:?}");
+    }
+
+    /// **No cutoff ages nothing at all** — the shape every caller gets
+    /// before a bot has run enough times to ask the question.
+    #[test]
+    fn no_cutoff_ages_nothing() {
+        let f = thought("f1", "thing:contract-thought-pointer-v1");
+        let touched = std::collections::HashMap::from([(f.id.clone(), at("2020-01-01T00:00:00Z"))]);
+        let split = split_by_age(vec![f.clone()], &touched, None);
+        assert_eq!(split.live, vec![f]);
+        assert!(split.aged_out.is_empty());
     }
 
     /// 🚨 **A refusal names the way forward.** `validate_field` backs a
