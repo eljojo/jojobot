@@ -109,6 +109,12 @@ pub struct CaptureArgs {
     /// you wrote it. **Nothing has to be declared first**, and no name for the
     /// class of thing is asked for: the fields ARE what the record says, and a
     /// type is something the keys answer rather than something you announce.
+    ///
+    /// **`"starred": "true"` competes for one of the few seats a bot's own
+    /// boot spends on its rules.** Going home unmarked is normal, not a
+    /// failure: an unstarred rule is fetched with `facts: true` when it is
+    /// needed rather than shown by default. Seats are few on purpose —
+    /// starring everything is the same as starring nothing.
     #[serde(default)]
     pub(crate) fields: Option<std::collections::BTreeMap<String, String>>,
     /// The entities this record touches, as `kind:slug` — **each must already
