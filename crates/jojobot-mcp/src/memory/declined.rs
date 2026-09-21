@@ -527,6 +527,16 @@ pub(crate) fn memory_error(e: MemoryError) -> McpError {
         MemoryError::Store(msg) => {
             McpError::internal_error(crate::boundary::store_failed("this call", &msg), None)
         }
+        // **A conflict is not a failure** — see the domain's own doc on
+        // [`MemoryError::Conflict`]. It reaches the caller through the same
+        // JSON-RPC error shape as `Store` (rated with the same severity,
+        // because a payload a client cannot act on is a server fault
+        // whatever the underlying cause), but the sentence itself says the
+        // opposite of `store_failed`'s: retry, not escalate.
+        MemoryError::Conflict => McpError::internal_error(
+            crate::boundary::conflict("this call", &MemoryError::Conflict.to_string()),
+            None,
+        ),
         // **A build-time misconfiguration, not a caller mistake.** No verb
         // produces this — it is caught at boot, before an instance ever
         // serves — so there is no way forward to hand a caller and no
@@ -710,6 +720,26 @@ mod tests {
         assert!(
             err.message.contains("Try once more"),
             "a caller needs its next move: {}",
+            err.message
+        );
+    }
+
+    /// **`memory_error` routes `Conflict` through `conflict`, not
+    /// `store_failed`** — the wiring proof beside `boundary`'s own case for
+    /// the sentence's shape. A caller reading this through the served
+    /// surface must see retry advice, never the "tell the operator" line a
+    /// bare store failure carries.
+    #[test]
+    fn a_conflict_is_mapped_through_the_conflict_sentence_not_the_failure_one() {
+        let err = memory_error(MemoryError::Conflict);
+        assert!(
+            !err.message.contains("tell the operator"),
+            "a conflict routed through the failure sentence rather than its own: {}",
+            err.message
+        );
+        assert!(
+            err.message.contains("retry") || err.message.contains("retrying"),
+            "the caller's next move must be named: {}",
             err.message
         );
     }

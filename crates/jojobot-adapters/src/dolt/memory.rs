@@ -1584,7 +1584,19 @@ const FACT_WRITE_COLUMNS: &str = "w.entity, w.fact_id AS id, w.content, w.detail
 /// A store failure, in the domain's own words. **The server's account never
 /// crosses** — no SQL, no table names, no product (rule 53); it goes to the log
 /// where an operator debugging a real failure wants it.
+///
+/// **A conflict is told apart from every other failure here, at the one seam
+/// every write already passes through.** SQLSTATE `40001` is Dolt's own
+/// optimistic concurrency catching two writes that landed on the same
+/// instant — the store answered correctly and promptly, so folding it into
+/// the same bucket as a store that could not be reached at all would tell a
+/// caller to escalate the commonest, most self-healing case exactly as it
+/// would a genuine outage.
 fn store(e: sqlx::Error) -> MemoryError {
+    if e.as_database_error().and_then(|db| db.code()).as_deref() == Some("40001") {
+        tracing::warn!(error = %e, "a write conflicted with another landing the same instant");
+        return MemoryError::Conflict;
+    }
     tracing::error!(error = %e, "the memory store failed");
     MemoryError::Store("the memory store could not be reached".into())
 }

@@ -14,6 +14,29 @@ pub(crate) fn store_failed(verb: &str, detail: &str) -> String {
     )
 }
 
+/// **A write that collided with another, told apart from a store failure.**
+///
+/// Logged at `warn` rather than `error`: the store answered correctly and
+/// promptly, so this is not the condition an operator needs paged for. The
+/// sentence says what `store_failed`'s must not — that nothing here is
+/// broken and a retry is the right next move rather than an escalation —
+/// because telling a caller to "tell the operator" about the commonest,
+/// self-healing case would send it looking for a person over nothing.
+pub(crate) fn conflict(verb: &str, detail: &str) -> String {
+    tracing::warn!(
+        verb,
+        detail,
+        "a write conflicted with another at the boundary"
+    );
+    format!(
+        "{verb} was rejected: another write landed at the same instant, and the store's own \
+         concurrency check caught the collision before either could corrupt the other. \
+         Nothing was written here, the store is working correctly, and retrying the same call \
+         is the right response — this is a transient conflict, not a mistake in what was sent \
+         and not something a person needs to look at."
+    )
+}
+
 /// A record jojobot cannot read, told the same way: logged, not returned.
 pub(crate) fn unreadable(what: &str, detail: &str) -> String {
     tracing::error!(what, detail, "unreadable record reached the boundary");
@@ -33,6 +56,7 @@ mod tests {
         let leaky = "the page for gamma has no table, and the row vanished from the document";
         for said in [
             store_failed("post_message", leaky),
+            conflict("post_message", leaky),
             unreadable("message gamma-4", leaky),
         ] {
             assert!(
@@ -40,6 +64,34 @@ mod tests {
                 "the adapter's own words crossed: {said}"
             );
         }
+    }
+
+    /// 🚨 **A conflict must not be told the way a failure is** — the two
+    /// call for opposite advice, and a caller cannot act on a sentence that
+    /// gives both at once. `conflict`'s own words say retry and say the
+    /// store is working; `store_failed`'s say the opposite of both, and
+    /// that difference is the entire point of telling them apart.
+    #[test]
+    fn a_conflict_reads_nothing_like_a_failed_store() {
+        let said = conflict("post_message", "40001 detail");
+        assert!(said.contains("post_message"), "{said}");
+        assert!(
+            said.contains("retry") || said.contains("retrying"),
+            "the caller's next move is to retry, and the sentence must say so: {said}"
+        );
+        assert!(
+            said.contains("working correctly"),
+            "the store is not the thing that failed here: {said}"
+        );
+        assert!(
+            !said.contains("tell the operator"),
+            "sending a caller to a person over the commonest, self-healing case is the wrong \
+             advice for a transient conflict: {said}"
+        );
+        assert!(
+            !said.contains("could not be reached"),
+            "the store WAS reached, and answered correctly: {said}"
+        );
     }
 
     /// **And it still tells the caller what to do**, which is the half a

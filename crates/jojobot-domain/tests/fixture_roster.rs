@@ -94,6 +94,7 @@ const ROSTER: &[&str] = &[
     "view:my-people",
     "view:names-no-kind",
     "view:nobody-has-this",
+    "bot:conflict-not-a-failure",
     "bot:contract-migrate-bot-column-delta",
     "bot:contract-migrate-bot-column-gamma",
     "bot:contract-migrate-bot-column-sigma",

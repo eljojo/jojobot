@@ -4170,3 +4170,71 @@ async fn session_write_summary_answers_the_real_store() {
     let _ = entry;
     store.stop().await;
 }
+
+/// 🚨 **A conflict is not a store failure, and the caller must be told
+/// which one happened.** Two concurrent captures on one bot's own home
+/// entity, nothing shared between them but that home — no drop, no edge,
+/// no capacity gate. Dolt's own optimistic concurrency rejects the second
+/// commit with SQLSTATE `40001`, and that must read back as
+/// [`MemoryError::Conflict`], never [`MemoryError::Store`]: the store
+/// answered correctly and promptly, and the two call for opposite advice.
+///
+/// **Against the real store on purpose.** The in-memory double takes one
+/// lock per write, so two "concurrent" calls against it simply run one
+/// after the other with no suspension between — there is no race for it to
+/// lose, so a case built on it would prove nothing about which branch this
+/// is. Real Dolt's own network I/O genuinely yields, so `tokio::join!`
+/// here is an actual race rather than a simulated one.
+#[tokio::test]
+async fn a_write_that_conflicts_with_another_is_told_apart_from_a_failed_store() {
+    let scratch = Scratch::new("conflict-not-a-failure");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("conflict_not_a_failure")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool.clone());
+
+    let bot = EntityId("bot:conflict-not-a-failure".into());
+    memory
+        .add_entity(NewEntity::new(
+            bot.clone(),
+            "SoftwareApplication",
+            "contract-fixture",
+        ))
+        .await
+        .expect("add_entity ok")
+        .written()
+        .expect("nothing collides");
+
+    let a = memory.capture(NewFact::about(bot.clone(), "racer A", date(2026, 7, 2)));
+    let b = memory.capture(NewFact::about(bot.clone(), "racer B", date(2026, 7, 2)));
+    let (ra, rb) = tokio::join!(a, b);
+
+    // **Exactly one side of this race is the loser** — a case that asserted
+    // on a fixed side would be asserting on scheduling order, which nothing
+    // here controls or should. Whichever one failed must have failed with
+    // the right word.
+    let loser = match (ra, rb) {
+        (Ok(_), Err(e)) => e,
+        (Err(e), Ok(_)) => e,
+        (Ok(_), Ok(_)) => panic!(
+            "both racers landed — this case is supposed to exercise the real conflict, and \
+             without one there is nothing here for MemoryError::Conflict to be proven against"
+        ),
+        (Err(a), Err(b)) => {
+            panic!("both racers failed, which is not the shape this proves: {a:?} / {b:?}")
+        }
+    };
+    assert!(
+        matches!(loser, MemoryError::Conflict),
+        "a write that lost a genuine commit-time race must read back as Conflict, not a bare \
+         store failure: {loser:?}"
+    );
+
+    store.stop().await;
+}

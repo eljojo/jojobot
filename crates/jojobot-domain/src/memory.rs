@@ -3561,8 +3561,30 @@ pub enum MemoryError {
     /// The underlying store failed — it, or the layer that carries and parses
     /// its answers. **A clean failure**: a write either commits or does not,
     /// so the record is as it was and retrying is a reasonable next move.
+    ///
+    /// **Never a conflict** — see [`MemoryError::Conflict`] for the write
+    /// that landed on a store working correctly, rejected only because
+    /// another write committed the same instant. The two are told apart at
+    /// the adapter, because they call for different words: this one is
+    /// genuinely unexplained, and telling a caller to escalate a conflict as
+    /// if it were this is the wrong advice for the commoner case.
     #[error("store error: {0}")]
     Store(String),
+    /// **A write collided with another that committed the same instant.**
+    ///
+    /// The store's own optimistic concurrency caught it before either write
+    /// could corrupt the other: nothing here was written, the row is
+    /// exactly as it was before the call, and the store itself is working —
+    /// it answered promptly and correctly. Retrying is not a guess or an
+    /// escalation: the same call, sent again, either lands cleanly against
+    /// the now-current state or collides again for the same transient
+    /// reason, and either way no person needs to look at anything.
+    #[error(
+        "this write collided with another that landed the same instant; nothing was written \
+         here — the store is working, and retrying the same call is the right response to a \
+         transient conflict rather than a mistake in what was sent"
+    )]
+    Conflict,
     /// **A whole-record provision names an address the store already holds a
     /// row at.**
     ///
