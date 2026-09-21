@@ -3277,6 +3277,42 @@ pub async fn capture_writes_an_edge_that_reads_back<M: Memory>(store: &M) {
 }
 
 /// 🚨 **A bot's room enforces its capacity, atomically with the write that
+/// **A thought whose pointer is a `thread` lands in the room, structurally.**
+/// `thought_room` filters on the edge's SHAPE alone — `Connection` — and
+/// never on what kind the edge points at, so a `thread` needs no teaching to
+/// the room: it is a kind like any other the moment it exists. The
+/// assertion is on the pointer's own address landing in the room, never on
+/// a match against the claim's words, which would pass on a room that reads
+/// content instead of structure.
+pub async fn a_thought_pointing_at_a_thread_is_in_the_room<M: Memory>(store: &M) {
+    let bot = EntityId("bot:contract-thread-room".into());
+    let thread = EntityId("thread:milhouse-moves".into());
+    ensure(store, &bot).await;
+
+    let thought = capture(
+        store,
+        NewFact {
+            edge: Some(Edge::new(EdgeShape::Connection, thread.clone())),
+            ..NewFact::about(bot.clone(), "still on for the spring", date(2026, 7, 1))
+        },
+    )
+    .await;
+
+    let after = store.recall(&bot).await.expect("recall ok");
+    let room = thought_room(&after);
+    let in_room = room
+        .iter()
+        .find(|f| f.id == thought.id)
+        .expect("a thought pointing at a thread must be in the room");
+    assert_eq!(
+        in_room.edge.as_ref().map(|e| &e.object),
+        Some(&thread),
+        "the room's own membership is the pointer's shape, not a read of the thread's own \
+         kind or the claim's words: {in_room:?}"
+    );
+}
+
+/// **A room at capacity, with a live thought and a way to name what leaves
 /// would exceed it.** A write into a full room with no drop named is
 /// refused, and the refusal carries the room so a caller can choose without
 /// a second read. A write naming a live thought to drop lands the new one
@@ -10292,6 +10328,7 @@ pub async fn run_all<M: Memory>(store: &M) {
 
     capture_writes_an_edge_that_reads_back(store).await;
     reading_a_bots_thoughts_never_touches_their_history(store).await;
+    a_thought_pointing_at_a_thread_is_in_the_room(store).await;
     a_bots_room_enforces_its_capacity(store).await;
     an_aged_thought_frees_the_room(store).await;
     an_archived_thought_frees_its_slot(store).await;

@@ -129,11 +129,27 @@ impl EntityKind {
     /// fleet asks — which of these stopped in the night — reads back nothing
     /// when the answer arrives mixed with the bike pump.
     pub const MACHINE: EntityKind = EntityKind("machine");
+    /// An ongoing line in somebody's life: a situation rather than a task.
+    /// `@person:milhouse is moving to @place:shelbyville in the spring` is a
+    /// thread — everything about the move lands on it, and a thought that
+    /// points at it only says the move is still live.
+    ///
+    /// **Not a `project`.** A project is an activity with a status funnel and
+    /// it ENDS WHEN IT IS DONE. A thread has no funnel and no done: it ends
+    /// when it stops being TRUE. The move is not a milestone list moving
+    /// toward completion — it is a fact about where somebody's life stands,
+    /// true until it is not.
+    ///
+    /// **Not a `topic`.** `topic` is the glue noun for a world-fact that
+    /// belongs to no person, place, or project — the anchor for something
+    /// nobody's story owns. A thread belongs to somebody's life; it is never
+    /// the anchor of last resort, it is the thing the story is ABOUT.
+    pub const THREAD: EntityKind = EntityKind("thread");
 
     /// **The kinds the software ships**, in the order they are seeded and
     /// listed. Not "every kind there is": that is [`kinds::all`], which answers
     /// from what this process loaded.
-    pub const ALL: [EntityKind; 14] = [
+    pub const ALL: [EntityKind; 15] = [
         EntityKind::PERSON,
         EntityKind::PROJECT,
         EntityKind::PLACE,
@@ -148,6 +164,7 @@ impl EntityKind {
         EntityKind::MACHINE,
         EntityKind::VIEW,
         EntityKind::SESSION,
+        EntityKind::THREAD,
     ];
 
     /// A kind from a token this crate already holds for the life of the
@@ -4867,6 +4884,7 @@ mod tests {
             (EntityKind::MACHINE, "machine"),
             (EntityKind::VIEW, "view"),
             (EntityKind::SESSION, "session"),
+            (EntityKind::THREAD, "thread"),
         ];
         for (kind, token) in all {
             assert_eq!(kind.as_token(), token);

@@ -10,7 +10,7 @@ use crate::teaching::{RHYTHM_HISTORY_DOMAIN, RHYTHM_HISTORY_TEACHING};
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AddEntityArgs {
     /// One of `person`, `project`, `place`, `event`, `work`, `thing`, `org`,
-    /// `topic`, `bot`, `pet`, `rhythm`, `machine`, `view`.
+    /// `topic`, `bot`, `pet`, `rhythm`, `machine`, `view`, `thread`.
     ///
     /// **A pet is a `pet` and not a `thing`.** `thing` is a named possession —
     /// a bike, a hand tool — and a companion animal is not one.
@@ -28,6 +28,12 @@ pub struct AddEntityArgs {
     /// is for: nothing about an identity is compiled in, so every bot beyond
     /// the one a fresh instance ships with is made through this call — and the
     /// mailbox it owns opens in the same act.
+    ///
+    /// **A `thread` is an ongoing line in somebody's life, not a `project`
+    /// and not a `topic`.** A project moves toward completion and ends when
+    /// it is DONE; a thread ends when it stops being TRUE. A topic is the glue noun
+    /// for a world-fact belonging to no person, place or project; a thread
+    /// belongs to somebody's life and is never the anchor of last resort.
     pub(crate) kind: String,
     /// The slug half of the handle (`[a-z0-9-]+`), or a full `kind:slug` id
     /// whose kind must match `kind`. The handle is the name this entity is

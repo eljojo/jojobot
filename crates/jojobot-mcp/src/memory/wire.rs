@@ -338,6 +338,12 @@ pub(crate) fn type_name(kind: EntityKind) -> &'static str {
         // `Product` — which states the one thing this kind exists to deny. So
         // the word here is the plain one every model already knows.
         "pet" => "Pet",
+        // schema.org has nothing for an ongoing situation either — its own
+        // `Thread` sense is a conversation, not a line in somebody's life —
+        // and the same choice already made for `rhythm`/`machine` applies
+        // here: the plain word over a nearest-fit that would state something
+        // false.
+        "thread" => "Thread",
         // **A kind the software never heard of has no word waiting for it.**
         // The set of kinds is data, so a store may hold one this build has no
         // opinion about, and the honest answer is the caller's own token
@@ -392,6 +398,7 @@ mod tests {
             (EntityKind::MACHINE, "machine", "Machine"),
             (EntityKind::VIEW, "view", "View"),
             (EntityKind::SESSION, "session", "Session"),
+            (EntityKind::THREAD, "thread", "Thread"),
         ];
         assert_eq!(
             table.len(),
