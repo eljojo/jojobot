@@ -2578,6 +2578,146 @@ mod tests {
         );
     }
 
+    /// A minimal run, projected — the same shape [`crate::session::projected`]'s
+    /// own test builds, factored out so this file's cases can construct one
+    /// per bot without repeating the fixture.
+    fn a_run(bot: &str, id: &str, focus: &str, text: &str) -> DocScan {
+        // **The same reason `entity`'s own fixture stands a store up**: the
+        // kind set arrives the way a boot delivers it, and a session's own
+        // subject is validated against it exactly as any other handle is.
+        let _booted = crate::memory::testing::InMemoryMemory::booted();
+        use crate::session::{EntryId, JournalEntry, Session, SessionId, SessionState};
+        crate::session::projected(&Session {
+            id: SessionId(id.into()),
+            sid: None,
+            bot: EntityId(bot.into()),
+            focus: focus.into(),
+            started_at: "2026-07-24T09:00:00Z".parse().expect("a timestamp"),
+            state: SessionState::Active,
+            timezone: None,
+            started_on: None,
+            served_chars: 0,
+            entries: vec![JournalEntry {
+                id: EntryId("e1".into()),
+                at: "2026-07-24T09:05:00Z".parse().expect("a timestamp"),
+                on: None,
+                text: text.into(),
+                touched: None,
+                beat: None,
+            }],
+        })
+    }
+
+    /// 🚨 **The owner-scoping mechanism already covers a run, on the exact
+    /// shape [`crate::session::projected`] already produces — this is what
+    /// makes widening the fetch to every bot's runs safe.** Nothing here is
+    /// new: `resolve`'s owner check reads `DocScan::owner`
+    /// (`Ctx::of`, `readable_by`, `withheld`), and a run's projection
+    /// already sets it. This proves the mechanism BEFORE anything fetches a
+    /// run that is not the caller's own, on purpose — landed first, so an
+    /// interruption after this commit changes no caller's exposure.
+    ///
+    /// Three things in one case, because a real caller meets all three at
+    /// once: naming another bot's run by handle is refused as `NotYours`
+    /// (never `UnknownEntity` — the caller is holding a real handle);
+    /// browsing by kind returns only the caller's own and counts the rest as
+    /// `withheld`, never silently; and the caller's own run still reads
+    /// whole, prose included, so protecting a run never breaks reading it.
+    #[test]
+    fn a_runs_owner_scoping_already_works_on_its_projected_shape() {
+        let mine = a_run(
+            "bot:gamma",
+            "contract-gamma-run",
+            "gamma's own",
+            "gamma's own beat",
+        );
+        let theirs = a_run(
+            "bot:delta",
+            "contract-delta-run",
+            "delta's own",
+            "delta's own beat",
+        );
+        let scanned = vec![mine.clone(), theirs.clone()];
+
+        // Naming the other bot's run: refused as theirs, not as absent.
+        let naming = GraphQuery {
+            select: Selection {
+                subject: Some(EntityId("session:contract-delta-run".into())),
+                asked_by: Some(EntityId("bot:gamma".into())),
+                ..Selection::default()
+            },
+            include: Include {
+                facts: false,
+                prose: true,
+                stood_for: false,
+            },
+            follow: None,
+            history: None,
+        };
+        match resolve(&scanned, &[], &naming) {
+            Err(MemoryError::NotYours { attempted, owner }) => {
+                assert_eq!(attempted, "session:contract-delta-run");
+                assert_eq!(owner, "bot:delta");
+            }
+            other => panic!(
+                "another bot's run must be refused as somebody else's, never as absent and \
+                 never returned: {other:?}"
+            ),
+        }
+
+        // Browsing by kind: only the caller's own comes back, and the rest
+        // is counted rather than vanishing.
+        let browsing = GraphQuery {
+            select: Selection {
+                kind: Some(EntityKind::SESSION),
+                asked_by: Some(EntityId("bot:gamma".into())),
+                ..Selection::default()
+            },
+            include: Include {
+                facts: false,
+                prose: true,
+                stood_for: false,
+            },
+            follow: None,
+            history: None,
+        };
+        let browsed = resolve(&scanned, &[], &browsing).expect("a kind selects");
+        assert_eq!(
+            handles(&browsed.objects),
+            vec!["session:contract-gamma-run"],
+            "a bot must find its own past runs and not another's"
+        );
+        assert_eq!(
+            browsed.withheld, 1,
+            "the other bot's run is counted as withheld, not dropped in silence — an empty \
+             withheld total here would be indistinguishable from an index holding nothing"
+        );
+
+        // The caller's own still reads whole — protecting is not the same
+        // defect the projection trap would be.
+        let mine_query = GraphQuery {
+            select: Selection {
+                subject: Some(EntityId("session:contract-gamma-run".into())),
+                asked_by: Some(EntityId("bot:gamma".into())),
+                ..Selection::default()
+            },
+            include: Include {
+                facts: false,
+                prose: true,
+                stood_for: false,
+            },
+            follow: None,
+            history: None,
+        };
+        let mine_read = resolved(&scanned, &[], &mine_query).expect("its own bot reads it");
+        assert_eq!(handles(&mine_read), vec!["session:contract-gamma-run"]);
+        assert_eq!(
+            mine_read[0].prose.as_deref(),
+            Some("gamma's own beat"),
+            "a run selectable to its own bot must also read whole, never with empty prose"
+        );
+    }
+
     /// The objects a selection answered with — what almost every case here
     /// asks for. The cases about what was WITHHELD call `resolve` directly,
     /// because the count is the thing they assert.

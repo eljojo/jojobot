@@ -439,6 +439,7 @@ const ROSTER: &[&str] = &[
     "thing:contract-fold-rename-child-current",
     "person:contract-gene",
     "session:contract-gamma-run",
+    "session:contract-delta-run",
     "session:contract-add-entity-session-gap",
     "session:contract-merge-session-gap",
     "person:contract-filed",
