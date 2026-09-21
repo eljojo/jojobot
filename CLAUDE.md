@@ -39,10 +39,15 @@ in doubt, it doesn't cross.
 - **The roadmap is the work-queue board**, not a document. Every release, rock
   and slice lives there; a release that exists only in prose is one nobody
   works. **The decision log** — every rule the operator has set, one line each —
-  and **the brief** that renders it live in the operator's private wiki, not in
-  this repo. The coordinator session owns all three and reconciles them after
-  every slice. There is no architecture document: it was retired for being false
-  about the code in a dozen places, and as-built detail comes from the repo.
+  and **the product brief** that renders it live in the operator's private wiki,
+  not in this repo. **The per-feature briefs DO live here, at
+  `pm/feature-briefs/`** — one file per feature, saying what it is for, why it is
+  shaped that way, and what it deliberately is not. **Read the brief for a
+  feature before you reason about that feature**: it usually already answers what
+  looks like a fresh design finding. The coordinator session owns all of them and
+  reconciles them after every slice. There is no architecture document: it was
+  retired for being false about the code in a dozen places, and as-built detail
+  comes from the repo.
 - **Migration note:** while behaviour migrates, most operating context still
   lives in a private repo of the user's. Sessions on the user's machine may read
   it for orientation. **Nothing life-specific may cross back into this repo** —
@@ -97,9 +102,17 @@ Milestones are **capabilities, never infrastructure** — each is named "after
 this, I can ___".
 
 > **This file and the README carry the roadmap status, so they are versioned
-> with the code: any slice that changes what's true here — a milestone ships,
-> a verb lands, config changes — updates both in the same round.** A stale
+> with the code: any slice that changes what's true here — a milestone ships, a
+> verb lands, config changes — updates both in the same round.** A stale
 > "Status" section is a bug, not a nice-to-have.
+>
+> **They carry it at different altitudes.** This file is the detail. The README
+> has one row per feature marked works, partly or not built, measured against
+> the code on `main` — so a slice that moves a feature between those three
+> states moves its row. **The README is for a person making sense of the
+> project**, is held to about five minutes of reading, and carries no
+> instructions for running the software: it is not meant to be run by anyone
+> yet.
 
 Shipped and live:
 
@@ -480,7 +493,8 @@ raw error became a blocked answer · the trash got swept.
 
 The **surface** is the redesign that followed: built from the catalogue of domain
 actions harvested from real use, fewer verbs doing more through domain-level
-parameters; the curated list lives in the README.
+parameters; the milestone list above records what shipped, and the live surface
+is whatever the tool schemas and `start_here` name.
 
 - **One identity ships.** A fresh instance arrives holding `assistant`, with its
   mailbox, seeded before anything serves. That is what closes the loop under
