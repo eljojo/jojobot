@@ -3933,6 +3933,7 @@ mod tests {
                     &corrected.address(),
                     FactPatch {
                         content: Some(said.into()),
+                        provenance: Some(Provenance::Inference),
                         ..Default::default()
                     },
                 )

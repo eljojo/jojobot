@@ -807,7 +807,7 @@ async fn july(room: &Surface, sid: &str) {
         "update_fact",
         json!({"address": wrong,
                "content": "The North Trail Club does not meet on Tuesdays — the operator was mistaken in March; that never stood.",
-               "recorded_at": "2026-07-05"}),
+               "recorded_at": "2026-07-05", "provenance": "testimony"}),
     )
     .await;
     did(
@@ -1105,7 +1105,7 @@ async fn corrects_or_captures_the_pump(room: &Surface, sid: &str) {
                 "update_fact",
                 json!({"address": ralphs, "content": "brought round over the summer",
                        "shape": "connection", "object": "person:nelson",
-                       "recorded_at": "2026-10-11"}),
+                       "recorded_at": "2026-10-11", "provenance": "testimony"}),
             )
             .await;
         }
@@ -1141,7 +1141,7 @@ async fn october_corrects_the_pump_and_clears_its_day(room: &Surface, sid: &str)
         "update_fact",
         json!({"address": ralphs, "content": "brought round over the summer",
                "shape": "connection", "object": "person:nelson",
-               "clear_happened_at": true, "recorded_at": "2026-10-11"}),
+               "clear_happened_at": true, "recorded_at": "2026-10-11", "provenance": "testimony"}),
     )
     .await;
 }
@@ -1397,7 +1397,7 @@ async fn bike_lock_corrected_in_the_same_breath(room: &Surface, sid: &str) -> St
         sid,
         "update_fact",
         json!({"address": address,
-               "content": "bought a cable lock for the bike, not the other kind"}),
+               "content": "bought a cable lock for the bike, not the other kind", "provenance": "testimony"}),
     )
     .await;
     address
@@ -1871,7 +1871,7 @@ async fn december_corrects_a_claim_nobody_questioned(room: &Surface, sid: &str) 
         sid,
         "update_fact",
         json!({"address": "person:bart#f1", "content": "joined the club in the autumn",
-               "recorded_at": "2026-12-13"}),
+               "recorded_at": "2026-12-13", "provenance": "testimony"}),
     )
     .await;
 }

@@ -528,6 +528,7 @@ const ROSTER: &[&str] = &[
     "person:contract-unwritten",
     "person:contract-upsilon",
     "person:contract-whitespace",
+    "person:contract-wordswap",
     "person:contract-withdrawn-apart",
     "person:contract-withdrawn-pulled",
     "person:contract-view-walk-owner",

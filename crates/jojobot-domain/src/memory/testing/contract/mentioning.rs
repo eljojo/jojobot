@@ -102,6 +102,7 @@ pub async fn a_mention_is_stored_as_a_badge_and_read_back_as_a_handle<
                 // line of its own — so it is asserted rather than assumed
                 // to follow the claim above it.
                 details: Some("along @place:contract-mention-yard".into()),
+                provenance: Some(Provenance::Inference),
                 ..Default::default()
             },
         )
@@ -1022,6 +1023,7 @@ pub async fn an_edit_that_touches_only_the_content_still_follows_a_later_rename<
             &written.address(),
             FactPatch {
                 content: Some("only the words changed".into()),
+                provenance: Some(Provenance::Inference),
                 ..Default::default()
             },
         )
@@ -1459,6 +1461,7 @@ pub async fn an_edit_through_a_stale_address_reaches_the_record_it_always_named<
             &stale_address,
             FactPatch {
                 content: Some("edited through the stale address".into()),
+                provenance: Some(Provenance::Inference),
                 ..Default::default()
             },
         )
@@ -1992,6 +1995,7 @@ pub async fn no_read_serves_a_badge_and_every_one_serves_the_handle<M: Memory + 
             &written.address(),
             FactPatch {
                 content: Some("was owed nothing by @place:contract-mention-inn".into()),
+                provenance: Some(Provenance::Inference),
                 ..Default::default()
             },
         )

@@ -9,6 +9,8 @@
 //! `// GAP —` marks what a beat needed and could not have. The commented-out
 //! call is the missing capability, written the way it would be asked for.
 
+use serde_json::json;
+
 use super::dsl::Story;
 
 #[tokio::test]
@@ -38,9 +40,13 @@ async fn where_did_you_get_that() {
 
     // The claim is rewritten in place, so a reader gets one answer rather than
     // two and a judgement.
-    s.correct(
-        &claim,
-        "closes at 6 on Sundays — they went on a Sunday and it was shut",
+    s.call(
+        "update_fact",
+        json!({
+            "address": &claim,
+            "content": "closes at 6 on Sundays — they went on a Sunday and it was shut",
+            "provenance": "inference",
+        }),
     )
     .await;
 
@@ -105,9 +111,13 @@ async fn where_did_you_get_that() {
     s.has_no_verb("reject", &["update_fact", "retract"]).await;
 
     // Cleaning up by hand, which is what a session would have to do every time.
-    s.correct(
-        &again,
-        "closes at 6 on Sundays — already established, do not re-derive",
+    s.call(
+        "update_fact",
+        json!({
+            "address": &again,
+            "content": "closes at 6 on Sundays — already established, do not re-derive",
+            "provenance": "inference",
+        }),
     )
     .await;
 

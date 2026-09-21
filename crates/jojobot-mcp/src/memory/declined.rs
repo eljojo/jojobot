@@ -254,7 +254,8 @@ pub(crate) fn memory_declined(
         | MemoryError::InvalidEntity(_)
         | MemoryError::InvalidEdge(_)
         | MemoryError::InvalidQuery(_)
-        | MemoryError::InvalidType(_) => Ok(blocked_body(
+        | MemoryError::InvalidType(_)
+        | MemoryError::UnstatedProvenance => Ok(blocked_body(
             &EntityId(String::new()),
             &[],
             format!(
@@ -480,7 +481,8 @@ pub(crate) fn memory_error(e: MemoryError) -> McpError {
         | MemoryError::HandleMoved { .. }
         | MemoryError::SuppliedHandle { .. }
         | MemoryError::UnconfirmedPromotion
-        | MemoryError::UnconfirmedSettling => McpError::invalid_params(e.to_string(), None),
+        | MemoryError::UnconfirmedSettling
+        | MemoryError::UnstatedProvenance => McpError::invalid_params(e.to_string(), None),
         MemoryError::Store(msg) => {
             McpError::internal_error(crate::boundary::store_failed("this call", &msg), None)
         }

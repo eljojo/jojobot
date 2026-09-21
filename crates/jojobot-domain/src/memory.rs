@@ -1660,6 +1660,13 @@ pub fn apply_fact_patch(fact: &mut Fact, patch: &FactPatch) -> Result<(), Memory
     if let Some(requested) = patch.standing {
         check_standing(fact.standing, requested, patch.confirmed_by_user)?;
     }
+    // **A replaced claim restates how it is known, every time.** Checked
+    // before the content itself: a patch that fails both this and shape
+    // validation is told about the missing provenance, the one thing no
+    // amount of editing the words can fix.
+    if patch.content.is_some() && patch.provenance.is_none() {
+        return Err(MemoryError::UnstatedProvenance);
+    }
     if let Some(content) = &patch.content {
         validate_content(content)?;
     }
@@ -3387,6 +3394,21 @@ pub enum MemoryError {
          (confirmed_by_user); jojobot infers freely but never blesses on its own"
     )]
     UnconfirmedPromotion,
+    /// **A content replacement named no provenance.**
+    ///
+    /// An edit that rewrites `content` and leaves `provenance` unnamed would
+    /// carry forward whatever the claim already had — testimony, an
+    /// observation, an inference — over words that did not exist when that
+    /// provenance was set. Refused rather than silently kept: a caller who
+    /// meant the same provenance says so again, and a caller who does not
+    /// know how the new words are known has found that out before anything
+    /// is written under a name that no longer fits it.
+    #[error(
+        "a claim's content cannot be replaced without saying how the new words are known: give \
+         'provenance' — testimony, observation or inference — even to say it is known the same \
+         way as before"
+    )]
+    UnstatedProvenance,
     /// An open claim was asked to be settled without the user saying so.
     #[error(
         "settling an open claim requires the user's explicit confirmation \

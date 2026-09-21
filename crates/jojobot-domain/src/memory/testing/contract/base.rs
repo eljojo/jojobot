@@ -1003,6 +1003,7 @@ pub async fn a_claim_carries_when_it_was_taken_in<M: Memory>(store: &M) {
         &backfilled.address(),
         FactPatch {
             content: Some("moved here in the spring".to_string()),
+            provenance: Some(Provenance::Inference),
             ..Default::default()
         },
     )
@@ -2594,6 +2595,7 @@ pub async fn facts_carry_a_usable_address<M: Memory>(store: &M) {
         &address,
         FactPatch {
             content: Some("addressed and edited".into()),
+            provenance: Some(Provenance::Inference),
             ..Default::default()
         },
     )
@@ -2616,6 +2618,7 @@ pub async fn update_fact_edits_in_place<M: Memory>(store: &M) {
         FactPatch {
             content: Some("works at the new place".into()),
             details: Some("changed jobs in July".into()),
+            provenance: Some(Provenance::Inference),
             ..Default::default()
         },
     )
@@ -2668,6 +2671,7 @@ pub async fn an_edit_can_carry_a_new_day_and_omitted_leaves_it_alone<M: Memory>(
         FactPatch {
             content: Some("the club meets on Wednesdays".into()),
             recorded_at: Some(date(2026, 8, 15)),
+            provenance: Some(Provenance::Inference),
             ..Default::default()
         },
     )
@@ -2683,6 +2687,7 @@ pub async fn an_edit_can_carry_a_new_day_and_omitted_leaves_it_alone<M: Memory>(
         &redated.address(),
         FactPatch {
             content: Some("the club meets on Thursdays".into()),
+            provenance: Some(Provenance::Inference),
             ..Default::default()
         },
     )
@@ -2719,6 +2724,7 @@ pub async fn a_refutation_is_an_ordinary_content_edit<M: Memory>(store: &M) {
         &captured.address(),
         FactPatch {
             content: Some("NOT a close contact — do not re-infer closeness".into()),
+            provenance: Some(Provenance::Inference),
             ..Default::default()
         },
     )
@@ -2791,6 +2797,61 @@ pub async fn promotion_to_testimony_needs_confirmation<M: Memory>(store: &M) {
         read_back(store, &subject, &captured.id).await.provenance,
         Provenance::Testimony
     );
+}
+
+/// **A content replacement must restate how the new words are known.**
+///
+/// Editing `content` with no `provenance` named would leave whatever the
+/// claim already carried standing over words that did not exist when that
+/// provenance was set — testimony backing a sentence the operator never
+/// said. A refusal makes the caller decide rather than a silent value
+/// deciding for them: name provenance again, even to say it is known the
+/// same way as before.
+pub async fn a_content_replacement_without_provenance_is_refused<M: Memory>(store: &M) {
+    let subject = EntityId::person("person:contract-wordswap");
+    let captured = capture(
+        store,
+        NewFact {
+            provenance: Provenance::Testimony,
+            ..NewFact::about(subject.clone(), "prefers tea", date(2026, 7, 1))
+        },
+    )
+    .await;
+    assert_eq!(captured.provenance, Provenance::Testimony);
+
+    let err = store
+        .update_fact(
+            &captured.address(),
+            FactPatch {
+                content: Some("prefers coffee".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect_err("a content replacement naming no provenance must be refused");
+    assert!(
+        matches!(err, MemoryError::UnstatedProvenance),
+        "expected UnstatedProvenance, got {err:?}"
+    );
+    assert_eq!(
+        read_back(store, &subject, &captured.id).await.content,
+        "prefers tea",
+        "a refused edit must leave the fact's content untouched"
+    );
+
+    // The paired positive: the same edit, naming provenance, lands.
+    let edited = edit(
+        store,
+        &captured.address(),
+        FactPatch {
+            content: Some("prefers coffee".to_string()),
+            provenance: Some(Provenance::Testimony),
+            ..Default::default()
+        },
+    )
+    .await;
+    assert_eq!(edited.content, "prefers coffee");
+    assert_eq!(edited.provenance, Provenance::Testimony);
 }
 
 /// **A hedge round-trips as itself.** The claim the second field exists
@@ -3779,6 +3840,7 @@ pub async fn each_write_of_a_claim_records_its_own_moment<M: Memory>(store: &M) 
             &claim.address(),
             FactPatch {
                 content: Some("was never at the fair".into()),
+                provenance: Some(Provenance::Inference),
                 ..Default::default()
             },
         )
@@ -5743,6 +5805,7 @@ async fn an_edit_on_a_captured_claim_lands<M: Memory, B: support::Backing<M>>(
             &written.address(),
             FactPatch {
                 content: Some("after the edit".to_string()),
+                provenance: Some(Provenance::Inference),
                 ..Default::default()
             },
         )
@@ -6851,6 +6914,7 @@ pub async fn a_rewrite_can_take_the_edge_off_and_leaves_it_alone_otherwise<M: Me
         &stays.address(),
         FactPatch {
             content: Some("was at the fair, all afternoon".into()),
+            provenance: Some(Provenance::Inference),
             ..Default::default()
         },
     )
@@ -6866,6 +6930,7 @@ pub async fn a_rewrite_can_take_the_edge_off_and_leaves_it_alone_otherwise<M: Me
         FactPatch {
             content: Some("was never at the fair — a different weekend".into()),
             clear_edge: true,
+            provenance: Some(Provenance::Inference),
             ..Default::default()
         },
     )
@@ -8915,6 +8980,7 @@ pub async fn a_read_of_facts_says_how_many_times_each_was_written<M: Memory>(sto
         &corrected.address(),
         FactPatch {
             content: Some("Ralph gave it back".into()),
+            provenance: Some(Provenance::Inference),
             ..Default::default()
         },
     )
@@ -9015,6 +9081,7 @@ pub async fn claim_histories_agrees_with_claim_history_per_fact<M: Memory>(store
         &corrected.address(),
         FactPatch {
             content: Some("ralph gave it back".into()),
+            provenance: Some(Provenance::Inference),
             ..Default::default()
         },
     )
@@ -9767,6 +9834,7 @@ pub async fn run_all<M: Memory>(store: &M) {
     pipe_in_content_round_trips(store).await;
     a_backslash_in_content_round_trips(store).await;
     both_provenances_survive(store).await;
+    a_content_replacement_without_provenance_is_refused(store).await;
     edge_whitespace_is_normalized(store).await;
     multiple_facts_all_recallable(store).await;
     subjects_are_isolated(store).await;

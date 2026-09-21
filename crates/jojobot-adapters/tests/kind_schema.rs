@@ -177,6 +177,7 @@ async fn a_key_added_to_a_kind_refuses_no_write_that_worked_before() {
             &record,
             FactPatch {
                 content: Some("the kiosk by the side door".to_string()),
+                provenance: Some(Provenance::Inference),
                 ..FactPatch::default()
             },
         )

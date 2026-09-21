@@ -1212,7 +1212,7 @@ impl Session {
         self.write(
             &format!("correcting {address}"),
             "update_fact",
-            json!({"address": address, "content": content}),
+            json!({"address": address, "content": content, "provenance": "testimony"}),
         )
         .await;
     }
@@ -1224,7 +1224,7 @@ impl Session {
             .write(
                 &format!("correcting {address}"),
                 "update_fact",
-                json!({"address": address, "content": content}),
+                json!({"address": address, "content": content, "provenance": "testimony"}),
             )
             .await;
         Answer {
@@ -1241,7 +1241,7 @@ impl Session {
         self.write(
             &format!("correcting {address} and taking its edge off"),
             "update_fact",
-            json!({"address": address, "content": content, "clear_edge": true}),
+            json!({"address": address, "content": content, "clear_edge": true, "provenance": "testimony"}),
         )
         .await;
     }
@@ -1290,6 +1290,7 @@ impl Session {
             json!({
                 "address": address, "content": content,
                 "shape": "about", "object": object,
+                "provenance": "testimony",
             }),
         )
         .await;

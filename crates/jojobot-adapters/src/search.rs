@@ -4106,6 +4106,7 @@ mod tests {
                 &captured.address(),
                 FactPatch {
                     content: Some("works at the new place".into()),
+                    provenance: Some(Provenance::Inference),
                     ..Default::default()
                 },
             )

@@ -629,6 +629,7 @@ mod tests {
         let untouched = json_of(
             &jojobot
                 .update_fact(Parameters(UpdateFactArgs {
+                    provenance: Some("inference".to_string()),
                     content: Some("the kiln held temperature".into()),
                     ..update_args(&address)
                 }))

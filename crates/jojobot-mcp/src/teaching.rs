@@ -375,6 +375,7 @@ mod tests {
         let content_only = json_of(
             &jojobot
                 .update_fact(Parameters(UpdateFactArgs {
+                    provenance: Some("inference".to_string()),
                     sid: Some(sid.clone()),
                     content: Some("rides with the club every week".into()),
                     ..update_args(&address)
@@ -1397,6 +1398,7 @@ mod tests {
         let edited = jojobot
             .update_fact(rmcp::handler::server::wrapper::Parameters(
                 crate::memory::UpdateFactArgs {
+                    provenance: Some("inference".to_string()),
                     content: Some("plays go on weekends".into()),
                     sid: Some(sid),
                     ..update_args("person:alpha#f1")

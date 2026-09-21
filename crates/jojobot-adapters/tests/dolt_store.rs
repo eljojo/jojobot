@@ -35,6 +35,7 @@ use jojobot_domain::memory::testing::contract as memory;
 use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
 use jojobot_domain::memory::{
     Edge, EdgeShape, EntityPatch, FactAddress, FactPatch, MemoryError, NewEntity, NewFact,
+    Provenance,
 };
 use jojobot_domain::session::testing::contract as sessions;
 use jojobot_domain::session::{NewEntry, NewSession, SessionState, Sessions, Sid};
@@ -1558,6 +1559,7 @@ async fn the_substrate_keeps_what_a_correction_overwrote() {
             &claim.address(),
             FactPatch {
                 content: Some("was never at the fair".into()),
+                provenance: Some(Provenance::Inference),
                 ..Default::default()
             },
         )
@@ -2500,6 +2502,7 @@ async fn an_edit_does_not_re_stamp_the_claims_own_column() {
             &claim.address(),
             FactPatch {
                 content: Some("was never at the fair".into()),
+                provenance: Some(Provenance::Inference),
                 ..Default::default()
             },
         )

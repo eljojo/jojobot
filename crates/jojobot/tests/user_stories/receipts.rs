@@ -87,6 +87,7 @@ async fn two_accounts_of_one_evening_and_the_receipt_that_says_both_stand() {
             json!({
                 "address": address,
                 "content": "the lease was NOT paid in June — confirmed",
+                "provenance": "testimony",
             }),
         )
         .await;

@@ -227,6 +227,7 @@ pub async fn a_term_from_a_superseded_wording_is_found_only_when_asked_for<M: Me
         &captured.address(),
         FactPatch {
             content: Some("returned the drill to milhouse".into()),
+            provenance: Some(Provenance::Inference),
             ..Default::default()
         },
     )

@@ -3364,6 +3364,7 @@ mod tests {
         capture_ok(&jojobot, capture_args("alpha", "rides to work")).await;
         jojobot
             .update_fact(Parameters(UpdateFactArgs {
+                provenance: Some("inference".to_string()),
                 content: Some("works at the new place".into()),
                 ..update_args("person:alpha#f1")
             }))
@@ -3467,6 +3468,7 @@ mod tests {
         capture_ok(&jojobot, capture_args("alpha", "rides to work")).await;
         jojobot
             .update_fact(Parameters(UpdateFactArgs {
+                provenance: Some("inference".to_string()),
                 content: Some("Ralph gave the drill back".into()),
                 ..update_args("person:alpha#f1")
             }))
@@ -3528,6 +3530,7 @@ mod tests {
         capture_ok(&jojobot, capture_args("alpha", "works at the old place")).await;
         jojobot
             .update_fact(Parameters(UpdateFactArgs {
+                provenance: Some("inference".to_string()),
                 content: Some("works at the new place".into()),
                 ..update_args("person:alpha#f1")
             }))
@@ -3682,6 +3685,7 @@ mod tests {
         let updated = json_of(
             &jojobot
                 .update_fact(Parameters(UpdateFactArgs {
+                    provenance: Some("inference".to_string()),
                     content: Some("works at the new place".into()),
                     details: Some("changed jobs in July".into()),
                     ..update_args(address)

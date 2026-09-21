@@ -679,6 +679,7 @@ mod tests {
         let edited = json_of(
             &jojobot
                 .update_fact(Parameters(UpdateFactArgs {
+                    provenance: Some("inference".to_string()),
                     content: Some("works at the new place".into()),
                     ..update_args("person:alpha#f1")
                 }))
@@ -748,6 +749,7 @@ mod tests {
             json_of(
                 &jojobot
                     .update_fact(Parameters(UpdateFactArgs {
+                        provenance: Some("inference".to_string()),
                         content: Some(content.into()),
                         ..update_args(address)
                     }))
@@ -837,6 +839,7 @@ mod tests {
         let rewritten = update_ok(
             &jojobot,
             UpdateFactArgs {
+                provenance: Some("inference".to_string()),
                 content: Some("said the kiln was NOT lit — confirmed".into()),
                 ..update_args(&address)
             },
@@ -913,6 +916,7 @@ mod tests {
         let alone = update_ok(
             &jojobot,
             UpdateFactArgs {
+                provenance: Some("inference".to_string()),
                 content: Some("said the kiln was NOT lit".into()),
                 ..update_args(&address_of(&only))
             },
@@ -933,6 +937,7 @@ mod tests {
             &update_ok(
                 &jojobot,
                 UpdateFactArgs {
+                    provenance: Some("inference".to_string()),
                     content: Some("the kiln was cold all week".into()),
                     ..update_args(&address_of(&only))
                 },
@@ -949,6 +954,7 @@ mod tests {
             &update_ok(
                 &jojobot,
                 UpdateFactArgs {
+                    provenance: Some("inference".to_string()),
                     content: Some("the kiln is lit again".into()),
                     ..update_args(&address_of(&only))
                 },
@@ -1389,6 +1395,7 @@ mod tests {
         let reworded = json_of(
             &jojobot
                 .update_fact(Parameters(UpdateFactArgs {
+                    provenance: Some("inference".to_string()),
                     content: Some("was at the winter fest, both nights".into()),
                     ..update_args(&address_of(&kept))
                 }))
@@ -1404,6 +1411,7 @@ mod tests {
         let corrected = json_of(
             &jojobot
                 .update_fact(Parameters(UpdateFactArgs {
+                    provenance: Some("inference".to_string()),
                     content: Some("was never at the winter fest".into()),
                     clear_edge: Some(true),
                     ..update_args(&address_of(&wrong))
@@ -1480,6 +1488,7 @@ mod tests {
         let redated = json_of(
             &jojobot
                 .update_fact(Parameters(UpdateFactArgs {
+                    provenance: Some("inference".to_string()),
                     content: Some("the club meets on Wednesdays".into()),
                     recorded_at: Some("2026-08-15".into()),
                     ..update_args(&address)
@@ -1496,6 +1505,7 @@ mod tests {
         let untouched = json_of(
             &jojobot
                 .update_fact(Parameters(UpdateFactArgs {
+                    provenance: Some("inference".to_string()),
                     content: Some("the club meets on Thursdays".into()),
                     ..update_args(&address)
                 }))
@@ -1545,6 +1555,7 @@ mod tests {
         let updated = json_of(
             &jojobot
                 .update_fact(Parameters(UpdateFactArgs {
+                    provenance: Some("inference".to_string()),
                     content: Some("NOT a close contact — do not re-infer".into()),
                     ..update_args(&address_of(&captured))
                 }))
@@ -1758,6 +1769,7 @@ mod tests {
 
         let err = jojobot
             .update_fact(Parameters(UpdateFactArgs {
+                provenance: Some("inference".to_string()),
                 content: Some("nope".into()),
                 ..update_args("not-an-address")
             }))
@@ -1768,6 +1780,7 @@ mod tests {
         let missed = blocked(
             &jojobot
                 .update_fact(Parameters(UpdateFactArgs {
+                    provenance: Some("inference".to_string()),
                     content: Some("nope".into()),
                     ..update_args("person:alpha#f99")
                 }))
@@ -1860,6 +1873,7 @@ mod tests {
         let edited = json_of(
             &jojobot
                 .update_fact(Parameters(UpdateFactArgs {
+                    provenance: Some("inference".to_string()),
                     content: Some("plays go and chess".into()),
                     sid: Some(sid),
                     ..update_args("person:alpha#f1")
@@ -2118,6 +2132,7 @@ mod tests {
         let edited = json_of(
             &jojobot
                 .update_fact(Parameters(UpdateFactArgs {
+                    provenance: Some("inference".to_string()),
                     content: Some("works at the new place".into()),
                     ..update_args("person:alpha#f1")
                 }))

@@ -249,6 +249,7 @@ async fn an_investigation_keeps_what_it_ruled_out() {
         json!({
             "address": &deliberate,
             "content": "its reset was NOT a deliberate reboot — refuted by direct access",
+            "provenance": "inference",
             "fields": {
                 "reasoning_error": "a kernel change across a boot does not imply the boot \
                                     was deliberate",
