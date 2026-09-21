@@ -415,6 +415,22 @@ impl Due {
             Due::Never | Due::NotYetOpened => (2, Date::MAX),
         }
     }
+
+    /// **How many days past `as_of` this fell due — the number `staleness`
+    /// orders by, stated rather than left for a caller to re-derive from a
+    /// date it was never given.**
+    ///
+    /// `None` on [`Due::Unreadable`]: nothing here can say exactly how late
+    /// it is, so this states no number rather than guessing one — the same
+    /// reason `staleness` sorts it first instead of behind a measured date.
+    /// `None` too on [`Due::Never`] and [`Due::NotYetOpened`], which
+    /// `owed_on` never lets a caller reach in the first place.
+    pub fn days_overdue(self, as_of: Date) -> Option<i64> {
+        match self {
+            Due::On(day) => as_of.since(day).ok().map(|span| span.get_days().into()),
+            Due::Unreadable | Due::Never | Due::NotYetOpened => None,
+        }
+    }
 }
 
 /// **How a SORT of thing says when one of its things falls due.**

@@ -349,6 +349,14 @@ pub struct RecallArgs {
     /// thing it was meant to change untouched. To confirm an edit worked,
     /// recall the thing by its own handle and read the field back directly;
     /// leaving a filtered list is not the same claim as a field changing.
+    ///
+    /// **The answer orders what it found, oldest due first, and each object
+    /// carries `overdue_by_days`** — how many days past the date named it
+    /// fell due, so the order is one you can check rather than one you have
+    /// to trust. `null` on the one thing this cannot measure: a due moment
+    /// that cannot be read sorts first, loudly, rather than behind a number
+    /// that would have to be guessed. Absent entirely when this call asked no
+    /// overdue question.
     #[serde(default)]
     pub(crate) overdue: Option<OverdueArgs>,
     /// **What else was recorded around a day.** See [`NearArgs`].
@@ -1604,6 +1612,13 @@ impl Jojobot {
         // never opened, unreadable, or a kind no carrier speaks for — and
         // this says how many, not which.
         let mut overdue_excluded: Option<usize> = None;
+        // **How many days past the day asked about each object fell due**,
+        // aligned with `found` in its final, already-sorted order. `None`
+        // when the call asked no overdue question at all, exactly as
+        // `overdue_as_of` and `overdue_excluded` already read — a caller that
+        // asked nothing is told nothing, rather than a distance for a
+        // question it never asked.
+        let mut overdue_by_days: Option<Vec<Option<i64>>> = None;
         if let Some(as_of) = as_of {
             // **The read compares a moment to a day and computes none of them.**
             // Which moment a thing falls due at is its carrier's answer, so a
@@ -1620,6 +1635,14 @@ impl Jojobot {
             // it was never given.** Ordering an already-found, already-filtered
             // set costs nothing extra to find.
             found.sort_by_key(|object| attention::owed(&asked, &object.fields).staleness());
+            // **Read off the same `Due` the order already came from**, so the
+            // number on the wire cannot disagree with the position it is in.
+            overdue_by_days = Some(
+                found
+                    .iter()
+                    .map(|object| attention::owed(&asked, &object.fields).days_overdue(as_of))
+                    .collect(),
+            );
         }
         // **The context a reader did not ask for, and the whole point of the
         // card.** A session that pulls a thing is told who holds what that
@@ -1843,10 +1866,21 @@ impl Jojobot {
             "candidates_capped": candidates_capped,
             "objects": found
                 .iter()
+                .enumerate()
                 .zip(held)
                 .zip(backing.into_iter().chain(std::iter::repeat(None)))
-                .map(|((o, held), backing)| {
+                .map(|(((idx, o), held), backing)| {
                     let mut rendered = object_json(o, include, today);
+                    // **Present, with a null value, on the one object this
+                    // cannot measure — never absent.** Absent would read as
+                    // "you did not ask", which is a different claim from
+                    // "nothing here can say".
+                    if let Some(distances) = &overdue_by_days {
+                        rendered["overdue_by_days"] = match distances[idx] {
+                            Some(days) => days.into(),
+                            None => serde_json::Value::Null,
+                        };
+                    }
                     let elided_bot_has_charter = elided_bot_charters
                         .get(&o.entity.id)
                         .copied()
@@ -2816,6 +2850,13 @@ mod tests {
     /// LATER; `polish` falls due first. A read that merely filtered and left
     /// the scan's own order standing would show `descale` first — this case
     /// only passes if something actually orders by how overdue each one is.
+    ///
+    /// **And it states the distance, not only the order.** An order a caller
+    /// cannot check is one they have to trust — polish fell due on 2026-01-08
+    /// and descale on 2026-03-08, 144 and 85 days respectively before
+    /// 2026-06-01, computed independently of `Due::staleness`'s own sort key
+    /// so this cannot pass on a build that orders correctly but reports the
+    /// wrong number.
     #[tokio::test]
     async fn the_owed_read_orders_the_longest_quiet_first() {
         let jojobot = handler();
@@ -2840,6 +2881,98 @@ mod tests {
             vec!["rhythm:polish".to_string(), "rhythm:descale".to_string()],
             "polish fell due in January and descale in March, so polish has gone quiet longer \
              and belongs first: {found}",
+        );
+        assert_eq!(
+            found["objects"][0]["overdue_by_days"], 144,
+            "polish fell due on 2026-01-08, 144 days before the day asked about: {found}",
+        );
+        assert_eq!(
+            found["objects"][1]["overdue_by_days"], 85,
+            "descale fell due on 2026-03-08, 85 days before the day asked about: {found}",
+        );
+
+        // The paired negative: a read that asks no overdue question states no
+        // distance either, on the same objects.
+        let unfiltered = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    kind: Some("rhythm".into()),
+                    ..of_nothing()
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        assert!(
+            unfiltered["objects"]
+                .as_array()
+                .expect("objects")
+                .iter()
+                .all(|o| o.get("overdue_by_days").is_none()),
+            "no overdue question was asked, so no distance is answered: {unfiltered}",
+        );
+    }
+
+    /// **A loop whose schedule cannot be read has no distance, and it still
+    /// sorts first.**
+    ///
+    /// `Due::staleness` already puts `Unreadable` ahead of every dated one —
+    /// loud, because nothing here can say exactly how late it is, so it does
+    /// not hide behind a number that can be measured. That domain rule had no
+    /// case proving it through the served surface, only the unit test on
+    /// `Due::staleness` itself; this is the served one, and it is what tells a
+    /// caller whether the position is a domain guarantee or an accident of
+    /// this one store's scan order.
+    #[tokio::test]
+    async fn an_unreadable_schedule_sorts_first_and_carries_no_distance() {
+        let jojobot = handler();
+        a_rhythm(&jojobot, "descale", "7", "2026-08-01").await;
+        ensure(&jojobot, "thing:kettle").await;
+        jojobot
+            .add_entity(Parameters(AddEntityArgs {
+                parent: Some("thing:kettle".into()),
+                ..add_args("rhythm", "half-made", "Half Made")
+            }))
+            .await
+            .expect("add ok");
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                fields: Some(
+                    [("cadence_days".to_string(), "7".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..capture_args("rhythm:half-made", "every week, roughly")
+            },
+        )
+        .await;
+
+        let found = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    kind: Some("rhythm".into()),
+                    overdue: Some(OverdueArgs {
+                        as_of: Some("2026-09-01".into()),
+                    }),
+                    ..of_nothing()
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        assert_eq!(
+            handles(&found),
+            vec!["rhythm:half-made".to_string(), "rhythm:descale".to_string()],
+            "the unreadable one sorts first, ahead of the dated one it would otherwise trail if \
+             sorted by anything measurable: {found}",
+        );
+        assert!(
+            found["objects"][0]["overdue_by_days"].is_null(),
+            "nothing can say how late the unreadable one is, so its distance is null rather \
+             than a guess: {found}",
+        );
+        assert_eq!(
+            found["objects"][1]["overdue_by_days"], 24,
+            "descale fell due on 2026-08-08, 24 days before the day asked about: {found}",
         );
     }
 
