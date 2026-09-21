@@ -111,6 +111,17 @@ pub struct SearchArgs {
     /// is a better query.
     #[serde(default)]
     pub(crate) limit: Option<u32>,
+    /// **Which day ranking reads: `recorded_on`** (the default — the day a
+    /// claim was said) **or `happened_at`** (the day the thing itself did).
+    /// Neither is the system's default over the other; this is a choice the
+    /// caller makes each time.
+    ///
+    /// ⚠️ **A claim with no `happened_at` ranks by `recorded_on` instead**,
+    /// and the answer's own `rank_fallbacks` says how many that happened to
+    /// — an incomplete answer, accepted and explained, never a silent mix
+    /// of two orderings.
+    #[serde(default)]
+    pub(crate) clock: Option<String>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
     /// every call — it is what tells jojobot which bot is asking. Reads are
     /// attributed, never journalled.
@@ -453,6 +464,22 @@ fn asking_for_mail() -> SearchQuery {
     }
 }
 
+/// Which clock search ranks recency against — the same idiom `recall`'s own
+/// `parse_clock` takes for its neighbourhood window, narrowed to the two
+/// days the operator's ruling actually named. `taken_in` is refused rather
+/// than silently accepted or silently dropped: it is a real day on a claim,
+/// just not the one either half of this ruling is about.
+fn parse_rank_clock(raw: Option<&str>) -> Result<RankClock, McpError> {
+    match raw.map(str::trim) {
+        None | Some("") | Some("recorded_on") => Ok(RankClock::RecordedAt),
+        Some("happened_at") => Ok(RankClock::HappenedAt),
+        Some(other) => Err(McpError::invalid_params(
+            format!("clock must be recorded_on or happened_at, got '{other}'"),
+            None,
+        )),
+    }
+}
+
 /// The next coverage state — [`MailExcluded::next`]'s job for the type this
 /// module does not own.
 #[cfg(test)]
@@ -614,6 +641,7 @@ impl Jojobot {
             include_mail: args.include_mail.unwrap_or(false),
             include_history: args.include_history.unwrap_or(false),
             limit: args.limit.map_or(DEFAULT_LIMIT, |l| l as usize),
+            rank_clock: parse_rank_clock(args.clock.as_deref())?,
         };
         // Checked here as well as in the index: a malformed query is the caller's
         // mistake, and it should read as one no matter which adapter is behind us.
@@ -634,8 +662,29 @@ impl Jojobot {
         // about a day, and two runs in two zones answer it differently for one
         // stored claim.
         let as_of = self.dated(None, args.sid.as_deref())?;
+        // **How many of the ranked facts had no `happened_at` to rank by,
+        // and fell back to `recorded_at` instead.** `None` when ranking by
+        // `recorded_at`, since the question was not asked — an incomplete
+        // answer is accepted and explained, never a silent mix of two
+        // orderings, and the count is one number on the answer rather than
+        // a note on every hit.
+        let rank_fallbacks = match query.rank_clock {
+            RankClock::RecordedAt => None,
+            RankClock::HappenedAt => Some(
+                hits.iter()
+                    .filter(
+                        |hit| matches!(hit, Hit::Fact { fact, .. } if fact.happened_at.is_none()),
+                    )
+                    .count(),
+            ),
+        };
         let mut body = serde_json::json!({
             "count": hits.len(),
+            "rank_clock": match query.rank_clock {
+                RankClock::RecordedAt => "recorded_on",
+                RankClock::HappenedAt => "happened_at",
+            },
+            "rank_fallbacks": rank_fallbacks,
             // **A different question from the two coverage notes below.**
             // Those answer *was everything searched*; this answers *did the
             // query match what is there*, which is a property of the QUERY and
@@ -874,6 +923,7 @@ mod tests {
                 include_mail: Some(false),
                 include_history: Some(false),
                 limit: Some(5),
+                clock: Some("happened_at".into()),
                 sid: None,
                 fits_type: None,
             }))
@@ -900,6 +950,7 @@ mod tests {
         assert_eq!(edge.shape, Some(EdgeShape::Location));
         assert_eq!(edge.object.as_str(), "place:shelbyville");
         assert_eq!(query.limit, 5);
+        assert_eq!(query.rank_clock, RankClock::HappenedAt);
     }
 
     /// An edge filter with no shape means any edge pointing at the object, and the
@@ -988,6 +1039,10 @@ mod tests {
                     shape: Some("knows".into()),
                     object: "place:x".into(),
                 }),
+                ..searching()
+            },
+            SearchArgs {
+                clock: Some("taken_in".into()),
                 ..searching()
             },
         ];
@@ -2037,5 +2092,171 @@ mod tests {
         );
         assert_eq!(results[2]["edges"][0]["object"], "org:guild");
         assert_eq!(results[2]["snippet"], "…allergic to penicillin…");
+    }
+
+    /// **`parse_rank_clock` pinned directly**: the default, both named words,
+    /// and a refusal that names both words a caller could have meant — so a
+    /// caller who typos `clock` is told the two it can be, not just that it
+    /// was wrong.
+    #[test]
+    fn parse_rank_clock_defaults_to_recorded_on_and_names_both_words_on_refusal() {
+        assert_eq!(parse_rank_clock(None).unwrap(), RankClock::RecordedAt);
+        assert_eq!(parse_rank_clock(Some("")).unwrap(), RankClock::RecordedAt);
+        assert_eq!(
+            parse_rank_clock(Some("recorded_on")).unwrap(),
+            RankClock::RecordedAt
+        );
+        assert_eq!(
+            parse_rank_clock(Some("happened_at")).unwrap(),
+            RankClock::HappenedAt
+        );
+        let err = parse_rank_clock(Some("taken_in")).expect_err("not one of the two words");
+        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+        assert!(
+            err.message.contains("recorded_on") && err.message.contains("happened_at"),
+            "the refusal names both words a caller could have meant: {}",
+            err.message
+        );
+    }
+
+    /// **`clock` reaches the port as the `rank_clock` it names.** Same shape
+    /// as `include_mail`/`include_history` above: the safe default is
+    /// `recorded_on`, and a caller naming `happened_at` must see it on the
+    /// query the index actually ranks by, not just on the answer's echo.
+    #[tokio::test]
+    async fn clock_reaches_the_port_as_the_named_rank_clock() {
+        for (asked, wanted) in [
+            (None, RankClock::RecordedAt),
+            (Some("recorded_on"), RankClock::RecordedAt),
+            (Some("happened_at"), RankClock::HappenedAt),
+        ] {
+            let spy = Arc::new(SpySearch::default());
+            handler_with(spy.clone())
+                .search(Parameters(SearchArgs {
+                    query: Some("damper".into()),
+                    clock: asked.map(String::from),
+                    ..search_args()
+                }))
+                .await
+                .expect("search ok");
+            assert_eq!(
+                spy.query().rank_clock,
+                wanted,
+                "clock: {asked:?} must reach the port as {wanted:?}"
+            );
+        }
+    }
+
+    /// Two facts with no `happened_at` and one that holds it — asymmetric on
+    /// purpose, so counting the wrong side would not land on the same number
+    /// as counting the right one.
+    fn fact_missing_and_holding_happened_at() -> (Fact, Fact, Fact) {
+        let base = Fact {
+            id: FactId("f1".into()),
+            home: EntityId::person("person:alpha"),
+            subject: EntityId::person("person:alpha"),
+            content: "a claim".into(),
+            details: None,
+            provenance: Provenance::Testimony,
+            standing: Standing::Open,
+            status: FactStatus::Active,
+            recorded_at: jiff::civil::date(2026, 7, 1),
+            happened_at: None,
+            happened_through: None,
+            edge: None,
+            fields: Default::default(),
+            refs: Vec::new(),
+            derived_from: None,
+            stands_for: Vec::new(),
+            inserted_at: None,
+            stale_after: None,
+        };
+        let undated_too = Fact {
+            id: FactId("f2".into()),
+            ..base.clone()
+        };
+        let dated = Fact {
+            id: FactId("f3".into()),
+            happened_at: Some(jiff::civil::date(2026, 6, 1)),
+            ..base.clone()
+        };
+        (base, undated_too, dated)
+    }
+
+    /// **`rank_clock` echoes the query on every answer, and `rank_fallbacks`
+    /// is the honest half of ranking by `happened_at`**: null when nobody
+    /// asked for it — the question was not asked, never a silent zero — and,
+    /// when asked, the exact count of facts that had no `happened_at` to rank
+    /// by and fell back to `recorded_at`. Two undated facts against one dated
+    /// one is what proves the count is the undated side, not the dated one,
+    /// nor 0, nor the whole list.
+    #[tokio::test]
+    async fn rank_clock_and_fallbacks_are_reported_on_the_answer() {
+        let (undated, undated_too, dated) = fact_missing_and_holding_happened_at();
+        let alpha = Entity {
+            id: EntityId::person("person:alpha"),
+            kind: EntityKind::PERSON,
+            name: "Alpha".into(),
+            aliases: Vec::new(),
+            source: "user-named".into(),
+            crm: None,
+            parent: None,
+            boot: Boot::OnDemand,
+            merged_into: None,
+            badge: None,
+            archived: None,
+        };
+        let hits = vec![
+            Hit::Fact {
+                fact: Box::new(undated),
+                subject: EntityRef::resolved(&alpha),
+                home: EntityRef::resolved(&alpha),
+                source: None,
+            },
+            Hit::Fact {
+                fact: Box::new(undated_too),
+                subject: EntityRef::resolved(&alpha),
+                home: EntityRef::resolved(&alpha),
+                source: None,
+            },
+            Hit::Fact {
+                fact: Box::new(dated),
+                subject: EntityRef::resolved(&alpha),
+                home: EntityRef::resolved(&alpha),
+                source: None,
+            },
+        ];
+
+        let default_clock = json_of(
+            &handler_with(Arc::new(SpySearch::answering(hits.clone())))
+                .search(Parameters(SearchArgs {
+                    query: Some("claim".into()),
+                    ..search_args()
+                }))
+                .await
+                .expect("search ok"),
+        );
+        assert_eq!(default_clock["rank_clock"], "recorded_on");
+        assert!(
+            default_clock["rank_fallbacks"].is_null(),
+            "ranking by recorded_on never asked the happened_at question, so the count is \
+             null rather than a silent zero: {default_clock}"
+        );
+
+        let by_happened_at = json_of(
+            &handler_with(Arc::new(SpySearch::answering(hits)))
+                .search(Parameters(SearchArgs {
+                    query: Some("claim".into()),
+                    clock: Some("happened_at".into()),
+                    ..search_args()
+                }))
+                .await
+                .expect("search ok"),
+        );
+        assert_eq!(by_happened_at["rank_clock"], "happened_at");
+        assert_eq!(
+            by_happened_at["rank_fallbacks"], 2,
+            "two of the three facts had no happened_at: {by_happened_at}"
+        );
     }
 }

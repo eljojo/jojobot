@@ -75,7 +75,9 @@ use jojobot_domain::memory::{
     FactStatus, Guarded, Landed, Memory, MemoryError, NewEntity, NewFact, Provenance, Standing,
     graph::Direction,
     guard::{self, EntityMatch},
-    search::{Behind, Coverage, DEFAULT_LIMIT, EdgeFilter, EntityRef, Hit, Search, SearchQuery},
+    search::{
+        Behind, Coverage, DEFAULT_LIMIT, EdgeFilter, EntityRef, Hit, RankClock, Search, SearchQuery,
+    },
     types::{DeclaredType, Field, Fold, ValueType},
     validate_edge,
 };

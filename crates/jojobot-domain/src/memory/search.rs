@@ -148,6 +148,28 @@ pub struct EdgeFilter {
 /// pagination and no cursor**: a second page is a better query.
 pub const DEFAULT_LIMIT: usize = 20;
 
+/// **Which day a search ranks recency against.** The operator's own ruling:
+/// a query may ask to rank by the day a claim happened instead of the day it
+/// was said, and neither becomes the default.
+///
+/// **Not [`super::graph::Clock`].** The operator's ruling names two days,
+/// not that type's three: ranking by the day jojobot took a record in is a
+/// different question nobody asked, and [`super::Fact::inserted_at`] is a
+/// `Timestamp` where this compares `Date`s — reusing the type would carry
+/// a conversion and a capability past what was ruled on in the same move.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RankClock {
+    /// **The day the claim was made** — the default, unchanged from before
+    /// this existed: ranking read `recorded_at` and nothing else.
+    #[default]
+    RecordedAt,
+    /// **The day the thing itself happened**, when the claim carries one.
+    /// A claim with no `happened_at` ranks by `recorded_at` instead, and a
+    /// caller asking for this clock is told how many claims that happened
+    /// to.
+    HappenedAt,
+}
+
 /// What to search for. `text` is optional as long as a structural filter narrows
 /// the field, because the structural questions ("every superseded fact", "who is
 /// in Shelbyville") have no keyword.
@@ -255,6 +277,9 @@ pub struct SearchQuery {
     pub asked_by: Option<EntityId>,
     /// How many results to return.
     pub limit: usize,
+    /// **Which day ranking measures recency against.** `RecordedAt` by
+    /// default, unchanged from before this field existed.
+    pub rank_clock: RankClock,
 }
 
 impl Default for SearchQuery {
@@ -273,6 +298,7 @@ impl Default for SearchQuery {
             include_mail: false,
             include_history: false,
             limit: DEFAULT_LIMIT,
+            rank_clock: RankClock::default(),
         }
     }
 }

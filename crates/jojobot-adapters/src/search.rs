@@ -46,7 +46,8 @@ use jojobot_domain::memory::{
     guard::{self, MatchReason},
     kinds,
     search::{
-        self, Behind, Coverage, DocScan, EntityRef, Hit, Search, SearchQuery, SourceStanding,
+        self, Behind, Coverage, DocScan, EntityRef, Hit, RankClock, Search, SearchQuery,
+        SourceStanding,
     },
     types::DeclaredType,
 };
@@ -1658,13 +1659,24 @@ impl FullTextIndex {
             scored.extend(self.collect(self.other_clauses(query), depth)?);
         }
 
+        // **Which day a fact's own recency is measured on** — the operator's
+        // ruling: `recorded_at` unless the caller asks to rank by
+        // `happened_at` instead. A claim with no `happened_at` falls back to
+        // `recorded_at`, the same day it would rank on by default.
+        let rank_date = |fact: &Fact| -> Date {
+            match query.rank_clock {
+                RankClock::RecordedAt => fact.recorded_at,
+                RankClock::HappenedAt => fact.happened_at.unwrap_or(fact.recorded_at),
+            }
+        };
+
         // Recency is measured against the newest fact in the candidate set, not a
         // clock: the domain stays clock-free, and the same corpus ranks the same
         // way tomorrow.
         let newest = scored
             .iter()
             .filter_map(|(_, p)| match p {
-                Payload::Fact { fact } => Some(fact.recorded_at),
+                Payload::Fact { fact } => Some(rank_date(fact)),
                 _ => None,
             })
             .max();
@@ -1683,7 +1695,7 @@ impl FullTextIndex {
                     // comes back.
                     (Payload::Fact { fact }, _) if fact.derived_from.is_some() => -DERIVED_DEMOTION,
                     (Payload::Fact { fact }, Some(newest)) => {
-                        let age_days = (newest - fact.recorded_at).get_days().max(0) as f32;
+                        let age_days = (newest - rank_date(fact)).get_days().max(0) as f32;
                         RECENCY_WEIGHT / (1.0 + age_days / 365.25)
                     }
                     // **A session ranks below everything else it shares an
@@ -2834,7 +2846,9 @@ mod tests {
     use jiff::civil::date;
     use jojobot_domain::mailbox::testing::{InMemoryMailboxes, contract as mail_contract};
     use jojobot_domain::mailbox::{MailboxName, Message, MessageId, MessageState};
-    use jojobot_domain::memory::search::{DEFAULT_LIMIT, EdgeFilter, EntityRef, SourceStanding};
+    use jojobot_domain::memory::search::{
+        DEFAULT_LIMIT, EdgeFilter, EntityRef, RankClock, SourceStanding,
+    };
     use jojobot_domain::memory::testing::{InMemoryMemory, contract};
     use jojobot_domain::memory::{
         Archived, Boot, Edge, EdgeShape, FactStatus, KeyWrite, NewEntity, NewFact, Provenance,
@@ -3710,6 +3724,55 @@ mod tests {
         assert!(
             found.contains("bought the pump"),
             "the control claim is missing, so this case measures nothing: {found}",
+        );
+    }
+
+    /// 🚨 **Asked for by name, ranking reads `happened_at` instead — and
+    /// only when asked.**
+    ///
+    /// The mirror of the case above: two claims recorded on the same day,
+    /// so `recorded_at` alone cannot order them, and `happened_at` values
+    /// that disagree about which is newer. `RankClock::HappenedAt` must put
+    /// the one that happened recently ahead of the one from years ago;
+    /// `RankClock::RecordedAt` (the case above, unchanged) must not.
+    #[tokio::test]
+    async fn asked_for_by_name_ranking_reads_happened_at_instead() {
+        let old_event = Fact {
+            happened_at: Some(date(2020, 1, 1)),
+            ..fact(
+                "person:alpha",
+                "f1",
+                "alpha bought the bike",
+                date(2026, 8, 25),
+            )
+        };
+        let recent_event = Fact {
+            happened_at: Some(date(2026, 8, 24)),
+            ..fact(
+                "person:alpha",
+                "f2",
+                "alpha bought the pump",
+                date(2026, 8, 25),
+            )
+        };
+        let index = index_of(vec![scan(
+            "doc-1",
+            Some(entity("person:alpha", "Alpha")),
+            "",
+            vec![old_event, recent_event],
+        )]);
+
+        let hits = index
+            .search(&SearchQuery {
+                rank_clock: RankClock::HappenedAt,
+                ..SearchQuery::text("alpha bought")
+            })
+            .expect("search ok");
+        let first = format!("{:?}", hits.first().expect("a hit"));
+        assert!(
+            first.contains("bought the pump"),
+            "asked to rank by happened_at, the claim that happened recently did not come \
+             first: {hits:?}",
         );
     }
 
