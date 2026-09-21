@@ -78,9 +78,9 @@ pub struct CaptureArgs {
     #[serde(default)]
     pub(crate) happened_at: Option<String>,
     /// **The far end, when the thing happened is a stretch of days rather
-    /// than one** — a trip, a festival, a course — `YYYY-MM-DD`. Send it
-    /// alongside `happened_at`, which is the start; an end with no start
-    /// names a span nobody can read.
+    /// than one** — a festival, a course — `YYYY-MM-DD`. Send it alongside
+    /// `happened_at`, which is the start; an end with no start names a span
+    /// nobody can read.
     #[serde(default)]
     pub(crate) happened_through: Option<String>,
     /// The shape of the edge this fact draws: `location` (object is a place) ·
