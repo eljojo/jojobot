@@ -542,6 +542,28 @@ impl Sessions for DoltSessions {
         rows.iter().map(summary_from).collect()
     }
 
+    /// **The same aggregate [`summaries_of`](Self::summaries_of) runs,
+    /// minus the one clause that scopes it to a bot.** Whosever a run is,
+    /// this answers what it is without paying for what it said.
+    async fn all_summaries(
+        &self,
+    ) -> Result<Vec<jojobot_domain::session::SessionSummary>, SessionError> {
+        let rows = sqlx::query(
+            "SELECT s.id, s.sid, s.bot, s.focus, s.started_at, s.state, s.served_chars,
+                    COUNT(j.id) AS entry_count,
+                    COALESCE(MAX(GREATEST(j.at, COALESCE(j.touched, j.at))), s.started_at)
+                        AS last_beat
+             FROM session s
+             LEFT JOIN journal_entry j ON j.session = s.id
+             GROUP BY s.id, s.sid, s.bot, s.focus, s.started_at, s.state, s.served_chars
+             ORDER BY s.started_at DESC, s.id DESC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(store)?;
+        rows.iter().map(summary_from).collect()
+    }
+
     async fn read_session(&self, id: &SessionId) -> Result<Session, SessionError> {
         validate_session_id(id)?;
         let mut tx = self.pool.begin().await.map_err(store)?;

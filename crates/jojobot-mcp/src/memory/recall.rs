@@ -1099,6 +1099,12 @@ fn object_json(
     body
 }
 
+/// The future [`Jojobot::fill_session_prose`] returns — named rather than
+/// spelled out inline, per `clippy::type_complexity` on this shape.
+type FillSessionProseFuture<'a> = std::pin::Pin<
+    Box<dyn std::future::Future<Output = Option<Result<CallToolResult, McpError>>> + Send + 'a>,
+>;
+
 /// The graph query — objects, what is on them, and what they reach.
 #[tool_router(router = recall_router, vis = "pub(crate)")]
 impl Jojobot {
@@ -1526,12 +1532,14 @@ impl Jojobot {
         // **A session joins the walk only when the query could reach one** —
         // kept off the ordinary path so a lookup that never mentions a
         // session does not pay for a `Sessions` read it did not ask for.
-        // **Scoped to the caller's own runs at the fetch**: `sessions_of`
-        // never asks the store for another bot's sessions in the first
-        // place, so one never reaches the entity index for this call to
-        // resolve a handle against. `graph::walk`'s owner check (an owned
-        // object answers its owner alone) is a second, redundant guard behind
-        // this one, for a caller that ever widens the fetch to every session.
+        // **Every run on the board joins the entity index, cheaply**:
+        // `all_summaries` never asks the store for a beat's own text, so a
+        // browse or a named lookup costs the same aggregate whether the run
+        // is the caller's own or not. `graph::walk`'s owner check (an owned
+        // object answers its owner alone — proven on this exact shape at
+        // `19fca07`) is what keeps another bot's runs out of the answer; it
+        // is the ONLY guard now, not a redundant second one, because nothing
+        // upstream of it scopes by bot any more.
         let wants_sessions = query.select.kind == Some(EntityKind::SESSION)
             || query
                 .select
@@ -1544,10 +1552,10 @@ impl Jojobot {
                 // own owner check would exclude every session anyway — this
                 // just saves the read.
                 None => Vec::new(),
-                Some(caller) => match self.sessions.sessions_of(&caller.bot).await {
+                Some(caller) => match self.sessions.all_summaries().await {
                     Ok(runs) => runs
                         .iter()
-                        .map(jojobot_domain::session::projected)
+                        .map(jojobot_domain::session::projected_summary)
                         .collect(),
                     Err(e) => return session_declined(e, caller.sid.as_str()),
                 },
@@ -1565,6 +1573,24 @@ impl Jojobot {
             Ok(answer) => answer,
             Err(e) => return memory_declined("recall", e),
         };
+        // **The chronology, read only for a run the walk actually kept.**
+        // `session_docs` above is cheap on purpose — no beat's text left the
+        // store to build it — so a run that made it into `found` (selectable
+        // AND readable; the owner check already ran) still carries no
+        // chronology until this reads it, one targeted `read_session` per
+        // run, never the whole board. This is the same split ordinary
+        // entities already have: `graph::walk` fetches a wanted entity's own
+        // records after deciding it is wanted, never before — sessions
+        // could not do that inside `walk` itself, since that module holds no
+        // `Sessions` port on purpose (`session::projected`'s own doc: "the
+        // caller already built its document"), so the same split happens
+        // here instead, right after the same decision is made.
+        if query.include.prose {
+            let caller_sid = caller.as_ref().map(|c| c.sid.as_str()).unwrap_or_default();
+            if let Some(refused) = self.fill_session_prose(&mut found, caller_sid).await {
+                return refused;
+            }
+        }
         // **The arithmetic is the domain's and the selection is here.** It is
         // asked of the object's FOLDED fields — every write on it, one value
         // per key — because a rhythm is described a record at a time: the
@@ -1904,6 +1930,57 @@ impl Jojobot {
             crate::answer::note_teaching(&mut body, CLAIMS_TEACHING);
         }
         json_result(&body)
+    }
+
+    /// **The one targeted read per wanted run.** `objects` already answered
+    /// `resolve`'s owner check — every session object left in it is one the
+    /// caller may read — so what is left is reading it whole. Recurses into
+    /// `connected` exactly as `fill_history`/`fill_revision_counts` do, on
+    /// the same reasoning: a walk can reach a session by more than one hop.
+    ///
+    /// `Some(refused)` on the first read that fails; the caller returns it
+    /// unchanged. `None` once every session object in the tree carries its
+    /// real prose. `caller_sid` is this CALL's own handle, never a
+    /// session's — `session_declined`'s own doc names why.
+    ///
+    /// The return type is named ([`FillSessionProseFuture`]) rather than
+    /// spelled out, the same fix clippy's own `type_complexity` lint asks
+    /// for on this exact recursive-boxed-future shape.
+    fn fill_session_prose<'a>(
+        &'a self,
+        objects: &'a mut [graph::Object],
+        caller_sid: &'a str,
+    ) -> FillSessionProseFuture<'a> {
+        Box::pin(async move {
+            for object in objects {
+                if object.entity.kind == EntityKind::SESSION {
+                    if let Some(prose) = &object.prose {
+                        // **Only ever empty here.** `session::projected_summary`
+                        // never sets anything else, and nothing else can have
+                        // set `Some` on a session object — a non-empty value
+                        // would mean this ran twice, which the loop shape
+                        // cannot do.
+                        debug_assert!(prose.is_empty());
+                        let id =
+                            jojobot_domain::session::SessionId(object.entity.id.slug().to_string());
+                        match self.sessions.read_session(&id).await {
+                            Ok(full) => {
+                                object.prose =
+                                    Some(jojobot_domain::session::projected(&full).prose);
+                            }
+                            Err(e) => return Some(session_declined(e, caller_sid)),
+                        }
+                    }
+                }
+                if let Some(refused) = self
+                    .fill_session_prose(&mut object.connected, caller_sid)
+                    .await
+                {
+                    return Some(refused);
+                }
+            }
+            None
+        })
     }
 }
 
@@ -5893,14 +5970,13 @@ mod tests {
         );
     }
 
-    /// **A session answers its own bot alone.** `recall` fetches only the
-    /// CALLING bot's own runs (`sessions_of(&caller.bot)`), so a second bot
-    /// naming the first bot's session never has it in its own entity index at
-    /// all — the handle reads as unknown, the same refusal an unrelated typo
-    /// gets, rather than a hit belonging to somebody else. `graph::walk`'s
-    /// owner check (`session::projected` sets `owner`) is a second, redundant
-    /// guard behind this one, for a caller that ever widens the fetch to
-    /// every session rather than one bot's own.
+    /// **A session answers its own bot alone.** `recall` fetches every run
+    /// on the board (`all_summaries`, cheap — no beat's text leaves the
+    /// store to build the entity index), so a second bot naming the first
+    /// bot's session DOES reach it in the index; `graph::walk`'s owner check
+    /// (`session::projected_summary` sets `owner`, proven on this exact
+    /// shape at `19fca07`) is what refuses it, as somebody else's, never as
+    /// absent — the same distinction an ordinary owned entity already gets.
     #[tokio::test]
     async fn a_bots_session_is_not_readable_by_a_different_bot() {
         let jojobot = crate::harness::handler();
@@ -5926,16 +6002,200 @@ mod tests {
                 }))
                 .await
                 .expect("recall answers rather than failing the protocol"),
-        )
-        .to_string();
+        );
+        assert_eq!(refused["attempted"], handle, "{refused}");
+        let how = refused["how_to_proceed"]
+            .as_str()
+            .expect("a blocked answer says how to proceed");
+        // **The refusal must say the object is another's, never that it does
+        // not exist** — the pairing this bar exists for: a build that
+        // regressed to "unknown" would still be `status: blocked` and would
+        // still pass a check that stopped at that.
         assert!(
-            refused.contains("is not an entity jojobot knows"),
-            "a different bot's session must read as unknown, not merely unreadable: {refused}",
+            how.contains("bot:otto") && how.contains("not yours"),
+            "a different bot's run must be refused as somebody else's, never as absent: {how}",
         );
         assert!(
-            !refused.contains("a beat that belongs to bot:otto alone"),
+            !refused
+                .to_string()
+                .contains("a beat that belongs to bot:otto alone"),
             "a different bot's run leaked into a caller that does not own it: {refused}",
         );
+    }
+
+    /// **Browsing runs by kind returns only the caller's own, and the rest
+    /// is counted — a total, never a breakdown — rather than vanishing.**
+    /// 🚨 **Both halves in one read, the pairing the bar demands**: a caller
+    /// finds its own run AND the other bot's is `withheld` rather than
+    /// silently absent, so this cannot pass against a build where nothing
+    /// is indexed at all. The caller's own also reads whole — prose
+    /// included — proving selectable and readable land together.
+    #[tokio::test]
+    async fn browsing_runs_by_kind_finds_only_the_callers_own_and_counts_the_rest() {
+        let jojobot = crate::harness::handler();
+        let sid = writing_as(&jojobot);
+        let receipt = journal_entry(&jojobot, &sid, "otto's own beat, browsed by kind").await;
+        let session_id = receipt["session"]
+            .as_str()
+            .expect("journal answers with the session it landed in")
+            .to_string();
+        let handle = format!("session:{session_id}");
+
+        let other_sid = jojobot
+            .registry
+            .mint(&EntityId("bot:milhouse".into()), None)
+            .expect("a free handle in a fresh registry")
+            .to_string();
+        journal_entry(
+            &jojobot,
+            &other_sid,
+            "milhouse's own beat, never otto's to read",
+        )
+        .await;
+
+        let answer = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    subject: None,
+                    kind: Some("session".into()),
+                    prose: Some(true),
+                    sid: Some(sid),
+                    ..of("unused")
+                }))
+                .await
+                .expect("recall answers rather than failing the protocol"),
+        );
+        assert_ne!(answer["status"], "blocked", "{answer}");
+        let objects = answer["objects"]
+            .as_array()
+            .expect("a kind browse answers with a list");
+        assert_eq!(
+            objects.len(),
+            1,
+            "a bot must find only its own past run among both: {answer}"
+        );
+        assert_eq!(objects[0]["id"], handle, "{answer}");
+        assert_eq!(
+            objects[0]["prose"], "otto's own beat, browsed by kind",
+            "the caller's own run must read whole, not merely be found: {answer}"
+        );
+        assert_eq!(
+            answer["withheld"], 1,
+            "the other bot's run must be counted as withheld, not dropped in silence: {answer}"
+        );
+        assert!(
+            !answer.to_string().contains("milhouse's own beat"),
+            "the other bot's content must never leak into a browse that withheld it: {answer}"
+        );
+    }
+
+    /// A scratch directory this test owns alone, removed when it is done —
+    /// the same shape `boundary`'s own fixture uses, local here because this
+    /// is the one case in this file needing a real store rather than the
+    /// fake.
+    struct LazinessScratch(std::path::PathBuf);
+
+    impl LazinessScratch {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "jojobot-mcp-recall-laziness-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .expect("a clock after 1970")
+                    .as_nanos()
+            ));
+            std::fs::create_dir_all(&path).expect("a scratch directory");
+            LazinessScratch(path)
+        }
+    }
+
+    impl Drop for LazinessScratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// 🚨 **Proves the lazy path is lazy, quantitatively, against a real
+    /// store — the same counter that already proves `summaries_of` avoids
+    /// the full read, copied to prove this one does too.** Five of the
+    /// caller's own runs exist; naming ONE by handle must cost exactly one
+    /// `full_reads` — never five, which is what the old
+    /// `sessions_of(&caller.bot)` fetch cost on every single call regardless
+    /// of which run, if any, the query actually wanted.
+    #[tokio::test]
+    async fn recall_reads_only_the_wanted_runs_chronology_not_every_ones() {
+        let scratch = LazinessScratch::new();
+        let mut store =
+            jojobot_adapters::dolt::Dolt::start(&scratch.0, jojobot_adapters::testing::free_port())
+                .await
+                .expect("the real store comes up");
+        jojobot_adapters::dolt::migrate::run(store.pool())
+            .await
+            .expect("the schema");
+        jojobot_adapters::dolt::migrate::seed_kinds(store.pool())
+            .await
+            .expect("the kinds are seeded");
+        let sessions = std::sync::Arc::new(jojobot_adapters::dolt::sessions::DoltSessions::open(
+            store.pool().clone(),
+        ));
+
+        let jojobot = Jojobot::new(
+            Arc::new(InMemoryMemory::booted()),
+            Arc::new(SpySearch::default()),
+            Arc::new(InMemoryMailboxes::knowing_any_owner()),
+            sessions.clone() as Arc<dyn jojobot_domain::session::Sessions>,
+            Arc::new(InMemoryTeachings::new()),
+            seeded_registry(),
+        );
+        // **Five DIFFERENT runs, not five beats on one** — `writing_as` is
+        // deliberately idempotent (one handle, one run), so each run here
+        // mints its own fresh handle the same way a fresh boot would.
+        let mut wanted_handle = String::new();
+        let mut last_sid = String::new();
+        for n in 0..5 {
+            let sid = jojobot
+                .registry
+                .mint(&EntityId("bot:otto".into()), None)
+                .expect("a free handle in a fresh registry")
+                .to_string();
+            let receipt = journal_entry(&jojobot, &sid, &format!("run {n}'s own beat")).await;
+            if n == 2 {
+                wanted_handle = format!(
+                    "session:{}",
+                    receipt["session"]
+                        .as_str()
+                        .expect("journal answers with the session it landed in")
+                );
+            }
+            last_sid = sid;
+        }
+        let sid = last_sid;
+
+        let before = sessions.full_reads();
+        let answer = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    sid: Some(sid),
+                    prose: Some(true),
+                    ..of(&wanted_handle)
+                }))
+                .await
+                .expect("recall answers rather than failing the protocol"),
+        );
+        assert_ne!(answer["status"], "blocked", "{answer}");
+        assert_eq!(
+            answer["objects"][0]["prose"], "run 2's own beat",
+            "the named run must still read whole: {answer}"
+        );
+        assert_eq!(
+            sessions.full_reads() - before,
+            1,
+            "naming one of five runs must cost exactly one full read, not one per run in the \
+             index"
+        );
+
+        store.stop().await;
     }
 
     /// **A bot reading its own room, adding nothing, still learns what aged

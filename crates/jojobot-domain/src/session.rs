@@ -725,6 +725,25 @@ pub trait Sessions: Send + Sync {
             .collect())
     }
 
+    /// **Every run on the board, without its chronology** — the same
+    /// widening [`all_sessions`](Sessions::all_sessions) is to
+    /// [`sessions_of`], for the same reason [`summaries_of`] exists: a
+    /// caller asking which runs exist, whosever they are, never needs a
+    /// beat's own text to answer it.
+    ///
+    /// **Defaulted off [`all_sessions`](Sessions::all_sessions).** A store
+    /// with no cheaper query is still correct through here; [`DoltSessions`]
+    /// overrides it with the same aggregate [`summaries_of`] uses, minus
+    /// the one clause that scopes it to a bot.
+    async fn all_summaries(&self) -> Result<Vec<SessionSummary>, SessionError> {
+        Ok(self
+            .all_sessions()
+            .await?
+            .iter()
+            .map(SessionSummary::of)
+            .collect())
+    }
+
     /// **Every session on the board, whosever it is** — what the handle registry
     /// is rebuilt from at startup.
     ///
@@ -1055,10 +1074,7 @@ pub async fn sweep_and_find(
 /// duplicated into the entity table. The write gate refuses a memory write onto
 /// the handle, which is what keeps the projection read-only.
 pub fn projected(session: &Session) -> crate::memory::search::DocScan {
-    let id = EntityId::new(crate::memory::EntityKind::SESSION, session.id.as_str());
     crate::memory::search::DocScan {
-        doc_id: session.id.as_str().to_string(),
-        title: session.focus.clone(),
         // **The chronology is the run's prose**, oldest first, which is the
         // order it was written and the order it reads in.
         prose: session
@@ -1067,18 +1083,69 @@ pub fn projected(session: &Session) -> crate::memory::search::DocScan {
             .map(|entry| entry.text.as_str())
             .collect::<Vec<_>>()
             .join("\n\n"),
+        ..projected_shell(
+            &session.id,
+            &session.bot,
+            &session.focus,
+            session.state,
+            session.started_at,
+            session.entries.len(),
+        )
+    }
+}
+
+/// **A run, selectable and unreadable — deliberately, and only ever a
+/// starting point.** Same entity, same owner, same fields [`projected`]
+/// builds; the one thing this never carries is the chronology, because a
+/// [`SessionSummary`] never read it. **Never hand this to a caller as the
+/// answer**: it exists so a run can join `resolve`'s selection cheaply, and
+/// whatever it selects is read whole afterwards, through
+/// [`Sessions::read_session`] and [`projected`] — see
+/// [`crate::memory::graph::walk`]'s own doc on why this file draws that
+/// line rather than fetching the chronology here.
+pub fn projected_summary(summary: &SessionSummary) -> crate::memory::search::DocScan {
+    crate::memory::search::DocScan {
+        prose: String::new(),
+        ..projected_shell(
+            &summary.id,
+            &summary.bot,
+            &summary.focus,
+            summary.state,
+            summary.started_at,
+            summary.entry_count,
+        )
+    }
+}
+
+/// **Everything [`projected`] and [`projected_summary`] share** — the
+/// entity, the owner, the cheap fields — with `prose` left for each caller
+/// to fill in its own way, since that is the one thing they answer
+/// differently.
+fn projected_shell(
+    id: &SessionId,
+    bot: &EntityId,
+    focus: &str,
+    state: SessionState,
+    started_at: Timestamp,
+    entry_count: usize,
+) -> crate::memory::search::DocScan {
+    let entity_id = EntityId::new(crate::memory::EntityKind::SESSION, id.as_str());
+    crate::memory::search::DocScan {
+        doc_id: id.as_str().to_string(),
+        title: focus.to_string(),
+        prose: String::new(),
         entity: Some(crate::memory::Entity {
-            id,
+            id: entity_id,
             kind: crate::memory::EntityKind::SESSION,
             // A run is known by what it was working on, which is what tells two
             // of them apart in an offer.
-            name: session.focus.clone(),
+            name: focus.to_string(),
             aliases: Vec::new(),
             source: "jojobot".to_string(),
             crm: None,
             // **The bot owns its runs**, so the tree already says whose it is
             // and no second copy has to be kept in step.
-            parent: Some(session.bot.clone()),
+            parent: Some(bot.clone()),
             boot: Default::default(),
             merged_into: None,
             // A session is projected as an entity so search can rank it; it is
@@ -1088,11 +1155,11 @@ pub fn projected(session: &Session) -> crate::memory::search::DocScan {
         }),
         facts: Vec::new(),
         fields: std::collections::BTreeMap::from([
-            ("state".to_string(), session.state.as_token().to_string()),
-            ("started_at".to_string(), session.started_at.to_string()),
-            ("beats".to_string(), session.entries.len().to_string()),
+            ("state".to_string(), state.as_token().to_string()),
+            ("started_at".to_string(), started_at.to_string()),
+            ("beats".to_string(), entry_count.to_string()),
         ]),
-        owner: Some(session.bot.clone()),
+        owner: Some(bot.clone()),
     }
 }
 
