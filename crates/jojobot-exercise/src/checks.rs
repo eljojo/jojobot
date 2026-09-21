@@ -113,6 +113,20 @@ use serde_json::{Value, json};
 
 use crate::run::{Checks, Observed, checked};
 
+/// **Read a live reply as JSON, or say plainly that it could not be read —
+/// never substitute a value and carry on.**
+///
+/// A silent `Value::Null` here reads downstream exactly like an object with
+/// nothing in it: every `carries` needle misses and every count comes back
+/// zero, which is indistinguishable from the agent genuinely not having done
+/// the thing. A red is evidence only if you know why it was red — so an
+/// unreadable reply fails loudly, naming itself, rather than quietly
+/// becoming the same shape as an agent's own failure.
+fn read_json(reply: &str) -> Result<Value, String> {
+    serde_json::from_str(reply)
+        .map_err(|e| format!("the reply could not be read as JSON: {e}: {reply}"))
+}
+
 /// One hatch: the name a document calls it, and what it does.
 type Hatch = (&'static str, fn() -> Box<dyn Checks>);
 
@@ -506,7 +520,7 @@ async fn the_service_day_is_a_value(seen: &Observed<'_>) -> Result<(), String> {
             "the bike is not readable, so nothing was measured: {read}"
         ));
     }
-    let parsed: Value = serde_json::from_str(&read).unwrap_or(Value::Null);
+    let parsed: Value = read_json(&read)?;
     let mut values = Vec::new();
     collect_values(&parsed, &mut values);
     if values.iter().any(|value| value == SERVICE_DAY) {
@@ -551,7 +565,7 @@ async fn a_handoff_is_waiting(seen: &Observed<'_>) -> Result<(), String> {
         .room
         .call("start_here", json!({"bot": "assistant", "brief": true}))
         .await;
-    let parsed: Value = serde_json::from_str(&door).unwrap_or(Value::Null);
+    let parsed: Value = read_json(&door)?;
     let open = parsed["session"]["choices"].as_array().is_some_and(|runs| {
         runs.iter()
             .filter_map(|run| run["working_on"].as_str())
@@ -795,7 +809,7 @@ async fn septembers_account_of_the_pump_is_corrected_in_place(
             json!({"subject": "thing:floor-pump", "facts": true, "history_record": address}),
         )
         .await;
-    let parsed: Value = serde_json::from_str(&read).unwrap_or(Value::Null);
+    let parsed: Value = read_json(&read)?;
     let Some(current) = parsed["objects"][0]["facts"].as_array().and_then(|facts| {
         facts
             .iter()
@@ -1055,7 +1069,7 @@ async fn the_service_landed_on_the_loop_that_already_existed(
         .room
         .call("recall", json!({"kind": "rhythm", "history": TURNS}))
         .await;
-    let parsed: Value = serde_json::from_str(&read).unwrap_or(Value::Null);
+    let parsed: Value = read_json(&read)?;
     let Some(loops) = parsed["objects"].as_array() else {
         return Err(format!(
             "no loop came back at all, so nothing was measured: {read}"
@@ -1326,7 +1340,7 @@ async fn aprils_move_archives_the_springfield_claim(seen: &Observed<'_>) -> Resu
             json!({"subject": "person:milhouse", "facts": true}),
         )
         .await;
-    let parsed: Value = serde_json::from_str(&read).unwrap_or(Value::Null);
+    let parsed: Value = read_json(&read)?;
     let Some(facts) = parsed["objects"][0]["facts"].as_array() else {
         return Err(format!(
             "nothing is on file for person:milhouse at all: {read}"
@@ -1538,7 +1552,7 @@ async fn late_octobers_note_retracts_nelsons_attendance(seen: &Observed<'_>) -> 
         .room
         .call("recall", json!({"subject": "person:nelson", "facts": true}))
         .await;
-    let parsed: Value = serde_json::from_str(&read).unwrap_or(Value::Null);
+    let parsed: Value = read_json(&read)?;
     let Some(facts) = parsed["objects"][0]["facts"].as_array() else {
         return Err(format!(
             "nothing is on file for person:nelson at all: {read}"
@@ -1842,7 +1856,7 @@ async fn junes_survey_mention_renders_under_the_current_handle(
             .room
             .call("recall", json!({"subject": subject, "facts": true}))
             .await;
-        let parsed: Value = serde_json::from_str(&read).unwrap_or(Value::Null);
+        let parsed: Value = read_json(&read)?;
         for fact in parsed["objects"][0]["facts"]
             .as_array()
             .into_iter()
@@ -1941,7 +1955,7 @@ async fn the_years_turns_are_on_file_as_derivations(seen: &Observed<'_>) -> Resu
         .room
         .call("recall", json!({"kind": "rhythm", "facts": true}))
         .await;
-    let parsed: Value = serde_json::from_str(&read).unwrap_or(Value::Null);
+    let parsed: Value = read_json(&read)?;
     let Some(loops) = parsed["objects"].as_array() else {
         return Err(format!(
             "no loop came back at all, so nothing was measured: {read}"
@@ -2085,7 +2099,7 @@ async fn a_records_trace_matches_the_writes_the_run_made(
             json!({"subject": UNTOUCHED, "history_record": UNTOUCHED_RECORD}),
         )
         .await;
-    let parsed: Value = serde_json::from_str(&read).unwrap_or(Value::Null);
+    let parsed: Value = read_json(&read)?;
     // **`count` rather than the length of `writes`.** A trace ships what it
     // shows and says how many there are; a long history comes back elided, and
     // measuring the shipped list would read an elision as a missing write.
@@ -2396,7 +2410,7 @@ async fn the_bike_locks_mistake_is_rewritten_in_place(seen: &Observed<'_>) -> Re
         .room
         .call("recall", json!({"subject": BIKE_LOCK, "facts": true}))
         .await;
-    let parsed: Value = serde_json::from_str(&read).unwrap_or(Value::Null);
+    let parsed: Value = read_json(&read)?;
     let Some(facts) = parsed["objects"][0]["facts"].as_array() else {
         return Err(format!(
             "nothing is on file for {BIKE_LOCK} at all, so this sitting never made the mistake \
@@ -2431,7 +2445,7 @@ async fn the_bike_locks_mistake_is_rewritten_in_place(seen: &Observed<'_>) -> Re
             json!({"subject": BIKE_LOCK, "history_record": address, "history_most": 1}),
         )
         .await;
-    let parsed_trace: Value = serde_json::from_str(&trace).unwrap_or(Value::Null);
+    let parsed_trace: Value = read_json(&trace)?;
     // **The reported total, not the length of what this read happened to
     // ship.** A `history_record` read ships at most `history_most` writes and
     // reports the true count beside them, for the reason
@@ -2476,7 +2490,7 @@ async fn decembers_note_is_reachable_by_the_walk_back_from_the_cadence(
             json!({"kind": "rhythm", "fields": [{"key": "cadence_days", "value": "90"}], "facts": true}),
         )
         .await;
-    let parsed: Value = serde_json::from_str(&read).unwrap_or(Value::Null);
+    let parsed: Value = read_json(&read)?;
     let Some(cadence) = parsed["objects"][0]["facts"][0]["address"].as_str() else {
         return Err(format!(
             "no loop carrying a ninety-day cadence has a first record to walk back from: {read}"
@@ -2494,7 +2508,7 @@ async fn decembers_note_is_reachable_by_the_walk_back_from_the_cadence(
     // not `built_on` walked to it — December's own note is in there
     // regardless of what it names as its source, so a plain substring check
     // over the whole payload would hold on a note that names nothing at all.
-    let parsed_built: Value = serde_json::from_str(&built).unwrap_or(Value::Null);
+    let parsed_built: Value = read_json(&built)?;
     let reached = parsed_built["built_on"]["claims"]
         .as_array()
         .is_some_and(|claims| {
@@ -2509,5 +2523,36 @@ async fn decembers_note_is_reachable_by_the_walk_back_from_the_cadence(
              either December's note does not name its lineage or the walk that reads lineage \
              back does not find it: {built}"
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::read_json;
+
+    /// **`read_json` is the one thing every one of these checks trusts to
+    /// turn a live reply into data.** All fourteen call it rather than
+    /// `serde_json::from_str` directly, so this is the only place the
+    /// substitute-nothing-and-carry-on shape can be tested without a real
+    /// room: the eight functions above it are not independently testable
+    /// this way — each needs a live `Surface`, which has no fake variant —
+    /// so this is stated plainly as the boundary of this case rather than
+    /// left implicit.
+    #[test]
+    fn an_unreadable_reply_fails_loudly_and_names_itself() {
+        let broken = "not json at all";
+        let err = read_json(broken).expect_err("garbage is not JSON");
+        assert!(
+            err.contains(broken),
+            "the failure did not carry what actually came back: {err}",
+        );
+    }
+
+    /// **The positive, beside the negative.** A case that only proves
+    /// garbage fails would pass identically against a `read_json` that
+    /// rejects everything, valid replies included.
+    #[test]
+    fn a_readable_reply_still_parses() {
+        assert_eq!(read_json(r#"{"ok":true}"#).unwrap()["ok"], true);
     }
 }

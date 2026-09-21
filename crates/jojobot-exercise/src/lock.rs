@@ -1102,8 +1102,15 @@ pub async fn needle_verdicts(
             continue;
         };
         let answer = room.call(verb, sent).await;
-        let parsed: serde_json::Value =
-            serde_json::from_str(&answer).unwrap_or(serde_json::Value::Null);
+        // **Dropped, not substituted** — the same shape the two arms above
+        // already take for a lock with no query to ask or arguments this
+        // file cannot read. A `Value::Null` here would report every needle
+        // in this lock as found nowhere, indistinguishable from a lock that
+        // is genuinely failing; see [`Matched::Nowhere`]'s own doc for the
+        // ambiguity this exists to not add to.
+        let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&answer) else {
+            continue;
+        };
         let mut here = Vec::new();
         for expect in &lock.expects {
             // **A negative is not asked.** `lacks` is satisfied by absence, so
