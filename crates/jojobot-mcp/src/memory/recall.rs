@@ -1057,14 +1057,34 @@ fn object_json(
         }
         fields.insert("via".into(), link);
     }
-    fields.insert(
-        "connected".into(),
-        object
-            .connected
-            .iter()
-            .map(|o| object_json(o, include, as_of))
-            .collect(),
-    );
+    // **Bounded, and honest about it, the same as every other list on this
+    // verb.** A hop with no cap at all is the exact overload a walk exists to
+    // prevent: a subject with a wide inbound fan-in would otherwise answer
+    // with every one of them, however many that is. Rendered first, then
+    // capped by the rendered size — the same order `held_json` already
+    // reads in, and the only order that costs the object it drops nothing
+    // beyond leaving it out. **The kept order is the walk's own order, not a
+    // ranking** — nothing here decides which neighbours matter more, only
+    // how many fit.
+    let rendered: Vec<serde_json::Value> = object
+        .connected
+        .iter()
+        .map(|o| object_json(o, include, as_of))
+        .collect();
+    let kept = text::CONNECTED_CONTEXT.head(&rendered, |item| item.to_string().chars().count());
+    fields.insert("connected".into(), kept.kept().to_vec().into());
+    if kept.omitted() > 0 {
+        fields.insert(
+            "connected_left_out".into(),
+            format!(
+                "{} more objects are connected here and are not in this answer, in the order \
+                 the walk reached them rather than any ranking — recall this handle again, or \
+                 narrow the walk with keeping, to reach the rest",
+                kept.omitted()
+            )
+            .into(),
+        );
+    }
     // **Eliding is never silent.** An empty `connected` otherwise means both
     // "the walk stopped here" and "there is nothing there", and the note says
     // which as well as how to get the rest.
@@ -1178,7 +1198,11 @@ impl Jojobot {
                        refused the same way; this is the same room, read rather than written. \
                        WHICH EDGES: follow {shape, direction, depth}, and \
                        THE ANSWER NESTS — a walked object carries the objects it reached, each \
-                       carrying its own. NARROW A WALK WITH follow.fits_type, which is the \
+                       carrying its own. EACH HOP IS BOUNDED: a wide fan-in comes back cut to \
+                       what fits, in the order the walk reached it rather than any ranking, and \
+                       connected_left_out on the object above says how many did not fit — recall \
+                       that handle again, or narrow the walk with keeping, to reach the rest. \
+                       NARROW A WALK WITH follow.fits_type, which is the \
                        stricter half of the pair: answers_type selects objects carrying SOME of \
                        a type's keys and reports the gaps, fits_type keeps only the ones \
                        carrying EVERY key. Which of these are described like a pet, versus which \
@@ -5123,6 +5147,148 @@ mod tests {
                 .iter()
                 .any(|f| f["content"] == "vegetarian"),
             "a reached object arrives carrying its own page: {walked}"
+        );
+    }
+
+    /// **A wide inbound fan-in is capped, and the cap says what it left out.**
+    ///
+    /// The paired positive is the case just above this one
+    /// (`a_value_selects_and_a_walk_nests`): an ordinary, small `connected`
+    /// carries no elision note at all. This is the negative — a fan-in wide
+    /// enough to overflow the budget — so the two together prove the note
+    /// appears exactly when something was actually left out, never as noise
+    /// on an ordinary answer.
+    #[tokio::test]
+    async fn a_wide_inbound_fan_in_is_capped_and_names_what_it_left_out() {
+        let jojobot = handler();
+        ensure(&jojobot, "place:leftorium").await;
+        // Every one of these is already on the fixture roster for other
+        // tests; reusing them costs nothing new there and is plenty to
+        // overflow a 20,000-character budget at a couple of hundred
+        // characters per bare connected object. Long and mutually distant —
+        // the write guard's near-slug screen (edit distance <= 2) would
+        // otherwise block a set this size before the walk is ever reached.
+        let admirers = [
+            "contract-chainless",
+            "contract-citation-editpath",
+            "contract-claim-histories",
+            "contract-corrected",
+            "contract-current-handle-now",
+            "contract-derived",
+            "contract-fields",
+            "contract-graph-fold",
+            "contract-orient",
+            "contract-revision-count",
+            "contract-stands-for-basic",
+            "contract-stands-for-decoy",
+            "contract-archived-link-moved-on",
+            "contract-addressable",
+            "contract-alias-borrower",
+            "contract-pumpback",
+            "contract-summertime",
+            "contract-appended",
+            "contract-away-talker",
+            "contract-backing",
+            "contract-backslash",
+            "contract-brimful",
+            "contract-cleared",
+            "contract-clear-marker",
+            "contract-clocks",
+            "contract-confirmed-guess",
+            "contract-conn-one",
+            "contract-counted",
+            "contract-crate-partial",
+            "contract-crate-whole",
+            "contract-crosslink",
+            "contract-demotable",
+            "contract-duet",
+            "contract-edged",
+            "contract-edge-guarded",
+            "contract-editable",
+            "contract-evented",
+            "contract-field-edit",
+            "contract-folded-kept",
+            "contract-fold-rename-before",
+            "contract-gene",
+            "contract-filed",
+            "contract-graph-coming",
+            "contract-hedged-word",
+            "contract-inked",
+            "contract-hijack-subject",
+            "contract-injector",
+            "contract-late-edge",
+            "contract-lineage",
+            "contract-listed-pointer-alpha",
+            "contract-many-labelled",
+            "contract-mention-author",
+            "contract-parent-child",
+            "contract-rename-author",
+            "contract-retype-parent",
+            "contract-stale-edit-was",
+            "contract-mention-bookkeeper",
+            "contract-mention-broken",
+            "contract-milhouse",
+            "contract-miskinded",
+            "contract-missing-row",
+            "contract-multi",
+            "contract-nearslug",
+            "contract-never-captured",
+            "contract-nickname-only",
+        ];
+        for admirer in admirers {
+            capture_ok(
+                &jojobot,
+                CaptureArgs {
+                    shape: Some("about".into()),
+                    object: Some("place:leftorium".into()),
+                    ..capture_args(admirer, "keeps talking about the store")
+                },
+            )
+            .await;
+        }
+
+        let walked = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    subject: Some("place:leftorium".into()),
+                    follow: Some(FollowArgs {
+                        shape: Some("about".into()),
+                        relation: None,
+                        direction: Some("in".into()),
+                        depth: None,
+                        keeping: None,
+                        fits_type: None,
+                    }),
+                    ..of_nothing()
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        let root = &walked["objects"][0];
+        let connected = root["connected"]
+            .as_array()
+            .expect("a capped connected list is still a list");
+        assert!(
+            connected.len() < admirers.len(),
+            "the fan-in overflowed the budget, so fewer than all {} admirers came back: {walked}",
+            admirers.len()
+        );
+        let left_out = root["connected_left_out"]
+            .as_str()
+            .expect("a capped answer names what it dropped");
+        let left_out_count: usize = left_out
+            .split_whitespace()
+            .next()
+            .and_then(|n| n.parse().ok())
+            .expect("the note leads with the count");
+        assert_eq!(
+            connected.len() + left_out_count,
+            admirers.len(),
+            "kept plus left out accounts for every admirer, none silently vanished: {walked}"
+        );
+        assert!(
+            left_out.contains("recall"),
+            "the note names the way back to the rest: {left_out}"
         );
     }
 

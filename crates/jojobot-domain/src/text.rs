@@ -334,6 +334,29 @@ pub const SESSION_CHRONOLOGY: Capped = Capped { budget: 12_000 };
 /// costs a reader information rather than access.
 pub const HELD_CONTEXT: Capped = Capped { budget: 2_000 };
 
+/// **What one hop of a `recall` walk carries.**
+///
+/// Unlike [`HELD_CONTEXT`], this is what the caller explicitly asked for by
+/// naming `follow` — but a hop with no bound at all is exactly the overload a
+/// walk exists to prevent, so it is bounded too.
+///
+/// **Measured against a real one, not guessed.** The first cut of this budget
+/// (3,000) was sized against a bare connected object — no facts, nothing
+/// itself reaches — at a couple of hundred characters each. That is the wrong
+/// object to measure: asking for a thing and what points at it in the same
+/// call, the case this exists for, asks for `facts` too, and a real guest at
+/// a real party — a small handful of short claims — runs to roughly 1,500
+/// characters, not a couple of hundred. At the old budget an ordinary
+/// three-guest party already lost its third guest, which is the overload
+/// this exists to prevent misfiring on the everyday case it exists to serve.
+/// This is sized for a few dozen of THAT shape — a real friend group, not a
+/// bare handle — while still well short of [`BOOT_ANSWER`]'s render ceiling,
+/// so one hop cannot become the whole answer. The answer says how many did
+/// not fit and that recalling the handle again, or narrowing the walk,
+/// reaches the rest. Applied at every hop, not only the root's: a walked
+/// object's own `connected` is capped the same way its parent's was.
+pub const CONNECTED_CONTEXT: Capped = Capped { budget: 20_000 };
+
 /// **The WHOLE boot answer, under ONE ceiling — not its prose alone, and not
 /// a constant per field or per part.** Rule 138's own bar is a payload the
 /// client cannot read, which is a claim about the ANSWER, never about one
