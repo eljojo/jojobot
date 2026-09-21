@@ -42,13 +42,17 @@ pub struct DoltSessions {
     /// leave the session standing, and the only way to watch that happen is to
     /// break the marking and nothing else — see [`Self::snapshotting`].
     snapshots: MySqlPool,
-    /// **How many sessions have been read in full** — every entry, every
-    /// word — through [`sessions_of`](Sessions::sessions_of) or
-    /// [`all_sessions`](Sessions::all_sessions). Test-only instrumentation
-    /// for the one property nothing else here can observe: whether a
-    /// summary read paid for the text a full read carries. Shared across a
-    /// clone, exactly as the pool it counts against is.
+    /// **How many times [`Self::read_in`] ran** — the one seam every full
+    /// read shares, whichever verb reached for it. Test-only instrumentation
+    /// for the one property nothing else here can observe: whether a call
+    /// that only needed existence paid for a full read anyway. Shared across
+    /// a clone, exactly as the pool it counts against is.
     full_reads: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    /// **How many `journal_entry` rows [`Self::read_in`] has actually
+    /// parsed**, summed across every call. `full_reads` counts the calls;
+    /// this counts what each one cost — the number that scales with a run's
+    /// own chronology, which a call count alone cannot show.
+    entries_read: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl DoltSessions {
@@ -64,6 +68,7 @@ impl DoltSessions {
             pool,
             draw: ids::drawing(),
             full_reads: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            entries_read: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
     }
 
@@ -72,6 +77,15 @@ impl DoltSessions {
     #[cfg(any(test, feature = "testing"))]
     pub fn full_reads(&self) -> usize {
         self.full_reads.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// How many `journal_entry` rows have been parsed by a full read since
+    /// this store opened. Test-only: the number a call count cannot show,
+    /// because it scales with what a run has already recorded rather than
+    /// with how many times something asked about it.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn entries_read(&self) -> usize {
+        self.entries_read.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// **Rewrite a handle written into a focus line or a journal beat before
@@ -195,6 +209,7 @@ impl DoltSessions {
             pool,
             draw,
             full_reads: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            entries_read: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
     }
 
@@ -210,14 +225,19 @@ impl DoltSessions {
             draw: ids::drawing(),
             snapshots,
             full_reads: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            entries_read: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
     }
 
     /// Read one whole session inside a transaction, or say it is not there.
     ///
     /// **One reader for every verb**, so the row and its chronology can never
-    /// come back assembled two different ways.
+    /// come back assembled two different ways — and **one counter for every
+    /// caller**, so a verb that reaches for this pays the cost in the open
+    /// rather than in a signal nothing else can see: `full_reads` for the
+    /// call, `entries_read` for the rows it actually parsed.
     async fn read_in(
+        &self,
         tx: &mut Transaction<'_, MySql>,
         id: &SessionId,
     ) -> Result<Session, SessionError> {
@@ -240,6 +260,10 @@ impl DoltSessions {
         .fetch_all(&mut **tx)
         .await
         .map_err(store)?;
+        self.full_reads
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.entries_read
+            .fetch_add(entries.len(), std::sync::atomic::Ordering::SeqCst);
         session_from(&row, &entries)
     }
 
@@ -248,10 +272,11 @@ impl DoltSessions {
     /// One helper for every write verb, so they cannot come to disagree about
     /// what closed means — the same reason the fake has one.
     async fn writable(
+        &self,
         tx: &mut Transaction<'_, MySql>,
         id: &SessionId,
     ) -> Result<Session, SessionError> {
-        let session = Self::read_in(tx, id).await?;
+        let session = self.read_in(tx, id).await?;
         if session.state.is_terminal() {
             return Err(SessionError::Closed {
                 attempted: id.to_string(),
@@ -428,9 +453,7 @@ impl Sessions for DoltSessions {
         let mut tx = self.pool.begin().await.map_err(store)?;
         let mut found = Vec::with_capacity(ids.len());
         for id in ids {
-            found.push(Self::read_in(&mut tx, &SessionId(id)).await?);
-            self.full_reads
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            found.push(self.read_in(&mut tx, &SessionId(id)).await?);
         }
         tx.commit().await.map_err(store)?;
         Ok(found)
@@ -445,9 +468,7 @@ impl Sessions for DoltSessions {
         let mut tx = self.pool.begin().await.map_err(store)?;
         let mut found = Vec::with_capacity(ids.len());
         for id in ids {
-            found.push(Self::read_in(&mut tx, &SessionId(id)).await?);
-            self.full_reads
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            found.push(self.read_in(&mut tx, &SessionId(id)).await?);
         }
         tx.commit().await.map_err(store)?;
         Ok(found)
@@ -500,7 +521,7 @@ impl Sessions for DoltSessions {
     async fn read_session(&self, id: &SessionId) -> Result<Session, SessionError> {
         validate_session_id(id)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
-        let session = Self::read_in(&mut tx, id).await?;
+        let session = self.read_in(&mut tx, id).await?;
         tx.commit().await.map_err(store)?;
         Ok(session)
     }
@@ -521,7 +542,7 @@ impl Sessions for DoltSessions {
         .await
         .map_err(store)?;
         if let Some(id) = held {
-            let session = Self::read_in(&mut tx, &SessionId(id)).await?;
+            let session = self.read_in(&mut tx, &SessionId(id)).await?;
             tx.commit().await.map_err(store)?;
             return Ok(session);
         }
@@ -551,7 +572,7 @@ impl Sessions for DoltSessions {
         .await
         .map_err(store)?;
         Self::append_session_write(&mut tx, &id).await?;
-        let session = Self::read_in(&mut tx, &id).await?;
+        let session = self.read_in(&mut tx, &id).await?;
         tx.commit().await.map_err(store)?;
         // **The near end of the run's span.** It fixes what the store looked
         // like before this run touched anything, so a sitting is bounded at
@@ -570,7 +591,7 @@ impl Sessions for DoltSessions {
         validate_session_id(id)?;
         validate_entry(&entry.text)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
-        Self::writable(&mut tx, id).await?;
+        self.writable(&mut tx, id).await?;
         let ordinal = Self::next_ordinal(&mut tx, id).await?;
         // **Free within its session**, which is the whole of this table's key:
         // a chronology entry is addressed by the run it sits on and the id it
@@ -608,7 +629,7 @@ impl Sessions for DoltSessions {
         validate_session_id(id)?;
         validate_entry(text)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
-        Self::writable(&mut tx, id).await?;
+        self.writable(&mut tx, id).await?;
         let newest: Option<String> = sqlx::query_scalar(
             "SELECT id FROM journal_entry WHERE session = ? ORDER BY ordinal DESC LIMIT 1",
         )
@@ -642,7 +663,7 @@ impl Sessions for DoltSessions {
         validate_session_id(id)?;
         validate_entry(text)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
-        Self::writable(&mut tx, id).await?;
+        self.writable(&mut tx, id).await?;
         let held = read_entry(&mut tx, id, entry).await?;
         // **Only an automatic beat.** An entry the session wrote is its own
         // account of what it was doing, and nothing but `amend_last` touches
@@ -671,7 +692,7 @@ impl Sessions for DoltSessions {
         validate_session_id(id)?;
         validate_focus(focus)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
-        Self::writable(&mut tx, id).await?;
+        self.writable(&mut tx, id).await?;
         sqlx::query("UPDATE session SET focus = ? WHERE id = ?")
             .bind(focus.trim())
             .bind(id.as_str())
@@ -679,7 +700,7 @@ impl Sessions for DoltSessions {
             .await
             .map_err(store)?;
         Self::append_session_write(&mut tx, id).await?;
-        let session = Self::read_in(&mut tx, id).await?;
+        let session = self.read_in(&mut tx, id).await?;
         tx.commit().await.map_err(store)?;
         Ok(session)
     }
@@ -691,7 +712,7 @@ impl Sessions for DoltSessions {
     ) -> Result<Session, SessionError> {
         validate_session_id(id)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
-        Self::writable(&mut tx, id).await?;
+        self.writable(&mut tx, id).await?;
         sqlx::query("UPDATE session SET timezone = ? WHERE id = ?")
             .bind(timezone.map(str::trim).filter(|z| !z.is_empty()))
             .bind(id.as_str())
@@ -699,7 +720,7 @@ impl Sessions for DoltSessions {
             .await
             .map_err(store)?;
         Self::append_session_write(&mut tx, id).await?;
-        let session = Self::read_in(&mut tx, id).await?;
+        let session = self.read_in(&mut tx, id).await?;
         tx.commit().await.map_err(store)?;
         Ok(session)
     }
@@ -709,7 +730,7 @@ impl Sessions for DoltSessions {
         let mut tx = self.pool.begin().await.map_err(store)?;
         // Terminal both ways: a closed session is not closed again, whichever
         // end it reached.
-        Self::writable(&mut tx, id).await?;
+        self.writable(&mut tx, id).await?;
         sqlx::query("UPDATE session SET state = ? WHERE id = ?")
             .bind(to.as_token())
             .bind(id.as_str())
@@ -717,7 +738,7 @@ impl Sessions for DoltSessions {
             .await
             .map_err(store)?;
         Self::append_session_write(&mut tx, id).await?;
-        let session = Self::read_in(&mut tx, id).await?;
+        let session = self.read_in(&mut tx, id).await?;
         tx.commit().await.map_err(store)?;
         // The far end of the span, whichever ending this was: a run that told
         // its story and one the sweep found stopped are both runs that ended.
@@ -739,7 +760,7 @@ impl Sessions for DoltSessions {
         let mut tx = self.pool.begin().await.map_err(store)?;
         // Existence only, never refused on a closed session — see the
         // trait's own doc.
-        Self::read_in(&mut tx, id).await?;
+        self.read_in(&mut tx, id).await?;
         sqlx::query("UPDATE session SET served_chars = served_chars + ? WHERE id = ?")
             .bind(chars as i64)
             .bind(id.as_str())
@@ -754,7 +775,7 @@ impl Sessions for DoltSessions {
     async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
         validate_session_id(id)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
-        let held = Self::read_in(&mut tx, id).await?;
+        let held = self.read_in(&mut tx, id).await?;
         // A run already open is a caller resuming the run they are in, which
         // is no mistake. A wrapped one told its story and is the last word.
         let session = match held.state {
@@ -767,7 +788,7 @@ impl Sessions for DoltSessions {
                     .await
                     .map_err(store)?;
                 Self::append_session_write(&mut tx, id).await?;
-                Self::read_in(&mut tx, id).await?
+                self.read_in(&mut tx, id).await?
             }
             SessionState::Wrapped => {
                 return Err(SessionError::Closed {
@@ -1614,6 +1635,82 @@ mod tests {
             sessions.full_reads(),
             before + 2,
             "sessions_of must read both sessions in full, which is the cost this exists to avoid"
+        );
+
+        store.stop().await;
+    }
+
+    /// **`entries_read` scales with what a run has recorded; `full_reads`
+    /// only counts how many times something asked.** Two sessions read the
+    /// same number of times (once each) must not move `entries_read` by the
+    /// same amount when one has carried three beats and the other none — a
+    /// call count alone cannot tell a full read of a long chronology from
+    /// one of an empty run, and that is exactly the distinction the
+    /// accounting-write defect turns on.
+    #[tokio::test]
+    async fn entries_read_scales_with_a_runs_own_chronology_not_with_the_call_count() {
+        let scratch = Scratch::new("session-entries-read");
+        let path = scratch.0.clone();
+        std::mem::forget(scratch);
+        let mut store = Dolt::start(&path, free_port())
+            .await
+            .expect("the store comes up");
+        migrate::run(store.pool()).await.expect("the schema");
+        migrate::seed_kinds(store.pool())
+            .await
+            .expect("the kinds are seeded");
+        let sessions = DoltSessions::open(store.pool().clone());
+
+        let busy = sessions
+            .begin(NewSession {
+                timezone: None,
+                bot: EntityId("bot:delta".into()),
+                sid: Sid("er01".into()),
+                focus: "a long-running sitting".into(),
+                started_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
+                started_on: None,
+            })
+            .await
+            .expect("begin ok");
+        for (text, at) in [
+            ("first beat", "2026-01-01T00:05:00Z"),
+            ("second beat", "2026-01-01T00:10:00Z"),
+            ("third beat", "2026-01-01T00:15:00Z"),
+        ] {
+            sessions
+                .append(
+                    &busy.id,
+                    NewEntry::manual(text, at.parse().expect("a fixed instant"), None),
+                )
+                .await
+                .expect("append ok");
+        }
+        let quiet = sessions
+            .begin(NewSession {
+                timezone: None,
+                bot: EntityId("bot:delta".into()),
+                sid: Sid("er02".into()),
+                focus: "a run with nothing journalled yet".into(),
+                started_at: "2026-01-02T00:00:00Z".parse().expect("a fixed instant"),
+                started_on: None,
+            })
+            .await
+            .expect("begin ok");
+
+        let before = sessions.entries_read();
+        sessions.read_session(&quiet.id).await.expect("read ok");
+        assert_eq!(
+            sessions.entries_read(),
+            before,
+            "a run with no beats must add none to the entries a full read parsed"
+        );
+
+        sessions.read_session(&busy.id).await.expect("read ok");
+        assert_eq!(
+            sessions.entries_read(),
+            before + 3,
+            "one full read of a three-beat run must add exactly its three rows, not a flat \
+             per-call cost"
         );
 
         store.stop().await;
