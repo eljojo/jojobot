@@ -2264,13 +2264,15 @@ impl Memory for DoltMemory {
                             // **`facts_of` serves under the current handle,
                             // never the storage key** (see `assemble`'s own
                             // comment) — exactly right for a reader, and
-                            // exactly wrong for a row `write_fact` is about
-                            // to target. Lowered back to the key this room
-                            // was read under before anything is written,
-                            // the same way `stored.home`/`.subject` are
-                            // lowered for the new fact just below.
-                            victim_fact.home = home.clone();
-                            victim_fact.subject = home.clone();
+                            // exactly wrong for a row about to be written
+                            // again. `lower_pointers` is the one seam
+                            // `update_fact` and `retract` both already call
+                            // for this: every pointer-bearing field at
+                            // once — `.home`, `.subject`, `.edge`,
+                            // `.derived_from`, `.refs` — never two of them
+                            // by hand while the rest stay served.
+                            self.lower_pointers(&mut tx, &mut victim_fact, &home)
+                                .await?;
                             // **Archived, through the one writer every
                             // archive goes through** — `write_fact` is what
                             // appends the claim's own write history; a

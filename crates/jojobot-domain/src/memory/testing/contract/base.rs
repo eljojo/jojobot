@@ -3444,6 +3444,89 @@ pub async fn an_archived_thought_frees_its_slot<M: Memory>(store: &M) {
     assert_eq!(landed.content, "the kettle is descaling");
 }
 
+/// 🚨 **A dropped thought's edge survives the drop under the pointer's
+/// permanent id, not under whatever it was called at the moment of the
+/// drop.** An edge's object is stored as the badge it wears, never the
+/// handle it answers to today (rule 268) — that is what makes a later
+/// rename harmless everywhere else, and archiving a thought through the
+/// capacity gate is an ordinary write like any other and must keep the
+/// same promise. The pointer is renamed TWICE: once before the drop, so a
+/// naive fix that merely stores whatever the room happened to serve would
+/// still show the right name by coincidence, and once after, which only a
+/// genuinely permanent id survives.
+pub async fn a_dropped_thoughts_edge_survives_the_pointers_own_rename<M: Memory>(store: &M) {
+    let bot = EntityId("bot:contract-thought-rename".into());
+    let pointer_v1 = EntityId("thing:contract-thought-pointer-v1".into());
+    let pointer_v2 = EntityId("thing:contract-thought-pointer-v2".into());
+    let pointer_v3 = EntityId("thing:contract-thought-pointer-v3".into());
+    let other = EntityId("thing:contract-thought-other-pointer".into());
+    ensure(store, &bot).await;
+    ensure(store, &pointer_v1).await;
+    ensure(store, &other).await;
+
+    capture(
+        store,
+        NewFact {
+            fields: [(THOUGHT_CAPACITY.to_string(), "1".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(bot.clone(), "capacity is one", date(2026, 9, 1))
+        },
+    )
+    .await;
+    let dropped = capture(
+        store,
+        NewFact {
+            edge: Some(Edge::new(EdgeShape::Connection, pointer_v1.clone())),
+            ..NewFact::about(bot.clone(), "the pointer needs attention", date(2026, 9, 2))
+        },
+    )
+    .await;
+
+    // Renamed BEFORE the drop — a fix that merely carried the room's own
+    // served value forward would already show this name, coincidentally.
+    store
+        .rename_entity(&pointer_v1, &pointer_v2, None, date(2026, 9, 3), None)
+        .await
+        .expect("rename ok")
+        .written()
+        .expect("the guard must not block the rename");
+
+    store
+        .capture(NewFact {
+            edge: Some(Edge::new(EdgeShape::Connection, other.clone())),
+            drop: Some(dropped.address()),
+            drop_because: Some("moved on".into()),
+            ..NewFact::about(bot.clone(), "a second thought", date(2026, 9, 4))
+        })
+        .await
+        .expect("capture should succeed")
+        .written()
+        .expect("the guard must not block a write that names a valid drop");
+
+    // Renamed AGAIN, AFTER the drop — only a permanent id, never a handle
+    // the drop happened to see, survives this one.
+    store
+        .rename_entity(&pointer_v2, &pointer_v3, None, date(2026, 9, 5), None)
+        .await
+        .expect("rename ok")
+        .written()
+        .expect("the guard must not block the second rename");
+
+    let after = store.recall(&bot).await.expect("recall ok");
+    let archived = after
+        .iter()
+        .find(|f| f.id == dropped.id)
+        .expect("the dropped thought is still there, archived");
+    assert_eq!(archived.status, FactStatus::Archived, "{archived:?}");
+    assert_eq!(
+        archived.edge.as_ref().map(|e| &e.object),
+        Some(&pointer_v3),
+        "the dropped thought's own edge must resolve to the pointer's CURRENT name, through \
+         both renames — not the name the drop happened to see: {archived:?}"
+    );
+}
+
 /// 🚨 **Reading a bot's own thoughts must never touch one.** A thought is an
 /// ordinary claim on a bot's own handle drawing a `connection` edge at its
 /// pointer — no new field, no new shape. What a future aging pass needs is
@@ -10122,6 +10205,7 @@ pub async fn run_all<M: Memory>(store: &M) {
     reading_a_bots_thoughts_never_touches_their_history(store).await;
     a_bots_room_enforces_its_capacity(store).await;
     an_archived_thought_frees_its_slot(store).await;
+    a_dropped_thoughts_edge_survives_the_pointers_own_rename(store).await;
     every_edge_shape_reads_back(store).await;
     a_wrong_kind_edge_object_is_refused(store).await;
     an_edge_object_is_screened_by_the_guard(store).await;
