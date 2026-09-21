@@ -110,6 +110,25 @@ impl Observed<'_> {
     }
 }
 
+/// **The phase number a boundary's own label encodes** — `"Phase 4 — ..."`
+/// reads as `4` — or `None` for a label that names no numbered phase (`"the
+/// end"`, the final boundary after every real phase).
+fn phase_number(label: &str) -> Option<u32> {
+    label
+        .strip_prefix("Phase ")?
+        .split(|c: char| !c.is_ascii_digit())
+        .next()
+        .filter(|digits| !digits.is_empty())?
+        .parse()
+        .ok()
+}
+
+/// **Where a boundary sits in the room's own phase order** — never in the
+/// vec's. `"the end"` sorts after every numbered phase, because it is.
+fn phase_order(label: &str) -> u32 {
+    phase_number(label).unwrap_or(u32::MAX)
+}
+
 /// **The lookup `across` performs, free of `Observed` so it can be measured
 /// without a live room.**
 ///
@@ -124,12 +143,21 @@ fn boundary_pair<'a>(
     boundaries: &'a [Boundary],
     phase: &str,
 ) -> Option<(&'a Boundary, &'a Boundary)> {
-    let at = boundaries.iter().position(|b| {
+    let before = boundaries.iter().find(|b| {
         b.before
             .strip_prefix(phase)
             .is_some_and(|rest| !rest.starts_with(|c: char| c.is_ascii_digit()))
     })?;
-    Some((boundaries.get(at)?, boundaries.get(at + 1)?))
+    // **The next boundary is found by the phase order its own label
+    // encodes, never by array position.** A boundary pushed out of the
+    // order its own phase implies must not silently pair with whatever
+    // the vec happens to hold at the next index.
+    let before_order = phase_order(&before.before);
+    let after = boundaries
+        .iter()
+        .filter(|b| phase_order(&b.before) > before_order)
+        .min_by_key(|b| phase_order(&b.before))?;
+    Some((before, after))
 }
 
 /// What one phase printed.
@@ -1202,6 +1230,37 @@ mod tests {
             before.before,
         );
         assert_eq!(after.before, "Phase 2 — a desk, a storm");
+    }
+
+    /// 🚨 **A boundary pushed out of the order its own phase implies must
+    /// not silently pair with whatever the vec happens to hold next.**
+    ///
+    /// `boundary_pair` is read by `Observed::across`, which is what
+    /// `window own-phase` reads from — the mechanism a real lock now
+    /// depends on. Correctness rested entirely on `boundaries` being
+    /// pushed in phase order, asserted nowhere. This constructs them out
+    /// of order — Phase 2's reading recorded before Phase 1's — and asks
+    /// for Phase 1's own pair.
+    ///
+    /// If the lookup trusted array position, it would print Phase 3 as
+    /// the boundary after Phase 1, because Phase 3 sits at the next
+    /// index — the wrong day's evidence, silently.
+    #[test]
+    fn a_phase_lookup_is_not_fooled_by_boundaries_recorded_out_of_order() {
+        let boundaries = vec![
+            boundary_labelled("Phase 2 — a desk, a storm"),
+            boundary_labelled("Phase 1 — the vault moves in"),
+            boundary_labelled("Phase 3 — boots and a tablet"),
+        ];
+        let (before, after) =
+            boundary_pair(&boundaries, "Phase 1").expect("Phase 1 has a boundary either side");
+        assert_eq!(before.before, "Phase 1 — the vault moves in");
+        assert_eq!(
+            after.before, "Phase 2 — a desk, a storm",
+            "Phase 1 paired with the wrong boundary — the vec's own push order leaked into \
+             the answer: {}",
+            after.before,
+        );
     }
 
     /// A run with two phases and nothing else — the smallest thing that has a
