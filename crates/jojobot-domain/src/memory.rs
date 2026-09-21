@@ -2384,7 +2384,7 @@ pub struct Fact {
     /// and never fills it in from the day the claim was made.
     pub happened_at: Option<Date>,
     /// **The far end of the span, when the thing happened is a stretch of days
-    /// rather than one** — a trip, a festival, a course. `None` is the
+    /// rather than one** — a festival, a course. `None` is the
     /// ordinary case: a claim about a single day, or one that says nothing
     /// about when at all.
     ///
