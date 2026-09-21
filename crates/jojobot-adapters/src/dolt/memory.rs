@@ -2210,6 +2210,81 @@ impl Memory for DoltMemory {
                     .unwrap_or_else(|| object.clone()),
             );
         }
+        // **Off the subject's own kind, never off `home`** — that is a badge
+        // now, and a badge carries no kind token to parse. Computed once,
+        // ahead of the cap check that needs it and the fit guard further
+        // down that already did.
+        let subject_kind = index
+            .iter()
+            .find(|e| e.id == subject_handle)
+            .expect("resolved above")
+            .kind;
+        // **A thought's cardinality is enforced here, atomically with the
+        // write it gates** — never as a separate call, because a drop with
+        // nothing yet written in its place is a state the room must never
+        // reach. A thought is an ordinary claim on a bot's own handle
+        // drawing a `connection` edge; the room is the bot's own active
+        // ones, and capacity is an ordinary field on the bot, folded like
+        // any other. A bot carrying none is uncapped.
+        if subject_kind == EntityKind::BOT
+            && edge
+                .as_ref()
+                .is_some_and(|e| e.shape == EdgeShape::Connection)
+        {
+            let capacity = Self::held_by(&mut tx, &home)
+                .await?
+                .get(jojobot_domain::memory::THOUGHT_CAPACITY)
+                .and_then(|v| v.trim().parse::<usize>().ok());
+            if let Some(capacity) = capacity {
+                let existing = self.facts_of(&mut tx, &home).await?;
+                let room = jojobot_domain::memory::thought_room(&existing);
+                if room.len() >= capacity {
+                    let refuse = |room: Vec<Fact>| MemoryError::RoomFull {
+                        bot: home.to_string(),
+                        live: room.len(),
+                        capacity,
+                        room,
+                    };
+                    match (&fact.drop, &fact.drop_because) {
+                        (Some(victim), Some(reason)) => {
+                            // **The victim must resolve to a live thought IN
+                            // THIS ROOM** — not merely to a fact that exists.
+                            // Anything else is answered exactly as an empty
+                            // drop is: refused, with the room shown, because
+                            // a caller that named the wrong thing still
+                            // needs to see what it could have named.
+                            let in_room = self
+                                .resolve(&mut tx, &victim.home)
+                                .await?
+                                .filter(|(key, _)| *key == home)
+                                .and_then(|_| room.iter().find(|f| f.id == victim.local).cloned());
+                            let Some(mut victim_fact) = in_room else {
+                                return Err(refuse(room));
+                            };
+                            // **`facts_of` serves under the current handle,
+                            // never the storage key** (see `assemble`'s own
+                            // comment) — exactly right for a reader, and
+                            // exactly wrong for a row `write_fact` is about
+                            // to target. Lowered back to the key this room
+                            // was read under before anything is written,
+                            // the same way `stored.home`/`.subject` are
+                            // lowered for the new fact just below.
+                            victim_fact.home = home.clone();
+                            victim_fact.subject = home.clone();
+                            // **Archived, through the one writer every
+                            // archive goes through** — `write_fact` is what
+                            // appends the claim's own write history; a
+                            // status flip that skipped it would read back
+                            // changed with nothing behind it saying when.
+                            victim_fact.status = FactStatus::Archived;
+                            victim_fact.details = Some(reason.clone());
+                            Self::write_fact(&mut tx, &victim_fact, &self.clock).await?;
+                        }
+                        _ => return Err(refuse(room)),
+                    }
+                }
+            }
+        }
         let id = Self::mint(&mut tx, &home).await?;
         let stored = Fact {
             id,
@@ -2247,14 +2322,8 @@ impl Memory for DoltMemory {
         let declared = Self::types_in(&mut tx).await?;
         // **The fold reads both halves and the guard reads one.** How a key
         // folds is declared by whoever declared it; what governs a thing is
-        // its own kind, and nothing else. **Off the subject's own kind, never
-        // off `stored.home`** — that is a badge now, and a badge carries no
-        // kind token to parse.
-        let subject_kind = index
-            .iter()
-            .find(|e| e.id == subject_handle)
-            .expect("resolved above")
-            .kind;
+        // its own kind, and nothing else — `subject_kind`, computed once
+        // above, ahead of the cap check that also needs it.
         let governs = Self::kind_keys_in(&mut tx, subject_kind.as_token()).await?;
         guard_fit(
             subject_kind.as_token(),

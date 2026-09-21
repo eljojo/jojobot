@@ -6466,6 +6466,8 @@ mod tests {
             refs: Vec::new(),
             derived_from: None,
             stale_after: None,
+            drop: None,
+            drop_because: None,
         }
     }
 

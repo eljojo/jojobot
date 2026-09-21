@@ -160,6 +160,21 @@ pub struct CaptureArgs {
     /// day made no promise**, which is neither fresh nor stale.
     #[serde(default)]
     pub(crate) stale_after: Option<String>,
+    /// **The address of a thought to drop, when this capture is what fills
+    /// the last free slot in a bot's own room.** `kind:slug#local-id`,
+    /// exactly as `recall` serves one. Archived in the SAME act as this
+    /// fact is written — never a separate call — because a drop with
+    /// nothing yet written in its place is a state the room must never
+    /// reach. Ignored when the room this write would join is not full:
+    /// naming one costs nothing until it is actually spent. Requires
+    /// `drop_because`.
+    #[serde(default)]
+    pub(crate) drop: Option<String>,
+    /// **The one-line reason the dropped thought no longer earns its
+    /// slot** — your own testimony, at the moment of the act. Archived onto
+    /// the dropped claim as its own `details`. Required whenever `drop` is.
+    #[serde(default)]
+    pub(crate) drop_because: Option<String>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
     /// every call — it is what tells jojobot which bot is asking. Reads are
     /// attributed, never journalled.
@@ -580,6 +595,26 @@ impl Jojobot {
             .transpose()
             .map_err(memory_error)?;
 
+        let drop = args
+            .drop
+            .as_deref()
+            .map(FactAddress::parse)
+            .transpose()
+            .map_err(memory_error)?;
+        // **The reason is not optional once a drop is named.** Splitting the
+        // two would let a drop land with no testimony behind it, which is
+        // exactly the gap the room's own refusal exists to prevent.
+        if drop.is_some() && args.drop_because.as_deref().is_none_or(str::is_empty) {
+            return memory_declined(
+                "capture",
+                MemoryError::InvalidFact(
+                    "drop names a thought without drop_because: the reason is the bot's own \
+                     testimony at the moment of the act, and a drop cannot land without one"
+                        .into(),
+                ),
+            );
+        }
+
         let mut fields = args.fields.unwrap_or_default();
         let mut opened_the_loop = false;
         if let Some(outcome) = args.check_in.as_deref() {
@@ -651,6 +686,8 @@ impl Jojobot {
                 .collect(),
             derived_from,
             stale_after: parse_date(args.stale_after.as_deref())?,
+            drop,
+            drop_because: args.drop_because,
         };
         // **Disagreement, not presence alone.** A check-in with no
         // `happened_at` has asked no question, and one where both fields

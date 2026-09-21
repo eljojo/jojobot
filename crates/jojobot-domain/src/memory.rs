@@ -1792,6 +1792,33 @@ pub fn apply_fact_patch(fact: &mut Fact, patch: &FactPatch) -> Result<(), Memory
     Ok(())
 }
 
+/// **The key a bot's own capacity is read from** — an ordinary field, folded
+/// like any other. No bot carries one until somebody writes it, and a bot
+/// with none is uncapped: the same "nothing computes without the key" rule
+/// every other carrier in this store already follows.
+pub const THOUGHT_CAPACITY: &str = "thought_capacity";
+
+/// **A bot's own live thoughts, out of everything captured about it.**
+///
+/// A thought is an ordinary claim on a bot's own handle drawing a
+/// `connection` edge at its pointer — no new field, no declared type; the
+/// edge carve already established this needs no new shape. The room is the
+/// ACTIVE ones: an archived thought stops occupying a slot the moment it is
+/// archived, so the count a write checks itself against is always the room
+/// as it stands, never as it once did.
+pub fn thought_room(captured: &[Fact]) -> Vec<Fact> {
+    captured
+        .iter()
+        .filter(|f| f.status == FactStatus::Active)
+        .filter(|f| {
+            f.edge
+                .as_ref()
+                .is_some_and(|e| e.shape == EdgeShape::Connection)
+        })
+        .cloned()
+        .collect()
+}
+
 /// **The writes an edit makes on a record's keys**, in the order
 /// [`apply_fact_patch`] applies them: a cleared key carries no value, and a set
 /// key carries what it puts there.
@@ -2272,6 +2299,18 @@ pub struct NewFact {
     /// **When somebody should look at this again** — see [`Fact::stale_after`].
     /// Optional, and most claims never carry one.
     pub stale_after: Option<Date>,
+    /// **The thought to drop, when this write is what fills the last free
+    /// slot in a full room.** Named and archived in the same act as this
+    /// fact is written — never as a separate call, because a drop with
+    /// nothing yet to show for it is a state the room must never be able to
+    /// reach. Ignored when the room the write would join is not full: a
+    /// drop is only ever spent, never merely offered.
+    pub drop: Option<FactAddress>,
+    /// **The one-line reason the dropped thought no longer earns its slot**
+    /// — the bot's own testimony, at the moment of the act. Required
+    /// whenever `drop` is; archived onto the dropped claim as its own
+    /// `details`, the same field an ordinary archive already carries one in.
+    pub drop_because: Option<String>,
 }
 
 impl NewFact {
@@ -2293,6 +2332,8 @@ impl NewFact {
             refs: Vec::new(),
             derived_from: None,
             stale_after: None,
+            drop: None,
+            drop_because: None,
         }
     }
 }
@@ -3252,6 +3293,24 @@ pub enum MemoryError {
         attempted: String,
         /// The identity it belongs to.
         owner: String,
+    },
+    /// **A bot's room is at capacity, and the write named nothing to drop.**
+    ///
+    /// Never the oldest thought silently pushed out: the point of a cap is
+    /// that something must give when something arrives, and giving is the
+    /// bot's own act, not jojobot's guess. The room rides on the refusal so
+    /// naming a drop never costs a second round trip to see what is in it.
+    #[error("bot:{bot}'s room already holds {live} of {capacity}: name a thought to drop")]
+    RoomFull {
+        /// The bot whose room is full.
+        bot: String,
+        /// How many live thoughts the room already holds.
+        live: usize,
+        /// The capacity itself.
+        capacity: usize,
+        /// The room's own contents, so the caller can choose without
+        /// reading it separately.
+        room: Vec<Fact>,
     },
     /// The named entity doesn't exist. Same rule: report, never create.
     #[error("no entity '{attempted}'{}", nearest_handles(nearest))]

@@ -1055,6 +1055,66 @@ impl Memory for InMemoryMemory {
         };
         let existing: Vec<&Fact> = facts.iter().filter(|f| f.home == home).collect();
         let id = FactId(format!("f{}", existing.len() + 1));
+        // **A thought's cardinality is enforced here, atomically with the
+        // write it gates** — the same rule and the same reasons the real
+        // store's copy carries. A thought is an ordinary claim on a bot's
+        // own handle drawing a `connection` edge; the room is the bot's own
+        // active ones, and capacity is an ordinary field on the bot. A bot
+        // carrying none is uncapped.
+        if subject_entity.kind == EntityKind::BOT
+            && edge
+                .as_ref()
+                .is_some_and(|e| e.shape == crate::memory::EdgeShape::Connection)
+        {
+            let capacity =
+                super::super::folded_fields(&self.writes_on(&home, &facts), &self.declarations())
+                    .get(super::super::THOUGHT_CAPACITY)
+                    .and_then(|v| v.trim().parse::<usize>().ok());
+            if let Some(capacity) = capacity {
+                let existing_owned: Vec<Fact> =
+                    facts.iter().filter(|f| f.home == home).cloned().collect();
+                let room = super::super::thought_room(&existing_owned);
+                if room.len() >= capacity {
+                    let refuse = |room: Vec<Fact>| MemoryError::RoomFull {
+                        bot: home.to_string(),
+                        live: room.len(),
+                        capacity,
+                        room,
+                    };
+                    match (&fact.drop, &fact.drop_because) {
+                        (Some(victim), Some(reason)) => {
+                            // **The victim must resolve to a live thought IN
+                            // THIS ROOM** — not merely to a fact that
+                            // exists. Anything else answers exactly as an
+                            // empty drop does: refused, with the room shown.
+                            let victim_home = self.storage_key(&victim.home);
+                            let in_room = victim_home.filter(|key| *key == home).is_some()
+                                && room.iter().any(|f| f.id == victim.local);
+                            let Some(victim_index) = in_room
+                                .then(|| {
+                                    facts
+                                        .iter()
+                                        .position(|f| f.home == home && f.id == victim.local)
+                                })
+                                .flatten()
+                            else {
+                                return Err(refuse(room));
+                            };
+                            // **Archived, through the one writer every
+                            // archive goes through** — `append_claim_write`
+                            // is what leaves a write behind; a status flip
+                            // that skipped it would read back changed with
+                            // nothing behind it saying when.
+                            facts[victim_index].status = FactStatus::Archived;
+                            facts[victim_index].details = Some(reason.clone());
+                            let archived = facts[victim_index].clone();
+                            self.append_claim_write(&archived);
+                        }
+                        _ => return Err(refuse(room)),
+                    }
+                }
+            }
+        }
         let wrote: Vec<(String, Option<String>)> = fields
             .iter()
             .map(|(key, value)| (key.clone(), Some(value.clone())))

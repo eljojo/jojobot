@@ -122,6 +122,8 @@ pub(crate) fn capture_args(subject: &str, content: &str) -> CaptureArgs {
         check_in: None,
         sid: Some(crate::harness::TEST_SID.into()),
         stale_after: None,
+        drop: None,
+        drop_because: None,
     }
 }
 

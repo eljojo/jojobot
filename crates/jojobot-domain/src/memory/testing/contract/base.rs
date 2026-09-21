@@ -1,5 +1,6 @@
 use super::support::{add, capture, edit, ensure};
 use super::*;
+use crate::memory::{THOUGHT_CAPACITY, thought_room};
 
 /// Add an entity the guard is expected to **refuse first** — the way a
 /// caller really gets one made: read the refusal, take the token it minted,
@@ -603,6 +604,8 @@ pub async fn preserves_all_fields<M: Memory>(store: &M) {
         refs: vec![subject.clone()],
         derived_from: Some(source.clone()),
         stale_after: None,
+        drop: None,
+        drop_because: None,
     };
     let captured = capture(store, new).await;
     assert_eq!(captured.subject, subject);
@@ -3272,6 +3275,175 @@ pub async fn capture_writes_an_edge_that_reads_back<M: Memory>(store: &M) {
     assert_eq!(seen.edge.map(|e| e.object), Some(edge.object));
 }
 
+/// 🚨 **A bot's room enforces its capacity, atomically with the write that
+/// would exceed it.** A write into a full room with no drop named is
+/// refused, and the refusal carries the room so a caller can choose without
+/// a second read. A write naming a live thought to drop lands the new one
+/// and archives the named one in the SAME act — never two calls, because a
+/// drop with nothing yet written in its place is a state the room must
+/// never reach.
+pub async fn a_bots_room_enforces_its_capacity<M: Memory>(store: &M) {
+    let bot = EntityId("bot:contract-thought-capacity".into());
+    let a = EntityId("thing:jukebox".into());
+    let b = EntityId("thing:battery".into());
+    let c = EntityId("thing:the-fern".into());
+    ensure(store, &bot).await;
+
+    capture(
+        store,
+        NewFact {
+            fields: [(THOUGHT_CAPACITY.to_string(), "2".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(bot.clone(), "capacity is two", date(2026, 7, 1))
+        },
+    )
+    .await;
+
+    let first = capture(
+        store,
+        NewFact {
+            edge: Some(Edge::new(EdgeShape::Connection, a.clone())),
+            ..NewFact::about(bot.clone(), "the jukebox needs a needle", date(2026, 7, 2))
+        },
+    )
+    .await;
+    capture(
+        store,
+        NewFact {
+            edge: Some(Edge::new(EdgeShape::Connection, b.clone())),
+            ..NewFact::about(bot.clone(), "the kettle is descaling", date(2026, 7, 3))
+        },
+    )
+    .await;
+
+    // The room holds two, its capacity is two — a third with no drop is
+    // refused, and the refusal shows the room.
+    ensure(store, &c).await;
+    let refused = store
+        .capture(NewFact {
+            edge: Some(Edge::new(EdgeShape::Connection, c.clone())),
+            ..NewFact::about(bot.clone(), "the fern needs water", date(2026, 7, 4))
+        })
+        .await
+        .expect_err("a full room with no drop named must be refused, not written");
+    match refused {
+        MemoryError::RoomFull {
+            live,
+            capacity,
+            room,
+            ..
+        } => {
+            assert_eq!(
+                (live, capacity),
+                (2, 2),
+                "the refusal must say what the room holds"
+            );
+            assert_eq!(
+                room.len(),
+                2,
+                "the refusal must carry the room itself: {room:?}"
+            );
+        }
+        other => panic!("expected RoomFull, got {other:?}"),
+    }
+
+    // Named this time — the same write lands, and the named thought is
+    // archived, in the one act.
+    let landed = store
+        .capture(NewFact {
+            edge: Some(Edge::new(EdgeShape::Connection, c.clone())),
+            drop: Some(first.address()),
+            drop_because: Some("the jukebox got fixed".into()),
+            ..NewFact::about(bot.clone(), "the fern needs water", date(2026, 7, 4))
+        })
+        .await
+        .expect("capture should succeed")
+        .written()
+        .expect("the guard must not block a write that names a valid drop");
+    assert_eq!(landed.content, "the fern needs water");
+
+    let after = store.recall(&bot).await.expect("recall ok");
+    let dropped = after
+        .iter()
+        .find(|f| f.id == first.id)
+        .expect("the dropped thought is still there, archived");
+    assert_eq!(dropped.status, FactStatus::Archived, "{dropped:?}");
+    assert_eq!(dropped.details.as_deref(), Some("the jukebox got fixed"));
+    let room = thought_room(&after);
+    assert_eq!(
+        room.len(),
+        2,
+        "the room stays at two: the drop freed exactly the slot it took"
+    );
+    assert!(
+        room.iter().any(|f| f.id == landed.id),
+        "the new thought is in the room: {room:?}"
+    );
+}
+
+/// 🚨 **An archived thought stops occupying a slot the moment it is
+/// archived** — proven on its own, not assumed from the status filter a
+/// capacity check happens to also use. An ordinary `update_fact` archive,
+/// with no drop involved at all, is what frees the slot here.
+pub async fn an_archived_thought_frees_its_slot<M: Memory>(store: &M) {
+    let bot = EntityId("bot:contract-thought-archive".into());
+    let a = EntityId("thing:jukebox".into());
+    let b = EntityId("thing:battery".into());
+    ensure(store, &bot).await;
+
+    capture(
+        store,
+        NewFact {
+            fields: [(THOUGHT_CAPACITY.to_string(), "1".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(bot.clone(), "capacity is one", date(2026, 8, 1))
+        },
+    )
+    .await;
+    let only = capture(
+        store,
+        NewFact {
+            edge: Some(Edge::new(EdgeShape::Connection, a.clone())),
+            ..NewFact::about(bot.clone(), "the jukebox needs a needle", date(2026, 8, 2))
+        },
+    )
+    .await;
+
+    ensure(store, &b).await;
+    store
+        .capture(NewFact {
+            edge: Some(Edge::new(EdgeShape::Connection, b.clone())),
+            ..NewFact::about(bot.clone(), "the kettle is descaling", date(2026, 8, 3))
+        })
+        .await
+        .expect_err("the one slot is already taken");
+
+    // Archived the ORDINARY way — no drop, no capacity write involved.
+    edit(
+        store,
+        &only.address(),
+        FactPatch {
+            status: Some(FactStatus::Archived),
+            details: Some("fixed".into()),
+            ..Default::default()
+        },
+    )
+    .await;
+
+    // The slot is free now, with no drop named.
+    let landed = capture(
+        store,
+        NewFact {
+            edge: Some(Edge::new(EdgeShape::Connection, b.clone())),
+            ..NewFact::about(bot.clone(), "the kettle is descaling", date(2026, 8, 3))
+        },
+    )
+    .await;
+    assert_eq!(landed.content, "the kettle is descaling");
+}
+
 /// 🚨 **Reading a bot's own thoughts must never touch one.** A thought is an
 /// ordinary claim on a bot's own handle drawing a `connection` edge at its
 /// pointer — no new field, no new shape. What a future aging pass needs is
@@ -3285,7 +3457,7 @@ pub async fn capture_writes_an_edge_that_reads_back<M: Memory>(store: &M) {
 /// bot, and asserts nothing about it moved — not the count of writes, not the
 /// moment of the newest one.
 pub async fn reading_a_bots_thoughts_never_touches_their_history<M: Memory>(store: &M) {
-    let bot = EntityId("bot:milhouse".into());
+    let bot = EntityId("bot:contract-thought-touch".into());
     let pointer = EntityId("thing:jukebox".into());
     let thought = capture(
         store,
@@ -9948,6 +10120,8 @@ pub async fn run_all<M: Memory>(store: &M) {
 
     capture_writes_an_edge_that_reads_back(store).await;
     reading_a_bots_thoughts_never_touches_their_history(store).await;
+    a_bots_room_enforces_its_capacity(store).await;
+    an_archived_thought_frees_its_slot(store).await;
     every_edge_shape_reads_back(store).await;
     a_wrong_kind_edge_object_is_refused(store).await;
     an_edge_object_is_screened_by_the_guard(store).await;

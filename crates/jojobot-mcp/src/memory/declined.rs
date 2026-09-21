@@ -443,6 +443,39 @@ pub(crate) fn memory_declined(
                  '{attempted}' — that is where it resolves now."
             ),
         )),
+        // **The room rides on the refusal**, structured rather than folded
+        // into prose, so naming a drop never costs a second round trip to
+        // see what is in it. `blocked_body`'s fixed shape has no room for
+        // this, so this is its own small body rather than a fourth
+        // parameter every other caller would carry and never use.
+        MemoryError::RoomFull {
+            ref bot,
+            live,
+            capacity,
+            ref room,
+        } => {
+            let body = serde_json::json!({
+                "status": "blocked",
+                "attempted": bot,
+                "wrote": false,
+                "room": room
+                    .iter()
+                    .map(|f| serde_json::json!({
+                        "address": f.address().to_string(),
+                        "content": f.content,
+                    }))
+                    .collect::<Vec<_>>(),
+                "how_to_proceed": format!(
+                    "Nothing was written: bot:{bot}'s room already holds {live} of {capacity} \
+                     thoughts. Re-call {verb} naming drop (one of the addresses above) and \
+                     drop_because (why it no longer earns its slot) — or wait, and let this one \
+                     go unwritten for now."
+                ),
+            });
+            Ok(CallToolResult::success(vec![ContentBlock::text(
+                body.to_string(),
+            )]))
+        }
         other => Err(memory_error(other)),
     }
 }
@@ -482,6 +515,7 @@ pub(crate) fn memory_error(e: MemoryError) -> McpError {
         | MemoryError::SuppliedHandle { .. }
         | MemoryError::UnconfirmedPromotion
         | MemoryError::UnconfirmedSettling
+        | MemoryError::RoomFull { .. }
         | MemoryError::UnstatedProvenance => McpError::invalid_params(e.to_string(), None),
         MemoryError::Store(msg) => {
             McpError::internal_error(crate::boundary::store_failed("this call", &msg), None)
