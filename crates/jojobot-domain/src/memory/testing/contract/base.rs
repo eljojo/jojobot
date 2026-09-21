@@ -3365,6 +3365,62 @@ pub async fn a_non_bots_room_enforces_its_capacity_too<M: Memory>(store: &M) {
     }
 }
 
+/// 🚨 **A refusal names a thing the caller can address it by, never the
+/// internal permanent id underneath.** Every entity wears a badge from the
+/// moment it is created — see `write_entity`'s own comment on the real
+/// store, and the fake's mirror — so `RoomFull`'s subject is at real risk
+/// of carrying that opaque token instead of the handle the caller just used
+/// to reach it. A refusal a caller cannot resolve is worse than no refusal:
+/// it reads as an answer and is not one. The needle is EXACT EQUALITY
+/// against the known handle, not a containment or non-empty check — a bare
+/// badge is also a non-empty string, and only exact equality against the
+/// real handle fails on one.
+pub async fn a_room_fulls_subject_is_never_a_bare_badge<M: Memory>(store: &M) {
+    let bot = EntityId("bot:contract-thought-badge".into());
+    let a = EntityId("thing:jukebox".into());
+    let b = EntityId("thing:battery".into());
+    ensure(store, &bot).await;
+
+    capture(
+        store,
+        NewFact {
+            fields: [(THOUGHT_CAPACITY.to_string(), "1".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(bot.clone(), "capacity is one", date(2026, 7, 1))
+        },
+    )
+    .await;
+    capture(
+        store,
+        NewFact {
+            edge: Some(Edge::new(EdgeShape::Connection, a.clone())),
+            ..NewFact::about(bot.clone(), "the jukebox needs a needle", date(2026, 7, 2))
+        },
+    )
+    .await;
+
+    ensure(store, &b).await;
+    let refused = store
+        .capture(NewFact {
+            edge: Some(Edge::new(EdgeShape::Connection, b.clone())),
+            ..NewFact::about(bot.clone(), "the battery needs replacing", date(2026, 7, 3))
+        })
+        .await
+        .expect_err("a full room with no drop named must be refused");
+    match refused {
+        MemoryError::RoomFull { subject, .. } => {
+            assert_eq!(
+                subject,
+                bot.to_string(),
+                "the refusal must name the handle the caller addressed the thing by, not the \
+                 permanent id underneath it"
+            );
+        }
+        other => panic!("expected RoomFull, got {other:?}"),
+    }
+}
+
 /// **A room at capacity, with a live thought and a way to name what leaves
 /// would exceed it.** A write into a full room with no drop named is
 /// refused, and the refusal carries the room so a caller can choose without
@@ -10382,6 +10438,7 @@ pub async fn run_all<M: Memory>(store: &M) {
     capture_writes_an_edge_that_reads_back(store).await;
     reading_a_bots_thoughts_never_touches_their_history(store).await;
     a_thought_pointing_at_a_thread_is_in_the_room(store).await;
+    a_room_fulls_subject_is_never_a_bare_badge(store).await;
     a_bots_room_enforces_its_capacity(store).await;
     a_non_bots_room_enforces_its_capacity_too(store).await;
     an_aged_thought_frees_the_room(store).await;

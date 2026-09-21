@@ -109,6 +109,7 @@ const ROSTER: &[&str] = &[
     "bot:contract-still-no-box",
     "bot:contract-thought-aging",
     "bot:contract-thought-archive",
+    "bot:contract-thought-badge",
     "bot:contract-thought-capacity",
     "bot:contract-thought-rename",
     "bot:contract-thought-touch",
