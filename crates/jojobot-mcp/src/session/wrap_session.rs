@@ -162,6 +162,7 @@ impl Jojobot {
 mod tests {
     use super::*;
     use crate::harness::*;
+    use crate::memory::RecallArgs;
     use crate::session::testing::*;
     use jojobot_domain::session::Sid;
 
@@ -297,6 +298,107 @@ mod tests {
         assert!(
             chronology.len() < session["entry_count"].as_u64().expect("a length") as usize,
             "entry_count is the whole record and the answer carries less: {session}"
+        );
+    }
+
+    /// **The elision names the way back, and the way it names really reaches
+    /// what it left out.** Rule 306 refused truncate-then-hunt-by-grep; the
+    /// fix is an ordinary addressable read, not a search, not a raised cap,
+    /// and not a sibling verb. `recall` already reads a session's own handle
+    /// whole (`session::projected`, unbounded) — this proves the note names
+    /// exactly that call, and that the call it names lands on the oldest
+    /// entry the wrap answer itself dropped.
+    #[tokio::test]
+    async fn the_chronology_note_names_a_call_that_actually_reaches_what_it_left_out() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+        for nth in 0..20 {
+            jojobot
+                .journal(Parameters(JournalArgs {
+                    entry: format!("beat {nth:02} {}", "w".repeat(1500)),
+                    focus: None,
+                    sid: sid.clone(),
+                }))
+                .await
+                .expect("journal ok");
+        }
+
+        let wrapped = json_of(
+            &jojobot
+                .wrap_session(Parameters(WrapSessionArgs {
+                    story: "the run is over and the story is told".into(),
+                    sid: sid.clone(),
+                }))
+                .await
+                .expect("wrap ok"),
+        );
+        let session = &wrapped["session"];
+        assert_eq!(session["chronology_elided"], true, "{session}");
+        let session_id = session["id"].as_str().expect("a session id").to_string();
+
+        // The note names an address and a verb — structure, not prose: a
+        // rewording would not break this, a renamed handle scheme or a
+        // renamed verb would.
+        let note = session["chronology_note"]
+            .as_str()
+            .expect("an elision says how to reach the rest");
+        assert!(
+            note.contains(&session_id) && note.contains("recall"),
+            "the note does not name an addressable way back: {note}"
+        );
+
+        // The oldest beat is the control: it must be the one thing this
+        // wrap's own answer did NOT carry, or the round trip below proves
+        // nothing. The needle is the entry's own body, not the bare "beat
+        // 00" prefix — the wrap's closing entry legitimately flushes a
+        // stale, never-updated focus derived from that same prefix, and a
+        // needle that matched it would make this control pass for the wrong
+        // reason.
+        let oldest_body = format!("beat 00 {}", "w".repeat(1500));
+        let kept_chronology = session["chronology"].as_array().expect("a chronology");
+        assert!(
+            !kept_chronology.iter().any(|e| e["text"]
+                .as_str()
+                .unwrap_or_default()
+                .contains(&oldest_body)),
+            "the fixture is only a control if the oldest beat was really left out: {session}"
+        );
+
+        let recalled = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    view: None,
+                    subject: Some(format!("session:{session_id}")),
+                    kind: None,
+                    answers_type: None,
+                    fields: None,
+                    facts: None,
+                    stood_for: None,
+                    prose: Some(true),
+                    charter: None,
+                    follow: None,
+                    overdue: None,
+                    near: None,
+                    sid: Some(sid),
+                    history: None,
+                    history_record: None,
+                    history_most: None,
+                    values: None,
+                    values_most: None,
+                    built_on: None,
+                    backing: None,
+                }))
+                .await
+                .expect("recall answers rather than failing the protocol"),
+        );
+        let prose = recalled["objects"][0]["prose"]
+            .as_str()
+            .expect("the session's own prose, asked for by name");
+        assert!(
+            prose.contains(&oldest_body),
+            "the call the note names did not reach the entry the wrap answer left out: {prose}"
         );
     }
 

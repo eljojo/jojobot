@@ -80,6 +80,7 @@ pub(crate) fn session_json(session: &Session) -> serde_json::Value {
         // does not spend. The rendering happens twice, which a chronology is far
         // too small for anybody to notice.
         obj.extend(chronology_json(
+            session.id.as_str(),
             &text::SESSION_CHRONOLOGY.tail(&session.entries, |e| {
                 entry_json(e).to_string().chars().count()
             }),
@@ -94,7 +95,10 @@ pub(crate) fn session_json(session: &Session) -> serde_json::Value {
 /// nothing but [`text::Capped::tail`] produces. So serving a chronology without
 /// passing through the cap is not a thing that can be written here: the cap is
 /// unskippable rather than remembered.
-fn chronology_json(kept: &Kept<'_, JournalEntry>) -> serde_json::Map<String, serde_json::Value> {
+fn chronology_json(
+    session_id: &str,
+    kept: &Kept<'_, JournalEntry>,
+) -> serde_json::Map<String, serde_json::Value> {
     let mut fields = serde_json::Map::new();
     fields.insert(
         "chronology".into(),
@@ -113,8 +117,9 @@ fn chronology_json(kept: &Kept<'_, JournalEntry>) -> serde_json::Map<String, ser
                 "the {} OLDEST entries of this chronology are not in this answer. A chronology \
                  grows with every beat, so a boot carries the newest of it and the answer stays \
                  one you can read; `entry_count` is the length of the whole record. Nothing was \
-                 changed and nothing was lost — but no verb serves the older entries, so read \
-                 this tail as what a resume gives you.",
+                 changed and nothing was lost — the rest is an ordinary addressable read: \
+                 `recall` with subject \"session:{session_id}\" and prose: true reads this run's \
+                 whole chronology, oldest entry included.",
                 kept.omitted(),
             )
             .into(),
@@ -148,8 +153,9 @@ pub(crate) fn entry_receipt_json(entry: &JournalEntry) -> serde_json::Value {
         &mut body,
         "text",
         &entry.text,
-        "you wrote this entry. The whole chronology comes back from start_here when you resume \
-         this session, and from wrap_session when you close it.",
+        "you wrote this entry. `start_here` on resume and `wrap_session` on close carry the \
+         newest of this chronology, not the whole of it once it outgrows the cap — `recall` on \
+         this session's own handle, with prose: true, reads it in full, any time.",
     );
     body
 }
