@@ -2427,4 +2427,65 @@ mod tests {
 
         store.stop().await;
     }
+
+    /// **The shape `0024_rhythm_kind_takes_its_name` declares is the one that
+    /// recovers it.** The statement is a bare `DELETE`, and the schema is
+    /// identical before it and after it: nothing but the rows themselves can
+    /// tell "not yet run" from "ran and found nothing to delete", which is
+    /// exactly what [`Leaves::NoRows`] asks.
+    #[tokio::test]
+    async fn an_interrupted_rhythm_kind_delete_is_recognized_by_the_types_row_being_gone() {
+        let scratch = Scratch::new("migrate-interrupted-rhythm-kind");
+        let path = scratch.0.clone();
+        std::mem::forget(scratch);
+        let mut store = crate::dolt::Dolt::start(&path, free_port())
+            .await
+            .expect("the store comes up");
+        let pool = store
+            .database("rhythmkindpartway")
+            .await
+            .expect("a database of its own");
+
+        run(&pool).await.expect("the schema");
+
+        // The state a death in the window leaves when the delete did NOT
+        // take effect: the type's row for `rhythm` back in place, the ledger
+        // row taken away, the marker committed. `owner` defaults to `type`,
+        // which is exactly the row the delete is for.
+        sqlx::query(
+            "INSERT INTO type_field (type_name, key_name, ordinal, holds)
+             VALUES ('rhythm', 'cadence_days', 0, 'int')",
+        )
+        .execute(&pool)
+        .await
+        .expect("the type's row for rhythm goes back in");
+        sqlx::query("DELETE FROM schema_migration WHERE version = ?")
+            .bind("0024_rhythm_kind_takes_its_name")
+            .execute(&pool)
+            .await
+            .expect("the ledger row goes");
+        mark_begun(&pool, "0024_rhythm_kind_takes_its_name")
+            .await
+            .expect("the marker lands");
+
+        assert_eq!(
+            run(&pool).await.expect("the start completes the schema"),
+            vec!["0024_rhythm_kind_takes_its_name".to_string()],
+            "the delete that did NOT land is reissued",
+        );
+
+        // **Read by a route that is not the probe**: the type's own row for
+        // `rhythm` is gone, while a kind's row of the same name still takes
+        // a write — proving the delete took its `owner = 'type'` clause
+        // rather than the name alone.
+        sqlx::query(
+            "INSERT INTO type_field (type_name, key_name, ordinal, holds, owner)
+             VALUES ('rhythm', 'name', 0, 'varchar(191)', 'kind')",
+        )
+        .execute(&pool)
+        .await
+        .expect("the kind's own row for rhythm still takes a write");
+
+        store.stop().await;
+    }
 }
