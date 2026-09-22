@@ -1,6 +1,6 @@
 use super::support::{add, capture, edit, ensure};
 use super::*;
-use crate::memory::{THOUGHT_CAPACITY, thought_room};
+use crate::memory::{READ_FROM, READ_REF, THOUGHT_CAPACITY, thought_room};
 
 /// Add an entity the guard is expected to **refuse first** — the way a
 /// caller really gets one made: read the refusal, take the token it minted,
@@ -1138,8 +1138,8 @@ pub async fn a_machine_read_claim_names_what_it_was_read_from<M: Memory>(store: 
         NewFact {
             provenance: Provenance::Observation,
             fields: [
-                ("read_from".to_string(), "the ledger app".to_string()),
-                ("read_ref".to_string(), "invoice-4471".to_string()),
+                (READ_FROM.to_string(), "the ledger app".to_string()),
+                (READ_REF.to_string(), "invoice-4471".to_string()),
             ]
             .into_iter()
             .collect(),
@@ -1181,7 +1181,7 @@ pub async fn a_machine_read_claim_names_what_it_was_read_from<M: Memory>(store: 
         &read.address(),
         FactPatch {
             provenance: Some(Provenance::Inference),
-            clear_fields: vec!["read_from".to_string(), "read_ref".to_string()],
+            clear_fields: vec![READ_FROM.to_string(), READ_REF.to_string()],
             ..Default::default()
         },
     )

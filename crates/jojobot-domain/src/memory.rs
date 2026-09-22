@@ -1289,23 +1289,6 @@ pub fn validate_crm(crm: &str) -> Result<(), MemoryError> {
 /// keeping a private copy the others could not enforce.
 pub const FACTS_HEADER: &str = "### ⚙ facts";
 
-/// The frontmatter field that marks a document as **jojobot's own machinery**
-/// rather than anybody's content: a bot's sessions page, and later its mailbox
-/// page. The value names which kind of machinery it is.
-///
-/// Named in the domain for the same reason [`FACTS_HEADER`] is. This one string
-/// decides **what search can see**. jojobot's bookkeeping
-/// lives in the same collection as the entities — a sessions page is a child of
-/// its bot's page, which is the whole point of the tree — and the boot scan
-/// reads every document it finds, generously, because a page somebody wrote by
-/// hand is exactly the page worth finding. A machinery page is the opposite: it
-/// is jojobot talking to itself, and a search that surfaced it would answer a
-/// question about the operator's life with a session's focus line.
-///
-/// A store keeping a private copy of this is a store that can start indexing
-/// its own bookkeeping without anything noticing.
-pub const MACHINERY_FIELD: &str = "machinery";
-
 /// The lines a document reserves for its own structure. Prose may not carry
 /// one, whatever store it is bound for — see [`validate_prose`].
 ///
@@ -3600,9 +3583,9 @@ pub enum MemoryError {
     /// carries both. A token with no attribution reads back settled and cannot
     /// be reassessed by anybody later, which is the use it was asked for.
     #[error(
-        "a claim read out of a system of record has to name it: give the field 'read_from' the \
-         system that was read — and 'read_ref' what was read there, if you have it — or capture \
-         it as an inference instead"
+        "a claim read out of a system of record has to name it: give the field '{READ_FROM}' \
+         the system that was read — and '{READ_REF}' what was read there, if you have it — or \
+         capture it as an inference instead"
     )]
     UnsourcedObservation,
     /// A claim can only become testimony on the user's explicit confirmation.
