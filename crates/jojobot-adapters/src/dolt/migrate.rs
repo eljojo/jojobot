@@ -3149,4 +3149,78 @@ mod tests {
 
         store.stop().await;
     }
+
+    /// **The shape `0026_session_timezone` declares is the one that recovers
+    /// it.** The same question `0015`'s own test drives for
+    /// `type_field.origin`.
+    #[tokio::test]
+    async fn an_interrupted_session_timezone_add_is_recognized_by_the_column_being_there() {
+        let scratch = Scratch::new("migrate-interrupted-session-timezone");
+        let path = scratch.0.clone();
+        std::mem::forget(scratch);
+        let mut store = crate::dolt::Dolt::start(&path, free_port())
+            .await
+            .expect("the store comes up");
+        let pool = store
+            .database("sessiontimezonepartway")
+            .await
+            .expect("a database of its own");
+
+        run(&pool).await.expect("the schema");
+        // The state a death in the window leaves: the ledger row taken away,
+        // the marker committed, the column already there because the
+        // statement itself had succeeded.
+        sqlx::query("DELETE FROM schema_migration WHERE version = ?")
+            .bind("0026_session_timezone")
+            .execute(&pool)
+            .await
+            .expect("the ledger row goes");
+        mark_begun(&pool, "0026_session_timezone")
+            .await
+            .expect("the marker lands");
+
+        let applied = run(&pool).await.expect("the start completes the schema");
+        assert!(
+            applied.is_empty(),
+            "an interrupted add-column that had landed is recorded, not re-issued: {applied:?}"
+        );
+        let recorded: Vec<String> = sqlx::query_scalar("SELECT version FROM schema_migration")
+            .fetch_all(&pool)
+            .await
+            .expect("the ledger is readable");
+        assert!(
+            recorded.iter().any(|v| v == "0026_session_timezone"),
+            "…and the ledger says so, so the next start asks nothing: {recorded:?}"
+        );
+
+        // **The other direction, and it is what makes the first one mean
+        // anything.** A death BEFORE the statement took effect leaves the
+        // same marker over a table that is still there.
+        sqlx::raw_sql("ALTER TABLE session DROP COLUMN timezone")
+            .execute(&pool)
+            .await
+            .expect("the column goes");
+        sqlx::query("DELETE FROM schema_migration WHERE version = ?")
+            .bind("0026_session_timezone")
+            .execute(&pool)
+            .await
+            .expect("the ledger row goes");
+        mark_begun(&pool, "0026_session_timezone")
+            .await
+            .expect("the marker lands");
+
+        assert_eq!(
+            run(&pool).await.expect("the start completes the schema"),
+            vec!["0026_session_timezone".to_string()],
+            "an interrupted add-column that did NOT land is applied",
+        );
+        assert!(
+            column_exists(&pool, "session", "timezone")
+                .await
+                .expect("the schema is readable"),
+            "…and the column the migration is for is really there afterwards",
+        );
+
+        store.stop().await;
+    }
 }
