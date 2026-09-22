@@ -47,11 +47,15 @@
 //! control freshly written for them; two more existing locks were REWRITTEN
 //! (kind-scoped to subject-scoped, fixing a false failure) and proven by a
 //! control in the same move; and 63 more turned out to be proven ALREADY —
-//! see [`NEGATIVE_CONTROLS`]'s own doc for all shapes. The backlog now
-//! stands at 56 of 129, and every one of those 56 is a `vault.md` lock with
-//! no existing proof of its own.
+//! see [`NEGATIVE_CONTROLS`]'s own doc for all shapes. The decision-log
+//! room shipped after that count, with all 15 of its own locks proven at
+//! birth by the same blanket pair `bike_room.rs` and the others use. The
+//! backlog now stands at 56 of 144, and every one of those 56 is a
+//! `vault.md` lock with no existing proof of its own.
 
-use crate::expectations::{BIKE_ROOM, HANDOVER_ROOM, LOOP_ROOM, VAULT_ROOM, YEAR_ROOM};
+use crate::expectations::{
+    BIKE_ROOM, DECISIONS_ROOM, HANDOVER_ROOM, LOOP_ROOM, VAULT_ROOM, YEAR_ROOM,
+};
 use crate::{expectations, lock};
 
 /// **One lock a real negative control has been written for**, somewhere in
@@ -98,7 +102,7 @@ pub enum Strength {
 
 /// **Every lock this build has actually proven failable, so far.**
 ///
-/// 73 entries, of five different shapes: 62 blanket and 11 discriminating.
+/// 88 entries, of five different shapes: 77 blanket and 11 discriminating.
 /// Quote the discriminating count as eleven, with one constructed positive
 /// — never as a bare eleven; see the note on `tests/fair_lock.rs` below for
 /// why.
@@ -694,6 +698,111 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
         room: HANDOVER_ROOM,
         lock: "Phase 2 — nothing on the colleague says how much of the pile is still waiting, so a later session has to go and find out again",
         file: "tests/handover_room.rs",
+        function: "every_check_fails_on_a_room_nobody_worked_in",
+        strength: Strength::Blanket,
+    },
+    NegativeControl {
+        room: DECISIONS_ROOM,
+        lock: "Phase 9 — rule 241 was not filed as active where the later question can find it",
+        file: "tests/decisions_room.rs",
+        function: "every_check_fails_on_a_room_nobody_worked_in",
+        strength: Strength::Blanket,
+    },
+    NegativeControl {
+        room: DECISIONS_ROOM,
+        lock: "Phase 9 — rule 275 was not filed as active where the later question can find it",
+        file: "tests/decisions_room.rs",
+        function: "every_check_fails_on_a_room_nobody_worked_in",
+        strength: Strength::Blanket,
+    },
+    NegativeControl {
+        room: DECISIONS_ROOM,
+        lock: "Phase 9 — rule 189 was not filed as active where the later question can find it",
+        file: "tests/decisions_room.rs",
+        function: "every_check_fails_on_a_room_nobody_worked_in",
+        strength: Strength::Blanket,
+    },
+    NegativeControl {
+        room: DECISIONS_ROOM,
+        lock: "Phase 9 — rule 190 was not filed as active where the later question can find it",
+        file: "tests/decisions_room.rs",
+        function: "every_check_fails_on_a_room_nobody_worked_in",
+        strength: Strength::Blanket,
+    },
+    NegativeControl {
+        room: DECISIONS_ROOM,
+        lock: "Phase 9 — rule 304 was not filed as active where the later question can find it",
+        file: "tests/decisions_room.rs",
+        function: "every_check_fails_on_a_room_nobody_worked_in",
+        strength: Strength::Blanket,
+    },
+    NegativeControl {
+        room: DECISIONS_ROOM,
+        lock: "Phase 9 — rule 284 was not filed as active where the later question can find it",
+        file: "tests/decisions_room.rs",
+        function: "every_check_fails_on_a_room_nobody_worked_in",
+        strength: Strength::Blanket,
+    },
+    NegativeControl {
+        room: DECISIONS_ROOM,
+        lock: "Phase 9 — rule 288 was not filed as active where the later question can find it",
+        file: "tests/decisions_room.rs",
+        function: "every_check_fails_on_a_room_nobody_worked_in",
+        strength: Strength::Blanket,
+    },
+    NegativeControl {
+        room: DECISIONS_ROOM,
+        lock: "Phase 9 — rule 58 was not filed as archived where the later question can find it",
+        file: "tests/decisions_room.rs",
+        function: "every_check_fails_on_a_room_nobody_worked_in",
+        strength: Strength::Blanket,
+    },
+    NegativeControl {
+        room: DECISIONS_ROOM,
+        lock: "Phase 10 — question 1 has no recorded answer with the required rules on its work item",
+        file: "tests/decisions_room.rs",
+        function: "every_check_fails_on_a_room_nobody_worked_in",
+        strength: Strength::Blanket,
+    },
+    NegativeControl {
+        room: DECISIONS_ROOM,
+        lock: "Phase 11 — question 2 has no recorded answer with the required rules on its work item",
+        file: "tests/decisions_room.rs",
+        function: "every_check_fails_on_a_room_nobody_worked_in",
+        strength: Strength::Blanket,
+    },
+    NegativeControl {
+        room: DECISIONS_ROOM,
+        lock: "Phase 12 — question 3 has no recorded answer with the required rules on its work item",
+        file: "tests/decisions_room.rs",
+        function: "every_check_fails_on_a_room_nobody_worked_in",
+        strength: Strength::Blanket,
+    },
+    NegativeControl {
+        room: DECISIONS_ROOM,
+        lock: "Phase 13 — question 4 has no recorded answer with the required rules on its work item",
+        file: "tests/decisions_room.rs",
+        function: "every_check_fails_on_a_room_nobody_worked_in",
+        strength: Strength::Blanket,
+    },
+    NegativeControl {
+        room: DECISIONS_ROOM,
+        lock: "Phase 14 — question 5 has no recorded answer with the required rules on its work item",
+        file: "tests/decisions_room.rs",
+        function: "every_check_fails_on_a_room_nobody_worked_in",
+        strength: Strength::Blanket,
+    },
+    NegativeControl {
+        room: DECISIONS_ROOM,
+        lock: "Phase 15 — the image-attachment question has no active answer without a rule reference",
+        file: "tests/decisions_room.rs",
+        function: "every_check_fails_on_a_room_nobody_worked_in",
+        strength: Strength::Blanket,
+    },
+    NegativeControl {
+        room: DECISIONS_ROOM,
+        lock: "Phase 16 — question 7 has no recorded answer with the required rules on its work item",
+        file: "tests/decisions_room.rs",
         function: "every_check_fails_on_a_room_nobody_worked_in",
         strength: Strength::Blanket,
     },

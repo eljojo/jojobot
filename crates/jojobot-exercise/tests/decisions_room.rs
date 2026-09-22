@@ -418,6 +418,30 @@ async fn judge(surface: &Surface) -> Vec<Outcome> {
 }
 
 #[tokio::test]
+async fn every_check_fails_on_a_room_nobody_worked_in() {
+    let (_room, surface) = Room::open_with_client(&server_binary().expect("a jojobot binary"))
+        .await
+        .expect("a room");
+    expectations::seed_for("rooms/decisions.md")
+        .expect("the starting world builds")
+        .furnish(&surface)
+        .await
+        .expect("the starting world applies");
+    let outcomes = judge(&surface).await;
+    assert!(
+        !outcomes.is_empty(),
+        "the room registered no checks, so a run would report a pass over an empty list",
+    );
+    for outcome in &outcomes {
+        assert!(
+            !outcome.held,
+            "a furnished room nobody touched held a check: {} — {}",
+            outcome.name, outcome.saying,
+        );
+    }
+}
+
+#[tokio::test]
 async fn the_decision_room_is_solvable_through_the_served_surface() {
     let playbook =
         Playbook::read(&expectations::room_document("rooms/decisions.md")).expect("the room reads");
