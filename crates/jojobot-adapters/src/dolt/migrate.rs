@@ -3445,4 +3445,157 @@ mod tests {
 
         store.stop().await;
     }
+
+    /// **A schema fingerprint** — every table, its columns (name, declared
+    /// type, nullability) and its indexes, read from `information_schema`
+    /// and rendered in a fixed order. Two databases fingerprint identically
+    /// only when their schemas actually agree; this is what a comparison
+    /// between a copied store and a freshly migrated one is built on.
+    async fn schema_fingerprint(pool: &MySqlPool) -> String {
+        let tables: Vec<String> = sqlx::query_scalar(
+            "SELECT table_name FROM information_schema.tables \
+             WHERE table_schema = DATABASE() ORDER BY table_name",
+        )
+        .fetch_all(pool)
+        .await
+        .expect("tables readable");
+        let mut out = String::new();
+        for table in &tables {
+            out.push_str(table);
+            out.push('\n');
+            let columns: Vec<(String, String, String)> = sqlx::query_as(
+                "SELECT column_name, column_type, is_nullable FROM information_schema.columns \
+                 WHERE table_schema = DATABASE() AND table_name = ? ORDER BY column_name",
+            )
+            .bind(table)
+            .fetch_all(pool)
+            .await
+            .expect("columns readable");
+            for (name, ty, nullable) in columns {
+                out.push_str(&format!("  {name} {ty} {nullable}\n"));
+            }
+            let indexes: Vec<(String, String, i64)> = sqlx::query_as(
+                "SELECT index_name, column_name, non_unique FROM information_schema.statistics \
+                 WHERE table_schema = DATABASE() AND table_name = ? \
+                 ORDER BY index_name, seq_in_index",
+            )
+            .bind(table)
+            .fetch_all(pool)
+            .await
+            .expect("indexes readable");
+            for (name, col, unique) in indexes {
+                out.push_str(&format!("  idx {name} {col} {unique}\n"));
+            }
+        }
+        out
+    }
+
+    /// Copy a directory tree, the way a template room copies its store —
+    /// used here to prove the copy is schema-safe, before anything in
+    /// `jojobot-exercise` relies on it being so.
+    fn copy_dir_all(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+        std::fs::create_dir_all(to)?;
+        for entry in std::fs::read_dir(from)? {
+            let entry = entry?;
+            let dest = to.join(entry.file_name());
+            if entry.file_type()?.is_dir() {
+                copy_dir_all(&entry.path(), &dest)?;
+            } else {
+                std::fs::copy(entry.path(), &dest)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// 🚨 **The assertion standing between the template-copy optimisation and
+    /// a suite that lies quietly.** A room built from a copied, pre-migrated
+    /// store must read the same schema as a room migrated fresh — this is
+    /// what jojobot-exercise's template mechanism rests on, proven at the
+    /// layer where it is actually true rather than assumed from the layer
+    /// above.
+    ///
+    /// **Both halves.** A copy of the whole chain fingerprints identically to
+    /// a fresh run of the whole chain — the positive a template copy needs.
+    /// A copy of a store built from a SHORT chain fingerprints differently —
+    /// the negative that proves the comparison is not vacuously true: a
+    /// stale or truncated template would be caught here, not discovered
+    /// later as a suite quietly testing the wrong schema.
+    #[tokio::test]
+    async fn a_copied_migrated_store_fingerprints_identically_to_a_fresh_one() {
+        let scratch_whole = Scratch::new("migrate-copy-whole");
+        let path_whole = scratch_whole.0.clone();
+        std::mem::forget(scratch_whole);
+        let mut store_whole = crate::dolt::Dolt::start(&path_whole, free_port())
+            .await
+            .expect("the whole-chain store comes up");
+        let pool_whole = store_whole
+            .database("copywhole")
+            .await
+            .expect("a database of its own");
+        apply(&pool_whole, MIGRATIONS)
+            .await
+            .expect("the whole chain applies");
+        let print_whole = schema_fingerprint(&pool_whole).await;
+        store_whole.stop().await;
+
+        // The copy: a fresh directory, populated from the whole-chain
+        // store's own files rather than migrated — what a template room
+        // does, at the layer where it actually happens.
+        let scratch_copy = Scratch::new("migrate-copy-of-whole");
+        let path_copy = scratch_copy.0.clone();
+        std::mem::forget(scratch_copy);
+        copy_dir_all(&path_whole, &path_copy).expect("the store directory copies");
+        let mut store_copy = crate::dolt::Dolt::start(&path_copy, free_port())
+            .await
+            .expect("the copy comes up without re-migrating");
+        let pool_copy = store_copy
+            .database("copywhole")
+            .await
+            .expect("the copy already has its database");
+        let print_copy = schema_fingerprint(&pool_copy).await;
+        assert_eq!(
+            print_whole, print_copy,
+            "a copy of a fully migrated store must fingerprint identically to the store it was \
+             copied from, or a template room silently serves a different schema than a fresh one",
+        );
+        store_copy.stop().await;
+
+        // The negative: a store built from a chain short its last
+        // migration, copied the same way. Its fingerprint must differ from
+        // the whole chain's, or this comparison cannot catch a stale or
+        // truncated template.
+        let scratch_short = Scratch::new("migrate-copy-short");
+        let path_short = scratch_short.0.clone();
+        std::mem::forget(scratch_short);
+        let mut store_short = crate::dolt::Dolt::start(&path_short, free_port())
+            .await
+            .expect("the short-chain store comes up");
+        let pool_short = store_short
+            .database("copyshort")
+            .await
+            .expect("a database of its own");
+        apply(&pool_short, &MIGRATIONS[..MIGRATIONS.len() - 1])
+            .await
+            .expect("the short chain applies");
+        store_short.stop().await;
+
+        let scratch_copy_short = Scratch::new("migrate-copy-of-short");
+        let path_copy_short = scratch_copy_short.0.clone();
+        std::mem::forget(scratch_copy_short);
+        copy_dir_all(&path_short, &path_copy_short).expect("the short store directory copies");
+        let mut store_copy_short = crate::dolt::Dolt::start(&path_copy_short, free_port())
+            .await
+            .expect("the copy of the short store comes up");
+        let pool_copy_short = store_copy_short
+            .database("copyshort")
+            .await
+            .expect("the copy already has its database");
+        let print_copy_short = schema_fingerprint(&pool_copy_short).await;
+        assert_ne!(
+            print_whole, print_copy_short,
+            "a copy of a store built from a short migration chain fingerprinted identically to \
+             the whole chain, so this comparison cannot actually catch a stale template",
+        );
+        store_copy_short.stop().await;
+    }
 }
