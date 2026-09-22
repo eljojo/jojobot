@@ -690,6 +690,7 @@ mod tests {
             let booted = json_of(
                 &jojobot
                     .start_here(Parameters(OrientArgs {
+                        claim: None,
                         bot: Some("otto".into()),
                         today: today.map(str::to_string),
                         resume: Some("new".into()),
@@ -864,6 +865,7 @@ mod tests {
         // reached with one…
         let err = jojobot
             .start_here(Parameters(OrientArgs {
+                claim: None,
                 timezone: None,
                 bot: Some("person:milhouse".into()),
                 brief: None,

@@ -529,6 +529,7 @@ mod tests {
         let body = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    claim: None,
                     timezone: None,
                     bot: None,
                     brief: None,
@@ -1129,6 +1130,7 @@ mod tests {
         let body = blocked(
             &restarted
                 .start_here(Parameters(OrientArgs {
+                    claim: None,
                     timezone: None,
                     bot: Some("gamma".into()),
                     brief: None,
@@ -1151,6 +1153,7 @@ mod tests {
         let mistyped = blocked(
             &restarted
                 .start_here(Parameters(OrientArgs {
+                    claim: None,
                     timezone: None,
                     bot: Some("gamma".into()),
                     brief: None,
@@ -1179,6 +1182,7 @@ mod tests {
         let body = blocked(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    claim: None,
                     timezone: None,
                     bot: Some("delta".into()),
                     brief: None,
@@ -1434,6 +1438,7 @@ mod tests {
         let refused = blocked(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    claim: None,
                     timezone: None,
                     bot: Some("gamma".into()),
                     brief: None,
@@ -1890,6 +1895,7 @@ mod tests {
                 .expect("begin ok");
 
             let booting = jojobot.start_here(Parameters(OrientArgs {
+                claim: None,
                 timezone: None,
                 bot: Some("gamma".into()),
                 brief: None,
@@ -1969,6 +1975,7 @@ mod tests {
             let sid = booted(&jojobot, "gamma").await;
 
             let booting = jojobot.start_here(Parameters(OrientArgs {
+                claim: None,
                 timezone: None,
                 bot: Some("gamma".into()),
                 brief: None,

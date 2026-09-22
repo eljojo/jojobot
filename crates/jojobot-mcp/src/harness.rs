@@ -249,6 +249,7 @@ pub(crate) async fn boot_on(jojobot: &Jojobot, name: &str, today: &str) -> serde
     json_of(
         &jojobot
             .start_here(Parameters(OrientArgs {
+                claim: None,
                 timezone: None,
                 today: Some(today.into()),
                 bot: Some(name.into()),
@@ -266,6 +267,7 @@ pub(crate) async fn boot(jojobot: &Jojobot, name: &str) -> serde_json::Value {
     json_of(
         &jojobot
             .start_here(Parameters(OrientArgs {
+                claim: None,
                 timezone: None,
                 today: None,
                 bot: Some(name.into()),
@@ -288,6 +290,7 @@ pub(crate) async fn boot_answering(
     json_of(
         &jojobot
             .start_here(Parameters(OrientArgs {
+                claim: None,
                 timezone: None,
                 today: None,
                 bot: Some(name.into()),
@@ -325,6 +328,7 @@ pub(crate) async fn booted_in(
     let body = json_of(
         &jojobot
             .start_here(Parameters(OrientArgs {
+                claim: None,
                 timezone: Some(zone.into()),
                 bot: Some(name.into()),
                 brief: Some(true),

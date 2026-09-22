@@ -2580,6 +2580,7 @@ mod tests {
         let booted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    claim: None,
                     bot: Some("otto".into()),
                     today: Some("2026-03-15".into()),
                     resume: Some("new".into()),
@@ -2617,6 +2618,7 @@ mod tests {
         let elsewhere = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    claim: None,
                     bot: Some("otto".into()),
                     today: Some("2026-07-04".into()),
                     resume: Some("new".into()),

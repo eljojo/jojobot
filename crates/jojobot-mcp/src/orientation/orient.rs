@@ -134,23 +134,40 @@ fn essay_for_boot(
     }
 }
 
+/// The door's own arguments, already validated — bundled so `orient` takes
+/// one argument rather than growing a new parameter every time the door
+/// learns a new one.
+pub(crate) struct OrientRequest<'a> {
+    pub(crate) bot: Option<&'a EntityId>,
+    pub(crate) brief: bool,
+    pub(crate) resume: Option<&'a str>,
+    /// The IANA zone this run resolves days in, validated at the door.
+    pub(crate) timezone: Option<&'a str>,
+    pub(crate) today: Option<jiff::civil::Date>,
+    /// What the handle this caller arrived with is worth — from
+    /// [`Jojobot::standing`], and `Null` when they arrived with none.
+    pub(crate) carried: serde_json::Value,
+    /// **A role to claim, by the name the caller chose.** `None` is the
+    /// ordinary boot, unchanged. Decided only once this call's own sid is
+    /// known — see where `session` is built below.
+    pub(crate) claim: Option<&'a str>,
+}
+
 impl Jojobot {
     /// The one orientation, anonymous or identified — **the one call site is
     /// the point.** Naming a bot adds the identity half to an answer that is
     /// otherwise the same text and the same snapshot; it does not open a second
     /// way in.
-    pub(crate) async fn orient(
-        &self,
-        bot: Option<&EntityId>,
-        brief: bool,
-        resume: Option<&str>,
-        // The IANA zone this run resolves days in, validated at the door.
-        timezone: Option<&str>,
-        today: Option<jiff::civil::Date>,
-        // What the handle this caller arrived with is worth — from
-        // [`Jojobot::standing`], and `Null` when they arrived with none.
-        carried: serde_json::Value,
-    ) -> Result<CallToolResult, McpError> {
+    pub(crate) async fn orient(&self, req: OrientRequest<'_>) -> Result<CallToolResult, McpError> {
+        let OrientRequest {
+            bot,
+            brief,
+            resume,
+            timezone,
+            today,
+            carried,
+            claim,
+        } = req;
         // The entity index is read ONCE for the whole answer. Three parts of
         // a boot need it — the counts by kind, which boxes the caller drains,
         // and the identity itself — and reading it three times would mean
@@ -430,7 +447,7 @@ impl Jojobot {
         // nothing, so it starts no session and sweeps nothing either — binding
         // a connection to an identity jojobot just refused would be a session
         // belonging to nobody.
-        let session = match bot {
+        let mut session = match bot {
             None => serde_json::Value::Null,
             Some(bot) => match self.attach(bot, resume, timezone, today).await {
                 Ok(session) => session,
@@ -440,6 +457,32 @@ impl Jojobot {
                 Err(refused) => return Ok(refused),
             },
         };
+        // **The lease's own half: decided only once this call's sid is
+        // known.** A role named without a resulting handle (the resume-or-new
+        // choice came back instead) decides nothing — there is no claimant
+        // yet, and the caller answers the choice, then names the role again.
+        if let (Some(bot), Some(role)) = (bot, claim) {
+            let sid = session
+                .get("sid")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
+            if let Some(sid) = sid {
+                let now = self.clock().now();
+                let today_or_clock = today.unwrap_or_else(|| {
+                    self.clock().today_in(
+                        &timezone
+                            .and_then(|name| jiff::tz::TimeZone::get(name).ok())
+                            .unwrap_or(jiff::tz::TimeZone::UTC),
+                    )
+                });
+                let outcome = self
+                    .decide_role_claim(bot, role, &sid, now, today_or_clock)
+                    .await;
+                if let Some(obj) = session.as_object_mut() {
+                    obj.insert("claim".into(), outcome);
+                }
+            }
+        }
         // **ONE declared ceiling for the WHOLE answer** — [`text::BOOT_ANSWER`]
         // — not for its prose alone (rule 138's own bar: a payload the client
         // cannot read, not a field inside it). Measure the FLOOR first:
@@ -551,6 +594,89 @@ impl Jojobot {
     }
 }
 
+impl Jojobot {
+    /// **Decide and, if granted, write a claim on a named role.**
+    ///
+    /// The lease's own half of the boot door: [`jojobot_domain::session::claim_role`]
+    /// against the bot's own fields — `role_holder_key`/`role_claimed_at_key`
+    /// — read back through [`Memory::fields`]. A field is never written bare
+    /// on this rail, so a granted claim lands as an ordinary fact on the bot
+    /// itself, carrying the two fields and nothing else load-bearing about
+    /// its prose.
+    ///
+    /// Naming no role never reaches this — see the call site in
+    /// [`Jojobot::orient`].
+    async fn decide_role_claim(
+        &self,
+        bot: &EntityId,
+        role: &str,
+        claimant: &str,
+        now: jiff::Timestamp,
+        today: jiff::civil::Date,
+    ) -> serde_json::Value {
+        let holder_key = jojobot_domain::session::role_holder_key(role);
+        let claimed_at_key = jojobot_domain::session::role_claimed_at_key(role);
+        let fields = match self.memory.fields(bot).await {
+            Ok(fields) => fields,
+            Err(e) => {
+                tracing::warn!(
+                    error = %e, %bot, role,
+                    "could not read the bot's fields to decide a role claim"
+                );
+                return serde_json::json!({
+                    "role": role,
+                    "status": "unavailable",
+                    "note": "the memory world could not be read, so this claim was neither \
+                             granted nor refused. Nothing was written.",
+                });
+            }
+        };
+        let current_holder = fields.get(&holder_key).map(String::as_str);
+        let claimed_at = fields
+            .get(&claimed_at_key)
+            .and_then(|s| s.parse::<jiff::Timestamp>().ok());
+        match jojobot_domain::session::claim_role(
+            claimant,
+            current_holder,
+            claimed_at,
+            now,
+            jojobot_domain::session::LEASE_FRESHNESS,
+        ) {
+            jojobot_domain::session::LeaseClaim::Refused { holder, until } => serde_json::json!({
+                "role": role,
+                "status": "refused",
+                "holder": holder,
+                "until": until.to_string(),
+            }),
+            jojobot_domain::session::LeaseClaim::Taken => {
+                let mut fact =
+                    NewFact::about(bot.clone(), format!("claimed the {role} role"), today);
+                fact.fields.insert(holder_key, claimant.to_string());
+                fact.fields.insert(claimed_at_key, now.to_string());
+                match self.memory.capture(fact).await {
+                    Ok(Guarded::Written(_)) => serde_json::json!({
+                        "role": role,
+                        "status": "taken",
+                    }),
+                    other => {
+                        if let Err(e) = &other {
+                            tracing::warn!(error = %e, %bot, role, "a role claim could not be written");
+                        } else {
+                            tracing::warn!(%bot, role, "a role claim's own capture was blocked unexpectedly");
+                        }
+                        serde_json::json!({
+                            "role": role,
+                            "status": "unavailable",
+                            "note": "the claim was decided but could not be written. Nothing is \
+                                     held.",
+                        })
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -603,6 +729,7 @@ mod tests {
         let booted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    claim: None,
                     timezone: None,
                     bot: Some("gamma".into()),
                     brief: Some(false),
@@ -720,6 +847,7 @@ mod tests {
         let booted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    claim: None,
                     timezone: None,
                     bot: Some("gamma".into()),
                     brief: Some(false),
@@ -811,6 +939,7 @@ mod tests {
         let booted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    claim: None,
                     timezone: None,
                     bot: Some("gamma".into()),
                     brief: Some(false),
@@ -892,6 +1021,7 @@ mod tests {
         let booted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    claim: None,
                     timezone: None,
                     bot: Some("gamma".into()),
                     brief: Some(false),
@@ -1010,6 +1140,7 @@ mod tests {
 
         let result = jojobot
             .start_here(Parameters(OrientArgs {
+                claim: None,
                 timezone: None,
                 bot: Some("gamma".into()),
                 brief: Some(false),
@@ -1061,6 +1192,7 @@ mod tests {
         let booted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    claim: None,
                     timezone: None,
                     bot: None,
                     brief: Some(false),
@@ -1110,6 +1242,7 @@ mod tests {
         let booted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    claim: None,
                     timezone: None,
                     bot: Some("gamma".into()),
                     brief: Some(false),
@@ -1614,6 +1747,7 @@ mod tests {
         let anonymous = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    claim: None,
                     timezone: None,
                     bot: None,
                     brief: None,
@@ -1683,6 +1817,7 @@ mod tests {
         let anonymous = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    claim: None,
                     timezone: None,
                     bot: None,
                     brief: None,
@@ -1760,6 +1895,7 @@ mod tests {
         let booted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    claim: None,
                     timezone: None,
                     bot: Some("gamma".into()),
                     brief: Some(false),
@@ -1860,6 +1996,7 @@ mod tests {
         let anonymous = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    claim: None,
                     timezone: None,
                     bot: None,
                     brief: None,
@@ -1965,6 +2102,7 @@ mod tests {
         let anonymous = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    claim: None,
                     timezone: None,
                     bot: None,
                     brief: None,
@@ -2105,6 +2243,7 @@ mod skills_are_indexed_not_shipped {
         let booted = json_of(
             &handler()
                 .start_here(Parameters(OrientArgs {
+                    claim: None,
                     timezone: None,
                     bot: None,
                     brief: None,
@@ -2162,6 +2301,7 @@ mod skills_are_indexed_not_shipped {
         let body = json_of(
             &handler()
                 .start_here(Parameters(OrientArgs {
+                    claim: None,
                     timezone: None,
                     bot: None,
                     brief: None,
@@ -2197,6 +2337,7 @@ mod skills_are_indexed_not_shipped {
         let body = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    claim: None,
                     timezone: None,
                     bot: Some("otto".into()),
                     brief: None,
@@ -2238,6 +2379,7 @@ mod skills_are_indexed_not_shipped {
         let body = json_of(
             &handler()
                 .start_here(Parameters(OrientArgs {
+                    claim: None,
                     timezone: None,
                     bot: None,
                     brief: None,

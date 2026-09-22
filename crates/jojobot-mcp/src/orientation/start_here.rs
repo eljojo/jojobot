@@ -80,6 +80,14 @@ pub struct OrientArgs {
     /// the zone the run already had rather than moving it.
     #[serde(default)]
     pub(crate) timezone: Option<String>,
+    /// **A role to claim, by a name you choose.** Boot names this when you
+    /// want jojobot to refuse a second claimant while your claim is fresh —
+    /// this comes back `taken`, or `refused` naming who holds it and until
+    /// when. Naming none is the ordinary boot: unchanged, and two sessions
+    /// working two separate slices never meet a lease neither of them
+    /// claimed.
+    #[serde(default)]
+    pub(crate) claim: Option<String>,
 }
 
 /// **The one orienting door**, with or without an identity: the world-model
@@ -235,14 +243,20 @@ impl Jojobot {
         // "stated nothing" would answer the sweep on the clock while the caller
         // believes it stated a frame.
         let today = parse_day(args.today.as_deref())?;
-        self.orient(
-            bot.as_ref(),
-            args.brief.unwrap_or(false),
+        let claim = args
+            .claim
+            .as_deref()
+            .map(str::trim)
+            .filter(|c| !c.is_empty());
+        self.orient(orient::OrientRequest {
+            bot: bot.as_ref(),
+            brief: args.brief.unwrap_or(false),
             resume,
-            timezone.as_deref(),
+            timezone: timezone.as_deref(),
             today,
             carried,
-        )
+            claim,
+        })
         .await
     }
 }
@@ -272,6 +286,7 @@ mod tests {
         // is reached at all.
         let out = jojobot
             .start_here(Parameters(OrientArgs {
+                claim: None,
                 timezone: None,
                 bot: None,
                 brief: None,
@@ -296,6 +311,7 @@ mod tests {
         // bot rather than the resume.
         let out = jojobot
             .start_here(Parameters(OrientArgs {
+                claim: None,
                 timezone: None,
                 bot: Some("dev".into()),
                 brief: None,
@@ -336,6 +352,7 @@ mod tests {
         let fetched = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    claim: None,
                     timezone: None,
                     bot: None,
                     brief: None,
@@ -389,6 +406,7 @@ mod tests {
             json_of(
                 &jojobot
                     .start_here(Parameters(OrientArgs {
+                        claim: None,
                         timezone: None,
                         bot: None,
                         brief: Some(true),
@@ -461,6 +479,7 @@ mod tests {
 
         let out = jojobot
             .start_here(Parameters(OrientArgs {
+                claim: None,
                 timezone: None,
                 bot: None,
                 brief: None,
@@ -537,6 +556,7 @@ mod tests {
         let full = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    claim: None,
                     timezone: None,
                     bot: None,
                     brief: None,
@@ -554,6 +574,7 @@ mod tests {
         let brief = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    claim: None,
                     timezone: None,
                     bot: None,
                     brief: Some(true),
@@ -613,6 +634,7 @@ mod tests {
             json_of(
                 &jojobot
                     .start_here(Parameters(OrientArgs {
+                        claim: None,
                         timezone: None,
                         bot: None,
                         brief: None,
@@ -627,6 +649,7 @@ mod tests {
             json_of(
                 &jojobot
                     .start_here(Parameters(OrientArgs {
+                        claim: None,
                         timezone: None,
                         bot: None,
                         brief: Some(true),
@@ -675,6 +698,7 @@ mod tests {
         let booted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    claim: None,
                     timezone: None,
                     bot: Some("gamma".into()),
                     brief: Some(true),
@@ -699,6 +723,7 @@ mod tests {
     async fn start_here_survives_a_world_that_is_down() {
         let out = handler_with_mailboxes_down(Arc::new(InMemoryMemory::booted()))
             .start_here(Parameters(OrientArgs {
+                claim: None,
                 timezone: None,
                 bot: None,
                 brief: None,
@@ -729,6 +754,7 @@ mod tests {
         let jojobot = handler();
         let out = jojobot
             .start_here(Parameters(OrientArgs {
+                claim: None,
                 timezone: None,
                 bot: None,
                 brief: None,
@@ -773,6 +799,7 @@ mod tests {
 
         let err = jojobot
             .start_here(Parameters(OrientArgs {
+                claim: None,
                 timezone: None,
                 bot: Some("person:milhouse".into()),
                 brief: None,
@@ -811,6 +838,7 @@ mod tests {
         let near = blocked(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    claim: None,
                     timezone: None,
                     bot: Some("gamm".into()),
                     brief: None,
@@ -830,6 +858,7 @@ mod tests {
         let stranger = blocked(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    claim: None,
                     timezone: None,
                     bot: Some("nobody".into()),
                     brief: None,
@@ -896,6 +925,7 @@ mod tests {
         let body = blocked(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    claim: None,
                     timezone: None,
                     bot: Some("gamma".into()),
                     brief: None,
@@ -912,6 +942,174 @@ mod tests {
         assert!(
             how.contains("no bots on this server") && how.contains("add_entity"),
             "with nobody to boot as, the way out is the verb that creates one: {how}"
+        );
+    }
+
+    /// **A fresh claim on a named role is taken, through the real door.**
+    #[tokio::test]
+    async fn a_fresh_claim_on_a_named_role_is_taken() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+
+        let booted = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    claim: Some("dev-dispatch".into()),
+                    timezone: None,
+                    bot: Some("gamma".into()),
+                    brief: None,
+                    skill: None,
+                    resume: None,
+                    sid: None,
+                    today: None,
+                }))
+                .await
+                .expect("start_here ok"),
+        );
+        assert_eq!(
+            booted["session"]["claim"]["role"], "dev-dispatch",
+            "{booted}"
+        );
+        assert_eq!(booted["session"]["claim"]["status"], "taken", "{booted}");
+    }
+
+    /// **A second claimant is refused while the first claim is fresh, and told
+    /// who holds it and until when — through the real door.**
+    #[tokio::test]
+    async fn a_second_claimant_is_refused_by_the_door_while_the_lease_is_fresh() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+
+        let first = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    claim: Some("dev-dispatch".into()),
+                    timezone: None,
+                    bot: Some("gamma".into()),
+                    brief: None,
+                    skill: None,
+                    resume: None,
+                    sid: None,
+                    today: None,
+                }))
+                .await
+                .expect("start_here ok"),
+        );
+        let holder_sid = sid_of(&first).expect("the first claimant's handle");
+        assert_eq!(first["session"]["claim"]["status"], "taken", "{first}");
+
+        // A distinct session of the SAME bot, naming the SAME role.
+        let second = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    claim: Some("dev-dispatch".into()),
+                    timezone: None,
+                    bot: Some("gamma".into()),
+                    brief: None,
+                    skill: None,
+                    resume: Some("new".into()),
+                    sid: None,
+                    today: None,
+                }))
+                .await
+                .expect("start_here ok"),
+        );
+        assert_ne!(
+            sid_of(&second).as_deref(),
+            Some(holder_sid.as_str()),
+            "a distinct session of the same bot: {second}"
+        );
+        assert_eq!(second["session"]["claim"]["status"], "refused", "{second}");
+        assert_eq!(
+            second["session"]["claim"]["holder"], holder_sid,
+            "the refusal names who holds it: {second}"
+        );
+        assert!(
+            second["session"]["claim"]["until"].is_string(),
+            "…and until when: {second}"
+        );
+    }
+
+    /// **The same claimant renewing its own claim is never refused, and a
+    /// claim on a DIFFERENT role never meets a lease it did not claim** —
+    /// through the real door, and both read back correctly.
+    #[tokio::test]
+    async fn the_same_claimant_renews_and_an_unrelated_role_is_untouched() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+
+        let first = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    claim: Some("dev-dispatch".into()),
+                    timezone: None,
+                    bot: Some("gamma".into()),
+                    brief: None,
+                    skill: None,
+                    resume: None,
+                    sid: None,
+                    today: None,
+                }))
+                .await
+                .expect("start_here ok"),
+        );
+        let holder_sid = sid_of(&first).expect("a handle");
+
+        // The same claimant, naming the same role again: not refused.
+        let renewed = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    claim: Some("dev-dispatch".into()),
+                    timezone: None,
+                    bot: Some("gamma".into()),
+                    brief: None,
+                    skill: None,
+                    resume: Some(holder_sid.clone()),
+                    sid: None,
+                    today: None,
+                }))
+                .await
+                .expect("start_here ok"),
+        );
+        assert_eq!(
+            renewed["session"]["claim"]["status"], "taken",
+            "the holder renewing its own claim: {renewed}"
+        );
+
+        // A DIFFERENT role, claimed by a distinct session: never meets the
+        // first role's lease.
+        let unrelated = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    claim: Some("reviewer-dispatch".into()),
+                    timezone: None,
+                    bot: Some("gamma".into()),
+                    brief: None,
+                    skill: None,
+                    resume: Some("new".into()),
+                    sid: None,
+                    today: None,
+                }))
+                .await
+                .expect("start_here ok"),
+        );
+        assert_eq!(
+            unrelated["session"]["claim"]["status"], "taken",
+            "an unclaimed role, named by anyone: {unrelated}"
+        );
+    }
+
+    /// **Naming no role is the ordinary boot: unchanged.** No `claim` key
+    /// appears anywhere in the answer.
+    #[tokio::test]
+    async fn naming_no_role_is_the_ordinary_boot() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+
+        let booted = boot(&jojobot, "gamma").await;
+        assert!(
+            booted["session"].get("claim").is_none(),
+            "no role was named, so nothing about a claim is in the answer: {booted}"
         );
     }
 }

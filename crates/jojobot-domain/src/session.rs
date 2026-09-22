@@ -337,6 +337,19 @@ pub fn claim_role(
     }
 }
 
+/// **The field key holding a role's current claimant**, on the bot entity's
+/// own fields — a bare string a caller invents for `role`, so this is what
+/// keeps two roles from colliding on one key.
+pub fn role_holder_key(role: &str) -> String {
+    format!("role/{role}/holder")
+}
+
+/// **The field key holding when a role was last claimed**, alongside
+/// [`role_holder_key`].
+pub fn role_claimed_at_key(role: &str) -> String {
+    format!("role/{role}/claimed_at")
+}
+
 /// The id charset, `[a-z0-9-]` — the mailbox context's, for the same reasons.
 fn is_id_byte(b: u8) -> bool {
     b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'
@@ -1402,6 +1415,20 @@ mod tests {
         assert_eq!(
             claim_role("gamma", None, None, now, threshold),
             LeaseClaim::Taken
+        );
+    }
+
+    /// **The role's key is pinned by its own literal.** Nothing outside this
+    /// process declares this spelling — it is stored on a bot's own fields
+    /// and read back by the same code that wrote it — so a rename here is
+    /// invisible to every other test and orphans a record already written
+    /// under the old key.
+    #[test]
+    fn a_roles_field_keys_are_pinned_by_their_own_literal() {
+        assert_eq!(role_holder_key("dev-dispatch"), "role/dev-dispatch/holder");
+        assert_eq!(
+            role_claimed_at_key("dev-dispatch"),
+            "role/dev-dispatch/claimed_at"
         );
     }
 

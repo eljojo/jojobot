@@ -2770,6 +2770,7 @@ mod tests {
         let acting = sid_of(&json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    claim: None,
                     bot: Some("otto".into()),
                     today: Some("2026-03-15".into()),
                     resume: Some("new".into()),
