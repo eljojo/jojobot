@@ -108,6 +108,9 @@
 //!   and the address itself is not nameable in the document at all, because
 //!   January invents the loop's handle, so the address it addresses is a
 //!   word no lock may spell.
+//! * **`question_*_rule_answer`** — inspect only live answer records on the
+//!   named work item. The lock vocabulary matches substrings in timestamps
+//!   and cannot distinguish a whole rule number in content or details.
 
 use serde_json::{Value, json};
 
@@ -132,7 +135,34 @@ type Hatch = (&'static str, fn() -> Box<dyn Checks>);
 
 /// **Every named check this build ships.** A room adds one line here and one
 /// `check` line in its document, and both are visible in the count.
-pub const CHECKS: [Hatch; 30] = [
+pub const CHECKS: [Hatch; 37] = [
+    ("question_one_rule_answer", || {
+        rule_answer_check("work:pm-state", &[241, 275], &[129, 189, 284])
+    }),
+    ("question_two_rule_answer", || {
+        rule_answer_check(
+            "work:conditional-rules",
+            &[
+                37, 92, 113, 125, 126, 140, 146, 194, 212, 232, 242, 289, 311, 325,
+            ],
+            &[129],
+        )
+    }),
+    ("question_three_rule_answer", || {
+        rule_answer_check("work:loop-check-in", &[189, 190], &[129, 241, 284])
+    }),
+    ("question_four_rule_answer", || {
+        rule_answer_check("work:bot-capacity", &[275, 304], &[129, 189, 284])
+    }),
+    ("question_five_rule_answer", || {
+        rule_answer_check("work:rule-58-replacement", &[288], &[129, 275, 304])
+    }),
+    ("question_seven_rule_answer", || {
+        rule_answer_check("work:shipped-kind-fields", &[284], &[129, 241, 304])
+    }),
+    ("question_six_has_answer_without_rule_number", || {
+        checked(|seen| Box::pin(question_six_has_answer_without_rule_number(seen)))
+    }),
     ("the_brief_left_the_box", || {
         checked(|seen| Box::pin(the_brief_left_the_box(seen)))
     }),
@@ -259,6 +289,97 @@ pub const CHECKS: [Hatch; 30] = [
         },
     ),
 ];
+
+fn rule_answer_check(
+    subject: &'static str,
+    required: &'static [u16],
+    forbidden: &'static [u16],
+) -> Box<dyn Checks> {
+    checked(move |seen| {
+        Box::pin(async move {
+            let records = answer_records(seen, subject).await?;
+            let numbers = answer_numbers(&records);
+            for number in required {
+                if !numbers.contains(number) {
+                    return Err(format!("answer on {subject} lacks rule {number}"));
+                }
+            }
+            for number in forbidden {
+                if numbers.contains(number) {
+                    return Err(format!(
+                        "answer on {subject} includes unrelated rule {number}"
+                    ));
+                }
+            }
+            Ok(())
+        })
+    })
+}
+
+fn answer_numbers(records: &[Value]) -> std::collections::BTreeSet<u16> {
+    records
+        .iter()
+        .flat_map(|record| {
+            ["content", "details"]
+                .into_iter()
+                .filter_map(|key| record[key].as_str())
+        })
+        .flat_map(|part| part.split(|ch: char| !ch.is_ascii_alphanumeric()))
+        .filter_map(|word| word.parse::<u16>().ok())
+        .collect()
+}
+
+async fn answer_records(seen: &Observed<'_>, subject: &str) -> Result<Vec<Value>, String> {
+    let read = seen
+        .room
+        .call("recall", json!({"subject":subject,"facts":true}))
+        .await;
+    let parsed = read_json(&read)?;
+    let facts = parsed["objects"][0]["facts"]
+        .as_array()
+        .ok_or_else(|| format!("the answer work item is not readable: {read}"))?;
+    let live: Vec<Value> = facts
+        .iter()
+        .filter(|fact| fact["status"] == "active")
+        .cloned()
+        .collect();
+    if live.is_empty() {
+        return Err(format!("no active answer was recorded on {subject}"));
+    }
+    Ok(live)
+}
+
+async fn question_six_has_answer_without_rule_number(seen: &Observed<'_>) -> Result<(), String> {
+    let facts = answer_records(seen, "work:image-attachments").await?;
+    for fact in facts {
+        for key in ["content", "details"] {
+            if let Some(part) = fact[key].as_str() {
+                let words: Vec<&str> = part.split_whitespace().collect();
+                if part.trim().parse::<u16>().is_ok()
+                    || words.iter().any(|word| {
+                        word.starts_with('#')
+                            && word[1..]
+                                .trim_end_matches(|c: char| !c.is_ascii_digit())
+                                .parse::<u16>()
+                                .is_ok()
+                    })
+                    || words.windows(2).any(|pair| {
+                        pair[0]
+                            .trim_end_matches(|c: char| !c.is_ascii_alphabetic())
+                            .eq_ignore_ascii_case("rule")
+                            && pair[1]
+                                .trim_matches(|c: char| !c.is_ascii_digit())
+                                .parse::<u16>()
+                                .is_ok()
+                    })
+                {
+                    return Err("the image-attachment answer names a rule".into());
+                }
+            }
+        }
+    }
+    Ok(())
+}
 
 /// The identity a fresh instance ships with, and the one every occupant wears.
 const OCCUPANT: &str = "bot:assistant";
@@ -2528,6 +2649,22 @@ async fn decembers_note_is_reachable_by_the_walk_back_from_the_cadence(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn answer_numbers_ignore_timestamps_and_read_details_across_records() {
+        let without_answer = [serde_json::json!({"recorded_at":"2026-11-11T00:00:00.241Z"})];
+        assert!(super::answer_numbers(&without_answer).is_empty());
+        let answer = [
+            serde_json::json!({"content":"answer", "details":"rule 241", "recorded_at":"2026-11-11T00:00:00.129Z"}),
+            serde_json::json!({"content":"275"}),
+        ];
+        assert_eq!(super::answer_numbers(&answer), [241, 275].into());
+        let overinclusive = [serde_json::json!({"content":"241, 275, 129"})];
+        assert_eq!(
+            super::answer_numbers(&overinclusive),
+            [129, 241, 275].into()
+        );
+    }
+
     use super::read_json;
 
     /// **`read_json` is the one thing every one of these checks trusts to
