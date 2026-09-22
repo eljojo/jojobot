@@ -2564,4 +2564,64 @@ mod tests {
 
         store.stop().await;
     }
+
+    /// **The shape `0046_fact_status_archived` declares is the one that
+    /// recovers it.** The statement is an `UPDATE` that leaves the schema
+    /// exactly as it found it, so nothing but the rows can tell whether it
+    /// ran. Unlike `0035`, nothing downstream renames a column this one
+    /// touches, so the full list is safe to reissue against.
+    #[tokio::test]
+    async fn an_interrupted_fact_status_archive_backfill_is_recognized_by_a_retired_status_left_standing()
+     {
+        let scratch = Scratch::new("migrate-interrupted-fact-status-archived");
+        let path = scratch.0.clone();
+        std::mem::forget(scratch);
+        let mut store = crate::dolt::Dolt::start(&path, free_port())
+            .await
+            .expect("the store comes up");
+        let pool = store
+            .database("factstatusarchivedpartway")
+            .await
+            .expect("a database of its own");
+
+        run(&pool).await.expect("the schema");
+
+        // The state a death in the window leaves when the rewrite did NOT
+        // take effect: a claim still carrying one of the retired tokens, the
+        // ledger row taken away, the marker committed.
+        sqlx::query(
+            "INSERT INTO fact (entity, id, content, provenance, status, recorded_at)
+             VALUES ('person:already-here', 'f1', 'a claim overtaken by a later one', \
+             'testimony', 'retracted', '2026-01-01')",
+        )
+        .execute(&pool)
+        .await
+        .expect("a claim carrying a retired status lands");
+        sqlx::query("DELETE FROM schema_migration WHERE version = ?")
+            .bind("0046_fact_status_archived")
+            .execute(&pool)
+            .await
+            .expect("the ledger row goes");
+        mark_begun(&pool, "0046_fact_status_archived")
+            .await
+            .expect("the marker lands");
+
+        assert_eq!(
+            run(&pool).await.expect("the start completes the schema"),
+            vec!["0046_fact_status_archived".to_string()],
+            "the rewrite that did NOT land is reissued",
+        );
+
+        // **Read by a route that is not the probe**: the claim's own status
+        // column now reads `archived`.
+        let status: String = sqlx::query_scalar(
+            "SELECT status FROM fact WHERE entity = 'person:already-here' AND id = 'f1'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("the claim is readable");
+        assert_eq!(status, "archived");
+
+        store.stop().await;
+    }
 }
