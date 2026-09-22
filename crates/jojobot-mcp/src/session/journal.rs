@@ -126,6 +126,11 @@ impl Jojobot {
                 }));
             }
         };
+        // **The claim renews on the beat that was just written — no second
+        // mechanism.** Best-effort: a renewal failure is logged and never
+        // turns a landed beat into a failed call.
+        self.renew_role_claims(&caller.bot, caller.sid.as_str(), entry.at)
+            .await;
         // The focus moves only once the beat is recorded: a session whose focus
         // says it is doing something its chronology never mentions is a record
         // that disagrees with itself.
@@ -195,6 +200,75 @@ impl Jojobot {
             self.what_a_beat_left_standing(&session).await,
         );
         json_result(&body)
+    }
+}
+
+impl Jojobot {
+    /// **Renew every role this session's own claimant holds, on the beat it
+    /// just wrote — no second mechanism, no cheap-renew path.**
+    ///
+    /// A role claim lives entirely in the bot's own fields (see
+    /// [`crate::orientation::orient::OrientRequest`]'s sibling, the boot
+    /// door's `decide_role_claim`), so this scans that bot's own backing
+    /// rather than tracking a claimed role on the session record: a second
+    /// place to remember what is claimed is a second place for the two to
+    /// disagree. The write is the ordinary field-edit path
+    /// ([`Memory::update_fact`], patching the claim's own existing fact in
+    /// place) rather than a fresh fact per beat.
+    ///
+    /// Best-effort: a read or write failure here is logged and never turns a
+    /// beat that landed into a failed call — renewing a lease is not what a
+    /// caller who wrote a journal entry asked for.
+    async fn renew_role_claims(&self, bot: &EntityId, claimant: &str, now: jiff::Timestamp) {
+        let fields = match self.memory.fields(bot).await {
+            Ok(fields) => fields,
+            Err(e) => {
+                tracing::warn!(
+                    error = %e, %bot,
+                    "could not read the bot's fields to renew a role claim"
+                );
+                return;
+            }
+        };
+        let held_roles: Vec<String> = fields
+            .iter()
+            .filter_map(|(key, holder)| {
+                if holder != claimant {
+                    return None;
+                }
+                key.strip_prefix("role/")?
+                    .strip_suffix("/holder")
+                    .map(str::to_string)
+            })
+            .collect();
+        if held_roles.is_empty() {
+            return;
+        }
+        let backing = match self.memory.backing(bot).await {
+            Ok(backing) => backing,
+            Err(e) => {
+                tracing::warn!(
+                    error = %e, %bot,
+                    "could not read the bot's fields' backing to renew a role claim"
+                );
+                return;
+            }
+        };
+        for role in held_roles {
+            let claimed_at_key = jojobot_domain::session::role_claimed_at_key(&role);
+            let Some(backing) = backing.get(&claimed_at_key) else {
+                tracing::warn!(%bot, role, "a held role's claimed-at field has no backing to renew");
+                continue;
+            };
+            let address = FactAddress::new(bot.clone(), backing.fact.clone());
+            let patch = FactPatch {
+                fields: std::collections::BTreeMap::from([(claimed_at_key, now.to_string())]),
+                ..Default::default()
+            };
+            if let Err(e) = self.memory.update_fact(&address, patch).await {
+                tracing::warn!(error = %e, %bot, role, "a role claim could not be renewed");
+            }
+        }
     }
 }
 
@@ -879,6 +953,81 @@ mod tests {
             ],
             "two entries: the amended one, and the story with the flushed focus"
         );
+    }
+
+    /// **A beat renews the session's own role claim — no second mechanism.**
+    /// The claim's own `claimed_at` field must actually move, not merely
+    /// survive: a claim that renewed only in name would still read `stale`
+    /// once its original threshold passed.
+    #[tokio::test]
+    async fn a_beat_renews_the_session_s_own_role_claim() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+
+        let booted = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    claim: Some("dev-dispatch".into()),
+                    timezone: None,
+                    bot: Some("gamma".into()),
+                    brief: None,
+                    skill: None,
+                    resume: None,
+                    sid: None,
+                    today: None,
+                }))
+                .await
+                .expect("start_here ok"),
+        );
+        let sid = sid_of(&booted).expect("a handle");
+        assert_eq!(booted["session"]["claim"]["status"], "taken", "{booted}");
+
+        let bot = EntityId("bot:gamma".into());
+        let before = jojobot.memory.fields(&bot).await.expect("fields ok");
+        let claimed_at_before = before
+            .get("role/dev-dispatch/claimed_at")
+            .cloned()
+            .expect("the claim's own field is present");
+        let holder_before = before
+            .get("role/dev-dispatch/holder")
+            .cloned()
+            .expect("the claim's own holder is present");
+
+        journal_entry(&jojobot, &sid, "did some of the work").await;
+
+        let after = jojobot.memory.fields(&bot).await.expect("fields ok");
+        assert_ne!(
+            after.get("role/dev-dispatch/claimed_at"),
+            Some(&claimed_at_before),
+            "the beat must move the claim's own timestamp, not merely leave it standing: {after:?}"
+        );
+        assert_eq!(
+            after.get("role/dev-dispatch/holder"),
+            Some(&holder_before),
+            "…and the holder is unchanged by a renewal: {after:?}"
+        );
+    }
+
+    /// A beat on a session holding no role claim does nothing extra and
+    /// still lands — the renewal path is silent when there is nothing of
+    /// this session's own to renew.
+    #[tokio::test]
+    async fn a_beat_with_no_role_claim_still_lands() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+
+        let body = json_of(
+            &jojobot
+                .journal(Parameters(JournalArgs {
+                    entry: "no role was ever claimed here".into(),
+                    focus: None,
+                    sid: sid.clone(),
+                }))
+                .await
+                .expect("journal ok"),
+        );
+        assert!(body["entry"]["id"].is_string(), "{body}");
     }
 
     /// A session verb on a connection that never booted is blocked with the way
