@@ -37,6 +37,9 @@ pub const YEAR_ROOM: &str = "rooms/year.md";
 /// vocabulary, lineage walk-back, derivation-on-check-in).
 pub const VAULT_ROOM: &str = "rooms/vault.md";
 
+/// A real design-rule register filed and queried across cold sittings.
+pub const DECISIONS_ROOM: &str = "rooms/decisions.md";
+
 /// **The Rust half of a room that still has one** — what must be true of it
 /// afterwards, and what it is furnished with before anybody arrives.
 type InRust = (
@@ -57,12 +60,13 @@ type Room = (&'static str, Option<InRust>, bool);
 ///
 /// **Exactly one entry carries `true`** — decision log 299 — and this table is
 /// the only place that name lives; nothing outside it repeats it.
-const ROOMS: [Room; 5] = [
+const ROOMS: [Room; 6] = [
     (BIKE_ROOM, None, false),
     (LOOP_ROOM, None, false),
     (YEAR_ROOM, None, false),
     (HANDOVER_ROOM, None, false),
     (VAULT_ROOM, None, true),
+    (DECISIONS_ROOM, None, false),
 ];
 
 /// **The room a run uses when none is named** — decision log 299.
