@@ -110,12 +110,42 @@ fn run_check() -> std::io::Result<ExitCode> {
     )?;
     if !ok {
         summary.phase_failed("fmt-check", "not formatted — see log");
+        summary.phase_skipped("build");
         summary.phase_skipped("test");
         summary.phase_skipped("lint");
         finish(&mut summary, &log_path);
         return Ok(ExitCode::FAILURE);
     }
     summary.phase_ok("fmt-check", "formatted");
+
+    // **Built before it is driven, not left to `cargo test` to build only
+    // what it happens to depend on.** `jojobot-exercise`'s suites spawn the
+    // `jojobot` binary as a child process rather than linking against the
+    // `jojobot` crate, so `cargo test --workspace` has no dependency edge
+    // that would rebuild it — a source `jojobot-exercise` never imports can
+    // go stale under a binary those suites still spawn, and the suite's own
+    // guard then refuses rather than driving it. The guard is correct and
+    // stays exactly as it is; this phase is what keeps it from firing on an
+    // ordinary green run.
+    let (ok, text) = run_phase(
+        &log_path,
+        "cargo build --workspace",
+        &cargo,
+        &["build", "--workspace"],
+    )?;
+    if !ok {
+        let verdict = summarize_test_output(&text);
+        if verdict.compiled {
+            summary.phase_failed("build", "see log");
+        } else {
+            summary.phase_failed("build", "DID NOT COMPILE — see log");
+        }
+        summary.phase_skipped("test");
+        summary.phase_skipped("lint");
+        finish(&mut summary, &log_path);
+        return Ok(ExitCode::FAILURE);
+    }
+    summary.phase_ok("build", "compiled");
 
     let (_, text) = run_phase(
         &log_path,
