@@ -15,10 +15,16 @@ use std::sync::atomic::{AtomicU16, Ordering};
 /// live.
 const FIRST: u16 = 20_000;
 
-/// How many ports one block holds. A suite starts a handful of servers, so a
-/// block is far larger than any single run needs, and the count of blocks is
-/// what a machine's concurrent runs draw from.
-const BLOCK: u16 = 64;
+/// How many ports one block holds.
+///
+/// **This is spent once per process, not once per concurrent server.** A
+/// single test binary holds one block for its whole run, and every
+/// `#[tokio::test]` in it that spawns a store draws one port from that same
+/// block — cumulatively, for as long as the process lives, not just for
+/// however many of them happen to run at once. A lib whose store-spawning
+/// tests outnumber this cap fails once the last one draws a port nobody
+/// left, however few of them were ever running at the same moment.
+const BLOCK: u16 = 256;
 
 /// How many blocks the range holds.
 ///
@@ -27,7 +33,7 @@ const BLOCK: u16 = 64;
 /// that line is one an ordinary connection from any process can take a port
 /// out of, including the store's own client connections, so a block claimed
 /// there is not the exclusive thing this file says it is.
-const BLOCKS: u16 = 199;
+const BLOCKS: u16 = 49;
 
 /// **A range of ports this process holds against every other process**, and
 /// the cursor that hands them out one at a time.
@@ -93,8 +99,9 @@ impl PortBlock {
             let offset = self.handed.fetch_add(1, Ordering::Relaxed);
             assert!(
                 offset < BLOCK - 1,
-                "this block's {BLOCK} ports are used up. A suite that needs more than one block \
-                 is a suite this helper was not written for."
+                "this block's {BLOCK} ports are used up — cumulatively, over the whole run of \
+                 this process, not at one moment. A lib whose store-spawning tests add up past \
+                 this many needs the cap raised, not fewer of them running together."
             );
             let port = self.first + offset;
             if TcpListener::bind(("127.0.0.1", port)).is_ok() {
@@ -196,5 +203,31 @@ mod tests {
         let mut second = second.expect("the second store comes up, on a port of its own");
         first.stop().await;
         second.stop().await;
+    }
+
+    /// **One block covers a whole run's cumulative total, not just a
+    /// handful of concurrent servers.**
+    ///
+    /// `free_port` hands out of one block for the life of the whole test
+    /// binary — every `#[tokio::test]` anywhere in this crate's lib that
+    /// spawns its own store draws from it, one at a time, for as long as the
+    /// process runs. That total is not a handful: it is every such test the
+    /// lib holds, all at once. A hundred is comfortably past what the block
+    /// used to cap out at and still well inside what it holds now, so this
+    /// proves the block cleared the raise without pinning the exact number
+    /// it was raised to.
+    #[test]
+    fn a_block_hands_out_a_hundred_ports_in_one_run() {
+        let block = PortBlock::claim();
+        let handed: Vec<u16> = (0..100).map(|_| block.port()).collect();
+
+        let mut unique = handed.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(
+            unique.len(),
+            100,
+            "a hundred calls into one block must hand out a hundred distinct ports: {handed:?}",
+        );
     }
 }
