@@ -259,6 +259,84 @@ fn still_offered_until(last: Date) -> Date {
 /// sweep got round to marking it.
 pub const OFFER_ABANDONED_WITHIN: jiff::SignedDuration = jiff::SignedDuration::from_hours(24 * 7);
 
+/// How fresh a claim on a role must be to still count as held, before it is
+/// treated as free for the taking.
+///
+/// **Its own value, deliberately not [`ABANDONED_AFTER`].** The sweep asks
+/// "has this run gone quiet for a whole day"; a lease asks "is somebody
+/// plausibly still at this right now" — seconds, not a day. Fusing the two
+/// would mean a run that is genuinely still working, mid-beat, reads as
+/// having lost its lease long before the sweep would ever call it abandoned.
+pub const LEASE_FRESHNESS: jiff::SignedDuration = jiff::SignedDuration::from_secs(300);
+
+/// A verdict on a claimed role, decided against a threshold — never handed to
+/// the caller as a timestamp to judge for itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LeaseVerdict {
+    /// Nobody has ever claimed it.
+    Free,
+    /// Claimed, and the claim is still inside the freshness threshold.
+    Held,
+    /// Claimed once, but the claim is older than the threshold — claimable.
+    Stale,
+}
+
+/// Decide the [`LeaseVerdict`] for a role last claimed at `claimed_at`, if
+/// ever, as of `now`, against `threshold`.
+pub fn lease_verdict(
+    claimed_at: Option<Timestamp>,
+    now: Timestamp,
+    threshold: jiff::SignedDuration,
+) -> LeaseVerdict {
+    match claimed_at {
+        None => LeaseVerdict::Free,
+        Some(at) if now.duration_since(at) < threshold => LeaseVerdict::Held,
+        Some(_) => LeaseVerdict::Stale,
+    }
+}
+
+/// One claim's outcome.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LeaseClaim {
+    /// The claimant now holds the role.
+    Taken,
+    /// A second claimant, told no while the lease is fresh — and told who
+    /// holds it and until when the hold goes stale on its own.
+    Refused {
+        /// Who holds it.
+        holder: String,
+        /// When the hold goes stale, absent a renewal.
+        until: Timestamp,
+    },
+}
+
+/// Decide whether `claimant` may take a role currently held by
+/// `current_holder` (if any), last claimed at `claimed_at` (if ever).
+///
+/// **The same claimant renewing is never refused.** A lease is a claim
+/// against everyone else, not a lock its own holder must fight its way back
+/// into — [`LeaseClaim::Refused`] only ever names somebody else.
+pub fn claim_role(
+    claimant: &str,
+    current_holder: Option<&str>,
+    claimed_at: Option<Timestamp>,
+    now: Timestamp,
+    threshold: jiff::SignedDuration,
+) -> LeaseClaim {
+    match (current_holder, claimed_at) {
+        (Some(holder), Some(at))
+            if holder != claimant
+                && lease_verdict(Some(at), now, threshold) == LeaseVerdict::Held =>
+        {
+            LeaseClaim::Refused {
+                holder: holder.to_string(),
+                until: at + threshold,
+            }
+        }
+        _ => LeaseClaim::Taken,
+    }
+}
+
 /// The id charset, `[a-z0-9-]` — the mailbox context's, for the same reasons.
 fn is_id_byte(b: u8) -> bool {
     b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'
@@ -1251,6 +1329,112 @@ mod tests {
     #[tokio::test]
     async fn the_fake_satisfies_the_contract() {
         contract::run_all(InMemorySessions::new).await;
+    }
+
+    /// **A second claimant is refused while the lease is fresh** — told no,
+    /// and told who holds it and until when.
+    #[test]
+    fn a_second_claimant_is_refused_while_the_lease_is_fresh() {
+        let claimed_at = contract::epoch();
+        let now = claimed_at + jiff::SignedDuration::from_secs(30);
+        let threshold = jiff::SignedDuration::from_secs(300);
+        let decision = claim_role("delta", Some("gamma"), Some(claimed_at), now, threshold);
+        assert_eq!(
+            decision,
+            LeaseClaim::Refused {
+                holder: "gamma".into(),
+                until: claimed_at + threshold,
+            },
+            "a fresh holder must not lose the role to a second claimant"
+        );
+    }
+
+    /// **The same claimant renewing is not refused.** A lease is a claim
+    /// against everyone else, not a lock its own holder must fight back into.
+    #[test]
+    fn the_same_claimant_renewing_is_not_refused() {
+        let claimed_at = contract::epoch();
+        let now = claimed_at + jiff::SignedDuration::from_secs(30);
+        let threshold = jiff::SignedDuration::from_secs(300);
+        let decision = claim_role("gamma", Some("gamma"), Some(claimed_at), now, threshold);
+        assert_eq!(
+            decision,
+            LeaseClaim::Taken,
+            "the holder renewing its own claim"
+        );
+    }
+
+    /// **A lease past the threshold reads `stale` and is claimable.**
+    #[test]
+    fn a_lease_past_the_threshold_reads_stale_and_is_claimable() {
+        let claimed_at = contract::epoch();
+        let threshold = jiff::SignedDuration::from_secs(300);
+        let now = claimed_at + jiff::SignedDuration::from_secs(301);
+        assert_eq!(
+            lease_verdict(Some(claimed_at), now, threshold),
+            LeaseVerdict::Stale
+        );
+        assert_eq!(
+            claim_role("delta", Some("gamma"), Some(claimed_at), now, threshold),
+            LeaseClaim::Taken,
+            "a stale lease is claimable by anyone"
+        );
+    }
+
+    /// **A lease inside the threshold reads `held`.**
+    #[test]
+    fn a_lease_inside_the_threshold_reads_held() {
+        let claimed_at = contract::epoch();
+        let threshold = jiff::SignedDuration::from_secs(300);
+        let now = claimed_at + jiff::SignedDuration::from_secs(299);
+        assert_eq!(
+            lease_verdict(Some(claimed_at), now, threshold),
+            LeaseVerdict::Held
+        );
+    }
+
+    /// **Nobody has ever claimed it reads `free`, and is claimable.**
+    #[test]
+    fn an_unclaimed_lease_reads_free_and_is_claimable() {
+        let now = contract::epoch();
+        let threshold = jiff::SignedDuration::from_secs(300);
+        assert_eq!(lease_verdict(None, now, threshold), LeaseVerdict::Free);
+        assert_eq!(
+            claim_role("gamma", None, None, now, threshold),
+            LeaseClaim::Taken
+        );
+    }
+
+    /// **A claim that succeeds must be READ BACK as held by the claimant.**
+    /// An assertion that the wrong claimant is refused passes identically
+    /// when nothing was actually taken — so this chains the successful
+    /// claim's own outcome into the next decision, the way a caller who
+    /// wrote the claim and then re-read it would.
+    #[test]
+    fn a_successful_claim_reads_back_as_held_by_the_claimant() {
+        let now = contract::epoch();
+        let threshold = jiff::SignedDuration::from_secs(300);
+        assert_eq!(
+            claim_role("gamma", None, None, now, threshold),
+            LeaseClaim::Taken,
+            "the first claimant takes a free role"
+        );
+        // What gamma's claim wrote, read back: `gamma` now holds it, claimed
+        // at `now`.
+        let later = now + jiff::SignedDuration::from_secs(30);
+        assert_eq!(
+            lease_verdict(Some(now), later, threshold),
+            LeaseVerdict::Held,
+            "the claim must read back as held, not merely as accepted"
+        );
+        assert_eq!(
+            claim_role("delta", Some("gamma"), Some(now), later, threshold),
+            LeaseClaim::Refused {
+                holder: "gamma".into(),
+                until: now + threshold,
+            },
+            "and held BY GAMMA specifically — a second claimant is told so"
+        );
     }
 
     /// **The sweep reads a clock it is handed, so its answer is a function of
