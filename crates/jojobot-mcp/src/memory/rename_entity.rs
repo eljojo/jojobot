@@ -532,7 +532,11 @@ mod tests {
         // never the bare badge the row itself carries.
         let board = sessions.all_sessions().await.expect("all_sessions ok");
         let rebuilt = std::sync::Arc::new(sid::SessionRegistry::new());
-        assert_eq!(rebuilt.rebuild_from(&board), 1, "one handle recovered");
+        assert_eq!(
+            rebuilt.rebuild_from(&board).recovered,
+            1,
+            "one handle recovered"
+        );
         let restarted = Jojobot::new(
             memory,
             std::sync::Arc::new(SpySearch::default()),

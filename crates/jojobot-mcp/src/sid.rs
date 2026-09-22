@@ -80,6 +80,19 @@ pub struct Handle {
     pub(crate) day: Option<jiff::civil::Date>,
 }
 
+/// What [`SessionRegistry::rebuild_from`] found on the board.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Rebuilt {
+    /// How many handles were put back.
+    pub recovered: usize,
+    /// **How many cards carried a `sid` that failed the shape check.** Held
+    /// apart from `recovered` rather than folded into the gap a missing `sid`
+    /// leaves, because the two say different things: a card with no `sid` is
+    /// the ordinary pre-handle case, and a card with an unreadable one is
+    /// damage a restart should be able to say out loud.
+    pub unreadable: usize,
+}
+
 /// Minting found no free handle. See [`MINT_ATTEMPTS`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NoFreeHandle;
@@ -219,16 +232,21 @@ impl SessionRegistry {
     ///
     /// A card written before handles were persisted carries none and simply
     /// contributes nothing here — the boot that offers it mints one on the spot,
-    /// which is the whole of the migration.
-    ///
-    /// Returns how many it recovered, so a restart can say so out loud.
-    pub fn rebuild_from(&self, sessions: &[Session]) -> usize {
+    /// which is the whole of the migration. **A card whose `sid` fails the
+    /// shape check is a different thing and is counted separately** — see
+    /// [`Rebuilt::unreadable`]. Nothing this process writes produces one:
+    /// `jojobot_adapters::dolt::sessions` proves the column round-trips
+    /// unvalidated, so its only source is damage on the board, never the
+    /// ordinary pre-handle gap.
+    pub fn rebuild_from(&self, sessions: &[Session]) -> Rebuilt {
         let mut held = self.held.write().expect("the registry is poisoned");
+        let mut unreadable = 0;
         for session in sessions {
             let Some(sid) = session.sid.clone() else {
                 continue;
             };
             if !is_readable_sid(sid.as_str()) {
+                unreadable += 1;
                 continue;
             }
             held.insert(
@@ -245,7 +263,10 @@ impl SessionRegistry {
                 },
             );
         }
-        held.len()
+        Rebuilt {
+            recovered: held.len(),
+            unreadable,
+        }
     }
 
     /// **Record the zone this run resolves days against**, replacing whatever it
@@ -448,5 +469,74 @@ mod tests {
         let old = SessionRegistry::new();
         let sid = old.mint(&bot("gamma"), None).expect("minted");
         assert!(SessionRegistry::new().lookup(sid.as_str()).is_none());
+    }
+
+    /// A card as the board hands it to a rebuild — built by hand, the way
+    /// [`SessionRegistry::rebuild_from`]'s caller never does, because this
+    /// registry is pure logic over what it is given and owes no I/O to prove
+    /// it.
+    fn card(id: &str, bot_slug: &str, sid: Option<&str>) -> Session {
+        use jojobot_domain::session::SessionState;
+        Session {
+            id: SessionId(id.into()),
+            sid: sid.map(|s| Sid(s.into())),
+            bot: bot(bot_slug),
+            focus: "a run".into(),
+            started_at: jiff::Timestamp::from_second(1_780_000_000).expect("a fixed instant"),
+            state: SessionState::Active,
+            entries: vec![],
+            timezone: None,
+            started_on: None,
+            served_chars: 0,
+        }
+    }
+
+    /// **An unreadable stored sid is counted apart from a missing one.** Both
+    /// leave a card with no live handle after the rebuild, but they are not
+    /// the same fact: a card with no `sid` at all is the ordinary pre-handle
+    /// gap every caller of this already expects, while a card whose `sid`
+    /// fails the shape check is damage — nothing this process writes
+    /// produces one, proved against the real store in
+    /// `jojobot_adapters::dolt::sessions`. Folding both into one number would
+    /// make the damaged case indistinguishable from the routine one.
+    #[test]
+    fn rebuild_from_counts_an_unreadable_sid_apart_from_a_missing_one() {
+        let registry = SessionRegistry::new();
+        let board = [
+            card("card-sound", "gamma", Some("ab12")),
+            card("card-legacy", "delta", None),
+            card("card-damaged", "sigma", Some("BAD1")),
+        ];
+
+        let rebuilt = registry.rebuild_from(&board);
+
+        assert_eq!(rebuilt.recovered, 1, "only the well-shaped sid is put back");
+        assert_eq!(
+            rebuilt.unreadable, 1,
+            "the damaged sid is counted, not folded into the gap a missing sid leaves"
+        );
+        assert!(
+            registry.lookup("ab12").is_some(),
+            "the sound handle is held"
+        );
+    }
+
+    /// **The paired case rule 161 asks for.** A rebuild that always reports
+    /// something is the failure the fix above would cause if `unreadable`
+    /// were, say, `Option<usize>` defaulting to `Some(0)` read as noteworthy —
+    /// a clean board must come back saying nothing went wrong, not zero
+    /// things went wrong.
+    #[test]
+    fn a_clean_rebuild_reports_no_unreadable_sids() {
+        let registry = SessionRegistry::new();
+        let board = [
+            card("card-sound", "gamma", Some("ab12")),
+            card("card-legacy", "delta", None),
+        ];
+
+        let rebuilt = registry.rebuild_from(&board);
+
+        assert_eq!(rebuilt.recovered, 1);
+        assert_eq!(rebuilt.unreadable, 0);
     }
 }

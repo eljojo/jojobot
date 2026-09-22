@@ -1176,6 +1176,62 @@ mod tests {
         store.stop().await;
     }
 
+    /// **A `sid`'s shape is never checked, on write or on read.** The state
+    /// and the timestamp just above are refused when they cannot be parsed
+    /// back; `sid` gets no equivalent anywhere in this file — `begin` binds
+    /// it straight into the `INSERT`, and `session_from` wraps whatever text
+    /// comes back in `Sid` unchanged. So a card that fails
+    /// `is_readable_sid` is not a hypothetical: the front door itself will
+    /// write one, and hand it back exactly as given.
+    #[tokio::test]
+    async fn a_sids_shape_is_never_checked_on_write_or_on_read() {
+        let scratch = Scratch::new("unchecked-sid-shape");
+        let path = scratch.0.clone();
+        std::mem::forget(scratch);
+        let mut store = Dolt::start(&path, free_port())
+            .await
+            .expect("the store comes up");
+        migrate::run(store.pool()).await.expect("the schema");
+        migrate::seed_kinds(store.pool())
+            .await
+            .expect("the kinds are seeded");
+        let sessions = DoltSessions::open(store.pool().clone());
+
+        // Uppercase is outside `SID_ALPHABET`, so this fails the shape check
+        // on length-correct input — the fixture must actually be unreadable
+        // or the round trip below proves nothing.
+        let bad = "BAD1";
+        assert!(
+            !jojobot_domain::session::is_readable_sid(bad),
+            "the fixture must be unreadable to begin with"
+        );
+
+        let begun = sessions
+            .begin(NewSession {
+                timezone: None,
+                started_on: None,
+                bot: EntityId("bot:gamma".into()),
+                sid: Sid(bad.into()),
+                focus: "a run".into(),
+                started_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
+            })
+            .await
+            .expect("begin does not check the sid's shape");
+        assert_eq!(begun.sid, Some(Sid(bad.into())));
+
+        let read = sessions
+            .read_session(&begun.id)
+            .await
+            .expect("read does not check it either");
+        assert_eq!(
+            read.sid,
+            Some(Sid(bad.into())),
+            "the unreadable sid round-trips exactly as written"
+        );
+
+        store.stop().await;
+    }
+
     /// **Both ends of a run are marked, and they are two marks.**
     ///
     /// A sitting is bounded at both ends rather than inferred from wherever

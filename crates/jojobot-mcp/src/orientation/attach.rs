@@ -950,7 +950,11 @@ mod tests {
         // the first request — exactly what the composition root does.
         let rebuilt = Arc::new(sid::SessionRegistry::new());
         let board = store.all_sessions().await.expect("board read ok");
-        assert_eq!(rebuilt.rebuild_from(&board), 1, "one handle recovered");
+        assert_eq!(
+            rebuilt.rebuild_from(&board).recovered,
+            1,
+            "one handle recovered"
+        );
         let restarted = connection_sharing(memory, store.clone(), rebuilt);
 
         let resumed = boot_answering(&restarted, "gamma", &handle).await;
@@ -1021,7 +1025,7 @@ mod tests {
             .sessions_of(&EntityId("bot:gamma".into()))
             .await
             .expect("read ok");
-        assert_eq!(rebuilt.rebuild_from(&board), 1);
+        assert_eq!(rebuilt.rebuild_from(&board).recovered, 1);
         assert_eq!(
             rebuilt.lookup(stored.as_str()).expect("held").card,
             Some(card.id.clone())
@@ -1059,7 +1063,7 @@ mod tests {
             .await
             .expect("read ok");
         assert_eq!(
-            registry.rebuild_from(&board),
+            registry.rebuild_from(&board).recovered,
             0,
             "a card with no handle contributes none"
         );
@@ -1110,7 +1114,7 @@ mod tests {
             .await
             .expect("read ok");
         assert_eq!(
-            rebuilt.rebuild_from(&board),
+            rebuilt.rebuild_from(&board).recovered,
             0,
             "the boot wrote no card, so the rebuild has nothing to recover: {board:?}"
         );

@@ -532,12 +532,27 @@ pub async fn boot_store(dir: &Path, port: u16, clock: Clock) -> anyhow::Result<B
     let registry = Arc::new(jojobot_mcp::sid::SessionRegistry::new());
     match sessions.all_sessions().await {
         Ok(board) => {
-            let recovered = registry.rebuild_from(&board);
+            let rebuilt = registry.rebuild_from(&board);
             tracing::info!(
-                recovered,
+                recovered = rebuilt.recovered,
                 cards = board.len(),
                 "sessions: handle registry rebuilt from the board"
             );
+            // **Only when there is something to say.** A clean rebuild — every
+            // gap between `cards` and `recovered` explained by a card with no
+            // `sid` at all — reports nothing further: the routine gap already
+            // has its own count, and a line that fired on every boot would
+            // stop meaning anything the day it fired on one that mattered.
+            if rebuilt.unreadable > 0 {
+                tracing::warn!(
+                    unreadable = rebuilt.unreadable,
+                    "SESSION HANDLE UNREADABLE — a stored sid failed the shape check and was \
+                     not put back into the registry. Nothing this process writes produces one, \
+                     so this names damage on the board rather than the ordinary pre-handle gap. \
+                     The session itself is untouched; only its handle is gone, and booting its \
+                     bot again offers the run back by what it was working on."
+                );
+            }
         }
         Err(e) => tracing::warn!(
             error = %e,
