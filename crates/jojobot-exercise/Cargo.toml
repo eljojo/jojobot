@@ -11,7 +11,9 @@ rust-version.workspace = true
 # test` — the paid half is a binary somebody has to invoke, and the machinery
 # below it is a library with ordinary free tests.
 [dependencies]
-tokio.workspace = true
+# `sync` is for `OnceCell`: the template a room copies instead of migrating
+# is built at most once per process, however many rooms ask for it at once.
+tokio = { workspace = true, features = ["sync"] }
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true

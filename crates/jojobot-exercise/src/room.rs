@@ -114,7 +114,7 @@ impl Room {
         );
         let mut last = None;
         for _ in 0..ATTEMPTS {
-            let room = match Room::spawn_once(binary, &DeathSignal::Ask, today).await {
+            let room = match Room::spawn_once(binary, &DeathSignal::Ask, today, true).await {
                 Ok(room) => room,
                 Err(e) => {
                     last = Some(e);
@@ -173,7 +173,7 @@ impl Room {
         );
         let mut last = None;
         for _ in 0..ATTEMPTS {
-            match Room::spawn_once(binary, &signal, None).await {
+            match Room::spawn_once(binary, &signal, None, true).await {
                 Ok(room) => return Ok(room),
                 Err(e) => last = Some(e),
             }
@@ -190,8 +190,49 @@ impl Room {
     /// `today`, when named, is carried to the child alone as `JOJOBOT_TODAY` —
     /// nothing process-wide, so a room forcing a day cannot leak it to a room
     /// spawned beside it.
-    async fn spawn_once(binary: &Path, signal: &DeathSignal, today: Option<&str>) -> Result<Room> {
+    ///
+    /// **`use_template` is false for exactly one caller: [`build_template`]
+    /// itself.** Copying a template into the directory that is about to
+    /// become the template would be circular, so the one spawn that builds
+    /// it migrates for real, the ordinary way, and every other caller here
+    /// copies what it left behind.
+    ///
+    /// **A thin wrapper over [`spawn_bare`] rather than one function with a
+    /// branch inside it.** `template` calls back into a spawn to build
+    /// itself; a single `spawn_once` awaiting `template` awaiting
+    /// `spawn_once` is a cycle the compiler can only accept boxed, and
+    /// boxing a cycle that never actually turns is paying for a recursion
+    /// this code does not have. Splitting the templating decision out
+    /// before the shared spawn logic removes the cycle instead of hiding it.
+    async fn spawn_once(
+        binary: &Path,
+        signal: &DeathSignal,
+        today: Option<&str>,
+        use_template: bool,
+    ) -> Result<Room> {
         let dir = scratch()?;
+        if use_template {
+            let template = template(binary).await?;
+            copy_dir_all(&template, &dir).with_context(|| {
+                format!(
+                    "copying the template at {} into {}",
+                    template.display(),
+                    dir.display()
+                )
+            })?;
+        }
+        Room::spawn_bare(binary, signal, today, dir).await
+    }
+
+    /// **One attempt, over a directory the caller already prepared** — empty
+    /// for [`build_template`], a template's own copy for everything else.
+    /// Templating is entirely [`spawn_once`]'s decision; this never asks.
+    async fn spawn_bare(
+        binary: &Path,
+        signal: &DeathSignal,
+        today: Option<&str>,
+        dir: PathBuf,
+    ) -> Result<Room> {
         // **Held until the spawn, then let go.** Nothing else in this process
         // can take these numbers while the command is being built, which is
         // the half of the window that is ours to close.
@@ -406,6 +447,83 @@ fn die_with_this_run(spawning: &mut std::process::Command) {
 /// Where no such flag exists, `Drop` is the whole of the cleanup.
 #[cfg(not(target_os = "linux"))]
 fn die_with_this_run(_spawning: &mut std::process::Command) {}
+
+/// **A store already migrated once, this process's own** — built on first
+/// use and shared read-only from there. Every room after the first copies
+/// its directory rather than paying the real cost the template already
+/// paid: a fresh `dolt init` and all fifty-plus migrations, run once
+/// instead of once per room.
+///
+/// **Never persisted.** A `PathBuf` under this process's own temp
+/// directory, built by whichever binary this run is testing, and reachable
+/// by nothing once the process exits. A template that outlived the run
+/// that built it could go stale the moment a migration changes — this one
+/// cannot, because there is no "later" for it to be stale in.
+///
+/// **Safe to share across threads in the way a live room is not.** A room's
+/// own server ties its death to the thread that spawned it —
+/// [`die_with_this_run`]'s own doc says so — so a `Room` shared past the
+/// call that opened it can die under a caller still using it. This holds no
+/// server: it is files on disk, built once and read many times, and
+/// nothing about reading a file cares which thread asked.
+static TEMPLATE: tokio::sync::OnceCell<PathBuf> = tokio::sync::OnceCell::const_new();
+
+/// **Get the template, building it first if nobody has yet.**
+///
+/// `OnceCell::get_or_try_init` is the whole of the ordering guarantee this
+/// needs: the first caller's build runs to completion before its result is
+/// handed to anyone, concurrent callers included, so a copy can never begin
+/// while the template is still migrating.
+async fn template(binary: &Path) -> Result<PathBuf> {
+    TEMPLATE
+        .get_or_try_init(|| build_template(binary))
+        .await
+        .cloned()
+}
+
+/// **The one spawn that migrates for real.** A bare room, on an empty
+/// directory, exactly what every room used to be before templates existed
+/// — brought up, waited on until it answers (which is the schema, the
+/// index and the seed all landing), then killed. The directory it leaves
+/// behind, still on disk, is the template; the server itself is not kept,
+/// so [`Room::drop`] never runs over it and the directory survives.
+async fn build_template(binary: &Path) -> Result<PathBuf> {
+    let dir = scratch()?;
+    let mut room = Room::spawn_bare(binary, &DeathSignal::Skip, None, dir).await?;
+    let _ = room.server.kill();
+    let _ = room.server.wait();
+    let dir = room.dir.clone();
+    // **Not dropped.** [`Room::drop`] removes its directory, and this
+    // directory is the template — the one thing this function exists to
+    // keep. The process handle is already dead from the kill above, so
+    // nothing is leaked by skipping the rest of what `Drop` would do.
+    std::mem::forget(room);
+    Ok(dir)
+}
+
+/// Copy a directory tree — what a room does with the template instead of
+/// migrating one of its own.
+fn copy_dir_all(from: &Path, to: &Path) -> Result<()> {
+    std::fs::create_dir_all(to)
+        .with_context(|| format!("making the room directory at {}", to.display()))?;
+    for entry in std::fs::read_dir(from)
+        .with_context(|| format!("reading the template at {}", from.display()))?
+    {
+        let entry = entry.with_context(|| format!("reading an entry in {}", from.display()))?;
+        let dest = to.join(entry.file_name());
+        let file_type = entry
+            .file_type()
+            .with_context(|| format!("the kind of {}", entry.path().display()))?;
+        if file_type.is_dir() {
+            copy_dir_all(&entry.path(), &dest)?;
+        } else {
+            std::fs::copy(entry.path(), &dest).with_context(|| {
+                format!("copying {} to {}", entry.path().display(), dest.display())
+            })?;
+        }
+    }
+    Ok(())
+}
 
 /// A directory of this run's own.
 fn scratch() -> Result<PathBuf> {
@@ -957,6 +1075,51 @@ mod tests {
         std::fs::write(binary.with_extension("d"), rule).expect("the depfile");
     }
 
+    /// **A room comes up from a template, not a fresh migration** — proven
+    /// by what the server itself says about its own schema. `jojobot::wiring`
+    /// logs "schema moved" the one time a chain actually runs against an
+    /// empty database, and "schema already current" every time after; a room
+    /// built from a copy of an already-migrated store is the second case,
+    /// and the server's own log is the only place that distinction is
+    /// visible from outside it.
+    #[tokio::test]
+    async fn a_spawned_room_uses_a_template_rather_than_migrating_fresh() {
+        let binary = super::server_binary().expect("a jojobot binary");
+        let room = super::Room::open(&binary).await.expect("a room");
+        let log = room.log.lock().expect("room log mutex poisoned").join("\n");
+        assert!(
+            log.contains("schema already current"),
+            "a room opened through the ordinary path re-ran the full migration chain instead \
+             of copying a template: {log}",
+        );
+    }
+
+    /// **Concurrent callers do not race the template into existence twice,
+    /// and none of them copies from one still being built.** Several rooms
+    /// opened at once is the ordinary shape a suite's own parallel tests
+    /// already produce, not a scenario this reaches for specially — and
+    /// every one of them must come up clean, reading the template rather
+    /// than migrating its own.
+    #[tokio::test]
+    async fn concurrent_rooms_all_read_one_template_rather_than_racing_it() {
+        let binary = super::server_binary().expect("a jojobot binary");
+        let (a, b, c, d) = tokio::join!(
+            super::Room::open(&binary),
+            super::Room::open(&binary),
+            super::Room::open(&binary),
+            super::Room::open(&binary),
+        );
+        for room in [a, b, c, d] {
+            let room = room.expect("a concurrently opened room");
+            let log = room.log.lock().expect("room log mutex poisoned").join("\n");
+            assert!(
+                log.contains("schema already current"),
+                "a concurrently opened room re-ran the full migration chain rather than reading \
+                 the template: {log}",
+            );
+        }
+    }
+
     /// 🚨 **The contract with the server: it announces the address it serves,
     /// and only once that address answers.**
     ///
@@ -1069,10 +1232,11 @@ mod tests {
     #[tokio::test]
     async fn a_room_that_dies_before_serving_names_its_port_status_and_words() {
         let binary = a_binary_that_says_and_exits("the store could not be reached", 7);
-        let err = match super::Room::spawn_once(&binary, &super::DeathSignal::Skip, None).await {
-            Ok(_) => panic!("a binary that exits at once must not read as a room"),
-            Err(e) => e,
-        };
+        let err =
+            match super::Room::spawn_once(&binary, &super::DeathSignal::Skip, None, false).await {
+                Ok(_) => panic!("a binary that exits at once must not read as a room"),
+                Err(e) => e,
+            };
         let message = format!("{err:#}");
         let _ = std::fs::remove_file(&binary);
 
