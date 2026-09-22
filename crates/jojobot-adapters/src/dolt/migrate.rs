@@ -2739,4 +2739,58 @@ mod tests {
 
         store.stop().await;
     }
+
+    /// **The shape `0020_entity_crm_wider` declares is the one that recovers
+    /// it.** The same question as `0019`, over the column beside it.
+    #[tokio::test]
+    async fn an_interrupted_entity_crm_widening_is_recognized_by_the_columns_type() {
+        let scratch = Scratch::new("migrate-interrupted-entity-crm-widening");
+        let path = scratch.0.clone();
+        std::mem::forget(scratch);
+        let mut store = crate::dolt::Dolt::start(&path, free_port())
+            .await
+            .expect("the store comes up");
+        let pool = store
+            .database("entitycrmwidepartway")
+            .await
+            .expect("a database of its own");
+
+        run(&pool).await.expect("the schema");
+
+        // The state a death in the window leaves when the widening did NOT
+        // take effect: the column back at the width 0008 gave it, the
+        // ledger row taken away, the marker committed.
+        sqlx::raw_sql("ALTER TABLE entity MODIFY COLUMN crm VARCHAR(191) NULL")
+            .execute(&pool)
+            .await
+            .expect("the column goes back to its old width");
+        sqlx::query("DELETE FROM schema_migration WHERE version = ?")
+            .bind("0020_entity_crm_wider")
+            .execute(&pool)
+            .await
+            .expect("the ledger row goes");
+        mark_begun(&pool, "0020_entity_crm_wider")
+            .await
+            .expect("the marker lands");
+
+        assert_eq!(
+            run(&pool).await.expect("the start completes the schema"),
+            vec!["0020_entity_crm_wider".to_string()],
+            "the widening that did NOT land is applied",
+        );
+
+        // **Read by a route that is not the probe**: a crm label past the
+        // old hundred-and-ninety-one-byte width is what the widening is FOR.
+        sqlx::query(
+            "INSERT INTO entity (id, kind, name, source, crm, boot, prose)
+             VALUES ('thing:already-here', 'thing', 'Already Here', 'contract-fixture', ?, \
+             'on-demand', '')",
+        )
+        .bind("c".repeat(200))
+        .execute(&pool)
+        .await
+        .expect("…and the row takes the label the old width refused");
+
+        store.stop().await;
+    }
 }
