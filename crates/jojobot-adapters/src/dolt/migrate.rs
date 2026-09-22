@@ -2684,4 +2684,59 @@ mod tests {
 
         store.stop().await;
     }
+
+    /// **The shape `0019_entity_source_wider` declares is the one that
+    /// recovers it.** The column is there either way, so only its declared
+    /// type tells "not yet widened" from "widened", the same question
+    /// `0018`'s own test drives for `type_field.holds`.
+    #[tokio::test]
+    async fn an_interrupted_entity_source_widening_is_recognized_by_the_columns_type() {
+        let scratch = Scratch::new("migrate-interrupted-entity-source-widening");
+        let path = scratch.0.clone();
+        std::mem::forget(scratch);
+        let mut store = crate::dolt::Dolt::start(&path, free_port())
+            .await
+            .expect("the store comes up");
+        let pool = store
+            .database("entitysourcewidepartway")
+            .await
+            .expect("a database of its own");
+
+        run(&pool).await.expect("the schema");
+
+        // The state a death in the window leaves when the widening did NOT
+        // take effect: the column back at the width 0008 gave it, the
+        // ledger row taken away, the marker committed.
+        sqlx::raw_sql("ALTER TABLE entity MODIFY COLUMN source VARCHAR(191) NOT NULL")
+            .execute(&pool)
+            .await
+            .expect("the column goes back to its old width");
+        sqlx::query("DELETE FROM schema_migration WHERE version = ?")
+            .bind("0019_entity_source_wider")
+            .execute(&pool)
+            .await
+            .expect("the ledger row goes");
+        mark_begun(&pool, "0019_entity_source_wider")
+            .await
+            .expect("the marker lands");
+
+        assert_eq!(
+            run(&pool).await.expect("the start completes the schema"),
+            vec!["0019_entity_source_wider".to_string()],
+            "the widening that did NOT land is applied",
+        );
+
+        // **Read by a route that is not the probe**: a source label past the
+        // old hundred-and-ninety-one-byte width is what the widening is FOR.
+        sqlx::query(
+            "INSERT INTO entity (id, kind, name, source, boot, prose)
+             VALUES ('thing:already-here', 'thing', 'Already Here', ?, 'on-demand', '')",
+        )
+        .bind("s".repeat(200))
+        .execute(&pool)
+        .await
+        .expect("…and the row takes the label the old width refused");
+
+        store.stop().await;
+    }
 }
