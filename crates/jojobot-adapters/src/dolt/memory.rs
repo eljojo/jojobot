@@ -4147,6 +4147,158 @@ mod tests {
         store.stop().await;
     }
 
+    /// **The collision path, actually watched.** `Draw` and `open_drawing`
+    /// exist, by their own doc comments, so a test can supply a draw that
+    /// collides on demand — entropy will not produce a collision on its own.
+    /// Nothing had ever called either: this is that test.
+    ///
+    /// A rigged draw hands back an already-taken badge for its first two
+    /// calls, then a fresh one. The second entity must still land, must wear
+    /// a badge distinct from the one it collided with, and the draw must
+    /// have been asked more than once — proving retry happened rather than
+    /// merely being possible.
+    #[tokio::test]
+    async fn a_drawn_badge_that_collides_retries_until_one_is_free() {
+        let scratch = Scratch::new("badge-collision-retry");
+        let mut store = Dolt::start(&scratch.0, free_port())
+            .await
+            .expect("the store comes up");
+        let pool = store
+            .database("badgecollisionretry")
+            .await
+            .expect("a database of its own");
+        migrate::run(&pool).await.expect("the schema");
+        jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
+            .await
+            .expect("the kinds are seeded");
+
+        let memory = DoltMemory::open(pool.clone());
+        let first = EntityId::person("person:badge-collision-holder");
+        memory
+            .add_entity(NewEntity::new(first.clone(), "First", "contract-fixture"))
+            .await
+            .expect("add_entity ok")
+            .written()
+            .expect("the guard waves it through");
+
+        let mut tx = pool.begin().await.expect("a transaction");
+        let known = memory.known(&mut tx).await.expect("the known rows read");
+        tx.commit().await.expect("the read commits");
+        let taken = known
+            .iter()
+            .find(|e| e.id == first)
+            .and_then(|e| e.badge.clone())
+            .expect("the first entity was badged");
+
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let rigged: Draw = {
+            let calls = calls.clone();
+            let taken = taken.clone();
+            std::sync::Arc::new(move || {
+                let n = calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if n < 2 {
+                    taken.clone()
+                } else {
+                    ids::drawing()()
+                }
+            })
+        };
+
+        let colliding = DoltMemory::open_drawing(pool.clone(), rigged);
+        let second = EntityId::person("person:badge-collision-retried");
+        colliding
+            .add_entity(NewEntity::new(second.clone(), "Second", "contract-fixture"))
+            .await
+            .expect("add_entity ok")
+            .written()
+            .expect("the guard waves it through");
+
+        assert!(
+            calls.load(std::sync::atomic::Ordering::SeqCst) >= 3,
+            "the draw must be asked again after each collision, not just once"
+        );
+
+        let mut tx = pool.begin().await.expect("a transaction");
+        let known = colliding.known(&mut tx).await.expect("the known rows read");
+        tx.commit().await.expect("the read commits");
+        let landed = known
+            .iter()
+            .find(|e| e.id == second)
+            .and_then(|e| e.badge.clone())
+            .expect("the second entity was badged");
+        assert_ne!(
+            landed, taken,
+            "a collision must never leave two rows wearing the same badge"
+        );
+
+        store.stop().await;
+    }
+
+    /// **The other half of the same path: giving up.** A draw that always
+    /// collides must not hang and must not silently mint a duplicate — it
+    /// exhausts `ATTEMPTS` and the write comes back an error, the same as
+    /// `draw_free`'s own doc says `Ok(None)` means.
+    #[tokio::test]
+    async fn a_badge_draw_that_never_frees_gives_up_rather_than_duplicating() {
+        let scratch = Scratch::new("badge-collision-giveup");
+        let mut store = Dolt::start(&scratch.0, free_port())
+            .await
+            .expect("the store comes up");
+        let pool = store
+            .database("badgecollisiongiveup")
+            .await
+            .expect("a database of its own");
+        migrate::run(&pool).await.expect("the schema");
+        jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
+            .await
+            .expect("the kinds are seeded");
+
+        let memory = DoltMemory::open(pool.clone());
+        let first = EntityId::person("person:badge-collision-blocker");
+        memory
+            .add_entity(NewEntity::new(first.clone(), "First", "contract-fixture"))
+            .await
+            .expect("add_entity ok")
+            .written()
+            .expect("the guard waves it through");
+
+        let mut tx = pool.begin().await.expect("a transaction");
+        let known = memory.known(&mut tx).await.expect("the known rows read");
+        tx.commit().await.expect("the read commits");
+        let taken = known
+            .iter()
+            .find(|e| e.id == first)
+            .and_then(|e| e.badge.clone())
+            .expect("the first entity was badged");
+
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let never_frees: Draw = {
+            let calls = calls.clone();
+            let taken = taken.clone();
+            std::sync::Arc::new(move || {
+                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                taken.clone()
+            })
+        };
+
+        let stuck = DoltMemory::open_drawing(pool.clone(), never_frees);
+        let second = EntityId::person("person:badge-collision-stuck");
+        let result = stuck
+            .add_entity(NewEntity::new(second.clone(), "Second", "contract-fixture"))
+            .await;
+        assert!(
+            result.is_err(),
+            "a draw that never finds a free badge must fail the write, not hang or duplicate: \
+             {result:?}"
+        );
+        assert!(
+            calls.load(std::sync::atomic::Ordering::SeqCst) >= 64,
+            "giving up must mean every attempt was spent, not a premature bailout"
+        );
+
+        store.stop().await;
+    }
+
     /// **`current_handle` must answer exactly what `entity_wearing` over the
     /// full `known` list would answer, for every badge a real corpus holds.**
     ///
