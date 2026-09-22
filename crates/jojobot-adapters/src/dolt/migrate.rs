@@ -2488,4 +2488,80 @@ mod tests {
 
         store.stop().await;
     }
+
+    /// **The shape `0035_fact_write_backfill` declares is the one that
+    /// recovers it.** The statement is an `INSERT … SELECT` that leaves the
+    /// schema exactly as it found it, so nothing but the rows can tell "not
+    /// yet run" from "ran and found nothing to fill".
+    ///
+    /// **This one cannot use the full list the way `0018`'s test does.**
+    /// `0035`'s statement names `fact.date`, and `0039_fact_recorded_at`
+    /// renames that column three migrations later — reissuing `0035`'s own
+    /// SQL against the finished schema fails on a column that is no longer
+    /// there, which is a real ordering fact and not a fault in the test. So
+    /// this drives `MIGRATIONS` up to the point `0035` itself reaches, the
+    /// way the badge test above does.
+    #[tokio::test]
+    async fn an_interrupted_fact_write_backfill_is_recognized_by_a_claim_with_no_write_of_its_own()
+    {
+        let scratch = Scratch::new("migrate-interrupted-fact-write-backfill");
+        let path = scratch.0.clone();
+        std::mem::forget(scratch);
+        let mut store = crate::dolt::Dolt::start(&path, free_port())
+            .await
+            .expect("the store comes up");
+        let pool = store
+            .database("factwritebackfillpartway")
+            .await
+            .expect("a database of its own");
+
+        let upto = MIGRATIONS
+            .iter()
+            .position(|m| m.version == "0039_fact_recorded_at")
+            .expect("the recorded_at rename is in the list");
+        apply(&pool, &MIGRATIONS[..upto])
+            .await
+            .expect("the schema up to and including the backfill");
+
+        // The state a death in the window leaves when the copy did NOT take
+        // effect: a claim with no write of its own, the ledger row taken
+        // away, the marker committed.
+        sqlx::query(
+            "INSERT INTO fact (entity, id, content, provenance, status, date)
+             VALUES ('person:already-here', 'f1', 'not yet given a write of its own', \
+             'testimony', 'active', '2026-01-01')",
+        )
+        .execute(&pool)
+        .await
+        .expect("a claim with no write behind it lands");
+        sqlx::query("DELETE FROM schema_migration WHERE version = ?")
+            .bind("0035_fact_write_backfill")
+            .execute(&pool)
+            .await
+            .expect("the ledger row goes");
+        mark_begun(&pool, "0035_fact_write_backfill")
+            .await
+            .expect("the marker lands");
+
+        assert_eq!(
+            apply(&pool, &MIGRATIONS[..upto])
+                .await
+                .expect("the start completes the schema"),
+            vec!["0035_fact_write_backfill".to_string()],
+            "the backfill that did NOT land is reissued",
+        );
+
+        // **Read by a route that is not the probe**: the claim's first write
+        // now carries its content, which is what the backfill is FOR.
+        let content: String = sqlx::query_scalar(
+            "SELECT content FROM fact_write WHERE entity = 'person:already-here' \
+             AND fact_id = 'f1'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("the claim's first write landed");
+        assert_eq!(content, "not yet given a write of its own");
+
+        store.stop().await;
+    }
 }
