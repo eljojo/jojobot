@@ -1242,14 +1242,6 @@ impl History {
             most: WRITES_SHOWN,
         }
     }
-
-    /// This record's own writes, with the default window.
-    pub fn of_record(record: FactAddress) -> Self {
-        History {
-            of: Trace::Record(record),
-            most: WRITES_SHOWN,
-        }
-    }
 }
 
 /// **The walk, over a store's own documents.** Pure: no I/O, no store, so the
