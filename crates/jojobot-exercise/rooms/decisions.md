@@ -327,12 +327,17 @@ entity  work:shipped-kind-fields | Extend a shipped kind
 > Rule 337: Moving the build's own rules into jojobot is how code red 2's exit is tested; it happens after the operator has seen the paid run. The operator's life data is a separate gate. Thread: code reds. This also bears on the build; carried state; how jojobot is proven.
 
 ```locks
-# These eight rows are the retrieval key and the replacement pair.
-search {"query": "Real data waits on the paid tests", "status": "active", "limit": 20}
+# These eight rows are the retrieval key and the replacement pair. A rule
+# with a "bears on" edge is filed once on its home thread and again as a
+# connection fact per edge, all carrying the same row text — so its own
+# needle matches more than once. limit 1 keeps the search to the top hit,
+# which still carries the needle, without opening the door to an
+# unrelated rule answering in its place.
+search {"query": "Real data waits on the paid tests", "status": "active", "limit": 1}
 carries paid tests
 say     rule 241 was not filed as active where the later question can find it
 
-search {"query": "hard capacity it cannot raise", "status": "active", "limit": 20}
+search {"query": "hard capacity it cannot raise", "status": "active", "limit": 1}
 carries capacity
 say     rule 275 was not filed as active where the later question can find it
 
@@ -344,15 +349,15 @@ search {"query": "cadence is always time", "status": "active", "limit": 20}
 carries measurement
 say     rule 190 was not filed as active where the later question can find it
 
-search {"query": "Capacity may be borrowed once", "status": "active", "limit": 20}
+search {"query": "Capacity may be borrowed once", "status": "active", "limit": 1}
 carries repaying
 say     rule 304 was not filed as active where the later question can find it
 
-search {"query": "layered", "status": "active", "limit": 200}
+search {"query": "the label still layered on top", "status": "active", "limit": 1}
 carries layered on top
 say     rule 284 was not filed as active where the later question can find it
 
-search {"query": "claim written wrong in this session", "status": "active", "limit": 20}
+search {"query": "claim written wrong in this session", "status": "active", "limit": 1}
 carries visible correction
 say     rule 288 was not filed as active where the later question can find it
 

@@ -530,6 +530,38 @@ async fn rule_answer_locks_read_details_across_records_and_reject_extra_numbers(
 }
 
 #[tokio::test]
+async fn no_lock_here_rests_on_a_needle_that_matches_somewhere_else() {
+    let playbook =
+        Playbook::read(&expectations::room_document("rooms/decisions.md")).expect("the room reads");
+    let (_room, surface) = Room::open_with_client(&server_binary().expect("a jojobot binary"))
+        .await
+        .expect("a room");
+    expectations::seed_for("rooms/decisions.md")
+        .expect("the starting world builds")
+        .furnish(&surface)
+        .await
+        .expect("the starting world applies");
+    file_register(&surface, &playbook).await;
+    let summary = jojobot_exercise::lock::needle_summary(
+        &surface,
+        &jojobot_exercise::lock::locks_of(expectations::DECISIONS_ROOM),
+    )
+    .await;
+    assert!(
+        summary.nowhere.is_empty(),
+        "a needle matched nowhere, so either its lock is failing or the walk could not read the \
+         answer — and those are different: {:?}",
+        summary.nowhere,
+    );
+    assert!(
+        summary.findings.is_empty(),
+        "a lock rests on a needle that matches somewhere else, with nothing else in that lock \
+         only its own sitting could satisfy: {:?}",
+        summary.findings,
+    );
+}
+
+#[tokio::test]
 async fn question_six_requires_an_answer_without_a_rule_reference() {
     let (_room, surface) = Room::open_with_client(&server_binary().expect("a jojobot binary"))
         .await
