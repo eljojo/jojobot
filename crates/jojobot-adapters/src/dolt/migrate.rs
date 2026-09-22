@@ -2793,4 +2793,64 @@ mod tests {
 
         store.stop().await;
     }
+
+    /// **The shape `0045_entity_former_handle_width` declares is the one
+    /// that recovers it.** The old `0045` was one `ALTER` carrying four
+    /// clauses; split apart (see `an_interrupted_primary_key_swap_…` above
+    /// for the rest of that history), this clause's own landed-check has to
+    /// answer for it alone, the way `0018`'s test drives the real list
+    /// rather than the mechanism's own synthetic fixture.
+    #[tokio::test]
+    async fn an_interrupted_former_handle_widening_is_recognized_by_the_columns_type() {
+        let scratch = Scratch::new("migrate-interrupted-former-handle-widening");
+        let path = scratch.0.clone();
+        std::mem::forget(scratch);
+        let mut store = crate::dolt::Dolt::start(&path, free_port())
+            .await
+            .expect("the store comes up");
+        let pool = store
+            .database("formerhandlewidepartway")
+            .await
+            .expect("a database of its own");
+
+        run(&pool).await.expect("the schema");
+
+        // The state a death in the window leaves when the widening did NOT
+        // take effect: the column back at the width 0042 gave it, the
+        // ledger row taken away, the marker committed.
+        sqlx::raw_sql(
+            "ALTER TABLE entity_former_handle MODIFY COLUMN former_handle VARCHAR(64) NOT NULL",
+        )
+        .execute(&pool)
+        .await
+        .expect("the column goes back to its old width");
+        sqlx::query("DELETE FROM schema_migration WHERE version = ?")
+            .bind("0045_entity_former_handle_width")
+            .execute(&pool)
+            .await
+            .expect("the ledger row goes");
+        mark_begun(&pool, "0045_entity_former_handle_width")
+            .await
+            .expect("the marker lands");
+
+        assert_eq!(
+            run(&pool).await.expect("the start completes the schema"),
+            vec!["0045_entity_former_handle_width".to_string()],
+            "the width clause that did NOT land is applied on its own, not the whole 0045 \
+             replayed",
+        );
+
+        // **Read by a route that is not the probe**: a former handle past
+        // the old sixty-four-byte width is what the widening is FOR.
+        sqlx::query(
+            "INSERT INTO entity_former_handle (former_handle, badge, changed_at)
+             VALUES (?, 'badge0001', '2026-01-01')",
+        )
+        .bind(format!("thing:{}", "h".repeat(90)))
+        .execute(&pool)
+        .await
+        .expect("…and the row takes the handle the old width refused");
+
+        store.stop().await;
+    }
 }
