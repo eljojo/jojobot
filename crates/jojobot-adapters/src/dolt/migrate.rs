@@ -2730,7 +2730,7 @@ mod tests {
         // old hundred-and-ninety-one-byte width is what the widening is FOR.
         sqlx::query(
             "INSERT INTO entity (id, kind, name, source, boot, prose)
-             VALUES ('thing:already-here', 'thing', 'Already Here', ?, 'on-demand', '')",
+             VALUES ('person:already-here', 'person', 'Already Here', ?, 'on-demand', '')",
         )
         .bind("s".repeat(200))
         .execute(&pool)
@@ -2783,7 +2783,7 @@ mod tests {
         // old hundred-and-ninety-one-byte width is what the widening is FOR.
         sqlx::query(
             "INSERT INTO entity (id, kind, name, source, crm, boot, prose)
-             VALUES ('thing:already-here', 'thing', 'Already Here', 'contract-fixture', ?, \
+             VALUES ('person:already-here', 'person', 'Already Here', 'contract-fixture', ?, \
              'on-demand', '')",
         )
         .bind("c".repeat(200))
