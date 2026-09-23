@@ -63,7 +63,7 @@ impl Jojobot {
     ) -> Result<CallToolResult, McpError> {
         // Refused here, before anything is written — see
         // [`Jojobot::attributable`].
-        let caller = match self.identified(args.sid.as_deref()) {
+        let caller = match self.identified_for_write(args.sid.as_deref()).await {
             Ok(caller) => caller,
             Err(refused) => return Ok(refused),
         };

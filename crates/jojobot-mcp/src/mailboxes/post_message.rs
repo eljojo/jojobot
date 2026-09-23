@@ -266,7 +266,7 @@ impl Jojobot {
         // as the caller's honesty and their memory of what they called
         // themselves last time. The handle says who is asking, so the handle
         // says who sent it.
-        let caller = match self.identified(Some(&args.sid)) {
+        let caller = match self.identified_for_write(Some(&args.sid)).await {
             Ok(caller) => caller,
             Err(refused) => return Ok(refused),
         };

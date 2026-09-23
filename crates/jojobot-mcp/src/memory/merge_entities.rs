@@ -57,7 +57,7 @@ impl Jojobot {
         &self,
         Parameters(args): Parameters<MergeArgs>,
     ) -> Result<CallToolResult, McpError> {
-        let caller = match self.identified(args.sid.as_deref()) {
+        let caller = match self.identified_for_write(args.sid.as_deref()).await {
             Ok(caller) => caller,
             Err(refused) => return Ok(refused),
         };

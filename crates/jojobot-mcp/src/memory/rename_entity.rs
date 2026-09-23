@@ -158,7 +158,7 @@ impl Jojobot {
     ) -> Result<CallToolResult, McpError> {
         // Refused here, before anything is written — see
         // [`Jojobot::attributable`].
-        if let Err(refused) = self.identified(args.sid.as_deref()) {
+        if let Err(refused) = self.identified_for_write(args.sid.as_deref()).await {
             return Ok(refused);
         }
         let from = EntityId::person(&args.handle);

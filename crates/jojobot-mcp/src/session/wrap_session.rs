@@ -162,7 +162,13 @@ impl Jojobot {
 mod tests {
     use super::*;
     use crate::harness::*;
-    use crate::memory::RecallArgs;
+    use crate::mailboxes::{MarkProcessedArgs, PostMessageArgs};
+    use crate::memory::archive_entity::ArchiveEntityArgs;
+    use crate::memory::merge_entities::MergeArgs;
+    use crate::memory::testing::{add_args, capture_args, recall_args, update_args};
+    use crate::memory::{
+        DeclareTypeArgs, RecallArgs, RenameEntityArgs, RetractArgs, SetCharterArgs,
+    };
     use crate::session::testing::*;
     use jojobot_domain::session::Sid;
 
@@ -628,6 +634,218 @@ mod tests {
                     .expect("call ok"),
             ),
             "wrap_session",
+        );
+    }
+
+    /// **Wrapped is terminal for every write, not only the three session
+    /// verbs.** `journal`, `amend_journal` and `wrap_session` already refuse
+    /// through the store's own close/append check — this proves the rest of
+    /// the surface, which carries a wrapped sid only for attribution, refuses
+    /// too. Each write is proven to land BEFORE the wrap and refuse AFTER
+    /// it, which is the pair that tells "this verb checks" from "this verb
+    /// never worked". A read stays answered either side: it is attributed,
+    /// never journalled.
+    #[tokio::test]
+    async fn a_wrapped_session_refuses_every_write_outside_the_session_surface() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+
+        let before = json_of(
+            &jojobot
+                .capture(Parameters(CaptureArgs {
+                    sid: Some(sid.clone()),
+                    ..capture_args("bot:gamma", "before the wrap")
+                }))
+                .await
+                .expect("capture call ok"),
+        );
+        assert_ne!(
+            before["status"], "blocked",
+            "a write before wrap must land: {before}"
+        );
+
+        journal_entry(&jojobot, &sid, "read the hand-off").await;
+        jojobot
+            .wrap_session(Parameters(WrapSessionArgs {
+                story: "done".into(),
+                sid: sid.clone(),
+            }))
+            .await
+            .expect("wrap ok");
+
+        let refused = |body: serde_json::Value, verb: &str| {
+            assert_eq!(body["status"], "blocked", "{verb} must be blocked: {body}");
+            assert_eq!(body["wrote"], false, "{verb}: {body}");
+            let how = body["how_to_proceed"].as_str().expect("advice");
+            assert!(
+                how.contains("story has been told"),
+                "{verb} has to say why: {how}"
+            );
+        };
+
+        refused(
+            json_of(
+                &jojobot
+                    .capture(Parameters(CaptureArgs {
+                        sid: Some(sid.clone()),
+                        ..capture_args("bot:gamma", "after the wrap")
+                    }))
+                    .await
+                    .expect("call ok"),
+            ),
+            "capture",
+        );
+        refused(
+            json_of(
+                &jojobot
+                    .update_fact(Parameters(UpdateFactArgs {
+                        sid: Some(sid.clone()),
+                        ..update_args("bot:gamma#f1")
+                    }))
+                    .await
+                    .expect("call ok"),
+            ),
+            "update_fact",
+        );
+        refused(
+            json_of(
+                &jojobot
+                    .add_entity(Parameters(AddEntityArgs {
+                        sid: Some(sid.clone()),
+                        ..add_args("topic", "widgets", "Widgets")
+                    }))
+                    .await
+                    .expect("call ok"),
+            ),
+            "add_entity",
+        );
+        refused(
+            json_of(
+                &jojobot
+                    .archive_entity(Parameters(ArchiveEntityArgs {
+                        handle: "bot:gamma".into(),
+                        reason: "test".into(),
+                        sid: Some(sid.clone()),
+                    }))
+                    .await
+                    .expect("call ok"),
+            ),
+            "archive_entity",
+        );
+        refused(
+            json_of(
+                &jojobot
+                    .merge_entities(Parameters(MergeArgs {
+                        duplicate: "bot:gamma".into(),
+                        survivor: "bot:gamma".into(),
+                        reason: None,
+                        recorded_at: None,
+                        sid: Some(sid.clone()),
+                    }))
+                    .await
+                    .expect("call ok"),
+            ),
+            "merge_entities",
+        );
+        refused(
+            json_of(
+                &jojobot
+                    .rename_entity(Parameters(RenameEntityArgs {
+                        handle: "bot:gamma".into(),
+                        to: "gamma2".into(),
+                        parent: None,
+                        recorded_at: None,
+                        override_token: None,
+                        sid: Some(sid.clone()),
+                    }))
+                    .await
+                    .expect("call ok"),
+            ),
+            "rename_entity",
+        );
+        refused(
+            json_of(
+                &jojobot
+                    .retract(Parameters(RetractArgs {
+                        address: "bot:gamma#f1".into(),
+                        reason: None,
+                        recorded_at: None,
+                        sid: Some(sid.clone()),
+                    }))
+                    .await
+                    .expect("call ok"),
+            ),
+            "retract",
+        );
+        refused(
+            json_of(
+                &jojobot
+                    .set_charter(Parameters(SetCharterArgs {
+                        bot: "bot:gamma".into(),
+                        prose: "a new charter".into(),
+                        sid: Some(sid.clone()),
+                    }))
+                    .await
+                    .expect("call ok"),
+            ),
+            "set_charter",
+        );
+        refused(
+            json_of(
+                &jojobot
+                    .post_message(Parameters(PostMessageArgs {
+                        to: "gamma".into(),
+                        body: "hi".into(),
+                        sid: sid.clone(),
+                        subject: None,
+                        in_reply_to: None,
+                    }))
+                    .await
+                    .expect("call ok"),
+            ),
+            "post_message",
+        );
+        refused(
+            json_of(
+                &jojobot
+                    .mark_processed(Parameters(MarkProcessedArgs {
+                        message_id: "whatever".into(),
+                        notes: None,
+                        sid: Some(sid.clone()),
+                    }))
+                    .await
+                    .expect("call ok"),
+            ),
+            "mark_processed",
+        );
+        refused(
+            json_of(
+                &jojobot
+                    .declare_type(Parameters(DeclareTypeArgs {
+                        name: "whatever".into(),
+                        fields: Vec::new(),
+                        sid: Some(sid.clone()),
+                    }))
+                    .await
+                    .expect("call ok"),
+            ),
+            "declare_type",
+        );
+
+        let recalled = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    sid: Some(sid.clone()),
+                    ..recall_args("bot:gamma")
+                }))
+                .await
+                .expect("recall answers rather than failing the protocol"),
+        );
+        assert_ne!(
+            recalled["status"], "blocked",
+            "a read after wrap must still answer: {recalled}"
         );
     }
 

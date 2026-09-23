@@ -61,7 +61,7 @@ impl Jojobot {
     ) -> Result<CallToolResult, McpError> {
         // Refused here, before anything is written — see
         // [`Jojobot::attributable`].
-        if let Err(refused) = self.attributable(args.sid.as_deref()) {
+        if let Err(refused) = self.attributable_for_write(args.sid.as_deref()).await {
             return Ok(refused);
         }
         let id = MessageId(args.message_id.trim().to_string());

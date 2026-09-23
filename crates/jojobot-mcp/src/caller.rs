@@ -231,6 +231,70 @@ impl Jojobot {
         self.caller(sid).map(|_| ())
     }
 
+    /// **Whether this caller's session is wrapped, and the refusal if it is.**
+    ///
+    /// One check, called from both [`Jojobot::identified_for_write`] and
+    /// [`Jojobot::attributable_for_write`] rather than written twice: a
+    /// wrapped session is the last word (rule: wrap folds the still-open
+    /// focus into the closing story as one final entry), so a write that
+    /// still lands after it is a write the story never told. Only a card
+    /// that already exists can be wrapped — a lazy handle with no card yet
+    /// has nothing to check — and a store read that fails is answered the
+    /// same conservative way [`Jojobot::standing`] answers one: it does not
+    /// invent a refusal from a read it could not take.
+    async fn write_refused_if_wrapped(&self, caller: &Caller) -> Option<CallToolResult> {
+        let card = caller.card.as_ref()?;
+        let session = self.sessions.read_session(card).await.ok()?;
+        if session.state != SessionState::Wrapped {
+            return None;
+        }
+        Some(
+            session_declined(
+                SessionError::Closed {
+                    attempted: caller.sid.as_str().to_string(),
+                    state: SessionState::Wrapped,
+                },
+                caller.sid.as_str(),
+            )
+            .expect("SessionError::Closed always answers blocked, never McpError"),
+        )
+    }
+
+    /// **The caller, required, refused if their session is wrapped** — the
+    /// write path's version of [`Jojobot::identified`]. Every write verb
+    /// outside the session surface calls this rather than `identified`
+    /// directly: `journal`, `amend_journal` and `wrap_session` already refuse
+    /// a wrapped sid on their own, through the store's own close/append
+    /// check, but nothing stopped a memory write or a mailbox post from
+    /// landing on a session whose story was already told.
+    pub(crate) async fn identified_for_write(
+        &self,
+        sid: Option<&str>,
+    ) -> Result<Caller, CallToolResult> {
+        let caller = self.identified(sid)?;
+        match self.write_refused_if_wrapped(&caller).await {
+            Some(refused) => Err(refused),
+            None => Ok(caller),
+        }
+    }
+
+    /// **The write path's version of [`Jojobot::attributable`]** — for the
+    /// verbs that take an optional `sid` and write anyway: a carried handle
+    /// must still be good, and a carried WRAPPED handle is no better than a
+    /// dead one for a write, even though carrying none at all remains fine.
+    pub(crate) async fn attributable_for_write(
+        &self,
+        sid: Option<&str>,
+    ) -> Result<(), CallToolResult> {
+        let Some(caller) = self.caller(sid)? else {
+            return Ok(());
+        };
+        match self.write_refused_if_wrapped(&caller).await {
+            Some(refused) => Err(refused),
+            None => Ok(()),
+        }
+    }
+
     /// **What the handle a caller carried is worth — for the doors that are
     /// reached without an identity and must never turn one away.**
     ///

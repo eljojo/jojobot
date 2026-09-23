@@ -177,7 +177,7 @@ impl Jojobot {
         // verb publishes a `sid` and says it is what tells jojobot who is
         // asking, so a handle that addresses nothing is refused rather than
         // dropped.
-        if let Err(refused) = self.attributable(args.sid.as_deref()) {
+        if let Err(refused) = self.attributable_for_write(args.sid.as_deref()).await {
             return Ok(refused);
         }
         let mut fields = Vec::with_capacity(args.fields.len());
