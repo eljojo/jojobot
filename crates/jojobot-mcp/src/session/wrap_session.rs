@@ -782,6 +782,23 @@ mod tests {
         refused(
             json_of(
                 &jojobot
+                    .update_entity(Parameters(UpdateEntityArgs {
+                        handle: "bot:gamma".into(),
+                        name: None,
+                        aliases: None,
+                        source: None,
+                        crm: None,
+                        override_token: None,
+                        sid: Some(sid.clone()),
+                    }))
+                    .await
+                    .expect("call ok"),
+            ),
+            "update_entity",
+        );
+        refused(
+            json_of(
+                &jojobot
                     .set_charter(Parameters(SetCharterArgs {
                         bot: "bot:gamma".into(),
                         prose: "a new charter".into(),
@@ -847,6 +864,70 @@ mod tests {
             recalled["status"], "blocked",
             "a read after wrap must still answer: {recalled}"
         );
+    }
+
+    /// **Every write that reaches this list, not the list somebody wrote by
+    /// hand.** `update_entity` carried a wrapped sid to a write for one whole
+    /// slice because the test above named eleven verbs somebody chose, and a
+    /// twelfth verb outside that choice was never asked. This reads the
+    /// SERVED surface — the same list
+    /// [`crate::surface::the_tool_surface_is_exactly_this_list`] pins — and
+    /// requires every verb on it to be named in exactly one of the two lists
+    /// below. A verb in neither fails the case: a new write verb that
+    /// forgets the guard, or forgets to be named here, fails closed instead
+    /// of passing silently.
+    ///
+    /// `WRITES` are proven refused above, in this test or its sibling
+    /// (`journal`, `amend_journal` and `wrap_session` refuse through the
+    /// store's own close/append check, proven by
+    /// `a_wrapped_session_refuses_every_further_write`; the rest are proven
+    /// by `a_wrapped_session_refuses_every_write_outside_the_session_surface`,
+    /// directly above). `READS` stay answered on a wrapped sid because a
+    /// read is attributed and never journalled — `start_here` is the boot
+    /// door and out of scope for this rule, so it is named here rather than
+    /// left to fall through unclassified.
+    const WRITES: &[&str] = &[
+        "add_entity",
+        "amend_journal",
+        "archive_entity",
+        "capture",
+        "declare_type",
+        "journal",
+        "mark_processed",
+        "merge_entities",
+        "post_message",
+        "rename_entity",
+        "retract",
+        "set_charter",
+        "update_entity",
+        "update_fact",
+        "wrap_session",
+    ];
+    const READS: &[&str] = &[
+        "list_entities",
+        "list_runs",
+        "list_sent",
+        "ping",
+        "read_mailbox",
+        "read_message",
+        "recall",
+        "search",
+        "start_here",
+    ];
+
+    #[test]
+    fn every_served_verb_is_named_as_a_write_or_a_read() {
+        let tools = crate::Jojobot::tool_router().list_all();
+        assert!(!tools.is_empty(), "the served surface named no verbs");
+        for tool in &tools {
+            let name = tool.name.as_ref();
+            assert!(
+                WRITES.contains(&name) || READS.contains(&name),
+                "{name} is served but is named in neither WRITES nor READS — a new write \
+                 verb has to gain the wrapped guard and a line here, or a new read verb \
+                 has to be named in READS",
+            );
+        }
     }
 
     /// Wrapping one session leaves every other one running: a wrap reaches
