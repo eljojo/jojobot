@@ -52,6 +52,7 @@ fn run_with(transcript: Vec<Said>, offered: &[usize], outcomes: Vec<Outcome>) ->
         boundaries: offered.iter().map(|n| boundary(*n)).collect(),
         before: "before".into(),
         after: "after".into(),
+        incomplete: None,
     }
 }
 

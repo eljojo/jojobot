@@ -8,7 +8,7 @@
 use anyhow::{Context, Result};
 use serde_json::json;
 
-use crate::agent::{Agent, Conversation};
+use crate::agent::{Agent, Conversation, UsageLimit};
 use crate::playbook::Playbook;
 use crate::room::Room;
 use crate::surface::{Seed, Surface};
@@ -179,6 +179,18 @@ pub struct Said {
     pub read_this: bool,
 }
 
+/// **The run stopped launching sittings because the agent ran out of
+/// runway**, not because jojobot failed anything. Named apart from an
+/// ordinary failed phase so a reader — and the render below — can tell "the
+/// model did not get the chance" from "the model got the chance and did not
+/// hold".
+pub struct Incomplete {
+    /// The phase after which no further sitting was launched.
+    pub phase: String,
+    /// When the limit resets, in the CLI's own words, when it said.
+    pub reset: Option<String>,
+}
+
 /// Everything one run produced.
 pub struct Results {
     pub playbook: String,
@@ -200,6 +212,9 @@ pub struct Results {
     /// written down: what a verb is called is the surface's to say, and a list
     /// kept here would go stale the day one is added.
     pub served: Vec<String>,
+    /// **Set when the agent ran out of runway rather than completing the
+    /// playbook.** `None` is the ordinary case: every phase launched.
+    pub incomplete: Option<Incomplete>,
 }
 
 impl Results {
@@ -299,8 +314,14 @@ impl Results {
 
     /// Everything held, something happened, and no phase quietly lost its
     /// memory on the way.
+    ///
+    /// **An incomplete run never holds**, whatever its outcomes say. A lock
+    /// past the point the agent ran out of runway measured a room the
+    /// playbook never finished furnishing, so nothing that follows can be
+    /// called a pass.
     pub fn held(&self) -> bool {
-        self.the_room_changed()
+        self.incomplete.is_none()
+            && self.the_room_changed()
             && self.lost_continuity().is_empty()
             && self.steps_unanswered().is_empty()
             && !self.outcomes.is_empty()
@@ -637,6 +658,20 @@ impl Results {
             out,
             "\n── results ─────────────────────────────────────────────────"
         );
+        if let Some(incomplete) = &self.incomplete {
+            let _ = writeln!(
+                out,
+                "\nINCOMPLETE: the agent ran out of runway after {}{} and no later phase was \
+                 launched. Nothing below is a verdict on the model — the run did not finish, so \
+                 no lock past this point can say what would have held.",
+                incomplete.phase,
+                incomplete
+                    .reset
+                    .as_deref()
+                    .map(|reset| format!(" (resets {reset})"))
+                    .unwrap_or_default(),
+            );
+        }
         if !self.the_room_changed() {
             let _ = writeln!(
                 out,
@@ -646,11 +681,23 @@ impl Results {
             );
         }
         for outcome in &self.outcomes {
-            let mark = match (outcome.refused, outcome.applies, outcome.held) {
-                (true, _, _) => "REFUSED",
-                (false, false, _) => "n/a",
-                (false, true, true) => "held",
-                (false, true, false) => "FAILED",
+            let mark = match (
+                self.incomplete.is_some(),
+                outcome.refused,
+                outcome.applies,
+                outcome.held,
+            ) {
+                // **A run that ran out of runway never fails a lock.** Once
+                // incomplete, nothing past that point measured the room the
+                // playbook would have finished furnishing — this is the same
+                // "did not happen" reading `applies` already carries for a
+                // sitting that never ran, applied to every lock rather than
+                // the ones an expectation itself knows to exempt.
+                (true, false, true, false) => "not run",
+                (_, true, _, _) => "REFUSED",
+                (_, false, false, _) => "n/a",
+                (_, false, true, true) => "held",
+                (_, false, true, false) => "FAILED",
             };
             let _ = writeln!(out, "  [{mark}] {} — {}", outcome.name, outcome.saying);
         }
@@ -781,6 +828,7 @@ pub async fn go(
 
     let mut transcript = Vec::new();
     let mut conversation = Conversation::fresh();
+    let mut incomplete: Option<Incomplete> = None;
     for (at, phase) in playbook.phases.iter().enumerate() {
         // **The playbook decides how many sessions a run uses.** The first
         // phase starts one; after that, a phase carries the last conversation
@@ -798,6 +846,10 @@ pub async fn go(
         let mut output = String::new();
         let mut ran = true;
         let mut raw = String::new();
+        // **Out of runway is not the model failing, and the two must not
+        // read alike.** `usage_limit_in` is the CLI's own words, never a
+        // bare non-zero exit — see [`crate::agent::UsageLimit`].
+        let mut hit_limit: Option<UsageLimit> = None;
         for delivery in &phase.deliveries {
             let worked = agent
                 .work(room.endpoint(), &conversation, delivery)
@@ -809,10 +861,19 @@ pub async fn go(
             output.push_str(&worked.output);
             raw.push_str(&worked.raw);
             ran &= worked.ran;
+            if hit_limit.is_none() {
+                hit_limit = worked.limit;
+            }
             // Every delivery after the first carries the one before it on, or
             // the answer to the prediction is not in the room when the reveal
             // lands.
             conversation = conversation.carried();
+            // A limit found here leaves nothing left to spend on the rest of
+            // THIS phase's own deliveries — sending another message spends
+            // the same exhausted turn again.
+            if hit_limit.is_some() {
+                break;
+            }
         }
         transcript.push(Said {
             phase: phase.name.clone(),
@@ -826,6 +887,16 @@ pub async fn go(
         // Taken after every phase and named for the one that comes next, so a
         // claim about a change has both sides of its boundary.
         boundaries.push(boundary(&surface, &named[at + 1]).await);
+        // **Stop launching sittings, not the run.** This phase's own effects
+        // are already recorded above; what a limit forbids is spending on a
+        // NEXT one the agent has no runway left to answer.
+        if let Some(limit) = hit_limit {
+            incomplete = Some(Incomplete {
+                phase: phase.name.clone(),
+                reset: limit.reset,
+            });
+            break;
+        }
     }
 
     let after = boundaries
@@ -872,6 +943,7 @@ pub async fn go(
         boundaries,
         before,
         after,
+        incomplete,
     };
     surface.finish().await;
     Ok(results)
@@ -1196,7 +1268,7 @@ pub async fn starting_identity(room: &Surface) -> Result<serde_json::Value> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Boundary, Results, Said, boundary_pair, phase_is_covered};
+    use super::{Boundary, Incomplete, Outcome, Results, Said, boundary_pair, phase_is_covered};
 
     fn boundary_labelled(before: &str) -> Boundary {
         Boundary {
@@ -1288,6 +1360,17 @@ mod tests {
             boundaries: Vec::new(),
             before: String::new(),
             after: String::new(),
+            incomplete: None,
+        }
+    }
+
+    fn outcome(name: &str, held: bool) -> Outcome {
+        Outcome {
+            name: name.to_string(),
+            held,
+            applies: true,
+            refused: false,
+            saying: "whatever the lock found".to_string(),
         }
     }
 
@@ -1418,6 +1501,63 @@ mod tests {
         assert!(
             !none.contains("the_cost_reads_as_a_number"),
             "a run that took no escape named one anyway: {none}",
+        );
+    }
+
+    /// **An incomplete run never holds, and no lock on it prints as FAILED.**
+    ///
+    /// The agent ran out of runway, not out of correctness — a lock that would
+    /// otherwise read FAILED measured a room the playbook never finished
+    /// furnishing, so it reads `not run` instead. The banner names the phase
+    /// and the reset time, when the CLI gave one.
+    ///
+    /// **Paired with the same outcome on a complete run**, which must still
+    /// read FAILED: a build that always printed `not run` would pass the
+    /// positive half by accident, and a real defect in a finished run must
+    /// not read as merely incomplete.
+    #[test]
+    fn an_incomplete_run_never_holds_and_no_lock_on_it_reads_as_failed() {
+        let mut cut_short = ran(&["Phase 1 — the room", "Phase 2 — never launched"]);
+        // Everything else `held` asks for is satisfied, so a red case here is
+        // about `incomplete` alone and not about the room, continuity or an
+        // outcome that failed on its own merits.
+        cut_short.before = "empty".to_string();
+        cut_short.after = "furnished".to_string();
+        cut_short.outcomes = vec![outcome("a lock that otherwise held", true)];
+        cut_short.incomplete = Some(Incomplete {
+            phase: "Phase 1 — the room".to_string(),
+            reset: Some("2:40pm".to_string()),
+        });
+        assert!(
+            !cut_short.held(),
+            "an incomplete run must never hold, even when everything else about it would"
+        );
+
+        cut_short.outcomes = vec![outcome("a lock past the cutoff", false)];
+        let rendered = cut_short.rendered(None);
+        assert!(
+            rendered.contains("INCOMPLETE") && rendered.contains("Phase 1 — the room"),
+            "the run does not say it is incomplete, or does not name the phase: {rendered}",
+        );
+        assert!(
+            rendered.contains("2:40pm"),
+            "the reset time the CLI gave did not survive to the report: {rendered}",
+        );
+        assert!(
+            rendered.contains("[not run] a lock past the cutoff"),
+            "a lock on an incomplete run must read as not run, never as failed: {rendered}",
+        );
+        assert!(
+            !rendered.contains("[FAILED] a lock past the cutoff"),
+            "an incomplete run must not fail a lock it never gave a fair chance: {rendered}",
+        );
+
+        let mut finished = ran(&["Phase 1 — the room"]);
+        finished.outcomes = vec![outcome("a lock past the cutoff", false)];
+        let rendered = finished.rendered(None);
+        assert!(
+            rendered.contains("[FAILED] a lock past the cutoff"),
+            "a real failure on a run that finished must still read as FAILED: {rendered}",
         );
     }
 

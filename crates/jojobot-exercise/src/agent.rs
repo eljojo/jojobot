@@ -102,6 +102,42 @@ pub struct Worked {
     /// Whether the CLI itself reported success. A phase told to continue a
     /// conversation the CLI could not find is the case this exists for.
     pub(crate) ran: bool,
+    /// **The CLI's own usage or plan limit, read off its words rather than
+    /// its exit code.** `None` for a clean exit and for a failure that names
+    /// no limit — a run out of runway and a model that failed are different
+    /// facts, and only this tells them apart.
+    pub(crate) limit: Option<UsageLimit>,
+}
+
+/// **A usage or plan limit the CLI reported, distinct from an ordinary
+/// failure.** A run out of runway is not the model failing, and the two must
+/// not read alike.
+pub struct UsageLimit {
+    /// When the limit resets, in the CLI's own words after "resets" — `None`
+    /// when it said nothing about that.
+    pub reset: Option<String>,
+}
+
+/// **The one signal this reads: the CLI's own words, never a bare non-zero
+/// exit.** A phase that fails for any other reason — a refused resume, a
+/// crash, a network error — reports exactly as it always has. Only text
+/// naming a session or usage limit, on a process that did not exit
+/// successfully, is read as the run running out of runway rather than the
+/// model failing.
+fn usage_limit_in(printed: &str, succeeded: bool) -> Option<UsageLimit> {
+    if succeeded {
+        return None;
+    }
+    let lower = printed.to_lowercase();
+    if !lower.contains("session limit") && !lower.contains("usage limit") {
+        return None;
+    }
+    let reset = printed.split_once("resets").and_then(|(_, after)| {
+        let after = after.trim_start_matches([':', ' ']);
+        let line = after.lines().next().unwrap_or(after).trim();
+        (!line.is_empty()).then(|| line.to_string())
+    });
+    Some(UsageLimit { reset })
 }
 
 /// The shipped agent, driven headless.
@@ -182,6 +218,10 @@ fn finished(done: &std::process::Output) -> Worked {
             String::from_utf8_lossy(&done.stderr),
         ));
     }
+    // **Read off the spoken text, never the raw stream.** The raw stream is
+    // JSON, and "resets" sitting a few bytes from a stray quote and brace
+    // would carry them into what this reports as the reset time.
+    let limit = usage_limit_in(&said, done.status.success());
     Worked {
         output: said,
         raw: printed,
@@ -191,6 +231,7 @@ fn finished(done: &std::process::Output) -> Worked {
         // anything, and a phase that lost its memory and carried on regardless
         // produces a transcript a reader would pass.
         ran: done.status.success(),
+        limit,
     }
 }
 
@@ -309,6 +350,7 @@ impl Agent {
                 // nothing instead of that the capture missed it.
                 raw: String::new(),
                 ran: false,
+                limit: None,
             });
         };
         Ok(finished(&done))
@@ -626,5 +668,42 @@ mod tests {
             "the stream was not kept whole, so the calls are gone",
         );
         assert!(worked.ran, "a clean exit reads as a run that worked");
+    }
+
+    /// **A usage limit is read off the CLI's own words, never off the bare
+    /// exit code.** A paid run on 2026-09-23 had every sitting from phase 8
+    /// on exit 1 with "You've hit your session limit · resets 2:40pm", and
+    /// the harness recorded each one as an invocation that "did not come
+    /// back" — indistinguishable from the model failing.
+    ///
+    /// **Paired with an ordinary non-zero exit that names no limit**, which
+    /// must report exactly as it always has: a build that read any failure
+    /// as a limit would pass the positive half by accident.
+    #[test]
+    fn a_usage_limit_is_read_off_the_clis_own_words_and_an_ordinary_failure_is_not() {
+        let limited = finished_with(
+            "{\"type\":\"result\",\"result\":\"You've hit your session limit \\u00b7 resets \
+             2:40pm\"}",
+            1,
+        );
+        let hit = limited
+            .limit
+            .as_ref()
+            .unwrap_or_else(|| panic!("a limit line on a failed exit must be read as a limit"));
+        assert_eq!(
+            hit.reset.as_deref(),
+            Some("2:40pm"),
+            "the reset time the CLI gave has to survive, not just the fact of a limit",
+        );
+
+        let crashed = finished_with(
+            "{\"type\":\"result\",\"result\":\"an ordinary tool error\"}",
+            1,
+        );
+        assert!(
+            crashed.limit.is_none(),
+            "an ordinary non-zero exit naming no limit must not read as one: {}",
+            crashed.output,
+        );
     }
 }

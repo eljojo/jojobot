@@ -33,6 +33,7 @@ fn run(transcript: Vec<Said>) -> Results {
         before: "before".into(),
         after: "after".into(),
         served: Vec::new(),
+        incomplete: None,
     }
 }
 
