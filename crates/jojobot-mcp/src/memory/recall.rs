@@ -4949,6 +4949,65 @@ mod tests {
         );
     }
 
+    /// **A view declaring `shows: charter` returns the charter unasked** —
+    /// the third arm of the same reader, the same case as `shows: facts`
+    /// and `shows: prose` one line over.
+    #[tokio::test]
+    async fn a_view_declaring_shows_charter_returns_the_charter_unasked() {
+        let jojobot = handler();
+        declared_view(
+            &jojobot,
+            "shows-charter",
+            &[("selects", "bot"), ("shows", "charter")],
+        )
+        .await;
+        declared_view(&jojobot, "charter-not-shown", &[("selects", "bot")]).await;
+        make_bot(&jojobot, "gamma").await;
+        let own = "Keeps the kitchen running.";
+        jojobot
+            .set_charter(Parameters(SetCharterArgs {
+                bot: "gamma".into(),
+                prose: own.into(),
+                sid: Some(crate::harness::TEST_SID.into()),
+            }))
+            .await
+            .expect("set_charter ok");
+
+        let shown = json_of(
+            &jojobot
+                .recall(Parameters(by_view("shows-charter")))
+                .await
+                .expect("recall ok"),
+        );
+        let gamma = shown["objects"]
+            .as_array()
+            .expect("objects is a list")
+            .iter()
+            .find(|o| o["id"] == "bot:gamma")
+            .unwrap_or_else(|| panic!("gamma is in the answer: {shown}"));
+        assert_eq!(
+            gamma["charter"], own,
+            "the view's own shows: charter must be honoured without the caller asking: {shown}",
+        );
+
+        let neither = json_of(
+            &jojobot
+                .recall(Parameters(by_view("charter-not-shown")))
+                .await
+                .expect("recall ok"),
+        );
+        let gamma = neither["objects"]
+            .as_array()
+            .expect("objects is a list")
+            .iter()
+            .find(|o| o["id"] == "bot:gamma")
+            .unwrap_or_else(|| panic!("gamma is in the answer: {neither}"));
+        assert_eq!(
+            gamma["charter_elided"], true,
+            "a view declaring neither key must elide the charter: {neither}",
+        );
+    }
+
     /// **A filter is its own record on the view** — a fact whose own
     /// fields carry `key` and `value` (and, when needed, `compare` and
     /// `scope`), the same shape every other claim on this store is.
