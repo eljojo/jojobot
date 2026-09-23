@@ -191,6 +191,23 @@ pub struct Incomplete {
     pub reset: Option<String>,
 }
 
+/// **Whether one phase's own result means the run stops here** — pure, and
+/// deliberately pulled out of `go()`'s loop. Nothing in this crate drives a
+/// live agent through a usage limit, so the decision has to be testable on
+/// its own or it is not tested at all: removing the `break` in `go()` that
+/// reads this answer left every case in the crate green, which is what
+/// having no seam for a fake agent actually means.
+///
+/// `None` is the ordinary case: the phase's own deliveries answered, and
+/// the run goes on to the next one. `Some` names the phase this was and
+/// carries the reset time onward, when the CLI gave one.
+fn stops_the_run(hit_limit: Option<UsageLimit>, phase: &str) -> Option<Incomplete> {
+    hit_limit.map(|limit| Incomplete {
+        phase: phase.to_string(),
+        reset: limit.reset,
+    })
+}
+
 /// Everything one run produced.
 pub struct Results {
     pub playbook: String,
@@ -889,12 +906,10 @@ pub async fn go(
         boundaries.push(boundary(&surface, &named[at + 1]).await);
         // **Stop launching sittings, not the run.** This phase's own effects
         // are already recorded above; what a limit forbids is spending on a
-        // NEXT one the agent has no runway left to answer.
-        if let Some(limit) = hit_limit {
-            incomplete = Some(Incomplete {
-                phase: phase.name.clone(),
-                reset: limit.reset,
-            });
+        // NEXT one the agent has no runway left to answer. Pure, so the
+        // decision is testable without a live agent or a spawned room.
+        if let Some(stop) = stops_the_run(hit_limit, &phase.name) {
+            incomplete = Some(stop);
             break;
         }
     }
@@ -1268,7 +1283,10 @@ pub async fn starting_identity(room: &Surface) -> Result<serde_json::Value> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Boundary, Incomplete, Outcome, Results, Said, boundary_pair, phase_is_covered};
+    use super::{
+        Boundary, Incomplete, Outcome, Results, Said, UsageLimit, boundary_pair, phase_is_covered,
+        stops_the_run,
+    };
 
     fn boundary_labelled(before: &str) -> Boundary {
         Boundary {
@@ -1501,6 +1519,38 @@ mod tests {
         assert!(
             !none.contains("the_cost_reads_as_a_number"),
             "a run that took no escape named one anyway: {none}",
+        );
+    }
+
+    /// **The stop decision itself, pulled out of `go()`'s loop and pinned
+    /// directly** — no live agent, no spawned room, and no seam for either.
+    /// A phase that hit no limit changes nothing; one that did names ITSELF,
+    /// not whatever phase came before it, and carries the reset time on.
+    #[test]
+    fn stops_the_run_is_none_without_a_limit_and_names_the_phase_that_hit_one() {
+        assert!(
+            stops_the_run(None, "Phase 1 — the room").is_none(),
+            "a phase with no limit must not stop the run",
+        );
+
+        let stop = stops_the_run(
+            Some(UsageLimit {
+                reset: Some("2:40pm".to_string()),
+            }),
+            "Phase 4 — the deadline",
+        )
+        .expect("a limit stops the run");
+        assert_eq!(
+            stop.phase, "Phase 4 — the deadline",
+            "the stop must name the phase that hit the limit, not any other",
+        );
+        assert_eq!(stop.reset.as_deref(), Some("2:40pm"));
+
+        let no_reset = stops_the_run(Some(UsageLimit { reset: None }), "Phase 2 — silent")
+            .expect("a limit with no reset time still stops the run");
+        assert_eq!(
+            no_reset.reset, None,
+            "a limit that named no reset time must not invent one",
         );
     }
 
