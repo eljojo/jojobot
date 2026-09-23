@@ -4266,7 +4266,7 @@ async fn session_write_summary_answers_the_real_store() {
     let session = sessions_store
         .begin(NewSession {
             bot: bot.clone(),
-            sid: Sid("s-session-write-summary".into()),
+            sid: Sid("wsm1".into()),
             focus: "working".into(),
             started_at: started,
             timezone: None,
