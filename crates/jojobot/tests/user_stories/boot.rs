@@ -205,15 +205,16 @@ async fn a_fresh_session_tries_to_be_useful_on_turn_one() {
     // by declaring one and reading a refusal, or by asking a question it had
     // no reason to ask — the distinction was invisible until it tripped.
     //
-    // **Names and origin, never bodies.** What a kind means and which keys it
-    // asks for is a deliberate second read; what a boot owes is the list.
+    // **Names only, never bodies.** What a kind means and which keys it asks
+    // for is a deliberate second read; what a boot owes is the list. Origin
+    // is left off too — an agent booting does not act differently for
+    // knowing which name is closed to redeclaration, and that question is
+    // answered where it is actually asked: declaring a kind or reading one
+    // directly.
     let (vocabulary, _) = story
         .call("start_here", json!({"bot": "otto", "brief": true}))
         .await;
-    vocabulary
-        .says("\"kinds\"")
-        .says("\"person\"")
-        .says("\"shipped\"");
+    vocabulary.says("\"kinds\"").says("\"person\"");
 
     // **The half that makes the three above mean anything.** A boot that named
     // an empty list would satisfy every `says` on a key that is present and

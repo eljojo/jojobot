@@ -6,6 +6,22 @@
 
 use super::*;
 
+/// **A bot's own box, in the boot's snapshot** — [`mailbox_json`] with its
+/// `quarantined` report dropped when there is nothing in it. A zero count is
+/// not a fact worth a field: an agent reading `quarantined.count`
+/// unconditionally already treats an absent report as zero, so nothing here
+/// is a silent elision — see [`quarantined_json`] for what the field holds
+/// when there is something to say.
+fn own_mail_json(mailbox: &jojobot_domain::mailbox::Mailbox) -> serde_json::Value {
+    let mut mail = mailbox_json(mailbox);
+    if mail["quarantined"]["count"] == 0 {
+        if let Some(object) = mail.as_object_mut() {
+            object.remove("quarantined");
+        }
+    }
+    mail
+}
+
 /// **Null out one rule's `details`, marked** — the same shape whichever
 /// caller reaches for it: a ranked cut, or the floor measurement below that
 /// has to know the answer's size with every rule's reasoning already gone.
@@ -291,25 +307,26 @@ impl Jojobot {
                 serde_json::json!({
                     "available": true,
                     "note": "the entity roster is unreadable, so mail is listed by owner here \
-                             rather than beside the bots",
+                             rather than beside the bots. Another bot's mail counts are never \
+                             shown here, whichever way this boot lists them.",
                     "by_owner": boxes
                         .iter()
                         .map(|b| serde_json::json!({
                             "owner": b.owner.as_str(),
                             "yours": mine.drains(b.name.as_str()),
                             "mail": match mine.drains(b.name.as_str()) {
-                                true => mailbox_json(b),
-                                false => serde_json::json!({
-                                    "counts": serde_json::Value::Null,
-                                    "counts_elided": true,
-                                    "quarantined": quarantined_json(b),
-                                }),
+                                true => own_mail_json(b),
+                                false => serde_json::json!({}),
                             },
                         }))
                         .collect::<Vec<_>>(),
                 })
             }
-            Ok(_) => serde_json::json!({ "available": true }),
+            Ok(_) => serde_json::json!({
+                "available": true,
+                "note": "another bot's mail counts are never shown here — only its own boot or \
+                         its own poll can see them",
+            }),
             Err(_) => serde_json::json!({
                 "available": false,
                 "note": "the mailbox world is not reachable right now — its tools will say why",
@@ -326,17 +343,13 @@ impl Jojobot {
                 match owned.as_slice() {
                     [] => None,
                     [b] => Some(match mine.drains(b.name.as_str()) {
-                        true => mailbox_json(b),
-                        // Somebody else's queue is not yours to weigh. Their
-                        // quarantine still rides out: it is the only place an
-                        // unreadable card shows, and the caller who most needs
-                        // it is a SENDER, who would otherwise conclude their
-                        // message was never sent.
-                        false => serde_json::json!({
-                            "counts": serde_json::Value::Null,
-                            "counts_elided": true,
-                            "quarantined": quarantined_json(b),
-                        }),
+                        true => own_mail_json(b),
+                        // **Somebody else's queue is not yours to weigh, and
+                        // neither is what jojobot could not read on it.** An
+                        // agent reading this boot cannot act on a stranger
+                        // box's fault — the caller who can is a sender, and
+                        // `list_sent` is where they read it.
+                        false => serde_json::json!({}),
                     }),
                     // **Two boxes is damage, and no count over one of them is
                     // an answer.** One box per bot is settled, so weighing the
@@ -373,11 +386,12 @@ impl Jojobot {
         // question it had no reason to ask: the distinction was invisible
         // until it tripped, which is the safe-default rule upside down.
         //
-        // **Names and origin, never bodies.** What a kind means and which keys
-        // it asks for is bigger than the list and is a deliberate second read.
-        // The origin rides along because it is what a caller can ACT on: a
-        // shipped name is closed to redeclaration and a declared one is theirs
-        // to reshape, and no other field says which.
+        // **Names only, never bodies.** What a kind means and which keys it
+        // asks for is bigger than the list and is a deliberate second read.
+        // Origin is left off too: an agent booting does not act differently
+        // for knowing which name is closed to redeclaration, and it stays
+        // exactly where that question is actually asked — declaring a kind
+        // or a type, or reading one directly.
         //
         // **Read from the store rather than from the list this build ships**,
         // for the same reason the boot's other reads are: a kind a caller
@@ -387,9 +401,7 @@ impl Jojobot {
             Ok(kinds) => {
                 let mut named: Vec<serde_json::Value> = kinds
                     .iter()
-                    .map(|(token, origin)| {
-                        serde_json::json!({ "kind": token, "origin": origin.as_token() })
-                    })
+                    .map(|(token, _origin)| serde_json::json!({ "kind": token }))
                     .collect();
                 named.sort_by_key(|k| k["kind"].as_str().unwrap_or("").to_string());
                 serde_json::json!({ "available": true, "kinds": named })
@@ -421,12 +433,7 @@ impl Jojobot {
             Ok(types) => {
                 let mut named: Vec<serde_json::Value> = types
                     .iter()
-                    .map(|declared| {
-                        serde_json::json!({
-                            "type": declared.name,
-                            "origin": declared.origin.as_token(),
-                        })
-                    })
+                    .map(|declared| serde_json::json!({ "type": declared.name }))
                     .collect();
                 named.sort_by_key(|t| t["type"].as_str().unwrap_or("").to_string());
                 vocabulary["types_available"] = serde_json::json!(true);
@@ -716,6 +723,7 @@ mod tests {
     use super::*;
     use crate::harness::*;
     use crate::mailboxes::testing::*;
+    use crate::memory::DeclareTypeArgs;
     use crate::memory::testing::*;
     use crate::session::testing::*;
 
@@ -1621,19 +1629,16 @@ mod tests {
             .clone()
     }
 
-    /// **A fault on the board is not somebody's queue, and it is not scoped
-    /// away with one.** What jojobot cannot read as a message is counted
-    /// nowhere and delivered nowhere, so the only caller who can act on knowing
-    /// it exists is often a SENDER — somebody who by definition does not drain
-    /// that box, and who would otherwise read the silence as "my message never
-    /// arrived". So the counts are withheld from a box that is not yours and
-    /// the unreadable report is not.
-    ///
-    /// This is the only answer that renders a box the caller does not drain:
-    /// `read_mailbox`'s counting mode is about your own box by construction,
-    /// and `list_sent` only reaches boxes you have posted into.
+    /// **Another bot's mail is not this boot's to weigh, quarantine included.**
+    /// An agent reading the snapshot cannot act differently for knowing a
+    /// stranger box's fault exists — that is what a sender's own
+    /// `list_sent` is for — so neither the counts nor the quarantine report
+    /// on somebody else's box rides in a boot that is not theirs. The
+    /// per-bot elision marker (`counts_elided`) is gone too: the snapshot
+    /// says once, in `mail.note`, that another bot's counts are never
+    /// shown here, rather than repeating a flag on every bot in the list.
     #[tokio::test]
-    async fn a_boot_shows_what_cannot_be_read_even_on_a_box_it_will_not_count() {
+    async fn a_boot_shows_nothing_at_all_about_a_box_that_is_not_its_own() {
         let boxes = Arc::new(InMemoryMailboxes::knowing_any_owner());
         let jojobot = with_mailboxes(boxes.clone());
         make_bot(&jojobot, "gamma").await;
@@ -1648,14 +1653,109 @@ mod tests {
         let theirs = bot_entry(&booted, "delta");
         assert_eq!(theirs["yours"], false);
         assert!(
-            theirs["mail"]["counts"].is_null(),
-            "somebody else's queue stays theirs: {theirs}"
+            theirs["mail"].get("counts").is_none(),
+            "somebody else's queue is not this boot's to render: {theirs}"
+        );
+        assert!(
+            theirs["mail"].get("counts_elided").is_none(),
+            "the per-bot elision flag must be gone — the snapshot says it once, not per bot: \
+             {theirs}"
+        );
+        assert!(
+            theirs["mail"].get("quarantined").is_none(),
+            "a stranger box's fault is not this boot's to report either: {theirs}"
+        );
+        assert!(
+            booted["snapshot"]["mail"]["note"]
+                .as_str()
+                .is_some_and(|note| !note.trim().is_empty()),
+            "the snapshot must say once that another bot's mail counts are not shown here: \
+             {booted}"
+        );
+    }
+
+    /// **The caller's own quarantine is the pair's other half — present when
+    /// there is something to act on, and absent otherwise.** A zero count is
+    /// not a fact worth a field: an agent that just reads `quarantined.count`
+    /// unconditionally would treat an absent report as zero already, so
+    /// nothing is lost by leaving the key out when there is nothing to say.
+    #[tokio::test]
+    async fn a_boots_own_quarantine_is_present_only_when_it_is_not_zero() {
+        let boxes = Arc::new(InMemoryMailboxes::knowing_any_owner());
+        let jojobot = with_mailboxes(boxes.clone());
+        make_bot(&jojobot, "gamma").await;
+
+        let clean = boot(&jojobot, "gamma").await;
+        let mine = bot_entry(&clean, "gamma");
+        assert!(
+            mine["mail"].get("quarantined").is_none(),
+            "a clean box must not carry an empty quarantine report: {mine}"
+        );
+
+        boxes.quarantine(
+            &MailboxName("gamma".into()),
+            &MessageId("4212".into()),
+            "its row cannot be read — a state or a sender has been edited past parsing",
+        );
+        let dirty = boot(&jojobot, "gamma").await;
+        let mine = bot_entry(&dirty, "gamma");
+        assert_eq!(mine["mail"]["quarantined"]["count"], 1, "{mine}");
+        assert_eq!(mine["mail"]["quarantined"]["ids"][0], "4212");
+    }
+
+    /// **A kind's or a type's origin is not something a boot's own agent acts
+    /// on** — it matters when declaring or reading one directly, which is
+    /// where it stays. The pair: gone from the boot's vocabulary listing,
+    /// still there wherever a kind or type is declared or read on its own.
+    #[tokio::test]
+    async fn the_boots_vocabulary_names_no_origin_though_declaring_one_still_does() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        let field = || crate::memory::FieldArgs {
+            key: "cost".into(),
+            holds: None,
+            folds: None,
+            required: false,
+            one_of: None,
+        };
+        jojobot
+            .declare_type(Parameters(DeclareTypeArgs {
+                name: "own-vocab-test".into(),
+                fields: vec![field()],
+                sid: Some(writing_as(&jojobot)),
+            }))
+            .await
+            .expect("declare_type call ok");
+
+        let booted = boot(&jojobot, "gamma").await;
+        let vocabulary = &booted["snapshot"]["vocabulary"];
+        for kind in vocabulary["kinds"].as_array().expect("kinds") {
+            assert!(
+                kind.get("origin").is_none(),
+                "a kind must not carry its origin in the boot's own vocabulary: {kind}"
+            );
+        }
+        for declared_type in vocabulary["types"].as_array().expect("types") {
+            assert!(
+                declared_type.get("origin").is_none(),
+                "a type must not carry its origin in the boot's own vocabulary: {declared_type}"
+            );
+        }
+
+        let declared = json_of(
+            &jojobot
+                .declare_type(Parameters(DeclareTypeArgs {
+                    name: "own-vocab-test".into(),
+                    fields: vec![field()],
+                    sid: Some(writing_as(&jojobot)),
+                }))
+                .await
+                .expect("declare_type call ok"),
         );
         assert_eq!(
-            theirs["mail"]["quarantined"]["count"], 1,
-            "…and the fault on it does not: {booted}"
+            declared["type"]["origin"], "declared",
+            "origin still rides declare_type's own answer: {declared}"
         );
-        assert_eq!(theirs["mail"]["quarantined"]["ids"][0], "4212");
     }
 
     /// A boot sees its own box's counts in the snapshot, and names only for the
@@ -2197,15 +2297,18 @@ mod tests {
                 .expect("start_here ok"),
         );
         assert!(
-            counts_for(&anonymous)["mail"]["counts"].is_null(),
+            counts_for(&anonymous)["mail"].get("counts").is_none(),
             "{anonymous}"
         );
         assert_eq!(counts_for(&anonymous)["yours"], false);
-        // Elided, never silently — the same rule the whole surface keeps: a
-        // reader must not have to infer withheld from empty.
-        assert_eq!(
-            counts_for(&anonymous)["mail"]["counts_elided"],
-            true,
+        // **The snapshot says once, not per bot.** The same rule the whole
+        // surface keeps — a reader must not have to infer withheld from
+        // empty — kept here at the one place it is true instead of on
+        // every bot's own entry.
+        assert!(
+            anonymous["snapshot"]["mail"]["note"]
+                .as_str()
+                .is_some_and(|note| !note.trim().is_empty()),
             "{anonymous}"
         );
 
