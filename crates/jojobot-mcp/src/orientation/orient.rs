@@ -663,6 +663,7 @@ impl Jojobot {
                             .collect(),
                             ..FactPatch::default()
                         },
+                        bot,
                     )
                     .await
             }

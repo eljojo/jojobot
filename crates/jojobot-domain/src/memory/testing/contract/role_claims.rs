@@ -125,6 +125,7 @@ pub async fn a_rival_update_fact_claim_is_refused_while_the_lease_is_fresh<M: Me
                 fields: role_fields("epsilon", now),
                 ..FactPatch::default()
             },
+            &bot,
         )
         .await;
     assert!(

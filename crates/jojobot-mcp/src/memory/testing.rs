@@ -709,6 +709,7 @@ impl Memory for ConflictingMemory {
         &self,
         _address: &FactAddress,
         _patch: FactPatch,
+        _caller: &EntityId,
     ) -> Result<Guarded<Fact>, MemoryError> {
         Err(MemoryError::Conflict)
     }
@@ -717,8 +718,9 @@ impl Memory for ConflictingMemory {
         address: &FactAddress,
         reason: Option<&str>,
         date: jiff::civil::Date,
+        caller: &EntityId,
     ) -> Result<jojobot_domain::memory::Retraction, MemoryError> {
-        self.0.retract(address, reason, date).await
+        self.0.retract(address, reason, date, caller).await
     }
     async fn merge(
         &self,
