@@ -88,7 +88,17 @@ impl Jojobot {
             }
         }
         match self.mailboxes.read_message(&id).await {
-            Ok(delivered) => json_result(&delivered_json(&delivered)),
+            Ok(delivered) => {
+                let mut rendered = delivered_json(&delivered);
+                let viewer = self
+                    .caller(args.sid.as_deref())
+                    .ok()
+                    .flatten()
+                    .and_then(|caller| caller.card);
+                self.mark_other_run(&mut rendered, &delivered.message, viewer.as_ref())
+                    .await;
+                json_result(&rendered)
+            }
             Err(e) => mailbox_declined(e),
         }
     }

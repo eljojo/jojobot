@@ -282,6 +282,7 @@ mod tests {
                 sent_at: epoch(),
                 in_reply_to: None,
                 sender_mail_waiting_at_send: None,
+                posted_by_session: None,
             })
             .await
             .expect("post_message should succeed")
@@ -371,6 +372,7 @@ mod tests {
                 sent_at: epoch(),
                 in_reply_to: None,
                 sender_mail_waiting_at_send: None,
+                posted_by_session: None,
             })
             .await
             .expect("post_message should succeed")
@@ -435,6 +437,7 @@ mod tests {
                 sent_at: epoch(),
                 in_reply_to: None,
                 sender_mail_waiting_at_send: None,
+                posted_by_session: None,
             })
             .await
             .expect("post_message should succeed")

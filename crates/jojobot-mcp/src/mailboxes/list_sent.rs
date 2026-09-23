@@ -459,6 +459,7 @@ mod tests {
                     sent_at: at,
                     in_reply_to: None,
                     sender_mail_waiting_at_send: None,
+                    posted_by_session: None,
                 })
                 .await
                 .expect("post ok");

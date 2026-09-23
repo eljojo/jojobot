@@ -185,6 +185,7 @@ impl Jojobot {
         &self,
         bot: &EntityId,
         posted_into: &mailbox::MailboxName,
+        viewer: Option<&SessionId>,
     ) -> Option<serde_json::Value> {
         let OwnBox::The(own) = self.own_box(bot).await else {
             return None;
@@ -211,7 +212,9 @@ impl Jojobot {
         // The same rendering `read_mailbox` uses, so mail taken this way reads
         // identically to mail somebody went and got. `new_only` is the same
         // default too: a leftover is still owed, and its body was shipped once.
-        Some(delivery_json(&delivery, true))
+        let mut rendered = delivery_json(&delivery, true);
+        self.mark_other_runs(&mut rendered, &delivery, viewer).await;
+        Some(rendered)
     }
 }
 
@@ -308,6 +311,14 @@ impl Jojobot {
         // sender's own answer where it never reaches anybody who did not send
         // this.
         let sender_mail_waiting_at_send = self.own_new_count(&caller.bot).await;
+        // **Stamped here, alongside `sender_mail_waiting_at_send`, from the
+        // same `caller` this call already resolved.** `caller.card` is `None`
+        // until this run's first write has materialized a card — the one gap
+        // this leaves is a session's own very first write being the post
+        // itself, which stamps `None` and reads back as unknown rather than
+        // as "this run" or "another run". That is the safe direction to be
+        // wrong in: it never falsely claims either.
+        let posted_by_session = caller.card.as_ref().map(|card| card.as_str().to_string());
         let new = NewMessage {
             mailbox: destination,
             body: args.body,
@@ -324,6 +335,7 @@ impl Jojobot {
                 .filter(|id| !id.is_empty())
                 .map(|id| MessageId(id.to_string())),
             sender_mail_waiting_at_send,
+            posted_by_session,
         };
         // Declined rather than errored: a reply naming a message jojobot does
         // not hold is a bad reference, and every other bad reference on this
@@ -351,7 +363,7 @@ impl Jojobot {
                 // and nothing to notice.
                 let mut collected = 0;
                 if let Some(delivered) = self
-                    .delivered_with_the_post(&caller.bot, &message.mailbox)
+                    .delivered_with_the_post(&caller.bot, &message.mailbox, caller.card.as_ref())
                     .await
                 {
                     collected = delivered["count"].as_u64().unwrap_or_default();

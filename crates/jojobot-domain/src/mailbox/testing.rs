@@ -395,6 +395,7 @@ impl Mailboxes for InMemoryMailboxes {
             in_reply_to: message.in_reply_to,
             taken_by: None,
             sender_mail_waiting_at_send: message.sender_mail_waiting_at_send,
+            posted_by_session: message.posted_by_session,
         };
         self.messages
             .lock()
@@ -637,6 +638,7 @@ pub mod contract {
                 sent_at: at(at_offset),
                 in_reply_to: None,
                 sender_mail_waiting_at_send: None,
+                posted_by_session: None,
             })
             .await
             .expect("post_message should succeed")
@@ -1116,6 +1118,7 @@ pub mod contract {
                 sent_at: at(0),
                 in_reply_to: None,
                 sender_mail_waiting_at_send: Some(3),
+                posted_by_session: None,
             })
             .await
             .expect("post_message should succeed")
@@ -1132,6 +1135,7 @@ pub mod contract {
                 sent_at: at(1),
                 in_reply_to: None,
                 sender_mail_waiting_at_send: Some(0),
+                posted_by_session: None,
             })
             .await
             .expect("post_message should succeed")
@@ -1282,6 +1286,7 @@ pub mod contract {
                 sent_at: at(30),
                 in_reply_to: None,
                 sender_mail_waiting_at_send: None,
+                posted_by_session: None,
             })
             .await;
         assert!(broken.is_err(), "a subject is one plain line");
@@ -1456,6 +1461,7 @@ pub mod contract {
                 sent_at: at(0),
                 in_reply_to: None,
                 sender_mail_waiting_at_send: None,
+                posted_by_session: None,
             })
             .await
             .expect("a blocked post is a result, not a failure")
@@ -1539,6 +1545,7 @@ pub mod contract {
                     sent_at: within(nanos),
                     in_reply_to: None,
                     sender_mail_waiting_at_send: None,
+                    posted_by_session: None,
                 })
                 .await
                 .expect("post ok")
@@ -1664,6 +1671,7 @@ pub mod contract {
                 sent_at: at(1),
                 in_reply_to: Some(original.id.clone()),
                 sender_mail_waiting_at_send: None,
+                posted_by_session: None,
             })
             .await
             .expect("post ok")
@@ -1705,6 +1713,7 @@ pub mod contract {
                 sent_at: at(1),
                 in_reply_to: Some(handoff.id.clone()),
                 sender_mail_waiting_at_send: None,
+                posted_by_session: None,
             })
             .await
             .expect("post ok")
@@ -1742,6 +1751,7 @@ pub mod contract {
                 sent_at: at(0),
                 in_reply_to: Some(MessageId("9999".into())),
                 sender_mail_waiting_at_send: None,
+                posted_by_session: None,
             })
             .await;
         assert!(
@@ -1762,6 +1772,7 @@ pub mod contract {
                 sent_at: at(0),
                 in_reply_to: Some(MessageId("../42".into())),
                 sender_mail_waiting_at_send: None,
+                posted_by_session: None,
             })
             .await;
         assert!(
@@ -1932,6 +1943,7 @@ pub mod contract {
                 sent_at: at(0),
                 in_reply_to: None,
                 sender_mail_waiting_at_send: None,
+                posted_by_session: None,
             })
             .await;
         assert!(bad_body.is_err(), "an empty body is not a message");
@@ -1945,6 +1957,7 @@ pub mod contract {
                 sent_at: at(0),
                 in_reply_to: None,
                 sender_mail_waiting_at_send: None,
+                posted_by_session: None,
             })
             .await;
         assert!(

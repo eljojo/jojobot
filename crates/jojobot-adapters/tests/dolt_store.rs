@@ -2566,6 +2566,7 @@ async fn a_mailbox_write_that_conflicts_with_another_is_told_apart_from_a_failed
             sent_at,
             in_reply_to: None,
             sender_mail_waiting_at_send: None,
+            posted_by_session: None,
         })
         .await
         .expect("post_message ok")

@@ -270,6 +270,7 @@ async fn seeded_board_over(memory: Arc<dyn Memory>) -> Board {
             sent_at: FIXED_INSTANT,
             in_reply_to: None,
             sender_mail_waiting_at_send: None,
+            posted_by_session: None,
         })
         .await
         .expect("the message is posted");
@@ -283,6 +284,7 @@ async fn seeded_board_over(memory: Arc<dyn Memory>) -> Board {
             sent_at: FIXED_INSTANT,
             in_reply_to: None,
             sender_mail_waiting_at_send: None,
+            posted_by_session: None,
         })
         .await
         .expect("the long message is posted");
@@ -298,6 +300,7 @@ async fn seeded_board_over(memory: Arc<dyn Memory>) -> Board {
             sent_at: FIXED_INSTANT,
             in_reply_to: None,
             sender_mail_waiting_at_send: None,
+            posted_by_session: None,
         })
         .await
         .expect("the markup-bearing message is posted");

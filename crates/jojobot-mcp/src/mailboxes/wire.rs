@@ -277,6 +277,86 @@ pub(crate) fn delivered_json(delivered: &Delivered) -> serde_json::Value {
     body
 }
 
+impl Jojobot {
+    /// **Whether `message` was posted by a different run than `viewer`'s
+    /// own**, and if so, by which — and whether that run has since ended,
+    /// read cheaply through [`Sessions::read_session`] rather than a listing
+    /// of every run a bot has had. `None` when the message carries no stamp
+    /// at all, or the stamp names `viewer` itself: neither is "a different
+    /// run", and both must read the same as the other.
+    async fn other_run(
+        &self,
+        message: &Message,
+        viewer: Option<&SessionId>,
+    ) -> Option<(String, Option<bool>)> {
+        let posted = message.posted_by_session.as_deref()?;
+        if viewer.is_some_and(|card| card.as_str() == posted) {
+            return None;
+        }
+        let ended = self
+            .sessions
+            .read_session(&SessionId(posted.to_string()))
+            .await
+            .ok()
+            .map(|session| session.state.is_terminal());
+        Some((posted.to_string(), ended))
+    }
+
+    /// **Mark every message in a rendered delivery that a different run
+    /// posted.** `rendered` must be [`delivery_json`]'s own output, whose
+    /// `messages` array sits in the same order as `delivery.messages` — the
+    /// pairing this walks by zipping the two.
+    pub(crate) async fn mark_other_runs(
+        &self,
+        rendered: &mut serde_json::Value,
+        delivery: &Delivery,
+        viewer: Option<&SessionId>,
+    ) {
+        let Some(messages) = rendered.get_mut("messages").and_then(|m| m.as_array_mut()) else {
+            return;
+        };
+        for (json, delivered) in messages.iter_mut().zip(&delivery.messages) {
+            if let Some((run, ended)) = self.other_run(&delivered.message, viewer).await {
+                note_written_by_other_run(json, &run, ended);
+            }
+        }
+    }
+
+    /// The single-message form [`read_message`] and [`post_message`]'s own
+    /// receipt need, over a rendered message JSON rather than a whole
+    /// delivery.
+    pub(crate) async fn mark_other_run(
+        &self,
+        rendered: &mut serde_json::Value,
+        message: &Message,
+        viewer: Option<&SessionId>,
+    ) {
+        if let Some((run, ended)) = self.other_run(message, viewer).await {
+            note_written_by_other_run(rendered, &run, ended);
+        }
+    }
+}
+
+/// **Name the run that posted this, when it was not the run reading it now.**
+/// `run` is `posted_by_session`'s own value; `ended` is whether that run has
+/// since ended, when the store could say so cheaply enough to ask on every
+/// message in a delivery — `None` when it could not. Absent from the wire
+/// entirely on a message this does not apply to, never present-and-null: the
+/// key's mere presence is what a reader branches on.
+pub(crate) fn note_written_by_other_run(
+    body: &mut serde_json::Value,
+    run: &str,
+    ended: Option<bool>,
+) {
+    let Some(fields) = body.as_object_mut() else {
+        return;
+    };
+    fields.insert(
+        "written_by_other_run".into(),
+        serde_json::json!({ "run": run, "ended": ended }),
+    );
+}
+
 /// A whole delivery.
 ///
 /// **`new_only` changes what is shipped, never what is owed.** Every message

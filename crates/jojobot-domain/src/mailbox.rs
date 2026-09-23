@@ -455,6 +455,11 @@ pub struct NewMessage {
     /// wrote the prose from memory — can check a claim about the sender's own
     /// mail against what was actually true when they hit send.
     pub sender_mail_waiting_at_send: Option<usize>,
+    /// **The id of the RUN that posted this** — an opaque token to this
+    /// module, stamped at the edge exactly as `sender_mail_waiting_at_send`
+    /// is: this bounded context knows nothing of a session, only that
+    /// something identifies one. `None` when the edge could not resolve one.
+    pub posted_by_session: Option<String>,
 }
 
 /// A message on the board.
@@ -503,6 +508,12 @@ pub struct Message {
     /// existed, and none of them is broken.
     #[serde(default)]
     pub sender_mail_waiting_at_send: Option<usize>,
+    /// **The run that posted this.** See [`NewMessage::posted_by_session`] —
+    /// carried verbatim into storage. `None` for every message posted before
+    /// this column existed, and for one the edge could not resolve; a reader
+    /// must treat both exactly alike — never as "posted by my own run".
+    #[serde(default)]
+    pub posted_by_session: Option<String>,
 }
 
 /// **How a message left `new`.**

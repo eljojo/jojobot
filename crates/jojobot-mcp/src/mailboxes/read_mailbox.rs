@@ -241,7 +241,17 @@ impl Jojobot {
             .await
             .map_err(mailbox_error)?
         {
-            mailbox::Guarded::Written(delivery) => json_result(&delivery_json(&delivery, new_only)),
+            mailbox::Guarded::Written(delivery) => {
+                let mut rendered = delivery_json(&delivery, new_only);
+                let viewer = self
+                    .caller(args.sid.as_deref())
+                    .ok()
+                    .flatten()
+                    .and_then(|caller| caller.card);
+                self.mark_other_runs(&mut rendered, &delivery, viewer.as_ref())
+                    .await;
+                json_result(&rendered)
+            }
             mailbox::Guarded::Blocked {
                 attempted,
                 candidates,
@@ -920,6 +930,191 @@ mod tests {
         assert!(
             delivery["messages"][0]["body_elided"].is_null(),
             "nothing was withheld"
+        );
+    }
+
+    /// **A delivered message names the run that posted it, when that run is
+    /// not the one reading now — and says whether that run has since
+    /// ended.**
+    ///
+    /// `dev` posts a note into its own box under one run, then a FRESH run
+    /// of `dev` — a different session of the same identity, a new sid with
+    /// no card of its own yet — reads the box. The note has to say which
+    /// run wrote it, and the value on the wire round-trips: it is read
+    /// straight off the stored message, never reconstructed from what the
+    /// test happens to know about the posting run.
+    ///
+    /// **Paired with a read inside the SAME run**, which must carry no such
+    /// key at all — not `false`, absent — because a build that always
+    /// marked would pass the positive half identically to a correct one.
+    #[tokio::test]
+    async fn a_message_names_the_run_that_posted_it_when_it_differs_from_the_readers_own() {
+        let jojobot = mailbox_handler();
+        make_bot(&jojobot, "dev").await;
+
+        // Run A: dev's first write (a journal entry) materializes its card,
+        // so the post right after it carries a real stamp rather than
+        // "unknown".
+        let run_a = as_bot(&jojobot, "dev");
+        jojobot
+            .journal(Parameters(JournalArgs {
+                entry: "starting work".into(),
+                focus: None,
+                sid: run_a.clone(),
+            }))
+            .await
+            .expect("journal ok");
+        let posted = json_of(
+            &jojobot
+                .post_message(Parameters(PostMessageArgs {
+                    to: "dev".into(),
+                    sid: run_a.clone(),
+                    subject: None,
+                    body: "leaving myself a note".into(),
+                    in_reply_to: None,
+                }))
+                .await
+                .expect("post ok"),
+        );
+        assert!(
+            posted.get("written_by_other_run").is_none(),
+            "posting is not a delivery to anybody: {posted}"
+        );
+        let id = posted["id"].as_str().expect("an id").to_string();
+
+        // Read inside run A: the same run posted and delivered it.
+        let same_run = json_of(
+            &jojobot
+                .read_mailbox(Parameters(ReadMailboxArgs {
+                    counts_only: None,
+                    new_only: None,
+                    sid: Some(run_a.clone()),
+                }))
+                .await
+                .expect("read ok"),
+        );
+        let mine = same_run["messages"]
+            .as_array()
+            .expect("messages")
+            .iter()
+            .find(|m| m["id"] == id)
+            .expect("the note is there");
+        assert!(
+            mine.get("written_by_other_run").is_none(),
+            "a run reading what it just posted must carry no mark at all: {mine}"
+        );
+
+        // A fresh run of the SAME identity — a different session, no card
+        // of its own yet.
+        let run_b = as_bot(&jojobot, "dev");
+        let cross_run = json_of(
+            &jojobot
+                .read_mailbox(Parameters(ReadMailboxArgs {
+                    counts_only: None,
+                    new_only: None,
+                    sid: Some(run_b.clone()),
+                }))
+                .await
+                .expect("read ok"),
+        );
+        let theirs = cross_run["messages"]
+            .as_array()
+            .expect("messages")
+            .iter()
+            .find(|m| m["id"] == id)
+            .expect("the note is there");
+        let marked = theirs
+            .get("written_by_other_run")
+            .unwrap_or_else(|| panic!("a different run reading it must be told: {theirs}"));
+        assert_eq!(
+            marked["ended"], false,
+            "run A is still active, never wrapped: {marked}"
+        );
+
+        // The positive half: the run named on the wire is exactly the run
+        // the store holds against the message.
+        let stored = jojobot
+            .mailboxes
+            .scan_messages()
+            .await
+            .expect("scan ok")
+            .into_iter()
+            .find(|m| m.id.as_str() == id)
+            .expect("the message is there");
+        assert_eq!(
+            marked["run"],
+            stored
+                .posted_by_session
+                .expect("this message was stamped with a run"),
+            "the stamped run read back equals the run that posted it: {marked}"
+        );
+
+        // And the mark survives a second read of the same run — a
+        // leftover, not a first delivery.
+        let again = json_of(
+            &jojobot
+                .read_mailbox(Parameters(ReadMailboxArgs {
+                    counts_only: None,
+                    new_only: Some(false),
+                    sid: Some(run_b),
+                }))
+                .await
+                .expect("read ok"),
+        );
+        let still = again["messages"]
+            .as_array()
+            .expect("messages")
+            .iter()
+            .find(|m| m["id"] == id)
+            .expect("the note is there");
+        assert!(
+            still.get("written_by_other_run").is_some(),
+            "the mark survives a re-read: {still}"
+        );
+    }
+
+    /// **Upgrade case: a message with no stamp at all reads as unknown,
+    /// never as the reader's own run.** A row written before this column
+    /// existed — or one the edge could not resolve — carries
+    /// `posted_by_session: None`, and a build that read absence as "mine"
+    /// would tell a fresh run it wrote something it never saw.
+    #[tokio::test]
+    async fn an_unstamped_message_reads_as_unknown_never_as_the_readers_own_run() {
+        let jojobot = mailbox_handler();
+        let reader = owning(&jojobot, "dev").await;
+        // Posted straight through the store, bypassing the edge that
+        // stamps a run — the shape a row written before this column
+        // existed left behind.
+        jojobot
+            .mailboxes
+            .post_message(jojobot_domain::mailbox::NewMessage {
+                mailbox: jojobot_domain::mailbox::MailboxName("dev".into()),
+                body: "a message with no run recorded".into(),
+                subject: None,
+                sender: "epsilon".into(),
+                sent_at: jiff::Timestamp::now(),
+                in_reply_to: None,
+                sender_mail_waiting_at_send: None,
+                posted_by_session: None,
+            })
+            .await
+            .expect("post ok");
+
+        let delivery = json_of(
+            &jojobot
+                .read_mailbox(Parameters(ReadMailboxArgs {
+                    counts_only: None,
+                    new_only: None,
+                    sid: Some(reader),
+                }))
+                .await
+                .expect("read ok"),
+        );
+        let message = &delivery["messages"][0];
+        assert!(
+            message.get("written_by_other_run").is_none(),
+            "a message with no stamp must carry no mark at all — never present-and-false, and \
+             never claiming it is the reader's own: {message}"
         );
     }
 }

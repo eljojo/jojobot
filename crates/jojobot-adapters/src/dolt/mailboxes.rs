@@ -189,7 +189,8 @@ impl DoltMailboxes {
             // no row over there** — and that absence is a fact about the
             // message rather than a reason to leave it out.
             "SELECT m.id, m.mailbox, m.ordinal, m.body, m.subject, m.sender, m.sent_at, m.state,
-                    m.notes, m.in_reply_to, m.sender_mail_waiting_at_send, d.taken_by
+                    m.notes, m.in_reply_to, m.sender_mail_waiting_at_send, m.posted_by_session,
+                    d.taken_by
              FROM message m
              LEFT JOIN message_delivery d ON d.message_id = m.id",
         )
@@ -318,6 +319,9 @@ fn card_from(row: &sqlx::mysql::MySqlRow) -> Result<Card, MailboxError> {
                 .try_get::<Option<i64>, _>("sender_mail_waiting_at_send")
                 .map_err(store)?
                 .map(|n| n as usize),
+            posted_by_session: row
+                .try_get::<Option<String>, _>("posted_by_session")
+                .map_err(store)?,
         }),
         ordinal,
     ))
@@ -554,12 +558,13 @@ impl Mailboxes for DoltMailboxes {
             in_reply_to: message.in_reply_to,
             taken_by: None,
             sender_mail_waiting_at_send: message.sender_mail_waiting_at_send,
+            posted_by_session: message.posted_by_session,
         };
         sqlx::query(
             "INSERT INTO message
                (id, mailbox, ordinal, body, subject, sender, sent_at, state, notes, in_reply_to,
-                sender_mail_waiting_at_send)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)",
+                sender_mail_waiting_at_send, posted_by_session)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)",
         )
         .bind(stored.id.as_str())
         .bind(stored.mailbox.as_str())
@@ -571,6 +576,7 @@ impl Mailboxes for DoltMailboxes {
         .bind(stored.state.as_token())
         .bind(stored.in_reply_to.as_ref().map(MessageId::as_str))
         .bind(stored.sender_mail_waiting_at_send.map(|n| n as i64))
+        .bind(stored.posted_by_session.as_deref())
         .execute(&mut *tx)
         .await
         .map_err(store)?;
@@ -793,6 +799,7 @@ mod tests {
                 sent_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
                 in_reply_to: None,
                 sender_mail_waiting_at_send: None,
+                posted_by_session: None,
             })
             .await
             .expect("post ok")
@@ -868,6 +875,7 @@ mod tests {
                 sent_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
                 in_reply_to: None,
                 sender_mail_waiting_at_send: None,
+                posted_by_session: None,
             })
             .await
             .expect("post ok")
@@ -901,6 +909,43 @@ mod tests {
         store.stop().await;
     }
 
+    /// **`posted_by_session` round-trips through the real store** — the
+    /// column this migration adds, read back through the ordinary scan
+    /// rather than assumed from the write's own echo.
+    #[tokio::test]
+    async fn posted_by_session_round_trips_through_the_real_store() {
+        let (mut store, mail, _readable) = board("posted-by-session").await;
+        let stamped = mail
+            .post_message(NewMessage {
+                mailbox: MailboxName("inbox".into()),
+                body: "stamped with a run".into(),
+                subject: None,
+                sender: "gamma".into(),
+                sent_at: "2026-01-02T00:00:00Z".parse().expect("a fixed instant"),
+                in_reply_to: None,
+                sender_mail_waiting_at_send: None,
+                posted_by_session: Some("s-real-dep".into()),
+            })
+            .await
+            .expect("post ok")
+            .written()
+            .expect("not blocked");
+        assert_eq!(stamped.posted_by_session.as_deref(), Some("s-real-dep"));
+
+        let scanned = mail.scan_messages().await.expect("scan ok");
+        let reread = scanned
+            .iter()
+            .find(|m| m.id == stamped.id)
+            .expect("the message is there");
+        assert_eq!(
+            reread.posted_by_session.as_deref(),
+            Some("s-real-dep"),
+            "the column survives a fresh read: {reread:?}"
+        );
+
+        store.stop().await;
+    }
+
     /// **A message id has the shape of a drawn handle**, six characters from
     /// the alphabet the session handle uses — asserted through the verb a
     /// caller reaches, because a shape the mint produces and the verb does not
@@ -925,6 +970,7 @@ mod tests {
                 sent_at: "2026-01-01T00:00:01Z".parse().expect("a fixed instant"),
                 in_reply_to: None,
                 sender_mail_waiting_at_send: None,
+                posted_by_session: None,
             })
             .await
             .expect("post ok")
@@ -1182,6 +1228,7 @@ mod tests {
                 sent_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
                 in_reply_to: None,
                 sender_mail_waiting_at_send: None,
+                posted_by_session: None,
             })
             .await
             .expect("post ok")
@@ -1298,6 +1345,7 @@ mod tests {
                 sent_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
                 in_reply_to: None,
                 sender_mail_waiting_at_send: None,
+                posted_by_session: None,
             })
             .await
             .expect("post ok")
