@@ -103,6 +103,20 @@ fn the_counted_listing_lock() -> lock::Lock {
         .expect("the vault ships the everyday-listing count lock")
 }
 
+/// **December's cross-subject ticket-deadline lock, read straight off the
+/// shipped document.** Matched by its own sentence for the same reason
+/// `the_counted_listing_lock` is.
+fn the_ticket_deadline_lock() -> lock::Lock {
+    lock::locks_of(expectations::VAULT_ROOM)
+        .into_iter()
+        .find(|found| {
+            found
+                .name()
+                .contains("reads as the wrong thing or as nothing at all")
+        })
+        .expect("the vault ships the ticket-deadline lock")
+}
+
 /// **A session for one sitting, in the day that sitting is in** — the same
 /// shape `year_room.rs`'s own `sitting` takes, copied rather than reinvented:
 /// each phase is a run of its own, on its own day, and a boot meeting a run
@@ -241,6 +255,66 @@ async fn the_count_lock_holds_once_exactly_hugo_is_archived() {
     assert!(
         outcome.held,
         "exactly one archival (Hugo) did not satisfy the count lock: {}",
+        outcome.saying,
+    );
+}
+
+/// **The negative this rests on: filed on the person it rode in on, and the
+/// lock must red.**
+///
+/// The fair's ticket deadline never mentions the fair by name — the
+/// operator hears it from Louise. A sitting that captures it as a fact
+/// about `person:louise` rather than `event:wagstaff-fair` has made exactly
+/// the mistake the overdue read cannot see past: found by key rather than
+/// kind, Louise would read as owed and the fair would read as having
+/// nothing due. `carries event:wagstaff-fair` fails because she is not the
+/// fair, and `lacks person:louise` fails because she is exactly what came
+/// back — both halves miss for the one reason this lock exists to catch.
+#[tokio::test]
+async fn the_ticket_deadline_lock_reds_when_filed_on_the_wrong_subject() {
+    let (_room, surface, sid) = furnished().await;
+    did(
+        &surface,
+        &sid,
+        "capture",
+        json!({"subject": "person:louise", "content": "mentioned tickets stop selling 10 October",
+               "provenance": "testimony", "fields": {"runs_out": "2026-10-10"}}),
+    )
+    .await;
+    let boundaries: Vec<Boundary> = Vec::new();
+    let seen = Observed {
+        room: &surface,
+        boundaries: &boundaries,
+    };
+    let outcome = the_ticket_deadline_lock().check(&seen).await;
+    assert!(
+        !outcome.held,
+        "the ticket deadline filed on Louise instead of the fair held the lock anyway: {}",
+        outcome.saying,
+    );
+}
+
+/// **The positive: filed on the fair, and the lock holds.**
+#[tokio::test]
+async fn the_ticket_deadline_lock_holds_once_filed_on_the_fair() {
+    let (_room, surface, sid) = furnished().await;
+    did(
+        &surface,
+        &sid,
+        "capture",
+        json!({"subject": "event:wagstaff-fair", "content": "Louise mentioned tickets stop selling 10 October",
+               "provenance": "testimony", "fields": {"runs_out": "2026-10-10"}}),
+    )
+    .await;
+    let boundaries: Vec<Boundary> = Vec::new();
+    let seen = Observed {
+        room: &surface,
+        boundaries: &boundaries,
+    };
+    let outcome = the_ticket_deadline_lock().check(&seen).await;
+    assert!(
+        outcome.held,
+        "the ticket deadline filed on the fair did not satisfy the lock: {}",
         outcome.saying,
     );
 }
@@ -631,6 +705,14 @@ async fn august(room: &Surface, sid: &str) {
         "capture",
         json!({"subject": "project:the-shed", "content": "Louise says just buy the kit; still torn",
                "provenance": "testimony", "fields": {"status": "considering"}}),
+    )
+    .await;
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "event:wagstaff-fair", "content": "Louise mentioned tickets stop selling 10 October",
+               "provenance": "testimony", "fields": {"runs_out": "2026-10-10"}}),
     )
     .await;
     did(

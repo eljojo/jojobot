@@ -509,7 +509,7 @@ say     July: no loop carries the fourteenth as a check-in, so the last swim bef
 >
 > Nobody will answer you, but your answer is being read. You must answer.
 >
-> start jojobot as assistant — it is 16 August 2026. The Wagstaff pool shut on the 1st — the roof — and they are saying it will not reopen before 1 April. Louise says I should just buy the kit for the shed; still torn. Sat down at the piano on Tuesday the 11th.
+> start jojobot as assistant — it is 16 August 2026. The Wagstaff pool shut on the 1st — the roof — and they are saying it will not reopen before 1 April. Louise says I should just buy the kit for the shed; still torn. She also mentioned that tickets for the Wagstaff fair stop selling on 10 October. Sat down at the piano on Tuesday the 11th.
 
 ```locks
 # 🚨 **The first of the three causes of silence, filed on the PLACE.** The loop
@@ -523,6 +523,15 @@ say     August: nothing on the pool carries this sitting's own day, so the reaso
 recall {"subject": "project:the-shed", "facts": true}
 carries "recorded_at":"2026-08-16"
 say     August: nothing on the shed carries this sitting's own day, so the fourth month of going round on it is not on record for December to count
+
+# 🚨 **A key on one occasion, mentioned in passing beside a person who is not
+# what it is about.** Louise is the one who says it, the same way June's
+# course arrives by way of Gayle and February's spare set arrives by way of
+# Teddy. The date belongs to the fair; filed under Louise instead, it is
+# lost to every question that reaches the fair by its own handle.
+recall {"subject": "event:wagstaff-fair", "facts": true}
+carries "recorded_at":"2026-08-16"
+say     August: nothing on the fair carries this sitting's own day, so the ticket deadline Louise mentioned in passing is filed under whoever mentioned it, or nowhere
 
 # ⚠️ **The LAST logged turn at the piano.** The operator keeps playing and
 # stops saying so; December has to tell that from the other two silences.
@@ -827,6 +836,18 @@ carries "runs_out":"2026-03-08"
 lacks   "runs_out":"2027-02-01"
 carries "overdue_excluded":4
 say     December: asking what is overdue across every runs_out thing, naming no kind, either misses the one window that has already passed or fails to say how many of the rest it correctly left out
+
+# 🚨 **THE SAME KEY, ON THE WRONG SUBJECT, IF A SITTING EVER WROTE IT THERE.**
+# August's mention of the fair's ticket deadline rode in on Louise's name.
+# The read that finds a window by its key rather than its kind does not know
+# who said it — so a sitting that filed the date under Louise instead of
+# under the fair would make Louise read as owed, and the fair as having
+# nothing due at all. Found across every kind by the day itself, never by a
+# handle either lock could have been written to expect.
+recall {"fields": [{"key": "runs_out", "value": "2026-10-10"}]}
+carries event:wagstaff-fair
+lacks   person:louise
+say     December: the fair's ticket deadline is either not on record under the fair or is on record under Louise instead, so what the operator actually owes reads as the wrong thing or as nothing at all
 ```
 
 ## Phase 13 — later in December, what went quiet and why

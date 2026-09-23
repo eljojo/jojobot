@@ -49,9 +49,11 @@
 //! control in the same move; and 63 more turned out to be proven ALREADY —
 //! see [`NEGATIVE_CONTROLS`]'s own doc for all shapes. The decision-log
 //! room shipped after that count, with all 15 of its own locks proven at
-//! birth by the same blanket pair `bike_room.rs` and the others use. The
-//! backlog now stands at 56 of 144, and every one of those 56 is a
-//! `vault.md` lock with no existing proof of its own.
+//! birth by the same blanket pair `bike_room.rs` and the others use. A ninth
+//! control landed with its own new lock, the same way the first eight did —
+//! see [`NEGATIVE_CONTROLS`]'s own doc. The backlog now stands at 57 of 146,
+//! and every one of those 57 is a `vault.md` lock with no existing proof of
+//! its own.
 
 use crate::expectations::{
     BIKE_ROOM, DECISIONS_ROOM, HANDOVER_ROOM, LOOP_ROOM, VAULT_ROOM, YEAR_ROOM,
@@ -102,12 +104,12 @@ pub enum Strength {
 
 /// **Every lock this build has actually proven failable, so far.**
 ///
-/// 88 entries, of five different shapes: 77 blanket and 11 discriminating.
-/// Quote the discriminating count as eleven, with one constructed positive
-/// — never as a bare eleven; see the note on `tests/fair_lock.rs` below for
+/// 89 entries, of five different shapes: 77 blanket and 12 discriminating.
+/// Quote the discriminating count as twelve, with one constructed positive
+/// — never as a bare twelve; see the note on `tests/fair_lock.rs` below for
 /// why.
 ///
-/// Eight are freshly written, landing with their lock in the same slice:
+/// Nine are freshly written, landing with their lock in the same slice:
 /// `tests/desk_lock.rs` replays Run 23's exact real regression (a
 /// `clear_fields` write nobody asked for, wiping the desk's return window);
 /// `tests/wharf_lock.rs` replays another — a timing filed on an invented
@@ -124,9 +126,13 @@ pub enum Strength {
 /// `tests/course_lock.rs` proves an eighth — a course's span filed on an
 /// invented event rather than the college three months of facts already
 /// point to, provable only once `wire.rs`'s fact renderer actually put
-/// `happened_through` on the answer. Each proves its lock reddens for the
-/// real mistake, then proves it holds when filed correctly. Nothing here
-/// was retrofit onto an older lock.
+/// `happened_through` on the answer; and `tests/vault_room.rs` proves a
+/// ninth — a key on one occasion (the fair's ticket deadline), mentioned in
+/// passing beside a person who is not what it is about (Louise), filed on
+/// her rather than on the fair the overdue read would have to find it
+/// under. Each proves its lock reddens for the real mistake, then proves it
+/// holds when filed correctly. Nothing here was retrofit onto an older
+/// lock.
 ///
 /// **`tests/fair_lock.rs` is not quite the same claim as the other seven,
 /// and `Strength` does not currently say so.** Its negative is a verbatim
@@ -265,6 +271,15 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
                or as prose a later question cannot compare a date against",
         file: "tests/course_lock.rs",
         function: "the_course_span_lock_reds_when_filed_on_an_invented_event",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::VAULT_ROOM,
+        lock: "Phase 12 — December: the fair's ticket deadline is either not on record under \
+               the fair or is on record under Louise instead, so what the operator actually \
+               owes reads as the wrong thing or as nothing at all",
+        file: "tests/vault_room.rs",
+        function: "the_ticket_deadline_lock_reds_when_filed_on_the_wrong_subject",
         strength: Strength::Discriminating,
     },
     NegativeControl {
@@ -943,6 +958,10 @@ pub const PENDING: &[Pending<'static>] = &[
     Pending {
         room: VAULT_ROOM,
         lock: "Phase 8 — August: nothing on the shed carries this sitting's own day, so the fourth month of going round on it is not on record for December to count",
+    },
+    Pending {
+        room: VAULT_ROOM,
+        lock: "Phase 8 — August: nothing on the fair carries this sitting's own day, so the ticket deadline Louise mentioned in passing is filed under whoever mentioned it, or nowhere",
     },
     Pending {
         room: VAULT_ROOM,
