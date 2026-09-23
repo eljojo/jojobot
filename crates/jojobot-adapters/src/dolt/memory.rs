@@ -4580,4 +4580,28 @@ mod tests {
 
         store.stop().await;
     }
+
+    /// A role's exclusivity against the real store — the same suite the
+    /// fake answers for, run against a disposable Dolt instance this test
+    /// spawns and tears down itself.
+    #[tokio::test]
+    async fn dolt_satisfies_the_role_claim_contract() {
+        let scratch = Scratch::new("role-claims");
+        let mut store = Dolt::start(&scratch.0, free_port())
+            .await
+            .expect("the store comes up");
+        let pool = store
+            .database("roleclaims")
+            .await
+            .expect("a database of its own");
+        migrate::run(&pool).await.expect("the schema");
+        jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
+            .await
+            .expect("the kinds are seeded");
+
+        let memory = DoltMemory::open(pool.clone());
+        jojobot_domain::memory::testing::contract::run_all_role_claims(&memory).await;
+
+        store.stop().await;
+    }
 }

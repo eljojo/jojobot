@@ -20,12 +20,17 @@ getrandom = { workspace = true }
 serde = { workspace = true }
 jiff = { workspace = true, features = ["serde"] }
 thiserror = { workspace = true }
+# Optional, and only ever pulled in by the `testing` feature below: the shared
+# contract's own race case joins two real futures rather than awaiting them
+# one after another, which is what `tokio::join!` is for. Absent from every
+# production binary, exactly like the fake it rides in beside.
+tokio = { workspace = true, optional = true }
 
 # The in-memory fake and the shared contract spec live behind this feature so
 # they compile for tests (here and in downstream crates) but NEVER ship in a
 # production binary.
 [features]
-testing = []
+testing = ["dep:tokio"]
 
 [dev-dependencies]
 tokio = { workspace = true }

@@ -10,10 +10,12 @@ mod support;
 
 pub mod base;
 pub mod mentioning;
+pub mod role_claims;
 pub mod search;
 pub mod stands_for;
 
 pub use base::*;
 pub use mentioning::*;
+pub use role_claims::*;
 pub use search::*;
 pub use stands_for::*;

@@ -4958,6 +4958,13 @@ mod tests {
         contract::run_all(&InMemoryMemory::booted()).await;
     }
 
+    /// A role's exclusivity against the fake — the same suite the gated
+    /// integration test runs against real Dolt.
+    #[tokio::test]
+    async fn fake_satisfies_the_role_claim_contract() {
+        contract::run_all_role_claims(&InMemoryMemory::booted()).await;
+    }
+
     /// The mark's own contract against the fake — the same suite the gated
     /// integration test runs against real Dolt.
     #[tokio::test]
