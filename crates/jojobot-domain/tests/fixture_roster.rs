@@ -112,6 +112,7 @@ const ROSTER: &[&str] = &[
     "bot:contract-repointed",
     "bot:contract-role-capture-race",
     "bot:contract-role-concurrent-race",
+    "bot:contract-role-takeover-race",
     "bot:contract-role-update-race",
     "bot:contract-room-over-capacity-edit",
     "bot:contract-still-no-box",

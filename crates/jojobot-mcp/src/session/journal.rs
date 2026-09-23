@@ -234,55 +234,7 @@ impl Jojobot {
         claimant: &str,
         now: jiff::Timestamp,
     ) {
-        let fields = match self.memory.fields(bot).await {
-            Ok(fields) => fields,
-            Err(e) => {
-                tracing::warn!(
-                    error = %e, %bot,
-                    "could not read the bot's fields to renew a role claim"
-                );
-                return;
-            }
-        };
-        let held_roles: Vec<String> = fields
-            .iter()
-            .filter_map(|(key, holder)| {
-                if holder != claimant {
-                    return None;
-                }
-                key.strip_prefix("role/")?
-                    .strip_suffix("/holder")
-                    .map(str::to_string)
-            })
-            .collect();
-        if held_roles.is_empty() {
-            return;
-        }
-        let backing = match self.memory.backing(bot).await {
-            Ok(backing) => backing,
-            Err(e) => {
-                tracing::warn!(
-                    error = %e, %bot,
-                    "could not read the bot's fields' backing to renew a role claim"
-                );
-                return;
-            }
-        };
-        for role in held_roles {
-            let claimed_at_key = jojobot_domain::session::role_claimed_at_key(&role);
-            let Some(backing) = backing.get(&claimed_at_key) else {
-                tracing::warn!(%bot, role, "a held role's claimed-at field has no backing to renew");
-                continue;
-            };
-            let address = FactAddress::new(bot.clone(), backing.fact.clone());
-            let patch = FactPatch {
-                fields: std::collections::BTreeMap::from([(claimed_at_key, now.to_string())]),
-                ..Default::default()
-            };
-            if let Err(e) = self.memory.update_fact(&address, patch, bot).await {
-                tracing::warn!(error = %e, %bot, role, "a role claim could not be renewed");
-            }
-        }
+        self.write_role_claims(bot, claimant, now, "renew").await;
     }
 
     /// **Release every role this session's own claimant holds, on wrap.**
@@ -301,13 +253,47 @@ impl Jojobot {
     /// Best-effort: a read or write failure here is logged and never turns a
     /// wrap that landed into a failed call.
     pub(crate) async fn release_role_claims(&self, bot: &EntityId, claimant: &str) {
+        self.write_role_claims(bot, claimant, jiff::Timestamp::UNIX_EPOCH, "release")
+            .await;
+    }
+
+    /// **The one mechanism behind claim, renew and release alike: a
+    /// self-claim, atomic against the store's live state, differing only in
+    /// what `claimed_at` is written as.** Renewing writes `now`, exactly the
+    /// shape a fresh claim writes; releasing writes the UNIX epoch, which
+    /// reads as stale to the very next [`crate::session::claim_role`] call —
+    /// functionally identical to clearing the fields, without a second
+    /// atomic-check shape for the store to carry.
+    ///
+    /// **Both are compare-and-write, not read-then-write.** Both go through
+    /// `role_write_in` writing BOTH of a role's fields together, so
+    /// [`crate::session::claim_role`]'s own guard runs, atomically, inside
+    /// the store's write: `holder != claimant` refuses it. A rival that took
+    /// over between this function's own pre-read and its write is
+    /// protected by that guard, not by the pre-read, which exists only to
+    /// find which roles are worth attempting — the same shape the claim
+    /// path's own pre-read already has.
+    ///
+    /// **A `RoleTaken` refusal here is success, not failure**: it is
+    /// exactly "apply only while the holder is still this sid; otherwise
+    /// change nothing", so it is not logged as an error. A `Conflict` is
+    /// retried once — the store's own optimistic concurrency caught a
+    /// genuine simultaneous write, and retrying the same call is the
+    /// documented, correct response to it, not a guess.
+    ///
+    /// Best-effort throughout: a read or write failure here is logged and
+    /// never turns the write this was called from into a failed call.
+    async fn write_role_claims(
+        &self,
+        bot: &EntityId,
+        claimant: &str,
+        at: jiff::Timestamp,
+        verb: &'static str,
+    ) {
         let fields = match self.memory.fields(bot).await {
             Ok(fields) => fields,
             Err(e) => {
-                tracing::warn!(
-                    error = %e, %bot,
-                    "could not read the bot's fields to release a role claim"
-                );
+                tracing::warn!(error = %e, %bot, verb, "could not read the bot's fields");
                 return;
             }
         };
@@ -328,10 +314,7 @@ impl Jojobot {
         let backing = match self.memory.backing(bot).await {
             Ok(backing) => backing,
             Err(e) => {
-                tracing::warn!(
-                    error = %e, %bot,
-                    "could not read the bot's fields' backing to release a role claim"
-                );
+                tracing::warn!(error = %e, %bot, verb, "could not read the bot's fields' backing");
                 return;
             }
         };
@@ -339,16 +322,26 @@ impl Jojobot {
             let holder_key = jojobot_domain::session::role_holder_key(&role);
             let claimed_at_key = jojobot_domain::session::role_claimed_at_key(&role);
             let Some(backing) = backing.get(&holder_key) else {
-                tracing::warn!(%bot, role, "a held role's holder field has no backing to release");
+                tracing::warn!(%bot, role, verb, "a held role's holder field has no backing");
                 continue;
             };
             let address = FactAddress::new(bot.clone(), backing.fact.clone());
-            let patch = FactPatch {
-                clear_fields: vec![holder_key, claimed_at_key],
+            let patch = || FactPatch {
+                fields: std::collections::BTreeMap::from([
+                    (holder_key.clone(), claimant.to_string()),
+                    (claimed_at_key.clone(), at.to_string()),
+                ]),
                 ..Default::default()
             };
-            if let Err(e) = self.memory.update_fact(&address, patch, bot).await {
-                tracing::warn!(error = %e, %bot, role, "a role claim could not be released");
+            let mut outcome = self.memory.update_fact(&address, patch(), bot).await;
+            if matches!(outcome, Err(MemoryError::Conflict)) {
+                outcome = self.memory.update_fact(&address, patch(), bot).await;
+            }
+            match outcome {
+                Ok(_) | Err(MemoryError::RoleTaken { .. }) => {}
+                Err(e) => {
+                    tracing::warn!(error = %e, %bot, role, verb, "a role claim write failed");
+                }
             }
         }
     }

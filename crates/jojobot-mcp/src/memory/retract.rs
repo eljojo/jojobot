@@ -70,6 +70,21 @@ impl Jojobot {
         let address = FactAddress::parse(&args.address).map_err(memory_error)?;
         let date = self.dated(args.recorded_at.as_deref(), args.sid.as_deref())?;
 
+        // **A retraction is archiving by another name.** Only writes carried
+        // by an active record fold, so taking this record back removes a
+        // role's holder or claimed_at from the fold exactly as archiving it
+        // through `update_fact` would — see that verb's own copy of this
+        // check. Checked against the record's OWN fields, the ones it was
+        // captured or last edited with.
+        let carried = self.memory.recall(&address.home).await.unwrap_or_default();
+        let refused = carried
+            .iter()
+            .find(|fact| fact.address() == address)
+            .and_then(|fact| jojobot_domain::memory::refuses_role_fields(fact.fields.keys()));
+        if let Some(refused) = refused {
+            return memory_declined("retract", refused);
+        }
+
         // **A write that landed is never reported as failed** (rule 130): see
         // `capture`'s own note on the same shape.
         let (taken_back, fold_behind) = match self
@@ -720,5 +735,77 @@ mod tests {
         // **The positive half.** The retraction still landed, exactly as an
         // ordinary retract does.
         assert_eq!(body["retracted"]["status"], "archived", "{body}");
+    }
+
+    /// **Retracting is archiving by another name**, so it faces the same
+    /// role-field guard `update_fact`'s own archive path does: taking back
+    /// the record that carries a role's holder or claimed_at would remove
+    /// both from the fold without this call ever naming either key. Paired
+    /// with the claim path itself: a renewal through the boot door still
+    /// moves the claim after the refusal.
+    #[tokio::test]
+    async fn retract_refuses_to_archive_a_roles_own_fields() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        let booted = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    claim: Some("dev-dispatch".into()),
+                    timezone: None,
+                    bot: Some("gamma".into()),
+                    brief: None,
+                    skill: None,
+                    resume: None,
+                    sid: None,
+                    today: None,
+                }))
+                .await
+                .expect("start_here ok"),
+        );
+        let sid = sid_of(&booted).expect("a handle");
+        assert_eq!(booted["session"]["claim"]["status"], "taken", "{booted}");
+
+        let bot = EntityId("bot:gamma".into());
+        let claim_address = jojobot
+            .memory
+            .recall(&bot)
+            .await
+            .expect("recall ok")
+            .into_iter()
+            .find(|fact| fact.fields.contains_key("role/dev-dispatch/holder"))
+            .expect("the claim left a fact carrying its own fields")
+            .address()
+            .to_string();
+
+        let refused = blocked(
+            &jojobot
+                .retract(Parameters(retract_args(
+                    &claim_address,
+                    "trying to clear the way",
+                )))
+                .await
+                .expect("a refusal is an answer, not a protocol failure"),
+        );
+        assert_eq!(refused["wrote"], false, "{refused}");
+
+        let after = jojobot.memory.fields(&bot).await.expect("fields ok");
+        assert_eq!(
+            after.get("role/dev-dispatch/holder"),
+            Some(&sid),
+            "the claim's own holder must survive the refused retraction: {after:?}"
+        );
+
+        let claimed_at_before = after
+            .get("role/dev-dispatch/claimed_at")
+            .cloned()
+            .expect("the claim's own field is present");
+        crate::session::testing::journal_entry(&jojobot, &sid, "kept working past the refusal")
+            .await;
+        let renewed = jojobot.memory.fields(&bot).await.expect("fields ok");
+        assert_ne!(
+            renewed.get("role/dev-dispatch/claimed_at"),
+            Some(&claimed_at_before),
+            "the claim path must still renew once the side door is closed: {renewed:?}"
+        );
     }
 }

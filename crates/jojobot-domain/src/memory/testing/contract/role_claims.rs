@@ -191,8 +191,86 @@ pub async fn two_concurrent_captures_race_and_exactly_one_wins<M: Memory>(store:
     );
 }
 
+/// **A stale former holder's own write is a self-claim like any other, so
+/// it faces the same check a rival's would** — the fix for the exact bug a
+/// release once had: reading the holder, then writing unconditionally,
+/// with nothing between the two re-checking who holds it NOW. Renew and
+/// release both write `role_holder_key` and `role_claimed_at_key`
+/// together, the same shape a claim writes, differing only in the
+/// timestamp — so a former holder's own write, arriving after a rival has
+/// legitimately taken over, is refused by [`crate::session::claim_role`]
+/// exactly as a stranger's would be, never a blind overwrite.
+pub async fn a_stale_holders_own_write_is_refused_once_a_rival_has_taken_over<M: Memory>(
+    store: &M,
+) {
+    let bot = EntityId("bot:contract-role-takeover-race".into());
+    ensure(store, &bot).await;
+    let claimed_at = crate::session::testing::contract::epoch();
+    let stale = claimed_at + crate::session::LEASE_FRESHNESS + jiff::SignedDuration::from_secs(1);
+
+    let claimed = capture(
+        store,
+        NewFact {
+            fields: role_fields("delta", claimed_at),
+            ..NewFact::about(bot.clone(), "delta claims the role", date(2026, 7, 1))
+        },
+    )
+    .await;
+
+    // Delta's claim is now stale, so epsilon's claim is legitimate — the
+    // same rival-takeover this contract already proves grants a fresh
+    // claimant once the lease has gone cold.
+    let taken_over = store
+        .update_fact(
+            &claimed.address(),
+            FactPatch {
+                fields: role_fields("epsilon", stale),
+                ..FactPatch::default()
+            },
+            &bot,
+        )
+        .await;
+    assert!(
+        matches!(taken_over, Ok(Guarded::Written(_))),
+        "epsilon's claim must be granted once delta's has gone stale, or this proves nothing \
+         about a takeover: {taken_over:?}",
+    );
+
+    // Delta's own write — release (an expired `claimed_at`) or renewal (a
+    // fresh one) both take this shape — must be refused now that epsilon
+    // legitimately holds it, never accepted as if delta still did.
+    for (label, delta_writes) in [
+        ("release", jiff::Timestamp::UNIX_EPOCH),
+        ("renewal", stale + jiff::SignedDuration::from_secs(1)),
+    ] {
+        let delta_write = store
+            .update_fact(
+                &claimed.address(),
+                FactPatch {
+                    fields: role_fields("delta", delta_writes),
+                    ..FactPatch::default()
+                },
+                &bot,
+            )
+            .await;
+        assert!(
+            matches!(delta_write, Err(MemoryError::RoleTaken { ref holder, .. }) if holder == "epsilon"),
+            "delta's {label}, arriving after epsilon's legitimate takeover, must be refused \
+             naming epsilon — never silently accepted: {delta_write:?}",
+        );
+    }
+
+    let fields = folded_fields_of(store, &bot).await;
+    assert_eq!(
+        fields.get(&crate::session::role_holder_key(ROLE)),
+        Some(&"epsilon".to_string()),
+        "epsilon's legitimate claim must survive both of delta's refused writes: {fields:?}",
+    );
+}
+
 pub async fn run_all_role_claims<M: Memory>(store: &M) {
     a_second_capture_racing_the_first_is_refused(store).await;
     a_rival_update_fact_claim_is_refused_while_the_lease_is_fresh(store).await;
     two_concurrent_captures_race_and_exactly_one_wins(store).await;
+    a_stale_holders_own_write_is_refused_once_a_rival_has_taken_over(store).await;
 }

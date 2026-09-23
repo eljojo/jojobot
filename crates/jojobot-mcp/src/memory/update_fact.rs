@@ -395,6 +395,17 @@ impl Jojobot {
             }
             (true, true) | (false, false) => {}
         }
+        // **A role's own two fields are the boot door's, whoever is asking.**
+        // The claim and renewal paths reach the Memory trait directly, never
+        // through this verb, so a write that reaches here naming either
+        // field — set or cleared — is, by construction, not one of those
+        // two. See `refuses_role_fields` and `capture`'s own copy of this
+        // check.
+        if let Some(refused) = jojobot_domain::memory::refuses_role_fields(
+            patch.fields.keys().chain(&patch.clear_fields),
+        ) {
+            return memory_declined("update_fact", refused);
+        }
         // **What THIS write sent, not what the fact ends up carrying.** The
         // fact's own edge can already be set from an earlier write this call
         // never touched, so the gate below reads the patch rather than the
@@ -405,6 +416,23 @@ impl Jojobot {
         // Whether the rhythm still shows a due moment AFTER this write is
         // read once the write lands — see [`Jojobot::still_has_a_due_moment`].
         let archives_this_write = patch.status == Some(FactStatus::Archived);
+        // **Archiving is the third way to take a role field off the fold**,
+        // beside `fields` and `clear_fields`: only writes carried by an
+        // active record fold at all, so archiving the record that carries a
+        // role's holder or claimed_at takes it out exactly as clearing the
+        // key would, without ever naming the key in this patch. Checked
+        // against the record's OWN fields — the ones it was captured or last
+        // edited with — because that is what would leave the fold.
+        if archives_this_write {
+            let carried = self.memory.recall(&address.home).await.unwrap_or_default();
+            let refused = carried
+                .iter()
+                .find(|fact| fact.address() == address)
+                .and_then(|fact| jojobot_domain::memory::refuses_role_fields(fact.fields.keys()));
+            if let Some(refused) = refused {
+                return memory_declined("update_fact", refused);
+            }
+        }
         // **A write that landed is never reported as failed** (rule 130): see
         // `capture`'s own note on the same shape.
         let (written, fold_behind) =
@@ -757,6 +785,7 @@ mod tests {
     use crate::harness::*;
     use crate::memory::recall::FollowArgs;
     use crate::memory::testing::*;
+    use crate::session::testing::journal_entry;
     use jojobot_domain::memory::types::{Field, ValueType};
 
     /// 🚨 **A rewrite says what it did NOT destroy**, because a caller that
@@ -2714,6 +2743,114 @@ mod tests {
             after[jojobot_domain::memory::THOUGHT_CAPACITY],
             "5",
             "a different identity's patch must land: {after}"
+        );
+    }
+
+    /// **The three side doors `update_fact` would otherwise leave open on a
+    /// role's own two fields**: setting the holder directly, clearing the
+    /// claim moment, and archiving the record that carries them — none of
+    /// this verb's business, because the claim and renewal paths never reach
+    /// it. Paired with the claim path itself: a renewal through the boot
+    /// door still moves the claim after all three refusals, so the guard is
+    /// proven to stop only the ordinary surface.
+    #[tokio::test]
+    async fn update_fact_refuses_to_set_clear_or_archive_a_roles_own_fields() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        let booted = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    claim: Some("dev-dispatch".into()),
+                    timezone: None,
+                    bot: Some("gamma".into()),
+                    brief: None,
+                    skill: None,
+                    resume: None,
+                    sid: None,
+                    today: None,
+                }))
+                .await
+                .expect("start_here ok"),
+        );
+        let sid = sid_of(&booted).expect("a handle");
+        assert_eq!(booted["session"]["claim"]["status"], "taken", "{booted}");
+
+        let bot = EntityId("bot:gamma".into());
+        let claim_address = jojobot
+            .memory
+            .recall(&bot)
+            .await
+            .expect("recall ok")
+            .into_iter()
+            .find(|fact| fact.fields.contains_key("role/dev-dispatch/holder"))
+            .expect("the claim left a fact carrying its own fields")
+            .address()
+            .to_string();
+
+        let set = blocked(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    fields: Some(
+                        [(
+                            "role/dev-dispatch/holder".to_string(),
+                            "epsilon".to_string(),
+                        )]
+                        .into_iter()
+                        .collect(),
+                    ),
+                    ..update_args(&claim_address)
+                }))
+                .await
+                .expect("a refusal is an answer, not a protocol failure"),
+        );
+        assert_eq!(set["wrote"], false, "{set}");
+
+        let cleared = blocked(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    clear_fields: Some(vec!["role/dev-dispatch/claimed_at".into()]),
+                    ..update_args(&claim_address)
+                }))
+                .await
+                .expect("a refusal is an answer, not a protocol failure"),
+        );
+        assert_eq!(cleared["wrote"], false, "{cleared}");
+
+        let archived = blocked(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    status: Some("archived".into()),
+                    ..update_args(&claim_address)
+                }))
+                .await
+                .expect("a refusal is an answer, not a protocol failure"),
+        );
+        assert_eq!(archived["wrote"], false, "{archived}");
+
+        let after = jojobot.memory.fields(&bot).await.expect("fields ok");
+        assert_eq!(
+            after.get("role/dev-dispatch/holder"),
+            Some(&sid),
+            "the claim's own holder must survive all three refused attempts: {after:?}"
+        );
+
+        // The claim path itself, untouched: a renewal through the boot door
+        // still moves the claim moment after every side door was refused.
+        let claimed_at_before = after
+            .get("role/dev-dispatch/claimed_at")
+            .cloned()
+            .expect("the claim's own field is present");
+        journal_entry(
+            &jojobot,
+            &sid,
+            "kept working after the side doors were tried",
+        )
+        .await;
+        let renewed = jojobot.memory.fields(&bot).await.expect("fields ok");
+        assert_ne!(
+            renewed.get("role/dev-dispatch/claimed_at"),
+            Some(&claimed_at_before),
+            "the claim path must still renew once the side doors are closed: {renewed:?}"
         );
     }
 }
