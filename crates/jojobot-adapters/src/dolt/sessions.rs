@@ -22,7 +22,8 @@ use jiff::Timestamp;
 use jojobot_domain::memory::{Entity, EntityId, mention};
 use jojobot_domain::session::{
     EntryId, JournalEntry, NewEntry, NewSession, Session, SessionError, SessionId, SessionState,
-    Sessions, Sid, normalize_entry, validate_entry, validate_focus, validate_session_id,
+    Sessions, Sid, is_readable_sid, normalize_entry, validate_entry, validate_focus,
+    validate_session_id,
 };
 use sqlx::{MySql, MySqlPool, Row, Transaction};
 
@@ -374,6 +375,25 @@ fn store(e: sqlx::Error) -> SessionError {
 /// One row of the summary query, as the domain's [`SessionSummary`] — the
 /// same field-by-field reading [`session_from`] does, minus the entries no
 /// query for this ever asked for.
+/// **A stored `sid` filtered the way the front door reads a handle.** A
+/// value that fails [`is_readable_sid`] is not a card this build could have
+/// minted — the earlier card-backed adapter filtered exactly this on load,
+/// and a stricter read here restores that guard. The row still reads: this
+/// only answers what the `sid` column resolves to, never whether the read
+/// itself may proceed. `session_id` is for the warning alone.
+fn readable_sid(sid: Option<String>, session_id: &str) -> Option<Sid> {
+    let sid = sid?;
+    if is_readable_sid(&sid) {
+        return Some(Sid(sid));
+    }
+    tracing::warn!(
+        session = session_id,
+        sid = %sid,
+        "a session row carries a sid this build did not mint — read as absent"
+    );
+    None
+}
+
 fn summary_from(
     row: &sqlx::mysql::MySqlRow,
 ) -> Result<jojobot_domain::session::SessionSummary, SessionError> {
@@ -381,9 +401,10 @@ fn summary_from(
     let started: String = row.try_get("started_at").map_err(store)?;
     let sid: Option<String> = row.try_get("sid").map_err(store)?;
     let last_beat: String = row.try_get("last_beat").map_err(store)?;
+    let id: String = row.try_get("id").map_err(store)?;
     Ok(jojobot_domain::session::SessionSummary {
-        id: SessionId(row.try_get::<String, _>("id").map_err(store)?),
-        sid: sid.map(Sid),
+        sid: readable_sid(sid, &id),
+        id: SessionId(id),
         bot: EntityId(row.try_get::<String, _>("bot").map_err(store)?),
         focus: row.try_get::<String, _>("focus").map_err(store)?,
         started_at: instant(&started)?,
@@ -403,9 +424,10 @@ fn session_from(
     let state: String = row.try_get("state").map_err(store)?;
     let started: String = row.try_get("started_at").map_err(store)?;
     let sid: Option<String> = row.try_get("sid").map_err(store)?;
+    let id: String = row.try_get("id").map_err(store)?;
     Ok(Session {
-        id: SessionId(row.try_get::<String, _>("id").map_err(store)?),
-        sid: sid.map(Sid),
+        sid: readable_sid(sid, &id),
+        id: SessionId(id),
         timezone: row
             .try_get::<Option<String>, _>("timezone")
             .map_err(store)?,
@@ -582,6 +604,17 @@ impl Sessions for DoltSessions {
 
     async fn begin(&self, new: NewSession) -> Result<Session, SessionError> {
         validate_focus(&new.focus)?;
+        // **A sid is minted, never written by hand.** The same refusal shape
+        // a bad focus already gets: nothing is written, and the caller is
+        // told why before anything reaches the store.
+        if !is_readable_sid(new.sid.as_str()) {
+            return Err(SessionError::InvalidEntry(format!(
+                "sid '{}' is not a handle this build ever mints — a sid is {} characters drawn \
+                 from its own alphabet, never one a caller writes",
+                new.sid.as_str(),
+                jojobot_domain::session::SID_LEN,
+            )));
+        }
         let mut tx = self.pool.begin().await.map_err(store)?;
 
         // **One handle, one run.** A caller retrying a `begin` whose write
@@ -1184,16 +1217,19 @@ mod tests {
         store.stop().await;
     }
 
-    /// **A `sid`'s shape is never checked, on write or on read.** The state
-    /// and the timestamp just above are refused when they cannot be parsed
-    /// back; `sid` gets no equivalent anywhere in this file — `begin` binds
-    /// it straight into the `INSERT`, and `session_from` wraps whatever text
-    /// comes back in `Sid` unchanged. So a card that fails
-    /// `is_readable_sid` is not a hypothetical: the front door itself will
-    /// write one, and hand it back exactly as given.
+    /// **A `sid`'s shape is checked on write, and filtered on read.**
+    ///
+    /// `begin` refuses a sid that fails `is_readable_sid`, the same refusal
+    /// shape a bad focus already gets — nothing is written. A row that
+    /// already carries one — a hand edit, or a card the deployed store
+    /// already holds from before this guard existed — must still read: the
+    /// earlier card-backed adapter filtered exactly this on load, and this
+    /// restores it, on both `read_session` and `summaries_of`. The row
+    /// itself, its state and its focus are untouched; only what `sid`
+    /// resolves to changes.
     #[tokio::test]
-    async fn a_sids_shape_is_never_checked_on_write_or_on_read() {
-        let scratch = Scratch::new("unchecked-sid-shape");
+    async fn a_sids_shape_is_checked_on_write_and_filtered_on_read() {
+        let scratch = Scratch::new("checked-sid-shape");
         let path = scratch.0.clone();
         std::mem::forget(scratch);
         let mut store = Dolt::start(&path, free_port())
@@ -1207,14 +1243,14 @@ mod tests {
 
         // Uppercase is outside `SID_ALPHABET`, so this fails the shape check
         // on length-correct input — the fixture must actually be unreadable
-        // or the round trip below proves nothing.
+        // or neither half below proves anything.
         let bad = "BAD1";
         assert!(
             !jojobot_domain::session::is_readable_sid(bad),
             "the fixture must be unreadable to begin with"
         );
 
-        let begun = sessions
+        let refused = sessions
             .begin(NewSession {
                 timezone: None,
                 started_on: None,
@@ -1223,19 +1259,90 @@ mod tests {
                 focus: "a run".into(),
                 started_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
             })
-            .await
-            .expect("begin does not check the sid's shape");
-        assert_eq!(begun.sid, Some(Sid(bad.into())));
+            .await;
+        assert!(
+            matches!(refused, Err(SessionError::InvalidEntry(_))),
+            "begin must refuse a malformed sid, the shape a bad focus already gets: {refused:?}"
+        );
+
+        // **Straight into the table, around `begin`.** The read side must
+        // never fail on this: the deployed store can already hold a row
+        // like it, and a stricter parse that fails the whole read over one
+        // bad column is the class of change that has taken production down
+        // before.
+        let id = SessionId("mmmmmm".into());
+        sqlx::query(
+            "INSERT INTO session (id, sid, bot, focus, started_at, state)
+             VALUES (?, ?, 'bot:gamma', 'what it was doing', ?, ?)",
+        )
+        .bind(id.as_str())
+        .bind(bad)
+        .bind("2026-01-01T00:00:00Z")
+        .bind(SessionState::Active.as_token())
+        .execute(store.pool())
+        .await
+        .expect("the board takes the row");
 
         let read = sessions
-            .read_session(&begun.id)
+            .read_session(&id)
             .await
-            .expect("read does not check it either");
+            .expect("a malformed sid must not fail the read");
         assert_eq!(
-            read.sid,
-            Some(Sid(bad.into())),
-            "the unreadable sid round-trips exactly as written"
+            read.sid, None,
+            "a sid this build did not mint must read as absent, never as the value itself"
         );
+        assert_eq!(
+            read.state,
+            SessionState::Active,
+            "the row's own state is untouched"
+        );
+        assert_eq!(
+            read.focus, "what it was doing",
+            "the row's own focus is untouched"
+        );
+
+        let listed = sessions
+            .summaries_of(&EntityId("bot:gamma".into()))
+            .await
+            .expect("listing must not fail on it either");
+        let summary = listed
+            .iter()
+            .find(|s| s.id == id)
+            .expect("the row is still listed");
+        assert_eq!(summary.sid, None);
+
+        // **The positive the filter rests on.** Without it, a build that
+        // filtered every sid — well-formed ones included — would pass
+        // everything above by accident.
+        let good = sessions
+            .begin(NewSession {
+                timezone: None,
+                started_on: None,
+                bot: EntityId("bot:gamma".into()),
+                sid: Sid("gd01".into()),
+                focus: "an ordinary run".into(),
+                started_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
+            })
+            .await
+            .expect("a well-formed sid is not refused");
+        let read_good = sessions
+            .read_session(&good.id)
+            .await
+            .expect("a well-formed sid's row still reads");
+        assert_eq!(
+            read_good.sid,
+            Some(Sid("gd01".into())),
+            "a well-formed sid must survive the read, not be filtered along with a bad one"
+        );
+        let listed = sessions
+            .summaries_of(&EntityId("bot:gamma".into()))
+            .await
+            .expect("listing ok");
+        let good_summary = listed
+            .iter()
+            .find(|s| s.id == good.id)
+            .expect("the good row is listed");
+        assert_eq!(good_summary.sid, Some(Sid("gd01".into())));
 
         store.stop().await;
     }
@@ -1426,7 +1533,7 @@ mod tests {
         let session = sessions
             .begin(NewSession {
                 bot: EntityId("bot:gamma".to_string()),
-                sid: Sid("sid-migrate".to_string()),
+                sid: Sid("sg01".to_string()),
                 focus: "about @thing:contract-migrate-mentions-was".to_string(),
                 started_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
                 timezone: None,
@@ -1517,7 +1624,7 @@ mod tests {
         let session = sessions
             .begin(NewSession {
                 bot: EntityId("bot:contract-migrate-bot-column-gamma".to_string()),
-                sid: Sid("sid-migrate-bot".to_string()),
+                sid: Sid("sg02".to_string()),
                 focus: "written before resolution existed".to_string(),
                 started_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
                 timezone: None,
@@ -1614,7 +1721,7 @@ mod tests {
         let handed = sessions
             .begin(NewSession {
                 bot: EntityId("bot:milhouse".to_string()),
-                sid: Sid("served-sid-a".to_string()),
+                sid: Sid("sa01".to_string()),
                 focus: "answering things".to_string(),
                 started_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
                 timezone: None,
@@ -1625,7 +1732,7 @@ mod tests {
         let untouched = sessions
             .begin(NewSession {
                 bot: EntityId("bot:gamma".to_string()),
-                sid: Sid("served-sid-b".to_string()),
+                sid: Sid("sa02".to_string()),
                 focus: "not yet asked anything".to_string(),
                 started_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
                 timezone: None,

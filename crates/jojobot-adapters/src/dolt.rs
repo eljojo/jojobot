@@ -1223,7 +1223,7 @@ pub(crate) mod tests {
         let session = sess
             .begin(NewSession {
                 bot: jojobot_domain::memory::EntityId("bot:contract-migrate-permanent-ids".into()),
-                sid: Sid("sid-permanent-ids".to_string()),
+                sid: Sid("pm01".to_string()),
                 focus: "about @thing:contract-migrate-permanent-ids-skip".to_string(),
                 started_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
                 timezone: None,
@@ -1315,7 +1315,7 @@ pub(crate) mod tests {
                 bot: jojobot_domain::memory::EntityId(
                     "bot:contract-migrate-permanent-ids-2".into(),
                 ),
-                sid: Sid("sid-permanent-ids-2".to_string()),
+                sid: Sid("pm02".to_string()),
                 focus: "about @thing:contract-migrate-permanent-ids-run".to_string(),
                 started_at: "2026-01-01T00:00:00Z".parse().expect("a fixed instant"),
                 timezone: None,
