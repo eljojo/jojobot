@@ -698,6 +698,14 @@ impl Jojobot {
         {
             return memory_declined("capture", refused);
         }
+        // **A role's own two fields are the boot door's, whoever is asking.**
+        // This call reaches the Memory trait directly from the claim path
+        // and the renewal path, never through this verb — so a write that
+        // reaches here naming either field is, by construction, not one of
+        // those two. See `refuses_role_fields`.
+        if let Some(refused) = jojobot_domain::memory::refuses_role_fields(fields.keys()) {
+            return memory_declined("capture", refused);
+        }
         let mut opened_the_loop = false;
         if let Some(outcome) = args.check_in.as_deref() {
             match self
@@ -2985,6 +2993,81 @@ mod tests {
             "5",
             "a different identity's write must land: {after}"
         );
+    }
+
+    /// **A role's own two fields are the boot door's, never an ordinary
+    /// capture's — whoever the caller is.** Unlike `thought_capacity`'s
+    /// guard, this one does not turn on who is asking: nobody may open this
+    /// side door, not even the bot the role would be about, because the
+    /// claim path and the renewal path are the only legitimate writers and
+    /// neither goes through this verb.
+    #[tokio::test]
+    async fn a_role_holder_field_cannot_be_set_through_an_ordinary_capture() {
+        let jojobot = handler();
+        ensure(&jojobot, "bot:otto").await;
+
+        let refused = blocked(
+            &jojobot
+                .capture(Parameters(CaptureArgs {
+                    fields: Some(
+                        [(
+                            jojobot_domain::session::role_holder_key("dev-dispatch"),
+                            "bot:otto".to_string(),
+                        )]
+                        .into_iter()
+                        .collect(),
+                    ),
+                    ..capture_args("bot:otto", "taking the role directly")
+                }))
+                .await
+                .expect("a refusal is an answer, not a failure"),
+        );
+        assert_eq!(refused["status"], "blocked", "{refused}");
+        assert_eq!(refused["wrote"], false, "{refused}");
+        let how = refused["how_to_proceed"]
+            .as_str()
+            .expect("a blocked answer says how to proceed");
+        assert!(
+            how.contains("start_here"),
+            "the refusal must name the boot door as the way forward: {how}"
+        );
+
+        let after = fields_of(&jojobot, "bot:otto").await;
+        assert!(
+            after
+                .get(jojobot_domain::session::role_holder_key("dev-dispatch"))
+                .is_none(),
+            "the refused write must not be readable back: {after}"
+        );
+    }
+
+    /// **The other of the role's two fields, caught the same way.** Proven
+    /// separately from the holder field rather than assumed from it — the
+    /// guard checks both keys, and a case that only tried one would not
+    /// know if the other side of the pair is still an open door.
+    #[tokio::test]
+    async fn a_role_claimed_at_field_cannot_be_set_through_an_ordinary_capture() {
+        let jojobot = handler();
+        ensure(&jojobot, "bot:otto").await;
+
+        let refused = blocked(
+            &jojobot
+                .capture(Parameters(CaptureArgs {
+                    fields: Some(
+                        [(
+                            jojobot_domain::session::role_claimed_at_key("dev-dispatch"),
+                            "2026-01-01T00:00:00Z".to_string(),
+                        )]
+                        .into_iter()
+                        .collect(),
+                    ),
+                    ..capture_args("bot:otto", "backdating a role claim directly")
+                }))
+                .await
+                .expect("a refusal is an answer, not a failure"),
+        );
+        assert_eq!(refused["status"], "blocked", "{refused}");
+        assert_eq!(refused["wrote"], false, "{refused}");
     }
 
     /// **The emergency reserve, spent through the served verb — and the

@@ -140,6 +140,13 @@ impl Jojobot {
                     .as_ref()
                     .is_some_and(|e| e.shape == jojobot_domain::memory::EdgeShape::Connection)
             })
+            // **A role claim is never a rule, whatever it carries.** It is
+            // operational lease state — who holds a role and when they last
+            // renewed it — never an instruction about how the bot behaves,
+            // and the two fields the claim path writes are exempted by
+            // their own shape, the same way a thought's connection edge
+            // exempts it just above.
+            .filter(|rule| jojobot_domain::session::role_write_in(&rule.fields).is_none())
             .collect();
         let total_in_force = in_force.len();
         // **A boot carries at most `CARRIED_RULES_CAP` of a bot's own
@@ -542,6 +549,87 @@ mod tests {
     use crate::mailboxes::testing::*;
     use crate::memory::testing::*;
     use crate::session::testing::*;
+
+    /// **A role claim is never a rule, whatever it carries — the same
+    /// exclusion the thought room already gets, on a different shape.** A
+    /// baseline boot with no claim ever made is compared against one after
+    /// three claiming boots and a fourth, claim-less one: the count a
+    /// caller reads (`total_in_force`, served in `rules_note`) must be the
+    /// same in both, or a bot's own operational lease state is bleeding
+    /// into what a session reads as instructions governing it.
+    #[tokio::test]
+    async fn a_role_claim_never_counts_as_a_rule_in_force() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+
+        let baseline = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    claim: None,
+                    timezone: None,
+                    bot: Some("gamma".into()),
+                    brief: Some(false),
+                    skill: None,
+                    resume: None,
+                    sid: None,
+                    today: None,
+                }))
+                .await
+                .expect("start_here ok"),
+        );
+        let baseline_carried = baseline["identity"]["rules"]
+            .as_array()
+            .expect("rules")
+            .len();
+        assert_eq!(
+            baseline["identity"]["rules_elided"],
+            serde_json::Value::Null,
+            "a bot with no rules at all must not read as having any left at home: {baseline}"
+        );
+
+        for _ in 0..3 {
+            jojobot
+                .start_here(Parameters(OrientArgs {
+                    claim: Some("dev-dispatch".into()),
+                    timezone: None,
+                    bot: Some("gamma".into()),
+                    brief: Some(true),
+                    skill: None,
+                    resume: None,
+                    sid: None,
+                    today: None,
+                }))
+                .await
+                .expect("start_here ok");
+        }
+
+        let after = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    claim: None,
+                    timezone: None,
+                    bot: Some("gamma".into()),
+                    brief: Some(false),
+                    skill: None,
+                    resume: None,
+                    sid: None,
+                    today: None,
+                }))
+                .await
+                .expect("start_here ok"),
+        );
+        assert_eq!(
+            after["identity"]["rules"].as_array().expect("rules").len(),
+            baseline_carried,
+            "three claiming boots changed how many rules are carried: {after}"
+        );
+        assert_eq!(
+            after["identity"]["rules_elided"],
+            serde_json::Value::Null,
+            "three role claims read as rules left at home, so they were counted as rules in \
+             force: {after}"
+        );
+    }
 
     /// The boot that loses a race to heal must not tell its agent the box is
     /// missing — it is right there, opened a moment ago by the other one. The

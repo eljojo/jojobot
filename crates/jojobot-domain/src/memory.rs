@@ -1938,6 +1938,32 @@ pub fn refuses_thought_over_cap(
     }
 }
 
+/// **A role's holder and claim moment are the boot door's to write, never an
+/// ordinary capture or edit's.**
+///
+/// Checked against a set of field KEYS rather than a `NewFact`/`FactPatch`,
+/// so the same call covers a write naming them (`fields`) and a write
+/// dropping them (`clear_fields`) alike — the two halves of the same
+/// mistake, and the reason a ceiling's own guard (`refuses_own_ceiling`)
+/// only ever checked the first is what makes a bot able to clear its own
+/// capacity by patch. Named by [`crate::session::role_from_field_key`]
+/// rather than a roster: a role's name is the caller's own choice, so the
+/// only thing that identifies one of its two fields is its shape.
+///
+/// The claim path (`orientation::orient::decide_role_claim`) and the
+/// renewal path write these fields directly through the `Memory` trait,
+/// never through this call — it guards the ordinary, caller-facing surface
+/// only, the same split `refuses_own_ceiling` already draws between a
+/// verb's own guard and what the trait itself allows.
+pub fn refuses_role_fields<'a>(keys: impl IntoIterator<Item = &'a String>) -> Option<MemoryError> {
+    keys.into_iter().find_map(|key| {
+        crate::session::role_from_field_key(key).map(|role| MemoryError::RoleFieldGuarded {
+            role: role.to_string(),
+            key: key.clone(),
+        })
+    })
+}
+
 /// **A bot's own live thoughts, out of everything captured about it.**
 ///
 /// A thought is an ordinary claim on a bot's own handle drawing a
@@ -3583,6 +3609,32 @@ pub enum MemoryError {
         /// The cap it went over.
         cap: usize,
     },
+    /// **A role's own two fields, named on the ordinary caller-facing
+    /// surface.** Never a kind question and never about who is asking: the
+    /// claim path and the renewal path are the only writers, and both name
+    /// these fields through the `Memory` trait directly rather than through
+    /// a verb this guard sits in front of — see [`refuses_role_fields`].
+    #[error("'{key}' is the boot door's own field: claim the {role} role there, not here")]
+    RoleFieldGuarded {
+        /// The role whose field was named.
+        role: String,
+        /// The exact key that was named.
+        key: String,
+    },
+    /// **A role is already held, freshly, by somebody else.** The claim
+    /// path's own refusal, decided and enforced in the same act as the
+    /// write it would otherwise race — see
+    /// [`crate::session::claim_role`] and the store's own atomic check
+    /// beside wherever it writes a role's two fields.
+    #[error("'{role}' is held by '{holder}' until {until}")]
+    RoleTaken {
+        /// The role that was contested.
+        role: String,
+        /// Who holds it.
+        holder: String,
+        /// When the hold goes stale on its own, absent a renewal.
+        until: jiff::Timestamp,
+    },
     /// The named entity doesn't exist. Same rule: report, never create.
     #[error("no entity '{attempted}'{}", nearest_handles(nearest))]
     UnknownEntity {
@@ -4551,6 +4603,29 @@ mod tests {
 
     fn at(s: &str) -> jiff::Timestamp {
         s.parse().expect("a fixed instant")
+    }
+
+    /// **Both of a role's own fields are caught, by shape, and an ordinary
+    /// field never is.** The positive and the negative in one read: a write
+    /// naming neither role field has nothing here to refuse.
+    #[test]
+    fn refuses_role_fields_catches_both_of_a_roles_fields_and_nothing_else() {
+        let holder = crate::session::role_holder_key("dev-dispatch");
+        let claimed_at = crate::session::role_claimed_at_key("dev-dispatch");
+        let ordinary = "thought_capacity".to_string();
+
+        let refused = refuses_role_fields([&holder]);
+        assert!(
+            matches!(&refused, Some(MemoryError::RoleFieldGuarded { role, key }) if role == "dev-dispatch" && key == &holder),
+            "{refused:?}",
+        );
+        let refused = refuses_role_fields([&claimed_at]);
+        assert!(
+            matches!(&refused, Some(MemoryError::RoleFieldGuarded { role, key }) if role == "dev-dispatch" && key == &claimed_at),
+            "{refused:?}",
+        );
+        assert!(refuses_role_fields([&ordinary]).is_none());
+        assert!(refuses_role_fields(std::iter::empty::<&String>()).is_none());
     }
 
     fn thought(id: &str, pointer: &str) -> Fact {

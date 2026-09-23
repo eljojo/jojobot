@@ -595,14 +595,23 @@ impl Jojobot {
 }
 
 impl Jojobot {
-    /// **Decide and, if granted, write a claim on a named role.**
+    /// **Decide and, if granted, write a claim on a named role — atomically,
+    /// inside the write itself.**
     ///
-    /// The lease's own half of the boot door: [`jojobot_domain::session::claim_role`]
-    /// against the bot's own fields — `role_holder_key`/`role_claimed_at_key`
-    /// — read back through [`Memory::fields`]. A field is never written bare
-    /// on this rail, so a granted claim lands as an ordinary fact on the bot
-    /// itself, carrying the two fields and nothing else load-bearing about
-    /// its prose.
+    /// The lease's own half of the boot door. [`jojobot_domain::session::claim_role`]
+    /// is not called here: it is called by the store, against whatever it
+    /// holds at the moment it writes — see `role_write_in` and its call
+    /// sites in `Memory::capture`/`Memory::update_fact`. Calling it here
+    /// first, against a separate read, would decide against a value that
+    /// could already be stale by the time the write lands; the refusal this
+    /// function reports is the store's own, taken in the same act as the
+    /// write it gates.
+    ///
+    /// **A claim never multiplies records.** An existing claim record for
+    /// this role is patched in place — the same record renews or changes
+    /// hands, and a bot's rules stay whatever they were before anybody
+    /// claimed anything. Only the first claim ever made for a role captures
+    /// a new one.
     ///
     /// Naming no role never reaches this — see the call site in
     /// [`Jojobot::orient`].
@@ -616,12 +625,14 @@ impl Jojobot {
     ) -> serde_json::Value {
         let holder_key = jojobot_domain::session::role_holder_key(role);
         let claimed_at_key = jojobot_domain::session::role_claimed_at_key(role);
-        let fields = match self.memory.fields(bot).await {
-            Ok(fields) => fields,
+        let existing = match self.memory.recall(bot).await {
+            Ok(facts) => facts
+                .into_iter()
+                .find(|f| f.fields.contains_key(&holder_key)),
             Err(e) => {
                 tracing::warn!(
                     error = %e, %bot, role,
-                    "could not read the bot's fields to decide a role claim"
+                    "could not read the bot's claims to decide a role claim"
                 );
                 return serde_json::json!({
                     "role": role,
@@ -631,47 +642,54 @@ impl Jojobot {
                 });
             }
         };
-        let current_holder = fields.get(&holder_key).map(String::as_str);
-        let claimed_at = fields
-            .get(&claimed_at_key)
-            .and_then(|s| s.parse::<jiff::Timestamp>().ok());
-        match jojobot_domain::session::claim_role(
-            claimant,
-            current_holder,
-            claimed_at,
-            now,
-            jojobot_domain::session::LEASE_FRESHNESS,
-        ) {
-            jojobot_domain::session::LeaseClaim::Refused { holder, until } => serde_json::json!({
+        let written = match &existing {
+            Some(found) => {
+                self.memory
+                    .update_fact(
+                        &found.address(),
+                        FactPatch {
+                            fields: [
+                                (holder_key, claimant.to_string()),
+                                (claimed_at_key, now.to_string()),
+                            ]
+                            .into_iter()
+                            .collect(),
+                            ..FactPatch::default()
+                        },
+                    )
+                    .await
+            }
+            None => {
+                let mut fact =
+                    NewFact::about(bot.clone(), format!("claimed the {role} role"), today);
+                fact.fields.insert(holder_key, claimant.to_string());
+                fact.fields.insert(claimed_at_key, now.to_string());
+                self.memory.capture(fact).await
+            }
+        };
+        match written {
+            Ok(Guarded::Written(_)) => serde_json::json!({
+                "role": role,
+                "status": "taken",
+            }),
+            Err(MemoryError::RoleTaken { holder, until, .. }) => serde_json::json!({
                 "role": role,
                 "status": "refused",
                 "holder": holder,
                 "until": until.to_string(),
             }),
-            jojobot_domain::session::LeaseClaim::Taken => {
-                let mut fact =
-                    NewFact::about(bot.clone(), format!("claimed the {role} role"), today);
-                fact.fields.insert(holder_key, claimant.to_string());
-                fact.fields.insert(claimed_at_key, now.to_string());
-                match self.memory.capture(fact).await {
-                    Ok(Guarded::Written(_)) => serde_json::json!({
-                        "role": role,
-                        "status": "taken",
-                    }),
-                    other => {
-                        if let Err(e) = &other {
-                            tracing::warn!(error = %e, %bot, role, "a role claim could not be written");
-                        } else {
-                            tracing::warn!(%bot, role, "a role claim's own capture was blocked unexpectedly");
-                        }
-                        serde_json::json!({
-                            "role": role,
-                            "status": "unavailable",
-                            "note": "the claim was decided but could not be written. Nothing is \
-                                     held.",
-                        })
-                    }
+            other => {
+                if let Err(e) = &other {
+                    tracing::warn!(error = %e, %bot, role, "a role claim could not be written");
+                } else {
+                    tracing::warn!(%bot, role, "a role claim's own write was blocked unexpectedly");
                 }
+                serde_json::json!({
+                    "role": role,
+                    "status": "unavailable",
+                    "note": "the claim was decided but could not be written. Nothing is \
+                             held.",
+                })
             }
         }
     }

@@ -1055,6 +1055,35 @@ impl Memory for InMemoryMemory {
         };
         let existing: Vec<&Fact> = facts.iter().filter(|f| f.home == home).collect();
         let id = FactId(format!("f{}", existing.len() + 1));
+        // **A role's own claim is decided atomically with the write it
+        // gates, against the folded state this same lock already holds** —
+        // the same reason the capacity check just below reads under it
+        // rather than in a call of its own. `role_write_in` reads `None`
+        // for any write that names neither of a role's two fields, so this
+        // costs nothing on the ordinary path.
+        if let Some((role, claimant, now)) = crate::session::role_write_in(&fact.fields) {
+            let folded =
+                super::super::folded_fields(&self.writes_on(&home, &facts), &self.declarations());
+            let current_holder = folded.get(&crate::session::role_holder_key(&role));
+            let current_claimed_at = folded
+                .get(&crate::session::role_claimed_at_key(&role))
+                .and_then(|s| s.parse().ok());
+            if let crate::session::LeaseClaim::Refused { holder, until } =
+                crate::session::claim_role(
+                    &claimant,
+                    current_holder.map(String::as_str),
+                    current_claimed_at,
+                    now,
+                    crate::session::LEASE_FRESHNESS,
+                )
+            {
+                return Err(MemoryError::RoleTaken {
+                    role,
+                    holder,
+                    until,
+                });
+            }
+        }
         // **A ceiling's cardinality is enforced here, atomically with the
         // write it gates** — the same rule and the same reasons the real
         // store's copy carries. **Structural, never a kind question**: a
@@ -1460,6 +1489,33 @@ impl Memory for InMemoryMemory {
                       one-way. Capture what is so now as a new record"
                     .to_string(),
             });
+        }
+        // **A role's own claim, renewed or re-claimed by patch, is decided
+        // atomically with the write it gates** — the same check `capture`
+        // runs, against the same folded state under the same lock, so a
+        // renewal and a fresh claim are one mechanism rather than two.
+        if let Some((role, claimant, now)) = crate::session::role_write_in(&patch.fields) {
+            let folded =
+                super::super::folded_fields(&self.writes_on(&key, &facts), &self.declarations());
+            let current_holder = folded.get(&crate::session::role_holder_key(&role));
+            let current_claimed_at = folded
+                .get(&crate::session::role_claimed_at_key(&role))
+                .and_then(|s| s.parse().ok());
+            if let crate::session::LeaseClaim::Refused { holder, until } =
+                crate::session::claim_role(
+                    &claimant,
+                    current_holder.map(String::as_str),
+                    current_claimed_at,
+                    now,
+                    crate::session::LEASE_FRESHNESS,
+                )
+            {
+                return Err(MemoryError::RoleTaken {
+                    role,
+                    holder,
+                    until,
+                });
+            }
         }
         // **The patch is applied to the record as it reads now**, so a set that
         // replaces a value is validated against the value it replaces — and the

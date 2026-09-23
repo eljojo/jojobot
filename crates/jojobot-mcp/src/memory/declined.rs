@@ -535,6 +535,52 @@ pub(crate) fn memory_declined(
                  '{subject}' — ask another bot, or the operator, to raise or lower it instead."
             ),
         )),
+        // **A role's own two fields, named on the ordinary surface.** The
+        // subject named here is not an entity handle — `blocked_body` wants
+        // one to check for candidates, and a role has none — so this is its
+        // own small body, the same shape `RoomFull`'s is for the same
+        // reason: what it carries has no `EntityId` to hang the shared
+        // shape on.
+        MemoryError::RoleFieldGuarded { ref role, ref key } => {
+            let body = serde_json::json!({
+                "status": "blocked",
+                "attempted": key,
+                "wrote": false,
+                "how_to_proceed": format!(
+                    "Nothing was written: {e}. Claim the '{role}' role through start_here's own \
+                     claim argument — that is the only door either of a role's own two fields \
+                     opens through."
+                ),
+            });
+            Ok(CallToolResult::success(vec![ContentBlock::text(
+                body.to_string(),
+            )]))
+        }
+        // **The claim path's own refusal, not a caller mistake about shape.**
+        // A second claimant told no while the lease is fresh — the same
+        // information `start_here`'s own `claim` answer carries when this is
+        // reached through the boot door, served here for whatever other
+        // path reaches this refusal.
+        MemoryError::RoleTaken {
+            ref role,
+            ref holder,
+            until,
+        } => {
+            let body = serde_json::json!({
+                "status": "blocked",
+                "attempted": role,
+                "wrote": false,
+                "holder": holder,
+                "until": until.to_string(),
+                "how_to_proceed": format!(
+                    "Nothing was written: {e}. Wait until {until}, or ask '{holder}' to release \
+                     '{role}' by wrapping its session."
+                ),
+            });
+            Ok(CallToolResult::success(vec![ContentBlock::text(
+                body.to_string(),
+            )]))
+        }
         other => Err(memory_error(other)),
     }
 }
@@ -577,6 +623,8 @@ pub(crate) fn memory_error(e: MemoryError) -> McpError {
         | MemoryError::RoomFull { .. }
         | MemoryError::SelfCeiling { .. }
         | MemoryError::ThoughtTooLong { .. }
+        | MemoryError::RoleFieldGuarded { .. }
+        | MemoryError::RoleTaken { .. }
         | MemoryError::UnstatedProvenance => McpError::invalid_params(e.to_string(), None),
         MemoryError::Store(msg) => {
             McpError::internal_error(crate::boundary::store_failed("this call", &msg), None)

@@ -350,6 +350,38 @@ pub fn role_claimed_at_key(role: &str) -> String {
     format!("role/{role}/claimed_at")
 }
 
+/// **Whether `key` is one of a role's own two guarded fields, and which
+/// role** — parsed by pattern rather than checked against a fixed list,
+/// because a role's name is the caller's own choice, exactly as
+/// [`role_holder_key`] and [`role_claimed_at_key`] mint it by pattern
+/// rather than from a roster.
+pub fn role_from_field_key(key: &str) -> Option<&str> {
+    let rest = key.strip_prefix("role/")?;
+    rest.strip_suffix("/holder")
+        .or_else(|| rest.strip_suffix("/claimed_at"))
+}
+
+/// **What a write's own fields say about a role claim, extracted rather
+/// than decided.** `None` when `fields` names neither of a role's own two
+/// keys: nothing here is this write's business. Otherwise the role, the
+/// claimant it names, and the moment it claims at — everything a caller
+/// needs to read the store's CURRENT state for that one role and decide
+/// with [`claim_role`], atomically, inside whatever critical section the
+/// actual write already runs in. Split from the decision itself because the
+/// decision needs the current holder, and only the store the write is
+/// about to land in can say what that is right now.
+pub fn role_write_in(
+    fields: &std::collections::BTreeMap<String, String>,
+) -> Option<(String, String, Timestamp)> {
+    let role = fields
+        .keys()
+        .find_map(|k| role_from_field_key(k))?
+        .to_string();
+    let claimant = fields.get(&role_holder_key(&role))?.clone();
+    let now: Timestamp = fields.get(&role_claimed_at_key(&role))?.parse().ok()?;
+    Some((role, claimant, now))
+}
+
 /// The id charset, `[a-z0-9-]` — the mailbox context's, for the same reasons.
 fn is_id_byte(b: u8) -> bool {
     b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'
@@ -1439,6 +1471,87 @@ mod tests {
         assert_eq!(
             role_claimed_at_key("dev-dispatch"),
             "role/dev-dispatch/claimed_at"
+        );
+    }
+
+    /// **The parse is the mint's own inverse, for both fields a role owns** —
+    /// and a key that merely looks like one (wrong prefix, wrong middle
+    /// segment split, or an ordinary field that shares no shape with either)
+    /// is not one.
+    #[test]
+    fn role_from_field_key_inverts_the_two_mints_and_nothing_else() {
+        assert_eq!(
+            role_from_field_key(&role_holder_key("dev-dispatch")),
+            Some("dev-dispatch")
+        );
+        assert_eq!(
+            role_from_field_key(&role_claimed_at_key("dev-dispatch")),
+            Some("dev-dispatch")
+        );
+        assert_eq!(role_from_field_key("thought_capacity"), None);
+        assert_eq!(role_from_field_key("role/dev-dispatch"), None);
+        assert_eq!(role_from_field_key("not-role/dev-dispatch/holder"), None);
+    }
+
+    /// **Naming neither of a role's own fields is not this call's business.**
+    #[test]
+    fn role_write_in_is_none_for_fields_naming_no_role() {
+        let fields: std::collections::BTreeMap<String, String> =
+            [("thought_capacity".to_string(), "5".to_string())]
+                .into_iter()
+                .collect();
+        assert_eq!(role_write_in(&fields), None);
+    }
+
+    /// **The role, the claimant and the moment, read back out of the two
+    /// keys a real claim write sets** — the mint's own inverse, over both
+    /// fields at once this time, so a caller has everything `claim_role`
+    /// needs without parsing the keys twice.
+    #[test]
+    fn role_write_in_reads_back_the_role_the_claimant_and_the_moment() {
+        let now = contract::epoch();
+        let fields: std::collections::BTreeMap<String, String> = [
+            (role_holder_key("dev-dispatch"), "gamma".to_string()),
+            (role_claimed_at_key("dev-dispatch"), now.to_string()),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(
+            role_write_in(&fields),
+            Some(("dev-dispatch".to_string(), "gamma".to_string(), now))
+        );
+    }
+
+    /// **A second claimant, decided against the CURRENT stored state a
+    /// caller supplies — never against anything this write's own fields
+    /// say.** This is the shape an atomic check inside a real write has to
+    /// hold: `role_write_in` only ever reads the write's own intent, and
+    /// `claim_role` is what a caller feeds the store's live answer into.
+    #[test]
+    fn a_second_claimant_is_refused_against_the_current_stored_holder() {
+        let claimed_at = contract::epoch();
+        let now = claimed_at + jiff::SignedDuration::from_secs(10);
+        let fields: std::collections::BTreeMap<String, String> = [
+            (role_holder_key("dev-dispatch"), "delta".to_string()),
+            (role_claimed_at_key("dev-dispatch"), now.to_string()),
+        ]
+        .into_iter()
+        .collect();
+        let (role, claimant, now) = role_write_in(&fields).expect("names the role");
+        assert_eq!(role, "dev-dispatch");
+        let verdict = claim_role(
+            &claimant,
+            Some("gamma"),
+            Some(claimed_at),
+            now,
+            LEASE_FRESHNESS,
+        );
+        assert_eq!(
+            verdict,
+            LeaseClaim::Refused {
+                holder: "gamma".to_string(),
+                until: claimed_at + LEASE_FRESHNESS,
+            }
         );
     }
 
