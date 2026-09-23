@@ -1005,15 +1005,27 @@ async fn every_lock_holds_once_the_vault_is_worked() {
 /// own case. **This was the second room left uncovered**, this time for
 /// nothing more than the room not having asked yet.
 ///
-/// **Ignored, not deleted, not banked green.** Worked to completion this
-/// finds nine needles that match somewhere other than their own sitting —
-/// a pre-existing hygiene backlog this case exposed rather than caused, on
-/// the scale of what `year.md`'s own hygiene pass was. Closing it is its
-/// own piece of work; see `needle_hygiene_coverage.rs`'s `PENDING` entry
-/// for `VAULT_ROOM` and the report to pm. Remove this attribute once the
-/// backlog is closed.
+/// **Green, not blind.** Seven of the nine needles this case first found
+/// were scoped to their own sitting — a companion needle only that
+/// sitting's own record or content could satisfy, added beside the
+/// ambiguous one, the same shape October's own dependency lock already
+/// uses. **Two are named exceptions rather than fixes**: `overdue_excluded`
+/// and `archived_excluded` are read from the answer's own envelope —
+/// outside every object `recall` and `list_entities` return — and
+/// [`jojobot_exercise::lock::NeedleVerdict::is_finding`] treats every
+/// envelope match as a finding regardless of what else the lock carries, on
+/// purpose: an envelope value is not about any one sitting, so no partner
+/// needle could ever pin one to its own. Turning either into a `check`
+/// hatch would misuse that escape valve — `checks.rs`'s own doc says a
+/// hatch names something the query-and-assertion vocabulary cannot say, and
+/// this one says it fine; the needle-hygiene walker's blind spot is
+/// envelope aggregates, not the query surface. Reported to pm rather than
+/// forced or swept: named here, the same way `needle_hygiene_coverage.rs`'s
+/// own `PENDING` names a room-level gap, so a NEW finding still reds this
+/// case instead of hiding beside these two.
+const ACCEPTED_ENVELOPE_FINDINGS: &[&str] = &["\"overdue_excluded\":4", "\"archived_excluded\":1"];
+
 #[tokio::test]
-#[ignore = "vault.md carries nine pre-existing ambiguous needles — see needle_hygiene_coverage.rs"]
 async fn no_lock_here_rests_on_a_needle_that_matches_somewhere_else() {
     let (_room, surface, _sid) = furnished().await;
     let _ = worked_the_vault(&surface, &room_document()).await;
@@ -1028,10 +1040,33 @@ async fn no_lock_here_rests_on_a_needle_that_matches_somewhere_else() {
          answer — and those are different: {:?}",
         summary.nowhere,
     );
+    let unaccepted: Vec<&String> = summary
+        .findings
+        .iter()
+        .filter(|finding| {
+            !ACCEPTED_ENVELOPE_FINDINGS
+                .iter()
+                .any(|needle| finding.ends_with(needle))
+        })
+        .collect();
     assert!(
-        summary.findings.is_empty(),
+        unaccepted.is_empty(),
         "a lock rests on a needle that matches somewhere else, with nothing else in that lock \
-         only its own sitting could satisfy: {:?}",
-        summary.findings,
+         only its own sitting could satisfy, and it is not one of the named envelope \
+         exceptions: {unaccepted:?}",
     );
+    // **The exception list is a receipt, not a promise.** An entry that
+    // stopped matching anything would be a stale allowlist masking nothing —
+    // the same failure mode `needle_hygiene_coverage.rs`'s own
+    // `every_named_entry_is_a_room_this_build_still_ships` guards against.
+    for needle in ACCEPTED_ENVELOPE_FINDINGS {
+        assert!(
+            summary
+                .findings
+                .iter()
+                .any(|finding| finding.ends_with(needle)),
+            "{needle} is listed as an accepted envelope finding but no longer matches anything — \
+             it was fixed, or the lock changed, and the exception is stale",
+        );
+    }
 }

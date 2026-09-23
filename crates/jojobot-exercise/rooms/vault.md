@@ -219,6 +219,7 @@ say     January: the road does not carry the January timing as a write of the ke
 # them before it is read against October.
 recall {"subject": "place:ocean-avenue", "facts": true}
 carries "provenance":"testimony"
+carries "minutes":"38"
 lacks   "standing":"open"
 say     January: the operator's own timing is on record as a guess rather than as their word, so every later question about what is in doubt starts from a store where everything is
 ```
@@ -269,6 +270,9 @@ say     February: the wharf road does not carry the one timing as a write of the
 # actually about.
 recall {"subject": "place:wonder-wharf", "facts": true}
 carries "provenance":"testimony"
+carries "minutes":"52"
+carries never again
+carries "status":"active"
 lacks   "standing":"open"
 window  own-phase
 say     February: the operator's "never again" is on record as a guess rather than as their word, so October cannot open a verdict that was never closed
@@ -795,6 +799,8 @@ say     December: the furnace's free service lapses inside the horizon and got n
 # negative is the window itself, still on record.
 recall {"kind": "thing", "fields": [{"key": "runs_out", "value": "2026-03-08"}], "facts": true}
 carries "runs_out":"2026-03-08"
+carries thirty days
+carries "status":"active"
 lacks   "recorded_at":"2026-12-06"
 say     December: the desk's return period closed in March and was flagged anyway, so the comparison ran one way and a closed window was offered as an open one
 
@@ -803,11 +809,15 @@ say     December: the desk's return period closed in March and was flagged anywa
 # that do not need anything.
 recall {"subject": "machine:theta", "facts": true}
 carries "runs_out":"2028-01-10"
+carries Globex
+carries "status":"active"
 lacks   "recorded_at":"2026-12-06"
 say     December: the laptop's cover runs to 2028 and was given a note anyway, so the selection was on the key rather than on the date
 
 recall {"fields": [{"key": "runs_out", "value": "2028-07-10"}], "facts": true}
 carries "runs_out":"2028-07-10"
+carries Globex again
+carries "status":"active"
 lacks   "recorded_at":"2026-12-06"
 say     December: the phone's cover runs to 2028 and was given a note anyway, so the selection was on the key rather than on the date
 
@@ -889,6 +899,8 @@ May and August; the floor went considering, doing, done.
 # nothing that was checked.
 recall {"subject": "rhythm:sit-at-the-piano", "facts": true}
 carries "2026-12-05"
+carries played for about an hour
+carries "status":"active"
 say     later December: the piano's own loop does not carry the day of the party, so the one silence the operator did not actually let happen was not logged from the record that proves it
 
 # 🚨 **JOJOBOT'S OWN ARITHMETIC, READ AFTER THE SITTING.** Three loops were
@@ -936,6 +948,7 @@ say     later December: the kitchen floor was given a decide_by, so a project th
 # question is asked — so the check is not today, it is next year.
 recall {"subject": "rhythm:sit-at-the-piano"}
 carries "Sit at the piano"
+carries rhythm:sit-at-the-piano
 lacks   "cadence_days"
 say     later December: the piano's loop still carries a cadence, so asking jojobot to stop reminding altogether left the schedule standing rather than dropping it
 

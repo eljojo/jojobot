@@ -27,6 +27,7 @@ const COVERED: &[&str] = &[
     jojobot_exercise::expectations::YEAR_ROOM,
     jojobot_exercise::expectations::HANDOVER_ROOM,
     jojobot_exercise::expectations::DECISIONS_ROOM,
+    jojobot_exercise::expectations::VAULT_ROOM,
 ];
 
 /// **A room named here on purpose, without a green case, and why.** Not a
@@ -39,20 +40,13 @@ struct Pending<'a> {
     reason: &'a str,
 }
 
-/// **`VAULT_ROOM`, and why.** Its case is written — furnish, work the whole
-/// document, ask every query-based lock — and marked `#[ignore]` rather
-/// than shipped red: worked to completion, it finds nine needles that match
-/// somewhere other than their own sitting, a pre-existing hygiene backlog
-/// this coverage effort exposed rather than caused. Closing it is its own
-/// piece of work, the same shape `year.md`'s own hygiene pass was — see the
-/// report to pm. Move to `COVERED` and drop the `#[ignore]` once it is
-/// green.
-const PENDING: &[Pending<'static>] = &[Pending {
-    room: jojobot_exercise::expectations::VAULT_ROOM,
-    reason: "the case is written and marked #[ignore]; worked to completion it finds nine \
-             pre-existing needles that match somewhere other than their own sitting, reported \
-             to pm as its own backlog rather than fixed blind",
-}];
+/// **Empty on purpose.** `VAULT_ROOM` moved to `COVERED` once seven of its
+/// nine ambiguous needles were scoped to their own sitting; the two that
+/// cannot be — `overdue_excluded` and `archived_excluded`, both envelope
+/// matches — are named as accepted exceptions inside `vault_room.rs`'s own
+/// case rather than kept here, because they are not gaps in coverage: the
+/// case is written, green, and watching for anything new.
+const PENDING: &[Pending<'static>] = &[];
 
 /// **A shipped room with no named entry, covered or pending, is a room
 /// nobody watched for needle hygiene at all.** This does not run the

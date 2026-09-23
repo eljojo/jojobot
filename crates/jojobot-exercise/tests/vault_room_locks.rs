@@ -203,7 +203,7 @@ async fn the_piano_locks_hold_after_the_loop_is_archived() {
         &surface,
         &sid,
         "2026-12-05",
-        "the party on 2026-12-05 was a turn at the piano too",
+        "played for about an hour at Tina's party on 2026-12-05",
     )
     .await;
     drop_the_piano_loop(&surface, &sid).await;
@@ -230,7 +230,7 @@ async fn the_april_piano_lock_reddens_when_the_april_check_in_was_never_logged()
         &surface,
         &sid,
         "2026-12-05",
-        "the party on 2026-12-05 was a turn at the piano too",
+        "played for about an hour at Tina's party on 2026-12-05",
     )
     .await;
     drop_the_piano_loop(&surface, &sid).await;
@@ -270,7 +270,7 @@ async fn the_august_piano_lock_reddens_when_the_august_check_in_was_never_logged
         &surface,
         &sid,
         "2026-12-05",
-        "the party on 2026-12-05 was a turn at the piano too",
+        "played for about an hour at Tina's party on 2026-12-05",
     )
     .await;
     drop_the_piano_loop(&surface, &sid).await;
