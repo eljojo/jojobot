@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Records the fixture crates/jojobot/tests/fixtures/upgrade/ carries, from a
+# binary built at a named ref — never from this checkout's own working tree.
+#
+#     scripts/refresh-upgrade-fixture [REF]
+#
+# REF defaults to origin/main. The ref is built in a DETACHED worktree, so
+# this script never moves this checkout's HEAD and never creates a branch.
+# The worktree is removed on exit, success or failure alike.
+set -euo pipefail
+
+REF="${1:-origin/main}"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+RESOLVED="$(git -C "$REPO_ROOT" rev-parse --short "$REF")"
+WORKTREE_DIR="$(mktemp -d)"
+
+cleanup() {
+    cd "$REPO_ROOT"
+    git worktree remove --force "$WORKTREE_DIR" 2>/dev/null || rm -rf "$WORKTREE_DIR"
+}
+trap cleanup EXIT
+
+echo "building $REF ($RESOLVED) in a detached worktree at $WORKTREE_DIR"
+git -C "$REPO_ROOT" worktree add --detach "$WORKTREE_DIR" "$RESOLVED"
+
+(cd "$WORKTREE_DIR" && nix develop -c cargo build -p jojobot)
+
+BINARY_DIR="$(cd "$WORKTREE_DIR" && nix develop -c bash -c 'echo "${CARGO_TARGET_DIR:-target}"')"
+BINARY="$BINARY_DIR/debug/jojobot"
+if [ ! -x "$BINARY" ]; then
+    echo "REFRESH REFUSED: no binary at $BINARY after building $REF" >&2
+    exit 1
+fi
+
+echo "recording the fixture from $BINARY ($RESOLVED)"
+cd "$REPO_ROOT"
+UPGRADE_FIXTURE_BINARY="$BINARY" UPGRADE_FIXTURE_REF="$RESOLVED" \
+    nix develop -c cargo test -p jojobot --test record_upgrade_fixture -- --ignored --nocapture

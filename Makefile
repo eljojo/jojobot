@@ -11,7 +11,7 @@
 CARGO ?= cargo
 
 .DEFAULT_GOAL := help
-.PHONY: help check narrow test lint fmt fmt-check build integration paid
+.PHONY: help check narrow test lint fmt fmt-check build integration paid refresh-upgrade-fixture
 
 help: ## List the targets
 	@grep -hE '^[a-z-]+:.*##' $(MAKEFILE_LIST) \
@@ -169,3 +169,16 @@ paid: build ## Drive a REAL model through a playbook — reaches the network and
 	$(CARGO) run -q -p jojobot-exercise -- \
 		$(if $(PLAYBOOK),--playbook $(PLAYBOOK),) $(if $(MODEL),--model $(MODEL),) \
 		$(if $(TRANSCRIPT),--transcript $(TRANSCRIPT),)
+
+# **Refreshing the upgrade fixture is one command.** It builds a binary at a
+# named ref in a DETACHED worktree — this checkout's own HEAD never moves and
+# no branch is created — boots it on a fresh disposable store, seeds a
+# representative set of records through its served surface, and dumps the
+# store to crates/jojobot/tests/fixtures/upgrade/, with the ref recorded
+# beside it. The upgrade gate itself (make check) reads that committed
+# fixture; this target is what a deploy runs to refresh it, never a test.
+#
+#     make refresh-upgrade-fixture [REF=<ref>]
+REF ?= origin/main
+refresh-upgrade-fixture: ## Record the upgrade gate's fixture from a binary built at REF (default origin/main)
+	scripts/refresh-upgrade-fixture $(REF)

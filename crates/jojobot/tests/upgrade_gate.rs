@@ -1,0 +1,260 @@
+//! **The upgrade proof: a store an older binary filled, read by this one.**
+//!
+//! `real_binary_serves_a_store_with_existing_rows` proves restart-safety —
+//! the binary under test seeds the store itself, so the rows it meets were
+//! written by the SAME schema and the SAME parsing it is about to run. That
+//! is not the outage class this catches: startup parsed a stored row before
+//! loading what it needed to parse it, and the incident happened between
+//! two different binaries, not two runs of one.
+//!
+//! This loads a store dumped from a binary built at an older ref —
+//! `crates/jojobot/tests/fixtures/upgrade/doltdump.sql`, refreshed by
+//! `make refresh-upgrade-fixture`, never by hand — into a fresh disposable
+//! store, boots the CURRENT binary on it, and asserts both that startup
+//! succeeds and that every record the recording wrote reads back correctly
+//! through the served surface.
+
+use std::process::Stdio;
+use std::time::Duration;
+
+use jojobot_adapters::dolt::Dolt;
+use jojobot_adapters::testing::free_port;
+use jojobot_exercise::surface::Surface;
+use serde_json::json;
+
+const FIXTURE_DUMP: &str = "tests/fixtures/upgrade/doltdump.sql";
+const FIXTURE_REF: &str = "tests/fixtures/upgrade/ref.txt";
+
+/// A directory of this run's own, removed when it is done.
+struct Scratch(std::path::PathBuf);
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+#[tokio::test]
+async fn the_current_binary_boots_on_a_store_an_older_binary_filled() {
+    let git_ref = std::fs::read_to_string(FIXTURE_REF)
+        .unwrap_or_else(|e| panic!("reading {FIXTURE_REF}: {e}"))
+        .trim()
+        .to_string();
+
+    let state_dir =
+        std::env::temp_dir().join(format!("jojobot-upgrade-gate-{}", std::process::id()));
+    std::fs::create_dir_all(&state_dir).expect("a scratch directory");
+    let scratch = Scratch(state_dir.clone());
+    let db_dir = state_dir.join("db");
+    let store_port = free_port();
+
+    // **Restore through the same layout `Dolt::start` itself produces** —
+    // an empty store brought up the ordinary way, then the fixture's own
+    // dump replayed over the live connection, so the directory this test's
+    // binary meets is built by the exact code every other suite already
+    // trusts to build it, not a hand-rolled copy of that layout.
+    let mut restoring = Dolt::start(&db_dir, store_port)
+        .await
+        .expect("a fresh store comes up to receive the fixture");
+    let dump = std::fs::read_to_string(FIXTURE_DUMP)
+        .unwrap_or_else(|e| panic!("reading {FIXTURE_DUMP}: {e}"));
+    for statement in split_sql_statements(&dump) {
+        sqlx::raw_sql(&statement)
+            .execute(restoring.pool())
+            .await
+            .unwrap_or_else(|e| {
+                panic!("replaying the fixture recorded at {git_ref} failed on:\n{statement}\n{e}")
+            });
+    }
+    restoring.stop().await;
+
+    let binary = jojobot_exercise::room::server_binary().expect("a jojobot binary to run");
+    let http_port = free_port();
+    let mut child = tokio::process::Command::new(&binary)
+        .env("STATE_DIRECTORY", &state_dir)
+        .env("JOJOBOT_STORE_PORT", store_port.to_string())
+        .env("JOJOBOT_BIND", format!("127.0.0.1:{http_port}"))
+        .env("JOJOBOT_ALLOW_NO_AUTH", "1")
+        .env_remove("JOJOBOT_ISSUER")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .expect("the current binary runs");
+
+    let stdout = child.stdout.take().expect("stdout was piped");
+    let mut lines = tokio::io::AsyncBufReadExt::lines(tokio::io::BufReader::new(stdout));
+    let mut seen = Vec::new();
+    let served = tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            match lines.next_line().await {
+                Ok(Some(line)) => {
+                    let hit = line.contains("serving http://");
+                    seen.push(line);
+                    if hit {
+                        return true;
+                    }
+                }
+                Ok(None) | Err(_) => return false,
+            }
+        }
+    })
+    .await
+    .unwrap_or(false);
+
+    assert!(
+        served,
+        "the current binary did not reach its own serving line on a store recorded at \
+         {git_ref} — this is the upgrade class this gate exists to catch. What it said \
+         instead:\n{}",
+        seen.join("\n")
+    );
+
+    let surface = Surface::connect(&format!("http://127.0.0.1:{http_port}/mcp"))
+        .await
+        .expect("connecting to the current binary");
+    assert_every_recorded_record_reads_back(&surface, &git_ref).await;
+    surface.finish().await;
+
+    let _ = child.start_kill();
+    let _ = child.wait().await;
+    drop(scratch);
+}
+
+/// **A naive split, safe for what this fixture actually contains**: this
+/// crate's own recorded content never carries a semicolon inside a string,
+/// so splitting the whole file on `;` is enough to recover each statement —
+/// a `CREATE TABLE` spans many lines and must not be split by line first. A
+/// dump that ever needed a semicolon inside a value would need a real SQL
+/// tokenizer here instead.
+fn split_sql_statements(dump: &str) -> Vec<String> {
+    dump.split(';')
+        .map(str::trim)
+        .filter(|stmt| !stmt.is_empty())
+        .map(|stmt| format!("{stmt};"))
+        .collect()
+}
+
+/// **Every category the recording wrote, read back through the served
+/// surface** — the second half of the proof. Startup succeeding is not
+/// enough on its own: a stricter parse can let the server come up and still
+/// fail the one row it was made stricter about the moment something asks
+/// for it.
+async fn assert_every_recorded_record_reads_back(surface: &Surface, git_ref: &str) {
+    let fail = |what: &str, body: &str| -> ! {
+        panic!("recorded at {git_ref}: {what} did not read back correctly: {body}")
+    };
+
+    // Entities of several kinds.
+    for (kind, slug) in [
+        ("person", "upgrade-fixture-person"),
+        ("place", "upgrade-fixture-place"),
+        ("thing", "upgrade-fixture-thing"),
+    ] {
+        let handle = format!("{kind}:{slug}");
+        let read = surface
+            .call("recall", json!({"subject": handle, "facts": true}))
+            .await;
+        let parsed: serde_json::Value =
+            serde_json::from_str(&read).unwrap_or_else(|_| fail(&handle, &read));
+        if parsed["objects"][0]["id"] != handle {
+            fail(&handle, &read);
+        }
+    }
+
+    // The fact with fields, an edge, and a stated provenance.
+    let read = surface
+        .call(
+            "recall",
+            json!({"subject": "person:upgrade-fixture-person", "facts": true}),
+        )
+        .await;
+    let parsed: serde_json::Value =
+        serde_json::from_str(&read).unwrap_or_else(|_| fail("the recorded fact", &read));
+    let facts = parsed["objects"][0]["facts"]
+        .as_array()
+        .unwrap_or_else(|| fail("the recorded fact's own list", &read));
+    let landed = facts
+        .iter()
+        .find(|f| f["content"] == "lives at the recorded place");
+    let Some(landed) = landed else {
+        fail("the recorded fact", &read);
+    };
+    if landed["provenance"] != "testimony"
+        || landed["edge"]["object"] != "place:upgrade-fixture-place"
+        || landed["fields"]["since"] != "2026-01-01"
+    {
+        fail("the recorded fact's provenance, edge or fields", &read);
+    }
+
+    // The declared type is still in the instance's own vocabulary.
+    let read = surface.call("start_here", json!({"brief": true})).await;
+    if !read.contains("upgrade-fixture-type") {
+        fail("the declared type", &read);
+    }
+
+    // The thought: an active, connection-edged claim on the bot's own
+    // handle, still readable as one of its own thoughts.
+    let read = surface
+        .call("recall", json!({"subject": "bot:assistant", "facts": true}))
+        .await;
+    if !read.contains("a recorded thought, live in the room") {
+        fail("the recorded thought", &read);
+    }
+
+    // The role-claim fields, on the bot's own folded fields.
+    let read = surface
+        .call("recall", json!({"subject": "bot:assistant"}))
+        .await;
+    let parsed: serde_json::Value =
+        serde_json::from_str(&read).unwrap_or_else(|_| fail("the role-claim fields", &read));
+    if parsed["objects"][0]["fields"]["role/upgrade-fixture-recorder/holder"] != "bot:assistant" {
+        fail("the role-claim fields", &read);
+    }
+
+    // Mail in each of its three states — read through search, since a
+    // message this binary did not send is invisible to list_sent, and
+    // read_mailbox drains only the caller's own live box.
+    for (needle, state) in [
+        ("left new", "new"),
+        ("will be read", "read"),
+        ("will be processed", "processed"),
+    ] {
+        let read = surface
+            .call(
+                "search",
+                json!({"query": needle, "include_mail": true, "limit": 5}),
+            )
+            .await;
+        if !read.contains(needle) || !read.contains(state) {
+            fail(&format!("the {state} mail message"), &read);
+        }
+    }
+
+    // The wrapped session — `list_runs` is the direct read on a bot's own
+    // runs and their state, attributed to the caller's own sid.
+    let booted = surface
+        .call("start_here", json!({"bot": "assistant", "brief": true}))
+        .await;
+    let booted: serde_json::Value =
+        serde_json::from_str(&booted).unwrap_or_else(|_| fail("booting to verify", &booted));
+    let sid = booted["session"]["sid"]
+        .as_str()
+        .unwrap_or_else(|| fail("booting to verify", &booted.to_string()));
+    let read = surface
+        .call("list_runs", json!({"sid": sid, "limit": 30}))
+        .await;
+    let parsed: serde_json::Value =
+        serde_json::from_str(&read).unwrap_or_else(|_| fail("the wrapped session", &read));
+    let runs = parsed["runs"]
+        .as_array()
+        .unwrap_or_else(|| fail("the wrapped session's own runs list", &read));
+    // The recording ran `assistant`'s only session in a fresh store, so
+    // this is that one run.
+    let Some(recording_run) = runs.first() else {
+        fail("the wrapped session", &read);
+    };
+    if recording_run["state"] != "wrapped" {
+        fail("the wrapped session's own state", &read);
+    }
+}
