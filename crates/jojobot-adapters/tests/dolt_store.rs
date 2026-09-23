@@ -177,7 +177,7 @@ async fn a_session_write_that_conflicts_with_another_is_told_apart_from_a_failed
     let session = sessions_store
         .begin(NewSession {
             bot,
-            sid: Sid("s-session-conflict-not-a-failure".into()),
+            sid: Sid("cnf1".into()),
             focus: "working".into(),
             started_at: started,
             timezone: None,
@@ -4456,7 +4456,7 @@ async fn session_write_summary_answers_the_real_store() {
     let to_wrap = sessions_store
         .begin(NewSession {
             bot: wrap_bot,
-            sid: Sid("s-session-write-summary-wrap".into()),
+            sid: Sid("wsm2".into()),
             focus: "working".into(),
             started_at: started,
             timezone: None,
