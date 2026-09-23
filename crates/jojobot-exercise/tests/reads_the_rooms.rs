@@ -61,6 +61,69 @@ fn every_shipped_room_reads_as_phases_with_something_to_say() {
     }
 }
 
+/// **Whether a phase's own day actually reaches the model.** A day marker is
+/// read for the run's own bookkeeping regardless of where it sits, but the
+/// PROMPT is built from the quoted lines alone — so a day named only on the
+/// marker line, and never repeated inside the quote, is a day the model is
+/// never told. Two forms are accepted: the ISO date itself, and the
+/// "D Month YYYY" prose `vault.md` and `year.md` write their entries in —
+/// neither is assumed to be the only correct one.
+fn day_reaches_the_model(prompt: &str, day: &str) -> bool {
+    if prompt.contains(day) {
+        return true;
+    }
+    const MONTHS: [&str; 12] = [
+        "January",
+        "February",
+        "March",
+        "April",
+        "May",
+        "June",
+        "July",
+        "August",
+        "September",
+        "October",
+        "November",
+        "December",
+    ];
+    let mut parts = day.splitn(3, '-');
+    let (Some(year), Some(month), Some(day_of_month)) = (parts.next(), parts.next(), parts.next())
+    else {
+        return false;
+    };
+    let Ok(month) = month.parse::<usize>() else {
+        return false;
+    };
+    let Some(name) = month.checked_sub(1).and_then(|i| MONTHS.get(i)) else {
+        return false;
+    };
+    let day_of_month = day_of_month.trim_start_matches('0');
+    prompt.contains(&format!("{day_of_month} {name} {year}"))
+}
+
+/// 🚨 **Every phase that claims a day tells the model that day.** A paid run
+/// on 2026-09-23 found `rooms/decisions.md` naming its day only on the
+/// marker line, outside every phase's block quote — the run's own bookkeeping
+/// read the day correctly and every dated lock still failed, because the
+/// prompt the model actually received never mentioned it.
+#[test]
+fn every_phase_that_claims_a_day_tells_the_model_that_day() {
+    let mut checked = 0;
+    for (name, room) in shipped() {
+        for phase in &room.phases {
+            let Some(day) = &phase.day else { continue };
+            checked += 1;
+            assert!(
+                day_reaches_the_model(&phase.prompt, day),
+                "{name}: {:?} claims {day} but its delivered prompt never says so: {:?}",
+                phase.name,
+                phase.prompt,
+            );
+        }
+    }
+    assert!(checked > 0, "no shipped room has a dated phase to check");
+}
+
 /// **Every shipped room is registered, both halves.**
 ///
 /// A document with no expectations is a run that refuses at the door, and a

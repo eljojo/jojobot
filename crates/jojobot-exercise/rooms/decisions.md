@@ -22,7 +22,7 @@ entity  work:shipped-kind-fields | Extend a shipped kind
 
 **Session: fresh.** **Day: 2026-10-01.**
 
-> This is a role-play. Treat the stated day as today.
+> This is a role-play. Today is 2026-10-01. Treat it as today.
 > Nobody will answer, but the work you leave here will be read.
 >
 > These are the subjects the operator uses for design rules: bots and identity, bright lines, budgets, carried state, code reds, finding things, finding your way, fronting a layer, how jojobot is proven, kinds, lines, mailboxes, memory, provenance and standing, rhythms, sessions, skills, synthesis, the build, the journal, the status bar, the store, the web ui, what is owed and late, what jojobot is, what you have already been shown.
@@ -58,7 +58,7 @@ entity  work:shipped-kind-fields | Extend a shipped kind
 
 **Session: fresh.** **Day: 2026-10-03.**
 
-> This is a role-play. Treat the stated day as today.
+> This is a role-play. Today is 2026-10-03. Treat it as today.
 > Nobody will answer, but the work you leave here will be read.
 >
 > Please take down these rules so a later sitting can find the ones that bear on a change:
@@ -92,7 +92,7 @@ entity  work:shipped-kind-fields | Extend a shipped kind
 
 **Session: fresh.** **Day: 2026-10-05.**
 
-> This is a role-play. Treat the stated day as today.
+> This is a role-play. Today is 2026-10-05. Treat it as today.
 > Nobody will answer, but the work you leave here will be read.
 >
 > Please take down these rules so a later sitting can find the ones that bear on a change:
@@ -126,7 +126,7 @@ entity  work:shipped-kind-fields | Extend a shipped kind
 
 **Session: fresh.** **Day: 2026-10-07.**
 
-> This is a role-play. Treat the stated day as today.
+> This is a role-play. Today is 2026-10-07. Treat it as today.
 > Nobody will answer, but the work you leave here will be read.
 >
 > Please take down these rules so a later sitting can find the ones that bear on a change:
@@ -160,7 +160,7 @@ entity  work:shipped-kind-fields | Extend a shipped kind
 
 **Session: fresh.** **Day: 2026-10-09.**
 
-> This is a role-play. Treat the stated day as today.
+> This is a role-play. Today is 2026-10-09. Treat it as today.
 > Nobody will answer, but the work you leave here will be read.
 >
 > Please take down these rules so a later sitting can find the ones that bear on a change:
@@ -194,7 +194,7 @@ entity  work:shipped-kind-fields | Extend a shipped kind
 
 **Session: fresh.** **Day: 2026-10-11.**
 
-> This is a role-play. Treat the stated day as today.
+> This is a role-play. Today is 2026-10-11. Treat it as today.
 > Nobody will answer, but the work you leave here will be read.
 >
 > Please take down these rules so a later sitting can find the ones that bear on a change:
@@ -228,7 +228,7 @@ entity  work:shipped-kind-fields | Extend a shipped kind
 
 **Session: fresh.** **Day: 2026-10-13.**
 
-> This is a role-play. Treat the stated day as today.
+> This is a role-play. Today is 2026-10-13. Treat it as today.
 > Nobody will answer, but the work you leave here will be read.
 >
 > Please take down these rules so a later sitting can find the ones that bear on a change:
@@ -262,7 +262,7 @@ entity  work:shipped-kind-fields | Extend a shipped kind
 
 **Session: fresh.** **Day: 2026-10-15.**
 
-> This is a role-play. Treat the stated day as today.
+> This is a role-play. Today is 2026-10-15. Treat it as today.
 > Nobody will answer, but the work you leave here will be read.
 >
 > Please take down these rules so a later sitting can find the ones that bear on a change:
@@ -296,7 +296,7 @@ entity  work:shipped-kind-fields | Extend a shipped kind
 
 **Session: fresh.** **Day: 2026-10-17.**
 
-> This is a role-play. Treat the stated day as today.
+> This is a role-play. Today is 2026-10-17. Treat it as today.
 > Nobody will answer, but the work you leave here will be read.
 >
 > Please take down these rules so a later sitting can find the ones that bear on a change:
@@ -371,7 +371,7 @@ say     rule 58 was not filed as archived where the later question can find it
 
 **Session: fresh.** **Day: 2026-11-01.**
 
-> This is a role-play. Treat the stated day as today.
+> This is a role-play. Today is 2026-11-01. Treat it as today.
 > Nobody will answer, but your answer is being read. You must answer.
 > The operator is about to move the PM's own working state into jojobot. What has been ruled that bears on it?
 > Record your answer on Move the PM's working state, as a list of rule numbers. If no rule covers it, record that nothing was found and where you looked.
@@ -385,7 +385,7 @@ say     question 1 has no recorded answer with the required rules on its work it
 
 **Session: fresh.** **Day: 2026-11-03.**
 
-> This is a role-play. Treat the stated day as today.
+> This is a role-play. Today is 2026-11-03. Treat it as today.
 > Nobody will answer, but your answer is being read. You must answer.
 > Which rules expire on a condition?
 > Record your answer on Review conditional rules, as a list of rule numbers. If no rule covers it, record that nothing was found and where you looked.
@@ -399,7 +399,7 @@ say     question 2 has no recorded answer with the required rules on its work it
 
 **Session: fresh.** **Day: 2026-11-05.**
 
-> This is a role-play. Treat the stated day as today.
+> This is a role-play. Today is 2026-11-05. Treat it as today.
 > Nobody will answer, but your answer is being read. You must answer.
 > The operator is about to change how a check-in on a recurring loop is recorded. What is ruled?
 > Record your answer on Change the loop check-in, as a list of rule numbers. If no rule covers it, record that nothing was found and where you looked.
@@ -413,7 +413,7 @@ say     question 3 has no recorded answer with the required rules on its work it
 
 **Session: fresh.** **Day: 2026-11-07.**
 
-> This is a role-play. Treat the stated day as today.
+> This is a role-play. Today is 2026-11-07. Treat it as today.
 > Nobody will answer, but your answer is being read. You must answer.
 > Can a bot raise its own capacity?
 > Record your answer on Review bot capacity, as a list of rule numbers. If no rule covers it, record that nothing was found and where you looked.
@@ -427,7 +427,7 @@ say     question 4 has no recorded answer with the required rules on its work it
 
 **Session: fresh.** **Day: 2026-11-09.**
 
-> This is a role-play. Treat the stated day as today.
+> This is a role-play. Today is 2026-11-09. Treat it as today.
 > Nobody will answer, but your answer is being read. You must answer.
 > What replaced rule 58, and what does the replacement say?
 > Record your answer on Review the replacement for rule 58, as a list of rule numbers. If no rule covers it, record that nothing was found and where you looked.
@@ -441,7 +441,7 @@ say     question 5 has no recorded answer with the required rules on its work it
 
 **Session: fresh.** **Day: 2026-11-11.**
 
-> This is a role-play. Treat the stated day as today.
+> This is a role-play. Today is 2026-11-11. Treat it as today.
 > Nobody will answer, but your answer is being read. You must answer.
 > What has been ruled about how jojobot handles image attachments?
 > Record your answer on Review image attachments, as a list of rule numbers. If no rule covers it, record that nothing was found and where you looked.
@@ -455,7 +455,7 @@ say     the image-attachment question has no active answer without a rule refere
 
 **Session: fresh.** **Day: 2026-11-13.**
 
-> This is a role-play. Treat the stated day as today.
+> This is a role-play. Today is 2026-11-13. Treat it as today.
 > Nobody will answer, but your answer is being read. You must answer.
 > Can the operator add a field to a kind the software ships?
 > Record your answer on Extend a shipped kind, as a list of rule numbers. If no rule covers it, record that nothing was found and where you looked.
