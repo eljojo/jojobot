@@ -463,6 +463,7 @@ impl Jojobot {
                     self.what_an_update_left_standing(&fact, &cleared, keep)
                         .await,
                 );
+                self.note_seat_pushed_off(&fact, &mut body).await;
                 if self.first_contact(CLAIMS_DOMAIN, Some(&caller)).await {
                     crate::answer::note_teaching(&mut body, CLAIMS_TEACHING);
                 }
@@ -2852,5 +2853,64 @@ mod tests {
             Some(&claimed_at_before),
             "the claim path must still renew once the side doors are closed: {renewed:?}"
         );
+    }
+
+    /// **The same overflow `capture` proves, through the other verb that can
+    /// cause it.** `update_fact` is the other write shape that can set
+    /// `fields.starred` — turning an ordinary claim into a rule after the
+    /// fact — and it has to name the same fallout: the write lands, and its
+    /// receipt names the oldest starred rule that no longer rides the boot.
+    #[tokio::test]
+    async fn update_fact_names_the_rule_a_new_star_pushes_off_the_boot() {
+        let jojobot = handler();
+        let bot = "bot:mcp-seats-update";
+        ensure(&jojobot, bot).await;
+
+        let mut oldest = String::new();
+        for n in 0..jojobot_domain::text::CARRIED_RULES {
+            let receipt = capture_ok(
+                &jojobot,
+                CaptureArgs {
+                    fields: Some(
+                        [("starred".to_string(), "true".to_string())]
+                            .into_iter()
+                            .collect(),
+                    ),
+                    ..capture_args(bot, &format!("starred rule {n}"))
+                },
+            )
+            .await;
+            if n == 0 {
+                oldest = address_of(&receipt);
+            }
+        }
+        let sixth = capture_ok(
+            &jojobot,
+            capture_args(bot, "an ordinary rule, starred later"),
+        )
+        .await;
+        let sixth_address = address_of(&sixth);
+
+        let starred_later = update_ok(
+            &jojobot,
+            UpdateFactArgs {
+                fields: Some(
+                    [("starred".to_string(), "true".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..update_args(&sixth_address)
+            },
+        )
+        .await;
+        assert_eq!(
+            starred_later["seats"]["dropped"], oldest,
+            "an edit that stars a rule past the cap has to name the oldest starred rule, exactly \
+             as a capture does: {starred_later}"
+        );
+        let note = starred_later["seats"]["note"].as_str().unwrap_or_else(|| {
+            panic!("the edit carries the same sentence the boot shows: {starred_later}")
+        });
+        assert!(note.contains("skill"), "{note}");
     }
 }

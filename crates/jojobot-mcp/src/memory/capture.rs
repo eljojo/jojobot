@@ -856,6 +856,7 @@ impl Jojobot {
                     self.what_a_capture_left_standing(&fact, checked_in, opened_the_loop)
                         .await,
                 );
+                self.note_seat_pushed_off(&fact, &mut body).await;
                 if self.first_contact(CLAIMS_DOMAIN, Some(&caller)).await {
                     crate::answer::note_teaching(&mut body, CLAIMS_TEACHING);
                 }
@@ -3231,5 +3232,71 @@ mod tests {
         )
         .await;
         assert_ne!(landed["status"], "blocked", "{landed}");
+    }
+
+    /// **Starring a rule past the boot's seats does not refuse the write —
+    /// it names which one no longer rides.**
+    ///
+    /// Five captures fill the seats exactly; a sixth, starred too, still
+    /// lands, and its own receipt names the oldest of the five — the one the
+    /// boot's own newest-first cap would not keep — because a caller that
+    /// never boots again would otherwise never learn it fell off.
+    ///
+    /// **Paired with the fifth capture, which fills the seats exactly and
+    /// must name nothing**: a build that always reported would pass the
+    /// positive half alone.
+    #[tokio::test]
+    async fn capture_names_the_rule_a_new_star_pushes_off_the_boot() {
+        let jojobot = handler();
+        let bot = "bot:mcp-seats-capture";
+        ensure(&jojobot, bot).await;
+
+        let mut oldest = String::new();
+        for n in 0..jojobot_domain::text::CARRIED_RULES {
+            let receipt = capture_ok(
+                &jojobot,
+                CaptureArgs {
+                    fields: Some(
+                        [("starred".to_string(), "true".to_string())]
+                            .into_iter()
+                            .collect(),
+                    ),
+                    ..capture_args(bot, &format!("starred rule {n}"))
+                },
+            )
+            .await;
+            assert_eq!(
+                receipt["seats"],
+                serde_json::Value::Null,
+                "filling a seat, not overflowing one, must name nothing: {receipt}"
+            );
+            if n == 0 {
+                oldest = receipt["address"]
+                    .as_str()
+                    .expect("a capture receipt carries its own address")
+                    .to_string();
+            }
+        }
+
+        let sixth = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                fields: Some(
+                    [("starred".to_string(), "true".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..capture_args(bot, "the sixth starred rule")
+            },
+        )
+        .await;
+        assert_eq!(
+            sixth["seats"]["dropped"], oldest,
+            "the write names the oldest starred rule, not any other: {sixth}"
+        );
+        let note = sixth["seats"]["note"].as_str().unwrap_or_else(|| {
+            panic!("the write carries the same sentence the boot shows: {sixth}")
+        });
+        assert!(note.contains("skill"), "{note}");
     }
 }

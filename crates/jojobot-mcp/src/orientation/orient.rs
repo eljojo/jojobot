@@ -2119,6 +2119,71 @@ mod tests {
         );
     }
 
+    /// **Seats can be full with nothing elided at all** — exactly
+    /// `CARRIED_RULES` starred and nothing else in force, so `rules_elided`
+    /// never fires — and the boot still has to say the seats are full,
+    /// because a session that stars a sixth would otherwise learn the cap
+    /// exists only by watching one quietly fall off.
+    ///
+    /// **Paired with a boot one rule short of the cap**, which must say
+    /// nothing: a build that always added the sentence would pass the
+    /// positive half alone.
+    #[tokio::test]
+    async fn a_boot_with_every_seat_taken_says_so_and_one_spare_says_nothing() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        for n in 0..jojobot_domain::text::CARRIED_RULES {
+            capture_ok(
+                &jojobot,
+                CaptureArgs {
+                    fields: Some(
+                        [("starred".to_string(), "true".to_string())]
+                            .into_iter()
+                            .collect(),
+                    ),
+                    ..capture_args("bot:gamma", &format!("starred rule {n}"))
+                },
+            )
+            .await;
+        }
+
+        let full = boot(&jojobot, "gamma").await;
+        assert_eq!(
+            full["identity"]["rules_elided"],
+            serde_json::Value::Null,
+            "every starred rule fit, so nothing was elided: {full}"
+        );
+        let note = full["identity"]["rules_note"]
+            .as_str()
+            .unwrap_or_else(|| panic!("a boot with every seat taken has to say so: {full}"));
+        assert!(
+            note.contains("skill"),
+            "the seats-full sentence names where a one-off rule belongs instead: {note}"
+        );
+
+        make_bot(&jojobot, "delta").await;
+        for n in 0..jojobot_domain::text::CARRIED_RULES - 1 {
+            capture_ok(
+                &jojobot,
+                CaptureArgs {
+                    fields: Some(
+                        [("starred".to_string(), "true".to_string())]
+                            .into_iter()
+                            .collect(),
+                    ),
+                    ..capture_args("bot:delta", &format!("starred rule {n}"))
+                },
+            )
+            .await;
+        }
+        let spare = boot(&jojobot, "delta").await;
+        assert_eq!(
+            spare["identity"]["rules_note"],
+            serde_json::Value::Null,
+            "one seat short of the cap must say nothing about it being full: {spare}"
+        );
+    }
+
     /// **One response never contradicts itself about which boxes exist.**
     ///
     /// It could before: booting minted the declared box *between* taking the

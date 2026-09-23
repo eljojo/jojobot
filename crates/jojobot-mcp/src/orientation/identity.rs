@@ -127,27 +127,17 @@ impl Jojobot {
         // `connection` edge — the same shape the capacity gate already
         // reads as "this is a thought" — is excluded before the mark is
         // ever asked about.
-        let in_force: Vec<_> = self
-            .memory
-            .recall(bot)
-            .await
-            .map_err(memory_error)?
-            .into_iter()
-            .filter(|rule| rule.status == jojobot_domain::memory::FactStatus::Active)
-            .filter(|rule| {
-                !rule
-                    .edge
-                    .as_ref()
-                    .is_some_and(|e| e.shape == jojobot_domain::memory::EdgeShape::Connection)
-            })
-            // **A role claim is never a rule, whatever it carries.** It is
-            // operational lease state — who holds a role and when they last
-            // renewed it — never an instruction about how the bot behaves,
-            // and the two fields the claim path writes are exempted by
-            // their own shape, the same way a thought's connection edge
-            // exempts it just above.
-            .filter(|rule| jojobot_domain::session::role_write_in(&rule.fields).is_none())
-            .collect();
+        // **A role claim is never a rule, whatever it carries.** It is
+        // operational lease state — who holds a role and when they last
+        // renewed it — never an instruction about how the bot behaves, and
+        // the two fields the claim path writes are exempted by their own
+        // shape, the same way a thought's connection edge exempts it. Both
+        // exemptions, and the active-only filter above them, are
+        // [`jojobot_domain::memory::rules_in_force`] — shared with the write
+        // that stars a rule, so the two cannot disagree about what counts.
+        let in_force = jojobot_domain::memory::rules_in_force(
+            &self.memory.recall(bot).await.map_err(memory_error)?,
+        );
         let total_in_force = in_force.len();
         // **A boot carries at most `CARRIED_RULES_CAP` of a bot's own
         // records — the backpack model.** Which ones is NOT computed: no
@@ -197,13 +187,17 @@ impl Jojobot {
         // different: some of what was not carried may still bind this bot,
         // so the boot says so, names how many, and names the way to read
         // them — the one case where "eliding is never silent" applies here.
-        if carried_count < total_in_force
-            && let Some(obj) = body.as_object_mut()
-        {
-            obj.insert("rules_elided".into(), true.into());
-            obj.insert(
-                "rules_note".into(),
-                format!(
+        // **Seats can be full with nothing elided at all** — exactly
+        // `CARRIED_RULES` starred and nothing else in force — so this is
+        // asked independently of the elision above rather than folded into
+        // its condition. [`jojobot_domain::memory::carried_seats_status`] is
+        // the same call a write that stars a rule makes, so the two say the
+        // same thing about the same count.
+        let seats = jojobot_domain::memory::carried_seats_status(&in_force);
+        if let Some(obj) = body.as_object_mut() {
+            if carried_count < total_in_force {
+                obj.insert("rules_elided".into(), true.into());
+                let mut note = format!(
                     "{carried_count} of {total_in_force} rules in force are carried here — the \
                      ones marked to carry. The rest are at home, not lost, and some of them may \
                      still bind this bot: recall {} with facts: true to read them all. To mark a \
@@ -211,9 +205,15 @@ impl Jojobot {
                      \"true\"}} — that is the only thing a boot checks, and the cap above is how \
                      many marked seats fit, never a selector among them.",
                     bot.as_str()
-                )
-                .into(),
-            );
+                );
+                if let Some(seats) = &seats {
+                    note.push(' ');
+                    note.push_str(&seats.sentence);
+                }
+                obj.insert("rules_note".into(), note.into());
+            } else if let Some(seats) = &seats {
+                obj.insert("rules_note".into(), seats.sentence.clone().into());
+            }
         }
         if answering_an_offer && let Some(obj) = body.as_object_mut() {
             obj.insert(

@@ -1985,6 +1985,76 @@ pub fn thought_room(captured: &[Fact]) -> Vec<Fact> {
         .collect()
 }
 
+/// **Which of a bot's own claims are rules currently binding it** — active,
+/// not a thought ([`thought_room`]'s own edge carve, read the other way), and
+/// not a role claim's operational lease state. The boot and a write that
+/// stars a rule both need exactly this filter to decide whether the seats
+/// are full; shared here so the two cannot drift apart.
+pub fn rules_in_force(recalled: &[Fact]) -> Vec<Fact> {
+    recalled
+        .iter()
+        .filter(|rule| rule.status == FactStatus::Active)
+        .filter(|rule| {
+            !rule
+                .edge
+                .as_ref()
+                .is_some_and(|e| e.shape == EdgeShape::Connection)
+        })
+        .filter(|rule| crate::session::role_write_in(&rule.fields).is_none())
+        .cloned()
+        .collect()
+}
+
+/// **How many of a bot's in-force rules are marked to ride the boot, and the
+/// one sentence about it** — read together because both the boot and a write
+/// that stars a rule need the same count to decide whether to say anything at
+/// all, and sharing this is what stops the wording drifting between the two.
+pub struct CarriedSeats {
+    /// How many in-force rules carry `fields.starred == "true"`.
+    pub starred: usize,
+    /// The sentence to show — present once `starred` reaches
+    /// [`crate::text::CARRIED_RULES`], whatever it goes on to say beyond
+    /// that.
+    pub sentence: String,
+    /// **The oldest starred rule, once there are more of them than seats.**
+    /// `None` at or under the cap: nothing has been pushed off yet. Past it,
+    /// the boot's own selection (newest first, capped) is what would not
+    /// keep this one, so this names it rather than leaving a write to find
+    /// out only at the next boot.
+    pub dropped: Option<FactAddress>,
+}
+
+/// `in_force` is [`rules_in_force`]'s own answer, in the store's own order —
+/// oldest first, the same order the boot's own selection reads before it
+/// reverses to take the newest.
+///
+/// `None` short of [`crate::text::CARRIED_RULES`] starred rules: there is
+/// nothing to say yet, and a caller under the cap gets no sentence at all.
+pub fn carried_seats_status(in_force: &[Fact]) -> Option<CarriedSeats> {
+    let starred: Vec<&Fact> = in_force
+        .iter()
+        .filter(|rule| rule.fields.get("starred").is_some_and(|v| v == "true"))
+        .collect();
+    let count = starred.len();
+    if count < crate::text::CARRIED_RULES {
+        return None;
+    }
+    let dropped = (count > crate::text::CARRIED_RULES)
+        .then(|| starred.first().map(|rule| rule.address()))
+        .flatten();
+    Some(CarriedSeats {
+        starred: count,
+        sentence: format!(
+            "This identity has {count} rules starred to ride the boot, and only {} seats \
+             exist. The seats are for rules that bind on every turn; a rule that binds at one \
+             moment is better carried by what is read at that moment, such as a skill fetched \
+             for that job.",
+            crate::text::CARRIED_RULES,
+        ),
+        dropped,
+    })
+}
+
 /// **How many runs a bot's own thought may go untouched before it ages out
 /// of the room a capacity write counts against.**
 ///

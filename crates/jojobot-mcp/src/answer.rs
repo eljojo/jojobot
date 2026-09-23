@@ -360,6 +360,22 @@ pub(crate) fn note_fold_behind(body: &mut serde_json::Value, behind: Behind) {
     );
 }
 
+/// **Name the starred rule a write just pushed off the boot's seats.** A
+/// bot's boot carries a fixed number of marked rules; starring one past that
+/// number does not refuse the write — see
+/// [`crate::Jojobot::note_seat_pushed_off`] — it names, by address, the
+/// oldest starred rule that no longer rides, so a caller learns of the gap
+/// here rather than only at the bot's next boot.
+pub(crate) fn note_seat_dropped(body: &mut serde_json::Value, dropped: &str, sentence: &str) {
+    let Some(fields) = body.as_object_mut() else {
+        return;
+    };
+    fields.insert(
+        "seats".into(),
+        serde_json::json!({ "dropped": dropped, "note": sentence }),
+    );
+}
+
 /// **Ride a teaching on the answer that triggered it**, rather than a
 /// separate call the caller has to know to make — see
 /// [`crate::teaching`].

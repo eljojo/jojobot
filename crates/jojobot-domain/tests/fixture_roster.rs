@@ -141,6 +141,8 @@ const ROSTER: &[&str] = &[
     // which is the whole point of that capture. It names no instance and
     // nobody's life, so it sits here on the same terms as `bot:assistant`.
     "bot:jojobot",
+    "bot:mcp-seats-capture",
+    "bot:mcp-seats-update",
     "bot:mcp-thought-aging",
     "bot:mcp-thought-body-cap",
     "bot:mcp-thought-borrow",

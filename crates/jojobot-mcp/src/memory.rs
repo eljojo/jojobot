@@ -27,6 +27,7 @@ pub mod rename_entity;
 pub mod retract;
 pub mod search;
 pub mod set_charter;
+pub mod starred;
 #[cfg(test)]
 pub mod testing;
 pub mod update_entity;
