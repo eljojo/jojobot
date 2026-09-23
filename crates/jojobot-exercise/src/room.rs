@@ -1249,7 +1249,7 @@ mod tests {
             "the port this room tried is missing from the error: {message}",
         );
         assert!(
-            message.contains('7'),
+            message.contains("exit status: 7"),
             "the child's exit status is missing from the error: {message}",
         );
     }
