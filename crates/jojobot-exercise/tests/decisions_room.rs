@@ -5,6 +5,7 @@ use jojobot_exercise::run::{Observed, Outcome};
 use jojobot_exercise::surface::Surface;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
+use std::path::PathBuf;
 
 #[test]
 fn the_decision_room_delivers_the_whole_register_across_cold_sittings() {
@@ -249,15 +250,11 @@ async fn every_bears_on_citation_the_worked_solution_files_is_under_the_body_cap
 
     let playbook =
         Playbook::read(&expectations::room_document("rooms/decisions.md")).expect("the room reads");
-    let (_room, surface) = Room::open_with_client(&server_binary().expect("a jojobot binary"))
-        .await
-        .expect("a room");
-    expectations::seed_for("rooms/decisions.md")
-        .expect("the starting world builds")
-        .furnish(&surface)
-        .await
-        .expect("the starting world applies");
-    file_register(&surface, &playbook).await;
+    let seed = filed_register_seed().await;
+    let (_room, surface) =
+        Room::open_with_client_from(&server_binary().expect("a jojobot binary"), &seed)
+            .await
+            .expect("a room");
 
     // The same rule rows `file_register` reads, narrowed to the threads that
     // carry at least one "bears on" citation — every topic a citation could
@@ -367,6 +364,52 @@ async fn file_as_one_prose(surface: &Surface, playbook: &Playbook) {
         }
     }
     assert_eq!(filed, 225);
+}
+
+static FILED_REGISTER: tokio::sync::OnceCell<PathBuf> = tokio::sync::OnceCell::const_new();
+static FILED_PROSE: tokio::sync::OnceCell<PathBuf> = tokio::sync::OnceCell::const_new();
+
+/// **The store `file_register` leaves behind, built once per test binary.**
+/// Three tests below need "the register already filed" as their starting
+/// state and do not test the filing itself — this is what lets each start
+/// from a copy of it instead of redoing several hundred sequential writes.
+async fn filed_register_seed() -> PathBuf {
+    FILED_REGISTER
+        .get_or_try_init(|| async {
+            let binary = server_binary().expect("a jojobot binary");
+            Room::snapshot_after(&binary, |surface| async move {
+                expectations::seed_for("rooms/decisions.md")?
+                    .furnish(&surface)
+                    .await?;
+                let playbook = Playbook::read(&expectations::room_document("rooms/decisions.md"))?;
+                file_register(&surface, &playbook).await;
+                Ok(())
+            })
+            .await
+        })
+        .await
+        .expect("the filed-register seed builds")
+        .clone()
+}
+
+/// The store `file_as_one_prose` leaves behind, built the same way.
+async fn filed_prose_seed() -> PathBuf {
+    FILED_PROSE
+        .get_or_try_init(|| async {
+            let binary = server_binary().expect("a jojobot binary");
+            Room::snapshot_after(&binary, |surface| async move {
+                expectations::seed_for("rooms/decisions.md")?
+                    .furnish(&surface)
+                    .await?;
+                let playbook = Playbook::read(&expectations::room_document("rooms/decisions.md"))?;
+                file_as_one_prose(&surface, &playbook).await;
+                Ok(())
+            })
+            .await
+        })
+        .await
+        .expect("the filed-prose seed builds")
+        .clone()
 }
 
 fn numbers_in(value: &Value, conditional_only: bool, out: &mut BTreeSet<String>) {
@@ -570,19 +613,53 @@ async fn the_decision_room_is_solvable_through_the_served_surface() {
     );
 }
 
+/// 🚨 **The one guard nothing else here can be.** A copy of the filed
+/// register reads identically to a live filing by design — proven above —
+/// so no read against the store, however this test's own assertions are
+/// worded, can tell whether `the_decision_room_is_solvable_through_the_served_surface`
+/// actually drove the filing itself or borrowed the cached seed a different
+/// test built. Swapping its own `Room::open_with_client` and `file_register`
+/// for `filed_register_seed`/`open_with_client_from` was tried by hand: the
+/// test still passed, because the content is the same either way. The only
+/// place that swap is visible is the source, so this reads it.
+///
+/// **Read once, checked twice.** The one call this test must keep proves it
+/// still drives the filing; the one call it must never gain proves it has
+/// not started borrowing the seed instead.
+#[test]
+fn the_solvable_test_still_files_live_rather_than_borrowing_the_cached_seed() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/decisions_room.rs");
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("this test's own file at {} reads: {e}", path.display()));
+    let marker = "async fn the_decision_room_is_solvable_through_the_served_surface";
+    let start = source
+        .find(marker)
+        .expect("the solvable test is still named this — update the marker if it was renamed");
+    let body = &source[start..];
+    let end = body
+        .find("\n}\n")
+        .expect("the function has a closing brace on its own line");
+    let body = &body[..end];
+    assert!(
+        body.contains("file_register(&surface, &playbook)"),
+        "the solvable test no longer files live through the served surface, so it proves \
+         nothing beyond what the cached seed already proved once when some other test built it"
+    );
+    assert!(
+        !body.contains("filed_register_seed"),
+        "the solvable test now borrows the cached seed instead of filing live"
+    );
+}
+
 #[tokio::test]
 async fn one_subject_of_prose_does_not_answer_the_working_state_or_capacity_questions() {
     let playbook =
         Playbook::read(&expectations::room_document("rooms/decisions.md")).expect("the room reads");
-    let (_room, surface) = Room::open_with_client(&server_binary().expect("a jojobot binary"))
-        .await
-        .expect("a room");
-    expectations::seed_for("rooms/decisions.md")
-        .expect("the starting world builds")
-        .furnish(&surface)
-        .await
-        .expect("the starting world applies");
-    file_as_one_prose(&surface, &playbook).await;
+    let seed = filed_prose_seed().await;
+    let (_room, surface) =
+        Room::open_with_client_from(&server_binary().expect("a jojobot binary"), &seed)
+            .await
+            .expect("a room");
     let stored = surface
         .call(
             "search",
@@ -658,17 +735,11 @@ async fn rule_answer_locks_read_details_across_records_and_reject_extra_numbers(
 
 #[tokio::test]
 async fn no_lock_here_rests_on_a_needle_that_matches_somewhere_else() {
-    let playbook =
-        Playbook::read(&expectations::room_document("rooms/decisions.md")).expect("the room reads");
-    let (_room, surface) = Room::open_with_client(&server_binary().expect("a jojobot binary"))
-        .await
-        .expect("a room");
-    expectations::seed_for("rooms/decisions.md")
-        .expect("the starting world builds")
-        .furnish(&surface)
-        .await
-        .expect("the starting world applies");
-    file_register(&surface, &playbook).await;
+    let seed = filed_register_seed().await;
+    let (_room, surface) =
+        Room::open_with_client_from(&server_binary().expect("a jojobot binary"), &seed)
+            .await
+            .expect("a room");
     let summary = jojobot_exercise::lock::needle_summary(
         &surface,
         &jojobot_exercise::lock::locks_of(expectations::DECISIONS_ROOM),
@@ -737,5 +808,95 @@ async fn question_six_requires_an_answer_without_a_rule_reference() {
     assert!(
         !lock.check(&observed).await.held,
         "a rule number beside the absence was accepted"
+    );
+}
+
+/// 🚨 **A copy of the filed register is the same room, not merely a room with
+/// the same schema.** Never served directly: the cached seed is shared by
+/// every test in this binary, so serving it live here and copying it
+/// elsewhere at the same time would race a live server's own writes against
+/// a plain filesystem copy. Two independent copies of the one seed prove the
+/// same property — if a copy were not faithful, two of them would not read
+/// alike either — without ever touching the shared original.
+///
+/// **Three reads, the ones a precondition-only test actually depends on.** A
+/// recall of one filed thing, a search over what filing wrote, and — the one
+/// a schema-only proof would never need — the session list, because filing
+/// leaves sessions behind and a copy carries them. Booting on each copy uses
+/// `fresh_sitting`, the same call the filing itself makes, so a leftover
+/// active session from the filing run is resumed past rather than met as an
+/// ambiguous choice — proving directly that no test which boots a bot on a
+/// copy meets that leftover and reads it wrong: this copy's own list of
+/// prior runs matches the other copy's, and only the freshly booted entry
+/// (excluded from the comparison below) differs, in its `sid` alone.
+#[tokio::test]
+async fn a_copy_of_the_filed_register_reads_the_same_as_another_copy() {
+    let binary = server_binary().expect("a jojobot binary");
+    let seed = filed_register_seed().await;
+    let (_room_a, a) = Room::open_with_client_from(&binary, &seed)
+        .await
+        .expect("the first copy opens");
+    let (_room_b, b) = Room::open_with_client_from(&binary, &seed)
+        .await
+        .expect("the second copy opens");
+
+    let recall_a = a
+        .call("recall", json!({"subject":"work:pm-state","facts":true}))
+        .await;
+    let recall_b = b
+        .call("recall", json!({"subject":"work:pm-state","facts":true}))
+        .await;
+    assert_eq!(
+        recall_a, recall_b,
+        "a recall of a filed thing reads differently between two copies of the same seed"
+    );
+
+    let search_a = a
+        .call(
+            "search",
+            json!({"query":"jojobot tracks what each session is doing"}),
+        )
+        .await;
+    let search_b = b
+        .call(
+            "search",
+            json!({"query":"jojobot tracks what each session is doing"}),
+        )
+        .await;
+    assert_eq!(
+        search_a, search_b,
+        "a search over what filing wrote reads differently between two copies of the same seed"
+    );
+
+    let playbook =
+        Playbook::read(&expectations::room_document("rooms/decisions.md")).expect("the room reads");
+    let day = playbook.phases[0]
+        .day
+        .as_deref()
+        .expect("phase 1 names a day");
+    let sid_a = fresh_sitting(&a, day).await;
+    let sid_b = fresh_sitting(&b, day).await;
+
+    let runs_a = a
+        .must("list_runs", json!({"sid": sid_a}))
+        .await
+        .expect("this copy's runs");
+    let runs_b = b
+        .must("list_runs", json!({"sid": sid_b}))
+        .await
+        .expect("the other copy's runs");
+    let without_sid = |runs: &Value| -> Vec<(Value, Value)> {
+        runs["runs"]
+            .as_array()
+            .expect("a runs array")
+            .iter()
+            .map(|run| (run["state"].clone(), run["working_on"].clone()))
+            .collect()
+    };
+    assert_eq!(
+        without_sid(&runs_a),
+        without_sid(&runs_b),
+        "booting on a copy met a leftover session from the filing run and read it differently \
+         than the other copy did — leftover run lists: {runs_a} / {runs_b}"
     );
 }

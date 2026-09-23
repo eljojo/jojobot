@@ -102,6 +102,87 @@ impl Room {
         Room::open_with_client_on(binary, Some(today)).await
     }
 
+    /// **A room started from a caller's own seed directory**, rather than the
+    /// shared empty template — what [`Room::snapshot_after`] built is the
+    /// starting state, filled or not, and this is how a caller gets its own
+    /// private copy of it. The copy is what makes it safe to open the same
+    /// seed from more than one test: each caller mutates its own directory,
+    /// never the seed's.
+    pub async fn open_with_client_from(
+        binary: &Path,
+        seed: &Path,
+    ) -> Result<(Room, crate::surface::Surface)> {
+        sweep_once();
+        anyhow::ensure!(
+            binary.is_file(),
+            "no jojobot binary at {} — build the workspace first",
+            binary.display(),
+        );
+        let mut last = None;
+        for _ in 0..ATTEMPTS {
+            let dir = match scratch() {
+                Ok(dir) => dir,
+                Err(e) => {
+                    last = Some(e);
+                    continue;
+                }
+            };
+            if let Err(e) = copy_dir_all(seed, &dir).with_context(|| {
+                format!(
+                    "copying the seed at {} into {}",
+                    seed.display(),
+                    dir.display()
+                )
+            }) {
+                last = Some(e);
+                continue;
+            }
+            let room = match Room::spawn_bare(binary, &DeathSignal::Ask, None, dir).await {
+                Ok(room) => room,
+                Err(e) => {
+                    last = Some(e);
+                    continue;
+                }
+            };
+            match crate::surface::Surface::connect(room.endpoint()).await {
+                Ok(surface) => return Ok((room, surface)),
+                Err(e) => last = Some(e),
+            }
+        }
+        Err(last
+            .unwrap_or_else(|| anyhow::anyhow!("no attempt was made"))
+            .context(format!(
+                "the room could not be opened from its seed in {ATTEMPTS} attempts"
+            )))
+    }
+
+    /// **Build a directory a room left behind, over its own served surface.**
+    /// The same shape [`build_template`] uses for the empty schema — brought
+    /// up, killed, its directory kept — except the room is handed to `fill`
+    /// first, live, exactly as a real caller would drive it. What `fill`
+    /// writes through the surface is what every copy of this directory
+    /// starts holding, which is what makes an expensive precondition
+    /// something a test pays for once rather than once per test that needs
+    /// it. Built from the empty template, the same way [`Room::open`] is, so
+    /// this pays no more than the ordinary migration cost on top of `fill`'s
+    /// own.
+    pub async fn snapshot_after<F, Fut>(binary: &Path, fill: F) -> Result<PathBuf>
+    where
+        F: FnOnce(crate::surface::Surface) -> Fut,
+        Fut: std::future::Future<Output = Result<()>>,
+    {
+        let (mut room, surface) = Room::open_with_client(binary).await?;
+        fill(surface).await?;
+        let _ = room.server.kill();
+        let _ = room.server.wait();
+        let dir = room.dir.clone();
+        // **Not dropped.** Same reasoning as `build_template`: `Room::drop`
+        // removes its directory, and this directory is the whole point of
+        // building it. The process is already dead from the kill above.
+        std::mem::forget(room);
+        Ok(dir)
+    }
+
     async fn open_with_client_on(
         binary: &Path,
         today: Option<&str>,
