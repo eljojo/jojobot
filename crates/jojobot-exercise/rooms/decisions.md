@@ -328,11 +328,12 @@ entity  work:shipped-kind-fields | Extend a shipped kind
 
 ```locks
 # These eight rows are the retrieval key and the replacement pair. A rule
-# with a "bears on" edge is filed once on its home thread and again as a
-# connection fact per edge, all carrying the same row text — so its own
-# needle matches more than once. limit 1 keeps the search to the top hit,
-# which still carries the needle, without opening the door to an
-# unrelated rule answering in its place.
+# with a "bears on" edge is filed once, in full, on its own home thread; a
+# citation on the topic it bears on is a short pointer naming the rule, not
+# the row again — a thought is enforceable only because its body is too
+# short to restate what it points at. So the needle below matches in
+# exactly one place, and limit 1 is the ordinary reader's habit rather
+# than a guard against a second, duplicate hit.
 search {"query": "Real data waits on the paid tests", "status": "active", "limit": 1}
 carries paid tests
 say     rule 241 was not filed as active where the later question can find it

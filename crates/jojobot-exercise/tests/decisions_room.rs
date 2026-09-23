@@ -141,6 +141,24 @@ async fn create_threads(surface: &Surface, playbook: &Playbook) -> String {
     first_sid
 }
 
+/// **The short pointer a "bears on" citation files, never the rule's own
+/// text again.** A citation is a thought: an active, connection-edged claim
+/// on the rule's own thread, and a thought is enforceable only because its
+/// body is too short to restate what it points at
+/// (`pm/feature-briefs/carried-state.md`). The rule's full text is filed
+/// once, on its own thread, by the ordinary claim just above this one in
+/// `file_register`; a citation that repeated it would be exactly the
+/// restatement the cap exists to refuse. This names the rule by number and
+/// says where the substance already lives.
+fn bears_on_pointer(number: &str, thread: &str) -> String {
+    // **`Rule {number}: `, not restated after the colon.** `numbers_in`
+    // (this file's own walker) reads a rule's number off exactly this
+    // prefix on every fact it visits, citations included — the same shape
+    // the primary filing already carries, kept here so the walk still
+    // finds a citation without needing the rule's own text to do it.
+    format!("Rule {number}: see topic:{thread} for the rule itself.")
+}
+
 async fn file_register(surface: &Surface, playbook: &Playbook) {
     let first_sid = create_threads(surface, playbook).await;
     let mut filed = 0;
@@ -201,7 +219,7 @@ async fn file_register(surface: &Surface, playbook: &Playbook) {
                             .must(
                                 "capture",
                                 json!({"subject": format!("topic:{thread}"),
-                                "content": row,
+                                "content": bears_on_pointer(number, &thread),
                             "provenance":"testimony", "shape":"connection",
                             "object":format!("topic:{edge}"), "sid":sid,
                             "standing": if conditional { "open" } else { "settled" },
@@ -216,6 +234,91 @@ async fn file_register(surface: &Surface, playbook: &Playbook) {
         }
     }
     assert_eq!(filed, 225);
+}
+
+/// 🚨 **Every "bears on" citation the worked solution files is a pointer,
+/// never the rule's own text again.** The default thought cap is 200
+/// characters (`jojobot_domain::memory::DEFAULT_THOUGHT_BODY_CAP`, mirrored
+/// here rather than depended on — this crate tests only the served
+/// surface); a citation over that would be refused the moment a real run
+/// tried to file it, so this proves the worked solution never asks the
+/// server to do that in the first place.
+#[tokio::test]
+async fn every_bears_on_citation_the_worked_solution_files_is_under_the_body_cap() {
+    const THOUGHT_BODY_CAP: usize = 200;
+
+    let playbook =
+        Playbook::read(&expectations::room_document("rooms/decisions.md")).expect("the room reads");
+    let (_room, surface) = Room::open_with_client(&server_binary().expect("a jojobot binary"))
+        .await
+        .expect("a room");
+    expectations::seed_for("rooms/decisions.md")
+        .expect("the starting world builds")
+        .furnish(&surface)
+        .await
+        .expect("the starting world applies");
+    file_register(&surface, &playbook).await;
+
+    // The same rule rows `file_register` reads, narrowed to the threads that
+    // carry at least one "bears on" citation — every topic a citation could
+    // possibly have landed on.
+    let mut threads_with_citations = BTreeSet::new();
+    for phase in &playbook.phases[..9] {
+        for row in phase
+            .prompt
+            .lines()
+            .filter(|line| line.starts_with("Rule "))
+        {
+            let (_, rest) = row
+                .strip_prefix("Rule ")
+                .expect("a rule")
+                .split_once(": ")
+                .expect("a numbered rule");
+            if rest.contains(" This also bears on ") {
+                let thread = rest
+                    .rsplit_once(" Thread: ")
+                    .and_then(|(_, tail)| tail.split('.').next())
+                    .unwrap_or("what jojobot is")
+                    .replace(' ', "-");
+                threads_with_citations.insert(thread);
+            }
+        }
+    }
+    assert!(
+        !threads_with_citations.is_empty(),
+        "the room's own fixture carries no bears-on citations — this case would prove nothing"
+    );
+
+    let mut checked = 0;
+    for thread in &threads_with_citations {
+        let read = surface
+            .call(
+                "recall",
+                json!({"subject": format!("topic:{thread}"), "facts": true}),
+            )
+            .await;
+        let parsed: Value = serde_json::from_str(&read).expect("an answer read");
+        let facts = parsed["objects"][0]["facts"]
+            .as_array()
+            .unwrap_or_else(|| panic!("topic:{thread} answered with no facts array: {read}"));
+        for fact in facts {
+            if fact["edge"]["type"] == "relatedTo" {
+                let content = fact["content"].as_str().expect("a citation's own content");
+                assert!(
+                    content.chars().count() <= THOUGHT_BODY_CAP,
+                    "a bears-on citation on topic:{thread} is {} characters, over the default \
+                     cap of {THOUGHT_BODY_CAP} — the worked solution must file a pointer, not \
+                     the rule's own text again: {content:?}",
+                    content.chars().count()
+                );
+                checked += 1;
+            }
+        }
+    }
+    assert!(
+        checked > 0,
+        "no citation was found to check — the recall query or the edge filter is wrong"
+    );
 }
 
 async fn file_as_one_prose(surface: &Surface, playbook: &Playbook) {
