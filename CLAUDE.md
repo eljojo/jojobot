@@ -678,6 +678,9 @@ roles and never an operator.
 - **Commits: one per coherent problem.** A milestone lands as a handful of
   commits — never one per file or checklist item, never dozens. **A fix and
   the test that proves it are ONE problem**, however a task listed them.
+- **A safe rebase needs no one's permission.** Rebasing unpushed commits onto
+  the main line, and joining them by fast-forward, is routine work. Never make
+  a merge commit. Push and deploy stay the operator's.
 - **A commit message uses Simplified Technical English**, like every other text
   this project writes. Short sentences. Active voice. One word has one meaning.
   No metaphor.
