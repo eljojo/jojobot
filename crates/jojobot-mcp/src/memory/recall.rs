@@ -4834,6 +4834,121 @@ mod tests {
         assert_eq!(gamma["charter"], own, "{body}");
     }
 
+    /// **A view declaring `shows: facts` returns the claims unasked.**
+    /// `args.facts.or(asked.facts.then_some(true))` in this file is the only
+    /// line that reads the view's own `facts` arm; falsifying it (forced to
+    /// `false`) leaves every case in this module green, so this is the one
+    /// that must go red on it.
+    #[tokio::test]
+    async fn a_view_declaring_shows_facts_returns_the_claims_unasked() {
+        let jojobot = handler();
+        declared_view(
+            &jojobot,
+            "shows-facts",
+            &[("selects", "bot"), ("shows", "facts")],
+        )
+        .await;
+        declared_view(&jojobot, "shows-neither", &[("selects", "bot")]).await;
+        make_bot(&jojobot, "gamma").await;
+        capture_ok(
+            &jojobot,
+            capture_args("bot:gamma", "gamma keeps the kitchen running"),
+        )
+        .await;
+
+        let shown = json_of(
+            &jojobot
+                .recall(Parameters(by_view("shows-facts")))
+                .await
+                .expect("recall ok"),
+        );
+        let gamma = shown["objects"]
+            .as_array()
+            .expect("objects is a list")
+            .iter()
+            .find(|o| o["id"] == "bot:gamma")
+            .unwrap_or_else(|| panic!("gamma is in the answer: {shown}"));
+        assert_eq!(
+            gamma["facts"][0]["content"], "gamma keeps the kitchen running",
+            "the view's own shows: facts must be honoured without the caller asking: {shown}",
+        );
+
+        let neither = json_of(
+            &jojobot
+                .recall(Parameters(by_view("shows-neither")))
+                .await
+                .expect("recall ok"),
+        );
+        let gamma = neither["objects"]
+            .as_array()
+            .expect("objects is a list")
+            .iter()
+            .find(|o| o["id"] == "bot:gamma")
+            .unwrap_or_else(|| panic!("gamma is in the answer: {neither}"));
+        assert!(
+            gamma.get("facts").is_none(),
+            "a view declaring neither facts nor prose must ship neither: {neither}",
+        );
+    }
+
+    /// **A view declaring `shows: prose` returns the prose unasked** — the
+    /// same case as `shows: facts`, one line over in the same read.
+    #[tokio::test]
+    async fn a_view_declaring_shows_prose_returns_the_prose_unasked() {
+        let jojobot = handler();
+        declared_view(
+            &jojobot,
+            "shows-prose",
+            &[("selects", "bot"), ("shows", "prose")],
+        )
+        .await;
+        declared_view(&jojobot, "prose-not-shown", &[("selects", "bot")]).await;
+        make_bot(&jojobot, "gamma").await;
+        let own = "Keeps the kitchen running.";
+        jojobot
+            .set_charter(Parameters(SetCharterArgs {
+                bot: "gamma".into(),
+                prose: own.into(),
+                sid: Some(crate::harness::TEST_SID.into()),
+            }))
+            .await
+            .expect("set_charter ok");
+
+        let shown = json_of(
+            &jojobot
+                .recall(Parameters(by_view("shows-prose")))
+                .await
+                .expect("recall ok"),
+        );
+        let gamma = shown["objects"]
+            .as_array()
+            .expect("objects is a list")
+            .iter()
+            .find(|o| o["id"] == "bot:gamma")
+            .unwrap_or_else(|| panic!("gamma is in the answer: {shown}"));
+        assert_eq!(
+            gamma["prose"], own,
+            "the view's own shows: prose must be honoured without the caller asking: {shown}",
+        );
+
+        let neither = json_of(
+            &jojobot
+                .recall(Parameters(by_view("prose-not-shown")))
+                .await
+                .expect("recall ok"),
+        );
+        let gamma = neither["objects"]
+            .as_array()
+            .expect("objects is a list")
+            .iter()
+            .find(|o| o["id"] == "bot:gamma")
+            .unwrap_or_else(|| panic!("gamma is in the answer: {neither}"));
+        assert!(
+            gamma.get("prose").is_none(),
+            "a view declaring neither facts nor prose must ship neither: {neither}",
+        );
+    }
+
     /// **A filter is its own record on the view** — a fact whose own
     /// fields carry `key` and `value` (and, when needed, `compare` and
     /// `scope`), the same shape every other claim on this store is.
