@@ -2845,6 +2845,16 @@ impl Memory for DoltMemory {
         // patch rewrites it, because that is what decides which of the patch's
         // clears is a write and which names a key this record never had.
         let carried = fact.fields.clone();
+        // **Whether this record was already a thought, read before the patch
+        // rewrites it.** The archived check just above guarantees `status` is
+        // `Active` here, so a connection edge is the whole of the question.
+        // This is what tells an edit that merely touches an EXISTING thought
+        // apart from one that MAKES a claim into a thought — the cap and the
+        // room only have anything to say about the second.
+        let was_thought = fact
+            .edge
+            .as_ref()
+            .is_some_and(|e| e.shape == EdgeShape::Connection);
         // **Every claim a mark names faces the existence rule a source
         // does** — a mark is a set of citations, and a citation to nothing
         // is exactly the failure `derived_from` is screened against below,
@@ -2956,12 +2966,18 @@ impl Memory for DoltMemory {
         ) {
             return Err(err);
         }
-        if fact.status == FactStatus::Active
+        let becomes_thought = fact.status == FactStatus::Active
             && fact
                 .edge
                 .as_ref()
-                .is_some_and(|e| e.shape == EdgeShape::Connection)
-        {
+                .is_some_and(|e| e.shape == EdgeShape::Connection);
+        // **The cap runs on a content change, or on newly becoming a
+        // thought — never on an edit that leaves an existing thought's
+        // content exactly as it was.** An edit seeded over the cap, or over
+        // capacity, before either check existed must still take an edit
+        // that does not touch the content the cap protects or the room
+        // membership the capacity protects.
+        if becomes_thought && (patch.content.is_some() || !was_thought) {
             // **The body cap, checked before the room has anything to say.**
             // A thought over its container's cap is refused whether or not
             // the room has space — see `refuses_thought_over_cap`.
@@ -2973,6 +2989,12 @@ impl Memory for DoltMemory {
             {
                 return Err(err);
             }
+        }
+        // **The room only grows when a record newly joins it.** An edit to
+        // a thought already in the room does not grow it, whatever else the
+        // edit changes — a room already over capacity (a borrow, or seeded
+        // that way) is an allowed state an unrelated edit must not re-judge.
+        if becomes_thought && !was_thought {
             let capacity = after_fold
                 .get(jojobot_domain::memory::THOUGHT_CAPACITY)
                 .and_then(|v| v.trim().parse::<usize>().ok());

@@ -1469,6 +1469,13 @@ impl Memory for InMemoryMemory {
         // rewrites it, because that is what decides which of the patch's clears
         // is a write and which names a key this record never had.
         let carried = edited.fields.clone();
+        // **Whether this record was already a thought, read before the patch
+        // rewrites it** — see the real store's identical comment on its own
+        // copy of this line.
+        let was_thought = edited
+            .edge
+            .as_ref()
+            .is_some_and(|e| e.shape == crate::memory::EdgeShape::Connection);
         // A source named by an edit faces the capture rule: a link at a claim
         // nobody wrote reads as evidence and leads nowhere.
         if let Some(source) = &patch.derived_from {
@@ -1614,12 +1621,16 @@ impl Memory for InMemoryMemory {
         {
             return Err(err);
         }
-        if edited.status == FactStatus::Active
+        let becomes_thought = edited.status == FactStatus::Active
             && edited
                 .edge
                 .as_ref()
-                .is_some_and(|e| e.shape == crate::memory::EdgeShape::Connection)
-        {
+                .is_some_and(|e| e.shape == crate::memory::EdgeShape::Connection);
+        // **The cap runs on a content change, or on newly becoming a
+        // thought — never on an edit that leaves an existing thought's
+        // content exactly as it was** — see the real store's identical
+        // comment on its own copy of this check.
+        if becomes_thought && (patch.content.is_some() || !was_thought) {
             let cap = after
                 .get(super::super::THOUGHT_BODY_CAP)
                 .and_then(|v| v.trim().parse::<usize>().ok());
@@ -1627,6 +1638,10 @@ impl Memory for InMemoryMemory {
             {
                 return Err(err);
             }
+        }
+        // **The room only grows when a record newly joins it** — see the
+        // real store's identical comment on its own copy of this check.
+        if becomes_thought && !was_thought {
             let capacity = after
                 .get(super::super::THOUGHT_CAPACITY)
                 .and_then(|v| v.trim().parse::<usize>().ok());

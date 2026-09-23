@@ -4094,6 +4094,180 @@ pub async fn a_thing_cannot_set_its_own_thought_body_cap_either<M: Memory>(store
         .expect("the guard must not block another identity's write");
 }
 
+/// **The cap runs on a content change, never on an edit that leaves an
+/// existing thought's content exactly as it was.** A thought captured while
+/// its container's cap was wide (or unset) can end up over a cap the
+/// container is later given — the same shape old code would have left
+/// behind before this guard existed. An edit that does not touch the
+/// content must still land; a rewrite that names new content over the cap
+/// is refused exactly as a fresh capture would be.
+pub async fn an_edit_that_leaves_an_over_cap_thoughts_content_untouched_still_lands<M: Memory>(
+    store: &M,
+) {
+    let bot = EntityId("bot:contract-thought-cap-grandfathered".into());
+    let a = EntityId("thing:jukebox".into());
+    ensure(store, &bot).await;
+    ensure(store, &a).await;
+
+    // Captured while the container names no cap of its own — the default is
+    // 200, and this content is well under it.
+    let thought = capture(
+        store,
+        NewFact {
+            edge: Some(Edge::new(EdgeShape::Connection, a.clone())),
+            ..NewFact::about(
+                bot.clone(),
+                "the jukebox needs a needle today",
+                date(2026, 8, 21),
+            )
+        },
+    )
+    .await;
+    // Another identity narrows the cap under what this thought already
+    // holds — the container's own field, set after the fact.
+    capture(
+        store,
+        NewFact {
+            fields: [(THOUGHT_BODY_CAP.to_string(), "10".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(bot.clone(), "cap is ten now", date(2026, 8, 22))
+        },
+    )
+    .await;
+
+    // An edit that does not touch the content lands, even though the
+    // content it leaves in place is already over the container's cap.
+    store
+        .update_fact(
+            &thought.address(),
+            FactPatch {
+                provenance: Some(Provenance::Testimony),
+                confirmed_by_user: true,
+                ..Default::default()
+            },
+            &other_caller(),
+        )
+        .await
+        .expect("update_fact ok")
+        .written()
+        .expect("an edit that does not touch the content must land over a cap set after capture");
+
+    // A rewrite of the content to another over-cap text is refused.
+    let refused = store
+        .update_fact(
+            &thought.address(),
+            FactPatch {
+                content: Some("a different needle, also too long for ten".to_string()),
+                provenance: Some(Provenance::Inference),
+                ..Default::default()
+            },
+            &other_caller(),
+        )
+        .await
+        .expect_err("rewriting the content to another over-cap text must be refused");
+    assert!(
+        matches!(refused, MemoryError::ThoughtTooLong { .. }),
+        "expected ThoughtTooLong, got {refused:?}"
+    );
+}
+
+/// **The room only grows when a record newly joins it, never on an edit to
+/// a thought already counted.** A room can sit over its own capacity —
+/// a borrow, spent and not yet repaid — and that is an allowed state an
+/// unrelated edit must not re-judge. Drawing a NEW thought into that same
+/// room is a different question, and it is still refused.
+pub async fn an_edit_to_a_thought_already_in_an_over_capacity_room_still_lands<M: Memory>(
+    store: &M,
+) {
+    let bot = EntityId("bot:contract-room-over-capacity-edit".into());
+    let a = EntityId("thing:jukebox".into());
+    let b = EntityId("thing:battery".into());
+    let c = EntityId("thing:the-fern".into());
+    ensure(store, &bot).await;
+    ensure(store, &a).await;
+    ensure(store, &b).await;
+    ensure(store, &c).await;
+
+    capture(
+        store,
+        NewFact {
+            fields: [(THOUGHT_CAPACITY.to_string(), "1".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(bot.clone(), "capacity is one", date(2026, 8, 23))
+        },
+    )
+    .await;
+    capture(
+        store,
+        NewFact {
+            edge: Some(Edge::new(EdgeShape::Connection, a.clone())),
+            ..NewFact::about(bot.clone(), "the jukebox needs a needle", date(2026, 8, 24))
+        },
+    )
+    .await;
+    // Borrowed over the ceiling — the room now holds two against a capacity
+    // of one, the allowed overdraw.
+    let borrowed = store
+        .capture(NewFact {
+            edge: Some(Edge::new(EdgeShape::Connection, b.clone())),
+            borrow: true,
+            ..NewFact::about(
+                bot.clone(),
+                "the battery needs replacing",
+                date(2026, 8, 25),
+            )
+        })
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("a borrow lands over the ceiling");
+
+    // An edit to the borrowed thought that does not grow the room lands,
+    // even though the room it sits in is already over capacity.
+    store
+        .update_fact(
+            &borrowed.address(),
+            FactPatch {
+                provenance: Some(Provenance::Testimony),
+                confirmed_by_user: true,
+                ..Default::default()
+            },
+            &other_caller(),
+        )
+        .await
+        .expect("update_fact ok")
+        .written()
+        .expect("an edit that does not grow the room must land even over capacity");
+
+    // Drawing a NEW thought into that same room is still refused.
+    let plain = capture(
+        store,
+        NewFact::about(
+            bot.clone(),
+            "the fern is on the windowsill",
+            date(2026, 8, 26),
+        ),
+    )
+    .await;
+    let refused = store
+        .update_fact(
+            &plain.address(),
+            FactPatch {
+                edge: Some(Edge::new(EdgeShape::Connection, c.clone())),
+                ..Default::default()
+            },
+            &other_caller(),
+        )
+        .await
+        .expect_err("drawing a new thought into an over-capacity room must be refused");
+    assert!(
+        matches!(refused, MemoryError::RoomFull { .. }),
+        "expected RoomFull, got {refused:?}"
+    );
+}
+
 /// **The emergency reserve — usable once, and only once.** A full room with
 /// no drop named is ordinarily refused (proven by
 /// [`a_bots_room_enforces_its_capacity`], this case's own positive twin);
@@ -11127,6 +11301,8 @@ pub async fn run_all<M: Memory>(store: &M) {
     )
     .await;
     a_thing_cannot_set_its_own_thought_body_cap_either(store).await;
+    an_edit_that_leaves_an_over_cap_thoughts_content_untouched_still_lands(store).await;
+    an_edit_to_a_thought_already_in_an_over_capacity_room_still_lands(store).await;
     an_uncapped_thing_is_refused_nothing(store).await;
     a_non_bots_room_enforces_its_capacity_too(store).await;
     a_borrow_crosses_the_ceiling_exactly_once(store).await;
