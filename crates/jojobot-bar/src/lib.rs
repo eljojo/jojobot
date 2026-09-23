@@ -29,11 +29,29 @@ pub struct TestVerdict {
 }
 
 impl TestVerdict {
-    /// **Compiled, and nothing failed.** The one question a caller almost
-    /// always wants answered first.
+    /// **Compiled, and nothing failed — going only by what the text said.**
+    /// A caller deciding whether the whole phase is fine also needs the
+    /// process's own exit status: see [`test_healthy`].
     pub fn ok(&self) -> bool {
         self.compiled && self.failed == 0
     }
+}
+
+/// **Whether the test phase, as a whole, is fine.** Two witnesses have to
+/// agree: what the text said about itself (`verdict.ok()`) and the process's
+/// own exit status.
+///
+/// They can disagree. A suite that crashes or is killed (`SIGABRT`,
+/// `SIGSEGV`, an OOM kill, a killed timeout) exits non-zero and prints no
+/// `test result:` line for itself — nothing to sum, nothing to count as
+/// failed. Under `--no-fail-fast`, every OTHER suite still runs and still
+/// prints its own clean line, so `verdict.ok()` alone reads the crashed
+/// suite as if it had never existed rather than as a failure. The exit
+/// status is the only witness that saw it: `cargo test` exits non-zero
+/// exactly when a suite it spawned did not exit zero, whether or not that
+/// suite got the chance to print anything.
+pub fn test_healthy(exit_ok: bool, verdict: &TestVerdict) -> bool {
+    exit_ok && verdict.ok()
 }
 
 /// **Read a `cargo test` run's combined stdout+stderr and sum what it said.**
@@ -113,21 +131,30 @@ impl Summary {
             .push(format!("{phase}: not run — an earlier phase failed"));
     }
 
-    /// **The `test` phase's own verdict**, rendered with the distinction the
-    /// whole mechanism exists for: a compile failure and a clean pass both
-    /// have `failed == 0`, and only one of them is fine.
-    pub fn test_phase(&mut self, verdict: &TestVerdict) {
-        self.green = self.green && verdict.ok();
+    /// **The `test` phase's own verdict**, rendered with the distinctions the
+    /// whole mechanism exists for: a compile failure, a crashed suite and a
+    /// clean pass can all show `failed == 0` in the text, and only one of
+    /// them is fine — see [`test_healthy`].
+    pub fn test_phase(&mut self, exit_ok: bool, verdict: &TestVerdict) {
+        self.green = self.green && test_healthy(exit_ok, verdict);
         if !verdict.compiled {
             self.lines
                 .push("test: DID NOT COMPILE — 0 suites ran".to_string());
             return;
         }
         if verdict.failed == 0 {
-            self.lines.push(format!(
-                "test: ok — {} suites, {} passed",
-                verdict.suites, verdict.passed
-            ));
+            if exit_ok {
+                self.lines.push(format!(
+                    "test: ok — {} suites, {} passed",
+                    verdict.suites, verdict.passed
+                ));
+            } else {
+                self.lines.push(format!(
+                    "test: FAILED — cargo exited non-zero over {} suites, {} passed, 0 \
+                     failed recorded — a suite crashed or was killed — see log",
+                    verdict.suites, verdict.passed
+                ));
+            }
             return;
         }
         self.lines.push(format!(
@@ -234,16 +261,60 @@ mod tests {
         assert!(!verdict.ok(), "did-not-compile must never read as ok");
     }
 
+    /// **A crashed or killed suite prints no `test result:` line for itself,
+    /// while every other suite under `--no-fail-fast` still prints a clean
+    /// one.** The text alone reads this as a pass — nothing named it as
+    /// failed, because a corpse cannot print `... FAILED`. Only the process's
+    /// own exit status saw it, so `test_healthy` must read `false` here even
+    /// though `verdict.ok()` reads `true`.
+    #[test]
+    fn a_crashed_suite_is_unhealthy_even_though_the_text_alone_reads_clean() {
+        let verdict = summarize_test_output(
+            "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; \
+             finished in 0.01s\n",
+        );
+        assert!(verdict.ok(), "the text alone has nothing marked failed");
+        assert!(
+            !test_healthy(false, &verdict),
+            "a non-zero exit must override a clean-looking verdict"
+        );
+        assert!(
+            test_healthy(true, &verdict),
+            "a real clean run stays healthy"
+        );
+    }
+
+    /// **The rendered summary names the crash rather than reading like a
+    /// pass or like a counted test failure.** Distinct from both: it is not
+    /// `test: ok` (something crashed) and it is not `N failed` (nothing was
+    /// counted as failing — there is no name to show).
+    #[test]
+    fn the_rendered_summary_names_a_crashed_suite_distinctly_from_a_clean_pass() {
+        let verdict = summarize_test_output(
+            "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; \
+             finished in 0.01s\n",
+        );
+        let mut summary = Summary::new();
+        summary.test_phase(false, &verdict);
+        let rendered = summary.render();
+        assert!(rendered.contains("verdict: RED"), "{rendered}");
+        assert!(!rendered.contains("test: ok"), "{rendered}");
+        assert!(
+            rendered.contains("crashed or was killed"),
+            "the reader needs to know this was not a counted failure: {rendered}"
+        );
+    }
+
     /// **The rendered summary distinguishes the two states by name**, not
     /// only by a boolean a reader has to already know to check.
     #[test]
     fn the_rendered_summary_names_did_not_compile_distinctly_from_a_clean_pass() {
         let mut clean = Summary::new();
-        clean.test_phase(&summarize_test_output(GREEN));
+        clean.test_phase(true, &summarize_test_output(GREEN));
         assert!(clean.render().contains("test: ok"));
 
         let mut broken = Summary::new();
-        broken.test_phase(&summarize_test_output(COMPILE_ERROR));
+        broken.test_phase(false, &summarize_test_output(COMPILE_ERROR));
         let rendered = broken.render();
         assert!(
             rendered.contains("DID NOT COMPILE"),
@@ -258,7 +329,7 @@ mod tests {
     #[test]
     fn a_failed_tests_name_is_readable_from_the_summary_alone() {
         let mut summary = Summary::new();
-        summary.test_phase(&summarize_test_output(ONE_FAILING));
+        summary.test_phase(false, &summarize_test_output(ONE_FAILING));
         let rendered = summary.render();
         assert!(
             rendered.contains("attention::tests::a_rhythm_is_overdue_from_the_day_it_falls_due"),
@@ -273,7 +344,7 @@ mod tests {
     fn the_summary_stays_under_ten_lines_even_over_a_real_multi_suite_run() {
         let mut summary = Summary::new();
         summary.phase_ok("fmt-check", "formatted");
-        summary.test_phase(&summarize_test_output(GREEN));
+        summary.test_phase(true, &summarize_test_output(GREEN));
         summary.phase_ok("lint", "clean");
         summary.log("target/bar/check.log", GREEN.lines().count());
         let rendered = summary.render();

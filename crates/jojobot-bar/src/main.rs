@@ -22,7 +22,7 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 
-use jojobot_bar::{Summary, summarize_test_output};
+use jojobot_bar::{Summary, summarize_test_output, test_healthy};
 
 /// **The cargo binary the outer `make` recipe was told to use.** The
 /// Makefile's own `CARGO ?= cargo` is an override hook, and this reads the
@@ -147,15 +147,15 @@ fn run_check() -> std::io::Result<ExitCode> {
     }
     summary.phase_ok("build", "compiled");
 
-    let (_, text) = run_phase(
+    let (ok, text) = run_phase(
         &log_path,
         "cargo test --workspace --no-fail-fast --locked",
         &cargo,
         &["test", "--workspace", "--no-fail-fast", "--locked"],
     )?;
     let verdict = summarize_test_output(&text);
-    summary.test_phase(&verdict);
-    if !verdict.ok() {
+    summary.test_phase(ok, &verdict);
+    if !test_healthy(ok, &verdict) {
         summary.phase_skipped("lint");
         finish(&mut summary, &log_path);
         return Ok(ExitCode::FAILURE);
@@ -295,15 +295,15 @@ fn run_narrow(args: &[String]) -> std::io::Result<ExitCode> {
     if let Some(f) = &filter {
         test_args.push(f);
     }
-    let (_, text) = run_phase(
+    let (ok, text) = run_phase(
         &log_path,
         "cargo test -p <crate> [filter]",
         &cargo,
         &test_args,
     )?;
     let verdict = summarize_test_output(&text);
-    summary.test_phase(&verdict);
-    if !verdict.ok() {
+    summary.test_phase(ok, &verdict);
+    if !test_healthy(ok, &verdict) {
         summary.phase_skipped("lint");
         finish(&mut summary, &log_path);
         return Ok(ExitCode::FAILURE);
