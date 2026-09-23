@@ -349,34 +349,41 @@ async fn answer_records(seen: &Observed<'_>, subject: &str) -> Result<Vec<Value>
     Ok(live)
 }
 
+/// **Whether any fact's own answer — `content`, never `details` — names a
+/// rule.** `details` is where a sitting explains itself, and dismissing a
+/// candidate by number there ("rule 129 is not this") is not naming it as
+/// the answer. Only `content` is the answer this check is about, so only
+/// `content` can fail it.
+fn content_names_a_rule(facts: &[Value]) -> bool {
+    facts.iter().any(|fact| {
+        let Some(part) = fact["content"].as_str() else {
+            return false;
+        };
+        let words: Vec<&str> = part.split_whitespace().collect();
+        part.trim().parse::<u16>().is_ok()
+            || words.iter().any(|word| {
+                word.starts_with('#')
+                    && word[1..]
+                        .trim_end_matches(|c: char| !c.is_ascii_digit())
+                        .parse::<u16>()
+                        .is_ok()
+            })
+            || words.windows(2).any(|pair| {
+                pair[0]
+                    .trim_end_matches(|c: char| !c.is_ascii_alphabetic())
+                    .eq_ignore_ascii_case("rule")
+                    && pair[1]
+                        .trim_matches(|c: char| !c.is_ascii_digit())
+                        .parse::<u16>()
+                        .is_ok()
+            })
+    })
+}
+
 async fn question_six_has_answer_without_rule_number(seen: &Observed<'_>) -> Result<(), String> {
     let facts = answer_records(seen, "work:image-attachments").await?;
-    for fact in facts {
-        for key in ["content", "details"] {
-            if let Some(part) = fact[key].as_str() {
-                let words: Vec<&str> = part.split_whitespace().collect();
-                if part.trim().parse::<u16>().is_ok()
-                    || words.iter().any(|word| {
-                        word.starts_with('#')
-                            && word[1..]
-                                .trim_end_matches(|c: char| !c.is_ascii_digit())
-                                .parse::<u16>()
-                                .is_ok()
-                    })
-                    || words.windows(2).any(|pair| {
-                        pair[0]
-                            .trim_end_matches(|c: char| !c.is_ascii_alphabetic())
-                            .eq_ignore_ascii_case("rule")
-                            && pair[1]
-                                .trim_matches(|c: char| !c.is_ascii_digit())
-                                .parse::<u16>()
-                                .is_ok()
-                    })
-                {
-                    return Err("the image-attachment answer names a rule".into());
-                }
-            }
-        }
+    if content_names_a_rule(&facts) {
+        return Err("the image-attachment answer names a rule".into());
     }
     Ok(())
 }
@@ -2662,6 +2669,29 @@ mod tests {
         assert_eq!(
             super::answer_numbers(&overinclusive),
             [129, 241, 275].into()
+        );
+    }
+
+    /// **A dismissed candidate in `details` passes; a citation in `content`
+    /// fails.** A paid run answered correctly with no rule, and separately
+    /// named a rule in `details` only to rule it out — the old scan read
+    /// both fields alike and failed on that, punishing the sitting for
+    /// explaining itself.
+    #[test]
+    fn content_names_a_rule_ignores_a_dismissed_candidate_in_details() {
+        let dismissed = [serde_json::json!({
+            "content": "no rule covers image attachments",
+            "details": "rule 129 talks about kinds, not this",
+        })];
+        assert!(
+            !super::content_names_a_rule(&dismissed),
+            "a rule dismissed in details was read as the answer",
+        );
+
+        let cited = [serde_json::json!({"content": "rule 129 covers this"})];
+        assert!(
+            super::content_names_a_rule(&cited),
+            "a rule cited in the answer itself was not caught",
         );
     }
 
