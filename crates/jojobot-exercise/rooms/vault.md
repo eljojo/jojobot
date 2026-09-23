@@ -955,8 +955,7 @@ say     later December: the piano reads overdue again by next June, so today's t
 # years actually accumulates. The reason is the operator's own words, not a
 # guess this sitting invents on the operator's behalf.
 recall {"subject": "person:hugo"}
-carries "archived"
-carries "reason":"
+carries "reason":"not real to me"
 say     later December: Hugo carries no archived reason, so a name the operator does not recognise is still standing in the vault as if it belonged there
 
 # 🚨 **THE OTHER CARRIER, FOUND THE SAME WAY — BY TYPE, NEVER BY KIND.** The

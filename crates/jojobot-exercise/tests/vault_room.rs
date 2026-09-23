@@ -998,3 +998,40 @@ async fn every_lock_holds_once_the_vault_is_worked() {
         );
     }
 }
+
+/// 🚨 **No lock in this room rests on a needle that matches somewhere else.**
+///
+/// The reasoning is written where this was first built, in the year room's
+/// own case. **This was the second room left uncovered**, this time for
+/// nothing more than the room not having asked yet.
+///
+/// **Ignored, not deleted, not banked green.** Worked to completion this
+/// finds nine needles that match somewhere other than their own sitting —
+/// a pre-existing hygiene backlog this case exposed rather than caused, on
+/// the scale of what `year.md`'s own hygiene pass was. Closing it is its
+/// own piece of work; see `needle_hygiene_coverage.rs`'s `PENDING` entry
+/// for `VAULT_ROOM` and the report to pm. Remove this attribute once the
+/// backlog is closed.
+#[tokio::test]
+#[ignore = "vault.md carries nine pre-existing ambiguous needles — see needle_hygiene_coverage.rs"]
+async fn no_lock_here_rests_on_a_needle_that_matches_somewhere_else() {
+    let (_room, surface, _sid) = furnished().await;
+    let _ = worked_the_vault(&surface, &room_document()).await;
+    let summary = jojobot_exercise::lock::needle_summary(
+        &surface,
+        &jojobot_exercise::lock::locks_of(expectations::VAULT_ROOM),
+    )
+    .await;
+    assert!(
+        summary.nowhere.is_empty(),
+        "a needle matched nowhere, so either its lock is failing or the walk could not read the \
+         answer — and those are different: {:?}",
+        summary.nowhere,
+    );
+    assert!(
+        summary.findings.is_empty(),
+        "a lock rests on a needle that matches somewhere else, with nothing else in that lock \
+         only its own sitting could satisfy: {:?}",
+        summary.findings,
+    );
+}
