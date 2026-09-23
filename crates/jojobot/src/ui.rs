@@ -64,6 +64,25 @@ const LOGIN_TTL: Duration = Duration::from_secs(10 * 60);
 /// the operator the way in.
 const MAX_PENDING: usize = 64;
 
+/// How many logged-in browsers are held live at once. Unlike [`MAX_PENDING`],
+/// reaching this table takes a completed, authorized login — the issuer
+/// vouched for the subject before a row here exists — so the table cannot be
+/// filled by an unauthenticated caller. What it still guards against is a
+/// permitted person opening sessions for a working day at a time
+/// ([`SESSION_TTL`]) faster than that TTL empties them: every browser tab,
+/// every device, every reload that draws a fresh cookie is another row, and
+/// nothing today ever takes one back before it expires.
+///
+/// **Global, not per subject.** A session here carries no subject at all —
+/// see [`Live`]'s own doc — by design: who logged in is settled once, at the
+/// callback, against the same allowlist `/mcp` uses, and nothing downstream
+/// reads it again. Capping per subject would mean carrying an identity this
+/// table was deliberately built without, for a personal instance where the
+/// real growth is one identity opening many sessions (tabs, devices,
+/// reloads) rather than many distinct people — the case a global ceiling,
+/// shaped exactly like [`MAX_PENDING`]'s, already covers.
+const MAX_LIVE_SESSIONS: usize = 64;
+
 /// A login that has been sent to the issuer and not yet come back.
 struct Pending {
     /// The PKCE verifier this login's challenge was derived from. It never
@@ -196,6 +215,19 @@ impl Ui {
             .lock()
             .expect("the session map is not poisoned");
         browsers.retain(|_, live| live.opened.elapsed() < SESSION_TTL);
+        // **Oldest by `opened`** — the session closest to its own TTL taking
+        // it anyway, the same choice [`Ui::begin_login`] makes over the
+        // pending table.
+        while browsers.len() >= MAX_LIVE_SESSIONS {
+            let Some(oldest) = browsers
+                .iter()
+                .min_by_key(|(_, live)| live.opened)
+                .map(|(token, _)| token.clone())
+            else {
+                break;
+            };
+            browsers.remove(&oldest);
+        }
         browsers.insert(
             token.clone(),
             Live {
@@ -410,6 +442,54 @@ mod tests {
         assert!(
             ui.claim_login(&survivor).is_some(),
             "a login started during the flood was evicted before the older one"
+        );
+    }
+
+    /// A completed, authorized login is the only way into the live-session
+    /// table, so it cannot be flooded the way the pending table can — but
+    /// nothing before this test ever took a row back before its own TTL, so
+    /// one identity opening sessions faster than a working day empties them
+    /// (a tab per reload, a session per device) grew the table without
+    /// bound for as long as the process ran.
+    #[test]
+    fn a_full_live_table_evicts_rather_than_growing_without_bound() {
+        let ui = a_ui();
+        for _ in 0..=MAX_LIVE_SESSIONS {
+            let _ = ui.open_session();
+        }
+
+        assert_eq!(
+            ui.browsers.lock().unwrap().len(),
+            MAX_LIVE_SESSIONS,
+            "the table grew past the cap of {MAX_LIVE_SESSIONS}"
+        );
+    }
+
+    /// The pairing case: a cap that evicted everything would pass the case
+    /// above just as well as one that evicts only the oldest. A session
+    /// opened during the flood, closer to a full working day of life left,
+    /// must still answer as live once the flood is over.
+    #[test]
+    fn a_session_opened_during_a_flood_is_still_valid_after_it() {
+        let ui = a_ui();
+        let oldest = ui.open_session();
+        // `opened` is what "oldest" reads, so put this session unambiguously
+        // behind everything the flood inserts.
+        std::thread::sleep(Duration::from_millis(2));
+
+        let survivor = ui.open_session();
+        for _ in 2..=MAX_LIVE_SESSIONS {
+            let _ = ui.open_session();
+        }
+
+        assert!(
+            !ui.is_live(&oldest),
+            "the oldest live session survived the flood, so something younger was evicted \
+             instead"
+        );
+        assert!(
+            ui.is_live(&survivor),
+            "a session opened during the flood was evicted before the older one"
         );
     }
 
