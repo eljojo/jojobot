@@ -640,6 +640,7 @@ const ROSTER: &[&str] = &[
     "thing:contract-cleared-key",
     "thing:contract-clear-off-address",
     "thing:contract-edit-lands-stored",
+    "thing:contract-retract-lands-stored",
     "thing:contract-edited-older-record",
     "thing:contract-folded-thing",
     "thing:contract-gated-read-stored",

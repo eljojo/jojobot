@@ -7214,6 +7214,75 @@ async fn an_edit_on_a_captured_claim_lands<M: Memory, B: support::Backing<M>>(
     );
 }
 
+/// **Retracting a claim filed on a supplied record's subject lands, exactly
+/// as it does on a stored one.**
+///
+/// `retract` addresses by `FactAddress` and resolves `address.home` through
+/// the same rows-plus-supplied set every other gated read asks (rule 234),
+/// the way [`an_edit_on_a_captured_claim_lands`] pins for `update_fact`. If
+/// a store's resolution disagrees between the two verbs, this is where that
+/// shows.
+///
+/// **Both halves, run once each**, the same way the reads above do: a store
+/// that refused every retraction on a handle it did not itself create would
+/// pass the supplied half alone identically to one that resolves it
+/// correctly.
+pub async fn a_retraction_on_a_captured_claim_lands_stored_and_supplied<M: Memory, S: Memory>(
+    stored: &M,
+    supplied: &S,
+) {
+    a_retraction_on_a_captured_claim_lands(
+        stored,
+        &support::Stored {
+            handle: EntityId("thing:contract-retract-lands-stored".into()),
+            name: "Retract Lands Stored",
+            source: "user-named",
+        },
+    )
+    .await;
+    a_retraction_on_a_captured_claim_lands(supplied, &support::Supplied).await;
+}
+
+async fn a_retraction_on_a_captured_claim_lands<M: Memory, B: support::Backing<M>>(
+    store: &M,
+    backing: &B,
+) {
+    let (existing, _source) = backing.existing(store).await;
+    let written = store
+        .capture(NewFact::about(
+            existing.clone(),
+            "before the retraction",
+            date(2026, 5, 22),
+        ))
+        .await
+        .expect("a claim on either backing is a write the gate allows")
+        .written()
+        .expect("nothing blocks it");
+
+    let taken_back = store
+        .retract(
+            &written.address(),
+            Some("no longer true"),
+            date(2026, 5, 23),
+            &other_caller(),
+        )
+        .await
+        .expect("a retraction on either backing's claim is a write the gate allows");
+    assert_eq!(
+        taken_back.retracted.status,
+        FactStatus::Archived,
+        "the claim on {existing} was not marked retracted",
+    );
+
+    let recalled = store.recall(&existing).await.expect("recall answers");
+    assert!(
+        recalled
+            .iter()
+            .any(|f| f.id == written.id && f.status == FactStatus::Archived),
+        "the retraction is not visible through the ordinary read: {recalled:?}",
+    );
+}
+
 /// **Renaming a record the build supplies is refused, never a silent
 /// no-op — and never a claim that it moved to itself.**
 /// `rename_entity`'s existence check reads stored rows only,
