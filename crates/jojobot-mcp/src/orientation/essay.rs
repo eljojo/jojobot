@@ -105,6 +105,8 @@ A session has two halves that answer different questions. Its **focus** is what 
 
 jojobot also writes **its own beats** into your chronology: one per class of WRITE you make, its count kept current as you go. Reads are not journalled. They are marked apart (`beat` names the class) because what you said you were doing and what jojobot noticed you doing are different kinds of evidence.
 
+**Claim a role** by naming `claim` on `start_here`, to refuse a second claimant while yours is fresh — `taken`, `refused`, or `conflict` (a collision with another write; retry the same call). Every write renews it, the lease is 45 minutes, and wrapping releases it.
+
 ### The two endings, and they are not interchangeable
 
 **WRAP when the work is over.** Your run finished what it was for; the story is told and the run closes clean. Nothing appends to it afterwards.

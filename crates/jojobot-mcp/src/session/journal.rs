@@ -50,7 +50,9 @@ impl Jojobot {
                        session. IT ANSWERS WITH A RECEIPT, NOT YOUR BEAT: the id the entry was \
                        given, when it was stamped, the run it landed in, the byte count of what \
                        was stored and the opening line. You wrote the entry; start_here returns \
-                       the whole chronology when you resume."
+                       the whole chronology when you resume. IF YOUR SESSION HOLDS A CLAIMED \
+                       ROLE, this beat renews it, exactly as any other write does — the lease is \
+                       not journal's alone to keep fresh."
     )]
     pub(crate) async fn journal(
         &self,

@@ -82,10 +82,19 @@ pub struct OrientArgs {
     pub(crate) timezone: Option<String>,
     /// **A role to claim, by a name you choose.** Boot names this when you
     /// want jojobot to refuse a second claimant while your claim is fresh —
-    /// this comes back `taken`, or `refused` naming who holds it and until
-    /// when. Naming none is the ordinary boot: unchanged, and two sessions
+    /// this comes back `taken`, `refused` naming who holds it and until
+    /// when, or `conflict` when the claim collided with another write
+    /// landing the same instant. **A conflict is the store working
+    /// correctly, not a mistake in what you sent** — retry the same call.
+    /// Naming none is the ordinary boot: unchanged, and two sessions
     /// working two separate slices never meet a lease neither of them
     /// claimed.
+    ///
+    /// **Every write you make while holding it renews the lease**, not
+    /// only a journal beat — capture, add_entity, post_message and the
+    /// rest all count — and the lease is 45 minutes. **Wrapping releases
+    /// whatever you held**, so a fresh session may claim the same role at
+    /// once.
     #[serde(default)]
     pub(crate) claim: Option<String>,
 }

@@ -364,6 +364,168 @@ fn the_mention_spelling_is_taught_on_every_argument_that_resolves_one() {
     );
 }
 
+/// **`search`'s `clock` argument names the fallback its own answer reports.**
+/// A caller choosing between `recorded_on` and `happened_at` needs to know
+/// up front that a claim missing the one it asked for still ranks — by the
+/// other — rather than discovering `rank_fallbacks` in the answer with
+/// nothing in the argument's own text pointing at what it counts.
+#[test]
+fn the_search_clock_argument_names_the_ranking_fallback() {
+    let tools = Jojobot::tool_router().list_all();
+    let search = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "search")
+        .expect("the surface offers search");
+    let schema = serde_json::to_value(&search.input_schema).expect("the schema serializes");
+    let described = schema["properties"]["clock"]["description"]
+        .as_str()
+        .expect("the clock argument carries its own description");
+    assert!(
+        described.contains("rank_fallbacks"),
+        "the clock argument does not name the field its own fallback is counted in: {described}"
+    );
+}
+
+/// **The `claim` argument names all three outcomes a claim can come back
+/// as** — `taken`, `refused` and `conflict` — so a caller reading the
+/// argument before ever making the call already knows a collision is a
+/// real, named outcome and not a surprise the answer alone explains.
+#[test]
+fn the_claim_argument_names_its_three_outcomes() {
+    let tools = Jojobot::tool_router().list_all();
+    let start_here = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "start_here")
+        .expect("the surface offers start_here");
+    let schema = serde_json::to_value(&start_here.input_schema).expect("the schema serializes");
+    let described = schema["properties"]["claim"]["description"]
+        .as_str()
+        .expect("the claim argument carries its own description");
+    for outcome in ["`taken`", "`refused`", "`conflict`"] {
+        assert!(
+            described.contains(outcome),
+            "the claim argument does not name the {outcome} outcome: {described}"
+        );
+    }
+    assert!(
+        described.to_lowercase().contains("retry"),
+        "the claim argument does not say a conflict is answered by retrying: {described}"
+    );
+}
+
+/// **The `claim` argument names how a lease is kept and given up**: every
+/// write renews it, not only a journal beat, the lease is 45 minutes, and
+/// wrapping releases it. A caller deciding whether it is safe to stay quiet
+/// between beats, or whether wrapping costs it the role, needs this in the
+/// argument it is reading before it acts — not only in this crate's own
+/// engineering notes.
+#[test]
+fn the_claim_argument_names_how_the_lease_is_kept_and_given_up() {
+    let tools = Jojobot::tool_router().list_all();
+    let start_here = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "start_here")
+        .expect("the surface offers start_here");
+    let schema = serde_json::to_value(&start_here.input_schema).expect("the schema serializes");
+    let described = schema["properties"]["claim"]["description"]
+        .as_str()
+        .expect("the claim argument carries its own description");
+    assert!(
+        described.contains("Every write"),
+        "the claim argument does not say every write renews the lease: {described}"
+    );
+    assert!(
+        described.contains("45 minutes"),
+        "the claim argument does not name the lease's own length: {described}"
+    );
+    assert!(
+        described.to_lowercase().contains("wrapping releases"),
+        "the claim argument does not say wrapping releases the claim: {described}"
+    );
+}
+
+/// **`journal`'s own description says a beat renews a held role claim** —
+/// the one capability this verb has beside recording a beat, and the one a
+/// caller relying on journalling alone to keep a lease fresh needs to read
+/// here rather than infer.
+#[test]
+fn the_journal_description_states_it_renews_a_held_role_claim() {
+    let tools = Jojobot::tool_router().list_all();
+    let journal = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "journal")
+        .expect("the surface offers journal");
+    let description = journal.description.as_deref().unwrap_or_default();
+    assert!(
+        description.to_lowercase().contains("renews"),
+        "journal's description does not say a beat renews a held role claim: {description}"
+    );
+}
+
+/// **The orientation essay explains claiming a role**, in the Sessions
+/// section where it already explains what a session is — the same place a
+/// caller reads to understand `start_here`'s `claim` argument, so the
+/// explanation is not left to the argument's own text alone.
+#[test]
+fn the_orientation_essay_explains_claiming_a_role() {
+    let essay = crate::orientation::essay::orientation();
+    assert!(
+        essay.contains("Claim a role"),
+        "the orientation essay does not explain claiming a role"
+    );
+    assert!(
+        essay.contains("45 minutes"),
+        "the orientation essay does not name the lease's own length"
+    );
+}
+
+/// **`capture`'s thought-room mechanics are documented on the arguments
+/// that actually work it** — a connection edge on the caller's own handle,
+/// `drop` paired with a required `drop_because`, `borrow` as the emergency
+/// reserve, and `starred` as a boot's own seat — so a caller reads the
+/// whole mechanism from the schema it already has, never only from this
+/// crate's internal comments.
+#[test]
+fn capture_documents_its_thought_room_mechanics() {
+    let tools = Jojobot::tool_router().list_all();
+    let capture = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "capture")
+        .expect("the surface offers capture");
+    let schema = serde_json::to_value(&capture.input_schema).expect("the schema serializes");
+    let described = |field: &str| -> String {
+        schema["properties"][field]["description"]
+            .as_str()
+            .unwrap_or_else(|| panic!("capture's {field} argument carries its own description"))
+            .to_string()
+    };
+    let shape = described("shape");
+    assert!(
+        shape.contains("thought_capacity") && shape.to_lowercase().contains("own bot handle"),
+        "the shape argument does not name a connection edge on the caller's own handle as what \
+         makes a thought: {shape}"
+    );
+    assert!(
+        shape.contains("drop"),
+        "the shape argument does not point a caller at drop when the room is full: {shape}"
+    );
+    let drop_because = described("drop_because");
+    assert!(
+        drop_because.contains("Required whenever"),
+        "drop_because does not say it is required whenever drop is: {drop_because}"
+    );
+    let borrow = described("borrow");
+    assert!(
+        borrow.to_lowercase().contains("over capacity"),
+        "borrow does not name the emergency-reserve shape: {borrow}"
+    );
+    let fields = described("fields");
+    assert!(
+        fields.contains("starred"),
+        "fields does not name the starred convention: {fields}"
+    );
+}
+
 /// **The whole tool surface, named.** Production jojobot never deletes
 /// anything: the standing rule is structural at the store (the Mailboxes
 /// port has no delete operation at all), and this pins the other end — that
