@@ -265,7 +265,7 @@ impl Jojobot {
                 fields: std::collections::BTreeMap::from([(claimed_at_key, now.to_string())]),
                 ..Default::default()
             };
-            if let Err(e) = self.memory.update_fact(&address, patch).await {
+            if let Err(e) = self.memory.update_fact(&address, patch, bot).await {
                 tracing::warn!(error = %e, %bot, role, "a role claim could not be renewed");
             }
         }

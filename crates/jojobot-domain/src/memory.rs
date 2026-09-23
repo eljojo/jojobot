@@ -1824,6 +1824,72 @@ pub fn refuses_own_ceiling(
     }
 }
 
+/// **The edit-and-retraction twin of [`refuses_own_ceiling`].**
+///
+/// A fresh capture either names [`THOUGHT_CAPACITY`] in its own fields or it
+/// does not, so reading the raw write is enough to judge it. An edit or a
+/// retraction is different: what binds the caller is the FOLD — the newest
+/// write of the key among active records — and a write can change that
+/// without ever spelling the key in what it sends. Clearing the key, writing
+/// it with surrounding whitespace the fold trims away, or moving the record
+/// that carried the newest write out of the fold (archiving it, retracting
+/// it) all change the fold identically to a write that named the key
+/// outright, and a guard reading only the raw write cannot tell any of them
+/// apart from an edit that never touched the ceiling at all.
+///
+/// So this reads the fold on both sides of the write instead: `before` is
+/// what the caller's own handle folds to now, `after` is what it would fold
+/// to once this write lands — [`stood_after`] for an edit, the same shape
+/// built by hand for a retraction, since a retraction carries no
+/// [`FactPatch`] of its own. A write that leaves the two answers equal is not
+/// this guard's business, whatever it changed to get there.
+pub fn refuses_own_ceiling_change(
+    subject: &EntityId,
+    caller: &EntityId,
+    before: &BTreeMap<String, String>,
+    after: &BTreeMap<String, String>,
+) -> Option<MemoryError> {
+    if subject == caller && before.get(THOUGHT_CAPACITY) != after.get(THOUGHT_CAPACITY) {
+        Some(MemoryError::SelfCeiling {
+            subject: subject.to_string(),
+            key: THOUGHT_CAPACITY.to_string(),
+        })
+    } else {
+        None
+    }
+}
+
+/// **Whether the room a write leaves behind holds more than its capacity.**
+///
+/// [`capture`](crate::memory::Memory::capture)'s own room check runs ageing
+/// and a named drop, because a capture is always ADDING to a room that may
+/// already be sitting at capacity, and something has to be named to make
+/// way. An edit is a narrower question: `room_after` is the room exactly as
+/// the edit would leave it — every other active connection-edged fact the
+/// subject already carries, plus this one if the edit leaves it
+/// connection-edged and active — and there is no ageing or drop to weigh,
+/// because an edit that does not grow the room past capacity needs neither
+/// and one that does is refused outright, the same answer capture gives a
+/// caller who named nothing to drop.
+pub fn refuses_room_overflow(
+    home: &EntityId,
+    room_after: &[Fact],
+    capacity: Option<usize>,
+) -> Option<MemoryError> {
+    let capacity = capacity?;
+    if room_after.len() > capacity {
+        Some(MemoryError::RoomFull {
+            subject: home.to_string(),
+            live: room_after.len(),
+            capacity,
+            room: room_after.to_vec(),
+            aged_out: 0,
+        })
+    } else {
+        None
+    }
+}
+
 /// **A bot's own live thoughts, out of everything captured about it.**
 ///
 /// A thought is an ordinary claim on a bot's own handle drawing a
@@ -4082,10 +4148,17 @@ pub trait Memory: Send + Sync {
     /// **A retracted row is not editable**, by anyone, for anything: that is
     /// where one-way is actually enforced, since a status flip back to active
     /// would otherwise be an ordinary patch away.
+    ///
+    /// **`caller` is who is making the edit** — see
+    /// [`refuses_own_ceiling_change`] and [`refuses_room_overflow`], run
+    /// atomically with the write they gate: an edit that would change the
+    /// caller's own folded ceiling, or leave its own room over capacity, is
+    /// refused rather than landed and reported.
     async fn update_fact(
         &self,
         address: &FactAddress,
         patch: FactPatch,
+        caller: &EntityId,
     ) -> Result<Guarded<Fact>, MemoryError>;
 
     /// **Every write of one key on one thing, oldest first** — what the
@@ -4200,11 +4273,17 @@ pub trait Memory: Send + Sync {
     /// [`check_retractable`] decides what may be taken back; a row that may not
     /// is [`MemoryError::NotRetractable`], and an address naming nothing is
     /// [`MemoryError::UnknownFact`] exactly as an edit's would be.
+    ///
+    /// **`caller` is who is retracting it** — see
+    /// [`refuses_own_ceiling_change`], run atomically with the write: taking
+    /// back the record that carries the newest write of the caller's own
+    /// ceiling is refused for the same reason clearing the key would be.
     async fn retract(
         &self,
         address: &FactAddress,
         reason: Option<&str>,
         date: Date,
+        caller: &EntityId,
     ) -> Result<Retraction, MemoryError>;
 
     /// **Fold one thing into another** — the repair for a duplicate that got

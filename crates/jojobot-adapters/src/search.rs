@@ -2310,8 +2310,9 @@ impl Memory for IndexedMemory {
         &self,
         address: &FactAddress,
         patch: FactPatch,
+        caller: &EntityId,
     ) -> Result<Guarded<Fact>, MemoryError> {
-        let written = self.inner.update_fact(address, patch).await?;
+        let written = self.inner.update_fact(address, patch, caller).await?;
         if let Guarded::Written(fact) = &written {
             self.refresh(&fact.home).await;
         }
@@ -2327,8 +2328,9 @@ impl Memory for IndexedMemory {
         address: &FactAddress,
         reason: Option<&str>,
         date: Date,
+        caller: &EntityId,
     ) -> Result<Retraction, MemoryError> {
-        let taken_back = self.inner.retract(address, reason, date).await?;
+        let taken_back = self.inner.retract(address, reason, date, caller).await?;
         self.refresh(&taken_back.retracted.home).await;
         Ok(taken_back)
     }
@@ -3060,7 +3062,12 @@ mod tests {
             .written()
             .expect("nothing to disambiguate");
         store
-            .retract(&claim.address(), Some("it was three"), date(2026, 4, 19))
+            .retract(
+                &claim.address(),
+                Some("it was three"),
+                date(2026, 4, 19),
+                &EntityId("bot:sigma".into()),
+            )
             .await
             .expect("the retraction lands");
 
@@ -4172,6 +4179,7 @@ mod tests {
                     provenance: Some(Provenance::Inference),
                     ..Default::default()
                 },
+                &EntityId("bot:sigma".into()),
             )
             .await
             .expect("update ok")
@@ -4335,6 +4343,7 @@ mod tests {
                 &taken_back.address(),
                 Some("it never happened"),
                 date(2026, 7, 3),
+                &EntityId("bot:sigma".into()),
             )
             .await
             .expect("retract ok");
@@ -4357,6 +4366,7 @@ mod tests {
                     status: Some(FactStatus::Archived),
                     ..Default::default()
                 },
+                &EntityId("bot:sigma".into()),
             )
             .await
             .expect("edit ok");
@@ -6091,6 +6101,7 @@ mod tests {
             &self,
             _: &FactAddress,
             _: FactPatch,
+            _: &EntityId,
         ) -> Result<Guarded<Fact>, MemoryError> {
             unimplemented!("this double only scans")
         }
@@ -6100,6 +6111,7 @@ mod tests {
             _: &FactAddress,
             _: Option<&str>,
             _: Date,
+            _: &EntityId,
         ) -> Result<Retraction, MemoryError> {
             unimplemented!("this double only scans")
         }
@@ -6263,16 +6275,18 @@ mod tests {
             &self,
             address: &FactAddress,
             patch: FactPatch,
+            caller: &EntityId,
         ) -> Result<Guarded<Fact>, MemoryError> {
-            self.inner.update_fact(address, patch).await
+            self.inner.update_fact(address, patch, caller).await
         }
         async fn retract(
             &self,
             address: &FactAddress,
             reason: Option<&str>,
             date: Date,
+            caller: &EntityId,
         ) -> Result<Retraction, MemoryError> {
-            self.inner.retract(address, reason, date).await
+            self.inner.retract(address, reason, date, caller).await
         }
         async fn merge(
             &self,
@@ -6403,6 +6417,7 @@ mod tests {
             &self,
             _: &FactAddress,
             _: FactPatch,
+            _: &EntityId,
         ) -> Result<Guarded<Fact>, MemoryError> {
             unimplemented!("this double answers the three reads a store owns")
         }
@@ -6411,6 +6426,7 @@ mod tests {
             _: &FactAddress,
             _: Option<&str>,
             _: Date,
+            _: &EntityId,
         ) -> Result<Retraction, MemoryError> {
             unimplemented!("this double answers the three reads a store owns")
         }
@@ -8553,8 +8569,9 @@ mod tests {
             &self,
             address: &FactAddress,
             patch: FactPatch,
+            caller: &EntityId,
         ) -> Result<Guarded<Fact>, MemoryError> {
-            self.0.update_fact(address, patch).await
+            self.0.update_fact(address, patch, caller).await
         }
         async fn fields(&self, entity: &EntityId) -> Result<BTreeMap<String, String>, MemoryError> {
             self.0.fields(entity).await
@@ -8564,8 +8581,9 @@ mod tests {
             address: &FactAddress,
             reason: Option<&str>,
             date: Date,
+            caller: &EntityId,
         ) -> Result<Retraction, MemoryError> {
-            self.0.retract(address, reason, date).await
+            self.0.retract(address, reason, date, caller).await
         }
         async fn merge(
             &self,

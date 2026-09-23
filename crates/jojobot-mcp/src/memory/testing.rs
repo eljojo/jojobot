@@ -437,16 +437,18 @@ impl Memory for DownMemory {
         &self,
         address: &FactAddress,
         patch: FactPatch,
+        caller: &EntityId,
     ) -> Result<Guarded<Fact>, MemoryError> {
-        self.1.update_fact(address, patch).await
+        self.1.update_fact(address, patch, caller).await
     }
     async fn retract(
         &self,
         address: &FactAddress,
         reason: Option<&str>,
         date: jiff::civil::Date,
+        caller: &EntityId,
     ) -> Result<jojobot_domain::memory::Retraction, MemoryError> {
-        self.1.retract(address, reason, date).await
+        self.1.retract(address, reason, date, caller).await
     }
     async fn merge(
         &self,
@@ -567,8 +569,9 @@ impl Memory for FoldBehindMemory {
         &self,
         address: &FactAddress,
         patch: FactPatch,
+        caller: &EntityId,
     ) -> Result<Guarded<Fact>, MemoryError> {
-        match self.0.update_fact(address, patch).await? {
+        match self.0.update_fact(address, patch, caller).await? {
             Guarded::Written(fact) => Err(fold_behind(Landed::Fact(Box::new(fact)))),
             blocked => Ok(blocked),
         }
@@ -578,8 +581,9 @@ impl Memory for FoldBehindMemory {
         address: &FactAddress,
         reason: Option<&str>,
         date: jiff::civil::Date,
+        caller: &EntityId,
     ) -> Result<jojobot_domain::memory::Retraction, MemoryError> {
-        let taken_back = self.0.retract(address, reason, date).await?;
+        let taken_back = self.0.retract(address, reason, date, caller).await?;
         Err(fold_behind(Landed::Retraction(Box::new(taken_back))))
     }
     async fn merge(

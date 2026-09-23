@@ -1135,6 +1135,7 @@ pub(crate) mod tests {
             &self,
             _: &jojobot_domain::memory::FactAddress,
             _: jojobot_domain::memory::FactPatch,
+            _: &jojobot_domain::memory::EntityId,
         ) -> Result<
             jojobot_domain::memory::Guarded<jojobot_domain::memory::Fact>,
             jojobot_domain::memory::MemoryError,
@@ -1146,6 +1147,7 @@ pub(crate) mod tests {
             _: &jojobot_domain::memory::FactAddress,
             _: Option<&str>,
             _: jiff::civil::Date,
+            _: &jojobot_domain::memory::EntityId,
         ) -> Result<jojobot_domain::memory::Retraction, jojobot_domain::memory::MemoryError>
         {
             unimplemented!("migrate_permanent_ids only reads the entity world")

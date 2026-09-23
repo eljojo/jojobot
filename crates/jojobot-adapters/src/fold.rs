@@ -214,8 +214,9 @@ impl Memory for Folded {
         &self,
         address: &FactAddress,
         patch: FactPatch,
+        caller: &EntityId,
     ) -> Result<Guarded<Fact>, MemoryError> {
-        match self.inner.update_fact(address, patch).await? {
+        match self.inner.update_fact(address, patch, caller).await? {
             Guarded::Written(fact) => match self.refresh(&fact.home).await {
                 Ok(()) => Ok(Guarded::Written(fact)),
                 Err(source) => Err(fold_behind(Landed::Fact(Box::new(fact)), source)),
@@ -241,8 +242,9 @@ impl Memory for Folded {
         address: &FactAddress,
         reason: Option<&str>,
         date: Date,
+        caller: &EntityId,
     ) -> Result<Retraction, MemoryError> {
-        let taken_back = self.inner.retract(address, reason, date).await?;
+        let taken_back = self.inner.retract(address, reason, date, caller).await?;
         match self.refresh(&taken_back.retracted.home).await {
             Ok(()) => Ok(taken_back),
             Err(source) => Err(fold_behind(
@@ -468,6 +470,7 @@ mod tests {
                 },
                 Some("moved back"),
                 date(2026, 9, 9),
+                &EntityId("bot:sigma".into()),
             )
             .await
             .expect("retract ok");
@@ -681,8 +684,9 @@ mod tests {
             &self,
             address: &FactAddress,
             patch: FactPatch,
+            caller: &EntityId,
         ) -> Result<Guarded<Fact>, MemoryError> {
-            self.0.update_fact(address, patch).await
+            self.0.update_fact(address, patch, caller).await
         }
         /// **The one method this double exists to break.** Always fails,
         /// whatever the write just did — this is what `Folded::refresh` calls.
@@ -699,8 +703,9 @@ mod tests {
             address: &FactAddress,
             reason: Option<&str>,
             date: Date,
+            caller: &EntityId,
         ) -> Result<Retraction, MemoryError> {
-            self.0.retract(address, reason, date).await
+            self.0.retract(address, reason, date, caller).await
         }
         async fn merge(
             &self,
@@ -870,8 +875,9 @@ mod tests {
             &self,
             address: &FactAddress,
             patch: FactPatch,
+            caller: &EntityId,
         ) -> Result<Guarded<Fact>, MemoryError> {
-            let written = self.inner.update_fact(address, patch).await?;
+            let written = self.inner.update_fact(address, patch, caller).await?;
             if matches!(written, Guarded::Written(_)) {
                 self.written
                     .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -901,8 +907,9 @@ mod tests {
             address: &FactAddress,
             reason: Option<&str>,
             date: Date,
+            caller: &EntityId,
         ) -> Result<Retraction, MemoryError> {
-            let retracted = self.inner.retract(address, reason, date).await?;
+            let retracted = self.inner.retract(address, reason, date, caller).await?;
             self.written
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Ok(retracted)

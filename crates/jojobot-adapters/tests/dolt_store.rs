@@ -1562,6 +1562,7 @@ async fn the_substrate_keeps_what_a_correction_overwrote() {
                 provenance: Some(Provenance::Inference),
                 ..Default::default()
             },
+            &EntityId("bot:sigma".into()),
         )
         .await
         .expect("update_fact ok")
@@ -2505,6 +2506,7 @@ async fn an_edit_does_not_re_stamp_the_claims_own_column() {
                 provenance: Some(Provenance::Inference),
                 ..Default::default()
             },
+            &EntityId("bot:sigma".into()),
         )
         .await
         .expect("update_fact ok")
@@ -3458,6 +3460,7 @@ async fn a_retract_hit_answers_with_no_full_listing_and_both_misses_still_build_
             &FactAddress::new(gamma.clone(), claim.id.clone()),
             Some("no longer true"),
             date(2026, 9, 8),
+            &EntityId("bot:sigma".into()),
         )
         .await
         .expect("retract ok");
@@ -3474,6 +3477,7 @@ async fn a_retract_hit_answers_with_no_full_listing_and_both_misses_still_build_
             &FactAddress::new(EntityId::person("person:gama"), claim.id.clone()),
             None,
             date(2026, 9, 8),
+            &EntityId("bot:sigma".into()),
         )
         .await
         .expect_err("an unwritten near-miss handle must not resolve");
@@ -3499,6 +3503,7 @@ async fn a_retract_hit_answers_with_no_full_listing_and_both_misses_still_build_
             &FactAddress::new(gamma.clone(), jojobot_domain::memory::FactId("f99".into())),
             None,
             date(2026, 9, 8),
+            &EntityId("bot:sigma".into()),
         )
         .await
         .expect_err("an address with no fact must not resolve");

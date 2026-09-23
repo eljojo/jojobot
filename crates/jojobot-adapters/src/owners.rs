@@ -248,6 +248,7 @@ mod tests {
                 &self,
                 _: &FactAddress,
                 _: FactPatch,
+                _: &EntityId,
             ) -> Result<Guarded<Fact>, MemoryError> {
                 unimplemented!("the owner index only reads the index")
             }
@@ -256,6 +257,7 @@ mod tests {
                 _: &FactAddress,
                 _: Option<&str>,
                 _: jiff::civil::Date,
+                _: &EntityId,
             ) -> Result<Retraction, MemoryError> {
                 unimplemented!("the owner index only reads the index")
             }

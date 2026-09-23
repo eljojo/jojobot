@@ -1,5 +1,17 @@
 use super::*;
 
+/// **A caller distinct from every subject this suite writes about.**
+///
+/// The self-ceiling and room guards read who is calling, and almost nothing
+/// in this suite is about that question — a case here is testing an edit or
+/// a retraction, not who made it. Reusing one fixed, already-rostered
+/// identity as "somebody else" keeps every case that does not care about the
+/// caller from having to name one, the same way `ensure` keeps them from
+/// having to provision an entity that merely has to exist.
+pub(super) fn other_caller() -> EntityId {
+    EntityId("bot:sigma".into())
+}
+
 /// Make sure `id` exists, so the write guard's **existence gate** is not
 /// what a spec about something else trips over. Idempotent: the suite runs
 /// against a shared, pre-populated collection as much as an empty fake.
@@ -128,7 +140,7 @@ pub(super) async fn edit<M: Memory + ?Sized>(
         ensure(store, &edge.object).await;
     }
     store
-        .update_fact(address, patch)
+        .update_fact(address, patch, &other_caller())
         .await
         .expect("update_fact should succeed")
         .written()

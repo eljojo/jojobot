@@ -470,6 +470,7 @@ fn an_unloaded_set_refuses_a_retract_naming_a_mention_in_its_reason_rather_than_
             &first,
             Some("ask @person:milhouse about it"),
             jiff::civil::date(2026, 1, 2),
+            &jojobot_domain::memory::EntityId("bot:sigma".into()),
         ))
         .expect("retracts while loaded — the control");
     assert_eq!(
@@ -484,6 +485,7 @@ fn an_unloaded_set_refuses_a_retract_naming_a_mention_in_its_reason_rather_than_
         &second,
         Some("ask @person:milhouse about it"),
         jiff::civil::date(2026, 1, 2),
+        &jojobot_domain::memory::EntityId("bot:sigma".into()),
     ));
     assert!(
         matches!(

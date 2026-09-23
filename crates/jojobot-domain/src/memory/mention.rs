@@ -591,6 +591,7 @@ impl super::Memory for Mentioning {
         &self,
         address: &super::FactAddress,
         patch: super::FactPatch,
+        caller: &super::EntityId,
     ) -> Result<super::Guarded<super::Fact>, super::MemoryError> {
         let known = self.known().await?;
         if let Some(blocked) = Self::screen(
@@ -621,6 +622,7 @@ impl super::Memory for Mentioning {
                         .map_err(unloaded)?,
                     ..patch
                 },
+                caller,
             )
             .await?;
         Ok(match written {
@@ -717,6 +719,7 @@ impl super::Memory for Mentioning {
         address: &super::FactAddress,
         reason: Option<&str>,
         date: jiff::civil::Date,
+        caller: &super::EntityId,
     ) -> Result<super::Retraction, super::MemoryError> {
         let known = self.known().await?;
         if let Some(err) = Self::screen_or_unknown(&[reason.unwrap_or("")], &known) {
@@ -728,7 +731,10 @@ impl super::Memory for Mentioning {
             .map(|r| resolved(r, &known))
             .transpose()
             .map_err(unloaded)?;
-        let mut done = self.inner.retract(address, reason.as_deref(), date).await?;
+        let mut done = self
+            .inner
+            .retract(address, reason.as_deref(), date, caller)
+            .await?;
         self.render_fact(&mut done.retracted, &known, &former, &declared);
         self.render_fact(&mut done.record, &known, &former, &declared);
         Ok(done)

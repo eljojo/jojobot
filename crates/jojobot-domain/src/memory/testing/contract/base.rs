@@ -1,4 +1,4 @@
-use super::support::{add, capture, edit, ensure};
+use super::support::{add, capture, edit, ensure, other_caller};
 use super::*;
 use crate::memory::{READ_FROM, READ_REF, THOUGHT_CAPACITY, thought_room};
 
@@ -254,6 +254,7 @@ pub async fn derived_from_on_an_edit_must_name_a_fact_that_exists<M: Memory>(sto
                 derived_from: Some(missing.clone()),
                 ..Default::default()
             },
+            &other_caller(),
         )
         .await;
     let Err(MemoryError::UnknownFact { attempted, nearest }) = &refused else {
@@ -274,6 +275,7 @@ pub async fn derived_from_on_an_edit_must_name_a_fact_that_exists<M: Memory>(sto
                 derived_from: Some(nowhere),
                 ..Default::default()
             },
+            &other_caller(),
         )
         .await;
     assert!(
@@ -477,6 +479,7 @@ pub async fn a_patch_may_widen_a_standing_start_but_not_orphan_one<M: Memory>(st
                 happened_through: Some(date(2026, 4, 20)),
                 ..Default::default()
             },
+            &other_caller(),
         )
         .await
         .expect("update_fact ok")
@@ -494,6 +497,7 @@ pub async fn a_patch_may_widen_a_standing_start_but_not_orphan_one<M: Memory>(st
                 clear_happened_at: true,
                 ..Default::default()
             },
+            &other_caller(),
         )
         .await
         .expect_err("clearing the start out from under a standing end must be refused");
@@ -535,6 +539,7 @@ pub async fn the_day_a_thing_happened_is_versioned_like_the_rest_of_the_claim<M:
                 happened_at: Some(date(2026, 8, 15)),
                 ..Default::default()
             },
+            &other_caller(),
         )
         .await
         .expect("update_fact ok")
@@ -549,6 +554,7 @@ pub async fn the_day_a_thing_happened_is_versioned_like_the_rest_of_the_claim<M:
                 clear_happened_at: true,
                 ..Default::default()
             },
+            &other_caller(),
         )
         .await
         .expect("update_fact ok")
@@ -1063,6 +1069,7 @@ pub async fn a_claim_carries_when_it_was_taken_in<M: Memory>(store: &M) {
             &watched.address(),
             Some("written in error"),
             date(2026, 8, 2),
+            &other_caller(),
         )
         .await
         .expect("the retraction lands");
@@ -1213,6 +1220,7 @@ pub async fn a_machine_read_claim_names_what_it_was_read_from<M: Memory>(store: 
                 provenance: Some(Provenance::Observation),
                 ..Default::default()
             },
+            &other_caller(),
         )
         .await
         .expect_err("a claim moved to a machine read with no source is refused");
@@ -1281,6 +1289,7 @@ pub async fn a_machine_read_claim_names_what_it_was_read_from<M: Memory>(store: 
                 clear_fields: vec!["read_from".to_string()],
                 ..Default::default()
             },
+            &other_caller(),
         )
         .await
         .expect_err("taking the source off a machine read is refused");
@@ -1578,6 +1587,7 @@ pub async fn a_claims_lineage_is_walkable_from_its_source<M: Memory>(store: &M) 
             &withdrawn.address(),
             Some("misread the notice"),
             date(2026, 4, 4),
+            &other_caller(),
         )
         .await
         .expect("the retraction lands");
@@ -1734,7 +1744,12 @@ pub async fn referring_to_answers_from_the_far_end<M: Memory>(store: &M) {
     )
     .await;
     store
-        .retract(&withdrawn.address(), Some("never issued"), date(2026, 8, 2))
+        .retract(
+            &withdrawn.address(),
+            Some("never issued"),
+            date(2026, 8, 2),
+            &other_caller(),
+        )
         .await
         .expect("the retraction lands");
     let after = store
@@ -2775,6 +2790,7 @@ pub async fn promotion_to_testimony_needs_confirmation<M: Memory>(store: &M) {
                 provenance: Some(Provenance::Testimony),
                 ..Default::default()
             },
+            &other_caller(),
         )
         .await
         .expect_err("an unconfirmed promotion must be refused");
@@ -2832,6 +2848,7 @@ pub async fn a_content_replacement_without_provenance_is_refused<M: Memory>(stor
                 content: Some("prefers coffee".to_string()),
                 ..Default::default()
             },
+            &other_caller(),
         )
         .await
         .expect_err("a content replacement naming no provenance must be refused");
@@ -2986,6 +3003,7 @@ pub async fn settling_a_hedge_needs_confirmation_and_keeps_its_provenance<M: Mem
                 standing: Some(Standing::Settled),
                 ..Default::default()
             },
+            &other_caller(),
         )
         .await
         .expect_err("an unconfirmed settling must be refused");
@@ -3156,6 +3174,7 @@ pub async fn update_fact_unknown_address_never_creates<M: Memory>(store: &M) {
                 content: Some("nope".into()),
                 ..Default::default()
             },
+            &other_caller(),
         )
         .await
         .expect_err("an unknown address must error");
@@ -3194,7 +3213,11 @@ pub async fn update_fact_tells_an_unknown_handle_from_an_empty_entity<M: Memory>
 
     let typo = EntityId::person("person:contract-addresse");
     let err = store
-        .update_fact(&FactAddress::new(typo, FactId("f1".into())), nudge())
+        .update_fact(
+            &FactAddress::new(typo, FactId("f1".into())),
+            nudge(),
+            &other_caller(),
+        )
         .await
         .expect_err("an address on an unknown handle must error");
     let MemoryError::UnknownEntity { nearest, .. } = &err else {
@@ -3210,6 +3233,7 @@ pub async fn update_fact_tells_an_unknown_handle_from_an_empty_entity<M: Memory>
         .update_fact(
             &FactAddress::new(known.clone(), FactId("f1".into())),
             nudge(),
+            &other_caller(),
         )
         .await
         .expect_err("an address on an entity with no facts must error");
@@ -3232,7 +3256,11 @@ pub async fn update_fact_tells_an_unknown_handle_from_an_empty_entity<M: Memory>
     )
     .await;
     let err = store
-        .update_fact(&FactAddress::new(known, FactId("f999".into())), nudge())
+        .update_fact(
+            &FactAddress::new(known, FactId("f999".into())),
+            nudge(),
+            &other_caller(),
+        )
         .await
         .expect_err("an unknown row must still error");
     let MemoryError::UnknownFact { nearest, .. } = &err else {
@@ -3565,6 +3593,264 @@ pub async fn a_bots_room_enforces_its_capacity<M: Memory>(store: &M) {
         room.iter().any(|f| f.id == landed.id),
         "the new thought is in the room: {room:?}"
     );
+}
+
+/// **The ceiling guard reads the FOLD, not the key this write spells.**
+/// Four paths change a subject's own folded [`THOUGHT_CAPACITY`] without
+/// naming the key the way a fresh capture does: whitespace around the key,
+/// [`FactPatch::clear_fields`], a status flip to archived, and a retraction.
+/// Each is refused for the caller who owns the handle, and lands for
+/// another identity making the same change — proving the guard reads who is
+/// calling, not merely what changed.
+pub async fn the_ceiling_guard_reads_the_fold_across_every_edit_and_retract_path<M: Memory>(
+    store: &M,
+) {
+    let bot = EntityId("bot:contract-ceiling-fold".into());
+    ensure(store, &bot).await;
+
+    // Path 1: a key that differs from the ceiling's only by whitespace.
+    // `apply_patch` trims the key before it lands, so the fold sees
+    // `THOUGHT_CAPACITY` even though this write never spells it exactly.
+    let whitespace_target = capture(
+        store,
+        NewFact::about(
+            bot.clone(),
+            "nothing to do with capacity yet",
+            date(2026, 8, 1),
+        ),
+    )
+    .await;
+    let whitespace_patch = FactPatch {
+        fields: [(format!(" {THOUGHT_CAPACITY}"), "5".to_string())]
+            .into_iter()
+            .collect(),
+        ..Default::default()
+    };
+    let refused = store
+        .update_fact(&whitespace_target.address(), whitespace_patch.clone(), &bot)
+        .await
+        .expect_err("a whitespace-padded ceiling key must still be refused for its own subject");
+    assert!(
+        matches!(refused, MemoryError::SelfCeiling { .. }),
+        "expected SelfCeiling, got {refused:?}"
+    );
+    store
+        .update_fact(
+            &whitespace_target.address(),
+            whitespace_patch,
+            &other_caller(),
+        )
+        .await
+        .expect("the same change lands for another identity")
+        .written()
+        .expect("the guard must not block another identity's write");
+
+    // Path 2: `clear_fields`, which names the key to take off rather than a
+    // new value — the raw-write guard this replaces only ever read `fields`.
+    let cleared = capture(
+        store,
+        NewFact {
+            fields: [(THOUGHT_CAPACITY.to_string(), "2".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(bot.clone(), "capacity is two", date(2026, 8, 2))
+        },
+    )
+    .await;
+    let clear_patch = FactPatch {
+        clear_fields: vec![THOUGHT_CAPACITY.to_string()],
+        ..Default::default()
+    };
+    let refused = store
+        .update_fact(&cleared.address(), clear_patch.clone(), &bot)
+        .await
+        .expect_err("clearing its own ceiling key must be refused for its own subject");
+    assert!(
+        matches!(refused, MemoryError::SelfCeiling { .. }),
+        "expected SelfCeiling, got {refused:?}"
+    );
+    store
+        .update_fact(&cleared.address(), clear_patch, &other_caller())
+        .await
+        .expect("clearing the key lands for another identity")
+        .written()
+        .expect("the guard must not block another identity's write");
+
+    // Path 3: archiving the record that carries the newest write — the
+    // fold drops the key exactly as a clear would.
+    let archived_subject = capture(
+        store,
+        NewFact {
+            fields: [(THOUGHT_CAPACITY.to_string(), "3".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(bot.clone(), "capacity is three", date(2026, 8, 3))
+        },
+    )
+    .await;
+    let archive_patch = FactPatch {
+        status: Some(FactStatus::Archived),
+        ..Default::default()
+    };
+    let refused = store
+        .update_fact(&archived_subject.address(), archive_patch.clone(), &bot)
+        .await
+        .expect_err("archiving the record that carries its own ceiling must be refused");
+    assert!(
+        matches!(refused, MemoryError::SelfCeiling { .. }),
+        "expected SelfCeiling, got {refused:?}"
+    );
+    store
+        .update_fact(&archived_subject.address(), archive_patch, &other_caller())
+        .await
+        .expect("archiving it lands for another identity")
+        .written()
+        .expect("the guard must not block another identity's write");
+
+    // Path 4: retracting the record that carries the newest write — the
+    // one-way twin of archiving, through its own verb.
+    let retracted_subject = capture(
+        store,
+        NewFact {
+            fields: [(THOUGHT_CAPACITY.to_string(), "4".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(bot.clone(), "capacity is four", date(2026, 8, 4))
+        },
+    )
+    .await;
+    let refused = store
+        .retract(
+            &retracted_subject.address(),
+            Some("testing the ceiling guard"),
+            date(2026, 8, 5),
+            &bot,
+        )
+        .await
+        .expect_err("retracting the record that carries its own ceiling must be refused");
+    assert!(
+        matches!(refused, MemoryError::SelfCeiling { .. }),
+        "expected SelfCeiling, got {refused:?}"
+    );
+    store
+        .retract(
+            &retracted_subject.address(),
+            Some("testing the ceiling guard"),
+            date(2026, 8, 5),
+            &other_caller(),
+        )
+        .await
+        .expect("retracting it lands for another identity");
+}
+
+/// **`update_fact` can turn an ordinary claim into a thought**, by drawing
+/// the connection edge that makes it one — a path `capture`'s own room
+/// check never sees, because nothing was ever added. A full room refuses
+/// that edit exactly as it refuses a new thought with no drop named; a room
+/// with space still takes it.
+pub async fn update_fact_drawing_a_connection_edge_into_a_full_room_is_refused<M: Memory>(
+    store: &M,
+) {
+    let bot = EntityId("bot:contract-ceiling-room-via-edit".into());
+    let a = EntityId("thing:jukebox".into());
+    let c = EntityId("thing:the-fern".into());
+    ensure(store, &bot).await;
+
+    capture(
+        store,
+        NewFact {
+            fields: [(THOUGHT_CAPACITY.to_string(), "1".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(bot.clone(), "capacity is one", date(2026, 8, 6))
+        },
+    )
+    .await;
+    capture(
+        store,
+        NewFact {
+            edge: Some(Edge::new(EdgeShape::Connection, a.clone())),
+            ..NewFact::about(bot.clone(), "the jukebox needs a needle", date(2026, 8, 7))
+        },
+    )
+    .await;
+
+    // An ordinary claim, not yet a thought: it draws no edge.
+    let plain = capture(
+        store,
+        NewFact::about(
+            bot.clone(),
+            "the fern is on the windowsill",
+            date(2026, 8, 8),
+        ),
+    )
+    .await;
+
+    ensure(store, &c).await;
+    let refused = store
+        .update_fact(
+            &plain.address(),
+            FactPatch {
+                edge: Some(Edge::new(EdgeShape::Connection, c.clone())),
+                ..Default::default()
+            },
+            &other_caller(),
+        )
+        .await
+        .expect_err("drawing a connection edge into a full room must be refused, not written");
+    assert!(
+        matches!(refused, MemoryError::RoomFull { .. }),
+        "expected RoomFull, got {refused:?}"
+    );
+
+    // With room to spare, the same edit lands.
+    let roomy = EntityId("bot:contract-ceiling-room-with-space".into());
+    ensure(store, &roomy).await;
+    capture(
+        store,
+        NewFact {
+            fields: [(THOUGHT_CAPACITY.to_string(), "2".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(roomy.clone(), "capacity is two", date(2026, 8, 6))
+        },
+    )
+    .await;
+    capture(
+        store,
+        NewFact {
+            edge: Some(Edge::new(EdgeShape::Connection, a.clone())),
+            ..NewFact::about(
+                roomy.clone(),
+                "the jukebox needs a needle",
+                date(2026, 8, 7),
+            )
+        },
+    )
+    .await;
+    let plain_in_roomy = capture(
+        store,
+        NewFact::about(
+            roomy.clone(),
+            "the fern is on the windowsill",
+            date(2026, 8, 8),
+        ),
+    )
+    .await;
+    let landed = store
+        .update_fact(
+            &plain_in_roomy.address(),
+            FactPatch {
+                edge: Some(Edge::new(EdgeShape::Connection, c.clone())),
+                ..Default::default()
+            },
+            &other_caller(),
+        )
+        .await
+        .expect("a room with space still takes the edit")
+        .written()
+        .expect("the guard must not block a write that fits");
+    assert_eq!(landed.id, plain_in_roomy.id);
 }
 
 /// **The emergency reserve — usable once, and only once.** A full room with
@@ -4416,6 +4702,7 @@ pub async fn a_correction_keeps_what_the_claim_used_to_say<M: Memory>(store: &M)
                 confirmed_by_user: true,
                 ..Default::default()
             },
+            &other_caller(),
         )
         .await
         .expect("update_fact should succeed")
@@ -4504,6 +4791,7 @@ pub async fn each_write_of_a_claim_records_its_own_moment<M: Memory>(store: &M) 
                 provenance: Some(Provenance::Inference),
                 ..Default::default()
             },
+            &other_caller(),
         )
         .await
         .expect("update_fact should succeed")
@@ -4891,6 +5179,7 @@ pub async fn retracting_a_record_marks_it_and_records_why<M: Memory>(store: &M) 
             &event.address(),
             Some("it was rebooked twice"),
             date(2026, 7, 4),
+            &other_caller(),
         )
         .await
         .expect("retracting a record should succeed");
@@ -4942,7 +5231,7 @@ pub async fn a_retraction_needs_no_reason<M: Memory>(store: &M) {
     .await;
 
     let taken_back = store
-        .retract(&event.address(), None, date(2026, 7, 4))
+        .retract(&event.address(), None, date(2026, 7, 4), &other_caller())
         .await
         .expect("a retraction without a reason is still a retraction");
 
@@ -4988,12 +5277,18 @@ pub async fn a_retraction_is_one_way<M: Memory>(store: &M) {
             &event.address(),
             Some("it did not, in fact"),
             date(2026, 7, 4),
+            &other_caller(),
         )
         .await
         .expect("the first retraction lands");
 
     let again = store
-        .retract(&event.address(), Some("again"), date(2026, 7, 5))
+        .retract(
+            &event.address(),
+            Some("again"),
+            date(2026, 7, 5),
+            &other_caller(),
+        )
         .await;
     // **Refused as already-done, never as impossible.** The caller asked
     // for a state jojobot is holding: an answer that says the retraction
@@ -5005,7 +5300,12 @@ pub async fn a_retraction_is_one_way<M: Memory>(store: &M) {
     );
 
     let the_record = store
-        .retract(&taken_back.record.address(), Some("undo"), date(2026, 7, 5))
+        .retract(
+            &taken_back.record.address(),
+            Some("undo"),
+            date(2026, 7, 5),
+            &other_caller(),
+        )
         .await;
     assert!(
         matches!(the_record, Err(MemoryError::NotRetractable { .. })),
@@ -5021,6 +5321,7 @@ pub async fn a_retraction_is_one_way<M: Memory>(store: &M) {
                 status: Some(FactStatus::Active),
                 ..Default::default()
             },
+            &other_caller(),
         )
         .await;
     assert!(
@@ -5069,6 +5370,7 @@ pub async fn the_retraction_marker_is_not_one_of_the_things_fields<M: Memory>(st
             &claim.address(),
             Some("the receipt said otherwise"),
             date(2026, 4, 19),
+            &other_caller(),
         )
         .await
         .expect("retracting the claim should succeed");
@@ -5120,6 +5422,7 @@ pub async fn clearing_the_retraction_marker_is_refused<M: Memory>(store: &M) {
             &event.address(),
             Some("it did not, in fact"),
             date(2026, 7, 4),
+            &other_caller(),
         )
         .await
         .expect("the retraction lands");
@@ -5132,6 +5435,7 @@ pub async fn clearing_the_retraction_marker_is_refused<M: Memory>(store: &M) {
                 clear_fields: vec![RETRACTS.to_string()],
                 ..Default::default()
             },
+            &other_caller(),
         )
         .await;
     assert!(
@@ -5167,7 +5471,7 @@ pub async fn clearing_the_retraction_marker_is_refused<M: Memory>(store: &M) {
         "the refused edit wrote nothing"
     );
     let reversal = store
-        .retract(&account, Some("undo"), date(2026, 7, 5))
+        .retract(&account, Some("undo"), date(2026, 7, 5), &other_caller())
         .await;
     assert!(
         matches!(reversal, Err(MemoryError::NotRetractable { .. })),
@@ -5214,7 +5518,12 @@ pub async fn retracting_an_unknown_address_never_writes<M: Memory>(store: &M) {
     let missed = FactAddress::new(subject.clone(), FactId("f404".into()));
 
     let refused = store
-        .retract(&missed, Some("nothing here"), date(2026, 7, 4))
+        .retract(
+            &missed,
+            Some("nothing here"),
+            date(2026, 7, 4),
+            &other_caller(),
+        )
         .await;
     assert!(
         matches!(refused, Err(MemoryError::UnknownFact { .. })),
@@ -5626,6 +5935,7 @@ pub async fn update_fact_requires_an_existing_edge_object<M: Memory>(store: &M) 
                 edge: Some(Edge::new(EdgeShape::Location, stranger.clone())),
                 ..Default::default()
             },
+            &other_caller(),
         )
         .await
         .expect("the call itself succeeds; the guard answers in the result");
@@ -6469,6 +6779,7 @@ async fn an_edit_on_a_captured_claim_lands<M: Memory, B: support::Backing<M>>(
                 provenance: Some(Provenance::Inference),
                 ..Default::default()
             },
+            &other_caller(),
         )
         .await
         .expect("an edit on either backing's claim is a write the gate allows")
@@ -7691,6 +8002,7 @@ pub async fn a_walk_marks_a_link_whose_claim_the_store_took_back<M: Memory>(stor
             &withdrawn.address(),
             Some("was never at it — a different evening"),
             date(2026, 8, 12),
+            &other_caller(),
         )
         .await
         .expect("a claim that stands may be taken back");
@@ -8445,6 +8757,7 @@ pub async fn a_write_cannot_put_a_value_the_type_refuses<M: Memory>(store: &M) {
                     .collect(),
                 ..Default::default()
             },
+            &other_caller(),
         )
         .await;
     let Err(MemoryError::BreaksType {
@@ -8499,6 +8812,7 @@ pub async fn a_write_cannot_put_a_value_the_type_refuses<M: Memory>(store: &M) {
                     .collect(),
                 ..Default::default()
             },
+            &other_caller(),
         )
         .await
         .expect("a thing that fits nothing has nothing to protect")
@@ -8517,6 +8831,7 @@ pub async fn a_write_cannot_put_a_value_the_type_refuses<M: Memory>(store: &M) {
                     .collect(),
                 ..Default::default()
             },
+            &other_caller(),
         )
         .await
         .expect("a key beyond the type is welcome")
@@ -8632,6 +8947,7 @@ pub async fn a_closed_set_refuses_a_write_outside_it<M: Memory>(store: &M) {
                     .collect(),
                 ..Default::default()
             },
+            &other_caller(),
         )
         .await;
     let Err(MemoryError::BreaksType {
@@ -8675,6 +8991,7 @@ pub async fn a_closed_set_refuses_a_write_outside_it<M: Memory>(store: &M) {
                     .collect(),
                 ..Default::default()
             },
+            &other_caller(),
         )
         .await
         .expect("a value the set names is written")
@@ -8773,6 +9090,7 @@ pub async fn a_reference_must_name_an_entity_that_exists<M: Memory>(store: &M) {
                 .collect(),
                 ..Default::default()
             },
+            &other_caller(),
         )
         .await
         .expect("a miss is an answer, not a failure");
@@ -8874,6 +9192,7 @@ pub async fn a_write_cannot_break_a_fit_that_already_exists<M: Memory>(store: &M
                 clear_fields: vec!["cost".to_string()],
                 ..Default::default()
             },
+            &other_caller(),
         )
         .await;
     let Err(MemoryError::BreaksFit { name, keys }) = &refused else {
@@ -9020,6 +9339,7 @@ pub async fn a_supersede_that_breaks_a_fit_is_refused_and_a_retraction_is_not<M:
                 status: Some(FactStatus::Archived),
                 ..Default::default()
             },
+            &other_caller(),
         )
         .await;
     let Err(MemoryError::BreaksFit { name, keys }) = &refused else {
@@ -9041,6 +9361,7 @@ pub async fn a_supersede_that_breaks_a_fit_is_refused_and_a_retraction_is_not<M:
             &seasonal.address(),
             Some("it was never so"),
             date(2026, 4, 19),
+            &other_caller(),
         )
         .await
         .expect("a retraction is not refused by the fit guard");
@@ -10066,7 +10387,7 @@ pub async fn a_stale_address_after_a_fold_says_where_it_went<M: Memory>(store: &
         .expect("the fold lands");
 
     let edit = store
-        .update_fact(&stale, FactPatch::default())
+        .update_fact(&stale, FactPatch::default(), &other_caller())
         .await
         .expect_err("a stale address must not silently succeed or silently miss");
     assert!(
@@ -10085,7 +10406,7 @@ pub async fn a_stale_address_after_a_fold_says_where_it_went<M: Memory>(store: &
     );
 
     let retracted = store
-        .retract(&stale, None, date(2026, 5, 11))
+        .retract(&stale, None, date(2026, 5, 11), &other_caller())
         .await
         .expect_err("retract must answer the same way");
     assert!(
@@ -10098,7 +10419,7 @@ pub async fn a_stale_address_after_a_fold_says_where_it_went<M: Memory>(store: &
     // this local id.
     let never = FactAddress::new(kept.clone(), FactId("f999".into()));
     let miss = store
-        .update_fact(&never, FactPatch::default())
+        .update_fact(&never, FactPatch::default(), &other_caller())
         .await
         .expect_err("an address nobody ever wrote must still miss");
     assert!(
@@ -10557,6 +10878,8 @@ pub async fn run_all<M: Memory>(store: &M) {
     a_thought_pointing_at_a_thread_is_in_the_room(store).await;
     a_room_fulls_subject_is_never_a_bare_badge(store).await;
     a_bots_room_enforces_its_capacity(store).await;
+    the_ceiling_guard_reads_the_fold_across_every_edit_and_retract_path(store).await;
+    update_fact_drawing_a_connection_edge_into_a_full_room_is_refused(store).await;
     an_uncapped_thing_is_refused_nothing(store).await;
     a_non_bots_room_enforces_its_capacity_too(store).await;
     a_borrow_crosses_the_ceiling_exactly_once(store).await;

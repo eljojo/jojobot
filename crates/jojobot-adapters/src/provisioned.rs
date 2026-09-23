@@ -339,8 +339,9 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
         &self,
         address: &FactAddress,
         patch: FactPatch,
+        caller: &EntityId,
     ) -> Result<Guarded<Fact>, MemoryError> {
-        self.inner.update_fact(address, patch).await
+        self.inner.update_fact(address, patch, caller).await
     }
     async fn history(&self, entity: &EntityId, key: &str) -> Result<Vec<FieldWrite>, MemoryError> {
         self.inner.history(entity, key).await
@@ -353,8 +354,9 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
         address: &FactAddress,
         reason: Option<&str>,
         date: Date,
+        caller: &EntityId,
     ) -> Result<Retraction, MemoryError> {
-        self.inner.retract(address, reason, date).await
+        self.inner.retract(address, reason, date, caller).await
     }
     /// **A handle the build supplies is taken, on either side of a fold —
     /// exactly as it is for add, update and rename** (rule 234). Checked

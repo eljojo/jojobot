@@ -233,11 +233,12 @@ impl jojobot_domain::memory::Memory for Blindable {
         &self,
         address: &jojobot_domain::memory::FactAddress,
         patch: jojobot_domain::memory::FactPatch,
+        caller: &jojobot_domain::memory::EntityId,
     ) -> Result<
         jojobot_domain::memory::Guarded<jojobot_domain::memory::Fact>,
         jojobot_domain::memory::MemoryError,
     > {
-        self.inner.update_fact(address, patch).await
+        self.inner.update_fact(address, patch, caller).await
     }
 
     async fn retract(
@@ -245,8 +246,9 @@ impl jojobot_domain::memory::Memory for Blindable {
         address: &jojobot_domain::memory::FactAddress,
         reason: Option<&str>,
         date: jiff::civil::Date,
+        caller: &jojobot_domain::memory::EntityId,
     ) -> Result<jojobot_domain::memory::Retraction, jojobot_domain::memory::MemoryError> {
-        self.inner.retract(address, reason, date).await
+        self.inner.retract(address, reason, date, caller).await
     }
 
     async fn merge(

@@ -2755,6 +2755,7 @@ impl Memory for DoltMemory {
         &self,
         address: &FactAddress,
         patch: FactPatch,
+        caller: &EntityId,
     ) -> Result<Guarded<Fact>, MemoryError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
         // **What EXISTS**, for the same reason `capture` reads it: an edge may
@@ -2926,12 +2927,49 @@ impl Memory for DoltMemory {
             .expect("resolved above")
             .kind;
         let governs = Self::kind_keys_in(&mut tx, kind.as_token()).await?;
-        guard_fit(
-            kind.as_token(),
-            &folded_fields(&held, &declared),
-            &stood_after(&held, &fact, &patch, &carried, &declared),
-            &governs,
-        )?;
+        let before_fold = folded_fields(&held, &declared);
+        let after_fold = stood_after(&held, &fact, &patch, &carried, &declared);
+        guard_fit(kind.as_token(), &before_fold, &after_fold, &governs)?;
+        // **The ceiling and the room, both on the state this edit leaves
+        // behind, atomically with the write that would leave it.** See
+        // `refuses_own_ceiling_change` and `refuses_room_overflow` in the
+        // domain crate for why the fold rather than the raw patch, and why
+        // no ageing here.
+        if let Some(err) = jojobot_domain::memory::refuses_own_ceiling_change(
+            &handle,
+            caller,
+            &before_fold,
+            &after_fold,
+        ) {
+            return Err(err);
+        }
+        if fact.status == FactStatus::Active
+            && fact
+                .edge
+                .as_ref()
+                .is_some_and(|e| e.shape == EdgeShape::Connection)
+        {
+            let capacity = after_fold
+                .get(jojobot_domain::memory::THOUGHT_CAPACITY)
+                .and_then(|v| v.trim().parse::<usize>().ok());
+            // **The storage key, not the display handle** — `facts_of` reads
+            // by the badge a row is filed under (see its own doc comment),
+            // exactly as `writes_on` above is called with `fact.home` rather
+            // than `handle`.
+            let others: Vec<Fact> = self
+                .facts_of(&mut tx, &key)
+                .await?
+                .into_iter()
+                .filter(|f| f.id != fact.id)
+                .collect();
+            let mut room_after = jojobot_domain::memory::thought_room(&others);
+            room_after.push(fact.clone());
+            if let Some(err) =
+                jojobot_domain::memory::refuses_room_overflow(&handle, &room_after, capacity)
+            {
+                return Err(err);
+            }
+        }
         Self::write_fact(&mut tx, &fact, &self.clock).await?;
         // **The edit appends.** The record reads back changed — that is the
         // surface — and the value it replaced stays where it was written.
@@ -3207,6 +3245,7 @@ impl Memory for DoltMemory {
         address: &FactAddress,
         reason: Option<&str>,
         date: Date,
+        caller: &EntityId,
     ) -> Result<Retraction, MemoryError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
         // **The full listing is built only on a miss** — two miss branches
@@ -3253,7 +3292,7 @@ impl Memory for DoltMemory {
         let record = Fact {
             id: Self::mint(&mut tx, &key).await?,
             home: key.clone(),
-            subject: key,
+            subject: key.clone(),
             content: account.content,
             details: account.details,
             provenance: account.provenance,
@@ -3275,6 +3314,28 @@ impl Memory for DoltMemory {
             status: FactStatus::Archived,
             ..target
         };
+        // **The ceiling, on the state this retraction leaves behind.** A
+        // retraction carries no `FactPatch` of its own, so `stood_after`
+        // takes an empty one — the only thing it needs from the patch is
+        // the record's own new status, which `retracted` already carries.
+        let held = Self::writes_on(&mut tx, &key).await?;
+        let declared = Self::types_in(&mut tx).await?;
+        let before_fold = folded_fields(&held, &declared);
+        let after_fold = stood_after(
+            &held,
+            &retracted,
+            &FactPatch::default(),
+            &Default::default(),
+            &declared,
+        );
+        if let Some(err) = jojobot_domain::memory::refuses_own_ceiling_change(
+            &handle,
+            caller,
+            &before_fold,
+            &after_fold,
+        ) {
+            return Err(err);
+        }
         Self::write_fact(&mut tx, &retracted, &self.clock).await?;
         Self::write_fact(&mut tx, &record, &self.clock).await?;
         // The account is a record like any other, and the key naming what it
@@ -4095,6 +4156,7 @@ mod tests {
                         provenance: Some(Provenance::Inference),
                         ..Default::default()
                     },
+                    &EntityId("bot:sigma".into()),
                 )
                 .await
                 .expect("update_fact ok")

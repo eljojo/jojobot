@@ -1,4 +1,4 @@
-use super::support::{add, capture, edit, ensure};
+use super::support::{add, capture, edit, ensure, other_caller};
 use super::*;
 
 /// **A store this suite can rename a handle in.**
@@ -105,6 +105,7 @@ pub async fn a_mention_is_stored_as_a_badge_and_read_back_as_a_handle<
                 provenance: Some(Provenance::Inference),
                 ..Default::default()
             },
+            &other_caller(),
         )
         .await
         .expect("the correction lands")
@@ -1028,6 +1029,7 @@ pub async fn an_edit_that_touches_only_the_content_still_follows_a_later_rename<
                 provenance: Some(Provenance::Inference),
                 ..Default::default()
             },
+            &other_caller(),
         )
         .await
         .expect("update_fact should succeed")
@@ -1091,7 +1093,12 @@ pub async fn a_retraction_still_follows_a_later_rename<M: Memory + ?Sized>(store
     let written = capture(store, linking).await;
 
     store
-        .retract(&written.address(), Some("no longer so"), date(2026, 6, 13))
+        .retract(
+            &written.address(),
+            Some("no longer so"),
+            date(2026, 6, 13),
+            &other_caller(),
+        )
         .await
         .expect("the retraction lands");
 
@@ -1467,6 +1474,7 @@ pub async fn an_edit_through_a_stale_address_reaches_the_record_it_always_named<
                 provenance: Some(Provenance::Inference),
                 ..Default::default()
             },
+            &other_caller(),
         )
         .await
         .expect("the edit lands")
@@ -1498,6 +1506,7 @@ pub async fn an_edit_through_a_stale_address_reaches_the_record_it_always_named<
                     content: Some("must not land".into()),
                     ..Default::default()
                 },
+                &other_caller(),
             )
             .await
             .is_err(),
@@ -1558,7 +1567,12 @@ pub async fn a_retraction_through_a_stale_address_reaches_the_record_it_always_n
         .await;
 
     store
-        .retract(&stale_address, Some("no longer so"), date(2026, 5, 14))
+        .retract(
+            &stale_address,
+            Some("no longer so"),
+            date(2026, 5, 14),
+            &other_caller(),
+        )
         .await
         .expect("the retraction lands");
 
@@ -1580,7 +1594,7 @@ pub async fn a_retraction_through_a_stale_address_reaches_the_record_it_always_n
     let never = FactAddress::new(now, FactId("f99".into()));
     assert!(
         store
-            .retract(&never, None, date(2026, 5, 14))
+            .retract(&never, None, date(2026, 5, 14), &other_caller())
             .await
             .is_err(),
         "a local id this thing never held must still miss, whichever of its handles is asked",
@@ -1732,6 +1746,7 @@ pub async fn retract_and_merge_screen_their_reason_and_write_nothing_on_a_miss<
             &claim.address(),
             Some("named @person:contract-mention-nobody"),
             date(2026, 4, 23),
+            &other_caller(),
         )
         .await;
     match refused {
@@ -1759,6 +1774,7 @@ pub async fn retract_and_merge_screen_their_reason_and_write_nothing_on_a_miss<
             &claim.address(),
             Some("named @person:contract-refscreen-author"),
             date(2026, 4, 23),
+            &other_caller(),
         )
         .await
         .expect("a retraction reason naming something real is not refused");
@@ -1915,7 +1931,7 @@ pub async fn a_mention_naming_nothing_is_refused_and_writes_nothing<
         },
     ] {
         let refused = mentioning
-            .update_fact(&standing.address(), patch)
+            .update_fact(&standing.address(), patch, &other_caller())
             .await
             .expect("a refusal is an answer rather than an error");
         match &refused {
@@ -2001,6 +2017,7 @@ pub async fn no_read_serves_a_badge_and_every_one_serves_the_handle<M: Memory + 
                 provenance: Some(Provenance::Inference),
                 ..Default::default()
             },
+            &other_caller(),
         )
         .await
         .expect("the correction lands")
@@ -2104,6 +2121,7 @@ pub async fn no_read_serves_a_badge_and_every_one_serves_the_handle<M: Memory + 
             &written.address(),
             Some("nobody at @place:contract-mention-inn remembers it"),
             date(2026, 4, 19),
+            &other_caller(),
         )
         .await
         .expect("the retraction lands");
@@ -2202,6 +2220,7 @@ pub async fn an_account_written_from_a_reason_stores_its_mentions<
             &claim.address(),
             Some("@org:contract-mention-guild says otherwise"),
             date(2026, 4, 19),
+            &other_caller(),
         )
         .await
         .expect("the retraction lands");

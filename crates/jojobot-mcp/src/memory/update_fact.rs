@@ -281,14 +281,12 @@ impl Jojobot {
         let declared = Declared::of(&args);
         let mut cleared = args.clear_fields.clone().unwrap_or_default();
         let mut fields = args.fields.unwrap_or_default();
-        // **The thing a ceiling binds cannot write that ceiling.** Same
-        // guard `capture` runs, on the same identity comparison — a patch
-        // is a write like any other, and this one can reach the same key.
-        if let Some(refused) =
-            jojobot_domain::memory::refuses_own_ceiling(&address.home, &caller.bot, &fields)
-        {
-            return memory_declined("update_fact", refused);
-        }
+        // **The thing a ceiling binds cannot write that ceiling — checked on
+        // the fold, atomically with the write, inside `self.memory.update_fact`
+        // below.** A raw check here on `fields` alone would miss a clear, a
+        // status change to archived, or a key that differs from the ceiling's
+        // only by whitespace, because none of those name the key in what
+        // THIS write sends — see `refuses_own_ceiling_change`.
         // **Kept current here too.** An edit that moves a cadence, a policy or
         // a basis is a write like any other write that could move the due
         // moment — the mechanism does not care that this one is a patch
@@ -409,15 +407,16 @@ impl Jojobot {
         let archives_this_write = patch.status == Some(FactStatus::Archived);
         // **A write that landed is never reported as failed** (rule 130): see
         // `capture`'s own note on the same shape.
-        let (written, fold_behind) = match self.memory.update_fact(&address, patch).await {
-            Ok(written) => (written, None),
-            Err(MemoryError::FoldBehind {
-                landed: Landed::Fact(fact),
-                behind,
-                ..
-            }) => (Guarded::Written(*fact), Some(behind)),
-            Err(e) => return memory_declined("update_fact", e),
-        };
+        let (written, fold_behind) =
+            match self.memory.update_fact(&address, patch, &caller.bot).await {
+                Ok(written) => (written, None),
+                Err(MemoryError::FoldBehind {
+                    landed: Landed::Fact(fact),
+                    behind,
+                    ..
+                }) => (Guarded::Written(*fact), Some(behind)),
+                Err(e) => return memory_declined("update_fact", e),
+            };
         match written {
             Guarded::Written(fact) => {
                 self.beat(

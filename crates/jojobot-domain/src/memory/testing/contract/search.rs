@@ -1,4 +1,4 @@
-use super::support::{add, capture, edit};
+use super::support::{add, capture, edit, other_caller};
 use super::*;
 
 // --- retrieval: the search verb ------------------------------------------
@@ -319,6 +319,7 @@ pub async fn search_excludes_a_retracted_record_by_default<M: Memory, S: Search>
             &taken_back.address(),
             Some("it never happened"),
             date(2026, 7, 3),
+            &other_caller(),
         )
         .await
         .expect("retracting a record should succeed");

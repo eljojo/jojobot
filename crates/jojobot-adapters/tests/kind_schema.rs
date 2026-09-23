@@ -181,6 +181,7 @@ async fn a_key_added_to_a_kind_refuses_no_write_that_worked_before() {
                 provenance: Some(Provenance::Inference),
                 ..FactPatch::default()
             },
+            &EntityId("bot:sigma".into()),
         )
         .await
         .expect("a write that worked before the key existed still works")
@@ -220,6 +221,7 @@ async fn a_key_added_to_a_kind_refuses_no_write_that_worked_before() {
                 clear_fields: vec!["opens_at".to_string()],
                 ..FactPatch::default()
             },
+            &EntityId("bot:sigma".into()),
         )
         .await
         .expect_err("the floor is on: a thing that fits is still protected");
@@ -259,6 +261,7 @@ async fn the_floor_protects_a_thing_that_fits_and_leaves_one_that_does_not() {
                 clear_fields: vec!["pitch".to_string()],
                 ..FactPatch::default()
             },
+            &EntityId("bot:sigma".into()),
         )
         .await
         .expect_err("taking away the key its kind names is refused");
@@ -279,6 +282,7 @@ async fn the_floor_protects_a_thing_that_fits_and_leaves_one_that_does_not() {
                 clear_fields: vec!["colour".to_string()],
                 ..FactPatch::default()
             },
+            &EntityId("bot:sigma".into()),
         )
         .await
         .expect("a thing that fits nothing has nothing to protect")
@@ -586,6 +590,7 @@ async fn a_required_key_is_a_floor_and_an_optional_one_is_checked_but_never_dema
                 clear_fields: vec!["awning".to_string()],
                 ..FactPatch::default()
             },
+            &EntityId("bot:sigma".into()),
         )
         .await
         .expect("an optional key is never demanded")
@@ -600,6 +605,7 @@ async fn a_required_key_is_a_floor_and_an_optional_one_is_checked_but_never_dema
                 clear_fields: vec!["pitch".to_string()],
                 ..FactPatch::default()
             },
+            &EntityId("bot:sigma".into()),
         )
         .await
         .expect_err("the required key has to survive the write");
@@ -622,6 +628,7 @@ async fn a_required_key_is_a_floor_and_an_optional_one_is_checked_but_never_dema
                     .collect(),
                 ..FactPatch::default()
             },
+            &EntityId("bot:sigma".into()),
         )
         .await
         .expect_err("an optional key still holds what it was declared to hold");
@@ -717,6 +724,7 @@ async fn a_list_key_holds_none_one_or_many_and_a_span_is_one_value() {
                         .collect(),
                     ..FactPatch::default()
                 },
+                &EntityId("bot:sigma".into()),
             )
             .await
             .expect("a list key takes as many as it is given")
@@ -743,6 +751,7 @@ async fn a_list_key_holds_none_one_or_many_and_a_span_is_one_value() {
                 .collect(),
                 ..FactPatch::default()
             },
+            &EntityId("bot:sigma".into()),
         )
         .await
         .expect_err("an item of the wrong kind is not a person who came along");
@@ -761,6 +770,7 @@ async fn a_list_key_holds_none_one_or_many_and_a_span_is_one_value() {
                     .collect(),
                 ..FactPatch::default()
             },
+            &EntityId("bot:sigma".into()),
         )
         .await
         .expect_err("a span has to run forwards");
@@ -853,6 +863,7 @@ async fn the_rhythm_kind_owns_its_name_and_asks_for_two_keys() {
                 clear_fields: vec!["last_check_in".to_string()],
                 ..FactPatch::default()
             },
+            &EntityId("bot:sigma".into()),
         )
         .await
         .expect_err("a loop somebody has looked at may not lose the day they did");

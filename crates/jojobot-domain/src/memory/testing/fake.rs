@@ -1367,6 +1367,7 @@ impl Memory for InMemoryMemory {
         &self,
         address: &FactAddress,
         patch: FactPatch,
+        caller: &EntityId,
     ) -> Result<Guarded<Fact>, MemoryError> {
         // An edge's object names an entity, so an edit that attaches one is an
         // entity-touching write and faces the guard — same check, same order:
@@ -1591,6 +1592,34 @@ impl Memory for InMemoryMemory {
         // badge now, and a badge carries no kind token to parse.
         let governs = self.kind_keys_of(kind.as_token());
         super::super::guard_fit(kind.as_token(), &before, &after, &governs)?;
+        // **The ceiling and the room, both on the state this edit leaves
+        // behind** — the same check the real store runs, atomically with the
+        // write it gates.
+        if let Some(err) =
+            super::super::refuses_own_ceiling_change(&handle, caller, &before, &after)
+        {
+            return Err(err);
+        }
+        if edited.status == FactStatus::Active
+            && edited
+                .edge
+                .as_ref()
+                .is_some_and(|e| e.shape == crate::memory::EdgeShape::Connection)
+        {
+            let capacity = after
+                .get(super::super::THOUGHT_CAPACITY)
+                .and_then(|v| v.trim().parse::<usize>().ok());
+            let others: Vec<Fact> = facts
+                .iter()
+                .filter(|f| f.home == home && f.id != edited.id)
+                .cloned()
+                .collect();
+            let mut room_after = super::super::thought_room(&others);
+            room_after.push(edited.clone());
+            if let Some(err) = super::super::refuses_room_overflow(&handle, &room_after, capacity) {
+                return Err(err);
+            }
+        }
         let id = fact.id.clone();
         for held in facts.iter_mut() {
             if held.home == home && held.id == id {
@@ -1884,6 +1913,7 @@ impl Memory for InMemoryMemory {
         address: &FactAddress,
         reason: Option<&str>,
         date: Date,
+        caller: &EntityId,
     ) -> Result<Retraction, MemoryError> {
         let index = self.known();
         let former = self.former();
@@ -1956,6 +1986,23 @@ impl Memory for InMemoryMemory {
             status: FactStatus::Archived,
             ..target
         };
+        // **The ceiling, on the state this retraction leaves behind** — the
+        // same check the real store runs, atomically with the write.
+        let declared = self.declarations();
+        let held = self.writes_on(&key, &facts);
+        let before_fold = super::super::folded_fields(&held, &declared);
+        let after_fold = super::super::stood_after(
+            &held,
+            &retracted,
+            &FactPatch::default(),
+            &Default::default(),
+            &declared,
+        );
+        if let Some(err) =
+            super::super::refuses_own_ceiling_change(&handle, caller, &before_fold, &after_fold)
+        {
+            return Err(err);
+        }
         for fact in facts.iter_mut() {
             if fact.home == key && fact.id == address.local {
                 *fact = Fact {

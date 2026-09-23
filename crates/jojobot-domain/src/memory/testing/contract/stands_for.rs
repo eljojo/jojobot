@@ -1,4 +1,4 @@
-use super::support::{capture, edit};
+use super::support::{capture, edit, other_caller};
 use super::*;
 
 /// **A mark names claims, and each has to be there** — the same rule
@@ -47,6 +47,7 @@ pub async fn stands_for_must_name_facts_that_exist<M: Memory>(store: &M) {
                 stands_for: Some(vec![missing.clone()]),
                 ..FactPatch::default()
             },
+            &other_caller(),
         )
         .await;
     let Err(MemoryError::UnknownFact { attempted, nearest }) = &refused else {
@@ -68,6 +69,7 @@ pub async fn stands_for_must_name_facts_that_exist<M: Memory>(store: &M) {
                 stands_for: Some(vec![nowhere]),
                 ..FactPatch::default()
             },
+            &other_caller(),
         )
         .await;
     assert!(
@@ -187,6 +189,7 @@ pub async fn a_mark_standing_for_nothing_is_refused<M: Memory>(store: &M) {
                 stands_for: Some(Vec::new()),
                 ..FactPatch::default()
             },
+            &other_caller(),
         )
         .await;
     assert!(
@@ -223,6 +226,7 @@ pub async fn a_record_cannot_stand_for_itself<M: Memory>(store: &M) {
                 stands_for: Some(vec![record.address()]),
                 ..FactPatch::default()
             },
+            &other_caller(),
         )
         .await;
     assert!(
@@ -273,6 +277,7 @@ pub async fn a_shape_cannot_name_a_source_that_is_itself_a_shape<M: Memory>(stor
                 stands_for: Some(vec![leaf_one.address()]),
                 ..FactPatch::default()
             },
+            &other_caller(),
         )
         .await;
     assert!(
@@ -315,6 +320,7 @@ pub async fn a_mark_cannot_repeat_the_same_source<M: Memory>(store: &M) {
                 stands_for: Some(vec![source.address(), source.address()]),
                 ..FactPatch::default()
             },
+            &other_caller(),
         )
         .await;
     assert!(
