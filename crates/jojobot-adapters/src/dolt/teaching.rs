@@ -23,7 +23,14 @@ impl DoltTeachings {
     }
 }
 
+/// **A conflict is told apart from every other failure here, at the one
+/// seam every write already passes through** — the same check the memory
+/// rail's own `store` runs, see its doc for why.
 fn store(err: sqlx::Error) -> TeachingError {
+    if err.as_database_error().and_then(|db| db.code()).as_deref() == Some("40001") {
+        tracing::warn!(error = %err, "a write conflicted with another landing the same instant");
+        return TeachingError::Conflict;
+    }
     TeachingError::Store(err.to_string())
 }
 

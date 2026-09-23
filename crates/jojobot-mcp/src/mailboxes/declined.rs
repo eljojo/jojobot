@@ -246,6 +246,15 @@ pub(crate) fn mailbox_error(e: MailboxError) -> McpError {
         MailboxError::Store(msg) => {
             McpError::internal_error(crate::boundary::store_failed("this call", &msg), None)
         }
+        // **A conflict is not a failure** — see the memory rail's own doc on
+        // this shape. It reaches the caller through the same JSON-RPC error
+        // shape as `Store` (a payload a client cannot act on is a server
+        // fault whatever the underlying cause), but the sentence itself
+        // says the opposite of `store_failed`'s: retry, not escalate.
+        MailboxError::Conflict => McpError::internal_error(
+            crate::boundary::conflict("this call", &MailboxError::Conflict.to_string()),
+            None,
+        ),
     }
 }
 
@@ -354,5 +363,25 @@ mod tests {
                  {expected}\n  got: {advice}"
             );
         }
+    }
+
+    /// **`mailbox_error` routes `Conflict` through `conflict`, not
+    /// `store_failed`** — the memory rail's own wiring proof, on this rail.
+    /// A caller reading this through the served surface must see retry
+    /// advice, never the "tell the operator" line a bare store failure
+    /// carries.
+    #[test]
+    fn a_conflict_is_mapped_through_the_conflict_sentence_not_the_failure_one() {
+        let err = mailbox_error(MailboxError::Conflict);
+        assert!(
+            !err.message.contains("tell the operator"),
+            "a conflict routed through the failure sentence rather than its own: {}",
+            err.message
+        );
+        assert!(
+            err.message.contains("retry") || err.message.contains("retrying"),
+            "the caller's next move must be named: {}",
+            err.message
+        );
     }
 }

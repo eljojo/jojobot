@@ -25,7 +25,9 @@ use jojobot_adapters::provisioned::Provisioned;
 use jojobot_adapters::search::{IndexedMemory, Retrieval};
 use jojobot_adapters::testing::free_port;
 use jojobot_domain::mailbox::testing::contract as mailboxes;
-use jojobot_domain::mailbox::{MailboxError, OwnerIndex, OwnerLookup};
+use jojobot_domain::mailbox::{
+    MailboxError, MailboxName, Mailboxes, NewMessage, OwnerIndex, OwnerLookup,
+};
 use jojobot_domain::memory::EntityId;
 use jojobot_domain::memory::FormerHandle;
 use jojobot_domain::memory::Memory;
@@ -38,8 +40,9 @@ use jojobot_domain::memory::{
     Provenance,
 };
 use jojobot_domain::session::testing::contract as sessions;
-use jojobot_domain::session::{NewEntry, NewSession, SessionState, Sessions, Sid};
+use jojobot_domain::session::{NewEntry, NewSession, SessionError, SessionState, Sessions, Sid};
 use jojobot_domain::teaching::testing::contract as teachings;
+use jojobot_domain::teaching::{TeachingError, Teachings};
 
 /// A directory of this run's own, removed when it is done.
 struct Scratch(PathBuf);
@@ -134,6 +137,81 @@ async fn dolt_satisfies_the_session_contract() {
     };
 
     sessions::run_all(fresh).await;
+
+    store.stop().await;
+}
+
+/// 🚨 **A conflict is not a store failure, and the caller must be told
+/// which one happened — the session rail's own copy of the memory rail's
+/// case.** A batch of concurrent `set_focus` calls on one session's own
+/// card — the same row, every time. Dolt's own optimistic concurrency
+/// rejects every commit but the racers that do not overlap it, with
+/// SQLSTATE `40001`, and a rejected one must read back as
+/// [`SessionError::Conflict`], never [`SessionError::Store`].
+///
+/// **A batch, not a single pair.** `append` inserts a fresh row per call and
+/// does not reproduce this reliably even at high concurrency, because two
+/// inserts with nothing in common give Dolt's optimistic concurrency
+/// nothing to catch — proven empirically before this landed. `set_focus`
+/// writes the one row every racer shares, and a handful of them
+/// concurrently is enough to force a real commit-time collision.
+///
+/// **Against the real store on purpose** — see the memory rail's own case
+/// for why an in-memory double cannot exercise this branch.
+#[tokio::test]
+async fn a_session_write_that_conflicts_with_another_is_told_apart_from_a_failed_store() {
+    let scratch = Scratch::new("session-conflict-not-a-failure");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("session_conflict_not_a_failure")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let sessions_store = DoltSessions::open(pool);
+
+    let bot = EntityId("bot:conflict-not-a-failure".into());
+    let started = sessions::epoch();
+    let session = sessions_store
+        .begin(NewSession {
+            bot,
+            sid: Sid("s-session-conflict-not-a-failure".into()),
+            focus: "working".into(),
+            started_at: started,
+            timezone: None,
+            started_on: None,
+        })
+        .await
+        .expect("begin ok");
+
+    let mut handles = Vec::new();
+    for i in 0..8 {
+        let racer = sessions_store.clone();
+        let id = session.id.clone();
+        handles.push(tokio::spawn(async move {
+            racer.set_focus(&id, &format!("racer {i}")).await
+        }));
+    }
+    let mut landed = 0;
+    let mut conflicted = 0;
+    for handle in handles {
+        match handle.await.expect("a racer task must not panic") {
+            Ok(_) => landed += 1,
+            Err(SessionError::Conflict) => conflicted += 1,
+            Err(other) => panic!(
+                "a racer failed with something other than Conflict, which is the one shape \
+                 this proves must not happen: {other:?}"
+            ),
+        }
+    }
+    assert!(landed >= 1, "at least one racer must land");
+    assert!(
+        conflicted >= 1,
+        "this case is supposed to exercise the real conflict, and without one there is \
+         nothing here for SessionError::Conflict to be proven against"
+    );
 
     store.stop().await;
 }
@@ -2398,6 +2476,91 @@ async fn dolt_satisfies_the_mailbox_contract() {
     store.stop().await;
 }
 
+/// 🚨 **A conflict is not a store failure, and the caller must be told
+/// which one happened — the mailbox rail's own copy of the memory rail's
+/// case.** The operator's own example: two bots marking ONE message
+/// processed at the same moment. A batch of concurrent `mark_processed`
+/// calls on one message — the same row, every time. Dolt's own optimistic
+/// concurrency rejects every commit but the racers that do not overlap it,
+/// with SQLSTATE `40001`, and a rejected one must read back as
+/// [`MailboxError::Conflict`], never [`MailboxError::Store`].
+///
+/// **A batch, not a single pair, for the same reason the session rail's
+/// case is one** — `post_message` inserting distinct rows does not
+/// reproduce this reliably; `mark_processed` updating the one row every
+/// racer shares does.
+///
+/// **Against the real store on purpose** — see the memory rail's own case
+/// for why an in-memory double cannot exercise this branch.
+#[tokio::test]
+async fn a_mailbox_write_that_conflicts_with_another_is_told_apart_from_a_failed_store() {
+    let scratch = Scratch::new("mailbox-conflict-not-a-failure");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("mailbox_conflict_not_a_failure")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let mailboxes_store = DoltMailboxes::open(pool, Arc::new(RosterOnly));
+
+    let owner = EntityId(mailboxes::OWNERS[0].to_string());
+    let name = MailboxName("conflict-not-a-failure".into());
+    mailboxes_store
+        .create_mailbox(&name, &owner, None)
+        .await
+        .expect("create_mailbox ok")
+        .written()
+        .expect("nothing collides");
+
+    let sent_at = mailboxes::epoch();
+    let posted = mailboxes_store
+        .post_message(NewMessage {
+            mailbox: name.clone(),
+            body: "the message every racer marks processed".into(),
+            subject: None,
+            sender: owner.to_string(),
+            sent_at,
+            in_reply_to: None,
+            sender_mail_waiting_at_send: None,
+        })
+        .await
+        .expect("post_message ok")
+        .written()
+        .expect("nothing collides");
+
+    let mut handles = Vec::new();
+    for i in 0..8 {
+        let racer = mailboxes_store.clone();
+        let id = posted.id.clone();
+        handles.push(tokio::spawn(async move {
+            racer.mark_processed(&id, Some(&format!("racer {i}"))).await
+        }));
+    }
+    let mut landed = 0;
+    let mut conflicted = 0;
+    for handle in handles {
+        match handle.await.expect("a racer task must not panic") {
+            Ok(_) => landed += 1,
+            Err(MailboxError::Conflict) => conflicted += 1,
+            Err(other) => panic!(
+                "a racer failed with something other than Conflict, which is the one shape \
+                 this proves must not happen: {other:?}"
+            ),
+        }
+    }
+    assert!(landed >= 1, "at least one racer must land");
+    assert!(
+        conflicted >= 1,
+        "this case is supposed to exercise the real conflict, and without one there is \
+         nothing here for MailboxError::Conflict to be proven against"
+    );
+
+    store.stop().await;
+}
+
 /// The teaching contract's cases, each against a store of its own.
 #[tokio::test]
 async fn dolt_satisfies_the_teaching_contract() {
@@ -2430,6 +2593,69 @@ async fn dolt_satisfies_the_teaching_contract() {
         async move { store }
     })
     .await;
+
+    store.stop().await;
+}
+
+/// 🚨 **A conflict is not a store failure, and the caller must be told
+/// which one happened — the teaching rail's own copy of the memory rail's
+/// case.** A batch of concurrent first-contact writes for one session, on
+/// the SAME domain and each with its own moment — so every racer proposes
+/// the identical (sid, domain) primary key with a genuinely different
+/// `taught_at`, giving Dolt's merge something to actually reconcile.
+/// Two racers proposing the identical row (same key, same values) merge
+/// cleanly with nothing to catch — proven empirically before this landed —
+/// so the case needs divergent payloads, not merely concurrent callers.
+/// The rejected commits come back with SQLSTATE `40001`, which must read
+/// back as [`TeachingError::Conflict`], never [`TeachingError::Store`].
+///
+/// **Against the real store on purpose** — see the memory rail's own case
+/// for why an in-memory double cannot exercise this branch. (This never
+/// reaches a caller — `first_contact`'s own MCP wiring swallows every
+/// `TeachingError` alike, by design, so a teaching failure never fails the
+/// verb it rides on. The distinction still matters at the adapter, which is
+/// what this proves.)
+#[tokio::test]
+async fn a_teaching_write_that_conflicts_with_another_is_told_apart_from_a_failed_store() {
+    let scratch = Scratch::new("teaching-conflict-not-a-failure");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("teaching_conflict_not_a_failure")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    let teaching_store = DoltTeachings::open(pool);
+
+    let sid = Sid("tchr".into());
+    let mut handles = Vec::new();
+    for i in 0..16u64 {
+        let racer = teaching_store.clone();
+        let sid = sid.clone();
+        let at = mailboxes::epoch() + jiff::Span::new().seconds(i as i64);
+        handles.push(tokio::spawn(async move {
+            racer.first_contact(&sid, "same-domain", at).await
+        }));
+    }
+    let mut landed = 0;
+    let mut conflicted = 0;
+    for handle in handles {
+        match handle.await.expect("a racer task must not panic") {
+            Ok(_) => landed += 1,
+            Err(TeachingError::Conflict) => conflicted += 1,
+            Err(other) => panic!(
+                "a racer failed with something other than Conflict, which is the one shape \
+                 this proves must not happen: {other:?}"
+            ),
+        }
+    }
+    assert!(landed >= 1, "at least one racer must land");
+    assert!(
+        conflicted >= 1,
+        "this case is supposed to exercise the real conflict, and without one there is \
+         nothing here for TeachingError::Conflict to be proven against"
+    );
 
     store.stop().await;
 }

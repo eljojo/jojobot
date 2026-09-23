@@ -357,7 +357,15 @@ impl DoltSessions {
 /// A store failure, in the domain's own words. **The server's account never
 /// crosses** — no SQL, no table names, no product (rule 53); it goes to the log
 /// where an operator debugging a real failure wants it.
+///
+/// **A conflict is told apart from every other failure here, at the one
+/// seam every write already passes through** — the same check the memory
+/// rail's own `store` runs, see its doc for why.
 fn store(e: sqlx::Error) -> SessionError {
+    if e.as_database_error().and_then(|db| db.code()).as_deref() == Some("40001") {
+        tracing::warn!(error = %e, "a write conflicted with another landing the same instant");
+        return SessionError::Conflict;
+    }
     tracing::error!(error = %e, "the session store failed");
     SessionError::Store("the session store could not be reached".into())
 }

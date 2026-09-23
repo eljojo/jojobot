@@ -69,4 +69,14 @@ pub enum TeachingError {
     /// cannot read.
     #[error("teaching store error: {0}")]
     Store(String),
+    /// **A write collided with another that landed the same instant** — see
+    /// [`crate::memory::MemoryError::Conflict`], the same distinction on
+    /// this rail: the store answered correctly and promptly, so this is not
+    /// the escalate-to-a-person failure [`TeachingError::Store`] is.
+    #[error(
+        "this write collided with another that landed the same instant; nothing was written \
+         here — the store is working, and retrying the same call is the right response to a \
+         transient conflict rather than a mistake in what was sent"
+    )]
+    Conflict,
 }

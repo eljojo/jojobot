@@ -163,6 +163,15 @@ pub(crate) fn session_error(e: SessionError) -> McpError {
             crate::boundary::store_failed("this call", &e.to_string()),
             None,
         ),
+        // **A conflict is not a failure** — see the memory rail's own doc on
+        // this shape. It reaches the caller through the same JSON-RPC error
+        // shape as `Store` (a payload a client cannot act on is a server
+        // fault whatever the underlying cause), but the sentence itself
+        // says the opposite of `store_failed`'s: retry, not escalate.
+        SessionError::Conflict => McpError::internal_error(
+            crate::boundary::conflict("this call", &SessionError::Conflict.to_string()),
+            None,
+        ),
     }
 }
 
@@ -251,5 +260,25 @@ mod tests {
                  {expected}\n  got: {advice}"
             );
         }
+    }
+
+    /// **`session_error` routes `Conflict` through `conflict`, not
+    /// `store_failed`** — the memory rail's own wiring proof, on this rail.
+    /// A caller reading this through the served surface must see retry
+    /// advice, never the "tell the operator" line a bare store failure
+    /// carries.
+    #[test]
+    fn a_conflict_is_mapped_through_the_conflict_sentence_not_the_failure_one() {
+        let err = session_error(SessionError::Conflict);
+        assert!(
+            !err.message.contains("tell the operator"),
+            "a conflict routed through the failure sentence rather than its own: {}",
+            err.message
+        );
+        assert!(
+            err.message.contains("retry") || err.message.contains("retrying"),
+            "the caller's next move must be named: {}",
+            err.message
+        );
     }
 }

@@ -677,6 +677,16 @@ pub enum MailboxError {
     /// its answers.
     #[error("store error: {0}")]
     Store(String),
+    /// **A write collided with another that landed the same instant** — see
+    /// [`crate::memory::MemoryError::Conflict`], the same distinction on
+    /// this rail: the store answered correctly and promptly, so this is not
+    /// the escalate-to-a-person failure [`MailboxError::Store`] is.
+    #[error(
+        "this write collided with another that landed the same instant; nothing was written \
+         here — the store is working, and retrying the same call is the right response to a \
+         transient conflict rather than a mistake in what was sent"
+    )]
+    Conflict,
     /// **An owner holds more than one mailbox**, so a rename cannot tell
     /// which one to follow. A box is opened once, with the bot that owns it
     /// (M4); more than one for the same owner is damage from before this
