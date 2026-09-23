@@ -1892,6 +1892,49 @@ async fn memory_with_views() -> Arc<dyn Memory> {
         .written()
         .expect("nothing on this board collides with it");
 
+    // **A view that narrows by a key filter, not only by `selects`.** The
+    // three loops above share a kind and a cadence but differ in
+    // `counts_from`, so a filter on that key keeps exactly one.
+    memory
+        .add_entity(NewEntity::new(
+            EntityId("view:the-old-loop".into()),
+            "The Old Loop",
+            "the operator",
+        ))
+        .await
+        .expect("the filtered view is created")
+        .written()
+        .expect("nothing on this board collides with it");
+    memory
+        .capture(NewFact {
+            fields: [("selects".to_string(), "rhythm".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(
+                EntityId("view:the-old-loop".into()),
+                "which loop is the old one",
+                Date::constant(2026, 3, 5),
+            )
+        })
+        .await
+        .expect("the question is written");
+    memory
+        .capture(NewFact {
+            fields: [
+                ("key".to_string(), "counts_from".to_string()),
+                ("value".to_string(), "2020-01-06".to_string()),
+            ]
+            .into_iter()
+            .collect(),
+            ..NewFact::about(
+                EntityId("view:the-old-loop".into()),
+                "filters to counts_from 2020-01-06",
+                Date::constant(2026, 3, 5),
+            )
+        })
+        .await
+        .expect("the filter record is written");
+
     memory
 }
 
@@ -1966,6 +2009,40 @@ async fn a_views_page_runs_the_view_and_shows_the_result() {
     assert!(
         page.contains("id=\"fields\"") && page.contains("selects"),
         "the view's own definition is still on the page: {page}"
+    );
+    ct.cancel();
+}
+
+/// **A view's page runs the view's own filter, not only its `selects`.**
+/// A view narrowed to one loop by a key filter must answer with that loop
+/// alone — the record the filter excludes must not be on the page, in the
+/// same read as the record it keeps.
+#[tokio::test]
+async fn a_views_page_runs_the_views_own_filter() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct) = spawn_over_views(&idp, endpoints).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let page = read(&client, addr, "/view:the-old-loop/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+
+    let answer = page
+        .split_once("id=\"answer\"")
+        .expect("the page carries the view's answer")
+        .1;
+    let answer = answer.split_once("</table>").expect("…and it closes").0;
+    assert!(
+        answer.contains("rhythm:descale"),
+        "the loop the filter keeps is in the answer: {answer}"
+    );
+    assert!(
+        !answer.contains("rhythm:worming") && !answer.contains("rhythm:abseiling"),
+        "the loops the filter excludes must not be in the answer: {answer}"
     );
     ct.cancel();
 }
