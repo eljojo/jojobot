@@ -204,8 +204,15 @@ impl Jojobot {
 }
 
 impl Jojobot {
-    /// **Renew every role this session's own claimant holds, on the beat it
-    /// just wrote — no second mechanism, no cheap-renew path.**
+    /// **Renew every role this session's own claimant holds, on the write it
+    /// just made — no second mechanism, no cheap-renew path.**
+    ///
+    /// Called from here AND from [`crate::beat`], which is what makes this
+    /// "every write carrying the holder's sid", not only a journal beat: a
+    /// journal entry is not one of jojobot's own automatic beats, so it
+    /// renews here directly, while every write class `beat` covers (capture,
+    /// add_entity, post_message, and the rest) renews there instead — one
+    /// mechanism, called from the two places a write actually lands.
     ///
     /// A role claim lives entirely in the bot's own fields (see
     /// [`crate::orientation::orient::OrientRequest`]'s sibling, the boot
@@ -217,9 +224,14 @@ impl Jojobot {
     /// place) rather than a fresh fact per beat.
     ///
     /// Best-effort: a read or write failure here is logged and never turns a
-    /// beat that landed into a failed call — renewing a lease is not what a
-    /// caller who wrote a journal entry asked for.
-    async fn renew_role_claims(&self, bot: &EntityId, claimant: &str, now: jiff::Timestamp) {
+    /// write that landed into a failed call — renewing a lease is not what a
+    /// caller who made an ordinary write asked for.
+    pub(crate) async fn renew_role_claims(
+        &self,
+        bot: &EntityId,
+        claimant: &str,
+        now: jiff::Timestamp,
+    ) {
         let fields = match self.memory.fields(bot).await {
             Ok(fields) => fields,
             Err(e) => {
@@ -267,6 +279,74 @@ impl Jojobot {
             };
             if let Err(e) = self.memory.update_fact(&address, patch, bot).await {
                 tracing::warn!(error = %e, %bot, role, "a role claim could not be renewed");
+            }
+        }
+    }
+
+    /// **Release every role this session's own claimant holds, on wrap.**
+    ///
+    /// A role's holder is a session id, not a bot handle, and a session
+    /// belongs to one bot for its whole life — the same bot `decide_role_claim`
+    /// records the claim on — so this reads that bot's own fields, exactly as
+    /// [`Jojobot::renew_role_claims`] does, rather than a graph-wide search
+    /// for the sid.
+    ///
+    /// Cleared through the ordinary field-edit path
+    /// ([`Memory::update_fact`], `clear_fields`), the same call a renewal
+    /// makes, so a racing fresh claimant meets a record with nothing left
+    /// on it rather than a bespoke release mechanism.
+    ///
+    /// Best-effort: a read or write failure here is logged and never turns a
+    /// wrap that landed into a failed call.
+    pub(crate) async fn release_role_claims(&self, bot: &EntityId, claimant: &str) {
+        let fields = match self.memory.fields(bot).await {
+            Ok(fields) => fields,
+            Err(e) => {
+                tracing::warn!(
+                    error = %e, %bot,
+                    "could not read the bot's fields to release a role claim"
+                );
+                return;
+            }
+        };
+        let held_roles: Vec<String> = fields
+            .iter()
+            .filter_map(|(key, holder)| {
+                if holder != claimant {
+                    return None;
+                }
+                key.strip_prefix("role/")?
+                    .strip_suffix("/holder")
+                    .map(str::to_string)
+            })
+            .collect();
+        if held_roles.is_empty() {
+            return;
+        }
+        let backing = match self.memory.backing(bot).await {
+            Ok(backing) => backing,
+            Err(e) => {
+                tracing::warn!(
+                    error = %e, %bot,
+                    "could not read the bot's fields' backing to release a role claim"
+                );
+                return;
+            }
+        };
+        for role in held_roles {
+            let holder_key = jojobot_domain::session::role_holder_key(&role);
+            let claimed_at_key = jojobot_domain::session::role_claimed_at_key(&role);
+            let Some(backing) = backing.get(&holder_key) else {
+                tracing::warn!(%bot, role, "a held role's holder field has no backing to release");
+                continue;
+            };
+            let address = FactAddress::new(bot.clone(), backing.fact.clone());
+            let patch = FactPatch {
+                clear_fields: vec![holder_key, claimed_at_key],
+                ..Default::default()
+            };
+            if let Err(e) = self.memory.update_fact(&address, patch).await {
+                tracing::warn!(error = %e, %bot, role, "a role claim could not be released");
             }
         }
     }

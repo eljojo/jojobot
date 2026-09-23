@@ -678,6 +678,22 @@ impl Jojobot {
                 "holder": holder,
                 "until": until.to_string(),
             }),
+            // **The store's own optimistic concurrency, not a defect.** Two
+            // writes landed on the same instant; nothing here was written,
+            // and the store answered promptly and correctly. Retrying is the
+            // right response to this one specifically, which is why it gets
+            // its own status rather than folding into `unavailable` below.
+            Err(MemoryError::Conflict) => {
+                tracing::info!(%bot, role, "a role claim collided with another write; retry");
+                serde_json::json!({
+                    "role": role,
+                    "status": "conflict",
+                    "note": "the claim collided with another write landing the same instant. \
+                             Nothing is held. Retry the same claim: it is a transient \
+                             collision on a store that is working correctly, not a mistake in \
+                             what you sent.",
+                })
+            }
             other => {
                 if let Err(e) = &other {
                     tracing::warn!(error = %e, %bot, role, "a role claim could not be written");
@@ -702,6 +718,54 @@ mod tests {
     use crate::mailboxes::testing::*;
     use crate::memory::testing::*;
     use crate::session::testing::*;
+
+    /// **A claim that collides with a real store's own optimistic
+    /// concurrency tells the caller to retry, not that the role is
+    /// `unavailable`.** `MemoryError::Conflict` is a documented, correct
+    /// outcome — a write that landed on the same instant as another, on a
+    /// store working correctly — and folding it into the generic "could not
+    /// be written" branch loses that: a caller reading `unavailable` has no
+    /// reason to believe trying again would do anything different.
+    #[tokio::test]
+    async fn a_claim_that_conflicts_tells_the_caller_to_retry() {
+        let jojobot = Jojobot::new(
+            Arc::new(ConflictingMemory(Arc::new(InMemoryMemory::booted()))),
+            Arc::new(SpySearch::default()),
+            Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
+            Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
+            Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+            Arc::new(crate::sid::SessionRegistry::new()),
+        );
+        make_bot(&jojobot, "gamma").await;
+
+        let booted = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    claim: Some("dev-dispatch".into()),
+                    timezone: None,
+                    bot: Some("gamma".into()),
+                    brief: None,
+                    skill: None,
+                    resume: None,
+                    sid: None,
+                    today: None,
+                }))
+                .await
+                .expect("start_here ok"),
+        );
+        let claim = &booted["session"]["claim"];
+        assert_ne!(
+            claim["status"], "unavailable",
+            "a Conflict must read as its own outcome, not the generic write failure: {booted}"
+        );
+        let note = claim["note"]
+            .as_str()
+            .unwrap_or_else(|| panic!("a Conflict answer must say what to do: {booted}"));
+        assert!(
+            note.to_lowercase().contains("retry") || note.to_lowercase().contains("try again"),
+            "the answer must tell the caller a retry is the right move: {note}"
+        );
+    }
 
     /// 🚨 **The bar the correction asked for: the WHOLE answer against the
     /// declared ceiling, not one field against one constant** (rule 106,

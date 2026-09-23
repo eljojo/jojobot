@@ -1099,6 +1099,97 @@ mod tests {
         );
     }
 
+    /// **A write other than `journal` renews a role claim too**, and one
+    /// landing after the OLD five-minute window still keeps it — through the
+    /// served surface, with no real waiting.
+    ///
+    /// Three handlers share one store and registry but run different clocks,
+    /// which is what stands in for time actually passing: `Clock::Stated`'s
+    /// `now()` is `midnight(day) + (real elapsed since `began`)`, so choosing
+    /// `began` in the past reads as if that much time had already gone by,
+    /// deterministically and in milliseconds of real test time.
+    ///
+    /// The gap between the claim and the write (400s) is past the OLD
+    /// `LEASE_FRESHNESS` (300s) on its own — if renewal only happened on
+    /// `journal`, this write would find nothing to renew and the claim would
+    /// still read as claimed at t0. The final check (3000s after t0) is
+    /// stale against t0 alone but fresh against a renewal at t0+400s under
+    /// the new 45-minute threshold, so the two cases read oppositely on the
+    /// second claimant.
+    #[tokio::test]
+    async fn a_write_other_than_journal_renews_a_role_claim_past_the_old_five_minute_window() {
+        let memory = Arc::new(InMemoryMemory::booted());
+        let search = Arc::new(SpySearch::default());
+        let mailboxes = Arc::new(InMemoryMailboxes::knowing_any_owner());
+        let sessions = Arc::new(InMemorySessions::new());
+        let teachings = Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new());
+        let registry = Arc::new(crate::sid::SessionRegistry::new());
+        let day: jiff::civil::Date = "2026-06-01".parse().expect("a date");
+
+        let at = |elapsed_secs: i64| {
+            Jojobot::new(
+                memory.clone(),
+                search.clone(),
+                mailboxes.clone(),
+                sessions.clone(),
+                teachings.clone(),
+                registry.clone(),
+            )
+            .on_clock(jojobot_domain::clock::Clock::Stated {
+                day,
+                began: jiff::Timestamp::now() - jiff::SignedDuration::from_secs(elapsed_secs),
+            })
+        };
+
+        let t0 = at(0);
+        make_bot(&t0, "gamma").await;
+        let claimed = json_of(
+            &t0.start_here(Parameters(OrientArgs {
+                claim: Some("dev-dispatch".into()),
+                timezone: None,
+                bot: Some("gamma".into()),
+                brief: None,
+                skill: None,
+                resume: None,
+                sid: None,
+                today: None,
+            }))
+            .await
+            .expect("start_here ok"),
+        );
+        let holder_sid = sid_of(&claimed).expect("a handle");
+        assert_eq!(claimed["session"]["claim"]["status"], "taken", "{claimed}");
+
+        // A write other than journal, carrying the holder's own sid, 400
+        // seconds later — past the old 300-second window.
+        ensure_as(&at(400), &holder_sid, "alpha").await;
+
+        // 3000 seconds after the ORIGINAL claim: stale against t0 alone
+        // (3000 > 2700), fresh against a renewal at t0+400 (3000-400 = 2600
+        // < 2700).
+        let rival = json_of(
+            &at(3000)
+                .start_here(Parameters(OrientArgs {
+                    claim: Some("dev-dispatch".into()),
+                    timezone: None,
+                    bot: Some("gamma".into()),
+                    brief: None,
+                    skill: None,
+                    resume: Some("new".into()),
+                    sid: None,
+                    today: None,
+                }))
+                .await
+                .expect("start_here ok"),
+        );
+        assert_eq!(
+            rival["session"]["claim"]["status"], "refused",
+            "the intervening write must have renewed the claim, or a rival 3000s after the \
+             original claim would find it stale: {rival}"
+        );
+        assert_eq!(rival["session"]["claim"]["holder"], holder_sid, "{rival}");
+    }
+
     /// **Naming no role is the ordinary boot: unchanged.** No `claim` key
     /// appears anywhere in the answer.
     #[tokio::test]

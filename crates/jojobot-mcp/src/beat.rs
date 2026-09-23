@@ -46,6 +46,13 @@ impl Jojobot {
         let Ok(Some(caller)) = self.caller(sid) else {
             return;
         };
+        // **Every write class this covers renews the caller's own role
+        // claims** — the other half of "every write carrying the holder's
+        // sid renews", beside `journal`'s own direct call. The write this
+        // beat is about has already landed by the time `beat` runs, exactly
+        // as journal's renewal runs after its own append succeeds.
+        self.renew_role_claims(&caller.bot, caller.sid.as_str(), self.clock().now())
+            .await;
         let Some((_, phrase)) = BEAT_CLASSES.iter().find(|(known, _)| *known == class) else {
             // **Every caller of `beat` is this crate's own code**, so a class
             // with no phrase is a programming error, not live data — a new

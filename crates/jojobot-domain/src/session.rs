@@ -264,10 +264,16 @@ pub const OFFER_ABANDONED_WITHIN: jiff::SignedDuration = jiff::SignedDuration::f
 ///
 /// **Its own value, deliberately not [`ABANDONED_AFTER`].** The sweep asks
 /// "has this run gone quiet for a whole day"; a lease asks "is somebody
-/// plausibly still at this right now" — seconds, not a day. Fusing the two
+/// plausibly still at this right now" — minutes, not a day. Fusing the two
 /// would mean a run that is genuinely still working, mid-beat, reads as
 /// having lost its lease long before the sweep would ever call it abandoned.
-pub const LEASE_FRESHNESS: jiff::SignedDuration = jiff::SignedDuration::from_secs(300);
+///
+/// **45 minutes, not 5.** Nothing releases a role when its holder's session
+/// ends on its own (a crash, a lost connection) rather than through an
+/// explicit wrap — see the release-on-wrap path for the case where it does.
+/// Five minutes meant a dev that merely stopped answering, mid-task, was
+/// refused its own role again within minutes of picking the work back up.
+pub const LEASE_FRESHNESS: jiff::SignedDuration = jiff::SignedDuration::from_secs(45 * 60);
 
 /// A verdict on a claimed role, decided against a threshold — never handed to
 /// the caller as a timestamp to judge for itself.

@@ -142,6 +142,11 @@ impl Jojobot {
             Ok(wrapped) => wrapped,
             Err(e) => return session_declined(e, caller.sid.as_str()),
         };
+        // **A wrapped session releases every role it held.** Best-effort and
+        // after the close: the wrap itself already landed, and releasing a
+        // lease is not what a caller telling its story asked for.
+        self.release_role_claims(&caller.bot, caller.sid.as_str())
+            .await;
         // **The handle outlives the run it named, and stops addressing it.** The
         // registry keeps the mapping — re-issuing a wrapped run's handle would
         // send somebody's next call into an archive — so nothing is removed
@@ -171,6 +176,109 @@ mod tests {
     };
     use crate::session::testing::*;
     use jojobot_domain::session::Sid;
+
+    /// **Wrapping releases every role the wrapping session held, and a fresh
+    /// claimant is granted the same role at once** — through the served
+    /// surface. A role held by a DIFFERENT sid is left alone, which is the
+    /// pair that tells "release" from "clear every claim on the bot".
+    #[tokio::test]
+    async fn wrapping_releases_the_sessions_own_role_claims_and_leaves_others_alone() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+
+        let claimed = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    claim: Some("dev-dispatch".into()),
+                    timezone: None,
+                    bot: Some("gamma".into()),
+                    brief: None,
+                    skill: None,
+                    resume: None,
+                    sid: None,
+                    today: None,
+                }))
+                .await
+                .expect("start_here ok"),
+        );
+        let holder_sid = sid_of(&claimed).expect("a handle");
+        assert_eq!(claimed["session"]["claim"]["status"], "taken", "{claimed}");
+
+        // A second, unrelated role, held by a DIFFERENT session of the same
+        // bot — the control that tells release from "clear everything".
+        let other = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    claim: Some("reviewer-dispatch".into()),
+                    timezone: None,
+                    bot: Some("gamma".into()),
+                    brief: None,
+                    skill: None,
+                    resume: Some("new".into()),
+                    sid: None,
+                    today: None,
+                }))
+                .await
+                .expect("start_here ok"),
+        );
+        let other_sid = sid_of(&other).expect("a handle");
+        assert_eq!(other["session"]["claim"]["status"], "taken", "{other}");
+
+        jojobot
+            .wrap_session(Parameters(WrapSessionArgs {
+                story: "done with dev-dispatch for now".into(),
+                sid: holder_sid.clone(),
+            }))
+            .await
+            .expect("wrap ok");
+
+        // A fresh session claims the released role at once and is granted it.
+        let fresh = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    claim: Some("dev-dispatch".into()),
+                    timezone: None,
+                    bot: Some("gamma".into()),
+                    brief: None,
+                    skill: None,
+                    resume: None,
+                    sid: None,
+                    today: None,
+                }))
+                .await
+                .expect("start_here ok"),
+        );
+        assert_eq!(
+            fresh["session"]["claim"]["status"], "taken",
+            "the wrap must have released dev-dispatch, or a fresh claimant meets a lease its \
+             old holder never gave up: {fresh}"
+        );
+
+        // The other session's own, unrelated role is untouched.
+        let rival_on_other = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    claim: Some("reviewer-dispatch".into()),
+                    timezone: None,
+                    bot: Some("gamma".into()),
+                    brief: None,
+                    skill: None,
+                    resume: Some("new".into()),
+                    sid: None,
+                    today: None,
+                }))
+                .await
+                .expect("start_here ok"),
+        );
+        assert_eq!(
+            rival_on_other["session"]["claim"]["status"], "refused",
+            "wrapping one session must not release a DIFFERENT session's role: {rival_on_other}"
+        );
+        assert_eq!(
+            rival_on_other["session"]["claim"]["holder"], other_sid,
+            "{rival_on_other}"
+        );
+    }
 
     /// **Wrapping flushes the current unpublished beat INTO the story, as one
     /// entry.** The operator's ruling, and the "one entry" half is the part a

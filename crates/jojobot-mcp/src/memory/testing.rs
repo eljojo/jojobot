@@ -611,3 +611,128 @@ fn fold_behind(landed: Landed) -> MemoryError {
         source: Box::new(MemoryError::Store("the fold's re-read failed".into())),
     }
 }
+
+/// **Every `capture` and `update_fact` collides — the shape a real store's
+/// optimistic concurrency takes** (SQLSTATE `40001`), for a caller that
+/// needs `MemoryError::Conflict` without spinning up a real store to race
+/// against itself.
+pub(crate) struct ConflictingMemory(pub(crate) Arc<InMemoryMemory>);
+
+#[async_trait]
+impl Memory for ConflictingMemory {
+    async fn former_handles(
+        &self,
+    ) -> Result<Vec<jojobot_domain::memory::FormerHandle>, MemoryError> {
+        self.0.former_handles().await
+    }
+    async fn list_entities(&self, kind: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError> {
+        self.0.list_entities(kind).await
+    }
+    async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
+        self.0.add_entity(new).await
+    }
+    async fn declare_type(
+        &self,
+        declared: jojobot_domain::memory::types::DeclaredType,
+    ) -> Result<jojobot_domain::memory::types::DeclaredType, MemoryError> {
+        self.0.declare_type(declared).await
+    }
+    async fn declare_kind(
+        &self,
+        token: &str,
+        origin: jojobot_domain::memory::types::Origin,
+        fields: Vec<jojobot_domain::memory::types::Field>,
+    ) -> Result<(), MemoryError> {
+        self.0.declare_kind(token, origin, fields).await
+    }
+    async fn declared_kinds(
+        &self,
+    ) -> Result<Vec<(String, jojobot_domain::memory::types::Origin)>, MemoryError> {
+        self.0.declared_kinds().await
+    }
+    async fn reclaim_kind(&self, token: &str) -> Result<(), MemoryError> {
+        self.0.reclaim_kind(token).await
+    }
+    async fn declared_types(
+        &self,
+    ) -> Result<Vec<jojobot_domain::memory::types::DeclaredType>, MemoryError> {
+        self.0.declared_types().await
+    }
+    async fn update_entity(
+        &self,
+        id: &EntityId,
+        patch: EntityPatch,
+    ) -> Result<Guarded<Entity>, MemoryError> {
+        self.0.update_entity(id, patch).await
+    }
+    async fn rename_entity(
+        &self,
+        from: &EntityId,
+        to: &EntityId,
+        parent: Option<EntityId>,
+        date: jiff::civil::Date,
+        override_token: Option<&str>,
+    ) -> Result<Guarded<Entity>, MemoryError> {
+        self.0
+            .rename_entity(from, to, parent, date, override_token)
+            .await
+    }
+    async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
+        self.0.archive_entity(id, reason).await
+    }
+    async fn capture(&self, _fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
+        Err(MemoryError::Conflict)
+    }
+    async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
+        self.0.recall(subject).await
+    }
+    async fn history(
+        &self,
+        entity: &EntityId,
+        key: &str,
+    ) -> Result<Vec<jojobot_domain::memory::FieldWrite>, MemoryError> {
+        self.0.history(entity, key).await
+    }
+    async fn claim_history(
+        &self,
+        address: &jojobot_domain::memory::FactAddress,
+    ) -> Result<Vec<jojobot_domain::memory::ClaimWrite>, MemoryError> {
+        self.0.claim_history(address).await
+    }
+    async fn fields(
+        &self,
+        entity: &EntityId,
+    ) -> Result<std::collections::BTreeMap<String, String>, MemoryError> {
+        self.0.fields(entity).await
+    }
+    async fn update_fact(
+        &self,
+        _address: &FactAddress,
+        _patch: FactPatch,
+    ) -> Result<Guarded<Fact>, MemoryError> {
+        Err(MemoryError::Conflict)
+    }
+    async fn retract(
+        &self,
+        address: &FactAddress,
+        reason: Option<&str>,
+        date: jiff::civil::Date,
+    ) -> Result<jojobot_domain::memory::Retraction, MemoryError> {
+        self.0.retract(address, reason, date).await
+    }
+    async fn merge(
+        &self,
+        folded: &EntityId,
+        survivor: &EntityId,
+        reason: Option<&str>,
+        date: jiff::civil::Date,
+    ) -> Result<jojobot_domain::memory::Merge, MemoryError> {
+        self.0.merge(folded, survivor, reason, date).await
+    }
+    async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
+        self.0.set_prose(entity, prose).await
+    }
+    async fn scan(&self) -> Result<Vec<jojobot_domain::memory::search::DocScan>, MemoryError> {
+        self.0.scan().await
+    }
+}
