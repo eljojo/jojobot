@@ -1065,10 +1065,24 @@ impl Memory for InMemoryMemory {
             .as_ref()
             .is_some_and(|e| e.shape == crate::memory::EdgeShape::Connection)
         {
-            let capacity =
-                super::super::folded_fields(&self.writes_on(&home, &facts), &self.declarations())
-                    .get(super::super::THOUGHT_CAPACITY)
-                    .and_then(|v| v.trim().parse::<usize>().ok());
+            let folded =
+                super::super::folded_fields(&self.writes_on(&home, &facts), &self.declarations());
+            // **The body cap, checked before the room has anything to say.**
+            // A thought over its container's cap is refused whether or not
+            // the room has space — see `refuses_thought_over_cap`.
+            let cap = folded
+                .get(super::super::THOUGHT_BODY_CAP)
+                .and_then(|v| v.trim().parse::<usize>().ok());
+            if let Some(err) = super::super::refuses_thought_over_cap(
+                &subject_entity.id,
+                &normalize_content(&fact.content),
+                cap,
+            ) {
+                return Err(err);
+            }
+            let capacity = folded
+                .get(super::super::THOUGHT_CAPACITY)
+                .and_then(|v| v.trim().parse::<usize>().ok());
             if let Some(capacity) = capacity {
                 let existing_owned: Vec<Fact> =
                     facts.iter().filter(|f| f.home == home).cloned().collect();
@@ -1606,6 +1620,13 @@ impl Memory for InMemoryMemory {
                 .as_ref()
                 .is_some_and(|e| e.shape == crate::memory::EdgeShape::Connection)
         {
+            let cap = after
+                .get(super::super::THOUGHT_BODY_CAP)
+                .and_then(|v| v.trim().parse::<usize>().ok());
+            if let Some(err) = super::super::refuses_thought_over_cap(&handle, &edited.content, cap)
+            {
+                return Err(err);
+            }
             let capacity = after
                 .get(super::super::THOUGHT_CAPACITY)
                 .and_then(|v| v.trim().parse::<usize>().ok());

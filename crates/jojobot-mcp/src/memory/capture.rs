@@ -3102,4 +3102,51 @@ mod tests {
              again: {how_over_capacity}"
         );
     }
+
+    /// **A thought over its container's body cap is refused through the
+    /// served surface**, and the way forward names the repair the brief
+    /// itself describes — move the substance onto what the thought points
+    /// at, and keep the thought itself short.
+    #[tokio::test]
+    async fn a_thought_over_the_body_cap_is_refused_through_the_served_surface() {
+        let jojobot = handler();
+        let bot = "bot:mcp-thought-body-cap";
+        ensure(&jojobot, bot).await;
+        ensure(&jojobot, "thing:jukebox").await;
+
+        let over_cap = "x".repeat(jojobot_domain::memory::DEFAULT_THOUGHT_BODY_CAP + 1);
+        let refused = json_of(
+            &jojobot
+                .capture(Parameters(CaptureArgs {
+                    shape: Some("connection".into()),
+                    object: Some("thing:jukebox".into()),
+                    ..capture_args(bot, &over_cap)
+                }))
+                .await
+                .expect("a refusal is an answer, not a failure"),
+        );
+        assert_eq!(refused["status"], "blocked", "{refused}");
+        let how = refused["how_to_proceed"]
+            .as_str()
+            .expect("a blocked answer says how to proceed");
+        assert!(
+            how.contains("Re-call capture") && how.contains("substance"),
+            "the way forward must tell the caller to re-call capture with the substance moved \
+             off the thought: {how}"
+        );
+
+        // At exactly the cap, it lands.
+        let at_cap = "x".repeat(jojobot_domain::memory::DEFAULT_THOUGHT_BODY_CAP);
+        ensure(&jojobot, "thing:battery").await;
+        let landed = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                shape: Some("connection".into()),
+                object: Some("thing:battery".into()),
+                ..capture_args(bot, &at_cap)
+            },
+        )
+        .await;
+        assert_ne!(landed["status"], "blocked", "{landed}");
+    }
 }

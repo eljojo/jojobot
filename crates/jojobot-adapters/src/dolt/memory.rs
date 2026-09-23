@@ -2289,8 +2289,21 @@ impl Memory for DoltMemory {
             .as_ref()
             .is_some_and(|e| e.shape == EdgeShape::Connection)
         {
-            let capacity = Self::held_by(&mut tx, &home)
-                .await?
+            let held = Self::held_by(&mut tx, &home).await?;
+            // **The body cap, checked before the room has anything to say.**
+            // A thought over its container's cap is refused whether or not
+            // the room has space — see `refuses_thought_over_cap`.
+            let cap = held
+                .get(jojobot_domain::memory::THOUGHT_BODY_CAP)
+                .and_then(|v| v.trim().parse::<usize>().ok());
+            if let Some(err) = jojobot_domain::memory::refuses_thought_over_cap(
+                &subject_handle,
+                &jojobot_domain::memory::normalize_content(&fact.content),
+                cap,
+            ) {
+                return Err(err);
+            }
+            let capacity = held
                 .get(jojobot_domain::memory::THOUGHT_CAPACITY)
                 .and_then(|v| v.trim().parse::<usize>().ok());
             if let Some(capacity) = capacity {
@@ -2949,6 +2962,17 @@ impl Memory for DoltMemory {
                 .as_ref()
                 .is_some_and(|e| e.shape == EdgeShape::Connection)
         {
+            // **The body cap, checked before the room has anything to say.**
+            // A thought over its container's cap is refused whether or not
+            // the room has space — see `refuses_thought_over_cap`.
+            let cap = after_fold
+                .get(jojobot_domain::memory::THOUGHT_BODY_CAP)
+                .and_then(|v| v.trim().parse::<usize>().ok());
+            if let Some(err) =
+                jojobot_domain::memory::refuses_thought_over_cap(&handle, &fact.content, cap)
+            {
+                return Err(err);
+            }
             let capacity = after_fold
                 .get(jojobot_domain::memory::THOUGHT_CAPACITY)
                 .and_then(|v| v.trim().parse::<usize>().ok());

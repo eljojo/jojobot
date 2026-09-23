@@ -502,6 +502,23 @@ pub(crate) fn memory_declined(
                 body.to_string(),
             )]))
         }
+        // **A thought earns its place by staying a pointer.** The way
+        // forward names the repair the brief itself describes: the
+        // substance belongs on the thing the thought points at, and the
+        // thought stays a short claim naming that it is live.
+        MemoryError::ThoughtTooLong {
+            ref subject,
+            len,
+            cap,
+        } => Ok(blocked_body(
+            &EntityId(subject.clone()),
+            &[],
+            format!(
+                "Nothing was written: {e}. Re-call {verb} with the substance moved onto the \
+                 thing this thought points at, and the thought itself shortened to a pointer at \
+                 or under {cap} characters (this one was {len})."
+            ),
+        )),
         // **The thing a ceiling binds cannot write that ceiling.** A
         // refusal, not a failure — the caller named a real subject and a
         // real key, and jojobot is declining to let it raise or lower its
@@ -559,6 +576,7 @@ pub(crate) fn memory_error(e: MemoryError) -> McpError {
         | MemoryError::UnconfirmedSettling
         | MemoryError::RoomFull { .. }
         | MemoryError::SelfCeiling { .. }
+        | MemoryError::ThoughtTooLong { .. }
         | MemoryError::UnstatedProvenance => McpError::invalid_params(e.to_string(), None),
         MemoryError::Store(msg) => {
             McpError::internal_error(crate::boundary::store_failed("this call", &msg), None)

@@ -1798,30 +1798,52 @@ pub fn apply_fact_patch(fact: &mut Fact, patch: &FactPatch) -> Result<(), Memory
 /// every other carrier in this store already follows.
 pub const THOUGHT_CAPACITY: &str = "thought_capacity";
 
+/// **The key a thought's own body cap is read from** — folded exactly like
+/// [`THOUGHT_CAPACITY`], on the container that holds the room rather than on
+/// the thought itself. Unlike capacity, absence is not "uncapped": a thought
+/// is enforceable only because its body is short enough that restating what
+/// it points at will not fit (`pm/feature-briefs/carried-state.md`), so a
+/// container that never wrote this key still gets [`DEFAULT_THOUGHT_BODY_CAP`].
+pub const THOUGHT_BODY_CAP: &str = "thought_body_cap";
+
+/// **The cap a container's room enforces when it has never written
+/// [`THOUGHT_BODY_CAP`] of its own.** The operator's choice, not a
+/// structural constant — a container may still widen or narrow it, subject
+/// to the same self-ceiling rule [`THOUGHT_CAPACITY`] carries.
+pub const DEFAULT_THOUGHT_BODY_CAP: usize = 200;
+
+/// **The keys a thing cannot set for itself** — its own room's capacity and
+/// its own thoughts' body cap. Both bind the caller who owns the container
+/// they are read off, so both face [`refuses_own_ceiling`] and
+/// [`refuses_own_ceiling_change`] the same way.
+const SELF_CEILING_KEYS: [&str; 2] = [THOUGHT_CAPACITY, THOUGHT_BODY_CAP];
+
 /// **The thing a ceiling binds cannot write that ceiling.**
 ///
 /// `subject` is who the write is about; `caller` is who is making it. A
-/// write naming [`THOUGHT_CAPACITY`] in its own fields, about the caller's
-/// own handle, is refused — never a kind question, because the field is
-/// freeform on every subject already and the only fact that matters is
-/// whether the one setting the number is the one it would bind.
+/// write naming one of [`SELF_CEILING_KEYS`] in its own fields, about the
+/// caller's own handle, is refused — never a kind question, because the
+/// field is freeform on every subject already and the only fact that
+/// matters is whether the one setting the number is the one it would bind.
 ///
 /// `None` is not "allowed" so much as "not this write's business": a write
-/// naming no capacity key, or naming one about somebody else, has nothing
+/// naming no ceiling key, or naming one about somebody else, has nothing
 /// here to refuse.
 pub fn refuses_own_ceiling(
     subject: &EntityId,
     caller: &EntityId,
     fields: &BTreeMap<String, String>,
 ) -> Option<MemoryError> {
-    if subject == caller && fields.contains_key(THOUGHT_CAPACITY) {
-        Some(MemoryError::SelfCeiling {
-            subject: subject.to_string(),
-            key: THOUGHT_CAPACITY.to_string(),
-        })
-    } else {
-        None
+    if subject != caller {
+        return None;
     }
+    SELF_CEILING_KEYS
+        .into_iter()
+        .find(|key| fields.contains_key(*key))
+        .map(|key| MemoryError::SelfCeiling {
+            subject: subject.to_string(),
+            key: key.to_string(),
+        })
 }
 
 /// **The edit-and-retraction twin of [`refuses_own_ceiling`].**
@@ -1849,14 +1871,16 @@ pub fn refuses_own_ceiling_change(
     before: &BTreeMap<String, String>,
     after: &BTreeMap<String, String>,
 ) -> Option<MemoryError> {
-    if subject == caller && before.get(THOUGHT_CAPACITY) != after.get(THOUGHT_CAPACITY) {
-        Some(MemoryError::SelfCeiling {
-            subject: subject.to_string(),
-            key: THOUGHT_CAPACITY.to_string(),
-        })
-    } else {
-        None
+    if subject != caller {
+        return None;
     }
+    SELF_CEILING_KEYS
+        .into_iter()
+        .find(|key| before.get(*key) != after.get(*key))
+        .map(|key| MemoryError::SelfCeiling {
+            subject: subject.to_string(),
+            key: key.to_string(),
+        })
 }
 
 /// **Whether the room a write leaves behind holds more than its capacity.**
@@ -1884,6 +1908,30 @@ pub fn refuses_room_overflow(
             capacity,
             room: room_after.to_vec(),
             aged_out: 0,
+        })
+    } else {
+        None
+    }
+}
+
+/// **Whether a thought's content leaves it over its own container's body
+/// cap** — [`DEFAULT_THOUGHT_BODY_CAP`] when the container has never written
+/// [`THOUGHT_BODY_CAP`] of its own. Only asked of a write that leaves `home`
+/// carrying an active, connection-edged claim on itself: an ordinary claim
+/// is never capped (`pm/feature-briefs/carried-state.md`), so the caller
+/// decides whether this write makes or keeps a thought before it asks.
+pub fn refuses_thought_over_cap(
+    home: &EntityId,
+    content: &str,
+    cap: Option<usize>,
+) -> Option<MemoryError> {
+    let cap = cap.unwrap_or(DEFAULT_THOUGHT_BODY_CAP);
+    let len = content.chars().count();
+    if len > cap {
+        Some(MemoryError::ThoughtTooLong {
+            subject: home.to_string(),
+            len,
+            cap,
         })
     } else {
         None
@@ -3518,6 +3566,22 @@ pub enum MemoryError {
         subject: String,
         /// The key it tried to set.
         key: String,
+    },
+    /// **A thought's body is over its container's cap.** See
+    /// [`refuses_thought_over_cap`] — only ever raised on a write that
+    /// leaves `subject` holding an active, connection-edged claim on
+    /// itself; an ordinary claim of any length is never this.
+    #[error(
+        "'{subject}' holds a thought {len} characters long, over its cap of {cap}: put the \
+         substance on the thing it points at, and keep the thought itself short"
+    )]
+    ThoughtTooLong {
+        /// The container whose room this thought would sit in.
+        subject: String,
+        /// How long the content is, in characters.
+        len: usize,
+        /// The cap it went over.
+        cap: usize,
     },
     /// The named entity doesn't exist. Same rule: report, never create.
     #[error("no entity '{attempted}'{}", nearest_handles(nearest))]
