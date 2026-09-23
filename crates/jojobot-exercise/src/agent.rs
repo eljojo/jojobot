@@ -242,6 +242,14 @@ impl Agent {
             // would reach somebody's real memory, calendar and mail from inside
             // a test. It is the single most load-bearing flag on this line.
             "--strict-mcp-config".to_string(),
+            // **No user-level settings or instructions, ever.** The CLI loads
+            // `~/.claude/CLAUDE.md` and `~/.claude/settings.json` independent
+            // of `cwd` — the working-directory guard on `Invocation::cwd`
+            // says nothing about this layer. Without this flag a run reaches
+            // the operator's own private rules from inside a room that is
+            // supposed to carry nothing but itself.
+            "--setting-sources".to_string(),
+            "project,local".to_string(),
             // A room is a throwaway instance on loopback with one server
             // attached, and a headless run that stops to ask about every call
             // is a run that never finishes.
@@ -429,6 +437,26 @@ mod tests {
             line.args.iter().any(|a| a == "--strict-mcp-config"),
             "without this the agent also loads whatever else is configured: {:?}",
             line.args,
+        );
+    }
+
+    /// **The working-directory guard below defeats project-tree walk-up and
+    /// nothing else.** The CLI separately loads a USER-level
+    /// `~/.claude/CLAUDE.md` and `~/.claude/settings.json`, independent of
+    /// `cwd` — a paid run on 2026-09-23 proved it: the model answered from the
+    /// operator's own private instruction file instead of calling the room.
+    /// `--setting-sources` is the flag that gates which layers load at all;
+    /// excluding `user` is what keeps a real operator's own rules out of a
+    /// room meant to carry nothing but itself.
+    #[test]
+    fn the_agent_does_not_load_the_operators_own_user_level_settings() {
+        let line = Agent::new("sonnet").invocation("http://room", &Conversation::fresh(), "go");
+        let sources = flag_after(&line, "--setting-sources")
+            .expect("a run must say which setting sources it loads");
+        assert!(
+            !sources.split(',').any(|s| s == "user"),
+            "the user setting source is still loaded, which is exactly the leak this line exists \
+             to close: {sources}",
         );
     }
 
