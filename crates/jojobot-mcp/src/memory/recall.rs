@@ -6558,7 +6558,7 @@ mod tests {
             sessions
                 .begin(jojobot_domain::session::NewSession {
                     bot: EntityId(bot.to_string()),
-                    sid: jojobot_domain::session::Sid(format!("room-read-run-{n}")),
+                    sid: jojobot_domain::session::Sid(format!("rr{n:02}")),
                     focus: "working".into(),
                     started_at: jiff::Timestamp::now(),
                     timezone: None,

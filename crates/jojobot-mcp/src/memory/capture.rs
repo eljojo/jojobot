@@ -2838,7 +2838,7 @@ mod tests {
             sessions
                 .begin(jojobot_domain::session::NewSession {
                     bot: EntityId(bot.to_string()),
-                    sid: jojobot_domain::session::Sid(format!("aging-run-{n}")),
+                    sid: jojobot_domain::session::Sid(format!("ar{n:02}")),
                     focus: "working".into(),
                     started_at: jiff::Timestamp::now(),
                     timezone: None,

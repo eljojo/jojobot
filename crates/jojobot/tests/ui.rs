@@ -310,7 +310,7 @@ async fn seeded_board_over(memory: Arc<dyn Memory>) -> Board {
         .begin(NewSession {
             timezone: None,
             bot: bot.clone(),
-            sid: Sid("ot1x".to_string()),
+            sid: Sid("pt1x".to_string()),
             focus: "Reading the survey".to_string(),
             started_at: FIXED_INSTANT,
             started_on: None,
@@ -1471,7 +1471,7 @@ async fn a_bot_page_shows_its_runs_and_what_each_one_recorded() {
 
     let runs = section(&body, "sessions");
     assert!(
-        runs.contains("ot1x"),
+        runs.contains("pt1x"),
         "a run is told from another by its sid: {body}"
     );
     assert!(
@@ -1591,7 +1591,7 @@ async fn looking_through_the_listing_writes_to_no_rail() {
         "the bot page must render the mail: {bot}"
     );
     assert!(
-        section(&bot, "sessions").contains("ot1x"),
+        section(&bot, "sessions").contains("pt1x"),
         "the bot page must render the runs: {bot}"
     );
 

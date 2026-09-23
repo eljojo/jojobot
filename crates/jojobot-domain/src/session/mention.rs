@@ -302,7 +302,7 @@ mod tests {
         let session = sessions
             .begin(NewSession {
                 bot: bot.clone(),
-                sid: super::super::Sid("sid-1".to_string()),
+                sid: super::super::Sid("sd01".to_string()),
                 focus: format!("looking at @{was}"),
                 started_at: epoch(),
                 timezone: None,
@@ -408,7 +408,7 @@ mod tests {
         let before = sessions
             .begin(NewSession {
                 bot: was.clone(),
-                sid: super::super::Sid("sid-3".to_string()),
+                sid: super::super::Sid("sd03".to_string()),
                 focus: "before the rename".into(),
                 started_at: epoch(),
                 timezone: None,
@@ -427,7 +427,7 @@ mod tests {
         let after = sessions
             .begin(NewSession {
                 bot: now.clone(),
-                sid: super::super::Sid("sid-4".to_string()),
+                sid: super::super::Sid("sd04".to_string()),
                 focus: "after the rename".into(),
                 started_at: epoch(),
                 timezone: None,
@@ -492,7 +492,7 @@ mod tests {
         let session = sessions
             .begin(NewSession {
                 bot,
-                sid: super::super::Sid("sid-2".to_string()),
+                sid: super::super::Sid("sd02".to_string()),
                 focus: format!("about @{never}"),
                 started_at: epoch(),
                 timezone: None,

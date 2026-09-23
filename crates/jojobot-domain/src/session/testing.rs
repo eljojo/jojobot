@@ -118,6 +118,18 @@ impl Sessions for InMemorySessions {
 
     async fn begin(&self, new: NewSession) -> Result<Session, SessionError> {
         validate_focus(&new.focus)?;
+        // **A sid is minted, never written by hand.** The same refusal shape
+        // a bad focus already gets: nothing is written, and the caller is
+        // told why before anything reaches the store. Mirrors the Dolt
+        // adapter's check, so the contract holds identically on both stores.
+        if !is_readable_sid(new.sid.as_str()) {
+            return Err(SessionError::InvalidEntry(format!(
+                "sid '{}' is not a handle this build ever mints — a sid is {} characters drawn \
+                 from its own alphabet, never one a caller writes",
+                new.sid.as_str(),
+                super::SID_LEN,
+            )));
+        }
         // **One handle, one run.** A caller retrying a `begin` whose write
         // committed before its read-back failed offers the same handle again;
         // appending unconditionally would fork the run. See the contract case.
@@ -1129,6 +1141,24 @@ pub mod contract {
         assert_eq!(read.focus, "the first run");
     }
 
+    /// A sid is minted, never written by hand. `begin` refuses one that does
+    /// not have the drawn shape — every store, not only the one this build
+    /// happens to run against.
+    pub async fn a_handle_that_is_not_drawn_is_refused(store: &dyn Sessions) {
+        let err = store
+            .begin(NewSession {
+                bot: bot("gamma"),
+                sid: Sid("BAD1".into()),
+                focus: "working".into(),
+                started_at: at(0),
+                timezone: None,
+                started_on: None,
+            })
+            .await
+            .expect_err("a handwritten sid is not a handle this build mints");
+        assert!(matches!(err, SessionError::InvalidEntry(_)), "got {err:?}");
+    }
+
     /// A multi-line entry survives the round trip, and CRLF normalizes — the
     /// same contract a message body carries, for the same reason.
     pub async fn an_entry_survives_the_round_trip(store: &dyn Sessions) {
@@ -1266,6 +1296,7 @@ pub mod contract {
         a_closed_session_stays_on_the_record(&fresh()).await;
         addressing_an_unknown_session_is_a_miss(&fresh()).await;
         malformed_input_is_refused(&fresh()).await;
+        a_handle_that_is_not_drawn_is_refused(&fresh()).await;
         an_entry_survives_the_round_trip(&fresh()).await;
         a_stated_day_survives_a_write_and_a_read(&fresh()).await;
     }
