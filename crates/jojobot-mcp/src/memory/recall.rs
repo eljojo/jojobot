@@ -1477,6 +1477,17 @@ impl Jojobot {
         // `built_on` share this one path rather than each carrying a copy
         // of it.
         let mut query = query;
+        // **Whether `subject` is the caller's own word, or a fill this loop
+        // is about to do itself.** The two read the same on `query.select`
+        // once filled, and the refusal below has to tell them apart: a
+        // caller-supplied subject disagreeing with an address is a caller
+        // mistake worth naming as "asked for"; a subject THIS LOOP filled
+        // from an earlier address disagreeing with a later one is a
+        // different mistake — two addresses on two different things — and
+        // saying the caller "asked for" the first address's entity would be
+        // inventing a subject nobody sent.
+        let subject_was_explicit = query.select.subject.is_some();
+        let mut filled_by: Option<(&str, FactAddress)> = None;
         let selecting_addresses = [
             query.history.as_ref().and_then(|h| match &h.of {
                 graph::Trace::Record(address) => Some(("history_record", address.clone())),
@@ -1491,7 +1502,7 @@ impl Jojobot {
                 // **The two DISAGREEING is the case worth a refusal.** A
                 // caller whose arguments point at two different things has made
                 // a mistake, and answering one of them quietly picks for them.
-                Some(named) if named != &address.home => {
+                Some(named) if named != &address.home && subject_was_explicit => {
                     let named = named.clone();
                     return memory_declined(
                         "recall",
@@ -1503,8 +1514,30 @@ impl Jojobot {
                         )),
                     );
                 }
+                // **The disagreement is between two ADDRESSES, not between
+                // an address and anything the caller sent.** `filled_by` is
+                // always `Some` here: `subject_was_explicit` is false, so the
+                // only way `query.select.subject` holds a value that
+                // disagrees is that an earlier iteration of this same loop
+                // set it.
+                Some(named) if named != &address.home => {
+                    let (earlier_arg, earlier_address) = filled_by
+                        .clone()
+                        .expect("a subject that disagrees with no caller input was filled here");
+                    return memory_declined(
+                        "recall",
+                        MemoryError::InvalidQuery(format!(
+                            "{earlier_arg} names {earlier_address}, a record on {}, and \
+                             {arg_name} names {address}, a record on {} — two different things. \
+                             Narrow to whichever record you meant, or send a subject naming the \
+                             one you want",
+                            earlier_address.home, address.home,
+                        )),
+                    );
+                }
                 None if query.select.narrows_nothing() => {
                     query.select.subject = Some(address.home.clone());
+                    filled_by = Some((arg_name, address.clone()));
                 }
                 _ => {}
             }
@@ -3995,6 +4028,45 @@ mod tests {
         assert!(
             way.contains("person:alpha") && way.contains("person:beta"),
             "the refusal names both things the call pointed at: {way}"
+        );
+    }
+
+    /// 🚨 **Two addresses on two different things, and no subject at all —
+    /// the refusal must not claim the caller asked for either entity.**
+    ///
+    /// `history_record` fills the subject from its own address first, and
+    /// `built_on`'s address then disagrees with that FILLED-IN subject —
+    /// not with anything the caller actually sent. Wording the refusal as
+    /// "…and asks for {subject}" is true when a caller-supplied subject
+    /// disagrees and false here: nobody asked for the first address's
+    /// entity, the second loop iteration invented that claim.
+    #[tokio::test]
+    async fn two_addresses_on_different_things_are_named_without_inventing_a_subject() {
+        let jojobot = handler();
+        let alpha = address_of(&capture_ok(&jojobot, capture_args("alpha", "alpha's claim")).await);
+        let beta = address_of(&capture_ok(&jojobot, capture_args("beta", "beta's claim")).await);
+
+        let refused = blocked(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    history_record: Some(alpha.clone()),
+                    built_on: Some(beta.clone()),
+                    ..of_nothing()
+                }))
+                .await
+                .expect("a malformed query is an answer, not a protocol failure"),
+        );
+        let way = refused["how_to_proceed"]
+            .as_str()
+            .unwrap_or_else(|| panic!("a refusal says the way out: {refused}"));
+        assert!(
+            way.contains(&alpha) && way.contains(&beta),
+            "the refusal names both addresses the call pointed at: {way}"
+        );
+        assert!(
+            !way.contains("asks for"),
+            "nobody asked for a subject — the caller sent none, and the wording must not \
+             invent one: {way}"
         );
     }
 
