@@ -426,10 +426,11 @@ pub struct FullTextIndex {
     session_loaded: std::sync::atomic::AtomicBool,
     /// Whether the last read behind the sessions half failed to reach the
     /// store — [`mail_refresh_failed_at`](Self::mail_refresh_failed_at)'s
-    /// question, asked of the third store. Cleared by the next
-    /// [`ingest_sessions`](Self::ingest_sessions) that runs, whether or not it
-    /// found anything to write.
-    session_refresh_failed: std::sync::atomic::AtomicBool,
+    /// question, asked of the third store, and cleared the same way: stamped
+    /// in [`mark_seq`](Self::mark_seq), zero when there is none, and cleared
+    /// only by a reading whose own [`ReadingPoint`] began after the failure
+    /// landed — never by one already in flight when it happened.
+    session_refresh_failed_at: std::sync::atomic::AtomicU64,
 }
 
 impl FullTextIndex {
@@ -473,7 +474,7 @@ impl FullTextIndex {
             session_entries_written: std::sync::atomic::AtomicUsize::new(0),
             session_entries_deleted: std::sync::atomic::AtomicUsize::new(0),
             session_loaded: std::sync::atomic::AtomicBool::new(false),
-            session_refresh_failed: std::sync::atomic::AtomicBool::new(false),
+            session_refresh_failed_at: std::sync::atomic::AtomicU64::new(0),
         })
     }
 
@@ -520,11 +521,20 @@ impl FullTextIndex {
     }
 
     /// Record that the read behind this answer could not reach the sessions
-    /// store, so the sessions half is serving whatever it last read. Cleared
-    /// by the next [`ingest_sessions`](Self::ingest_sessions) that runs.
+    /// store, so the sessions half is serving whatever it last read.
+    ///
+    /// **Stamped in [`mark_seq`](Self::mark_seq), like the other two halves'
+    /// own failure marks** — see [`ingest_sessions_changes`](Self::ingest_sessions_changes)
+    /// for how that is what lets a reading already in flight survive a
+    /// failure that lands after it, rather than being wiped out by a success
+    /// that started before the failure and knows nothing of it.
     pub fn session_refresh_failed(&self) {
-        self.session_refresh_failed
-            .store(true, std::sync::atomic::Ordering::Release);
+        let at = self
+            .mark_seq
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
+            + 1;
+        self.session_refresh_failed_at
+            .store(at, std::sync::atomic::Ordering::Release);
     }
 
     /// Record that this entity's document is indexed as it stands in the store.
@@ -795,9 +805,31 @@ impl FullTextIndex {
     /// deleting and re-adding every beat it has ever had. A run evicted
     /// outright still goes by its own id — the whole run is gone, so nothing
     /// is left for a beat-level comparison to save.
+    ///
+    /// **Test-only, because it takes its own reading point.** A caller that
+    /// has just read the sessions store must take the point BEFORE that read
+    /// and hand it to
+    /// [`ingest_sessions_changes`](Self::ingest_sessions_changes); this one is
+    /// handed its sessions directly, so there is no read for a point to
+    /// precede — [`ingest_mail`](Self::ingest_mail)'s own reason.
+    #[cfg(test)]
     pub fn ingest_sessions(
         &self,
         sessions: &[jojobot_domain::session::Session],
+    ) -> Result<usize, MemoryError> {
+        let began = self.reading_begins();
+        self.ingest_sessions_changes(sessions, began)
+    }
+
+    /// Bring the sessions half to what this read of the runs says, and return
+    /// how many runs had to be written or evicted — [`ingest_sessions`]'s own
+    /// work, given the [`ReadingPoint`] its caller took before reading the
+    /// store, so a failure that lands while this reading is still in flight
+    /// survives it rather than being cleared by a reading that never saw it.
+    pub fn ingest_sessions_changes(
+        &self,
+        sessions: &[jojobot_domain::session::Session],
+        began: ReadingPoint,
     ) -> Result<usize, MemoryError> {
         use std::collections::{HashMap, HashSet};
 
@@ -857,19 +889,23 @@ impl FullTextIndex {
         // **Set whether or not anything changed**, the memory and mail halves'
         // own rule: reaching the store is what this reports, and a read that
         // found nothing new still reached it.
-        //
-        // **Simpler than the other two halves on purpose.** Memory and mail
-        // stamp a failure against a reading point so a success already in
-        // flight cannot clear one that lands after it — this half has no such
-        // guard: any successful call clears any prior failure outright. This
-        // half is refreshed fresh before every answer rather than from a
-        // periodic boot scan, so the window that guard exists to close is
-        // narrower here; it is a known simplification, not a claim there is
-        // no window at all.
         self.session_loaded
             .store(true, std::sync::atomic::Ordering::Release);
-        self.session_refresh_failed
-            .store(false, std::sync::atomic::Ordering::Release);
+        // The other two halves' own rule, on this half's flag: this reading
+        // clears a failure it began after and leaves one that landed while it
+        // was in flight. Exchanged against the value just read, so a failure
+        // arriving in between is kept rather than overwritten.
+        let failed_at = self
+            .session_refresh_failed_at
+            .load(std::sync::atomic::Ordering::Acquire);
+        if failed_at != 0 && failed_at <= began.0 {
+            let _ = self.session_refresh_failed_at.compare_exchange(
+                failed_at,
+                0,
+                std::sync::atomic::Ordering::AcqRel,
+                std::sync::atomic::Ordering::Acquire,
+            );
+        }
         if changed == 0 {
             return Ok(0);
         }
@@ -1690,7 +1726,7 @@ impl FullTextIndex {
         use std::sync::atomic::Ordering::Acquire;
         match (
             self.session_loaded.load(Acquire),
-            self.session_refresh_failed.load(Acquire),
+            self.session_refresh_failed_at.load(Acquire) != 0,
         ) {
             (false, _) => Coverage::Unread,
             (true, true) => Coverage::Partial(Behind::Stale),
@@ -2751,9 +2787,13 @@ impl IndexedSessions {
             }
         }
 
+        // Taken before the read that can fail, so a failure that lands while
+        // it is in flight is not cleared by this reading's own success — see
+        // [`FullTextIndex::ingest_sessions_changes`].
+        let began = self.index.reading_begins();
         let sessions = self.inner.all_sessions().await?;
         self.index
-            .ingest_sessions(&sessions)
+            .ingest_sessions_changes(&sessions, began)
             .map_err(|e| jojobot_domain::session::SessionError::Store(e.to_string()))?;
         if let Some(summary) = summary {
             *self.last_scan.write().expect("session scan cache poisoned") =
@@ -5086,6 +5126,49 @@ mod tests {
             index.session_coverage(),
             Coverage::Loaded,
             "a read taken after the failure speaks for the store as it stands"
+        );
+    }
+
+    /// **A reading already in flight does not clear a failure it predates** —
+    /// [`a_board_read_in_flight_does_not_clear_a_failure_it_predates`]'s own
+    /// case, for the third store. A reading's own snapshot only speaks for the
+    /// store as it stood when the reading began; a failure recorded after that
+    /// point happened to a store the reading never saw, so landing late must
+    /// not vouch for it.
+    #[tokio::test]
+    async fn a_session_read_in_flight_does_not_clear_a_failure_it_predates() {
+        let index = Arc::new(FullTextIndex::open().expect("index opens"));
+        let sessions = vec![run(
+            "s-gamma",
+            "bot:gamma",
+            "the kiln slice",
+            "the damper is hand-cut",
+        )];
+        // Loaded once, so the failure below reaches `Stale` rather than
+        // `Unread` — the same reason the coverage test above rebuilds first.
+        index
+            .ingest_sessions_changes(&[], index.reading_begins())
+            .expect("the empty read still counts as having reached the store");
+
+        // The reading begins — its point is taken here, before the failure.
+        let began = index.reading_begins();
+        // The failure lands while that reading is still in flight.
+        index.session_refresh_failed();
+        assert_eq!(
+            index.session_coverage(),
+            Coverage::Partial(Behind::Stale),
+            "the failure is on record"
+        );
+        // The earlier reading lands now, carrying the point it took before
+        // the failure — it was in flight when the store went down and never
+        // saw that.
+        index
+            .ingest_sessions_changes(&sessions, began)
+            .expect("the read that began earlier still writes what it saw");
+        assert_eq!(
+            index.session_coverage(),
+            Coverage::Partial(Behind::Stale),
+            "a reading that began before the failure must not clear it on landing late"
         );
     }
 
