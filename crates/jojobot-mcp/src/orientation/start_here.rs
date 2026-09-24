@@ -34,6 +34,17 @@ pub struct OrientArgs {
     /// that are.
     #[serde(default)]
     pub(crate) skill: Option<String>,
+    /// **One unit of the essay's remainder, left out of an anonymous boot's
+    /// answer by the ceiling** — by its exact `##` heading, or the literal
+    /// word `"opening"` for the remainder's un-headed opening paragraphs.
+    /// The answer carries that one unit, whole, and nothing else from the
+    /// essay — never the core, which always ships and needs no fetch.
+    ///
+    /// It reads the same way `skill` does: no bot, no session, a pure fetch.
+    /// A name that matches no section comes back blocked, naming every
+    /// valid one, `"opening"` included.
+    #[serde(default)]
+    pub(crate) section: Option<String>,
     /// The session handle you are already carrying, if you have one — the same
     /// `sid` that rides every other call you make. Leave it off when you have
     /// none: this door is where one comes from, so a first boot has nothing to
@@ -122,7 +133,11 @@ impl Jojobot {
                        ships — a name and what each is FOR, never the procedures themselves. \
                        When one of them matches the job in front of you, call this again with \
                        skill: its name and you get that body. Nothing here decides when a \
-                       skill applies; the index says what each is for and you choose. CALLED THIS \
+                       skill applies; the index says what each is for and you choose. AN \
+                       ANONYMOUS BOOT WHOSE ESSAY DID NOT FIT WHOLE names every section it left \
+                       out — call this again with section: one of those exact headings, or \
+                       \"opening\" for the remainder's un-headed opening paragraphs, and you get \
+                       that one unit whole, no bot and no session either. CALLED THIS \
                        BEFORE? Pass brief: true and you get the snapshot without the essay — the \
                        essay is the only part that does not change between calls, and calling \
                        again without brief reads it in full. NAME A BOT and the same answer also \
@@ -235,6 +250,55 @@ impl Jojobot {
                 )),
             };
         }
+        // **The fetch is answered before the boot, exactly as `skill`'s
+        // is.** Reading one unit of the essay's remainder is a read; it
+        // must not sweep, start or resume anything.
+        if let Some(wanted) = args
+            .section
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            if bot.is_some() {
+                return Ok(misused(
+                    "reading a section and booting an identity are two calls: a fetch starts no \
+                     session, so honouring `bot` here would hand you a body and no handle. Call \
+                     start_here with `section` alone to read it, then again with `bot` to boot \
+                     — or drop `section` to boot now."
+                        .to_string(),
+                ));
+            }
+            let (preamble, sections) = essay::remainder();
+            let body = if wanted == "opening" {
+                Some(preamble)
+            } else {
+                sections
+                    .iter()
+                    .find(|s| s.heading == wanted)
+                    .map(|s| s.body)
+            };
+            return match body {
+                Some(body) => json_result(&serde_json::json!({
+                    "section": {
+                        "name": wanted,
+                        "body": body,
+                    },
+                    "carried_session": carried,
+                })),
+                None => Ok(handle_declined(
+                    wanted,
+                    format!(
+                        "Nothing was read. '{wanted}' is not a section of this essay. These are, \
+                         by name: \"opening\", {}. Ask for one by its exact name.",
+                        sections
+                            .iter()
+                            .map(|s| format!("\"{}\"", s.heading))
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                    ),
+                )),
+            };
+        }
         // **Validated at the door, where a caller can still fix it.** A name
         // that is no zone is a malformed argument rather than a near miss, and
         // it is refused before any session is minted or resumed.
@@ -300,6 +364,7 @@ mod tests {
                 bot: None,
                 brief: None,
                 skill: Some("evidence".into()),
+                section: None,
                 resume: Some("jm7z".into()),
                 sid: None,
                 today: None,
@@ -325,6 +390,7 @@ mod tests {
                 bot: Some("dev".into()),
                 brief: None,
                 skill: Some("evidence".into()),
+                section: None,
                 resume: Some("jm7z".into()),
                 sid: None,
                 today: None,
@@ -366,6 +432,7 @@ mod tests {
                     bot: None,
                     brief: None,
                     skill: Some("evidence".into()),
+                    section: None,
                     resume: None,
                     sid: Some(live.clone()),
                     today: None,
@@ -420,6 +487,7 @@ mod tests {
                         bot: None,
                         brief: Some(true),
                         skill: None,
+                        section: None,
                         resume: None,
                         sid,
                         today: None,
@@ -493,6 +561,7 @@ mod tests {
                 bot: None,
                 brief: None,
                 skill: None,
+                section: None,
                 resume: None,
                 sid: None,
                 today: None,
@@ -570,6 +639,7 @@ mod tests {
                     bot: None,
                     brief: None,
                     skill: None,
+                    section: None,
                     resume: None,
                     sid: None,
                     today: None,
@@ -588,6 +658,7 @@ mod tests {
                     bot: None,
                     brief: Some(true),
                     skill: None,
+                    section: None,
                     resume: None,
                     sid: None,
                     today: None,
@@ -648,6 +719,7 @@ mod tests {
                         bot: None,
                         brief: None,
                         skill: None,
+                        section: None,
                         resume: None,
                         sid: None,
                         today: None,
@@ -663,6 +735,7 @@ mod tests {
                         bot: None,
                         brief: Some(true),
                         skill: None,
+                        section: None,
                         resume: None,
                         sid: None,
                         today: None,
@@ -712,6 +785,7 @@ mod tests {
                     bot: Some("gamma".into()),
                     brief: Some(true),
                     skill: None,
+                    section: None,
                     resume: None,
                     sid: None,
                     today: None,
@@ -737,6 +811,7 @@ mod tests {
                 bot: None,
                 brief: None,
                 skill: None,
+                section: None,
                 resume: None,
                 sid: None,
                 today: None,
@@ -768,6 +843,7 @@ mod tests {
                 bot: None,
                 brief: None,
                 skill: None,
+                section: None,
                 resume: Some("new".into()),
                 sid: None,
                 today: None,
@@ -813,6 +889,7 @@ mod tests {
                 bot: Some("person:milhouse".into()),
                 brief: None,
                 skill: None,
+                section: None,
                 resume: None,
                 sid: None,
                 today: None,
@@ -852,6 +929,7 @@ mod tests {
                     bot: Some("gamm".into()),
                     brief: None,
                     skill: None,
+                    section: None,
                     resume: None,
                     sid: None,
                     today: None,
@@ -872,6 +950,7 @@ mod tests {
                     bot: Some("nobody".into()),
                     brief: None,
                     skill: None,
+                    section: None,
                     resume: None,
                     sid: None,
                     today: None,
@@ -939,6 +1018,7 @@ mod tests {
                     bot: Some("gamma".into()),
                     brief: None,
                     skill: None,
+                    section: None,
                     resume: None,
                     sid: None,
                     today: None,
@@ -968,6 +1048,7 @@ mod tests {
                     bot: Some("gamma".into()),
                     brief: None,
                     skill: None,
+                    section: None,
                     resume: None,
                     sid: None,
                     today: None,
@@ -997,6 +1078,7 @@ mod tests {
                     bot: Some("gamma".into()),
                     brief: None,
                     skill: None,
+                    section: None,
                     resume: None,
                     sid: None,
                     today: None,
@@ -1016,6 +1098,7 @@ mod tests {
                     bot: Some("gamma".into()),
                     brief: None,
                     skill: None,
+                    section: None,
                     resume: Some("new".into()),
                     sid: None,
                     today: None,
@@ -1055,6 +1138,7 @@ mod tests {
                     bot: Some("gamma".into()),
                     brief: None,
                     skill: None,
+                    section: None,
                     resume: None,
                     sid: None,
                     today: None,
@@ -1073,6 +1157,7 @@ mod tests {
                     bot: Some("gamma".into()),
                     brief: None,
                     skill: None,
+                    section: None,
                     resume: Some(holder_sid.clone()),
                     sid: None,
                     today: None,
@@ -1095,6 +1180,7 @@ mod tests {
                     bot: Some("gamma".into()),
                     brief: None,
                     skill: None,
+                    section: None,
                     resume: Some("new".into()),
                     sid: None,
                     today: None,
@@ -1159,6 +1245,7 @@ mod tests {
                 bot: Some("gamma".into()),
                 brief: None,
                 skill: None,
+                section: None,
                 resume: None,
                 sid: None,
                 today: None,
@@ -1184,6 +1271,7 @@ mod tests {
                     bot: Some("gamma".into()),
                     brief: None,
                     skill: None,
+                    section: None,
                     resume: Some("new".into()),
                     sid: None,
                     today: None,
@@ -1197,6 +1285,154 @@ mod tests {
              original claim would find it stale: {rival}"
         );
         assert_eq!(rival["session"]["claim"]["holder"], holder_sid, "{rival}");
+    }
+
+    /// **A section fetched by its exact heading returns exactly that unit,
+    /// whole — and nothing else from the essay.** The positive this whole
+    /// mechanism rests on, paired against a neighbouring section's own
+    /// distinguishing text to prove the answer is one unit and not the
+    /// whole remainder.
+    #[tokio::test]
+    async fn a_section_by_exact_heading_returns_exactly_that_unit() {
+        let jojobot = handler();
+        let (_, sections) = crate::orientation::essay::remainder_units(
+            crate::orientation::essay::ORIENTATION_REMAINDER,
+        );
+        let bots = sections
+            .iter()
+            .find(|s| s.heading == "## Bots")
+            .expect("the essay has a Bots section");
+
+        let fetched = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    claim: None,
+                    timezone: None,
+                    bot: None,
+                    brief: None,
+                    skill: None,
+                    section: Some("## Bots".into()),
+                    resume: None,
+                    sid: None,
+                    today: None,
+                }))
+                .await
+                .expect("start_here ok"),
+        );
+        assert_eq!(fetched["section"]["name"], "## Bots", "{fetched}");
+        assert_eq!(fetched["section"]["body"], bots.body, "{fetched}");
+        assert!(
+            !fetched["section"]["body"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("The two endings")
+                || bots.body.contains("The two endings"),
+            "a neighbouring section's own text leaked into this one: {fetched}"
+        );
+        assert!(
+            !fetched.to_string().contains("## Sessions"),
+            "only the one unit asked for comes back: {fetched}"
+        );
+    }
+
+    /// **`section: "opening"` returns the remainder's un-headed preamble,**
+    /// the one unit with no heading of its own — paired against a real
+    /// heading's own text to prove the answer is the preamble alone.
+    #[tokio::test]
+    async fn section_opening_returns_the_un_headed_preamble() {
+        let jojobot = handler();
+        let (preamble, _) = crate::orientation::essay::remainder_units(
+            crate::orientation::essay::ORIENTATION_REMAINDER,
+        );
+
+        let fetched = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    claim: None,
+                    timezone: None,
+                    bot: None,
+                    brief: None,
+                    skill: None,
+                    section: Some("opening".into()),
+                    resume: None,
+                    sid: None,
+                    today: None,
+                }))
+                .await
+                .expect("start_here ok"),
+        );
+        assert_eq!(fetched["section"]["name"], "opening", "{fetched}");
+        assert_eq!(fetched["section"]["body"], preamble, "{fetched}");
+        assert!(
+            !fetched.to_string().contains("## Bots"),
+            "the opening paragraphs carry no section heading: {fetched}"
+        );
+    }
+
+    /// **A section name that matches nothing is refused, and the refusal
+    /// lists every valid name — `"opening"` included.**
+    #[tokio::test]
+    async fn an_unknown_section_is_refused_and_lists_every_valid_name() {
+        let jojobot = handler();
+        let (_, sections) = crate::orientation::essay::remainder_units(
+            crate::orientation::essay::ORIENTATION_REMAINDER,
+        );
+
+        let refused = blocked(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    claim: None,
+                    timezone: None,
+                    bot: None,
+                    brief: None,
+                    skill: None,
+                    section: Some("## Nonexistent".into()),
+                    resume: None,
+                    sid: None,
+                    today: None,
+                }))
+                .await
+                .expect("an unknown section is an answer, not a protocol failure"),
+        );
+        assert_eq!(refused["attempted"], "## Nonexistent", "{refused}");
+        let how = refused["how_to_proceed"].as_str().expect("advice");
+        assert!(how.contains("opening"), "{how}");
+        for section in &sections {
+            assert!(how.contains(section.heading), "{}\n{how}", section.heading);
+        }
+    }
+
+    /// **Fetching a section and booting an identity are two calls**, the
+    /// same guard `skill` already wears — a fetch starts no session, so
+    /// honouring `bot` alongside it would hand back a body and no handle.
+    #[tokio::test]
+    async fn a_section_fetch_with_a_bot_is_refused() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+
+        let out = jojobot
+            .start_here(Parameters(OrientArgs {
+                claim: None,
+                timezone: None,
+                bot: Some("gamma".into()),
+                brief: None,
+                skill: None,
+                section: Some("## Bots".into()),
+                resume: None,
+                sid: None,
+                today: None,
+            }))
+            .await
+            .expect("start_here ok");
+        let body: serde_json::Value = serde_json::from_str(&text_of(&out)).expect("json");
+        assert_eq!(body["status"], "blocked", "{body}");
+        assert!(
+            body["how_to_proceed"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("two calls"),
+            "{body}"
+        );
     }
 
     /// **Naming no role is the ordinary boot: unchanged.** No `claim` key

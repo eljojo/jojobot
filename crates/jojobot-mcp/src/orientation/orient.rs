@@ -183,7 +183,7 @@ fn essay_for_boot(brief: bool, identity: &serde_json::Value, budget: usize) -> E
         };
     }
 
-    let (preamble, sections) = essay::remainder_units(essay::ORIENTATION_REMAINDER);
+    let (preamble, sections) = essay::remainder();
     let mut candidates: Vec<(Option<&str>, &str)> = Vec::with_capacity(sections.len() + 1);
     candidates.push((None, preamble));
     candidates.extend(sections.iter().map(|s| (Some(s.heading), s.body)));
@@ -214,15 +214,17 @@ fn essay_for_boot(brief: bool, identity: &serde_json::Value, budget: usize) -> E
 
     let note = if preamble_shipped {
         format!(
-            "this boot's ceiling could not fit the whole essay. Left out: {}. No call returns \
-             a left-out section today.",
+            "this boot's ceiling could not fit the whole essay. Left out: {}. Call start_here \
+             again with section set to one of those exact headings to read it whole.",
             left_out.join(", ")
         )
     } else {
         format!(
             "this boot's ceiling could not fit any of the essay's remainder — not even its \
              opening paragraphs. Left out: the remainder's opening paragraphs, plus every \
-             section: {}. No call returns a left-out section today.",
+             section: {}. Call start_here again with section: \"opening\" for the paragraphs, \
+             or with section set to one of those exact headings for a section, to read either \
+             whole.",
             left_out.join(", ")
         )
     };
@@ -822,6 +824,7 @@ mod tests {
                     bot: Some("gamma".into()),
                     brief: None,
                     skill: None,
+                    section: None,
                     resume: None,
                     sid: None,
                     today: None,
@@ -892,6 +895,7 @@ mod tests {
                     bot: Some("gamma".into()),
                     brief: Some(false),
                     skill: None,
+                    section: None,
                     resume: None,
                     sid: None,
                     today: None,
@@ -1010,6 +1014,7 @@ mod tests {
                     bot: Some("gamma".into()),
                     brief: Some(false),
                     skill: None,
+                    section: None,
                     resume: None,
                     sid: None,
                     today: None,
@@ -1102,6 +1107,7 @@ mod tests {
                     bot: Some("gamma".into()),
                     brief: Some(false),
                     skill: None,
+                    section: None,
                     resume: None,
                     sid: None,
                     today: None,
@@ -1184,6 +1190,7 @@ mod tests {
                     bot: Some("gamma".into()),
                     brief: Some(false),
                     skill: None,
+                    section: None,
                     resume: None,
                     sid: None,
                     today: None,
@@ -1303,6 +1310,7 @@ mod tests {
                 bot: Some("gamma".into()),
                 brief: Some(false),
                 skill: None,
+                section: None,
                 resume: None,
                 sid: None,
                 today: None,
@@ -1355,6 +1363,7 @@ mod tests {
                     bot: None,
                     brief: Some(false),
                     skill: None,
+                    section: None,
                     resume: None,
                     sid: None,
                     today: None,
@@ -1405,6 +1414,7 @@ mod tests {
                     bot: Some("gamma".into()),
                     brief: Some(false),
                     skill: None,
+                    section: None,
                     resume: None,
                     sid: None,
                     today: None,
@@ -2002,6 +2012,7 @@ mod tests {
                     bot: None,
                     brief: None,
                     skill: None,
+                    section: None,
                     resume: None,
                     sid: None,
                     today: None,
@@ -2072,6 +2083,7 @@ mod tests {
                     bot: None,
                     brief: None,
                     skill: None,
+                    section: None,
                     resume: None,
                     sid: None,
                     today: None,
@@ -2150,6 +2162,7 @@ mod tests {
                     bot: Some("gamma".into()),
                     brief: Some(false),
                     skill: None,
+                    section: None,
                     resume: None,
                     sid: None,
                     today: None,
@@ -2316,6 +2329,7 @@ mod tests {
                     bot: None,
                     brief: None,
                     skill: None,
+                    section: None,
                     resume: None,
                     sid: None,
                     today: None,
@@ -2422,6 +2436,7 @@ mod tests {
                     bot: None,
                     brief: None,
                     skill: None,
+                    section: None,
                     resume: None,
                     sid: None,
                     today: None,
@@ -2567,6 +2582,7 @@ mod skills_are_indexed_not_shipped {
                     brief: None,
                     resume: None,
                     skill: None,
+                    section: None,
                     sid: None,
                     today: None,
                 }))
@@ -2625,6 +2641,7 @@ mod skills_are_indexed_not_shipped {
                     brief: None,
                     resume: None,
                     skill: Some("recommend".into()),
+                    section: None,
                     sid: None,
                     today: None,
                 }))
@@ -2660,6 +2677,7 @@ mod skills_are_indexed_not_shipped {
                     bot: Some("otto".into()),
                     brief: None,
                     skill: Some("recommend".into()),
+                    section: None,
                     resume: None,
                     sid: None,
                     today: None,
@@ -2703,6 +2721,7 @@ mod skills_are_indexed_not_shipped {
                     brief: None,
                     resume: None,
                     skill: Some("recomend".into()),
+                    section: None,
                     sid: None,
                     today: None,
                 }))
@@ -2793,6 +2812,10 @@ mod essay_for_boot_budget {
             !note.contains("###"),
             "a subheading is never named on its own in the note: {note}"
         );
+        assert!(
+            note.contains("start_here") && note.contains("section"),
+            "the note names the call that reaches a left-out section: {note}"
+        );
     }
 
     /// A budget covering the preamble exactly, and nothing past it, ships
@@ -2813,6 +2836,10 @@ mod essay_for_boot_budget {
         for heading in &headings {
             assert!(note.contains(heading), "{note}");
         }
+        assert!(
+            note.contains("start_here") && note.contains("section"),
+            "the note names the call that reaches a left-out section: {note}"
+        );
     }
 
     /// A budget too tight even for the preamble ships the core alone — the
@@ -2834,5 +2861,10 @@ mod essay_for_boot_budget {
         for heading in &headings {
             assert!(note.contains(heading), "{note}");
         }
+        assert!(
+            note.contains("start_here") && note.contains("\"opening\""),
+            "the note names the call and the literal word that reaches the opening paragraphs: \
+             {note}"
+        );
     }
 }

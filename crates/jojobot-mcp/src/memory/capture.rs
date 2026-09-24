@@ -2596,6 +2596,7 @@ mod tests {
                     brief: Some(true),
                     timezone: None,
                     skill: None,
+                    section: None,
                     sid: None,
                 }))
                 .await
@@ -2634,6 +2635,7 @@ mod tests {
                     brief: Some(true),
                     timezone: None,
                     skill: None,
+                    section: None,
                     sid: None,
                 }))
                 .await

@@ -255,6 +255,7 @@ pub(crate) async fn boot_on(jojobot: &Jojobot, name: &str, today: &str) -> serde
                 bot: Some(name.into()),
                 brief: None,
                 skill: None,
+                section: None,
                 resume: None,
                 sid: None,
             }))
@@ -273,6 +274,7 @@ pub(crate) async fn boot(jojobot: &Jojobot, name: &str) -> serde_json::Value {
                 bot: Some(name.into()),
                 brief: None,
                 skill: None,
+                section: None,
                 resume: None,
                 sid: None,
             }))
@@ -296,6 +298,7 @@ pub(crate) async fn boot_answering(
                 bot: Some(name.into()),
                 brief: None,
                 skill: None,
+                section: None,
                 resume: Some(answer.into()),
                 sid: None,
             }))
@@ -333,6 +336,7 @@ pub(crate) async fn booted_in(
                 bot: Some(name.into()),
                 brief: Some(true),
                 skill: None,
+                section: None,
                 resume: resume.map(str::to_string),
                 sid: None,
                 today: None,

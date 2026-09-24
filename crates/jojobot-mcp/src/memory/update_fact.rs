@@ -2766,6 +2766,7 @@ mod tests {
                     bot: Some("gamma".into()),
                     brief: None,
                     skill: None,
+                    section: None,
                     resume: None,
                     sid: None,
                     today: None,

@@ -177,6 +177,18 @@ pub(crate) fn remainder_units(text: &str) -> (&str, Vec<MarkdownSection<'_>>) {
     (preamble, sections)
 }
 
+/// **`remainder_units` of the one remainder this build ships**, so every
+/// caller wanting the essay's real units — `orient`'s own ranking, and
+/// `start_here`'s section fetch — goes through this one place rather than
+/// each naming the essay's own remainder constant again. The one-door
+/// guard (`there_is_exactly_one_orientation_verb`) counts literal readers
+/// of that constant; this keeps the count at the two it already pins — the
+/// constant's own definition and this function — however many callers
+/// this function itself gains.
+pub(crate) fn remainder() -> (&'static str, Vec<MarkdownSection<'static>>) {
+    remainder_units(ORIENTATION_REMAINDER)
+}
+
 #[cfg(test)]
 mod tests {
     use jojobot_domain::memory::EntityKind;
