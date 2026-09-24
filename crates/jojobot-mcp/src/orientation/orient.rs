@@ -123,30 +123,114 @@ fn rank_rule_details(identity: &mut serde_json::Value, budget: usize) {
 /// today's essay, not a guarantee, and the one candidate here is the one
 /// this exists to catch if that ever changes.
 ///
-/// Returns the text to ship (`None` when `brief` already dropped it, or an
-/// anonymous boot's whole essay did not fit) and whether an anonymous boot's
-/// omission was the ceiling's doing rather than `brief`'s.
-fn essay_for_boot(
-    brief: bool,
-    identity: &serde_json::Value,
-    budget: usize,
-) -> (Option<String>, bool) {
+/// What `essay_for_boot` ships, and how it says what it left out.
+pub(crate) struct EssayForBoot {
+    /// The text to ship. `None` only when `brief` dropped it outright —
+    /// every other shape, named or anonymous, always carries the core at
+    /// least.
+    pub(crate) text: Option<String>,
+    /// Whether anything was left out relative to the whole essay: always
+    /// true for `brief` and for a named boot (core-only is a rule, not a
+    /// ranking outcome), and true for an anonymous boot only when the
+    /// ceiling actually cut something.
+    pub(crate) elided: bool,
+    /// The note explaining the cut, or `None` when nothing was cut. Built
+    /// here rather than at the call site, because only this function knows
+    /// which unit stopped the prefix.
+    pub(crate) note: Option<String>,
+}
+
+/// **What the essay's own text is for this boot, and whether the ceiling had
+/// a say in it — the two shapes of boot are not the same question.**
+///
+/// **A named boot never gets the remainder — it is not a ranking candidate,
+/// it is a rule.** The core already carries the kinds, what a claim carries,
+/// the structural type questions and the call that reaches the rest, which
+/// is the teaching a session needs before it can write anything; the
+/// remainder waits behind an anonymous boot, always, whatever the ceiling
+/// has room for.
+///
+/// **An anonymous boot always gets the core, plus as many whole units of the
+/// remainder as `budget` allows, taken strictly in order** — the un-headed
+/// preamble first (`essay::remainder_units`'s own first unit), then each
+/// `##` section whole, a `###` subheading riding with its parent rather than
+/// standing on its own. `budget` is the remainder's own allowance: the
+/// caller (`orient`) has already paid for the core in the floor, so this
+/// never subtracts it and always prepends it. **Never cut inside a unit,
+/// and never skip one to fit a later one** — `text::Capped::head_or_none`'s
+/// own strict-prefix behaviour is exactly this rule.
+///
+/// A unit left out is named by its own `##` heading in `note`; the un-headed
+/// preamble, when it is the one left out, is named in plain words instead,
+/// because it has no heading to be named by.
+fn essay_for_boot(brief: bool, identity: &serde_json::Value, budget: usize) -> EssayForBoot {
     if brief {
-        return (None, false);
+        return EssayForBoot {
+            text: None,
+            elided: true,
+            note: None,
+        };
     }
     if !identity.is_null() {
-        return (Some(essay::ORIENTATION_CORE.to_string()), false);
+        return EssayForBoot {
+            text: Some(essay::ORIENTATION_CORE.to_string()),
+            elided: true,
+            note: Some(
+                "a named boot's orientation is the essay's core; call start_here again naming \
+                 no bot to read the whole essay"
+                    .to_string(),
+            ),
+        };
     }
-    let whole = format!(
-        "{}{}",
-        essay::ORIENTATION_CORE,
-        essay::ORIENTATION_REMAINDER
-    );
-    let candidates = [whole.chars().count()];
-    let kept = (text::Capped { budget }).head_or_none(&candidates, |len| *len);
-    match kept.kept().is_empty() {
-        false => (Some(whole), false),
-        true => (None, true),
+
+    let (preamble, sections) = essay::remainder_units(essay::ORIENTATION_REMAINDER);
+    let mut candidates: Vec<(Option<&str>, &str)> = Vec::with_capacity(sections.len() + 1);
+    candidates.push((None, preamble));
+    candidates.extend(sections.iter().map(|s| (Some(s.heading), s.body)));
+
+    let kept =
+        (text::Capped { budget }).head_or_none(&candidates, |(_, body)| body.chars().count());
+    let kept_items = kept.kept();
+
+    let mut text = essay::ORIENTATION_CORE.to_string();
+    for (_, body) in kept_items {
+        text.push_str(body);
+    }
+
+    if kept.omitted() == 0 {
+        return EssayForBoot {
+            text: Some(text),
+            elided: false,
+            note: None,
+        };
+    }
+
+    let preamble_shipped = !kept_items.is_empty();
+    let shipped_sections = kept_items.len() - usize::from(preamble_shipped);
+    let left_out: Vec<&str> = sections[shipped_sections..]
+        .iter()
+        .map(|s| s.heading)
+        .collect();
+
+    let note = if preamble_shipped {
+        format!(
+            "this boot's ceiling could not fit the whole essay. Left out: {}. No call returns \
+             a left-out section today.",
+            left_out.join(", ")
+        )
+    } else {
+        format!(
+            "this boot's ceiling could not fit any of the essay's remainder — not even its \
+             opening paragraphs. Left out: the remainder's opening paragraphs, plus every \
+             section: {}. No call returns a left-out section today.",
+            left_out.join(", ")
+        )
+    };
+
+    EssayForBoot {
+        text: Some(text),
+        elided: true,
+        note: Some(note),
     }
 }
 
@@ -495,13 +579,13 @@ impl Jojobot {
         // cannot read, not a field inside it). Measure the FLOOR first:
         // everything that ships whatever the ranking below decides — bot
         // metadata, charter whole (it is never cut, see `rank_rule_details`),
-        // the essay's own core for a named boot (also never cut, see
-        // `essay_for_boot`), every rule's own structural fields (address,
-        // dates, provenance, standing, status, fields, refs), session,
-        // snapshot, skills — with every rule's `details` already gone. What
-        // is LEFT of the ceiling after that floor is what the rules'
-        // `details` compete for, and — for an anonymous boot only — what the
-        // whole essay is ranked against; see `essay_for_boot`.
+        // the essay's own core (never cut, every boot, see `essay_for_boot`),
+        // every rule's own structural fields (address, dates, provenance,
+        // standing, status, fields, refs), session, snapshot, skills — with
+        // every rule's `details` already gone. What is LEFT of the ceiling
+        // after that floor is what the rules' `details` compete for, and —
+        // for an anonymous boot only — what the remainder's own units are
+        // ranked against; see `essay_for_boot`.
         let mut floor_identity = identity.clone();
         if let Some(rules) = floor_identity
             .get_mut("rules")
@@ -511,13 +595,11 @@ impl Jojobot {
                 elide_rule_details(rule);
             }
         }
-        // **The essay's core rides in the floor for a named boot, exactly
-        // like the charter — an anonymous boot pays nothing here, because it
-        // either gets the whole essay or none of it, ranked below.** It is
-        // short by design and never ranked for a named boot, so its true
-        // cost is counted here, once, rather than competing with the rules'
-        // `details`.
-        let core = (!brief && !identity.is_null()).then_some(essay::ORIENTATION_CORE);
+        // **The essay's core rides in the floor for every boot, named or
+        // anonymous, exactly like the charter — it always ships and is
+        // never ranked, so its true cost is counted here, once, rather than
+        // competing with the rules' `details` or the remainder's own units.**
+        let core = (!brief).then_some(essay::ORIENTATION_CORE);
         let floor_len = serde_json::json!({
             "orientation": core,
             "orientation_elided": true,
@@ -535,10 +617,9 @@ impl Jojobot {
 
         let mut identity = identity;
         rank_rule_details(&mut identity, remaining_for_prose);
-        let (orientation, essay_elided_by_ceiling) =
-            essay_for_boot(brief, &identity, remaining_for_prose);
+        let essay = essay_for_boot(brief, &identity, remaining_for_prose);
         let mut answer = serde_json::json!({
-            "orientation": orientation,
+            "orientation": essay.text,
             // **The elision is marked, and that is all it is.** The essay used
             // to arrive stamped with a version so a returning session could ask
             // whether the copy it held was current; the stamp is gone, and no
@@ -546,11 +627,12 @@ impl Jojobot {
             // elision on this surface owes — less came back, and the caller is
             // told so rather than left to infer withheld from empty.
             //
-            // **True unless an anonymous boot got the whole essay** — the
-            // only shape that is ever NOT missing something: a named boot's
-            // core is elided by design, and `None` (brief, or an anonymous
-            // boot the ceiling declined) is elided by construction.
-            "orientation_elided": !(identity.is_null() && orientation.is_some()),
+            // **False only when an anonymous boot got the whole essay** — the
+            // only shape that is ever NOT missing something; every other
+            // shape — `brief`, a named boot's core-only, or an anonymous
+            // boot the ceiling cut — is elided, and `essay_for_boot` is
+            // where that is decided.
+            "orientation_elided": essay.elided,
             // **Names and when-to-use lines, never bodies.** A session that
             // needs a procedure fetches it by name; a boot that shipped every
             // one would spend a session's attention on the jobs it is not
@@ -572,28 +654,13 @@ impl Jojobot {
             // exception, and a session reads it before it writes anything.
             "clock": self.stated_clock(),
         });
-        // **Three reasons an answer can carry less than the whole essay, and
-        // `brief`'s is the only one that needs no note** — the caller set
-        // that flag and already knows why. The other two are `orientation`
-        // itself distinguishing them: a named boot's core, present, means
-        // the remainder was never offered — a designed omission, not a
-        // ceiling one. `None` on an anonymous boot means the ceiling
-        // declined the whole essay outright.
+        // **`brief` needs no note — the caller set that flag and already
+        // knows why.** Every other reason an answer carries less than the
+        // whole essay is `essay_for_boot`'s own note, already built there:
+        // a named boot's core-only is a rule, and an anonymous boot's cut
+        // names exactly which units were left out.
         if !brief && let Some(obj) = answer.as_object_mut() {
-            let note = match (identity.is_null(), essay_elided_by_ceiling) {
-                (false, _) => Some(
-                    "a named boot's orientation is the essay's core; call start_here again \
-                     naming no bot to read the whole essay"
-                        .to_string(),
-                ),
-                (true, true) => Some(
-                    "the essay did not fit this boot's declared prose ceiling — call start_here \
-                     again with nothing else competing for it to read it whole"
-                        .to_string(),
-                ),
-                (true, false) => None,
-            };
-            if let Some(note) = note {
+            if let Some(note) = essay.note {
                 obj.insert("orientation_note".into(), note.into());
             }
         }
@@ -2648,5 +2715,124 @@ mod skills_are_indexed_not_shipped {
             body.to_string().contains("recommend"),
             "the refusal names the skills that do exist: {body}"
         );
+    }
+}
+
+/// **`essay_for_boot`'s cut behaviour, budget-precise.** Exercised directly
+/// against the real essay's remainder, at budgets derived from that text's
+/// own measured unit lengths (`essay::remainder_units`) rather than
+/// invented — a boundary here is a boundary the real essay actually has,
+/// not a guess at one. `budget` is the remainder's own allowance: the
+/// caller (`orient`) always prepends the core separately, having already
+/// paid for it in the floor.
+#[cfg(test)]
+mod essay_for_boot_budget {
+    use crate::orientation::essay;
+    use crate::orientation::orient::essay_for_boot;
+
+    fn remainder_shape() -> (&'static str, Vec<&'static str>, Vec<usize>) {
+        let (preamble, sections) = essay::remainder_units(essay::ORIENTATION_REMAINDER);
+        let headings: Vec<&'static str> = sections.iter().map(|s| s.heading).collect();
+        let lens: Vec<usize> = sections.iter().map(|s| s.body.chars().count()).collect();
+        (preamble, headings, lens)
+    }
+
+    /// A budget covering the whole remainder ships it whole, byte for byte
+    /// — the case this whole mechanism must never regress.
+    #[test]
+    fn a_budget_covering_the_whole_remainder_ships_it_whole() {
+        let whole_remainder_len = essay::ORIENTATION_REMAINDER.chars().count();
+        let served = essay_for_boot(false, &serde_json::Value::Null, whole_remainder_len);
+        assert_eq!(
+            served.text.as_deref(),
+            Some(essay::orientation()).as_deref()
+        );
+        assert!(!served.elided, "{:?}", served.note);
+        assert!(served.note.is_none(), "{:?}", served.note);
+    }
+
+    /// A budget covering the preamble and the first two `##` sections, and
+    /// no more, ships exactly those and names exactly the other two as
+    /// left out — never a `###` subheading on its own.
+    #[test]
+    fn a_partial_budget_ships_the_leading_sections_and_names_the_rest() {
+        let (preamble, headings, lens) = remainder_shape();
+        assert!(headings.len() >= 3, "{headings:?}");
+        let budget = preamble.chars().count() + lens[0] + lens[1];
+        let served = essay_for_boot(false, &serde_json::Value::Null, budget);
+        let text = served.text.expect("some text always ships");
+        assert!(text.starts_with(essay::ORIENTATION_CORE), "{text:?}");
+        assert!(text.contains(preamble), "{text:?}");
+        let (_, sections) = essay::remainder_units(essay::ORIENTATION_REMAINDER);
+        for heading in &headings[..2] {
+            let body = sections
+                .iter()
+                .find(|s| &s.heading == heading)
+                .unwrap()
+                .body;
+            assert!(text.contains(body), "shipped section missing: {heading}");
+        }
+        for heading in &headings[2..] {
+            assert!(
+                !text.contains(heading),
+                "left-out section shipped: {heading}\n{text}"
+            );
+        }
+        assert!(served.elided);
+        let note = served.note.expect("a cut answer names what it left out");
+        for heading in &headings[2..] {
+            assert!(note.contains(heading), "{note}");
+        }
+        for heading in &headings[..2] {
+            assert!(
+                !note.contains(heading),
+                "a shipped heading is named as left out: {note}"
+            );
+        }
+        assert!(
+            !note.contains("###"),
+            "a subheading is never named on its own in the note: {note}"
+        );
+    }
+
+    /// A budget covering the preamble exactly, and nothing past it, ships
+    /// the preamble alone and names every `##` heading as left out.
+    #[test]
+    fn a_budget_covering_only_the_preamble_ships_it_alone_and_names_every_heading() {
+        let (preamble, headings, _) = remainder_shape();
+        let budget = preamble.chars().count();
+        let served = essay_for_boot(false, &serde_json::Value::Null, budget);
+        let text = served.text.expect("some text always ships");
+        assert!(text.starts_with(essay::ORIENTATION_CORE), "{text:?}");
+        assert!(text.contains(preamble), "{text:?}");
+        for heading in &headings {
+            assert!(!text.contains(heading), "{text}");
+        }
+        assert!(served.elided);
+        let note = served.note.expect("a cut answer names what it left out");
+        for heading in &headings {
+            assert!(note.contains(heading), "{note}");
+        }
+    }
+
+    /// A budget too tight even for the preamble ships the core alone — the
+    /// note says the whole remainder was left out and names its opening
+    /// paragraphs in plain words, since they have no heading to be named by.
+    #[test]
+    fn a_budget_too_tight_for_the_preamble_ships_core_only_and_names_the_opening_paragraphs() {
+        let (preamble, headings, _) = remainder_shape();
+        let budget = preamble.chars().count().saturating_sub(1);
+        let served = essay_for_boot(false, &serde_json::Value::Null, budget);
+        let text = served.text.expect("the core always ships");
+        assert_eq!(text, essay::ORIENTATION_CORE, "{text:?}");
+        assert!(served.elided);
+        let note = served.note.expect("a cut answer names what it left out");
+        assert!(
+            note.contains("opening paragraph"),
+            "the un-headed preamble is named in plain words: {note}"
+        );
+        for heading in &headings {
+            assert!(note.contains(heading), "{note}");
+        }
     }
 }

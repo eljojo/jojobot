@@ -133,6 +133,50 @@ pub(crate) fn orientation() -> String {
     format!("{ORIENTATION_CORE}{ORIENTATION_REMAINDER}")
 }
 
+/// One `##`-section of a markdown text: its heading line itself (e.g.
+/// `"## Bots"`) and everything from that line up to, but not including, the
+/// next `##` heading — including any `###` subheading nested inside it.
+pub(crate) struct MarkdownSection<'a> {
+    pub(crate) heading: &'a str,
+    pub(crate) body: &'a str,
+}
+
+fn is_level_2_heading(line: &str) -> bool {
+    line.starts_with("## ")
+}
+
+/// **The remainder's own ranking units**: the un-headed preamble, then each
+/// `##` section whole — carrying every `###` subheading nested under it
+/// rather than splitting on it. **Only `##` starts a unit**: a `###` block
+/// ships or drops with the `##` section it sits under, and is never named
+/// on its own in a left-out note.
+pub(crate) fn remainder_units(text: &str) -> (&str, Vec<MarkdownSection<'_>>) {
+    let mut starts: Vec<usize> = Vec::new();
+    let mut pos = 0usize;
+    for line in text.split_inclusive('\n') {
+        if is_level_2_heading(line.trim_end_matches('\n')) {
+            starts.push(pos);
+        }
+        pos += line.len();
+    }
+
+    let preamble_end = starts.first().copied().unwrap_or(text.len());
+    let preamble = &text[..preamble_end];
+
+    let sections = starts
+        .iter()
+        .enumerate()
+        .map(|(i, &start)| {
+            let end = starts.get(i + 1).copied().unwrap_or(text.len());
+            let body = &text[start..end];
+            let heading = body.lines().next().unwrap_or("").trim();
+            MarkdownSection { heading, body }
+        })
+        .collect();
+
+    (preamble, sections)
+}
+
 #[cfg(test)]
 mod tests {
     use jojobot_domain::memory::EntityKind;
@@ -369,6 +413,48 @@ mod tests {
         assert!(
             names(&super::orientation(), "stands_for"),
             "a session that reads only the essay has no way to find the synthesis mark"
+        );
+    }
+
+    /// **`remainder_units` splits on `##` headings only and separates the
+    /// un-headed preamble from the headed chunks** — a `###` inside a `##`
+    /// block folds into its parent rather than starting a unit of its own:
+    /// two units here, not three, and the nested `###` line is inside the
+    /// first unit's body.
+    #[test]
+    fn remainder_units_folds_a_nested_subheading_into_its_parent_section() {
+        let text = "intro line\nmore intro\n## First\nfirst body\n### Nested\nnested body\n## Second\nsecond body\n";
+        let (preamble, units) = super::remainder_units(text);
+        assert_eq!(preamble, "intro line\nmore intro\n");
+        let headings: Vec<&str> = units.iter().map(|s| s.heading).collect();
+        assert_eq!(headings, vec!["## First", "## Second"]);
+        assert_eq!(
+            units[0].body,
+            "## First\nfirst body\n### Nested\nnested body\n"
+        );
+        assert_eq!(units[1].body, "## Second\nsecond body\n");
+    }
+
+    /// **Pinned against the real remainder's actual `##`-level units** — the
+    /// `###` subheadings under Sessions fold into it rather than appearing
+    /// as units of their own.
+    #[test]
+    fn remainder_units_reads_the_real_remainder_as_four_top_level_units() {
+        let (_, units) = super::remainder_units(super::ORIENTATION_REMAINDER);
+        let headings: Vec<&str> = units.iter().map(|s| s.heading).collect();
+        assert_eq!(
+            headings,
+            vec![
+                "## Working here, by example",
+                "## The answers that are not errors",
+                "## Bots",
+                "## Sessions",
+            ]
+        );
+        assert!(
+            units[3].body.contains("### The two endings"),
+            "the Sessions unit must carry its nested subheadings whole: {}",
+            units[3].body
         );
     }
 
