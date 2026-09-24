@@ -436,6 +436,34 @@ fn memory_coverage(coverage: Coverage) -> serde_json::Value {
     }
 }
 
+/// **Whether this answer covered a bot's own sessions, and why not when it
+/// didn't** — [`memory_coverage`] and [`mail_coverage`]'s question, asked of
+/// the third store, in the same shape and the same words.
+///
+/// A session read cannot reach the store for the same reason mail's board
+/// read cannot: this half refreshes before every answer rather than from a
+/// boot scan, so a read that fails leaves the last good index standing and
+/// the answer would otherwise look complete. Without this, "no session says
+/// that" and "jojobot could not look" are the same silence.
+fn session_coverage(coverage: Coverage) -> serde_json::Value {
+    match coverage {
+        Coverage::Unread => serde_json::json!({
+            "searched": false,
+            "note": "NO session is searchable right now — this is not 'nothing matched'. \
+                     list_runs reads a bot's own runs directly and is complete.",
+        }),
+        Coverage::Partial(behind) => serde_json::json!({
+            "searched": true,
+            "behind": behind.as_token(),
+            "note": "PARTIAL: the last read of the sessions store could not reach it, so the \
+                     index is serving whatever it last read. Any hit here is real — this is not \
+                     a complete answer over sessions. list_runs reads the store directly and is \
+                     complete.",
+        }),
+        Coverage::Loaded => serde_json::json!({ "searched": true }),
+    }
+}
+
 /// **Every state of a kind, walked rather than listed.**
 ///
 /// Each state names its successor in a `match`, so a state added to the enum
@@ -518,6 +546,10 @@ pub(crate) fn coverage_notes() -> Vec<(String, String)> {
         found.push((
             format!("search's mail coverage note ({coverage:?})"),
             mail_coverage(&asking_for_mail(), coverage).to_string(),
+        ));
+        found.push((
+            format!("search's sessions coverage note ({coverage:?})"),
+            session_coverage(coverage).to_string(),
         ));
     }
     found
@@ -696,6 +728,7 @@ impl Jojobot {
             "matching": matching_note(&query),
             "memory": memory_coverage(self.search.memory_coverage()),
             "mail": mail_coverage(&query, self.search.mail_coverage()),
+            "sessions": session_coverage(self.search.session_coverage()),
             // **A third question, beside the two above and folded into
             // neither.** See [`corpus_note`].
             "corpus": corpus_note(),
@@ -1524,6 +1557,99 @@ mod tests {
                 .expect("an absence says why")
                 .contains("recall"),
             "…and names the verb that reads the store instead: {unread}"
+        );
+    }
+
+    /// **The sessions half reports its own coverage, and a degraded answer is
+    /// not the same shape as an empty one.**
+    ///
+    /// Before this, a session read that could not reach the store left the
+    /// last good index standing and the answer silent — indistinguishable
+    /// from a search that genuinely found nothing among a bot's own runs.
+    /// Both cases here return zero session hits; only the note tells them
+    /// apart, which is the whole of what this coverage exists to do.
+    #[tokio::test]
+    async fn an_answer_from_the_sessions_half_that_is_behind_says_so_and_is_not_an_empty_answer() {
+        let hit = || {
+            vec![Hit::Session {
+                session: jojobot_domain::session::SessionId("s-alpha".into()),
+                bot: EntityId("bot:gamma".into()),
+                working_on: Some("reading the kiln logs".into()),
+                snippet: "…the kiln…".into(),
+            }]
+        };
+
+        let complete = json_of(
+            &handler_with(Arc::new(SpySearch::over_sessions(Coverage::Loaded, hit())))
+                .search(Parameters(SearchArgs {
+                    query: Some("kiln".into()),
+                    ..search_args()
+                }))
+                .await
+                .expect("search ok"),
+        );
+        assert_eq!(
+            complete["sessions"]["searched"], true,
+            "a loaded half searched everything: {complete}"
+        );
+        assert!(
+            complete["sessions"]["note"].is_null(),
+            "and has nothing to warn about: {complete}"
+        );
+
+        // **The pair this test is for.** Both answers below return zero session
+        // hits — one because the store genuinely has nothing, the other
+        // because the read that would have found it could not reach the
+        // store. Collapsing them was the defect: an answer that could not
+        // look read identically to one that looked and found nothing.
+        let found_nothing = json_of(
+            &handler_with(Arc::new(SpySearch::over_sessions(
+                Coverage::Loaded,
+                Vec::new(),
+            )))
+            .search(Parameters(SearchArgs {
+                query: Some("kiln".into()),
+                ..search_args()
+            }))
+            .await
+            .expect("search ok"),
+        );
+        assert_eq!(
+            found_nothing["sessions"]["searched"], true,
+            "it looked, and nothing answered: {found_nothing}"
+        );
+        assert!(
+            found_nothing["sessions"]["note"].is_null(),
+            "a complete answer with no hits warns of nothing: {found_nothing}"
+        );
+
+        let could_not_look = json_of(
+            &handler_with(Arc::new(SpySearch::over_sessions(
+                Coverage::Partial(Behind::Stale),
+                Vec::new(),
+            )))
+            .search(Parameters(SearchArgs {
+                query: Some("kiln".into()),
+                ..search_args()
+            }))
+            .await
+            .expect("search ok"),
+        );
+        assert_eq!(
+            could_not_look["sessions"]["searched"], true,
+            "searched is still true — hits would be real if there were any: {could_not_look}"
+        );
+        assert!(
+            could_not_look["sessions"]["note"]
+                .as_str()
+                .expect("a degraded answer says it is degraded")
+                .contains("PARTIAL"),
+            "…and unlike the found-nothing case above, this one says so: {could_not_look}"
+        );
+        assert_ne!(
+            found_nothing["sessions"], could_not_look["sessions"],
+            "finding nothing and being unable to look must not read the same: \
+             {found_nothing} vs {could_not_look}"
         );
     }
 

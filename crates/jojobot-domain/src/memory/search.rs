@@ -727,6 +727,16 @@ pub trait Search: Send + Sync {
     /// not run, leaves this half serving the version it last read. Without this
     /// the caller cannot tell that answer from a complete one.
     fn memory_coverage(&self) -> Coverage;
+
+    /// How much of the sessions half this projection holds — the same question
+    /// as [`mail_coverage`](Self::mail_coverage) and
+    /// [`memory_coverage`](Self::memory_coverage), asked of the third store.
+    ///
+    /// This half refreshes before every answer rather than on a boot scan, so
+    /// the only way it goes behind is a read that could not reach the store —
+    /// the last good index goes on answering, and without this the caller
+    /// cannot tell that from "no session says that".
+    fn session_coverage(&self) -> Coverage;
 }
 
 #[cfg(test)]

@@ -18,6 +18,7 @@ impl Default for SpySearch {
             hits: Mutex::new(Vec::new()),
             coverage: Coverage::Loaded,
             memory: Coverage::Loaded,
+            session: Coverage::Loaded,
         }
     }
 }
@@ -57,6 +58,16 @@ impl SpySearch {
         Self::covering(Coverage::Unread, Vec::new())
     }
 
+    /// A search port whose SESSIONS half is degraded — a read that could not
+    /// reach the store, with the last good index left standing.
+    pub(crate) fn over_sessions(session: Coverage, hits: Vec<Hit>) -> Self {
+        SpySearch {
+            hits: Mutex::new(hits),
+            session,
+            ..Default::default()
+        }
+    }
+
     pub(crate) fn query(&self) -> SearchQuery {
         self.seen
             .lock()
@@ -87,6 +98,10 @@ impl Search for SpySearch {
     fn memory_coverage(&self) -> Coverage {
         self.memory
     }
+
+    fn session_coverage(&self) -> Coverage {
+        self.session
+    }
 }
 
 /// A [`Search`] double: it records the query it was handed and answers with
@@ -102,6 +117,8 @@ pub(crate) struct SpySearch {
     coverage: Coverage,
     /// The same, for the memory half.
     memory: Coverage,
+    /// The same, for the sessions half.
+    session: Coverage,
 }
 
 pub(crate) fn capture_args(subject: &str, content: &str) -> CaptureArgs {

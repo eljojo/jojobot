@@ -417,6 +417,19 @@ pub struct FullTextIndex {
     /// proves the eviction is scoped to what changed rather than to the whole
     /// run: siblings of a changed entry must not move this number.
     session_entries_deleted: std::sync::atomic::AtomicUsize,
+    /// Whether the sessions half has ever been loaded from a real read of the
+    /// store — [`mail_loaded`](Self::mail_loaded)'s question, asked of the
+    /// third store. This half has no separate "touched" state: nothing writes
+    /// a session document except [`ingest_sessions`](Self::ingest_sessions)
+    /// itself, so there is no route to "partly filled by writes, never read
+    /// whole" the way mail and memory each have one.
+    session_loaded: std::sync::atomic::AtomicBool,
+    /// Whether the last read behind the sessions half failed to reach the
+    /// store — [`mail_refresh_failed_at`](Self::mail_refresh_failed_at)'s
+    /// question, asked of the third store. Cleared by the next
+    /// [`ingest_sessions`](Self::ingest_sessions) that runs, whether or not it
+    /// found anything to write.
+    session_refresh_failed: std::sync::atomic::AtomicBool,
 }
 
 impl FullTextIndex {
@@ -459,6 +472,8 @@ impl FullTextIndex {
             sessions: RwLock::new(Vec::new()),
             session_entries_written: std::sync::atomic::AtomicUsize::new(0),
             session_entries_deleted: std::sync::atomic::AtomicUsize::new(0),
+            session_loaded: std::sync::atomic::AtomicBool::new(false),
+            session_refresh_failed: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -502,6 +517,14 @@ impl FullTextIndex {
             + 1;
         self.memory_refresh_failed_at
             .store(at, std::sync::atomic::Ordering::Release);
+    }
+
+    /// Record that the read behind this answer could not reach the sessions
+    /// store, so the sessions half is serving whatever it last read. Cleared
+    /// by the next [`ingest_sessions`](Self::ingest_sessions) that runs.
+    pub fn session_refresh_failed(&self) {
+        self.session_refresh_failed
+            .store(true, std::sync::atomic::Ordering::Release);
     }
 
     /// Record that this entity's document is indexed as it stands in the store.
@@ -831,6 +854,22 @@ impl FullTextIndex {
             (rewrite, evict, evicted_entry_counts, entry_changes)
         };
         let changed = rewrite.len() + evict.len();
+        // **Set whether or not anything changed**, the memory and mail halves'
+        // own rule: reaching the store is what this reports, and a read that
+        // found nothing new still reached it.
+        //
+        // **Simpler than the other two halves on purpose.** Memory and mail
+        // stamp a failure against a reading point so a success already in
+        // flight cannot clear one that lands after it — this half has no such
+        // guard: any successful call clears any prior failure outright. This
+        // half is refreshed fresh before every answer rather than from a
+        // periodic boot scan, so the window that guard exists to close is
+        // narrower here; it is a known simplification, not a claim there is
+        // no window at all.
+        self.session_loaded
+            .store(true, std::sync::atomic::Ordering::Release);
+        self.session_refresh_failed
+            .store(false, std::sync::atomic::Ordering::Release);
         if changed == 0 {
             return Ok(0);
         }
@@ -1640,6 +1679,22 @@ impl FullTextIndex {
             (false, false) => Coverage::Unread,
             (true, _) if behind_now => Coverage::Partial(Behind::Stale),
             (true, _) => Coverage::Loaded,
+        }
+    }
+
+    /// The sessions half's question, asked the simpler way: this half has
+    /// only one route in and one route behind, so there is no `touched` case
+    /// to fold in the way [`memory_coverage`](Self::memory_coverage) and
+    /// [`mail_coverage`](Self::mail_coverage) each have one.
+    pub fn session_coverage(&self) -> Coverage {
+        use std::sync::atomic::Ordering::Acquire;
+        match (
+            self.session_loaded.load(Acquire),
+            self.session_refresh_failed.load(Acquire),
+        ) {
+            (false, _) => Coverage::Unread,
+            (true, true) => Coverage::Partial(Behind::Stale),
+            (true, false) => Coverage::Loaded,
         }
     }
 
@@ -2536,6 +2591,10 @@ impl Search for Retrieval {
     fn memory_coverage(&self) -> Coverage {
         self.index.memory_coverage()
     }
+
+    fn session_coverage(&self) -> Coverage {
+        self.index.session_coverage()
+    }
 }
 
 #[async_trait]
@@ -2707,10 +2766,12 @@ impl IndexedSessions {
 #[async_trait]
 impl Refresh for IndexedSessions {
     async fn refresh(&self) {
-        // A read that cannot reach the store leaves the last good one standing.
-        // The session half reports no coverage of its own, so an answer says
-        // nothing about how far behind it is — see the note on the card.
-        let _ = self.sync().await;
+        // A read that cannot reach the store leaves the last good one
+        // standing, and now says so: `session_coverage` is what lets an
+        // answer tell that from having searched and found nothing.
+        if self.sync().await.is_err() {
+            self.index.session_refresh_failed();
+        }
     }
 }
 
@@ -4842,6 +4903,10 @@ mod tests {
         sessions: RwLock<Vec<jojobot_domain::session::Session>>,
         summary: RwLock<Option<(i64, Option<jiff::Timestamp>)>>,
         reads: std::sync::atomic::AtomicUsize,
+        /// The store stops answering `all_sessions`, so a refresh behind it
+        /// fails and the sessions half is left serving what it last read —
+        /// [`Board::blind`]'s own mechanism, for the third store.
+        blind: std::sync::atomic::AtomicBool,
     }
 
     impl SummarizedSessions {
@@ -4850,6 +4915,7 @@ mod tests {
                 sessions: RwLock::new(sessions),
                 summary: RwLock::new(None),
                 reads: std::sync::atomic::AtomicUsize::new(0),
+                blind: std::sync::atomic::AtomicBool::new(false),
             })
         }
 
@@ -4861,6 +4927,14 @@ mod tests {
         /// How many times the real `all_sessions` ran.
         fn reads_ran(&self) -> usize {
             self.reads.load(std::sync::atomic::Ordering::SeqCst)
+        }
+
+        fn blinded(&self) {
+            self.blind.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+
+        fn sighted(&self) {
+            self.blind.store(false, std::sync::atomic::Ordering::SeqCst);
         }
     }
 
@@ -4877,6 +4951,11 @@ mod tests {
             &self,
         ) -> Result<Vec<jojobot_domain::session::Session>, jojobot_domain::session::SessionError>
         {
+            if self.blind.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(jojobot_domain::session::SessionError::Store(
+                    "the sessions store cannot be read".into(),
+                ));
+            }
             self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Ok(self.sessions.read().expect("sessions poisoned").clone())
         }
@@ -4964,6 +5043,50 @@ mod tests {
         {
             unimplemented!("this double only answers all_sessions and write_summary")
         }
+    }
+
+    /// **The sessions half reports its own coverage** — [`Board`]'s own test
+    /// on `mail_coverage`, asked of the third store. A fresh index has read
+    /// nothing; a read that cannot reach the store leaves the last good one
+    /// standing and says so; a read taken after recovery clears it.
+    #[tokio::test]
+    async fn a_session_read_that_cannot_reach_the_store_leaves_the_index_behind() {
+        let index = Arc::new(FullTextIndex::open().expect("index opens"));
+        assert_eq!(
+            index.session_coverage(),
+            Coverage::Unread,
+            "nothing has read the sessions store yet"
+        );
+
+        let spy = SummarizedSessions::new(vec![run(
+            "s-gamma",
+            "bot:gamma",
+            "the kiln slice",
+            "the damper is hand-cut",
+        )]);
+        let sessions = Arc::new(IndexedSessions::new(spy.clone(), index.clone()));
+        sessions.rebuild().await.expect("rebuild");
+        assert_eq!(
+            index.session_coverage(),
+            Coverage::Loaded,
+            "nothing has failed yet, so nothing is behind"
+        );
+
+        spy.blinded();
+        Refresh::refresh(sessions.as_ref()).await;
+        assert_eq!(
+            index.session_coverage(),
+            Coverage::Partial(Behind::Stale),
+            "a read that could not reach the store leaves the index behind"
+        );
+
+        spy.sighted();
+        Refresh::refresh(sessions.as_ref()).await;
+        assert_eq!(
+            index.session_coverage(),
+            Coverage::Loaded,
+            "a read taken after the failure speaks for the store as it stands"
+        );
     }
 
     /// **An unchanged session store costs no re-read.** The session half's
