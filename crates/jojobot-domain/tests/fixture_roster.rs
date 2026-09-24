@@ -255,6 +255,12 @@ const ROSTER: &[&str] = &[
     "person:kept-alpha",
     "person:kept-beta",
     "person:kappa",
+    "person:delta",
+    "person:epsilon",
+    "person:zeta",
+    "person:eta",
+    "person:theta",
+    "person:iota",
     // Bob's Burgers.
     "person:linda",
     "person:louise",

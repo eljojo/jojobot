@@ -288,6 +288,19 @@ impl Memory for Folded {
         self.inner.scan().await
     }
 
+    /// **Forwarded, not defaulted.** Left to [`Memory::scan_entity`]'s own
+    /// default, this fold would answer a one-entity question by reading
+    /// every entity's every fact through [`scan`](Self::scan) and throwing
+    /// away all but one row — a cost that grows with the whole store on
+    /// every write, paid by [`IndexedMemory`](crate::search::IndexedMemory)'s
+    /// per-write refresh regardless of which entity was touched. The fold
+    /// caches no document of its own to consult instead, so forwarding is
+    /// the whole fix: whatever the store underneath can do better, this
+    /// stops hiding from it.
+    async fn scan_entity(&self, entity: &EntityId) -> Result<Option<DocScan>, MemoryError> {
+        self.inner.scan_entity(entity).await
+    }
+
     async fn write_summary(&self) -> Result<Option<WriteSummary>, MemoryError> {
         self.inner.write_summary().await
     }
@@ -785,6 +798,221 @@ mod tests {
             recalled.iter().any(|f| f.id == fact.id),
             "the write must be visible in the store even though the fold refresh failed: \
              {recalled:?}",
+        );
+    }
+
+    /// **Counts calls to the whole-corpus `scan`, apart from `scan_entity`.**
+    /// `scan_entity` is answered directly here, from `self.inner.scan()`
+    /// called by hand rather than through this double's own counted `scan`
+    /// method — `InMemoryMemory` has the identical gap this double exists to
+    /// catch `Folded` having, so forwarding to `self.inner.scan_entity`
+    /// would fall through to `InMemoryMemory`'s own default and be
+    /// indistinguishable from the whole-corpus path this counts.
+    struct CountingScan {
+        inner: Arc<InMemoryMemory>,
+        scan_calls: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl Memory for CountingScan {
+        async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
+            self.inner.add_entity(new).await
+        }
+        async fn list_entities(
+            &self,
+            kind: Option<EntityKind>,
+        ) -> Result<Vec<Entity>, MemoryError> {
+            self.inner.list_entities(kind).await
+        }
+        async fn former_handles(&self) -> Result<Vec<FormerHandle>, MemoryError> {
+            self.inner.former_handles().await
+        }
+        async fn update_entity(
+            &self,
+            handle: &EntityId,
+            patch: EntityPatch,
+        ) -> Result<Guarded<Entity>, MemoryError> {
+            self.inner.update_entity(handle, patch).await
+        }
+        async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
+            self.inner.archive_entity(id, reason).await
+        }
+        async fn rename_entity(
+            &self,
+            from: &EntityId,
+            to: &EntityId,
+            parent: Option<EntityId>,
+            date: Date,
+            override_token: Option<&str>,
+        ) -> Result<Guarded<Entity>, MemoryError> {
+            self.inner
+                .rename_entity(from, to, parent, date, override_token)
+                .await
+        }
+        async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
+            self.inner.capture(fact).await
+        }
+        async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
+            self.inner.recall(subject).await
+        }
+        async fn history(
+            &self,
+            entity: &EntityId,
+            key: &str,
+        ) -> Result<Vec<FieldWrite>, MemoryError> {
+            self.inner.history(entity, key).await
+        }
+        async fn claim_history(
+            &self,
+            address: &FactAddress,
+        ) -> Result<Vec<ClaimWrite>, MemoryError> {
+            self.inner.claim_history(address).await
+        }
+        async fn update_fact(
+            &self,
+            address: &FactAddress,
+            patch: FactPatch,
+            caller: &EntityId,
+        ) -> Result<Guarded<Fact>, MemoryError> {
+            self.inner.update_fact(address, patch, caller).await
+        }
+        async fn fields(&self, entity: &EntityId) -> Result<BTreeMap<String, String>, MemoryError> {
+            self.inner.fields(entity).await
+        }
+        async fn retract(
+            &self,
+            address: &FactAddress,
+            reason: Option<&str>,
+            date: Date,
+            caller: &EntityId,
+        ) -> Result<Retraction, MemoryError> {
+            self.inner.retract(address, reason, date, caller).await
+        }
+        async fn merge(
+            &self,
+            folded: &EntityId,
+            survivor: &EntityId,
+            reason: Option<&str>,
+            date: Date,
+        ) -> Result<Merge, MemoryError> {
+            self.inner.merge(folded, survivor, reason, date).await
+        }
+        async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
+            self.inner.set_prose(entity, prose).await
+        }
+        async fn scan(&self) -> Result<Vec<DocScan>, MemoryError> {
+            self.scan_calls
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.inner.scan().await
+        }
+        async fn scan_entity(&self, entity: &EntityId) -> Result<Option<DocScan>, MemoryError> {
+            Ok(self
+                .inner
+                .scan()
+                .await?
+                .into_iter()
+                .find(|d| d.entity.as_ref().is_some_and(|e| &e.id == entity)))
+        }
+        async fn declare_type(&self, declared: DeclaredType) -> Result<DeclaredType, MemoryError> {
+            self.inner.declare_type(declared).await
+        }
+        async fn declared_types(&self) -> Result<Vec<DeclaredType>, MemoryError> {
+            self.inner.declared_types().await
+        }
+        async fn declare_kind(
+            &self,
+            token: &str,
+            origin: types::Origin,
+            fields: Vec<types::Field>,
+        ) -> Result<(), MemoryError> {
+            self.inner.declare_kind(token, origin, fields).await
+        }
+        async fn declared_kinds(&self) -> Result<Vec<(String, types::Origin)>, MemoryError> {
+            self.inner.declared_kinds().await
+        }
+        async fn reclaim_kind(&self, token: &str) -> Result<(), MemoryError> {
+            self.inner.reclaim_kind(token).await
+        }
+    }
+
+    /// 🚨 **One write's own store work must not grow with how much is
+    /// already stored.** Before `Folded::scan_entity` forwarded, it fell to
+    /// [`Memory::scan_entity`]'s own default: read every entity's every fact
+    /// through `scan`, then keep one row and discard the rest — a cost that
+    /// grows with the whole store regardless of which entity was asked
+    /// about. The count that proves it: how many times the whole-corpus
+    /// `scan` ran to answer one `scan_entity` call, asked once against a
+    /// small corpus and once against a large one. A count that does not move
+    /// is the proof, and here it does not even have to move off zero.
+    #[tokio::test]
+    async fn scan_entity_does_not_pay_for_the_whole_corpus() {
+        async fn scan_calls_for_one_entity(handles: &[&str]) -> usize {
+            let inner = Arc::new(InMemoryMemory::booted());
+            for handle in handles {
+                let new = NewEntity::new(
+                    EntityId::person(*handle),
+                    format!("Person {handle}"),
+                    "user-named",
+                );
+                match inner.add_entity(new.clone()).await.expect("add ok") {
+                    Guarded::Written(_) => {}
+                    Guarded::Blocked {
+                        attempted,
+                        candidates,
+                    } => {
+                        let token =
+                            jojobot_domain::memory::guard::override_token(&attempted, &candidates);
+                        inner
+                            .add_entity(NewEntity {
+                                override_token: Some(token),
+                                ..new
+                            })
+                            .await
+                            .expect("add ok")
+                            .written()
+                            .expect("the override clears the near-miss");
+                    }
+                }
+            }
+            let scan_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let counted = Arc::new(CountingScan {
+                inner,
+                scan_calls: scan_calls.clone(),
+            });
+            let folded = Folded::new(counted);
+            folded
+                .scan_entity(&EntityId::person("person:alpha"))
+                .await
+                .expect("scan_entity ok");
+            scan_calls.load(std::sync::atomic::Ordering::SeqCst)
+        }
+
+        const SMALL: &[&str] = &["person:alpha", "person:beta"];
+        const LARGE: &[&str] = &[
+            "person:alpha",
+            "person:beta",
+            "person:gamma",
+            "person:kappa",
+            "person:delta",
+            "person:epsilon",
+            "person:zeta",
+            "person:eta",
+            "person:theta",
+            "person:iota",
+        ];
+        let small = scan_calls_for_one_entity(SMALL).await;
+        let large = scan_calls_for_one_entity(LARGE).await;
+        assert_eq!(
+            small,
+            large,
+            "one write's store work must not depend on how many things are already stored: \
+             {small} whole-corpus scans at {} entities, {large} at {}",
+            SMALL.len(),
+            LARGE.len(),
+        );
+        assert_eq!(
+            small, 0,
+            "scan_entity must not read the whole corpus to answer about one entity: {small} calls",
         );
     }
 
