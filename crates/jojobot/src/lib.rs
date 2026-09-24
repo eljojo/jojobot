@@ -35,19 +35,19 @@ pub struct AppState {
     /// Absolute URL of the protected-resource metadata endpoint.
     pub metadata_url: String,
     /// The Memory port backing the `capture`/`recall` tools. Always the real
-    /// Outline adapter (possibly unconfigured) — no toy store ships.
+    /// adapter (possibly unconfigured) — no toy store ships.
     pub memory: Arc<dyn Memory>,
     /// The retrieval port backing `search` — the projection over the same store.
     /// A separate port, not a second store: in production both fields are the one
     /// indexed adapter, so every write keeps the index current.
     pub search: Arc<dyn Search>,
-    /// The Mailboxes port backing the mailbox tools. A **different bounded
-    /// context with its own pages in the same store** — always the real
-    /// adapter, possibly unconfigured; no toy store ships.
+    /// The Mailboxes port backing the mailbox tools. A **separate bounded
+    /// context, kept in its own tables in the same SQL store** — always the
+    /// real adapter, possibly unconfigured; no toy store ships.
     pub mailboxes: Arc<dyn Mailboxes>,
     /// The Sessions port backing `journal`, `amend_journal`, `wrap_session` and
-    /// the session half of `start_here`. A third context in the same collection, in
-    /// **its own project** — never the mailbox one.
+    /// the session half of `start_here`. A third bounded context, in **its own
+    /// tables in the same SQL store** — never the mailbox ones.
     pub sessions: Arc<dyn Sessions>,
     /// The Teachings port — whether a session's handle has already been
     /// taught how a domain behaves. Always the real adapter; no toy store
