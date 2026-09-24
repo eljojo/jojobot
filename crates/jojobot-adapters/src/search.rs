@@ -4048,6 +4048,49 @@ mod tests {
         );
     }
 
+    /// **Deduped by identity, not by the whole hit.** The same claim can be
+    /// sitting in two docs at once — a correction has landed and one doc's
+    /// re-index has not caught up with it yet — and both answer the same
+    /// query until it does. `identity` keys a fact on its address, never its
+    /// content, so two copies of one claim differing only in what they say
+    /// are one fact and must be one hit. A dedupe comparing whole hits would
+    /// see two different bodies and keep both — the stale one included.
+    #[tokio::test]
+    async fn one_fact_scanned_into_two_docs_answers_once() {
+        let stale = fact(
+            "person:milhouse",
+            "f1",
+            "the couch needs a leg fixed, quimby-forty",
+            date(2026, 1, 1),
+        );
+        let fresh = fact(
+            "person:milhouse",
+            "f1",
+            "the couch is fixed now, quimby-forty",
+            date(2026, 1, 2),
+        );
+        let index = index_of(vec![
+            scan("doc-a-stale", None, "", vec![stale]),
+            scan("doc-b-fresh", None, "", vec![fresh]),
+        ]);
+
+        let found: Vec<String> = index
+            .search(&SearchQuery::text("quimby-forty"))
+            .expect("search ok")
+            .iter()
+            .filter_map(|hit| match hit {
+                Hit::Fact { fact, .. } => Some(fact.address().to_string()),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(
+            found.len(),
+            1,
+            "one claim sitting in two docs must answer once, not once per doc: {found:?}",
+        );
+    }
+
     /// The limit is honoured, and defaults to twenty.
     #[tokio::test]
     async fn the_limit_caps_the_list_and_defaults_to_twenty() {
