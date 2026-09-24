@@ -262,19 +262,22 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
         .await
         .says("thing:commit-omicron");
 
-    // GAP — but the link is `connection`, which records that the two are
-    // related and not that one AUTHORIZED the other. Naming a link is served
-    // where both ends are entities: a key declared to hold a reference points
-    // the commit at the project and walks both ways, the way the bikes story
-    // walks a loan. It does not reach THIS link, because the authority is a
-    // CLAIM — the ruling is a fact address — and a reference holds an entity
-    // handle. So the chain is walkable and its meaning is still a reading job.
+    // CLOSED — `capture`'s `derived_from` plus `recall`'s `built_on` answer
+    // this: a claim on the commit naming the ruling's fact address as
+    // `derived_from`, then `recall(subject: "project:jojobot-server",
+    // built_on: &ruling)` walks back from the ruling and returns it.
+    // `derived_from` takes any fact address regardless of subject, so the
+    // claim and its source need not share an entity. What shipped answers a
+    // different name than the one this beat imagined — the capability is a
+    // claim-to-claim link, walkable in both directions, never a `connection`
+    // edge between entities.
     //   s.commit("thing:commit-omicron", authorized_by: &ruling).await;
     s.has_no_verb("authorized_by", &["capture", "search"]).await;
 
-    // GAP — the defect has the same problem from the other end: nothing
-    // connects it to the commit that closed it. The record is on the page, the
-    // fix is in the history, and only a person knows they are the same story.
+    // CLOSED — the same mechanism as the guard above, read from the other
+    // end: a claim naming the defect's fact address as `derived_from`, then
+    // `recall(subject: "project:jojobot-server", built_on: &defect)` walks
+    // back from the defect and returns what closed it.
     //   s.fact_about(&defect, "closed by", "closed-by", "thing:commit-omicron").await;
     s.has_no_verb("closed_by", &["capture", "update_fact"])
         .await;

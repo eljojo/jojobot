@@ -106,14 +106,11 @@ async fn an_unsourced_candidate_is_visibly_unsourced() {
     checked.says("probably good");
     s.find("Riverbend").await.says("place:riverbend");
 
-    // GAP — and having checked, saying so is a record and reaching it is not.
-    // The check goes down as a typed record naming the claim it checked, since
-    // `derived_from` takes a fact address, with what was found under a key of
-    // its own. Nothing gets it back from the claim: the claim reads the same
-    // either way — `inference`, no edge, no parent — and `derived_from` is
-    // neither an edge nor a declared relation, so no walk turns it around and
-    // no filter takes a fact address. The check is findable by its wording,
-    // which is where the next session pays for the phone call again.
+    // CLOSED — `capture`'s `derived_from` plus `recall`'s `built_on` answer
+    // this: the check goes down as a claim naming the guessed claim's own
+    // fact address as `derived_from`, with what was found under a field of
+    // its own, and `recall(subject: "place:riverbend", built_on:
+    // &riverbend_guess)` walks back from the guessed claim and returns it.
     //   s.checked(&riverbend_guess, found: "nothing to source it to").await;
     s.has_no_verb("checked", &["update_fact", "capture"]).await;
 
