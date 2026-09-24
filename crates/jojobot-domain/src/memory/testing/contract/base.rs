@@ -7767,6 +7767,38 @@ pub async fn a_declared_type_reads_back<M: Memory>(store: &M) {
     );
 }
 
+/// **The roster is ordered by type name, never by when each was declared.**
+///
+/// Declaration order records when somebody happened to write something, and
+/// no reader can reason from that — the operator's ruling. Declared out of
+/// alphabetical order on purpose, or a store that happens to keep
+/// declaration order passes this unchanged.
+pub async fn the_type_roster_is_ordered_by_name<M: Memory>(store: &M) {
+    let one_key = |name: &str| DeclaredType::new(name, vec![Field::required("k", ValueType::Text)]);
+    declare(store, one_key("contract-zebra-roster")).await;
+    declare(store, one_key("contract-apple-roster")).await;
+    declare(store, one_key("contract-mango-roster")).await;
+
+    let names: Vec<String> = store
+        .declared_types()
+        .await
+        .expect("declared_types should succeed")
+        .into_iter()
+        .map(|t| t.name)
+        .filter(|n| n.ends_with("-roster"))
+        .collect();
+
+    assert_eq!(
+        names,
+        vec![
+            "contract-apple-roster".to_string(),
+            "contract-mango-roster".to_string(),
+            "contract-zebra-roster".to_string(),
+        ],
+        "the roster reads back sorted by name, however the types were declared: {names:?}",
+    );
+}
+
 /// **Declaring again replaces the keys whole.**
 ///
 /// A type is the set of keys it names now. One that accumulated every key
@@ -11430,6 +11462,7 @@ pub async fn run_all<M: Memory>(store: &M) {
     a_field_at_the_validators_limit_survives_storage(store).await;
 
     a_declared_type_reads_back(store).await;
+    the_type_roster_is_ordered_by_name(store).await;
     declaring_a_type_again_replaces_its_keys(store).await;
     a_type_with_no_keys_is_refused_and_writes_nothing(store).await;
     a_shipped_type_refuses_a_callers_redeclaration(store).await;

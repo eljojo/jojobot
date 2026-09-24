@@ -2236,7 +2236,11 @@ impl Memory for InMemoryMemory {
     }
 
     async fn declared_types(&self) -> Result<Vec<crate::memory::types::DeclaredType>, MemoryError> {
-        Ok(self.types.lock().unwrap().clone())
+        // **By name, not by when each was declared** — the real store's own
+        // order, and the one a reader can build on.
+        let mut types = self.types.lock().unwrap().clone();
+        types.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(types)
     }
 
     async fn declare_kind(
