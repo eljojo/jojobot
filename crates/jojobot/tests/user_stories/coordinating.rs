@@ -262,30 +262,54 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
         .await
         .says("thing:commit-omicron");
 
-    // CLOSED — `capture`'s `derived_from` plus `recall`'s `built_on` answer
-    // this: a claim on the commit naming the ruling's fact address as
-    // `derived_from`, then `recall(subject: "project:jojobot-server",
-    // built_on: &ruling)` walks back from the ruling and returns it.
-    // `derived_from` takes any fact address regardless of subject, so the
-    // claim and its source need not share an entity. What shipped answers a
-    // different name than the one this beat imagined — the capability is a
-    // claim-to-claim link, walkable in both directions, never a `connection`
-    // edge between entities.
-    //   s.commit("thing:commit-omicron", authorized_by: &ruling).await;
+    // The commit's own claim says what authorized it, and it names a
+    // specific claim rather than the project in general: `derived_from`
+    // takes the ruling's own fact address — not an entity handle, and not
+    // the same subject the ruling itself is filed under — and a walk back
+    // from the ruling, through `built_on`, returns it.
+    let authorized = s
+        .guess_from(
+            "thing:commit-omicron",
+            "authorized by the ruling that a second field carries how settled a claim is",
+            &ruling,
+        )
+        .await;
+    s.shape(
+        "what was built on the ruling",
+        json!({"subject": "thing:commit-omicron", "built_on": &ruling}),
+    )
+    .await
+    .says(&format!("\"address\":\"{authorized}\""))
+    // The negative it depends on: an ordinary claim on the same commit
+    // that does not derive from the ruling is not swept in by the walk.
+    .never_says("landed the column the ruling called for");
+    // What shipped answers a different name than the one this guard
+    // imagined: no verb or argument named `authorized_by` exists, only the
+    // claim-to-claim capability above.
     s.has_no_verb("authorized_by", &["capture", "search"]).await;
 
-    // CLOSED — the same mechanism as the guard above, read from the other
-    // end: a claim naming the defect's fact address as `derived_from`, then
-    // `recall(subject: "project:jojobot-server", built_on: &defect)` walks
-    // back from the defect and returns what closed it.
-    //   s.fact_about(&defect, "closed by", "closed-by", "thing:commit-omicron").await;
+    // The defect has the same problem from the other end, and the same
+    // mechanism answers it: a claim naming the defect's own fact address as
+    // `derived_from`, walked back the same way.
+    let closed = s
+        .guess_from(
+            "thing:commit-omicron",
+            "closed the defect where a claim carrying an escaped quote could not be written",
+            &defect,
+        )
+        .await;
+    s.shape(
+        "what was built on the defect",
+        json!({"subject": "thing:commit-omicron", "built_on": &defect}),
+    )
+    .await
+    .says(&format!("\"address\":\"{closed}\""))
+    .never_says("landed the column the ruling called for");
     s.has_no_verb("closed_by", &["capture", "update_fact"])
         .await;
     s.recall("project:jojobot-server")
         .await
         .says("could not be written at all");
-    let _ = &defect;
-    //   s.closed(&defect, by_commit: "dcedd0a").await;
 
     s.wrap("answered where the ruling came from, and could not answer for the commit")
         .await;

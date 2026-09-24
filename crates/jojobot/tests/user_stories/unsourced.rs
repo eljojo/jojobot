@@ -14,6 +14,8 @@
 //! about it, so no assertion can hold it and none pretends to — and it
 //! proposes no call either, because there is no verb that would fix it.
 
+use serde_json::json;
+
 use super::dsl::Story;
 
 #[tokio::test]
@@ -62,7 +64,8 @@ async fn an_unsourced_candidate_is_visibly_unsourced() {
 
     // Unsourced: worked out from nothing in particular — no menu, no review,
     // no earlier claim behind it.
-    s.guess("place:riverbend", "probably good, seems like a nice spot")
+    let riverbend_guess = s
+        .guess("place:riverbend", "probably good, seems like a nice spot")
         .await;
 
     s.wrap("one candidate sourced, one worked out from nothing")
@@ -106,12 +109,35 @@ async fn an_unsourced_candidate_is_visibly_unsourced() {
     checked.says("probably good");
     s.find("Riverbend").await.says("place:riverbend");
 
-    // CLOSED — `capture`'s `derived_from` plus `recall`'s `built_on` answer
-    // this: the check goes down as a claim naming the guessed claim's own
-    // fact address as `derived_from`, with what was found under a field of
-    // its own, and `recall(subject: "place:riverbend", built_on:
-    // &riverbend_guess)` walks back from the guessed claim and returns it.
-    //   s.checked(&riverbend_guess, found: "nothing to source it to").await;
+    // The check goes down as a claim naming the guessed claim's own fact
+    // address as `derived_from`, with what was found under a field of its
+    // own, and a walk back from the guessed claim, through `built_on`,
+    // returns it.
+    let check_record = s
+        .call(
+            "capture",
+            json!({
+                "subject": "place:riverbend",
+                "content": "checked by phone: no Thursday special",
+                "provenance": "inference",
+                "derived_from": &riverbend_guess,
+                "fields": {"found": "nothing to source it to"},
+            }),
+        )
+        .await
+        .field("address");
+    s.shape(
+        "what was built on the unsourced guess",
+        json!({"subject": "place:riverbend", "built_on": &riverbend_guess}),
+    )
+    .await
+    .says(&format!("\"address\":\"{check_record}\""))
+    .says("nothing to source it to")
+    // The negative it depends on: the guess's own content is not the check,
+    // and the walk does not echo the source back as one of its own results.
+    .never_says("probably good, seems like a nice spot");
+    // No verb or argument named `checked` exists — only the claim-to-claim
+    // capability above.
     s.has_no_verb("checked", &["update_fact", "capture"]).await;
 
     s.wrap("checked the unsourced one, and could not record that it was checked")
