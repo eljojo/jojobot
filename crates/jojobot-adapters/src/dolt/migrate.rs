@@ -2246,6 +2246,36 @@ mod tests {
     /// migration may take that away again — `0007` drops the table `0003`
     /// creates, so a check at the end would report a defect on a pair that is
     /// working exactly as written.
+    ///
+    /// **Both interrupted directions ride the same walk, on the same store.**
+    /// A death can land between the begun-marker and the statement (the
+    /// change never happened) or between the statement and the ledger row
+    /// (the change is standing and unrecorded); each migration is put through
+    /// both before the walk moves on, using the one pool the whole test
+    /// already pays for.
+    ///
+    /// **Not-landed** is folded into the round already here: marking a
+    /// version begun before applying it is exactly the state a death in that
+    /// window leaves, so the existing `apply` call now runs with the marker
+    /// already down, and the existing assertions are what proves recovery —
+    /// a migration whose shape reads "already reached" before its statement
+    /// ran would see `apply` skip it and return nothing, failing the first
+    /// assertion below rather than the second.
+    ///
+    /// **Landed-but-unrecorded** takes the version just applied, removes its
+    /// ledger row and marks it begun again — the shape now reads true without
+    /// help, so a correct `apply` records it without touching the store a
+    /// second time, and a shape that answered "already reached" for the
+    /// wrong reason would have failed already, above.
+    ///
+    /// **`NoRows` is the one shape this cannot drive from the schema alone.**
+    /// Its landed state is "no row violates the condition", which an empty
+    /// table already satisfies before the statement ever runs — so without a
+    /// row seeded to violate it first, both directions pass for a reason
+    /// that has nothing to do with the shape. [`seed_before_recovery_check`]
+    /// supplies that row by version and panics, naming it, for a `NoRows`
+    /// migration it does not recognize — a silent skip would read as
+    /// coverage that is not there.
     #[tokio::test]
     async fn every_migrations_declared_shape_is_reached_once_it_has_run() {
         let scratch = Scratch::new("migrate-shapes-reached");
@@ -2257,7 +2287,19 @@ mod tests {
             .await
             .expect("a database of its own");
 
+        // Primes the ledger and begun tables with nothing to apply, so
+        // `mark_begun` below has a table to write into before the first
+        // migration ever runs.
+        apply(&pool, &[]).await.expect("the ledger tables exist");
+
         for (last, migration) in MIGRATIONS.iter().enumerate() {
+            seed_before_recovery_check(&pool, migration.version).await;
+
+            // Not landed: a death after the marker committed and before the
+            // statement went out.
+            mark_begun(&pool, migration.version)
+                .await
+                .expect("the marker lands");
             assert_eq!(
                 apply(&pool, &MIGRATIONS[..=last])
                     .await
@@ -2275,9 +2317,117 @@ mod tests {
                  interruption would re-issue a statement that had already landed",
                 migration.version,
             );
+
+            // Landed but not recorded: a death after the statement committed
+            // and before the ledger row went in.
+            sqlx::query("DELETE FROM schema_migration WHERE version = ?")
+                .bind(migration.version)
+                .execute(&pool)
+                .await
+                .expect("the ledger row goes");
+            mark_begun(&pool, migration.version)
+                .await
+                .expect("the marker lands again");
+            assert_eq!(
+                apply(&pool, &MIGRATIONS[..=last])
+                    .await
+                    .expect("the start completes the schema"),
+                Vec::<String>::new(),
+                "{} was already landed, so a second start must record it rather than \
+                 reissue its statement",
+                migration.version,
+            );
+            let recorded: Option<String> =
+                sqlx::query_scalar("SELECT version FROM schema_migration WHERE version = ?")
+                    .bind(migration.version)
+                    .fetch_optional(&pool)
+                    .await
+                    .expect("the ledger is readable");
+            assert_eq!(
+                recorded.as_deref(),
+                Some(migration.version),
+                "{} landed but unrecorded must still end up recorded",
+                migration.version,
+            );
         }
 
         store.stop().await;
+    }
+
+    /// **A row that violates a `NoRows` migration's condition, seeded before
+    /// its recovery is checked.** Every other shape answers "not yet reached"
+    /// from the schema alone; a backfill or a cleanup leaves the schema
+    /// exactly as it found it, so only the rows can tell "not yet run" from
+    /// "ran and found nothing to do" — and an empty table already reads as
+    /// the second one, for free, which is the answer this seed exists to
+    /// rule out.
+    ///
+    /// Every row here is filed under `person:already-here`, the roster
+    /// handle the badge migration's own test already uses for exactly this
+    /// "a row from before the change" shape — a fresh handle per migration
+    /// would need its own roster entry for no reason a reader could see. The
+    /// walk keeps one growing schema rather than a fresh database per
+    /// migration, so each row's own id only has to not collide with another
+    /// seed's in the same table.
+    ///
+    /// A `NoRows` migration with no arm here panics naming it, rather than
+    /// silently reading as covered.
+    async fn seed_before_recovery_check(pool: &MySqlPool, version: &str) {
+        match version {
+            "0024_rhythm_kind_takes_its_name" => {
+                sqlx::query(
+                    "INSERT INTO type_field (type_name, key_name, ordinal, holds) \
+                     VALUES ('rhythm', 'cadence_days', 0, 'int')",
+                )
+                .execute(pool)
+                .await
+                .expect("the rhythm type's own row lands");
+            }
+            "0035_fact_write_backfill" => {
+                sqlx::query(
+                    "INSERT INTO fact (entity, id, content, provenance, status, date) \
+                     VALUES ('person:already-here', 's35', 'a claim with no write of its own', \
+                     'testimony', 'active', '2026-01-01')",
+                )
+                .execute(pool)
+                .await
+                .expect("a claim with no write behind it lands");
+            }
+            "0046_fact_status_archived" => {
+                sqlx::query(
+                    "INSERT INTO fact (entity, id, content, provenance, status, recorded_at) \
+                     VALUES ('person:already-here', 's46', 'a claim overtaken by a later one', \
+                     'testimony', 'retracted', '2026-01-01')",
+                )
+                .execute(pool)
+                .await
+                .expect("a claim carrying a retired status lands");
+            }
+            "0047_fact_write_status_archived" => {
+                sqlx::query(
+                    "INSERT INTO fact_write (entity, fact_id, ordinal, content, provenance, \
+                     status, recorded_at) \
+                     VALUES ('person:already-here', 's47', 1, 'a claim overtaken by a later one', \
+                     'testimony', 'negated', '2026-01-01')",
+                )
+                .execute(pool)
+                .await
+                .expect("a write carrying a retired status lands");
+            }
+            _ => {
+                let migration = MIGRATIONS
+                    .iter()
+                    .find(|m| m.version == version)
+                    .expect("the version came from this same list");
+                if matches!(migration.leaves, Leaves::NoRows(_, _)) {
+                    panic!(
+                        "{version} is a NoRows migration with no seed registered in \
+                         seed_before_recovery_check — without one, its recovery check \
+                         cannot tell \"not yet run\" from \"ran and found nothing to do\""
+                    );
+                }
+            }
+        }
     }
 
     /// **The shape migration 0018 declares is the one that recovers it.**
