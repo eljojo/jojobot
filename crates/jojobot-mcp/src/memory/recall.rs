@@ -294,6 +294,13 @@ pub struct RecallArgs {
     /// question somebody has the moment a claim is taken back. **Records of
     /// every status come back**, because a claim that was itself withdrawn is
     /// part of the answer to *what did we build on this*.
+    ///
+    /// **The address is selection enough.** Send it on its own and the call
+    /// answers about the thing the address names — you do not have to repeat
+    /// the subject beside it. Name a `subject` as well and it has to be that
+    /// same thing, or the call is refused: two arguments pointing at two
+    /// things is a mistake worth hearing about rather than one jojobot picks
+    /// between.
     #[serde(default)]
     pub(crate) built_on: Option<String>,
     /// **The values already recorded under one key**, across the objects this
@@ -1433,6 +1440,16 @@ impl Jojobot {
             }),
             (None, None) => None,
         };
+        // **Parsed here, once, so the fill below and the walk further down
+        // share the same parse** — never a second `FactAddress::parse` of
+        // the same string.
+        let built_on_address = match args.built_on.as_deref() {
+            None => None,
+            Some(address) => match FactAddress::parse(address) {
+                Ok(parsed) => Some(parsed),
+                Err(refused) => return memory_declined("recall", refused),
+            },
+        };
         let query = graph::GraphQuery {
             select: graph::Selection {
                 subject: args.subject.as_deref().map(EntityId::person),
@@ -1451,28 +1468,35 @@ impl Jojobot {
             history: trace,
         };
         // 🚨 **An address is a selection.** A record's address contains its
-        // subject, and a call that named only a record to trace was refused for
-        // naming nothing to recall — which is what the first two callers of
-        // this argument both met on their first use (rule 236). The subject is
-        // filled in from the address when the call chose nothing else, and the
-        // condition is the refusal's own, so the two cannot come to disagree.
+        // subject, and a call that named only a record — to trace, or to walk
+        // lineage from — was refused for naming nothing to recall, which is
+        // what the first callers of these arguments met on their first use
+        // (rule 236). The subject is filled in from the address when the
+        // call chose nothing else, and the condition is the refusal's own,
+        // so the two cannot come to disagree. `history_record` and
+        // `built_on` share this one path rather than each carrying a copy
+        // of it.
         let mut query = query;
-        if let Some(graph::History {
-            of: graph::Trace::Record(address),
-            ..
-        }) = &query.history
-        {
+        let selecting_addresses = [
+            query.history.as_ref().and_then(|h| match &h.of {
+                graph::Trace::Record(address) => Some(("history_record", address.clone())),
+                graph::Trace::Key(_) => None,
+            }),
+            built_on_address
+                .clone()
+                .map(|address| ("built_on", address)),
+        ];
+        for (arg_name, address) in selecting_addresses.into_iter().flatten() {
             match &query.select.subject {
                 // **The two DISAGREEING is the case worth a refusal.** A
                 // caller whose arguments point at two different things has made
                 // a mistake, and answering one of them quietly picks for them.
                 Some(named) if named != &address.home => {
                     let named = named.clone();
-                    let address = address.clone();
                     return memory_declined(
                         "recall",
                         MemoryError::InvalidQuery(format!(
-                            "this call traces {address}, which is a record on {}, and asks for \
+                            "{arg_name} names {address}, which is a record on {}, and asks for \
                              {named}. Drop the subject — the address names its own — or name the \
                              record you meant on {named}",
                             address.home,
@@ -1677,11 +1701,10 @@ impl Jojobot {
         // **Lineage, when the call asked for it.** It is a claim-level question
         // rather than an object-level one, so it rides beside the objects
         // rather than inside them.
-        let standing_on = match &args.built_on {
+        let standing_on = match &built_on_address {
             None => None,
-            Some(address) => {
-                let source = FactAddress::parse(address).map_err(memory_error)?;
-                match self.memory.built_on(&source).await {
+            Some(source) => {
+                match self.memory.built_on(source).await {
                     Ok(claims) => Some(serde_json::json!({
                         "source": source.to_string(),
                         "count": claims.len(),
@@ -3869,6 +3892,109 @@ mod tests {
                 && untouched.get("revision_count").is_none()
                 && untouched.get("revision_note").is_none(),
             "a claim written once carries none of these keys: {untouched}"
+        );
+    }
+
+    /// 🚨 **`built_on` alone is a complete selection, the same shape
+    /// `history_record` already has.** An address names the entity its
+    /// source claim is filed under, so a call naming only `built_on` is not
+    /// naming nothing — it was refused before this, on the domain's own
+    /// narrows-nothing check, because `built_on` filled no subject in.
+    #[tokio::test]
+    async fn built_on_alone_is_selection_enough_and_returns_the_derived_claims() {
+        let jojobot = handler();
+        let source =
+            address_of(&capture_ok(&jojobot, capture_args("alpha", "the source claim")).await);
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                derived_from: Some(source.clone()),
+                ..capture_args("alpha", "built on the source claim")
+            },
+        )
+        .await;
+
+        let alone = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    built_on: Some(source.clone()),
+                    ..of_nothing()
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        assert_eq!(
+            alone["objects"][0]["id"], "person:alpha",
+            "the address names its own subject and the read did not use it: {alone}"
+        );
+        assert_eq!(alone["built_on"]["count"], 1, "{alone}");
+        assert!(
+            alone["built_on"]["claims"][0]["content"] == "built on the source claim",
+            "the derived claim itself is not in the answer: {alone}"
+        );
+    }
+
+    /// **A subject that agrees with `built_on`'s own address changes
+    /// nothing** — the positive this mechanism rests on: filling the subject
+    /// in is only ever a convenience for the caller who left it out, never a
+    /// different answer than naming it explicitly would give.
+    #[tokio::test]
+    async fn built_on_with_a_matching_subject_gives_the_same_answer() {
+        let jojobot = handler();
+        let source =
+            address_of(&capture_ok(&jojobot, capture_args("alpha", "the source claim")).await);
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                derived_from: Some(source.clone()),
+                ..capture_args("alpha", "built on the source claim")
+            },
+        )
+        .await;
+
+        let named = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    subject: Some("alpha".into()),
+                    built_on: Some(source.clone()),
+                    ..of_nothing()
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        assert_eq!(named["built_on"]["count"], 1, "{named}");
+        assert!(
+            named["built_on"]["claims"][0]["content"] == "built on the source claim",
+            "{named}"
+        );
+    }
+
+    /// **`built_on`'s address is refused against a contradicting subject the
+    /// same way `history_record`'s is** — one shared path, not two guards
+    /// that could come to disagree about what counts as a contradiction.
+    #[tokio::test]
+    async fn built_on_with_a_contradicting_subject_is_refused() {
+        let jojobot = handler();
+        let source =
+            address_of(&capture_ok(&jojobot, capture_args("alpha", "the source claim")).await);
+        ensure(&jojobot, "person:beta").await;
+
+        let refused = blocked(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    subject: Some("beta".into()),
+                    built_on: Some(source.clone()),
+                    ..of_nothing()
+                }))
+                .await
+                .expect("a malformed query is an answer, not a protocol failure"),
+        );
+        let way = refused["how_to_proceed"]
+            .as_str()
+            .unwrap_or_else(|| panic!("a refusal says the way out: {refused}"));
+        assert!(
+            way.contains("person:alpha") && way.contains("person:beta"),
+            "the refusal names both things the call pointed at: {way}"
         );
     }
 

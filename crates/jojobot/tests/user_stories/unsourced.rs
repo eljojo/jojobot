@@ -128,7 +128,7 @@ async fn an_unsourced_candidate_is_visibly_unsourced() {
         .field("address");
     s.shape(
         "what was built on the unsourced guess",
-        json!({"subject": "place:riverbend", "built_on": &riverbend_guess}),
+        json!({"built_on": &riverbend_guess}),
     )
     .await
     .says(&format!("\"address\":\"{check_record}\""))

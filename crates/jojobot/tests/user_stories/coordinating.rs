@@ -274,15 +274,12 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
             &ruling,
         )
         .await;
-    s.shape(
-        "what was built on the ruling",
-        json!({"subject": "thing:commit-omicron", "built_on": &ruling}),
-    )
-    .await
-    .says(&format!("\"address\":\"{authorized}\""))
-    // The negative it depends on: an ordinary claim on the same commit
-    // that does not derive from the ruling is not swept in by the walk.
-    .never_says("landed the column the ruling called for");
+    s.shape("what was built on the ruling", json!({"built_on": &ruling}))
+        .await
+        .says(&format!("\"address\":\"{authorized}\""))
+        // The negative it depends on: an ordinary claim on the same commit
+        // that does not derive from the ruling is not swept in by the walk.
+        .never_says("landed the column the ruling called for");
     // What shipped answers a different name than the one this guard
     // imagined: no verb or argument named `authorized_by` exists, only the
     // claim-to-claim capability above.
@@ -298,13 +295,10 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
             &defect,
         )
         .await;
-    s.shape(
-        "what was built on the defect",
-        json!({"subject": "thing:commit-omicron", "built_on": &defect}),
-    )
-    .await
-    .says(&format!("\"address\":\"{closed}\""))
-    .never_says("landed the column the ruling called for");
+    s.shape("what was built on the defect", json!({"built_on": &defect}))
+        .await
+        .says(&format!("\"address\":\"{closed}\""))
+        .never_says("landed the column the ruling called for");
     s.has_no_verb("closed_by", &["capture", "update_fact"])
         .await;
     s.recall("project:jojobot-server")

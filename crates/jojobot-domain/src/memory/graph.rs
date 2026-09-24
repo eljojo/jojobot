@@ -654,7 +654,9 @@ impl GraphQuery {
         let select = &self.select;
         if select.narrows_nothing() {
             return Err(MemoryError::InvalidQuery(
-                "name what to recall: a subject, a kind, a type, or a key".into(),
+                "name what to recall: a subject, a kind, a type, a key, or a record's own \
+                 address — history_record or built_on"
+                    .into(),
             ));
         }
         if let Some(subject) = &select.subject {
@@ -4399,6 +4401,21 @@ mod tests {
             }
             other => panic!("a miss must name the handle and its candidates: {other:?}"),
         }
+    }
+
+    /// **The narrows-nothing refusal names every way forward, including the
+    /// two a caller reaches by an address alone** — `history_record` and
+    /// `built_on` each select without a subject, by filling one in from the
+    /// address's own home entity, so a refusal that omits them from its list
+    /// of options misleads a caller into thinking a subject, a kind, a type
+    /// or a key are the only ways to select something.
+    #[test]
+    fn the_narrows_nothing_refusal_names_a_record_address_as_a_way_forward() {
+        let refused = resolved(&store(), &[], &GraphQuery::default())
+            .expect_err("an empty query cannot be served");
+        let message = refused.to_string();
+        assert!(message.contains("history_record"), "{message}");
+        assert!(message.contains("built_on"), "{message}");
     }
 
     /// **A query that narrows nothing is refused**, and so is a walk of no
