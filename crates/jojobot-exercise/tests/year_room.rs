@@ -20,6 +20,7 @@ use jojobot_exercise::run::{
 };
 use jojobot_exercise::surface::Surface;
 use serde_json::{Value, json};
+use std::path::PathBuf;
 
 /// **The locks the year carries, in the order its document writes them.**
 ///
@@ -59,13 +60,16 @@ fn room_document() -> Playbook {
 }
 
 /// A room furnished the way a run furnishes it, and a handle to write into it
-/// as an occupant would.
+/// as an occupant would — **live**, through the served surface, exactly as
+/// [`furnished`] used to and [`filed_year_seed`] still does once, to build
+/// the cache every other caller now reads.
+///
 /// ⛔️ **It boots nothing.** A sitting is a run of its own and brings its own
 /// session, in its own day. A session minted here would be a run in the day the
 /// server is actually having — months after the year's first sitting — and the
 /// sweep answering in January's frame would see a beat from its own future and
 /// keep offering it.
-async fn furnished() -> (Room, Surface) {
+async fn furnished_live() -> (Room, Surface) {
     let (room, surface) = Room::open_with_client(&server_binary().expect("a jojobot binary"))
         .await
         .expect("a room");
@@ -75,6 +79,44 @@ async fn furnished() -> (Room, Surface) {
         .await
         .expect("the room is furnished");
     (room, surface)
+}
+
+/// **The directory a live furnish of the year leaves behind, built once per
+/// process and copied for every caller after that** — the same mechanism
+/// `decisions_room.rs` already has (`filed_register_seed`), reused rather
+/// than duplicated. `OnceCell::get_or_try_init` is what makes the first
+/// builder finish before any concurrent caller copies from it: a caller
+/// that arrives while the first build is still running awaits the same
+/// build rather than starting a second one.
+static YEAR_SEED: tokio::sync::OnceCell<PathBuf> = tokio::sync::OnceCell::const_new();
+
+async fn filed_year_seed() -> PathBuf {
+    YEAR_SEED
+        .get_or_try_init(|| async {
+            let binary = server_binary().expect("a jojobot binary");
+            Room::snapshot_after(&binary, |surface| async move {
+                expectations::seed_for(expectations::YEAR_ROOM)?
+                    .furnish(&surface)
+                    .await?;
+                Ok(())
+            })
+            .await
+        })
+        .await
+        .expect("the filed-year seed builds")
+        .clone()
+}
+
+/// A room furnished the way a run furnishes it, and a handle to write into it
+/// as an occupant would — **the cache**, a private copy of
+/// [`filed_year_seed`]'s directory. `Room::open_with_client_from` copies the
+/// seed before spawning, so a caller here mutates its own directory only and
+/// never another test's.
+async fn furnished() -> (Room, Surface) {
+    let seed = filed_year_seed().await;
+    Room::open_with_client_from(&server_binary().expect("a jojobot binary"), &seed)
+        .await
+        .expect("a room from the seed")
 }
 
 /// **A session for one sitting, in the day that sitting is in.**
@@ -3513,7 +3555,7 @@ async fn the_walk_to_the_place_holds_whatever_the_event_is_actually_called() {
 /// suite as the thing that must fail, so the route cannot quietly come back.
 #[tokio::test]
 async fn the_years_turns_are_checked_in_rather_than_set_by_hand() {
-    let (_room, surface) = furnished().await;
+    let (_room, surface) = furnished_live().await;
     let by_hand = work_the_year(&surface, &room_document(), &WORKED, &[5, 12]).await;
     let judged = judge_all(&surface, &by_hand).await;
     assert!(
@@ -3523,13 +3565,95 @@ async fn the_years_turns_are_checked_in_rather_than_set_by_hand() {
         saying(&judged),
     );
 
-    let (_room, surface) = furnished().await;
+    let (_room, surface) = furnished_live().await;
     let boundaries = worked_the_year(&surface).await;
     let judged = judge_all(&surface, &boundaries).await;
     assert!(
         judged[LATE_NOVEMBER[0]].held,
         "the year checked in and the turns are not on file as derivations: {}",
         saying(&judged),
+    );
+}
+
+/// 🚨 **The one guard nothing else here can be** — `decisions_room.rs`'s own
+/// pattern, reused rather than duplicated. A copy of the cached year reads
+/// identically to a live furnish, by design (proven below), so no read
+/// against the store can tell whether
+/// `the_years_turns_are_checked_in_rather_than_set_by_hand` actually drove
+/// its own furnish or borrowed the cache every other test now reads. This
+/// reads the source instead.
+#[test]
+fn the_canary_test_still_furnishes_live_rather_than_borrowing_the_cache() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/year_room.rs");
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("this test's own file at {} reads: {e}", path.display()));
+    let marker = "async fn the_years_turns_are_checked_in_rather_than_set_by_hand";
+    let start = source
+        .find(marker)
+        .expect("the canary is still named this — update the marker if it was renamed");
+    let body = &source[start..];
+    let end = body
+        .find("\n}\n")
+        .expect("the function has a closing brace on its own line");
+    let body = &body[..end];
+    assert!(
+        body.contains("furnished_live()"),
+        "the canary no longer furnishes live, so it proves nothing beyond what the cache \
+         already proved once when it was built"
+    );
+    assert!(
+        !body.contains("filed_year_seed"),
+        "the canary now borrows the cache instead of furnishing live"
+    );
+}
+
+/// **The cached year reads the same as a live furnish, on what a sitting can
+/// actually find** — the proof that [`filed_year_seed`] is not quietly
+/// thinner than what [`furnished_live`] gives every sitting. Checked on an
+/// entity from the room's opening furniture and on the operator's own
+/// opening words, which is the LAST write the furnish makes and the one
+/// most likely to go missing if the cache ever stopped matching it.
+#[tokio::test]
+async fn the_cached_year_reads_the_same_as_a_live_furnish() {
+    let (_live_room, live) = furnished_live().await;
+    let (_cached_room, cached) = furnished().await;
+
+    for (surface, label) in [(&live, "live"), (&cached, "cached")] {
+        let recall = surface
+            .call("recall", json!({"subject": "org:north-trail-club"}))
+            .await;
+        let read: Value = serde_json::from_str(&recall).expect("a JSON read");
+        assert_eq!(
+            read["objects"][0]["id"], "org:north-trail-club",
+            "{label} room: the club from the opening furniture is not there: {recall}"
+        );
+    }
+
+    // **The snippet, never the whole answer.** Each room is its own server
+    // run, so a message's `id` and `sent_at` are never going to agree
+    // between one and the other — that is expected of two independent
+    // furnishes, not a defect. The snippet and subject are the wording the
+    // furnish actually wrote, which is what this test is proving matches.
+    async fn opening_message_snippet(surface: &Surface, label: &str) -> (Value, Value) {
+        let found = surface
+            .call(
+                "search",
+                json!({"query": "invoiced, paid, or waived", "include_mail": true}),
+            )
+            .await;
+        let read: Value = serde_json::from_str(&found).expect("a JSON read");
+        let hit = read["results"].as_array().and_then(|hits| hits.first());
+        let hit = hit.unwrap_or_else(|| {
+            panic!("{label} room: the operator's opening message is not findable: {found}")
+        });
+        (hit["subject"].clone(), hit["snippet"].clone())
+    }
+    let live_snippet = opening_message_snippet(&live, "live").await;
+    let cached_snippet = opening_message_snippet(&cached, "cached").await;
+    assert_eq!(
+        live_snippet, cached_snippet,
+        "the operator's opening words — the furnish's own last write — read differently \
+         between a live furnish and the cache"
     );
 }
 
