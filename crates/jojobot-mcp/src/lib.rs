@@ -122,7 +122,8 @@ pub struct Jojobot {
     /// The verb table this handler dispatches through, and the source the
     /// argument gate reads a verb's published arguments from.
     tool_router: ToolRouter<Jojobot>,
-    /// The Memory port. Injected: real Outline in production, a fake in tests.
+    /// The Memory port. Injected: the real adapter in production, a fake in
+    /// tests.
     memory: Arc<dyn Memory>,
     /// The retrieval port — the search projection over the same store. Injected
     /// separately because it is a different port, not a second store: in

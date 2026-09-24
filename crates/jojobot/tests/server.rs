@@ -387,8 +387,8 @@ async fn mcp_accepts_public_host_but_still_guards_dns_rebinding() {
 }
 
 /// A **live** store behind the real index, wired the way `main` wires it: one
-/// `IndexedMemory` serving both ports. The fake stands in for Outline; nothing
-/// else about the pairing is faked.
+/// `IndexedMemory` serving both ports. The fake stands in for the real Memory
+/// adapter; nothing else about the pairing is faked.
 fn searchable_state(addr: SocketAddr) -> AppState {
     let indexed = Arc::new(
         IndexedMemory::new(Arc::new(InMemoryMemory::booted())).expect("the search index opens"),

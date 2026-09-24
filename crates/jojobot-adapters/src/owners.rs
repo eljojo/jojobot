@@ -9,8 +9,8 @@
 //!
 //! **It reads the port, not a store.** Which store holds entities is a wiring
 //! decision that has already changed once and will change again — nothing here
-//! knows or cares. That is also why this is not in [`crate::outline`]: the
-//! entity world sits there today, and the day it moves this file does not.
+//! knows or cares. That is also why this is not in [`crate::dolt::memory`]:
+//! the entity world sits there today, and the day it moves this file does not.
 //!
 //! **The whole surface is existence plus what is near it.** It cannot fetch a
 //! fact, a kind, an edge or a record, and [`OwnerLookup`] gives it nowhere to

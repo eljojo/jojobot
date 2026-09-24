@@ -314,8 +314,8 @@ pub(crate) fn search_args() -> SearchArgs {
 /// port that failed wholesale could not say which read the surface under test
 /// actually depends on.
 pub(crate) enum Down {
-    /// The entity index — the shape an Outline outage takes for the one read
-    /// ownership depends on.
+    /// The entity index — the shape a failed entity-index read takes, for the
+    /// one read ownership depends on.
     EntityIndex,
     /// The type roster — the one fallible step behind every `answers_type`
     /// argument.

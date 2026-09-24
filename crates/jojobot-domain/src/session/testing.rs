@@ -1,10 +1,10 @@
 //! The Sessions contract, and the in-memory fake that must satisfy it.
 //!
-//! One behavioural spec, three tiers — the fake here, the real Outline adapter
-//! over an in-memory API double, and the real adapter against real Outline —
-//! and **the spec is the same code in all three**, which is what stops the fake
-//! from drifting into a store that agrees with the tests and disagrees with
-//! reality.
+//! One behavioural spec, two tiers — the fake here, and the real adapter
+//! against the real store it runs, a disposable database this process spawns
+//! itself — and **the spec is the same code on both**, which is what stops the
+//! fake from drifting into a store that agrees with the tests and disagrees
+//! with reality.
 //!
 //! Behind the `testing` feature, so it compiles for tests here and in downstream
 //! crates but never ships in a production binary.

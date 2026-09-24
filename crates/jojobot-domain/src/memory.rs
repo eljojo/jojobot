@@ -4012,7 +4012,7 @@ pub struct WriteSummary {
 }
 
 /// The Memory port — six verbs over entities and the facts about them. One real
-/// adapter stands behind it in production (Outline); a fake stands behind it in
+/// adapter stands behind it in production; a fake stands behind it in
 /// tests. Three invariants bind every adapter:
 ///
 /// * **read-back** — a write succeeds only if reading it back through the read
@@ -5022,7 +5022,7 @@ mod tests {
     }
 
     /// The full behavioural contract holds for the fake — the same suite the
-    /// gated integration test runs against real Outline.
+    /// real-store test runs against the real adapter.
     #[tokio::test]
     async fn fake_satisfies_the_contract() {
         contract::run_all(&InMemoryMemory::booted()).await;

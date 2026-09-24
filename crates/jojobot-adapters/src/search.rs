@@ -135,9 +135,9 @@ struct Fields {
     /// The store's doc id — the unit of incremental re-indexing.
     doc_id: Field,
     /// A message's id — the mail half's unit of incremental re-indexing. Its own
-    /// field rather than `doc_id`: the two ids come from two different stores
-    /// and share no namespace, so one field would make an Outline page id and a
-    /// card id capable of evicting each other.
+    /// field rather than `doc_id`: an entity's badge and a message's own id come
+    /// from different tables and share no namespace, so one field would make
+    /// them capable of evicting each other.
     message_id: Field,
     /// The entity kind this document is filed under.
     kind: Field,
@@ -5832,8 +5832,8 @@ mod tests {
     /// A store that just hands back the docs it was given, and can drop them.
     ///
     /// Its doc ids are deliberately **not** entity handles — the real store's
-    /// shape, where Outline mints a UUID per page. The fake keys facts by
-    /// handle, so anything that turns on the gap between the two ids is
+    /// shape, where the doc id is the entity's own badge. The fake keys facts
+    /// by handle, so anything that turns on the gap between the two ids is
     /// invisible to it and shows up only here.
     struct Scanned {
         docs: RwLock<Vec<DocScan>>,
@@ -5868,7 +5868,7 @@ mod tests {
             })
         }
 
-        /// The page is deleted in the wiki.
+        /// The document is gone from the store.
         fn vanish(&self) {
             self.docs.write().expect("docs poisoned").clear();
         }
@@ -7111,9 +7111,10 @@ mod tests {
 
     /// **A vanished doc leaves no ghost.** Eviction has to key on the id the
     /// postings were written under — the store's doc id — not the entity handle.
-    /// It keyed on the handle, so in the real store (where a doc id is an Outline
-    /// UUID) the delete matched nothing: the page was gone from the wiki and every
-    /// one of its hits was still being served, forever, from the last scan.
+    /// It keyed on the handle, so in the real store (where a doc id is the
+    /// entity's own badge, not its handle) the delete matched nothing: the
+    /// entity was gone and every one of its hits was still being served,
+    /// forever, from the last scan.
     #[tokio::test]
     async fn reindexing_a_vanished_doc_evicts_every_hit_it_had() {
         let inner = Scanned::new(vec![DocScan {

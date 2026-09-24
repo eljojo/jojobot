@@ -1,10 +1,11 @@
 //! The Mailboxes contract, and the in-memory fake that must satisfy it.
 //!
-//! One behavioural spec, three tiers: the fake here (milliseconds), the real
-//! Outline adapter over an in-memory API double (fast, no network), and the real
-//! adapter against real Outline (gated). **The spec is the same code in all
-//! three**, which is what stops the fake from drifting into a store that agrees
-//! with the tests and disagrees with reality.
+//! One behavioural spec, two tiers: the fake here (milliseconds), and the
+//! real adapter against the real store it runs — a disposable database this
+//! process spawns itself, so it needs no network and no credentials and runs
+//! in an ordinary `cargo test`. **The spec is the same code on both**, which
+//! is what stops the fake from drifting into a store that agrees with the
+//! tests and disagrees with reality.
 //!
 //! Behind the `testing` feature, so it compiles for tests here and in downstream
 //! crates but never ships in a production binary.
@@ -1696,9 +1697,10 @@ pub mod contract {
     /// in.** A hand-off is left in one box and its report goes back in another;
     /// a reply into the same box is the easy case and not the real one. It runs
     /// on every tier because this is precisely where a fake and a store can
-    /// quietly disagree: the real adapter scopes its reads to the mailbox
-    /// PROJECT rather than the box, and if that ever narrowed, a fake checking
-    /// globally would stay green while production stopped linking.
+    /// quietly disagree: the real adapter looks up `in_reply_to` by the
+    /// message's own id, unscoped to any box, and if a fake narrowed that
+    /// lookup to the sender's own box it would stay green while production
+    /// stopped linking.
     pub async fn a_reply_can_answer_a_message_in_another_box(store: &dyn Mailboxes) {
         create(store, "dev").await;
         create(store, "pm").await;
@@ -1980,7 +1982,7 @@ pub mod contract {
     /// case files boxes under [`OWNERS`], and a store that resolves owners by
     /// reading Memory cannot be given them by a constructor — the entities have
     /// to be written, which is I/O. The fake seeds them synchronously and does
-    /// not need this; the Outline adapter does, and running this suite against
+    /// not need this; the real adapter does, and running this suite against
     /// it is the point of the shape.
     /// **How a delivery was taken is recorded, and the two ways differ.**
     ///
