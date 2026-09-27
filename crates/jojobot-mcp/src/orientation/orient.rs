@@ -568,9 +568,42 @@ impl Jojobot {
                             .unwrap_or(jiff::tz::TimeZone::UTC),
                     )
                 });
+                // **Its own gate, taken fresh.** `attach`'s gate is already
+                // released by the time control reaches here, and
+                // materializing a session record below needs the same proof
+                // of serialization `session_for` requires everywhere else it
+                // is called.
+                let gate = self.registry.gate(bot.as_str());
+                let _serialized = gate.lock().await;
                 let outcome = self
                     .decide_role_claim(bot, role, &sid, now, today_or_clock)
                     .await;
+                // **A GRANTED claim has done something, so its session record
+                // is written now, through the same lazy path any first write
+                // uses.** A refused claim writes nothing new — the caller
+                // that lost the race gets no card for a run that never did
+                // anything.
+                if outcome.get("status").and_then(|s| s.as_str()) == Some("taken") {
+                    match self.identified(Some(&sid)) {
+                        Ok(caller) => {
+                            let derived = format!("claimed the {role} role");
+                            if let Err(e) = self
+                                .session_for(&_serialized, &caller, None, Some(&derived))
+                                .await
+                            {
+                                tracing::warn!(
+                                    error = ?e, %sid, role,
+                                    "a granted role claim could not materialize its session \
+                                     record"
+                                );
+                            }
+                        }
+                        Err(_) => tracing::warn!(
+                            %sid, role,
+                            "a granted role claim's own sid did not resolve to a caller"
+                        ),
+                    }
+                }
                 if let Some(obj) = session.as_object_mut() {
                     obj.insert("claim".into(), outcome);
                 }

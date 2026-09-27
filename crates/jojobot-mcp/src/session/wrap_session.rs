@@ -235,6 +235,9 @@ mod tests {
             .expect("wrap ok");
 
         // A fresh session claims the released role at once and is granted it.
+        // `resume: "new"` for the same reason `other`'s own claim above needs
+        // it: `other`'s session is still live, so a bare `resume: None` here
+        // would meet that unrelated choice rather than a claimant to decide.
         let fresh = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
@@ -244,7 +247,7 @@ mod tests {
                     brief: None,
                     skill: None,
                     section: None,
-                    resume: None,
+                    resume: Some("new".into()),
                     sid: None,
                     today: None,
                 }))

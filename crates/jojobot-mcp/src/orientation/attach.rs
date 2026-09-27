@@ -1523,9 +1523,10 @@ mod tests {
 
     /// **Two sequential boots of one identity, with nothing written between
     /// them, do not see each other.** The second gets a fresh handle, not a
-    /// choice — the documented shape a claimed boot was checked against
-    /// separately (reported rather than committed here, since a claim writes
-    /// a fact on the bot's own record and never touches what this reads).
+    /// choice. Paired with
+    /// [`a_granted_claim_alone_leaves_the_session_live_for_the_next_boot`]:
+    /// naming a claim is what tells the two apart, because a GRANTED claim
+    /// is itself a write.
     #[tokio::test]
     async fn two_sequential_boots_with_nothing_written_between_them_do_not_see_each_other() {
         let store = Arc::new(InMemorySessions::new());
@@ -1548,6 +1549,115 @@ mod tests {
              {after}"
         );
         assert!(after["session"]["choices"].is_null(), "{after}");
+    }
+
+    /// **A GRANTED claim is itself a write, so it materializes a session
+    /// record — the same lazy path any other first write uses.** A second
+    /// boot of the same identity, with nothing else written, now finds that
+    /// run live and is offered it, exactly as
+    /// [`booting_again_is_offered_the_session_in_flight`] shows for a
+    /// journal beat.
+    #[tokio::test]
+    async fn a_granted_claim_alone_leaves_the_session_live_for_the_next_boot() {
+        let store = Arc::new(InMemorySessions::new());
+        let memory = Arc::new(InMemoryMemory::booted());
+        let registry = crate::harness::seeded_registry();
+
+        let first = connection_sharing(memory.clone(), store.clone(), registry.clone());
+        make_bot(&first, "gamma").await;
+        let claimed = json_of(
+            &first
+                .start_here(Parameters(OrientArgs {
+                    claim: Some("dev-dispatch".into()),
+                    timezone: None,
+                    bot: Some("gamma".into()),
+                    brief: None,
+                    skill: None,
+                    section: None,
+                    resume: None,
+                    sid: None,
+                    today: None,
+                }))
+                .await
+                .expect("the boot call is ok"),
+        );
+        assert_eq!(claimed["session"]["claim"]["status"], "taken", "{claimed}");
+        let holder_sid = sid_of(&claimed).expect("a handle");
+
+        let second = connection_sharing(memory, store, registry);
+        let offered = boot(&second, "gamma").await;
+        assert!(
+            sid_of(&offered).is_none(),
+            "the choice comes first: {offered}"
+        );
+        let choice = &offered["session"]["choices"][0];
+        assert_eq!(choice["sid"], holder_sid, "{offered}");
+        assert_eq!(choice["working_on"], "claimed the dev-dispatch role");
+    }
+
+    /// **A REFUSED claim writes nothing new — the caller that lost the race
+    /// gets no card for a run that never did anything.** Paired with the
+    /// positive: the holder's own claim, granted moments earlier, does leave
+    /// one.
+    #[tokio::test]
+    async fn a_refused_claim_leaves_no_session_record_beside_the_granted_one() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma").await;
+
+        let first = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    claim: Some("dev-dispatch".into()),
+                    timezone: None,
+                    bot: Some("gamma".into()),
+                    brief: None,
+                    skill: None,
+                    section: None,
+                    resume: None,
+                    sid: None,
+                    today: None,
+                }))
+                .await
+                .expect("start_here ok"),
+        );
+        assert_eq!(first["session"]["claim"]["status"], "taken", "{first}");
+        let holder_sid = sid_of(&first).expect("a handle");
+
+        // A distinct session of the SAME bot, naming the SAME role while the
+        // first lease is still fresh: refused.
+        let second = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    claim: Some("dev-dispatch".into()),
+                    timezone: None,
+                    bot: Some("gamma".into()),
+                    brief: None,
+                    skill: None,
+                    section: None,
+                    resume: Some("new".into()),
+                    sid: None,
+                    today: None,
+                }))
+                .await
+                .expect("start_here ok"),
+        );
+        assert_eq!(second["session"]["claim"]["status"], "refused", "{second}");
+        assert_ne!(
+            sid_of(&second).as_deref(),
+            Some(holder_sid.as_str()),
+            "a distinct session: {second}"
+        );
+
+        let rows = store
+            .sessions_of(&EntityId("bot:gamma".into()))
+            .await
+            .expect("list ok");
+        assert_eq!(
+            rows.len(),
+            1,
+            "the granted claim left one row; the refused one added none: {rows:?}"
+        );
     }
 
     /// **The sweep, and what it is measured from.** A session that has gone a
