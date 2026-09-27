@@ -138,6 +138,10 @@ fn loaded() -> &'static RwLock<BTreeSet<String>> {
 /// It replaces rather than merges: a kind that has gone from the store has
 /// gone, and a merge would keep it alive in a running process for as long as
 /// the process lives.
+///
+/// **The set belongs to the process, not to any one store.** A caller that
+/// opens a second store in the same process must not rely on this call to
+/// keep the two apart — it does not, and it is not the layer that could.
 pub fn load<I, S>(tokens: I)
 where
     I: IntoIterator<Item = S>,

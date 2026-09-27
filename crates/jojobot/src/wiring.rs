@@ -56,6 +56,20 @@ use jojobot_domain::session::Sessions;
 use jojobot_domain::session::mention as session_mention;
 use jojobot_domain::teaching::Teachings;
 
+/// **Whether this process has already provisioned a store.** Set once, by
+/// the first call to [`open_provisioned`] to reach it.
+///
+/// **Process-wide on purpose, and narrowly so.** The kind set
+/// [`open_provisioned`] seeds is itself process-wide (see
+/// `memory::kinds::load`'s own doc), so a second store provisioned in the
+/// same process would already be reading and writing against the first
+/// store's vocabulary with nothing anywhere saying so. This does not make the
+/// kind set per-store, and it does not touch `kinds::seed`, `reload` or
+/// `load` themselves — every caller that seeds a store directly, including
+/// the real-store contract suite, is unaffected. It only refuses a second
+/// call to THIS function in one process.
+static PROVISIONED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+
 /// **Stage zero: seed the kinds this build ships, then guard, then wrap in
 /// `Provisioned`.**
 ///
@@ -71,10 +85,20 @@ use jojobot_domain::teaching::Teachings;
 ///
 /// `bare` must already carry `.knowing(supplied)` — see the module doc for
 /// why that step stays with the caller.
+///
+/// **Refuses a second call in the same process** (see [`PROVISIONED`]),
+/// before touching the store it was handed. A process serves one store.
 pub async fn open_provisioned<M: Memory + Clone + 'static>(
     bare: M,
     supplied: Provisions,
 ) -> anyhow::Result<Arc<dyn Memory>> {
+    if PROVISIONED.set(()).is_err() {
+        anyhow::bail!(
+            "a store is already provisioned in this process — a process serves one store, and \
+             the kind set the first one seeded is process-wide (see memory::kinds::load); this \
+             call was refused before touching the store it was handed"
+        );
+    }
     match jojobot_domain::memory::kinds::seed(&bare).await {
         Ok(kinds) => tracing::info!(kinds, "loaded the kinds this instance holds"),
         Err(e) => tracing::error!(
