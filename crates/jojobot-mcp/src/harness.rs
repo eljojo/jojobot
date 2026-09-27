@@ -307,6 +307,34 @@ pub(crate) async fn boot_answering(
     )
 }
 
+/// Answer the choice a boot handed back, naming `today` and/or `timezone`
+/// on this same call — what a resume that moves the day, the zone, or
+/// neither actually sends.
+pub(crate) async fn boot_answering_dated(
+    jojobot: &Jojobot,
+    name: &str,
+    answer: &str,
+    today: Option<&str>,
+    timezone: Option<&str>,
+) -> serde_json::Value {
+    json_of(
+        &jojobot
+            .start_here(Parameters(OrientArgs {
+                claim: None,
+                timezone: timezone.map(str::to_string),
+                today: today.map(str::to_string),
+                bot: Some(name.into()),
+                brief: None,
+                skill: None,
+                section: None,
+                resume: Some(answer.into()),
+                sid: None,
+            }))
+            .await
+            .expect("the boot call is ok"),
+    )
+}
+
 /// The handle a boot handed back, or `None` when it handed none back.
 pub(crate) fn sid_of(body: &serde_json::Value) -> Option<String> {
     body["session"]["sid"].as_str().map(str::to_string)

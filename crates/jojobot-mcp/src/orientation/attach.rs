@@ -128,9 +128,15 @@ impl Jojobot {
                 // included, because a run outlives a device hop and the zone it
                 // began in is not always the zone it is being worked in. A
                 // resume that names none keeps what the run had: see `attach`.
+                //
+                // **Independent of the day, on purpose.** These used to be one
+                // `if let Some(zone) = timezone` block, which meant a resume
+                // naming `today` alone never reached `set_day` at all, and one
+                // naming `timezone` alone called `set_day(&handle, None)` —
+                // clearing a day this call never asked to touch. Two callers
+                // asking two different questions must not answer each other's.
                 if let Some(zone) = timezone {
                     self.registry.set_zone(&handle, Some(zone.to_string()));
-                    self.registry.set_day(&handle, today);
                     if let Some(session) = &session
                         && let Err(e) = self.sessions.set_timezone(&session.id, Some(zone)).await
                     {
@@ -141,6 +147,9 @@ impl Jojobot {
                              one back"
                         );
                     }
+                }
+                if let Some(day) = today {
+                    self.registry.set_day(&handle, Some(day));
                 }
                 match session {
                     Some(session) => {
@@ -157,7 +166,15 @@ impl Jojobot {
                         // caller stating its own day is answered in that
                         // frame already and has nothing to be told.
                         if today.is_none() {
-                            crate::answer::note_resumed_day(&mut block, session.started_on);
+                            // **Read from the registry, the same place a write
+                            // reads `caller.day` from — never the session
+                            // row's own `started_on`,** which is set once at
+                            // creation and never moved by a resume that
+                            // changes the day. Reading the row would let this
+                            // note name a day no write will actually use.
+                            let live_day =
+                                self.registry.lookup(handle.as_str()).and_then(|h| h.day);
+                            crate::answer::note_resumed_day(&mut block, live_day);
                         }
                         block
                     }
@@ -520,6 +537,95 @@ mod tests {
             zone_on_record().await.as_deref(),
             Some("America/New_York"),
             "…and a resume that names none leaves it where it was",
+        );
+    }
+
+    /// **A resume names `today` and `timezone` independently — neither
+    /// clears the other, and naming neither keeps both.** These used to
+    /// share one `if let Some(zone) = timezone` guard, so a resume naming
+    /// `today` alone never reached `set_day` at all, and one naming
+    /// `timezone` alone cleared the day by calling `set_day(&handle, None)`.
+    #[tokio::test]
+    async fn a_resume_moves_the_day_independently_of_the_zone() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        ensure(&jojobot, "person:milhouse").await;
+
+        let booted = boot_on(&jojobot, "gamma", "2026-03-15").await;
+        let sid = sid_of(&booted).expect("a handle");
+        journal_entry(&jojobot, &sid, "started").await;
+
+        let day_of = async |sid: &str| {
+            let mut args = capture_args("milhouse", "dated by the run");
+            args.sid = Some(sid.to_string());
+            args.recorded_at = None;
+            capture_ok(&jojobot, args).await["recorded_at"]
+                .as_str()
+                .expect("a capture is stamped with a day")
+                .to_string()
+        };
+        assert_eq!(day_of(&sid).await, "2026-03-15");
+
+        // `today` alone moves the day.
+        boot_answering_dated(&jojobot, "gamma", &sid, Some("2026-04-01"), None).await;
+        assert_eq!(
+            day_of(&sid).await,
+            "2026-04-01",
+            "a resume naming today alone must move the day"
+        );
+
+        // `timezone` alone must not clear a day this call never named.
+        boot_answering_dated(&jojobot, "gamma", &sid, None, Some("Europe/Madrid")).await;
+        assert_eq!(
+            day_of(&sid).await,
+            "2026-04-01",
+            "a resume naming a zone alone must leave the day exactly where it was"
+        );
+
+        // Naming neither keeps both.
+        boot_answering_dated(&jojobot, "gamma", &sid, None, None).await;
+        assert_eq!(
+            day_of(&sid).await,
+            "2026-04-01",
+            "a resume naming neither must leave the day exactly where it was"
+        );
+    }
+
+    /// **`day_note` names the day a write will actually use, never the
+    /// session row's own stale `started_on`.** After a resume moves the day,
+    /// a further resume naming no day of its own must report — and a
+    /// following capture must record under — the SAME day, read from the
+    /// receipt rather than recomputed here.
+    #[tokio::test]
+    async fn a_resumed_days_note_names_the_day_a_capture_actually_records_under() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        ensure(&jojobot, "person:milhouse").await;
+
+        let booted = boot_on(&jojobot, "gamma", "2026-03-15").await;
+        let sid = sid_of(&booted).expect("a handle");
+        journal_entry(&jojobot, &sid, "started").await;
+
+        // Move the day.
+        boot_answering_dated(&jojobot, "gamma", &sid, Some("2026-04-01"), None).await;
+
+        // Resume again, naming no day of its own: the note must read the
+        // moved day.
+        let resumed = boot_answering(&jojobot, "gamma", &sid).await;
+        let noted = resumed["session"]["day_note"]
+            .as_str()
+            .unwrap_or_else(|| panic!("a day note: {resumed}"));
+        assert!(noted.contains("2026-04-01"), "{noted}");
+
+        // And a capture on this same sid, naming no day, must land on that
+        // same day.
+        let mut args = capture_args("milhouse", "after the moved day");
+        args.sid = Some(sid.clone());
+        args.recorded_at = None;
+        let captured = capture_ok(&jojobot, args).await;
+        assert_eq!(
+            captured["recorded_at"], "2026-04-01",
+            "the note and the write must agree: {captured}"
         );
     }
 
