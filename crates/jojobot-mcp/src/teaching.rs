@@ -187,6 +187,28 @@ pub(crate) fn shadowed_argument<'a>(
     sent.into_iter().find(|key| properties.contains_key(*key))
 }
 
+/// **Which verb a shadowed key's argument actually belongs to — the
+/// current call's own, or the OTHER verb's when a caller has moved a key
+/// across from one to the other.** Checked against `current`'s own
+/// properties first: a key that verb already has needs no cross-reference,
+/// so a `capture` carrying `provenance` is told about `capture`. Only when
+/// `current` does not have it does `other`'s set answer, so a `capture`
+/// carrying `status` — real record state, but not one of capture's own
+/// arguments — is told about `update_fact`, and an `update_fact` carrying
+/// `check_in` is told about `capture`.
+pub(crate) fn shadowed_argument_verb<'a>(
+    sent: impl IntoIterator<Item = &'a str> + Clone,
+    current: &str,
+    current_properties: &serde_json::Map<String, serde_json::Value>,
+    other: &str,
+    other_properties: &serde_json::Map<String, serde_json::Value>,
+) -> Option<(&'a str, String)> {
+    if let Some(key) = shadowed_argument(sent.clone(), current_properties) {
+        return Some((key, current.to_string()));
+    }
+    shadowed_argument(sent, other_properties).map(|key| (key, other.to_string()))
+}
+
 /// **The argument names `verb` actually publishes**, read from the tool
 /// router rather than a list this file maintains — the schema a client sees
 /// is the schema this reads, so a new argument on either verb is covered the
@@ -1630,24 +1652,22 @@ mod tests {
         }
     }
 
-    /// **A field key that shadows one of `capture`'s own arguments is
-    /// taught, once — and a field that shadows nothing is not.** Both halves
-    /// in one case, the same shape [`the_first_capture_of_a_session_is_taught_and_the_second_is_not`]
+    /// **The real case: a capture carrying `status`, which is not one of
+    /// capture's own arguments — only update_fact's.** Checking capture's
+    /// own schema alone misses this; the teaching has to name update_fact,
+    /// never capture. Both halves in one case, the same shape
+    /// [`the_first_capture_of_a_session_is_taught_and_the_second_is_not`]
     /// already uses: the negative is read against the positive that fires,
     /// never trusted alone.
     #[tokio::test]
-    async fn a_field_that_shadows_an_argument_is_taught_once_and_a_plain_one_is_not() {
+    async fn a_capture_carrying_status_is_taught_to_use_update_fact() {
         let jojobot = handler();
         make_bot(&jojobot, "gamma").await;
         let sid = booted(&jojobot, "gamma").await;
 
-        // **`provenance`, not `status`.** `status` is real record state, but
-        // it is not one of capture's OWN arguments — only update_fact's;
-        // `captures_published_arguments_name_its_own_real_ones` pins that
-        // `provenance` is.
         let mut args = capture_args("alpha", "plays go");
         args.fields = Some(
-            [("provenance".to_string(), "testimony".to_string())]
+            [("status".to_string(), "retired".to_string())]
                 .into_iter()
                 .collect(),
         );
@@ -1658,16 +1678,18 @@ mod tests {
         assert!(
             teaching.iter().any(|t| {
                 t.as_str().is_some_and(|t| {
-                    t.contains("\"provenance\"") && t.contains("is stored as ordinary data")
+                    t.contains("\"status\"")
+                        && t.contains("is stored as ordinary data")
+                        && t.contains("update_fact")
                 })
             }),
-            "the first field naming an argument this session ever sent carries the teaching: \
+            "a capture carrying status must be taught to use update_fact, not capture: \
              {shadowing}"
         );
 
         let mut second_args = capture_args("alpha", "also plays chess");
         second_args.fields = Some(
-            [("provenance".to_string(), "testimony".to_string())]
+            [("status".to_string(), "retired".to_string())]
                 .into_iter()
                 .collect(),
         );
@@ -1675,10 +1697,9 @@ mod tests {
         assert!(
             !second["teaching"]
                 .as_array()
-                .map(|t| t
-                    .iter()
-                    .any(|t| t.as_str().is_some_and(|t| t.contains("\"provenance\"")
-                        && t.contains("is stored as ordinary data"))))
+                .map(|t| t.iter().any(|t| t.as_str().is_some_and(
+                    |t| t.contains("\"status\"") && t.contains("is stored as ordinary data")
+                )))
                 .unwrap_or(false),
             "the same session shadowing the same argument again is not taught again: {second}"
         );
@@ -1697,7 +1718,39 @@ mod tests {
                     .as_str()
                     .is_some_and(|s| s.contains("is stored as ordinary data"))))
                 .unwrap_or(false),
-            "a field naming nothing capture already takes as an argument teaches nothing: {plain}"
+            "a field naming nothing either verb takes as an argument teaches nothing: {plain}"
+        );
+    }
+
+    /// **The second shape: a field that shadows the CURRENT verb's own
+    /// argument.** No cross-reference is needed — `provenance` is one of
+    /// capture's own arguments, so the teaching names capture, exactly as
+    /// before the union fix.
+    #[tokio::test]
+    async fn a_capture_carrying_its_own_argument_is_taught_to_use_capture() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+
+        let mut args = capture_args("alpha", "plays go");
+        args.fields = Some(
+            [("provenance".to_string(), "testimony".to_string())]
+                .into_iter()
+                .collect(),
+        );
+        let shadowing = capture_as(&jojobot, &sid, args).await;
+        let teaching = shadowing["teaching"]
+            .as_array()
+            .unwrap_or_else(|| panic!("a teaching list: {shadowing}"));
+        assert!(
+            teaching.iter().any(|t| {
+                t.as_str().is_some_and(|t| {
+                    t.contains("\"provenance\"")
+                        && t.contains("is stored as ordinary data")
+                        && t.contains("capture")
+                })
+            }),
+            "a capture carrying its own argument names capture, not update_fact: {shadowing}"
         );
     }
 }

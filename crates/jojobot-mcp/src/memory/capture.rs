@@ -913,11 +913,22 @@ impl Jojobot {
                 // on a call that did not shadow anything would silence the
                 // call that actually does. The schema lookup is skipped
                 // entirely when no fields were sent, which is most calls.
+                //
+                // **Against the UNION of both verbs' arguments, never
+                // capture's alone.** The motivating case is exactly a
+                // capture carrying `status`, an argument only update_fact
+                // has — checking capture's own schema alone would miss it.
                 if !sent_field_keys.is_empty()
-                    && let Some(properties) = crate::teaching::published_arguments("capture")
-                    && let Some(shadowed) = crate::teaching::shadowed_argument(
+                    && let Some(capture_properties) =
+                        crate::teaching::published_arguments("capture")
+                    && let Some(update_fact_properties) =
+                        crate::teaching::published_arguments("update_fact")
+                    && let Some((shadowed, owning_verb)) = crate::teaching::shadowed_argument_verb(
                         sent_field_keys.iter().map(String::as_str),
-                        &properties,
+                        "capture",
+                        &capture_properties,
+                        "update_fact",
+                        &update_fact_properties,
                     )
                     && self
                         .first_contact(FIELD_SHADOWS_ARGUMENT_DOMAIN, Some(&caller))
@@ -925,7 +936,7 @@ impl Jojobot {
                 {
                     crate::answer::note_teaching(
                         &mut body,
-                        &crate::teaching::field_shadows_argument_teaching(shadowed, "capture"),
+                        &crate::teaching::field_shadows_argument_teaching(shadowed, &owning_verb),
                     );
                 }
                 json_result(&body)

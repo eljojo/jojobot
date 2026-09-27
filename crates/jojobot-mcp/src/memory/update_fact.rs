@@ -518,11 +518,21 @@ impl Jojobot {
                 // **Checked before the gate, never after** — see `capture`'s
                 // own copy of this note. The schema lookup is skipped
                 // entirely when no fields were sent, which is most calls.
+                //
+                // **Against the UNION of both verbs' arguments** — see
+                // `capture`'s own copy: an update_fact carrying `check_in`,
+                // capture's own argument, is caught the same way.
                 if !sent_field_keys.is_empty()
-                    && let Some(properties) = crate::teaching::published_arguments("update_fact")
-                    && let Some(shadowed) = crate::teaching::shadowed_argument(
+                    && let Some(update_fact_properties) =
+                        crate::teaching::published_arguments("update_fact")
+                    && let Some(capture_properties) =
+                        crate::teaching::published_arguments("capture")
+                    && let Some((shadowed, owning_verb)) = crate::teaching::shadowed_argument_verb(
                         sent_field_keys.iter().map(String::as_str),
-                        &properties,
+                        "update_fact",
+                        &update_fact_properties,
+                        "capture",
+                        &capture_properties,
                     )
                     && self
                         .first_contact(FIELD_SHADOWS_ARGUMENT_DOMAIN, Some(&caller))
@@ -530,7 +540,7 @@ impl Jojobot {
                 {
                     crate::answer::note_teaching(
                         &mut body,
-                        &crate::teaching::field_shadows_argument_teaching(shadowed, "update_fact"),
+                        &crate::teaching::field_shadows_argument_teaching(shadowed, &owning_verb),
                     );
                 }
                 json_result(&body)
