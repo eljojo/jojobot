@@ -153,6 +153,7 @@ impl Sessions for InMemorySessions {
             timezone: new.timezone,
             started_on: new.started_on,
             served_chars: 0,
+            stated_day: None,
         };
         self.sessions
             .lock()
@@ -244,6 +245,18 @@ impl Sessions for InMemorySessions {
             .map(str::trim)
             .filter(|z| !z.is_empty())
             .map(str::to_string);
+        Ok(sessions[at].clone())
+    }
+
+    async fn set_stated_day(
+        &self,
+        id: &SessionId,
+        day: Option<Date>,
+    ) -> Result<Session, SessionError> {
+        validate_session_id(id)?;
+        let mut sessions = self.sessions.lock().expect("session lock");
+        let at = Self::writable(&mut sessions, id)?;
+        sessions[at].stated_day = day;
         Ok(sessions[at].clone())
     }
 
@@ -1275,6 +1288,80 @@ pub mod contract {
         );
     }
 
+    /// **A resume moves the day exactly the way it moves the zone** —
+    /// [`a_runs_zone_is_stored_and_can_be_moved`]'s own shape, on
+    /// [`Sessions::set_stated_day`] rather than
+    /// [`Sessions::set_timezone`]. `started_on` is untouched throughout:
+    /// this is the OTHER day, the one a later resume moved to.
+    pub async fn a_moved_day_is_stored_and_can_be_moved_again(store: &dyn Sessions) {
+        let day = |text: &str| text.parse::<Date>().expect("a date");
+        let born = store
+            .begin(NewSession {
+                bot: bot("gamma"),
+                sid: sid(90),
+                focus: "acting out a year".to_string(),
+                started_at: at(90),
+                timezone: None,
+                started_on: Some(day("2026-03-15")),
+            })
+            .await
+            .expect("a run may be born stating a day");
+        assert_eq!(
+            store
+                .read_session(&born.id)
+                .await
+                .expect("it reads back")
+                .stated_day,
+            None,
+            "nothing has moved the day yet"
+        );
+
+        // **The device hop, or the day after.** The same run, picked up with a
+        // different day stated.
+        let moved = store
+            .set_stated_day(&born.id, Some(day("2026-04-01")))
+            .await
+            .expect("a run may be moved into another day");
+        assert_eq!(moved.stated_day, Some(day("2026-04-01")));
+        assert_eq!(
+            moved.started_on,
+            Some(day("2026-03-15")),
+            "the creation day is untouched by a move"
+        );
+        assert_eq!(
+            store
+                .read_session(&born.id)
+                .await
+                .expect("it reads back")
+                .stated_day,
+            Some(day("2026-04-01")),
+            "…and the card says so, not just the answer to the write"
+        );
+
+        // A run nobody has moved carries no stated day at all — without this
+        // a store that invents one for every row would pass everything above.
+        let bare = store
+            .begin(NewSession {
+                bot: bot("gamma"),
+                sid: sid(91),
+                focus: "no day moved".to_string(),
+                started_at: at(91),
+                timezone: None,
+                started_on: None,
+            })
+            .await
+            .expect("a run may have no moved day");
+        assert_eq!(
+            store
+                .read_session(&bare.id)
+                .await
+                .expect("it reads back")
+                .stated_day,
+            None,
+            "a run nobody moved is not handed a stated day"
+        );
+    }
+
     pub async fn run_all<S: Sessions, F: Fn() -> S>(fresh: F) {
         a_begun_session_is_active_and_empty(&fresh()).await;
         beginning_twice_under_one_handle_yields_one_run(&fresh()).await;
@@ -1299,5 +1386,6 @@ pub mod contract {
         a_handle_that_is_not_drawn_is_refused(&fresh()).await;
         an_entry_survives_the_round_trip(&fresh()).await;
         a_stated_day_survives_a_write_and_a_read(&fresh()).await;
+        a_moved_day_is_stored_and_can_be_moved_again(&fresh()).await;
     }
 }

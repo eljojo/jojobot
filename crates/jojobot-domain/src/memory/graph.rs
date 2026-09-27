@@ -2591,6 +2591,7 @@ mod tests {
             timezone: None,
             started_on: None,
             served_chars: 0,
+            stated_day: None,
             entries: vec![JournalEntry {
                 id: EntryId("e1".into()),
                 at: "2026-07-24T09:05:00Z".parse().expect("a timestamp"),

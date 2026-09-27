@@ -19,6 +19,8 @@ use crate::memory::{
     Entity, EntityId, FormerHandle, Memory, entity_wearing, mention, resolve_handle,
 };
 
+use jiff::civil::Date;
+
 use super::{
     EntryId, JournalEntry, NewEntry, NewSession, Session, SessionError, SessionId, Sessions,
 };
@@ -235,6 +237,16 @@ impl Sessions for Mentioning {
         timezone: Option<&str>,
     ) -> Result<Session, SessionError> {
         let mut session = self.inner.set_timezone(id, timezone).await?;
+        self.render(&mut session).await?;
+        Ok(session)
+    }
+
+    async fn set_stated_day(
+        &self,
+        id: &SessionId,
+        day: Option<Date>,
+    ) -> Result<Session, SessionError> {
+        let mut session = self.inner.set_stated_day(id, day).await?;
         self.render(&mut session).await?;
         Ok(session)
     }

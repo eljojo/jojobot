@@ -150,6 +150,16 @@ impl Jojobot {
                 }
                 if let Some(day) = today {
                     self.registry.set_day(&handle, Some(day));
+                    if let Some(session) = &session
+                        && let Err(e) = self.sessions.set_stated_day(&session.id, Some(day)).await
+                    {
+                        tracing::warn!(
+                            error = %e, session = %session.id,
+                            "the resumed session's stated day could not be written — this run \
+                             answers in the day it was given, and a restart would read the \
+                             original one back"
+                        );
+                    }
                 }
                 match session {
                     Some(session) => {
@@ -1081,6 +1091,47 @@ mod tests {
         assert_eq!(
             resumed["session"]["session"]["chronology"][0]["text"],
             "read the hand-off"
+        );
+    }
+
+    /// **A moved day survives a restart, exactly as a moved zone already
+    /// does.** Before this, a resume's `today` only ever reached the
+    /// in-process registry — `rebuild_from` reads `started_on`, the creation
+    /// day, off the board, so a restart silently reverted any day a resume
+    /// had moved. Mirrors
+    /// [`a_handle_written_on_the_card_survives_a_restart`]'s own shape.
+    #[tokio::test]
+    async fn a_moved_day_survives_a_restart() {
+        let store = Arc::new(InMemorySessions::new());
+        let memory = Arc::new(InMemoryMemory::booted());
+        let jojobot = connection_sharing(
+            memory.clone(),
+            store.clone(),
+            Arc::new(sid::SessionRegistry::new()),
+        );
+        seed_bot(&memory, "gamma").await;
+
+        let handle = sid_of(&boot_on(&jojobot, "gamma", "2026-03-15").await).expect("a handle");
+        journal_entry(&jojobot, &handle, "started").await;
+
+        // Picked up again, stating a different day — the device hop a
+        // resume's `today` argument is for.
+        boot_answering_dated(&jojobot, "gamma", &handle, Some("2026-04-01"), None).await;
+
+        // A restart: same board, an empty registry, filled from the board
+        // before the first request.
+        let rebuilt = Arc::new(sid::SessionRegistry::new());
+        let board = store.all_sessions().await.expect("board read ok");
+        rebuilt.rebuild_from(&board);
+        let restarted = connection_sharing(memory, store, rebuilt);
+
+        let resumed = boot_answering(&restarted, "gamma", &handle).await;
+        let note = resumed["session"]["day_note"]
+            .as_str()
+            .unwrap_or_else(|| panic!("a day note: {resumed}"));
+        assert!(
+            note.contains("2026-04-01"),
+            "the moved day did not survive the restart: {note}"
         );
     }
 

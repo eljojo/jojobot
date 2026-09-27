@@ -237,6 +237,13 @@ impl Sessions for CommitsThenFails {
     ) -> Result<Session, SessionError> {
         self.inner.set_timezone(id, timezone).await
     }
+    async fn set_stated_day(
+        &self,
+        id: &SessionId,
+        day: Option<jiff::civil::Date>,
+    ) -> Result<Session, SessionError> {
+        self.inner.set_stated_day(id, day).await
+    }
     async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
         self.inner.close(id, to).await
     }
@@ -319,6 +326,13 @@ impl Sessions for RefusingFocus {
             "the timezone cell on the page could not be written".into(),
         ))
     }
+    async fn set_stated_day(
+        &self,
+        id: &SessionId,
+        day: Option<jiff::civil::Date>,
+    ) -> Result<Session, SessionError> {
+        self.0.set_stated_day(id, day).await
+    }
     async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
         self.0.close(id, to).await
     }
@@ -374,6 +388,13 @@ impl Sessions for RefusingAppend {
         timezone: Option<&str>,
     ) -> Result<Session, SessionError> {
         self.0.set_timezone(id, timezone).await
+    }
+    async fn set_stated_day(
+        &self,
+        id: &SessionId,
+        day: Option<jiff::civil::Date>,
+    ) -> Result<Session, SessionError> {
+        self.0.set_stated_day(id, day).await
     }
     async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
         self.0.close(id, to).await
@@ -490,6 +511,13 @@ impl Sessions for RefusingClose {
     ) -> Result<Session, SessionError> {
         self.inner.set_timezone(id, timezone).await
     }
+    async fn set_stated_day(
+        &self,
+        id: &SessionId,
+        day: Option<jiff::civil::Date>,
+    ) -> Result<Session, SessionError> {
+        self.inner.set_stated_day(id, day).await
+    }
     async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
         if self.refuse.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(SessionError::Store("the close failed in flight".into()));
@@ -564,6 +592,14 @@ impl Sessions for Yielding {
     ) -> Result<Session, SessionError> {
         self.pause().await;
         self.0.set_timezone(id, timezone).await
+    }
+    async fn set_stated_day(
+        &self,
+        id: &SessionId,
+        day: Option<jiff::civil::Date>,
+    ) -> Result<Session, SessionError> {
+        self.pause().await;
+        self.0.set_stated_day(id, day).await
     }
     async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
         self.pause().await;

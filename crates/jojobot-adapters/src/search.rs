@@ -4919,6 +4919,7 @@ mod tests {
             started_on: None,
             timezone: None,
             served_chars: 0,
+            stated_day: None,
             id: SessionId(id.into()),
             sid: None,
             bot: EntityId(bot.into()),
@@ -5057,6 +5058,14 @@ mod tests {
             &self,
             _: &jojobot_domain::session::SessionId,
             _: Option<&str>,
+        ) -> Result<jojobot_domain::session::Session, jojobot_domain::session::SessionError>
+        {
+            unimplemented!("this double only answers all_sessions and write_summary")
+        }
+        async fn set_stated_day(
+            &self,
+            _: &jojobot_domain::session::SessionId,
+            _: Option<jiff::civil::Date>,
         ) -> Result<jojobot_domain::session::Session, jojobot_domain::session::SessionError>
         {
             unimplemented!("this double only answers all_sessions and write_summary")
@@ -5405,6 +5414,7 @@ mod tests {
             started_on: None,
             timezone: None,
             served_chars: 0,
+            stated_day: None,
             id: SessionId(id.into()),
             sid: None,
             bot: EntityId(bot.into()),

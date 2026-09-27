@@ -488,6 +488,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0055_message_posted_by_session.sql"),
         leaves: Leaves::Column("message", "posted_by_session"),
     },
+    Migration {
+        version: "0056_session_stated_day",
+        sql: include_str!("../../migrations/0056_session_stated_day.sql"),
+        leaves: Leaves::Column("session", "stated_day"),
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a
@@ -913,6 +918,7 @@ mod tests {
         "0053_fact_write_happened_through",
         "0054_session_write",
         "0055_message_posted_by_session",
+        "0056_session_stated_day",
     ];
 
     /// **A migration set of this test's own, carrying the shape no shipped

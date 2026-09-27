@@ -624,6 +624,13 @@ pub struct Session {
     /// since this existed to count either way.
     #[serde(default)]
     pub served_chars: u64,
+    /// **The day a resume most recently set this run to**, distinct from
+    /// [`Session::started_on`] — which stays the creation day forever, and
+    /// never moves. `None` until a resume sets one; a reader that wants the
+    /// day this run is CURRENTLY in reads this with `started_on` as the
+    /// fallback, never the other way round.
+    #[serde(default)]
+    pub stated_day: Option<Date>,
 }
 
 /// **A run, without its chronology** — the fields [`list_runs`](crate) and
@@ -963,6 +970,21 @@ pub trait Sessions: Send + Sync {
         &self,
         id: &SessionId,
         timezone: Option<&str>,
+    ) -> Result<Session, SessionError>;
+
+    /// **Record the day a resume most recently set this run to**, replacing
+    /// whatever it carried — [`Session::stated_day`], persisted exactly the
+    /// way [`set_timezone`](Sessions::set_timezone) already persists the
+    /// zone.
+    ///
+    /// A run outlives a restart, so a day set only in the process registry is
+    /// lost the moment the process is. [`Session::started_on`] is untouched
+    /// by this: it stays the day the run began, and this is the day a later
+    /// resume moved it to.
+    async fn set_stated_day(
+        &self,
+        id: &SessionId,
+        day: Option<Date>,
     ) -> Result<Session, SessionError>;
 
     /// Move a session to a terminal state. Refused if it is already in one —
@@ -1331,6 +1353,7 @@ mod projection_tests {
             timezone: None,
             started_on: None,
             served_chars: 0,
+            stated_day: None,
             entries: vec![
                 JournalEntry {
                     id: EntryId("e1".into()),
@@ -1735,6 +1758,7 @@ mod tests {
             timezone: None,
             started_on: None,
             served_chars: 0,
+            stated_day: None,
             id: SessionId("1".into()),
             sid: Some(Sid("s001".into())),
             bot: EntityId("bot:gamma".into()),
@@ -1862,6 +1886,13 @@ mod tests {
                 timezone: Option<&str>,
             ) -> Result<Session, SessionError> {
                 self.0.set_timezone(id, timezone).await
+            }
+            async fn set_stated_day(
+                &self,
+                id: &SessionId,
+                day: Option<Date>,
+            ) -> Result<Session, SessionError> {
+                self.0.set_stated_day(id, day).await
             }
             async fn append(
                 &self,
@@ -2018,6 +2049,7 @@ mod tests {
             timezone: None,
             started_on: Some(on),
             served_chars: 0,
+            stated_day: None,
             id: SessionId("1".into()),
             sid: Some(Sid("s001".into())),
             bot: EntityId("bot:gamma".into()),
@@ -2073,6 +2105,7 @@ mod tests {
             timezone: None,
             started_on: None,
             served_chars: 0,
+            stated_day: None,
             id: SessionId("1".into()),
             sid: Some(Sid("s001".into())),
             bot: EntityId("bot:gamma".into()),
@@ -2168,6 +2201,7 @@ mod tests {
             timezone: None,
             started_on: None,
             served_chars: 0,
+            stated_day: None,
             id: SessionId("1".into()),
             sid: Some(Sid("s001".into())),
             bot: EntityId("bot:gamma".into()),

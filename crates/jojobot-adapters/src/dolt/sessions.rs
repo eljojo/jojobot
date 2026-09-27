@@ -243,7 +243,8 @@ impl DoltSessions {
         id: &SessionId,
     ) -> Result<Session, SessionError> {
         let row = sqlx::query(
-            "SELECT id, sid, bot, focus, started_at, state, timezone, started_on, served_chars
+            "SELECT id, sid, bot, focus, started_at, state, timezone, started_on, served_chars,
+                    stated_day
              FROM session WHERE id = ?",
         )
         .bind(id.as_str())
@@ -436,6 +437,9 @@ fn session_from(
         started_at: instant(&started)?,
         started_on: day(row
             .try_get::<Option<String>, _>("started_on")
+            .map_err(store)?)?,
+        stated_day: day(row
+            .try_get::<Option<String>, _>("stated_day")
             .map_err(store)?)?,
         served_chars: row.try_get::<i64, _>("served_chars").map_err(store)? as u64,
         // A state token the store does not recognize is a record jojobot
@@ -815,6 +819,28 @@ impl Sessions for DoltSessions {
         // second saving to make here: this call already needs the full read
         // below for its own answer, so there is no cheap existence check to
         // swap in.
+        let session = self.read_in(&mut tx, id).await?;
+        tx.commit().await.map_err(store)?;
+        Ok(session)
+    }
+
+    async fn set_stated_day(
+        &self,
+        id: &SessionId,
+        day: Option<jiff::civil::Date>,
+    ) -> Result<Session, SessionError> {
+        validate_session_id(id)?;
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        self.writable(&mut tx, id).await?;
+        sqlx::query("UPDATE session SET stated_day = ? WHERE id = ?")
+            .bind(day.map(|d| d.to_string()))
+            .bind(id.as_str())
+            .execute(&mut *tx)
+            .await
+            .map_err(store)?;
+        // **No `append_session_write` here**, for the same reason
+        // `set_timezone` carries none: the stated day is no more indexed
+        // than the zone is.
         let session = self.read_in(&mut tx, id).await?;
         tx.commit().await.map_err(store)?;
         Ok(session)

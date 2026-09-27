@@ -259,7 +259,10 @@ impl SessionRegistry {
                     // from the board; a zone kept only in the process would be
                     // gone while the run it belongs to is still being worked.
                     zone: session.timezone.clone(),
-                    day: session.started_on,
+                    // **`stated_day` first, `started_on` the fallback** — a
+                    // resume that moved the day writes the former and leaves
+                    // the latter as the creation day it always was.
+                    day: session.stated_day.or(session.started_on),
                 },
             );
         }
@@ -475,7 +478,13 @@ mod tests {
     /// [`SessionRegistry::rebuild_from`]'s caller never does, because this
     /// registry is pure logic over what it is given and owes no I/O to prove
     /// it.
-    fn card(id: &str, bot_slug: &str, sid: Option<&str>) -> Session {
+    fn card(
+        id: &str,
+        bot_slug: &str,
+        sid: Option<&str>,
+        started_on: Option<jiff::civil::Date>,
+        stated_day: Option<jiff::civil::Date>,
+    ) -> Session {
         use jojobot_domain::session::SessionState;
         Session {
             id: SessionId(id.into()),
@@ -486,8 +495,9 @@ mod tests {
             state: SessionState::Active,
             entries: vec![],
             timezone: None,
-            started_on: None,
+            started_on,
             served_chars: 0,
+            stated_day,
         }
     }
 
@@ -503,9 +513,9 @@ mod tests {
     fn rebuild_from_counts_an_unreadable_sid_apart_from_a_missing_one() {
         let registry = SessionRegistry::new();
         let board = [
-            card("card-sound", "gamma", Some("ab12")),
-            card("card-legacy", "delta", None),
-            card("card-damaged", "sigma", Some("BAD1")),
+            card("card-sound", "gamma", Some("ab12"), None, None),
+            card("card-legacy", "delta", None, None, None),
+            card("card-damaged", "sigma", Some("BAD1"), None, None),
         ];
 
         let rebuilt = registry.rebuild_from(&board);
@@ -530,13 +540,54 @@ mod tests {
     fn a_clean_rebuild_reports_no_unreadable_sids() {
         let registry = SessionRegistry::new();
         let board = [
-            card("card-sound", "gamma", Some("ab12")),
-            card("card-legacy", "delta", None),
+            card("card-sound", "gamma", Some("ab12"), None, None),
+            card("card-legacy", "delta", None, None, None),
         ];
 
         let rebuilt = registry.rebuild_from(&board);
 
         assert_eq!(rebuilt.recovered, 1);
         assert_eq!(rebuilt.unreadable, 0);
+    }
+
+    /// **A rebuild reads the moved day, never the creation day, when both
+    /// exist — and falls back to the creation day when nothing moved it.**
+    /// Paired in one case: a card carrying both, and one carrying only
+    /// `started_on`, so the fallback is read against the case that overrides
+    /// it rather than trusted alone.
+    #[test]
+    fn rebuild_from_prefers_the_moved_day_over_the_creation_day() {
+        let started_on: jiff::civil::Date = "2026-03-01".parse().expect("a date");
+        let moved: jiff::civil::Date = "2026-04-01".parse().expect("a date");
+        let registry = SessionRegistry::new();
+        let board = [
+            card(
+                "card-moved",
+                "gamma",
+                Some("ab12"),
+                Some(started_on),
+                Some(moved),
+            ),
+            card(
+                "card-unmoved",
+                "delta",
+                Some("cd34"),
+                Some(started_on),
+                None,
+            ),
+        ];
+
+        registry.rebuild_from(&board);
+
+        assert_eq!(
+            registry.lookup("ab12").expect("held").day,
+            Some(moved),
+            "a card carrying both reads the moved day"
+        );
+        assert_eq!(
+            registry.lookup("cd34").expect("held").day,
+            Some(started_on),
+            "a card carrying no moved day falls back to the creation day"
+        );
     }
 }
