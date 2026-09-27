@@ -342,7 +342,7 @@ mod tests {
         let jojobot = with_mailboxes(boxes.clone());
         let reader = owning(&jojobot, "dev").await;
         send(&jojobot, "dev", "epsilon", "the shipment landed").await;
-        boxes.quarantine(
+        boxes.quarantine_by_damage(
             &MailboxName("dev".into()),
             &MessageId("4212".into()),
             "its row cannot be read — a state or a sender has been edited past parsing",
@@ -451,6 +451,7 @@ mod tests {
                     message_id: id.clone(),
                     notes: Some("filed under shipments".into()),
                     sid: None,
+                    quarantine: None,
                 }))
                 .await
                 .expect("mark_processed ok"),
@@ -897,6 +898,7 @@ mod tests {
                     message_id: held_id,
                     notes: None,
                     sid: None,
+                    quarantine: None,
                 }))
                 .await
                 .expect("mark ok"),

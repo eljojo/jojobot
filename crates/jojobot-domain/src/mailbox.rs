@@ -125,6 +125,15 @@ impl MessageState {
     }
 }
 
+/// **The state token a deliberate quarantine writes into the column
+/// `MessageState` reads.** Deliberately never one of [`MessageState::ALL`]:
+/// [`MessageState::from_token`] answers `None` for it, on any build, so a
+/// binary that predates this reads the row exactly as it already reads any
+/// other token it does not recognize — unreadable, never crashed, never
+/// served. That absence is the whole upgrade story; nothing else makes it
+/// true.
+pub const QUARANTINE_STATE_TOKEN: &str = "quarantined";
+
 impl std::fmt::Display for MessageState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_token())
@@ -684,6 +693,41 @@ pub enum MailboxError {
         /// Why the card cannot be read.
         reason: String,
     },
+    /// **The addressed id was quarantined ON PURPOSE** — a decision a bot
+    /// made about its own mail, never damage. Every path that serves
+    /// [`MailboxError::Quarantined`] serves this the same way — hidden,
+    /// never acted on — but the words are different on purpose: nothing
+    /// here is broken, nobody has to repair anything, and the caller reads
+    /// who decided and why rather than being told to fetch a person.
+    #[error(
+        "message '{attempted}' is quarantined: {by} quarantined it, saying \"{reason}\". This \
+         was a decision, not damage — there is nothing here to repair."
+    )]
+    QuarantinedOnPurpose {
+        /// The id that was addressed.
+        attempted: String,
+        /// The box that made the decision.
+        by: String,
+        /// The reason it gave.
+        reason: String,
+    },
+    /// **A bot tried to quarantine a message that is not in its own box.**
+    /// The same ownership `read_mailbox` already enforces by construction —
+    /// there is no box argument to get wrong there — enforced here because
+    /// `mark_processed` addresses a message by id and a caller could name
+    /// one it does not own.
+    #[error(
+        "message '{attempted}' is in the '{mailbox}' box, not '{by}' — a bot may quarantine only \
+         its own mail"
+    )]
+    NotYourMessage {
+        /// The id that was addressed.
+        attempted: String,
+        /// The box the message is actually in.
+        mailbox: String,
+        /// The box that tried.
+        by: String,
+    },
     /// The underlying store failed — it, or the layer that carries and parses
     /// its answers.
     #[error("store error: {0}")]
@@ -874,6 +918,41 @@ pub trait Mailboxes: Send + Sync {
         id: &MessageId,
         notes: Option<&str>,
     ) -> Result<Message, MailboxError>;
+
+    /// **Quarantine a message ON PURPOSE — a decision, not damage.** Refused
+    /// with [`MailboxError::NotYourMessage`] unless `by` owns the box the
+    /// message is filed in: a bot may quarantine only its own mail. Refused
+    /// with [`MailboxError::UnknownMessage`] or
+    /// [`MailboxError::Quarantined`] exactly where `mark_processed` would be
+    /// — the same id has to mean the same thing to both verbs.
+    ///
+    /// Terminal, like `mark_processed`: nothing is deleted. Lifting a
+    /// quarantine is not a verb this trait has yet.
+    async fn quarantine(
+        &self,
+        id: &MessageId,
+        by: &MailboxName,
+        reason: &str,
+        at: Timestamp,
+    ) -> Result<Quarantined, MailboxError>;
+}
+
+/// **What a deliberate quarantine actually wrote**, read back rather than
+/// assumed — the same discipline every write on this rail keeps: the caller
+/// gets the receipt, not a promise that its own inputs landed unchanged.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Quarantined {
+    /// The id that was quarantined.
+    pub id: MessageId,
+    /// The box the message was filed in — read back, not the caller's own
+    /// claim, though the write refuses unless the two already agree.
+    pub mailbox: MailboxName,
+    /// The box that made the decision.
+    pub by: String,
+    /// The reason it gave.
+    pub reason: String,
+    /// When the decision landed.
+    pub at: Timestamp,
 }
 
 #[cfg(test)]
@@ -981,6 +1060,32 @@ mod tests {
         assert_eq!(
             MessageState::ALL.map(|s| s.as_token()),
             ["new", "read", "processed"]
+        );
+    }
+
+    /// **The upgrade hazard, made a case rather than left a comment.** A
+    /// binary that predates the deliberate-quarantine feature has never heard
+    /// of [`QUARANTINE_STATE_TOKEN`], and this is exactly what it does with a
+    /// column value it does not recognize: [`MessageState::from_token`]
+    /// answers `None`, the same as for any other unknown token, and the
+    /// caller's existing unreadable-card branch takes it — never a crash,
+    /// never a state it silently mis-files as `new` or `read`. Deliberately
+    /// pinned against the SAME set the closed-set test above pins, so a
+    /// future variant added to `ALL` that happened to collide would fail
+    /// here first.
+    #[test]
+    fn the_quarantine_token_is_deliberately_outside_the_closed_set() {
+        assert!(
+            !MessageState::ALL
+                .map(|s| s.as_token())
+                .contains(&QUARANTINE_STATE_TOKEN),
+            "a real state and the quarantine marker must never share a token"
+        );
+        assert_eq!(
+            MessageState::from_token(QUARANTINE_STATE_TOKEN),
+            None,
+            "an older binary reading this token must land on the same 'unrecognized' \
+             answer it already gives any other value it does not know"
         );
     }
 

@@ -279,6 +279,17 @@ impl mailbox::Mailboxes for DownMailboxes {
             "the mailbox world is down".into(),
         ))
     }
+    async fn quarantine(
+        &self,
+        _: &mailbox::MessageId,
+        _: &mailbox::MailboxName,
+        _: &str,
+        _: jiff::Timestamp,
+    ) -> Result<mailbox::Quarantined, mailbox::MailboxError> {
+        Err(mailbox::MailboxError::Store(
+            "the mailbox world is down".into(),
+        ))
+    }
 }
 
 #[async_trait]
@@ -332,6 +343,15 @@ impl mailbox::Mailboxes for UnopenableMailboxes {
     ) -> Result<mailbox::Message, mailbox::MailboxError> {
         self.0.mark_processed(id, notes).await
     }
+    async fn quarantine(
+        &self,
+        id: &mailbox::MessageId,
+        by: &mailbox::MailboxName,
+        reason: &str,
+        at: jiff::Timestamp,
+    ) -> Result<mailbox::Quarantined, mailbox::MailboxError> {
+        self.0.quarantine(id, by, reason, at).await
+    }
 }
 
 #[async_trait]
@@ -384,5 +404,14 @@ impl mailbox::Mailboxes for CountingMailboxes {
         notes: Option<&str>,
     ) -> Result<mailbox::Message, mailbox::MailboxError> {
         self.inner.mark_processed(id, notes).await
+    }
+    async fn quarantine(
+        &self,
+        id: &mailbox::MessageId,
+        by: &mailbox::MailboxName,
+        reason: &str,
+        at: jiff::Timestamp,
+    ) -> Result<mailbox::Quarantined, mailbox::MailboxError> {
+        self.inner.quarantine(id, by, reason, at).await
     }
 }

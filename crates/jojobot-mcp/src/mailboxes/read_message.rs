@@ -150,6 +150,7 @@ mod tests {
                     message_id: id,
                     notes: None,
                     sid: None,
+                    quarantine: None,
                 }))
                 .await
                 .expect("mark_processed ok"),
@@ -312,6 +313,7 @@ mod tests {
                 message_id: id.clone(),
                 notes: Some("acted on".into()),
                 sid: Some(delta),
+                quarantine: None,
             }))
             .await
             .expect("mark_processed ok");
@@ -368,7 +370,7 @@ mod tests {
         make_box(&jojobot, "inbox").await;
         let posted = send(&jojobot, "inbox", "epsilon", "the shipment landed").await;
         let id = posted["id"].as_str().expect("an id").to_string();
-        store.quarantine(
+        store.quarantine_by_damage(
             &MailboxName("inbox".into()),
             &MessageId(id.clone()),
             "its row on the page cannot be read — a state or a sender has been edited past parsing",

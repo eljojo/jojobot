@@ -157,6 +157,53 @@ pub(crate) fn mailbox_quarantined(attempted: &str, reason: &str) -> CallToolResu
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])
 }
 
+/// **Told apart from [`mailbox_quarantined`] in every word.** Damage says a
+/// person has to repair it; this says who decided and why, and never says
+/// "repair" at all — there is nothing broken here.
+pub(crate) fn mailbox_quarantined_on_purpose(
+    attempted: &str,
+    by: &str,
+    reason: &str,
+) -> CallToolResult {
+    let how_to_proceed: WayForward = format!(
+        "Nothing was written, and retrying will not help — this is not damage. '{by}' \
+         quarantined {attempted} on purpose, saying \"{reason}\". That is a decision, not a \
+         fault, and lifting it is not something this call can do."
+    )
+    .into();
+    let body = serde_json::json!({
+        "status": "blocked",
+        "attempted": attempted,
+        "wrote": false,
+        "quarantined_by": by,
+        "quarantine_reason": reason,
+        "how_to_proceed": how_to_proceed.as_str(),
+    });
+    CallToolResult::success(vec![ContentBlock::text(body.to_string())])
+}
+
+/// **A bot named a message that is not in its own box.** The write side's
+/// own copy of [`not_yours`] — that one is for a read by id, this one is for
+/// `mark_processed`'s `quarantine` argument, and the two answers read alike
+/// on purpose: a bot's reach over mail it did not receive is one rule, not
+/// two.
+pub(crate) fn mailbox_not_your_message(attempted: &str, mailbox: &str, by: &str) -> CallToolResult {
+    let how_to_proceed: WayForward = format!(
+        "Nothing was written. Message '{attempted}' is in '{mailbox}', not '{by}' — a bot may \
+         quarantine only its own mail. To reach that box, post_message writes into it without \
+         reading it, which is the shape of a request."
+    )
+    .into();
+    let body = serde_json::json!({
+        "status": "blocked",
+        "attempted": attempted,
+        "wrote": false,
+        "mailbox": mailbox,
+        "how_to_proceed": how_to_proceed.as_str(),
+    });
+    CallToolResult::success(vec![ContentBlock::text(body.to_string())])
+}
+
 /// The mailbox half of [`memory_declined`]: an id that names nothing, and the
 /// quarantined card that names something jojobot cannot read. Different answers
 /// — one is repairable by a better id, the other only by a person on the board
@@ -175,6 +222,16 @@ pub(crate) fn mailbox_declined(e: MailboxError) -> Result<CallToolResult, McpErr
         MailboxError::Quarantined { attempted, reason } => {
             Ok(mailbox_quarantined(&attempted, &reason))
         }
+        MailboxError::QuarantinedOnPurpose {
+            attempted,
+            by,
+            reason,
+        } => Ok(mailbox_quarantined_on_purpose(&attempted, &by, &reason)),
+        MailboxError::NotYourMessage {
+            attempted,
+            mailbox,
+            by,
+        } => Ok(mailbox_not_your_message(&attempted, &mailbox, &by)),
         // **A malformed name or id is a caller mistake, so it is an answer**
         // (rule 68). The payload of these two IS the value that was refused,
         // so the caller sees what jojobot read.
@@ -237,6 +294,8 @@ pub(crate) fn mailbox_error(e: MailboxError) -> McpError {
         | MailboxError::InvalidMessage(_)
         | MailboxError::UnknownMessage { .. }
         | MailboxError::Quarantined { .. }
+        | MailboxError::QuarantinedOnPurpose { .. }
+        | MailboxError::NotYourMessage { .. }
         | MailboxError::OwnerHasMultipleBoxes { .. }
         | MailboxError::NameTaken { .. }
         | MailboxError::KindsNeverLoaded => McpError::invalid_params(e.to_string(), None),
@@ -318,6 +377,7 @@ mod tests {
                 message_id: "not an id!".into(),
                 notes: None,
                 sid: Some(sid),
+                quarantine: None,
             }))
             .await
             .expect("a caller mistake is an answer, not a protocol failure");

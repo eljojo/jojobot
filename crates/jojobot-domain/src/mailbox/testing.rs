@@ -18,9 +18,9 @@ use crate::memory::{EntityId, guard as memory_guard};
 
 use super::{
     Delivered, Delivery, Guarded, Mailbox, MailboxError, MailboxName, Mailboxes, Message,
-    MessageId, MessageState, NOTES_BUDGET, NewMessage, StateCounts, TakenBy, guard, normalize_body,
-    normalize_notes, normalize_subject, validate_body, validate_mailbox_name, validate_message_id,
-    validate_notes, validate_sender, validate_subject,
+    MessageId, MessageState, NOTES_BUDGET, NewMessage, Quarantined, StateCounts, TakenBy, guard,
+    normalize_body, normalize_notes, normalize_subject, validate_body, validate_mailbox_name,
+    validate_message_id, validate_notes, validate_sender, validate_subject,
 };
 
 /// The in-memory [`Mailboxes`] fake — a real store that holds a write, with no
@@ -40,6 +40,11 @@ pub struct InMemoryMailboxes {
     messages: Mutex<Vec<Message>>,
     next_id: Mutex<u64>,
     quarantined: Mutex<Vec<(MailboxName, MessageId, String)>>,
+    /// **Which of `quarantined`'s ids were quarantined ON PURPOSE**, and by
+    /// whom — a subset, looked up by id, that turns the shared hiding list
+    /// above into two different refusals rather than one. An id here is
+    /// always also in `quarantined`; the reverse is not true.
+    deliberate: Mutex<Vec<(MessageId, String, String, Timestamp)>>,
     /// Whether a board read fails. Writes still land: this is the store being
     /// unreachable for a read, not gone.
     blind: Mutex<bool>,
@@ -93,7 +98,10 @@ impl InMemoryMailboxes {
         }
     }
 
-    /// Put a card into quarantine, as a hand edit on a real board would.
+    /// Put a card into quarantine BY DAMAGE, as a hand edit on a real board
+    /// would — a parse failure that names no decision, distinct from the
+    /// [`Mailboxes::quarantine`] trait verb, which is a box acting on its own
+    /// mail on purpose and names who and why.
     ///
     /// **Seeding only — nothing in this fake can quarantine itself**, because
     /// everything that reaches it passed validation on the way in. That is
@@ -107,7 +115,7 @@ impl InMemoryMailboxes {
     /// of the message list that counts and delivery are both built from. A fake
     /// that only taught two of its verbs the word would answer differently from
     /// the store on the other two, in a place the shared contract is silent.
-    pub fn quarantine(&self, mailbox: &MailboxName, card: &MessageId, reason: &str) {
+    pub fn quarantine_by_damage(&self, mailbox: &MailboxName, card: &MessageId, reason: &str) {
         self.quarantined.lock().expect("quarantine lock").push((
             mailbox.clone(),
             card.clone(),
@@ -130,7 +138,7 @@ impl InMemoryMailboxes {
     /// record leaves at all: outside jojobot, with no verb of its own and
     /// nothing telling the index it happened.
     ///
-    /// Distinct from [`quarantine`](Self::quarantine), which leaves the card on
+    /// Distinct from [`quarantine_by_damage`](Self::quarantine_by_damage), which leaves the card on
     /// the board and unreadable. Both are invisible to a board read; only this
     /// one means the record is gone.
     pub fn lose(&self, card: &MessageId) {
@@ -162,6 +170,23 @@ impl InMemoryMailboxes {
     /// id is on the board and cannot be read, which is a different answer from
     /// "no such message" and has to stay one.
     fn refuse_if_quarantined(&self, id: &MessageId) -> Result<(), MailboxError> {
+        // **Checked first, because it is the more specific answer.** An id
+        // quarantined on purpose is always also in `quarantined` — the
+        // shared hiding list every other filter reads — but it owes the
+        // caller the decision, not the damage wording.
+        if let Some((_, by, reason, _)) = self
+            .deliberate
+            .lock()
+            .expect("deliberate lock")
+            .iter()
+            .find(|(card, ..)| card == id)
+        {
+            return Err(MailboxError::QuarantinedOnPurpose {
+                attempted: id.to_string(),
+                by: by.clone(),
+                reason: reason.clone(),
+            });
+        }
         let reason = self
             .quarantined
             .lock()
@@ -524,6 +549,53 @@ impl Mailboxes for InMemoryMailboxes {
             message.notes = Some(notes);
         }
         Ok(message.clone())
+    }
+
+    async fn quarantine(
+        &self,
+        id: &MessageId,
+        by: &MailboxName,
+        reason: &str,
+        at: Timestamp,
+    ) -> Result<Quarantined, MailboxError> {
+        validate_message_id(id)?;
+        self.refuse_if_quarantined(id)?;
+        let messages = self.messages.lock().expect("message lock");
+        let message =
+            messages
+                .iter()
+                .find(|m| &m.id == id)
+                .ok_or_else(|| MailboxError::UnknownMessage {
+                    attempted: id.to_string(),
+                })?;
+        if &message.mailbox != by {
+            return Err(MailboxError::NotYourMessage {
+                attempted: id.to_string(),
+                mailbox: message.mailbox.as_str().to_string(),
+                by: by.as_str().to_string(),
+            });
+        }
+        let mailbox = message.mailbox.clone();
+        drop(messages);
+        let reason = reason.trim().to_string();
+        self.quarantined.lock().expect("quarantine lock").push((
+            mailbox.clone(),
+            id.clone(),
+            reason.clone(),
+        ));
+        self.deliberate.lock().expect("deliberate lock").push((
+            id.clone(),
+            by.as_str().to_string(),
+            reason.clone(),
+            at,
+        ));
+        Ok(Quarantined {
+            id: id.clone(),
+            mailbox,
+            by: by.as_str().to_string(),
+            reason,
+            at,
+        })
     }
 }
 
@@ -1911,6 +1983,91 @@ pub mod contract {
         assert_eq!(candidates[0].name.as_str(), "inbox");
     }
 
+    /// **A deliberate quarantine is a decision, not damage** — it names who
+    /// made it and why, and it stops the message being served or retired
+    /// anywhere else, while its neighbour is untouched.
+    pub async fn a_deliberate_quarantine_stops_serving_the_message_and_names_why(
+        store: &dyn Mailboxes,
+    ) {
+        create(store, "inbox").await;
+        let target = post(store, "inbox", "alpha", "the count on this one is wrong", 0).await;
+        let neighbor = post(store, "inbox", "alpha", "this one is fine", 1).await;
+
+        let quarantined = store
+            .quarantine(
+                &target.id,
+                &name("inbox"),
+                "the count cannot be trusted",
+                at(5),
+            )
+            .await
+            .expect("quarantining your own mail should succeed");
+        assert_eq!(quarantined.id, target.id);
+        assert_eq!(quarantined.mailbox, name("inbox"));
+        assert_eq!(quarantined.by, "inbox");
+        assert_eq!(quarantined.reason, "the count cannot be trusted");
+        assert_eq!(quarantined.at, at(5));
+
+        let remaining: Vec<MessageId> = scanned(store, "inbox")
+            .await
+            .into_iter()
+            .map(|m| m.id)
+            .collect();
+        assert_eq!(
+            remaining,
+            vec![neighbor.id.clone()],
+            "the quarantined message must not be scanned, and its neighbour must be"
+        );
+
+        let delivery = read(store, "inbox").await;
+        assert_eq!(
+            delivery.messages.len(),
+            1,
+            "the quarantined message must not be delivered"
+        );
+        assert_eq!(delivery.messages[0].message.id, neighbor.id);
+
+        let read_err = store
+            .read_message(&target.id)
+            .await
+            .expect_err("a quarantined message must not be readable by id");
+        assert!(
+            matches!(read_err, MailboxError::QuarantinedOnPurpose { .. }),
+            "got {read_err:?}"
+        );
+
+        let processed_err = store
+            .mark_processed(&target.id, None)
+            .await
+            .expect_err("a quarantined message must not be processable");
+        assert!(
+            matches!(processed_err, MailboxError::QuarantinedOnPurpose { .. }),
+            "got {processed_err:?}"
+        );
+    }
+
+    /// A box may quarantine only its own mail.
+    pub async fn quarantining_another_boxs_message_is_refused(store: &dyn Mailboxes) {
+        create(store, "inbox").await;
+        create(store, "errands").await;
+        let theirs = post(store, "errands", "alpha", "errands' own shipment", 0).await;
+
+        let err = store
+            .quarantine(&theirs.id, &name("inbox"), "not mine to decide", at(0))
+            .await
+            .expect_err("a box must not quarantine mail sitting in another box");
+        assert!(
+            matches!(err, MailboxError::NotYourMessage { ref mailbox, .. } if mailbox == "errands"),
+            "got {err:?}"
+        );
+
+        // Nothing was written: the message is exactly as readable as before.
+        store
+            .read_message(&theirs.id)
+            .await
+            .expect("the refused quarantine must not have touched the message");
+    }
+
     /// An id nothing answers to is a miss — never a create, never a silent
     /// success.
     pub async fn processing_an_unknown_message_is_a_miss(store: &dyn Mailboxes) {
@@ -2116,6 +2273,8 @@ pub mod contract {
         a_delivery_orders_inside_one_second(&fresh().await).await;
         a_second_read_redelivers_leftovers_flagged(&fresh().await).await;
         mark_processed_is_terminal_and_records_the_outcome(&fresh().await).await;
+        a_deliberate_quarantine_stops_serving_the_message_and_names_why(&fresh().await).await;
+        quarantining_another_boxs_message_is_refused(&fresh().await).await;
         a_failure_is_recorded_as_an_outcome(&fresh().await).await;
         a_reply_names_the_message_it_answers(&fresh().await).await;
         a_reply_can_answer_a_message_in_another_box(&fresh().await).await;

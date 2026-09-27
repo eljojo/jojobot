@@ -22,9 +22,11 @@ use crate::memory::{
     Entity, EntityId, FormerHandle, Memory, entity_wearing, mention, resolve_handle,
 };
 
+use jiff::Timestamp;
+
 use super::{
     Delivered, Delivery, Mailbox, MailboxError, MailboxName, Mailboxes, Message, MessageId,
-    NewMessage, TakenBy,
+    NewMessage, Quarantined, TakenBy,
 };
 
 /// Wraps any [`Mailboxes`] so a handle written into a message's body,
@@ -225,6 +227,16 @@ impl Mailboxes for Mentioning {
             .await?;
         Self::render(&mut message, &known);
         Ok(message)
+    }
+
+    async fn quarantine(
+        &self,
+        id: &MessageId,
+        by: &MailboxName,
+        reason: &str,
+        at: Timestamp,
+    ) -> Result<Quarantined, MailboxError> {
+        self.inner.quarantine(id, by, reason, at).await
     }
 }
 

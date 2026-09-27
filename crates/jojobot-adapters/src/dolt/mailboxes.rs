@@ -30,9 +30,10 @@ use async_trait::async_trait;
 use jiff::Timestamp;
 use jojobot_domain::mailbox::{
     Delivered, Delivery, Guarded, Mailbox, MailboxError, MailboxName, Mailboxes, Message,
-    MessageId, MessageState, NewMessage, OwnerIndex, OwnerLookup, StateCounts, TakenBy, guard,
-    normalize_body, normalize_notes, normalize_subject, validate_body, validate_mailbox_name,
-    validate_message_id, validate_notes, validate_sender, validate_subject,
+    MessageId, MessageState, NewMessage, OwnerIndex, OwnerLookup, QUARANTINE_STATE_TOKEN,
+    Quarantined, StateCounts, TakenBy, guard, normalize_body, normalize_notes, normalize_subject,
+    validate_body, validate_mailbox_name, validate_message_id, validate_notes, validate_sender,
+    validate_subject,
 };
 use jojobot_domain::memory::{Entity, EntityId, mention};
 use sqlx::{MySql, MySqlPool, Row, Transaction};
@@ -190,6 +191,7 @@ impl DoltMailboxes {
             // message rather than a reason to leave it out.
             "SELECT m.id, m.mailbox, m.ordinal, m.body, m.subject, m.sender, m.sent_at, m.state,
                     m.notes, m.in_reply_to, m.sender_mail_waiting_at_send, m.posted_by_session,
+                    m.quarantined_by, m.quarantine_reason,
                     d.taken_by
              FROM message m
              LEFT JOIN message_delivery d ON d.message_id = m.id",
@@ -220,6 +222,16 @@ enum Card {
         ordinal: i64,
         reason: String,
     },
+    /// **A row quarantined ON PURPOSE — a decision, not damage.** Hidden
+    /// exactly where [`Card::Unreadable`] is, everywhere; the two are told
+    /// apart only in what [`refuse`] answers about them.
+    Quarantined {
+        id: MessageId,
+        mailbox: MailboxName,
+        ordinal: i64,
+        by: String,
+        reason: String,
+    },
 }
 
 impl Card {
@@ -227,6 +239,7 @@ impl Card {
         match self {
             Card::Readable(m, _) => &m.id,
             Card::Unreadable { id, .. } => id,
+            Card::Quarantined { id, .. } => id,
         }
     }
 
@@ -234,6 +247,7 @@ impl Card {
         match self {
             Card::Readable(m, _) => &m.mailbox,
             Card::Unreadable { mailbox, .. } => mailbox,
+            Card::Quarantined { mailbox, .. } => mailbox,
         }
     }
 
@@ -242,13 +256,14 @@ impl Card {
         match self {
             Card::Readable(m, ordinal) => (Some(m.sent_at), *ordinal),
             Card::Unreadable { ordinal, .. } => (None, *ordinal),
+            Card::Quarantined { ordinal, .. } => (None, *ordinal),
         }
     }
 
     fn readable(&self) -> Option<&Message> {
         match self {
             Card::Readable(m, _) => Some(m),
-            Card::Unreadable { .. } => None,
+            Card::Unreadable { .. } | Card::Quarantined { .. } => None,
         }
     }
 }
@@ -286,6 +301,25 @@ fn card_from(row: &sqlx::mysql::MySqlRow) -> Result<Card, MailboxError> {
     };
 
     let token: String = row.try_get("state").map_err(store)?;
+    // **Checked before the ordinary parse, and by exact value.** The
+    // sentinel is deliberately not one of `MessageState::ALL`, so a build
+    // that predates it falls straight through to the line below and reads
+    // the row as generic damage — never crashes, never serves it. Only a
+    // build that knows the sentinel takes this branch at all.
+    if token == QUARANTINE_STATE_TOKEN {
+        let by: Option<String> = row.try_get("quarantined_by").map_err(store)?;
+        let reason: Option<String> = row.try_get("quarantine_reason").map_err(store)?;
+        return Ok(match (by, reason) {
+            (Some(by), Some(reason)) => Card::Quarantined {
+                id,
+                mailbox,
+                ordinal,
+                by,
+                reason,
+            },
+            _ => unreadable("it is marked quarantined but who and why did not survive"),
+        });
+    }
     let Some(state) = MessageState::from_token(&token) else {
         return Ok(unreadable("it sits in no state jojobot recognizes"));
     };
@@ -335,6 +369,11 @@ fn refuse(card: &Card) -> Result<&Message, MailboxError> {
         Card::Readable(m, _) => Ok(m),
         Card::Unreadable { id, reason, .. } => Err(MailboxError::Quarantined {
             attempted: id.to_string(),
+            reason: reason.clone(),
+        }),
+        Card::Quarantined { id, by, reason, .. } => Err(MailboxError::QuarantinedOnPurpose {
+            attempted: id.to_string(),
+            by: by.clone(),
             reason: reason.clone(),
         }),
     }
@@ -738,6 +777,55 @@ impl Mailboxes for DoltMailboxes {
         };
         tx.commit().await.map_err(store)?;
         Ok(message)
+    }
+
+    async fn quarantine(
+        &self,
+        id: &MessageId,
+        by: &MailboxName,
+        reason: &str,
+        at: Timestamp,
+    ) -> Result<Quarantined, MailboxError> {
+        validate_message_id(id)?;
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        let cards = self.cards(&mut tx).await?;
+        let card =
+            cards
+                .iter()
+                .find(|c| c.id() == id)
+                .ok_or_else(|| MailboxError::UnknownMessage {
+                    attempted: id.to_string(),
+                })?;
+        let message = refuse(card)?;
+        if &message.mailbox != by {
+            return Err(MailboxError::NotYourMessage {
+                attempted: id.to_string(),
+                mailbox: message.mailbox.as_str().to_string(),
+                by: by.as_str().to_string(),
+            });
+        }
+        let mailbox = message.mailbox.clone();
+        let reason = reason.trim().to_string();
+        sqlx::query(
+            "UPDATE message SET state = ?, quarantined_by = ?, quarantined_at = ?, \
+             quarantine_reason = ? WHERE id = ?",
+        )
+        .bind(QUARANTINE_STATE_TOKEN)
+        .bind(by.as_str())
+        .bind(at.to_string())
+        .bind(&reason)
+        .bind(id.as_str())
+        .execute(&mut *tx)
+        .await
+        .map_err(store)?;
+        tx.commit().await.map_err(store)?;
+        Ok(Quarantined {
+            id: id.clone(),
+            mailbox,
+            by: by.as_str().to_string(),
+            reason,
+            at,
+        })
     }
 }
 

@@ -405,7 +405,7 @@ mod tests {
         let boxes = Arc::new(InMemoryMailboxes::knowing_any_owner());
         let jojobot = with_mailboxes(boxes.clone());
         make_box(&jojobot, "pm").await;
-        boxes.quarantine(
+        boxes.quarantine_by_damage(
             &MailboxName("pm".into()),
             &MessageId("4212".into()),
             "its row on the page cannot be read — a state or a sender has been edited past parsing",

@@ -22,6 +22,15 @@ pub struct MarkProcessedArgs {
     /// attributed, never journalled.
     #[serde(default)]
     pub(crate) sid: Option<String>,
+    /// **Quarantine this message instead of retiring it — a decision, not
+    /// damage.** Give the reason here and the message becomes unreadable from
+    /// every future delivery, exactly like storage damage, except the refusal
+    /// names who decided and why instead of asking for repair. Only your own
+    /// mail: naming a message sitting in another box is refused, and nothing
+    /// is written. Mutually exclusive with `notes` — a quarantine records no
+    /// processing outcome, because none happened.
+    #[serde(default)]
+    pub(crate) quarantine: Option<String>,
 }
 
 /// Retire a message once it has actually been acted on.
@@ -53,7 +62,13 @@ impl Jojobot {
                        nothing at all (use one read_mailbox or post_message handed you), and an \
                        id naming an item jojobot cannot read, which comes back saying why — \
                        retrying that one will not help, a person has to repair it, and until \
-                       then treat whatever it carried as unhandled and say so."
+                       then treat whatever it carried as unhandled and say so. TO QUARANTINE A \
+                       MESSAGE INSTEAD OF RETIRING IT — a decision, not damage — pass `quarantine` \
+                       with your reason and leave `notes` unset; the message becomes unreadable \
+                       from every future delivery, and its refusal names you and your reason \
+                       rather than asking for repair. Only your own mail: naming a message sitting \
+                       in another box is refused, and nothing is written. There is no verb that \
+                       lifts a quarantine."
     )]
     pub(crate) async fn mark_processed(
         &self,
@@ -65,6 +80,30 @@ impl Jojobot {
             return Ok(refused);
         }
         let id = MessageId(args.message_id.trim().to_string());
+        // Blank-is-absent, the same rule `notes` reads by.
+        let quarantine_reason = args
+            .quarantine
+            .as_deref()
+            .map(str::trim)
+            .filter(|r| !r.is_empty());
+        if let Some(reason) = quarantine_reason {
+            let mine = match self.my_box(args.sid.as_deref()).await {
+                Ok(mine) => mine,
+                Err(refused) => return Ok(refused),
+            };
+            return match self
+                .mailboxes
+                .quarantine(&id, &mine.name, reason, self.clock().now())
+                .await
+            {
+                Ok(quarantined) => {
+                    self.beat("quarantine", quarantined.id.as_str(), args.sid.as_deref())
+                        .await;
+                    json_result(&quarantine_receipt_json(&quarantined))
+                }
+                Err(e) => mailbox_declined(e),
+            };
+        }
         // What the caller asked to record, blank-is-absent.
         let asked = args
             .notes
@@ -131,6 +170,20 @@ impl Jojobot {
 ///
 /// The outcome record is named only when this call carries one, so the line
 /// does not claim an account that was never written.
+/// The receipt for a deliberate quarantine — never `message_receipt_json`,
+/// because the row it describes is now unreadable: there is no body to elide,
+/// only the decision and who made it.
+fn quarantine_receipt_json(quarantined: &mailbox::Quarantined) -> serde_json::Value {
+    serde_json::json!({
+        "id": quarantined.id.as_str(),
+        "mailbox": quarantined.mailbox.as_str(),
+        "state": mailbox::QUARANTINE_STATE_TOKEN,
+        "quarantined_by": quarantined.by,
+        "quarantine_reason": quarantined.reason,
+        "quarantined_at": quarantined.at.to_string(),
+    })
+}
+
 fn what_a_retirement_left_standing(processed: &Message) -> String {
     let recorded = match processed.notes.as_deref() {
         Some(_) => " Your outcome record is stored on it.",
@@ -163,6 +216,7 @@ mod tests {
                     message_id: posted["id"].as_str().expect("an id").to_string(),
                     notes: Some("filed under shipments".into()),
                     sid: None,
+                    quarantine: None,
                 }))
                 .await
                 .expect("mark_processed ok"),
@@ -216,6 +270,7 @@ mod tests {
                     message_id: id.clone(),
                     notes: Some("filed under shipments".into()),
                     sid: None,
+                    quarantine: None,
                 }))
                 .await
                 .expect("mark_processed ok"),
@@ -242,6 +297,7 @@ mod tests {
                     message_id: second["id"].as_str().expect("an id").to_string(),
                     notes: None,
                     sid: None,
+                    quarantine: None,
                 }))
                 .await
                 .expect("mark_processed ok"),
@@ -274,6 +330,7 @@ mod tests {
                     message_id: id.clone(),
                     notes: Some(long.clone()),
                     sid: None,
+                    quarantine: None,
                 }))
                 .await
                 .expect("a long note must not fail the terminal verb"),
@@ -320,6 +377,7 @@ mod tests {
                             message_id: id,
                             notes,
                             sid: None,
+                            quarantine: None,
                         }))
                         .await
                         .expect("mark_processed ok"),
@@ -359,6 +417,7 @@ mod tests {
                     message_id: posted["id"].as_str().expect("an id").to_string(),
                     notes: Some("filed under shipments".into()),
                     sid: None,
+                    quarantine: None,
                 }))
                 .await
                 .expect("mark_processed ok"),
@@ -378,6 +437,7 @@ mod tests {
                 message_id: "999999".into(),
                 notes: None,
                 sid: None,
+                quarantine: None,
             }))
             .await
             .expect("an id that names nothing is an answer, not a protocol failure");
@@ -405,7 +465,7 @@ mod tests {
         let store = Arc::new(InMemoryMailboxes::knowing_any_owner());
         let jojobot = with_mailboxes(store.clone());
         make_box(&jojobot, "inbox").await;
-        store.quarantine(
+        store.quarantine_by_damage(
             &MailboxName("inbox".into()),
             &MessageId("4212".into()),
             "its row on the page cannot be read — a state or a sender has been edited past parsing",
@@ -416,6 +476,7 @@ mod tests {
                 message_id: "4212".into(),
                 notes: Some("filed".into()),
                 sid: None,
+                quarantine: None,
             }))
             .await
             .expect("a quarantined card is a structured answer, not a protocol error");
@@ -460,6 +521,7 @@ mod tests {
                     message_id: "999999".into(),
                     notes: None,
                     sid: None,
+                    quarantine: None,
                 }))
                 .await
                 .expect("an id nothing answers to is still an answer"),
@@ -475,5 +537,147 @@ mod tests {
                 .contains("PERSON"),
             "and its way out is not a human on the board: {unknown}"
         );
+    }
+
+    /// **A deliberate quarantine names who decided and why, and stops
+    /// serving the message everywhere else — but only that one.** The
+    /// readable neighbour is the proof the reach is scoped to the id named,
+    /// not to the whole box.
+    #[tokio::test]
+    async fn quarantining_a_message_names_who_and_why_and_stops_serving_it() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "inbox").await;
+        let target = send(
+            &jojobot,
+            "inbox",
+            "epsilon",
+            "the shipment is short a crate",
+        )
+        .await;
+        let neighbor = send(
+            &jojobot,
+            "inbox",
+            "epsilon",
+            "the second crate arrived whole",
+        )
+        .await;
+        let sid = as_bot(&jojobot, "inbox");
+
+        let receipt = json_of(
+            &jojobot
+                .mark_processed(Parameters(MarkProcessedArgs {
+                    message_id: target["id"].as_str().expect("an id").to_string(),
+                    notes: None,
+                    sid: Some(sid.clone()),
+                    quarantine: Some("the count on this one cannot be trusted".into()),
+                }))
+                .await
+                .expect("quarantining is an answer, not a protocol failure"),
+        );
+        assert_eq!(receipt["state"], "quarantined");
+        assert_eq!(receipt["quarantined_by"], "inbox");
+        assert_eq!(
+            receipt["quarantine_reason"],
+            "the count on this one cannot be trusted"
+        );
+        assert!(
+            receipt["quarantined_at"]
+                .as_str()
+                .is_some_and(|s| !s.is_empty()),
+            "when it happened has to be on the receipt: {receipt}"
+        );
+
+        // read_message on the quarantined id is blocked, and the refusal
+        // names the decision — never the damage wording that a parse
+        // failure gets.
+        let read = blocked(
+            &jojobot
+                .read_message(Parameters(ReadMessageArgs {
+                    message_id: target["id"].as_str().expect("an id").to_string(),
+                    sid: Some(sid.clone()),
+                }))
+                .await
+                .expect("a quarantined id is a structured answer"),
+        );
+        assert_eq!(read["quarantined_by"], "inbox");
+        assert_eq!(
+            read["quarantine_reason"],
+            "the count on this one cannot be trusted"
+        );
+        let advice = read["how_to_proceed"].as_str().expect("advice");
+        assert!(
+            advice.contains("decision") && !advice.contains("operator"),
+            "a decision is not damage, and it needs no person to repair it: {advice}"
+        );
+
+        // read_mailbox omits the quarantined message and still delivers the
+        // one beside it, unaffected.
+        let delivery = json_of(
+            &jojobot
+                .read_mailbox(Parameters(ReadMailboxArgs {
+                    counts_only: None,
+                    new_only: Some(false),
+                    sid: Some(sid),
+                }))
+                .await
+                .expect("read_mailbox ok"),
+        );
+        let ids: Vec<&str> = delivery["messages"]
+            .as_array()
+            .expect("messages")
+            .iter()
+            .map(|m| m["id"].as_str().expect("an id"))
+            .collect();
+        assert!(
+            !ids.contains(&target["id"].as_str().expect("an id")),
+            "the quarantined message must not be delivered: {delivery}"
+        );
+        assert!(
+            ids.contains(&neighbor["id"].as_str().expect("an id")),
+            "…and the readable one beside it still must be: {delivery}"
+        );
+    }
+
+    /// **A bot may quarantine only its own mail.** Naming a message sitting
+    /// in somebody else's box is refused, and the message stays exactly as
+    /// readable as it was.
+    #[tokio::test]
+    async fn a_bot_cannot_quarantine_another_boxs_message() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "inbox").await;
+        make_box(&jojobot, "dev").await;
+        let theirs = send(&jojobot, "dev", "epsilon", "dev's own shipment").await;
+        let mine = as_bot(&jojobot, "inbox");
+
+        let refused = blocked(
+            &jojobot
+                .mark_processed(Parameters(MarkProcessedArgs {
+                    message_id: theirs["id"].as_str().expect("an id").to_string(),
+                    notes: None,
+                    sid: Some(mine),
+                    quarantine: Some("not mine to decide".into()),
+                }))
+                .await
+                .expect("reaching another box's mail is an answer, not a protocol failure"),
+        );
+        assert_eq!(refused["mailbox"], "dev");
+        let advice = refused["how_to_proceed"].as_str().expect("advice");
+        assert!(
+            advice.contains("post_message"),
+            "the way to reach another box is the one verb that does: {advice}"
+        );
+
+        // Nothing was written: dev can still read its own message.
+        let dev_sid = as_bot(&jojobot, "dev");
+        let read = json_of(
+            &jojobot
+                .read_message(Parameters(ReadMessageArgs {
+                    message_id: theirs["id"].as_str().expect("an id").to_string(),
+                    sid: Some(dev_sid),
+                }))
+                .await
+                .expect("read_message ok"),
+        );
+        assert_eq!(read["body"], "dev's own shipment");
     }
 }

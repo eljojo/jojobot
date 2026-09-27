@@ -2942,6 +2942,22 @@ impl Mailboxes for IndexedMailboxes {
         self.reindex(&processed)?;
         Ok(processed)
     }
+
+    /// **No incremental reindex — there is no `Message` left to feed one.**
+    /// A quarantined row is unreadable by design, the same way a damaged
+    /// one already is, and a damaged row is not incrementally deindexed
+    /// either: it stops answering on the next full refresh, which already
+    /// reads the board through this same port and already excludes
+    /// anything unreadable.
+    async fn quarantine(
+        &self,
+        id: &jojobot_domain::mailbox::MessageId,
+        by: &jojobot_domain::mailbox::MailboxName,
+        reason: &str,
+        at: jiff::Timestamp,
+    ) -> Result<jojobot_domain::mailbox::Quarantined, MailboxError> {
+        self.inner.quarantine(id, by, reason, at).await
+    }
 }
 
 #[cfg(test)]
@@ -4816,6 +4832,16 @@ mod tests {
             _: &MessageId,
             _: Option<&str>,
         ) -> Result<Message, MailboxError> {
+            unimplemented!("this double only scans messages")
+        }
+
+        async fn quarantine(
+            &self,
+            _: &MessageId,
+            _: &MailboxName,
+            _: &str,
+            _: jiff::Timestamp,
+        ) -> Result<jojobot_domain::mailbox::Quarantined, MailboxError> {
             unimplemented!("this double only scans messages")
         }
     }
@@ -8340,7 +8366,7 @@ mod tests {
     async fn a_quarantined_card_stops_being_served_too() {
         let (inner, _mail, port) = a_board_of_two().await;
 
-        inner.quarantine(
+        inner.quarantine_by_damage(
             &MailboxName("pm".into()),
             &MessageId("1".into()),
             "the card cannot be read",
@@ -8352,6 +8378,39 @@ mod tests {
                 .expect("search ok")
                 .is_empty(),
             "jojobot cannot read it, so search must not go on serving its content"
+        );
+        assert_eq!(
+            port.search(&asking_for_mail("damper"))
+                .await
+                .expect("search ok")
+                .len(),
+            1,
+            "…and the readable one beside it is untouched"
+        );
+    }
+
+    /// **A card quarantined ON PURPOSE is the same absence as one damaged by
+    /// storage.** Neither has machinery of its own in the index: both arrive as
+    /// a message the board read no longer carries.
+    #[tokio::test]
+    async fn a_deliberately_quarantined_card_stops_being_served_too() {
+        let (_inner, mail, port) = a_board_of_two().await;
+
+        mail.quarantine(
+            &MessageId("1".into()),
+            &MailboxName("pm".into()),
+            "pm decided to quarantine it",
+            jiff::Timestamp::now(),
+        )
+        .await
+        .expect("quarantine ok");
+
+        assert!(
+            port.search(&asking_for_mail("kiln"))
+                .await
+                .expect("search ok")
+                .is_empty(),
+            "quarantined on purpose is still unreadable, so search must not serve it"
         );
         assert_eq!(
             port.search(&asking_for_mail("damper"))

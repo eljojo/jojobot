@@ -1754,7 +1754,7 @@ mod tests {
         let jojobot = with_mailboxes(boxes.clone());
         make_bot(&jojobot, "gamma").await;
         make_bot(&jojobot, "delta").await;
-        boxes.quarantine(
+        boxes.quarantine_by_damage(
             &MailboxName("delta".into()),
             &MessageId("4212".into()),
             "its row cannot be read — a state or a sender has been edited past parsing",
@@ -1803,7 +1803,7 @@ mod tests {
             "a clean box must not carry an empty quarantine report: {mine}"
         );
 
-        boxes.quarantine(
+        boxes.quarantine_by_damage(
             &MailboxName("gamma".into()),
             &MessageId("4212".into()),
             "its row cannot be read — a state or a sender has been edited past parsing",

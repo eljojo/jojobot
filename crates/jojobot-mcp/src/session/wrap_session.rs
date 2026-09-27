@@ -946,6 +946,7 @@ mod tests {
                         message_id: "whatever".into(),
                         notes: None,
                         sid: Some(sid.clone()),
+                        quarantine: None,
                     }))
                     .await
                     .expect("call ok"),
