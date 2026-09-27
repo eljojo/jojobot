@@ -1,17 +1,10 @@
--- The day a resume most recently set this run to, distinct from the day it
--- began on.
+-- The day a resume most recently set this run to.
 --
--- A resume's day only ever reached the in-process handle registry. The
--- registry is rebuilt from this table at every restart, from started_on
--- alone, so a day a resume moved silently reverted to the creation day the
--- moment the process restarted — the same loss timezone does not have,
--- because timezone is written to this table on every resume that sets one.
+-- started_on is the day the run began, and never moves. This is the day a
+-- later resume moved it to, read ahead of started_on whenever both exist —
+-- so a restart keeps the day a resume set, the same way it already keeps
+-- the zone.
 --
--- started_on is untouched by this column and keeps meaning what it always
--- meant: the day the run began. This is the day a later resume moved it to,
--- read ahead of started_on whenever both exist.
---
--- NULL is a run no resume has moved, which is what every row written before
--- this column is. Those fall back to started_on, which is what they already
--- meant.
+-- NULL is a run no resume has moved. Those read as started_on, which is
+-- what they already meant.
 ALTER TABLE session ADD COLUMN stated_day VARCHAR(10) NULL;
