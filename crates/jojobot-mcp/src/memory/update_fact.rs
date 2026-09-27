@@ -8,7 +8,8 @@ use jojobot_domain::attention;
 use super::*;
 use crate::teaching::{
     CLAIM_DIRECTION_DOMAIN, CLAIM_DIRECTION_TEACHING, CLAIM_SUBJECT_DOMAIN, CLAIM_SUBJECT_TEACHING,
-    CLAIMS_DOMAIN, CLAIMS_TEACHING, RHYTHM_ARCHIVE_DOMAIN, RHYTHM_ARCHIVE_TEACHING,
+    CLAIMS_DOMAIN, CLAIMS_TEACHING, FIELD_SHADOWS_ARGUMENT_DOMAIN, RHYTHM_ARCHIVE_DOMAIN,
+    RHYTHM_ARCHIVE_TEACHING,
 };
 
 /// Arguments to `update_fact`.
@@ -286,6 +287,10 @@ impl Jojobot {
         let declared = Declared::of(&args);
         let mut cleared = args.clear_fields.clone().unwrap_or_default();
         let mut fields = args.fields.unwrap_or_default();
+        // **Captured before anything computed joins `fields`**, for the same
+        // reason `capture`'s own copy is: this is about what the CALLER
+        // sent, never what jojobot added on its own.
+        let sent_field_keys: Vec<String> = fields.keys().cloned().collect();
         // **The thing a ceiling binds cannot write that ceiling — checked on
         // the fold, atomically with the write, inside `self.memory.update_fact`
         // below.** A raw check here on `fields` alone would miss a clear, a
@@ -509,6 +514,24 @@ impl Jojobot {
                         .await
                 {
                     crate::answer::note_teaching(&mut body, RHYTHM_ARCHIVE_TEACHING);
+                }
+                // **Checked before the gate, never after** — see `capture`'s
+                // own copy of this note. The schema lookup is skipped
+                // entirely when no fields were sent, which is most calls.
+                if !sent_field_keys.is_empty()
+                    && let Some(properties) = crate::teaching::published_arguments("update_fact")
+                    && let Some(shadowed) = crate::teaching::shadowed_argument(
+                        sent_field_keys.iter().map(String::as_str),
+                        &properties,
+                    )
+                    && self
+                        .first_contact(FIELD_SHADOWS_ARGUMENT_DOMAIN, Some(&caller))
+                        .await
+                {
+                    crate::answer::note_teaching(
+                        &mut body,
+                        &crate::teaching::field_shadows_argument_teaching(shadowed, "update_fact"),
+                    );
                 }
                 json_result(&body)
             }
@@ -3035,5 +3058,68 @@ mod tests {
             panic!("the edit carries the same sentence the boot shows: {starred_later}")
         });
         assert!(note.contains("skill"), "{note}");
+    }
+
+    /// **`update_fact`'s own copy of the field-shadows-argument teaching** —
+    /// `capture`'s is proven in `teaching.rs`; this is the same mechanism
+    /// wired through the edit verb, whose own `status` argument makes the
+    /// PM's own motivating example ("a rule filed with fields:
+    /// {status: retired}" instead of `update_fact` with `status: archived`)
+    /// the natural key to prove it with here.
+    #[tokio::test]
+    async fn a_field_that_shadows_update_facts_own_argument_is_taught_once() {
+        let jojobot = handler();
+        let captured = capture_ok(&jojobot, capture_args("alpha", "the club meets Tuesdays")).await;
+        let address = address_of(&captured);
+
+        let shadowing = json_of(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    fields: Some(
+                        [("status".to_string(), "retired".to_string())]
+                            .into_iter()
+                            .collect(),
+                    ),
+                    ..update_args(&address)
+                }))
+                .await
+                .expect("update ok"),
+        );
+        assert!(
+            shadowing["teaching"]
+                .as_array()
+                .unwrap_or_else(|| panic!("a teaching list: {shadowing}"))
+                .iter()
+                .any(|t| t.as_str().is_some_and(
+                    |t| t.contains("\"status\"") && t.contains("is stored as ordinary data")
+                )),
+            "a field shadowing update_fact's own status argument is taught: {shadowing}"
+        );
+
+        let second = json_of(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    fields: Some(
+                        [("status".to_string(), "retired".to_string())]
+                            .into_iter()
+                            .collect(),
+                    ),
+                    keep: None,
+                    content: Some("the club meets Wednesdays".into()),
+                    provenance: Some("inference".to_string()),
+                    ..update_args(&address)
+                }))
+                .await
+                .expect("update ok"),
+        );
+        assert!(
+            !second["teaching"]
+                .as_array()
+                .map(|t| t.iter().any(|t| t.as_str().is_some_and(
+                    |t| t.contains("\"status\"") && t.contains("is stored as ordinary data")
+                )))
+                .unwrap_or(false),
+            "the same session shadowing the same argument again is not taught again: {second}"
+        );
     }
 }

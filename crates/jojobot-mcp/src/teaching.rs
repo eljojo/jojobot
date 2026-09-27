@@ -156,6 +156,52 @@ pub(crate) const CHECK_IN_DATE_TEACHING: &str = "A check-in's schedule is dated 
     named both, for different days: to record a turn that happened on an earlier day, send that \
     day as recorded_at.";
 
+/// **A field key that shadows one of the same verb's own arguments** — a
+/// caller who meant `update_fact` with `status: archived` and instead sent
+/// `fields: {status: "archived"}` has written data, not the write they meant.
+/// Named on the call that raises the question: `capture` or `update_fact`
+/// carrying a field key that is also one of that verb's own argument names.
+pub(crate) const FIELD_SHADOWS_ARGUMENT_DOMAIN: &str = "field-shadows-argument";
+
+/// **The sentence for [`FIELD_SHADOWS_ARGUMENT_DOMAIN`]**, naming the actual
+/// key and verb rather than a generic warning — a caller who sees their own
+/// word reflected back trusts the answer; one told about "a field" has to
+/// work out which one meant them.
+pub(crate) fn field_shadows_argument_teaching(key: &str, verb: &str) -> String {
+    format!(
+        "The field \"{key}\" is stored as ordinary data — jojobot never reads a record's fields \
+         back into how it treats the claim itself. It changes nothing: {verb}'s own {key} \
+         argument is what does that. Call {verb} again naming {key} as an argument, not a field, \
+         to change it."
+    )
+}
+
+/// **Which field key, if any, shadows one of `properties`' own names.** Pure
+/// over an already-extracted property set, so the RULE — the first field key
+/// that is also a property name — is tested without a live tool registry: see
+/// [`published_arguments`] for where a real schema's properties come from.
+pub(crate) fn shadowed_argument<'a>(
+    sent: impl IntoIterator<Item = &'a str>,
+    properties: &serde_json::Map<String, serde_json::Value>,
+) -> Option<&'a str> {
+    sent.into_iter().find(|key| properties.contains_key(*key))
+}
+
+/// **The argument names `verb` actually publishes**, read from the tool
+/// router rather than a list this file maintains — the schema a client sees
+/// is the schema this reads, so a new argument on either verb is covered the
+/// moment it exists. `None` when `verb` names no tool, or its schema carries
+/// no `properties` object, neither of which is true of `capture` or
+/// `update_fact`.
+pub(crate) fn published_arguments(
+    verb: &str,
+) -> Option<serde_json::Map<String, serde_json::Value>> {
+    let tools = Jojobot::tool_router().list_all();
+    let tool = tools.iter().find(|t| t.name.as_ref() == verb)?;
+    let schema = serde_json::to_value(&tool.input_schema).ok()?;
+    schema.get("properties")?.as_object().cloned()
+}
+
 impl Jojobot {
     /// Whether this call is the first time `domain` has reached this
     /// session's handle.
@@ -1536,6 +1582,122 @@ mod tests {
         assert!(
             second.get("teaching").is_none(),
             "the same session creating a second rhythm is not taught again: {second}"
+        );
+    }
+
+    /// **The rule is general, never a hand-written list** — a synthetic
+    /// schema carrying an argument name no real verb has ever published is
+    /// caught exactly as `status` or `recorded_at` would be, because
+    /// `shadowed_argument` knows nothing about which names are real. This is
+    /// what a new argument added to either verb is covered by, without
+    /// anybody editing a list here.
+    #[test]
+    fn shadowed_argument_is_caught_by_shape_never_by_a_maintained_list() {
+        let properties: serde_json::Map<String, serde_json::Value> = [(
+            "an-argument-nobody-has-published-yet".to_string(),
+            serde_json::json!({}),
+        )]
+        .into_iter()
+        .collect();
+
+        assert_eq!(
+            shadowed_argument(
+                ["content", "an-argument-nobody-has-published-yet"],
+                &properties
+            ),
+            Some("an-argument-nobody-has-published-yet"),
+            "a name found in the schema is caught whether or not it is a name anybody wrote down"
+        );
+        assert_eq!(
+            shadowed_argument(["content", "details"], &properties),
+            None,
+            "a name absent from the schema is not"
+        );
+    }
+
+    /// **`capture`'s own published schema really does name `status` and
+    /// `provenance`** — the pin `published_arguments("capture")` rests on,
+    /// so the integration cases below are read against a real property set
+    /// rather than trusted to exist.
+    #[test]
+    fn captures_published_arguments_name_its_own_real_ones() {
+        let properties = published_arguments("capture").expect("capture is a published tool");
+        for name in ["provenance", "recorded_at", "standing"] {
+            assert!(
+                properties.contains_key(name),
+                "capture's own schema does not name its own argument {name}: {properties:?}"
+            );
+        }
+    }
+
+    /// **A field key that shadows one of `capture`'s own arguments is
+    /// taught, once — and a field that shadows nothing is not.** Both halves
+    /// in one case, the same shape [`the_first_capture_of_a_session_is_taught_and_the_second_is_not`]
+    /// already uses: the negative is read against the positive that fires,
+    /// never trusted alone.
+    #[tokio::test]
+    async fn a_field_that_shadows_an_argument_is_taught_once_and_a_plain_one_is_not() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+
+        // **`provenance`, not `status`.** `status` is real record state, but
+        // it is not one of capture's OWN arguments — only update_fact's;
+        // `captures_published_arguments_name_its_own_real_ones` pins that
+        // `provenance` is.
+        let mut args = capture_args("alpha", "plays go");
+        args.fields = Some(
+            [("provenance".to_string(), "testimony".to_string())]
+                .into_iter()
+                .collect(),
+        );
+        let shadowing = capture_as(&jojobot, &sid, args).await;
+        let teaching = shadowing["teaching"]
+            .as_array()
+            .unwrap_or_else(|| panic!("a teaching list: {shadowing}"));
+        assert!(
+            teaching.iter().any(|t| {
+                t.as_str().is_some_and(|t| {
+                    t.contains("\"provenance\"") && t.contains("is stored as ordinary data")
+                })
+            }),
+            "the first field naming an argument this session ever sent carries the teaching: \
+             {shadowing}"
+        );
+
+        let mut second_args = capture_args("alpha", "also plays chess");
+        second_args.fields = Some(
+            [("provenance".to_string(), "testimony".to_string())]
+                .into_iter()
+                .collect(),
+        );
+        let second = capture_as(&jojobot, &sid, second_args).await;
+        assert!(
+            !second["teaching"]
+                .as_array()
+                .map(|t| t
+                    .iter()
+                    .any(|t| t.as_str().is_some_and(|t| t.contains("\"provenance\"")
+                        && t.contains("is stored as ordinary data"))))
+                .unwrap_or(false),
+            "the same session shadowing the same argument again is not taught again: {second}"
+        );
+
+        let mut plain_args = capture_args("alpha", "and also poker");
+        plain_args.fields = Some(
+            [("favourite_suit".to_string(), "spades".to_string())]
+                .into_iter()
+                .collect(),
+        );
+        let plain = capture_as(&jojobot, &sid, plain_args).await;
+        assert!(
+            !plain["teaching"]
+                .as_array()
+                .map(|t| t.iter().any(|t| t
+                    .as_str()
+                    .is_some_and(|s| s.contains("is stored as ordinary data"))))
+                .unwrap_or(false),
+            "a field naming nothing capture already takes as an argument teaches nothing: {plain}"
         );
     }
 }

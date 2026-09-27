@@ -14,7 +14,8 @@ use super::*;
 use crate::session::session_declined;
 use crate::teaching::{
     CHECK_IN_DATE_TEACHING, CLAIM_DIRECTION_DOMAIN, CLAIM_DIRECTION_TEACHING, CLAIM_SUBJECT_DOMAIN,
-    CLAIM_SUBJECT_TEACHING, CLAIMS_DOMAIN, CLAIMS_TEACHING, RHYTHM_HISTORY_DOMAIN,
+    CLAIM_SUBJECT_TEACHING, CLAIMS_DOMAIN, CLAIMS_TEACHING, FIELD_SHADOWS_ARGUMENT_DOMAIN,
+    RHYTHM_HISTORY_DOMAIN,
 };
 
 /// Arguments to `capture`.
@@ -694,6 +695,10 @@ impl Jojobot {
         }
 
         let mut fields = args.fields.unwrap_or_default();
+        // **Captured before anything computed joins `fields`** — `check_in`
+        // and a moved due moment both add keys below, and this is about what
+        // the CALLER sent, never what jojobot added on its own.
+        let sent_field_keys: Vec<String> = fields.keys().cloned().collect();
         // **The thing a ceiling binds cannot write that ceiling.** Checked
         // before anything else about this write, on the caller's own
         // identity against the subject it is about to write — never a kind
@@ -902,6 +907,26 @@ impl Jojobot {
                         .await
                 {
                     crate::answer::note_teaching(&mut body, CHECK_IN_DATE_TEACHING);
+                }
+                // **Checked before the gate, never after** — `first_contact`
+                // has a side effect, and spending this domain's one teaching
+                // on a call that did not shadow anything would silence the
+                // call that actually does. The schema lookup is skipped
+                // entirely when no fields were sent, which is most calls.
+                if !sent_field_keys.is_empty()
+                    && let Some(properties) = crate::teaching::published_arguments("capture")
+                    && let Some(shadowed) = crate::teaching::shadowed_argument(
+                        sent_field_keys.iter().map(String::as_str),
+                        &properties,
+                    )
+                    && self
+                        .first_contact(FIELD_SHADOWS_ARGUMENT_DOMAIN, Some(&caller))
+                        .await
+                {
+                    crate::answer::note_teaching(
+                        &mut body,
+                        &crate::teaching::field_shadows_argument_teaching(shadowed, "capture"),
+                    );
                 }
                 json_result(&body)
             }
