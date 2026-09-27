@@ -385,6 +385,24 @@ pub(crate) fn note_fold_behind(body: &mut serde_json::Value, behind: Behind) {
     );
 }
 
+/// **Say what day a resumed run is in, when the resuming call named none of
+/// its own.** A call that states its own day answers in that frame and needs
+/// no note — this is for the caller who sent nothing and would otherwise
+/// have no way to tell "the run already has a day" from "nothing has a day."
+pub(crate) fn note_resumed_day(
+    body: &mut serde_json::Value,
+    started_on: Option<jiff::civil::Date>,
+) {
+    let Some(fields) = body.as_object_mut() else {
+        return;
+    };
+    let note = match started_on {
+        Some(day) => format!("This run is in {day}, set by an earlier call."),
+        None => "This run has no stated day. The server's clock is used.".to_string(),
+    };
+    fields.insert("day_note".into(), note.into());
+}
+
 /// **Name the starred rule a write just pushed off the boot's seats.** A
 /// bot's boot carries a fixed number of marked rules; starring one past that
 /// number does not refuse the write — see

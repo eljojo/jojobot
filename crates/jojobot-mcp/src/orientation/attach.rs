@@ -144,7 +144,7 @@ impl Jojobot {
                 }
                 match session {
                     Some(session) => {
-                        let block = serde_json::json!({
+                        let mut block = serde_json::json!({
                             "available": true,
                             "sid": handle.as_str(),
                             "resumed": true,
@@ -153,6 +153,12 @@ impl Jojobot {
                                      chronology is above. Read it before you start: somebody \
                                      (you, before a disconnect) was part way through something.",
                         });
+                        // **Only when THIS call named no day of its own.** A
+                        // caller stating its own day is answered in that
+                        // frame already and has nothing to be told.
+                        if today.is_none() {
+                            crate::answer::note_resumed_day(&mut block, session.started_on);
+                        }
                         block
                     }
                     // A handle whose session was never written: theirs, still
@@ -1657,6 +1663,44 @@ mod tests {
             rows.len(),
             1,
             "the granted claim left one row; the refused one added none: {rows:?}"
+        );
+    }
+
+    /// **A resumed run's own day, told to a caller that named none of its
+    /// own on THIS call.** Two shapes: the run already has one, set by an
+    /// earlier call — and the run has none, so the server's clock answers.
+    #[tokio::test]
+    async fn a_resumed_run_names_its_own_day_when_the_caller_states_none() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        make_bot(&jojobot, "milhouse").await;
+
+        // A run that stated its own day, then was resumed without one.
+        let dated_boot = boot_on(&jojobot, "gamma", "2026-03-15").await;
+        let dated_sid = sid_of(&dated_boot).expect("a handle");
+        journal_entry(&jojobot, &dated_sid, "started").await;
+
+        let resumed = boot_answering(&jojobot, "gamma", &dated_sid).await;
+        let note = resumed["session"]["day_note"]
+            .as_str()
+            .unwrap_or_else(|| panic!("a day note: {resumed}"));
+        assert!(
+            note.contains("2026-03-15") && note.to_lowercase().contains("earlier call"),
+            "{note}"
+        );
+
+        // A run with no stated day, resumed the same way.
+        let undated_boot = boot(&jojobot, "milhouse").await;
+        let undated_sid = sid_of(&undated_boot).expect("a handle");
+        journal_entry(&jojobot, &undated_sid, "started").await;
+
+        let resumed_undated = boot_answering(&jojobot, "milhouse", &undated_sid).await;
+        let note = resumed_undated["session"]["day_note"]
+            .as_str()
+            .unwrap_or_else(|| panic!("a day note: {resumed_undated}"));
+        assert!(
+            note.to_lowercase().contains("no stated day") && note.to_lowercase().contains("clock"),
+            "{note}"
         );
     }
 
