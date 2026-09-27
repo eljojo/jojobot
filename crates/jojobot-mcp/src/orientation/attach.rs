@@ -1521,6 +1521,35 @@ mod tests {
         assert_eq!(live[0].entries.len(), 2);
     }
 
+    /// **Two sequential boots of one identity, with nothing written between
+    /// them, do not see each other.** The second gets a fresh handle, not a
+    /// choice — the documented shape a claimed boot was checked against
+    /// separately (reported rather than committed here, since a claim writes
+    /// a fact on the bot's own record and never touches what this reads).
+    #[tokio::test]
+    async fn two_sequential_boots_with_nothing_written_between_them_do_not_see_each_other() {
+        let store = Arc::new(InMemorySessions::new());
+        let memory = Arc::new(InMemoryMemory::booted());
+        let registry = crate::harness::seeded_registry();
+
+        // A name other than "otto" — the harness's own fixture-writer
+        // identity, whose boot inside `make_bot` would otherwise land a
+        // session card on the very bot this case is trying to leave
+        // untouched.
+        let first = connection_sharing(memory.clone(), store.clone(), registry.clone());
+        make_bot(&first, "milhouse").await;
+        boot(&first, "milhouse").await;
+
+        let second = connection_sharing(memory, store, registry);
+        let after = boot(&second, "milhouse").await;
+        assert!(
+            sid_of(&after).is_some(),
+            "two sequential boots with nothing written between them do not see each other: \
+             {after}"
+        );
+        assert!(after["session"]["choices"].is_null(), "{after}");
+    }
+
     /// **The sweep, and what it is measured from.** A session that has gone a
     /// day without a beat is closed as `abandoned` at the next boot of its bot —
     /// never deleted, never wrapped, because its story was never told.
