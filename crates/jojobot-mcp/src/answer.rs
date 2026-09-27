@@ -312,6 +312,31 @@ pub(crate) fn note_delta(body: &mut serde_json::Value, differences: Vec<Differen
     );
 }
 
+/// **Say when an explicit `recorded_at` differs from the day this run is
+/// in.** Call it only when both are true — the caller sent one and it does
+/// not match the run's own stated day — so the note stays silent on an
+/// omitted date, a matching one, and a run with no stated day to differ
+/// from. A different question from [`note_delta`]: that one is about what
+/// the STORE kept versus what was sent; this is about the caller's own
+/// argument versus the frame their run is already working in.
+pub(crate) fn note_recorded_at_mismatch(
+    body: &mut serde_json::Value,
+    run_day: jiff::civil::Date,
+    recorded_at: jiff::civil::Date,
+) {
+    let Some(fields) = body.as_object_mut() else {
+        return;
+    };
+    fields.insert(
+        "recorded_at_note".into(),
+        format!(
+            "recorded_at names {recorded_at}, which differs from the day this run is in, \
+             {run_day}. Leaving recorded_at off would record this under {run_day}."
+        )
+        .into(),
+    );
+}
+
 /// **State what now stands, and what this write left alone.**
 ///
 /// A fact about the CALLER'S OWN EFFECT on the store, derivable from the verb's

@@ -66,6 +66,11 @@ pub struct CaptureArgs {
     /// Not the day the thing happened: that is `happened_at`, and it is
     /// separate because one field answering both is how a vague answer becomes
     /// an invented date.
+    ///
+    /// **Naming a day that differs from the day your run is in is never
+    /// refused** — the receipt carries `recorded_at_note`, one sentence
+    /// naming both days, so a sitting acting out a different period does not
+    /// silently record under the wrong one by mistake.
     #[serde(default)]
     pub(crate) recorded_at: Option<String>,
     /// **The day the thing this claim is about HAPPENED**, `YYYY-MM-DD` —
@@ -838,6 +843,16 @@ impl Jojobot {
                 let mut body = fact_receipt_json(&fact, self.dated(None, args.sid.as_deref())?);
                 if let Some(behind) = fold_behind {
                     crate::answer::note_fold_behind(&mut body, behind);
+                }
+                // **Only when the caller named a day AND their run has one of
+                // its own AND the two disagree.** `recorded_at` above is
+                // already the resolved day — equal to what the caller sent
+                // whenever they sent one — so the comparison is this simple.
+                if args.recorded_at.is_some()
+                    && let Some(stated) = caller.day
+                    && stated != recorded_at
+                {
+                    crate::answer::note_recorded_at_mismatch(&mut body, stated, recorded_at);
                 }
                 // **Either trigger for the provenance demotion gets its own
                 // reason.** `checked_in` and `due_on_set` fire the same
@@ -2664,6 +2679,75 @@ mod tests {
                 .date()
                 .to_string(),
             "a run that stated no day was answered with somebody else's frame: {clocked}"
+        );
+    }
+
+    /// **The receipt says when an explicit `recorded_at` differs from the
+    /// run's own stated day, and stays silent on every other shape** —
+    /// omitted, matching, or a run with no stated day to differ from. Four
+    /// cases in one, so the one that fires is read against the three that do
+    /// not rather than trusted alone.
+    #[tokio::test]
+    async fn the_receipt_names_a_recorded_at_that_differs_from_the_runs_day() {
+        let jojobot = handler();
+        make_bot(&jojobot, "otto").await;
+        ensure(&jojobot, "person:milhouse").await;
+
+        let booted = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    claim: None,
+                    bot: Some("otto".into()),
+                    today: Some("2026-03-15".into()),
+                    resume: Some("new".into()),
+                    brief: Some(true),
+                    timezone: None,
+                    skill: None,
+                    section: None,
+                    sid: None,
+                }))
+                .await
+                .expect("the boot call is ok"),
+        );
+        let acting = sid_of(&booted).expect("a handle");
+
+        // A different day: the sentence names both.
+        let mut args = capture_args("milhouse", "stated on a different day");
+        args.sid = Some(acting.clone());
+        args.recorded_at = Some("2026-03-01".into());
+        let differing = capture_ok(&jojobot, args).await;
+        let note = differing["recorded_at_note"]
+            .as_str()
+            .unwrap_or_else(|| panic!("a sentence naming both days: {differing}"));
+        assert!(
+            note.contains("2026-03-01") && note.contains("2026-03-15"),
+            "{note}"
+        );
+
+        // The same day as the run: silent.
+        let mut args = capture_args("milhouse", "stated on the run's own day");
+        args.sid = Some(acting.clone());
+        args.recorded_at = Some("2026-03-15".into());
+        let same = capture_ok(&jojobot, args).await;
+        assert!(same["recorded_at_note"].is_null(), "{same}");
+
+        // No explicit day at all: silent.
+        let mut args = capture_args("milhouse", "no day named at all");
+        args.sid = Some(acting.clone());
+        args.recorded_at = None;
+        let omitted = capture_ok(&jojobot, args).await;
+        assert!(omitted["recorded_at_note"].is_null(), "{omitted}");
+
+        // A run with no stated day: silent, even naming a day that would
+        // otherwise disagree with the server's own clock.
+        let undated = booted_in(&jojobot, "otto", "Etc/GMT+12", Some("new")).await;
+        let mut args = capture_args("milhouse", "a run with no stated day");
+        args.sid = Some(undated);
+        args.recorded_at = Some("2026-01-01".into());
+        let no_stated_day = capture_ok(&jojobot, args).await;
+        assert!(
+            no_stated_day["recorded_at_note"].is_null(),
+            "{no_stated_day}"
         );
     }
 

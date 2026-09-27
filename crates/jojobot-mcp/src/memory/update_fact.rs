@@ -39,6 +39,11 @@ pub struct UpdateFactArgs {
     /// on the record, permanently: a correction made months later would
     /// otherwise read back as if it had been made on the original day
     /// forever.
+    ///
+    /// **Naming a day that differs from the day your run is in is never
+    /// refused** — the receipt carries `recorded_at_note`, one sentence
+    /// naming both days, so a sitting acting out a different period does not
+    /// silently record under the wrong one by mistake.
     #[serde(default)]
     pub recorded_at: Option<String>,
     /// **The day the thing this claim is about HAPPENED**, `YYYY-MM-DD`.
@@ -456,6 +461,17 @@ impl Jojobot {
                 let mut body = fact_receipt_json(&fact, self.dated(None, args.sid.as_deref())?);
                 if let Some(behind) = fold_behind {
                     crate::answer::note_fold_behind(&mut body, behind);
+                }
+                // **Only when the caller named a day AND their run has one of
+                // its own AND the two disagree.** Reparsed rather than
+                // threaded through the moved patch — `parse_date` already
+                // validated this same string once above, so it cannot fail
+                // differently here.
+                if let Some(explicit) = parse_date(args.recorded_at.as_deref())?
+                    && let Some(stated) = caller.day
+                    && stated != explicit
+                {
+                    crate::answer::note_recorded_at_mismatch(&mut body, stated, explicit);
                 }
                 crate::answer::note_delta(&mut body, declared.not_stored(&fact));
                 crate::answer::note_postcondition(
@@ -1814,6 +1830,112 @@ mod tests {
         assert_eq!(
             untouched["recorded_at"], "2026-08-15",
             "an edit naming no day must leave the record's existing day alone: {untouched}"
+        );
+    }
+
+    /// **The receipt says when an explicit `recorded_at` differs from the
+    /// run's own stated day, and stays silent on every other shape** —
+    /// mirrors `capture`'s own case, on the edit verb.
+    #[tokio::test]
+    async fn the_update_receipt_names_a_recorded_at_that_differs_from_the_runs_day() {
+        let jojobot = handler();
+        make_bot(&jojobot, "otto").await;
+
+        let booted = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    claim: None,
+                    bot: Some("otto".into()),
+                    today: Some("2026-03-15".into()),
+                    resume: Some("new".into()),
+                    brief: Some(true),
+                    timezone: None,
+                    skill: None,
+                    section: None,
+                    sid: None,
+                }))
+                .await
+                .expect("the boot call is ok"),
+        );
+        let acting = sid_of(&booted).expect("a handle");
+
+        let captured = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                sid: Some(acting.clone()),
+                ..capture_args("alpha", "the club meets on Tuesdays")
+            },
+        )
+        .await;
+        let address = address_of(&captured);
+
+        // A different day: the sentence names both.
+        let differing = json_of(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    provenance: Some("inference".to_string()),
+                    content: Some("the club meets on Wednesdays".into()),
+                    recorded_at: Some("2026-03-01".into()),
+                    sid: Some(acting.clone()),
+                    ..update_args(&address)
+                }))
+                .await
+                .expect("update ok"),
+        );
+        let note = differing["recorded_at_note"]
+            .as_str()
+            .unwrap_or_else(|| panic!("a sentence naming both days: {differing}"));
+        assert!(
+            note.contains("2026-03-01") && note.contains("2026-03-15"),
+            "{note}"
+        );
+
+        // The same day as the run: silent.
+        let same = json_of(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    provenance: Some("inference".to_string()),
+                    content: Some("the club meets on Thursdays".into()),
+                    recorded_at: Some("2026-03-15".into()),
+                    sid: Some(acting.clone()),
+                    ..update_args(&address)
+                }))
+                .await
+                .expect("update ok"),
+        );
+        assert!(same["recorded_at_note"].is_null(), "{same}");
+
+        // No explicit day at all: silent.
+        let omitted = json_of(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    provenance: Some("inference".to_string()),
+                    content: Some("the club meets on Fridays".into()),
+                    sid: Some(acting.clone()),
+                    ..update_args(&address)
+                }))
+                .await
+                .expect("update ok"),
+        );
+        assert!(omitted["recorded_at_note"].is_null(), "{omitted}");
+
+        // A run with no stated day — `update_args`'s own default sid, bound
+        // to no day by `writing_as` — is silent even naming a day that would
+        // otherwise disagree.
+        let no_stated_day = json_of(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    provenance: Some("inference".to_string()),
+                    content: Some("the club meets on Saturdays".into()),
+                    recorded_at: Some("2026-01-01".into()),
+                    ..update_args(&address)
+                }))
+                .await
+                .expect("update ok"),
+        );
+        assert!(
+            no_stated_day["recorded_at_note"].is_null(),
+            "{no_stated_day}"
         );
     }
 
