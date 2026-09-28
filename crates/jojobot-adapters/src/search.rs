@@ -49,7 +49,7 @@ use jojobot_domain::memory::{
         self, Behind, Coverage, DocScan, EntityRef, Hit, RankClock, Search, SearchQuery,
         SourceStanding,
     },
-    types::DeclaredType,
+    types::{DeclaredType, Displaced},
 };
 
 /// How much a fresh fact is worth against text relevance. Small on purpose: it
@@ -2515,6 +2515,10 @@ impl Memory for IndexedMemory {
 
     async fn declared_types(&self) -> Result<Vec<DeclaredType>, MemoryError> {
         self.inner.declared_types().await
+    }
+
+    async fn displaced_type(&self, name: &str) -> Result<Option<Displaced>, MemoryError> {
+        self.inner.displaced_type(name).await
     }
 
     /// The same reason [`declare_type`](Self::declare_type) drops the

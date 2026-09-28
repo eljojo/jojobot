@@ -470,6 +470,55 @@ pub(crate) fn note_teaching(body: &mut serde_json::Value, content: &str) {
         .push(content.into());
 }
 
+/// **Say when a type NAME this call resolved has a caller's own declaration
+/// displaced underneath it.** A caller who names a type — in `answers_type`,
+/// `fits_type`, or any other argument that resolves one — gets matched
+/// against the type the software ships now, and if that used to be the
+/// caller's own, with different keys, matching silently against the wrong
+/// shape is the same silence `declare_type`'s own refusal used to carry
+/// before it named this too.
+///
+/// **Once per name, never per object matched against it.** `declare_type`'s
+/// own refusal already covers a caller who tries to redeclare the name; this
+/// is for the query path that never gets that far, because it never tries to
+/// write.
+///
+/// **Silent when nothing was ever displaced under this name** — the ordinary
+/// case, and the positive this note rests on. Appends rather than overwrites,
+/// the way `note_teaching` does: `answers_type` and `fits_type` can name two
+/// different displaced types in the same call, and a single key either could
+/// overwrite would silently drop one.
+pub(crate) fn note_type_displaced(
+    body: &mut serde_json::Value,
+    name: &str,
+    displaced: Option<&Displaced>,
+) {
+    let Some(displaced) = displaced else {
+        return;
+    };
+    let Some(fields) = body.as_object_mut() else {
+        return;
+    };
+    let note = format!(
+        "'{name}' held keys {}, declared by a caller, until {}, when the software's own \
+         declaration took the name over. What follows is matched against the software's keys, \
+         not those.",
+        displaced
+            .fields
+            .iter()
+            .map(|f| f.key.as_str())
+            .collect::<Vec<_>>()
+            .join(", "),
+        displaced.replaced_on,
+    );
+    fields
+        .entry("type_displaced")
+        .or_insert_with(|| serde_json::Value::Array(Vec::new()))
+        .as_array_mut()
+        .expect("type_displaced is always written as an array")
+        .push(note.into());
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -491,6 +540,68 @@ mod tests {
     fn a_real_way_forward_survives_construction() {
         let built: WayForward = "call add_entity first".into();
         assert_eq!(built.as_str(), "call add_entity first");
+    }
+
+    /// **Two different names can each carry a displaced record in one
+    /// answer, and neither overwrites the other** — the same
+    /// append-not-overwrite property `note_teaching` already guards,
+    /// proven here for its sibling. Mechanism level, independent of any one
+    /// verb that calls this.
+    #[test]
+    fn note_type_displaced_appends_rather_than_overwrites() {
+        use jiff::civil::date;
+        use jojobot_domain::memory::types::{Displaced, Field, ValueType};
+
+        let mut body = serde_json::json!({});
+        note_type_displaced(
+            &mut body,
+            "roster-a",
+            Some(&Displaced {
+                name: "roster-a".into(),
+                fields: vec![Field::new("shift_lead", ValueType::Reference)],
+                replaced_on: date(2026, 4, 18),
+            }),
+        );
+        note_type_displaced(
+            &mut body,
+            "roster-b",
+            Some(&Displaced {
+                name: "roster-b".into(),
+                fields: vec![Field::new("cover", ValueType::Reference)],
+                replaced_on: date(2026, 4, 18),
+            }),
+        );
+
+        let notes = body["type_displaced"]
+            .as_array()
+            .expect("both notes are recorded");
+        assert_eq!(
+            notes.len(),
+            2,
+            "the second call must not overwrite the first: {body}"
+        );
+        let joined = notes
+            .iter()
+            .filter_map(|n| n.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(
+            joined.contains("roster-a") && joined.contains("shift_lead"),
+            "{joined}"
+        );
+        assert!(
+            joined.contains("roster-b") && joined.contains("cover"),
+            "{joined}"
+        );
+    }
+
+    /// **`None` adds nothing at all** — the positive above rests on this,
+    /// and it is the ordinary case: most names were never displaced.
+    #[test]
+    fn note_type_displaced_is_silent_on_none() {
+        let mut body = serde_json::json!({});
+        note_type_displaced(&mut body, "never-displaced", None);
+        assert!(body.get("type_displaced").is_none(), "{body}");
     }
 
     /// **`misused` is wired to the mechanism, not merely beside it.** A

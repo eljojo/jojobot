@@ -8000,6 +8000,19 @@ pub async fn a_shipped_write_displacing_a_callers_type_is_remembered<M: Memory>(
         "the keys the caller's declaration named, exactly as declared",
     );
 
+    // **The same record, reached by the standalone read too** — not only
+    // through the refusal a redeclaration meets. A query that resolves the
+    // name (`answers_type`, `fits_type`) has no redeclaration to be refused
+    // by, so it reaches this instead.
+    assert_eq!(
+        store
+            .displaced_type("contract-roster")
+            .await
+            .expect("the read answers"),
+        Some(displaced.clone()),
+        "the standalone read answers the same record the refusal carries",
+    );
+
     // The pair this rests on: a second shipped write, landing on the
     // software's OWN previous row rather than a caller's — a reboot
     // repeating the seed — must not touch or duplicate what the first
@@ -8044,6 +8057,14 @@ pub async fn a_shipped_type_declared_fresh_displaces_nothing<M: Memory>(store: &
     assert_eq!(
         displaced, None,
         "nothing was ever a caller's under this name, so the refusal names nothing",
+    );
+    assert_eq!(
+        store
+            .displaced_type("contract-fresh-rota")
+            .await
+            .expect("the read answers"),
+        None,
+        "…and the standalone read agrees",
     );
 }
 

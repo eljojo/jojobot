@@ -2273,6 +2273,19 @@ impl Memory for InMemoryMemory {
         Ok(types)
     }
 
+    async fn displaced_type(
+        &self,
+        name: &str,
+    ) -> Result<Option<crate::memory::types::Displaced>, MemoryError> {
+        Ok(self
+            .displaced_types
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|d| d.name == name)
+            .cloned())
+    }
+
     async fn declare_kind(
         &self,
         token: &str,

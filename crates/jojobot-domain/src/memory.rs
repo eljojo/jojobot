@@ -4627,6 +4627,20 @@ pub trait Memory: Send + Sync {
     /// reading what a writer was told to fill, never what the store holds.
     async fn declared_types(&self) -> Result<Vec<types::DeclaredType>, MemoryError>;
 
+    /// **What a caller's own declaration of `name` held, before the software
+    /// replaced it under the same name.** `None` when nothing was ever
+    /// displaced — the ordinary case for every name.
+    ///
+    /// **Defaults to `Ok(None)`, and that default is only correct on a store
+    /// with nothing to forward to.** A decorator wrapping another `Memory`
+    /// must override this to read through its own inner store — a read that
+    /// silently stops at the wrong layer of a decorator stack answers
+    /// "nothing displaced" for a name that really has one, underneath.
+    async fn displaced_type(&self, name: &str) -> Result<Option<types::Displaced>, MemoryError> {
+        let _ = name;
+        Ok(None)
+    }
+
     /// **Declare a kind** — the namespace a handle carries and the schema of
     /// what it names (rule 213).
     ///

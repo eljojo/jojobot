@@ -98,7 +98,7 @@ impl Jojobot {
         &self,
         wanted: &str,
         did: &'static str,
-    ) -> Result<Result<DeclaredType, CallToolResult>, McpError> {
+    ) -> Result<Result<(DeclaredType, Option<Displaced>), CallToolResult>, McpError> {
         let known = match self.memory.declared_types().await {
             Ok(known) => known,
             // **Not a name mistake — the store is down.** `declared_types` has
@@ -111,7 +111,16 @@ impl Jojobot {
             Err(e) => return memory_declined(did, e).map(Err),
         };
         if let Some(found) = known.iter().find(|t| t.name == wanted.trim()) {
-            return Ok(Ok(found.clone()));
+            // **A name that resolves may still have displaced a caller's own
+            // declaration** (rule 68): the query is about to match against
+            // the type this answers with, and if that used to be a caller's,
+            // with different keys, silence here is the same silence
+            // `declare_type`'s own refusal used to carry.
+            let displaced = match self.memory.displaced_type(&found.name).await {
+                Ok(displaced) => displaced,
+                Err(e) => return memory_declined(did, e).map(Err),
+            };
+            return Ok(Ok((found.clone(), displaced)));
         }
         let names: Vec<&str> = known.iter().map(|t| t.name.as_str()).collect();
         Ok(Err(blocked_body(

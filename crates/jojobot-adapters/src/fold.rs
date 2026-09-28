@@ -321,6 +321,10 @@ impl Memory for Folded {
         self.inner.declared_types().await
     }
 
+    async fn displaced_type(&self, name: &str) -> Result<Option<types::Displaced>, MemoryError> {
+        self.inner.displaced_type(name).await
+    }
+
     /// **The same reason [`declare_type`](Self::declare_type) rebuilds
     /// rather than refreshes**: a kind's keys fold exactly like a declared
     /// type's, over every entity that answers to it.

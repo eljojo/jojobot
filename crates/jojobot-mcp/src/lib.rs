@@ -78,7 +78,7 @@ use jojobot_domain::memory::{
     search::{
         Behind, Coverage, DEFAULT_LIMIT, EdgeFilter, EntityRef, Hit, RankClock, Search, SearchQuery,
     },
-    types::{DeclaredType, Field, Fold, ValueType},
+    types::{DeclaredType, Displaced, Field, Fold, ValueType},
     validate_edge,
 };
 use jojobot_domain::session::{

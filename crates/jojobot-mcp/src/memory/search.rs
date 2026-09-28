@@ -628,10 +628,14 @@ impl Jojobot {
         // below takes the keys rather than the name, so nothing deeper needs a
         // store to answer a type question — and a name nobody declared is
         // answered here, where the roster to offer instead is in reach.
+        let mut type_displaced = Vec::new();
         let declared = match &args.answers_type {
             None => None,
             Some(wanted) => match self.declared(wanted, "searched").await? {
-                Ok(declared) => Some(declared),
+                Ok((declared, displaced)) => {
+                    type_displaced.push((wanted.clone(), displaced));
+                    Some(declared)
+                }
                 Err(refused) => return Ok(refused),
             },
         };
@@ -641,7 +645,10 @@ impl Jojobot {
         let fits = match &args.fits_type {
             None => None,
             Some(wanted) => match self.declared(wanted, "searched").await? {
-                Ok(declared) => Some(declared),
+                Ok((declared, displaced)) => {
+                    type_displaced.push((wanted.clone(), displaced));
+                    Some(declared)
+                }
                 Err(refused) => return Ok(refused),
             },
         };
@@ -744,6 +751,9 @@ impl Jojobot {
             && self.first_contact(CLAIMS_DOMAIN, asking.as_ref()).await
         {
             crate::answer::note_teaching(&mut body, CLAIMS_TEACHING);
+        }
+        for (wanted, displaced) in &type_displaced {
+            crate::answer::note_type_displaced(&mut body, wanted, displaced.as_ref());
         }
         json_result(&body)
     }
@@ -879,6 +889,82 @@ mod tests {
         assert!(
             note.contains("answers_type"),
             "…and the reason names the argument the caller actually passed: {note}"
+        );
+    }
+
+    /// 🚨 **A search naming a displaced type does not match silently against
+    /// the wrong shape.** Before this, `answers_type`/`fits_type` resolved
+    /// straight to the type the software ships now, with no trace of what a
+    /// caller's own declaration under that name used to hold.
+    ///
+    /// **Once per answer, not per hit.** Asserted with the search port
+    /// answering nothing at all, so the note cannot be riding on a hit.
+    #[tokio::test]
+    async fn a_search_naming_a_displaced_type_names_it_once_in_the_answer() {
+        let jojobot = handler_with(Arc::new(SpySearch::default()));
+        jojobot
+            .memory
+            .declare_type(DeclaredType::new(
+                "roster",
+                vec![Field::new("shift_lead", ValueType::Reference)],
+            ))
+            .await
+            .expect("the caller's own declaration lands");
+        jojobot
+            .memory
+            .declare_type(DeclaredType::shipped(
+                "roster",
+                vec![Field::new("starts", ValueType::Date)],
+            ))
+            .await
+            .expect("the software's own write replaces a caller's");
+
+        let found = json_of(
+            &jojobot
+                .search(Parameters(SearchArgs {
+                    answers_type: Some("roster".into()),
+                    ..search_args()
+                }))
+                .await
+                .expect("search ok"),
+        );
+        let notes = found["type_displaced"]
+            .as_array()
+            .unwrap_or_else(|| panic!("names what the query's own type displaced: {found}"));
+        assert_eq!(notes.len(), 1, "once per answer, not per hit: {found}");
+        assert!(
+            notes[0].as_str().unwrap_or_default().contains("shift_lead"),
+            "names the caller's own key: {found}"
+        );
+    }
+
+    /// **The positive above rests on this**: a type never displaced names
+    /// nothing. Without it, an answer that always carried something under
+    /// `type_displaced` would pass the case above for the wrong reason.
+    #[tokio::test]
+    async fn a_search_naming_a_type_never_displaced_names_nothing() {
+        let jojobot = handler_with(Arc::new(SpySearch::default()));
+        jojobot
+            .memory
+            .declare_type(DeclaredType::shipped(
+                "always-shipped-search",
+                vec![Field::new("starts", ValueType::Date)],
+            ))
+            .await
+            .expect("the software declares its own types");
+
+        let found = json_of(
+            &jojobot
+                .search(Parameters(SearchArgs {
+                    answers_type: Some("always-shipped-search".into()),
+                    ..search_args()
+                }))
+                .await
+                .expect("search ok"),
+        );
+        assert!(
+            found.get("type_displaced").is_none(),
+            "nothing was ever a caller's under this name, so nothing is named: {found}"
         );
     }
 

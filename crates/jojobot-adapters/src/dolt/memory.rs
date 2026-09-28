@@ -3858,6 +3858,18 @@ impl Memory for DoltMemory {
         gather_types(&rows)
     }
 
+    async fn displaced_type(&self, name: &str) -> Result<Option<Displaced>, MemoryError> {
+        let rows = sqlx::query(
+            "SELECT key_name, holds, folds, required, one_of, replaced_on FROM displaced_type_field \
+             WHERE type_name = ? ORDER BY ordinal",
+        )
+        .bind(name)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(store)?;
+        displaced_from_rows(name, &rows)
+    }
+
     async fn declare_kind(
         &self,
         token: &str,
@@ -4143,12 +4155,23 @@ async fn fetch_displaced(
     .fetch_all(&mut **tx)
     .await
     .map_err(store)?;
+    displaced_from_rows(name, &rows)
+}
+
+/// Rows into the [`Displaced`] they are — **one reader**, shared by the read
+/// taken inside a `declare_type` transaction and the standalone read a
+/// caller's own query makes, so the two cannot come to parse a row two
+/// different ways.
+fn displaced_from_rows(
+    name: &str,
+    rows: &[sqlx::mysql::MySqlRow],
+) -> Result<Option<Displaced>, MemoryError> {
     if rows.is_empty() {
         return Ok(None);
     }
     let mut fields = Vec::with_capacity(rows.len());
     let mut replaced_on: Option<Date> = None;
-    for row in &rows {
+    for row in rows {
         let key: String = row.get("key_name");
         let holds_token: String = row.get("holds");
         let held = Field::of_token(&key, &holds_token);

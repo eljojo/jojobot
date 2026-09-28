@@ -840,6 +840,12 @@ impl super::Memory for Mentioning {
     async fn declared_types(&self) -> Result<Vec<super::types::DeclaredType>, super::MemoryError> {
         self.inner.declared_types().await
     }
+    async fn displaced_type(
+        &self,
+        name: &str,
+    ) -> Result<Option<super::types::Displaced>, super::MemoryError> {
+        self.inner.displaced_type(name).await
+    }
     async fn declare_kind(
         &self,
         token: &str,
