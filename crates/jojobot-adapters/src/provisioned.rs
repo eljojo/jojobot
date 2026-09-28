@@ -87,6 +87,23 @@ impl<M> Provisioned<M> {
             doc.prose = extended(shipped, &doc.prose);
         }
     }
+
+    /// **What this entity's fields would fold to if the store held nothing
+    /// of its own** — a whole shipped record's own fields, narrowed by any
+    /// per-key default over the same entity, exactly as [`fields`](Self::fields)
+    /// folds them before the store's own writes join. Shared so a read and
+    /// the echo check can never drift apart about what counts as a default:
+    /// [`fields`](Self::fields) extends this with what the store holds;
+    /// [`echoed_defaults`](Self::echoed_defaults) compares an incoming write
+    /// against it directly.
+    fn unwritten_defaults(&self, entity: &EntityId) -> BTreeMap<String, String> {
+        let mut defaults = match self.provisions.record_for(entity) {
+            Some((_, supplied)) => supplied.clone(),
+            None => BTreeMap::new(),
+        };
+        defaults.extend(self.provisions.fields_for(entity));
+        defaults
+    }
 }
 
 #[async_trait]
@@ -224,11 +241,7 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
     /// nothing.
     async fn fields(&self, entity: &EntityId) -> Result<BTreeMap<String, String>, MemoryError> {
         let held = self.inner.fields(entity).await?;
-        let mut folded = match self.provisions.record_for(entity) {
-            Some((_, supplied)) => supplied.clone(),
-            None => BTreeMap::new(),
-        };
-        folded.extend(self.provisions.fields_for(entity));
+        let mut folded = self.unwritten_defaults(entity);
         folded.extend(held);
         Ok(folded)
     }
@@ -236,17 +249,18 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
     /// **The one comparison this layer can make that the store underneath
     /// cannot**: only `Provisioned` holds what the build ships, so only here
     /// can a write be compared against it. Per-key exact-value equality
-    /// against [`Provisions::fields_for`] — never the line-window prose
-    /// comparison [`guard_extension`] runs for [`set_prose`](Self::set_prose),
-    /// which is the wrong shape for a bag of independent scalars. Nothing here
-    /// changes what gets written; a caller (`capture`, in this build) reads
-    /// this beside the write to build its own receipt.
+    /// against [`unwritten_defaults`](Self::unwritten_defaults) — never the
+    /// line-window prose comparison [`guard_extension`] runs for
+    /// [`set_prose`](Self::set_prose), which is the wrong shape for a bag of
+    /// independent scalars. Nothing here changes what gets written; a caller
+    /// (`capture` and `update_fact`, in this build) reads this beside the
+    /// write to build its own receipt.
     async fn echoed_defaults(
         &self,
         entity: &EntityId,
         fields: &BTreeMap<String, String>,
     ) -> Vec<String> {
-        let defaults = self.provisions.fields_for(entity);
+        let defaults = self.unwritten_defaults(entity);
         let mut echoed: Vec<String> = fields
             .iter()
             .filter(|(key, value)| defaults.get(key.as_str()) == Some(*value))
@@ -918,6 +932,40 @@ mod tests {
             echoed_after_upgrade.is_empty(),
             "a value that no longer matches any current default must not be named: \
              {echoed_after_upgrade:?}",
+        );
+    }
+
+    /// **The same echo, over a whole shipped record's own fields — not only a
+    /// per-key [`Provision::field`] default.** A `Supplies::Record` carries
+    /// its own fields map, folded in at [`fields`](Provisioned::fields)'s own
+    /// starting point exactly as a `Field` default is; `echoed_defaults`
+    /// shares that same fold now, through `unwritten_defaults`, so it must
+    /// see this shape too.
+    ///
+    /// Paired: an echo of the record's own value is named, and a
+    /// customisation of the same key is not — without the second half this
+    /// passes on a check that names every write to a supplied record's key.
+    #[tokio::test]
+    async fn an_echo_of_a_shipped_records_own_field_is_named_and_a_customisation_is_not() {
+        let record = shipped_record("my-week");
+        let id = EntityId("view:my-week".into());
+        let store = InMemoryMemory::booted();
+        let over = Provisioned::new(store, Provisions::new(vec![record]));
+
+        let echoing = BTreeMap::from([("selects".to_string(), "rhythm".to_string())]);
+        let echoed = over.echoed_defaults(&id, &echoing).await;
+        assert_eq!(
+            echoed,
+            vec!["selects".to_string()],
+            "a value equal to the shipped record's own field must be named: {echoed:?}",
+        );
+
+        let customised = BTreeMap::from([("selects".to_string(), "person".to_string())]);
+        let not_echoed = over.echoed_defaults(&id, &customised).await;
+        assert!(
+            not_echoed.is_empty(),
+            "a value that differs from the shipped record's own field must not be named: \
+             {not_echoed:?}",
         );
     }
 
