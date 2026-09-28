@@ -244,7 +244,11 @@ impl Jojobot {
             Guarded::Blocked {
                 attempted,
                 candidates,
-            } => Ok(blocked_result(&attempted, &candidates, Blocked::Renaming)),
+            } => Ok(blocked_result(
+                &attempted,
+                &candidates,
+                Blocked::Renaming(args.override_token.as_deref()),
+            )),
         }
     }
 }
@@ -393,6 +397,77 @@ mod tests {
             .map(|e| e["name"].as_str().unwrap())
             .collect();
         assert_eq!(names, vec!["Alpha", "Zenith"]);
+    }
+
+    /// **The positive `a_rename_onto_an_existing_handle_is_blocked` needs**:
+    /// a near miss on the DESTINATION, not an exact collision, is the
+    /// refusal that IS overridable, and its own token really lifts it.
+    /// Without this, `Blocked::Renaming`'s promising arm was proven to
+    /// refuse correctly but never proven to keep the promise it makes —
+    /// only its exact-collision sibling and its two unoverridable parent
+    /// refusals had a round trip.
+    #[tokio::test]
+    async fn a_rename_near_miss_on_the_destination_is_lifted_by_its_own_token() {
+        let jojobot = handler();
+        let sid = writing_as(&jojobot);
+        jojobot
+            .add_entity(Parameters(add_args("person", "alpha", "Alpha")))
+            .await
+            .expect("add ok");
+        jojobot
+            .add_entity(Parameters(add_args("person", "beta", "Beta")))
+            .await
+            .expect("add ok");
+
+        let rename = |token: Option<String>| RenameEntityArgs {
+            override_token: token,
+            ..args("person:beta", "person:alphaa", &sid)
+        };
+
+        let result = jojobot
+            .rename_entity(Parameters(rename(None)))
+            .await
+            .expect("the call succeeds; the guard answers in the body");
+        let body = blocked(&result);
+        assert_eq!(body["attempted"], "person:alphaa");
+        assert_eq!(body["candidates"][0]["handle"], "person:alpha");
+        assert_eq!(body["candidates"][0]["reason"], "near-slug");
+        let how = body["how_to_proceed"]
+            .as_str()
+            .expect("a blocked answer says how to proceed");
+        assert!(
+            how.contains(OFFERS_A_TOKEN),
+            "a near miss on the destination is lifted by a token: {body}",
+        );
+        let token = how
+            .split_once(OFFERS_A_TOKEN)
+            .and_then(|(_, rest)| rest.split_once('"'))
+            .expect("the advice hands over the token it mints")
+            .0
+            .to_string();
+
+        // A token nobody minted must not move it — without this half, the
+        // assertion below holds identically on a build that accepts any
+        // string.
+        let invented = json_of(
+            &jojobot
+                .rename_entity(Parameters(rename(Some("0000000000000000".into()))))
+                .await
+                .expect("the call succeeds; the guard answers in the body"),
+        );
+        assert_eq!(
+            invented["status"], "blocked",
+            "a token nobody minted moves nothing: {invented}"
+        );
+
+        let forced = json_of(
+            &jojobot
+                .rename_entity(Parameters(rename(Some(token))))
+                .await
+                .expect("confirmed rename ok"),
+        );
+        assert_ne!(forced["status"], "blocked");
+        assert_eq!(forced["id"], "person:alphaa");
     }
 
     /// `rename_entity` moves the handle and leaves the metadata alone.

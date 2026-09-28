@@ -282,7 +282,11 @@ impl Jojobot {
             Guarded::Blocked {
                 attempted,
                 candidates,
-            } => Ok(blocked_result(&attempted, &candidates, Blocked::Creating)),
+            } => Ok(blocked_result(
+                &attempted,
+                &candidates,
+                Blocked::Creating(args.override_token.as_deref()),
+            )),
         }
     }
 }

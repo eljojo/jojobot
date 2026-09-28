@@ -12,18 +12,34 @@ use super::*;
 /// Which gate stopped a write — because the way out of each one is different,
 /// and one copy-pasted paragraph telling a rename to "pick a more qualified
 /// slug" is worse than no advice at all.
-pub(crate) enum Blocked {
+///
+/// **The three arms that promise an `override_token` each carry the verb's
+/// own `override_token` field, and use it for nothing.** The field is
+/// evidence, not an ingredient: `blocked_result` mints its own token from
+/// `attempted` and `candidates` regardless of what is passed here. What the
+/// parameter buys is that a verb whose own `Args` carries no
+/// `override_token` field has nothing to pass — the call does not compile —
+/// so a promising arm can never be wired to a gate with no token to promise
+/// about. Before this, nothing here tied the choice of arm to what the verb
+/// actually accepts, and the one place that went wrong (`add_entity`'s
+/// parent refusal, 5e2d18a7) was fixed by routing around the shared body
+/// rather than by anything that would have stopped a second one.
+// The three `Option<&str>` fields are read by nothing below — that is the
+// whole mechanism, not an oversight, so the warning they would otherwise
+// raise is silenced here rather than by reaching for the value.
+#[allow(dead_code)]
+pub(crate) enum Blocked<'a> {
     /// A creation: the handle is being minted here, so an exact collision is
     /// unforgivable and the token covers only a shared *name*.
-    Creating,
+    Creating(Option<&'a str>),
     /// A relabel — a change to a name or an alias. No handle is moving, so
     /// nothing here is unforgivable.
-    Relabelling,
+    Relabelling(Option<&'a str>),
     /// A rename's destination handle. Unlike [`Relabelling`](Self::Relabelling)
     /// a handle IS moving here — that is the whole verb — so the advice must
     /// not say otherwise; unlike [`Creating`](Self::Creating) the thing is
     /// not new, it already answers to a different name.
-    Renaming,
+    Renaming(Option<&'a str>),
     /// A write that only **names** an entity (a capture's subject, an edge's
     /// object). It cannot create one, so there is no token to hand back and no
     /// `override_token` on the verb.
@@ -42,7 +58,7 @@ pub(crate) enum Blocked {
 pub(crate) fn blocked_result(
     attempted: &EntityId,
     candidates: &[EntityMatch],
-    gate: Blocked,
+    gate: Blocked<'_>,
 ) -> CallToolResult {
     let exact = candidates
         .iter()
@@ -54,12 +70,12 @@ pub(crate) fn blocked_result(
     // (rule 68). An exact collision mints none: there is nothing to lift.
     let token = guard::override_token(attempted, candidates);
     let how_to_proceed = match gate {
-        Blocked::Creating if exact => format!(
+        Blocked::Creating(_) if exact => format!(
             "Nothing was written. The handle '{attempted}' is already taken, and that cannot be \
              forced — a handle has exactly one owner. Either this IS the entity above (use its \
              handle and carry on), or it is a different one and needs a more qualified slug.",
         ),
-        Blocked::Creating => format!(
+        Blocked::Creating(_) => format!(
             "Nothing was written. If '{attempted}' IS one of the entities above, use that handle \
              instead. If it is genuinely a different one that happens to share a name, re-call \
              add_entity with override_token: \"{token}\". That token belongs to THIS refusal and \
@@ -69,7 +85,7 @@ pub(crate) fn blocked_result(
         // Says "name" rather than "rename": this gate fires on an alias write
         // too, and telling a caller nothing was renamed when they renamed
         // nothing sends them looking for a rename they never made.
-        Blocked::Relabelling => format!(
+        Blocked::Relabelling(_) => format!(
             "Nothing was written, and the handle '{attempted}' is unaffected either way — this \
              only moves the names it answers to. Either pick a name or alias that isn't already \
              worn, or re-call update_entity with override_token: \"{token}\" if this entity really \
@@ -88,13 +104,13 @@ pub(crate) fn blocked_result(
              handles above is what you meant, use that. Otherwise {verb} cannot create it for \
              you — call add_entity to create '{attempted}' first, then re-call {verb}.",
         ),
-        Blocked::Renaming if exact => format!(
+        Blocked::Renaming(_) if exact => format!(
             "Nothing was renamed. The handle '{attempted}' is already taken, and that cannot be \
              forced — a handle has exactly one owner. Either this IS the entity above (nothing \
              to do — it already has this name), or it is a different thing and the destination \
              needs a more qualified slug.",
         ),
-        Blocked::Renaming => format!(
+        Blocked::Renaming(_) => format!(
             "Nothing was renamed. If '{attempted}' IS one of the entities above, renaming onto \
              it would collide with a thing that already exists there. If it is genuinely a \
              different thing that happens to share a name, re-call rename_entity with \

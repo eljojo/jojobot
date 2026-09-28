@@ -108,7 +108,7 @@ impl Jojobot {
             } => Ok(blocked_result(
                 &attempted,
                 &candidates,
-                Blocked::Relabelling,
+                Blocked::Relabelling(args.override_token.as_deref()),
             )),
         }
     }
