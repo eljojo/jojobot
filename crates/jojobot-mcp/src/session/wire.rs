@@ -47,7 +47,8 @@ pub(crate) fn served_json(served_chars: u64) -> serde_json::Value {
     serde_json::json!({
         "characters": served_chars,
         "note": format!(
-            "≈{} tokens, from {} characters at about {CHARS_PER_TOKEN:.0} per token",
+            "≈{} tokens, from {} characters at about {CHARS_PER_TOKEN:.0} per token — a lower \
+             bound, likely more than this",
             magnitude(tokens),
             magnitude(served_chars),
         ),
@@ -184,6 +185,12 @@ mod tests {
         assert!(
             note.contains("per token"),
             "the divisor itself is shown, so it can be recalibrated later: {note}"
+        );
+        assert!(
+            note.contains("lower bound"),
+            "the figure must say what it means for the caller — at least this many, likely \
+             more, since jojobot's answers tokenise denser than the prose ratio it is estimated \
+             from: {note}"
         );
     }
 
