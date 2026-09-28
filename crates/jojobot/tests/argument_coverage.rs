@@ -14,6 +14,11 @@
 //! view fills them in, a default reaches the same code a spelled-out value
 //! would — and only a person reading the call sites can tell that apart from
 //! a real gap.
+//!
+//! **A known limit, stated rather than implied**: a call whose arguments are
+//! built away from the verb's name is not seen; a zero here may be that.
+//! Matching is textual, not a parse of the call expression — see
+//! [`call_sites`] for what it actually reads.
 
 use std::path::PathBuf;
 
@@ -94,9 +99,29 @@ fn call_sites<'a>(text: &'a str, verb: &str) -> Vec<&'a str> {
     sites
 }
 
+/// **The one exemption, derived from a real mechanism rather than
+/// hand-picked** — `sid` cannot appear as a literal key in a story's own
+/// source, because `Session::riding`
+/// (`crates/jojobot/tests/user_stories/dsl.rs`) injects it into every
+/// call's arguments before the request goes out, precisely so a story never
+/// has to spell out the identity it already holds. Every other argument
+/// this report checks is exercised, when it is exercised, by a story
+/// writing it down; this one is exercised by never having to.
+///
+/// **It cannot outlive its reason**: [`the_sid_exemption_still_matches_what_riding_actually_does`]
+/// reads `riding`'s own source and goes red the day it stops injecting —
+/// this list is not a standing allowance, it is a claim that test keeps
+/// honest. No other name belongs here without the same kind of proof.
+const INJECTED_ARGUMENTS: &[&str] = &["sid"];
+
 /// **Whether any story calls `verb` with `argument` among its keys**, at any
-/// depth inside that call's own arguments object.
+/// depth inside that call's own arguments object — or the argument is one
+/// the story DSL injects on every call regardless of what any story wrote,
+/// see [`INJECTED_ARGUMENTS`].
 fn covered(sources: &[(PathBuf, String)], verb: &str, argument: &str) -> bool {
+    if INJECTED_ARGUMENTS.contains(&argument) {
+        return true;
+    }
     let needle = format!("\"{argument}\"");
     sources.iter().any(|(_, text)| {
         call_sites(text, verb)
@@ -171,6 +196,15 @@ mod tests {
         assert!(!covered(&sources, "declare_type", "fields"));
     }
 
+    /// **`sid` counts as covered even where no story ever calls the verb at
+    /// all** — the exemption is unconditional, the way `Session::riding`'s
+    /// own injection is. Empty sources are the sharpest form of the claim:
+    /// nothing else here could make this pass by accident.
+    #[test]
+    fn the_sid_exemption_applies_with_no_call_site_at_all() {
+        assert!(covered(&[], "declare_type", "sid"));
+    }
+
     /// **An argument nested under a sub-object is still found** — `follow`
     /// on `recall` carries its own keys, and a check that only read the top
     /// level would report every one of them uncovered regardless of what a
@@ -227,6 +261,24 @@ mod tests {
             covered_count > 0,
             "a check that read no story text would report every argument uncovered — at least \
              one real argument must come back covered: {covered_count} of {total}"
+        );
+    }
+
+    /// 🚨 **The `sid` exemption cannot outlive its reason.** If
+    /// `Session::riding` ever stops injecting `sid` into every call's
+    /// arguments, this goes red the same day — not some later day somebody
+    /// notices the report has gone quiet on an argument nothing exercises
+    /// any more.
+    #[test]
+    fn the_sid_exemption_still_matches_what_riding_actually_does() {
+        let dsl = std::fs::read_to_string(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/user_stories/dsl.rs"),
+        )
+        .expect("dsl.rs reads");
+        assert!(
+            dsl.contains("args[\"sid\"] = self.sid"),
+            "Session::riding no longer injects sid the way INJECTED_ARGUMENTS assumes — read \
+             riding() in dsl.rs and update the exemption to match what it actually does"
         );
     }
 }

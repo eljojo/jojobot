@@ -11,7 +11,7 @@
 CARGO ?= cargo
 
 .DEFAULT_GOAL := help
-.PHONY: help check narrow test lint fmt fmt-check build integration paid refresh-upgrade-fixture
+.PHONY: help check narrow test lint fmt fmt-check build integration argument-coverage paid refresh-upgrade-fixture
 
 help: ## List the targets
 	@grep -hE '^[a-z-]+:.*##' $(MAKEFILE_LIST) \
@@ -143,6 +143,14 @@ build: ## Build the workspace
 # thing rather than pretending there is a second gate.
 integration: ## Run the suites against the real store
 	$(CARGO) test -p jojobot-adapters --test dolt_store --test dolt_without_a_home
+
+# **The report `cargo test` swallows.** A passing test's stdout is captured
+# and thrown away, so served_arguments_with_no_story_site_are_reported
+# (crates/jojobot/tests/argument_coverage.rs) never reaches a reader through
+# `make check` or a plain `cargo test` — a lead nobody can see is the failure
+# this report exists to end. This target is how a person actually reads it.
+argument-coverage: ## Print every served argument the story suite never calls with
+	$(CARGO) test -p jojobot --test argument_coverage served_arguments_with_no_story_site_are_reported -- --nocapture
 
 # **The third tier, and it is billed.**
 #
