@@ -74,6 +74,7 @@ async fn one_thing_filed_twice_can_be_put_back_together() {
             "person:nelson-2",
             "person:nelson",
             "one person, filed twice",
+            None,
         )
         .await;
 
@@ -184,12 +185,21 @@ async fn a_merge_follows_a_pointer_drawn_before_the_folded_sides_own_rename() {
     // way the first duplicate above got past it.
     s.add_over_the_screen("person:flanders-original", "Ned Flanders")
         .await;
-    s.merge_entities(
-        "person:ned-flanders",
-        "person:flanders-original",
-        "one neighbor, filed under the typo and again months earlier",
-    )
-    .await;
+    // **The merge is recorded on the day the duplicate was actually made**,
+    // months before today — the account should read as an old repair of an
+    // old mistake, not as something that happened just now.
+    let merged = s
+        .merge_entities(
+            "person:ned-flanders",
+            "person:flanders-original",
+            "one neighbor, filed under the typo and again months earlier",
+            Some("2026-01-15"),
+        )
+        .await;
+    assert_eq!(
+        merged["record"]["recorded_at"], "2026-01-15",
+        "the merge did not land on the day it was told to: {merged}",
+    );
 
     // Both of Homer's claims — one drawn before the rename, one after — now
     // point at the survivor. Counted, not merely present: a fix that

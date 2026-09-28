@@ -1403,11 +1403,25 @@ impl Session {
     /// Put a duplicate away into the thing it duplicates. Returns the whole
     /// answer, because what a caller does next turns on how many claims changed
     /// address.
-    pub async fn merge_entities(&self, duplicate: &str, survivor: &str, reason: &str) -> Value {
+    ///
+    /// `recorded_at` is the day the merge is recorded as happening — `None`
+    /// leaves it to default to today, which is what every call here sent
+    /// before the argument existed. A story naming a duplicate found months
+    /// after the fact sends one.
+    pub async fn merge_entities(
+        &self,
+        duplicate: &str,
+        survivor: &str,
+        reason: &str,
+        recorded_at: Option<&str>,
+    ) -> Value {
         self.write(
             &format!("merging {duplicate} into {survivor}"),
             "merge_entities",
-            json!({"duplicate": duplicate, "survivor": survivor, "reason": reason}),
+            json!({
+                "duplicate": duplicate, "survivor": survivor, "reason": reason,
+                "recorded_at": recorded_at,
+            }),
         )
         .await
     }

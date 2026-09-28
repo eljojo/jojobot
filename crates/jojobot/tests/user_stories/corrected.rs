@@ -162,6 +162,36 @@ async fn a_reader_can_tell_a_corrected_record_from_one_that_was_always_right() {
         "rides out from the trailhead car park",
     );
 
+    // ── and the same trace, reached by search rather than by address ────────
+    //
+    // "Has anything ever said 'chinook'?" is a question with no address to
+    // recall by — a session does not carry the record's own address around,
+    // only the word it half-remembers. A claim carrying it once and then
+    // corrected away is invisible to the ordinary search below it, and
+    // reachable only by the same history that answered the question above.
+    let chinook = winter
+        .fact("org:north-trail-club", "closes early for the chinook winds")
+        .await;
+    winter
+        .correct(&chinook, "closes early in high wind, whatever the season")
+        .await;
+
+    // The ordinary search never reaches the word: matching is over the
+    // current wording, and the current wording does not have it.
+    winter.find("chinook").await.never_says("chinook");
+
+    // The same query, told to reach a claim's earlier wordings too, finds
+    // it — still the same current record, its current content included, not
+    // the old sentence standing in for it.
+    let reached = winter
+        .call(
+            "search",
+            json!({ "query": "chinook", "include_history": true }),
+        )
+        .await;
+    reached.says(&format!("\"address\":\"{chinook}\""));
+    reached.says("closes early in high wind, whatever the season");
+
     winter
         .wrap("answered what the record says, and that it once said the opposite")
         .await;

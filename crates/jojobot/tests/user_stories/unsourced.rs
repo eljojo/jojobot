@@ -136,6 +136,46 @@ async fn an_unsourced_candidate_is_visibly_unsourced() {
     // The negative it depends on: the guess's own content is not the check,
     // and the walk does not echo the source back as one of its own results.
     .never_says("probably good, seems like a nice spot");
+
+    // ── a second opinion, filed with no source and pointed at one later ──────
+    //
+    // The lineage above was set at capture time. A claim can also be worked
+    // out first and sourced afterward — a session writes down what it thinks
+    // before it has traced where the thought came from, then points it at
+    // the guess once it works that out. `derived_from` is an `update_fact`
+    // argument too, not only a `capture` one.
+    let second_opinion = s
+        .call(
+            "capture",
+            json!({
+                "subject": "place:riverbend",
+                "content": "worth a second look regardless",
+                "provenance": "inference",
+            }),
+        )
+        .await
+        .field("address");
+    // Before the edit: nothing built on the guess names this claim.
+    s.shape(
+        "what was built on the unsourced guess",
+        json!({"built_on": &riverbend_guess}),
+    )
+    .await
+    .never_says("worth a second look regardless");
+    s.call(
+        "update_fact",
+        json!({"address": &second_opinion, "derived_from": &riverbend_guess}),
+    )
+    .await;
+    // After it: the same walk finds it, sourced exactly as the first check
+    // was — the edit is what moved it, not a second capture.
+    s.shape(
+        "what was built on the unsourced guess",
+        json!({"built_on": &riverbend_guess}),
+    )
+    .await
+    .says("worth a second look regardless");
+
     // No verb or argument named `checked` exists — only the claim-to-claim
     // capability above.
     s.has_no_verb("checked", &["update_fact", "capture"]).await;
