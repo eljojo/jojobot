@@ -236,7 +236,10 @@ impl Jojobot {
                        fields sets the keys you name and leaves every other key alone, and \
                        clear_fields takes keys off. Those are two arguments rather than one, \
                        because setting a key to an empty value and removing the key are \
-                       different edits and a caller means one of them. AND IT REACHES THE \
+                       different edits and a caller means one of them. A field you set that \
+                       equals what jojobot ships as its default today is stored exactly as you \
+                       sent it either way, and the receipt's echoes_defaults names which key that \
+                       was. AND IT REACHES THE \
                        EDGE BOTH WAYS: shape with object draws or replaces one, and clear_edge \
                        takes it off. Reach for clear_edge when the rewrite turns a claim about \
                        what is true NOW into its current negative — was a member and is not any \
@@ -443,6 +446,14 @@ impl Jojobot {
                 return memory_declined("update_fact", refused);
             }
         }
+        // **No extra read: the written fact's own `subject` is what
+        // `echoed_defaults` needs, and the write below already returns it.**
+        // `FactPatch` cannot move a fact to a new subject, so what comes back
+        // is the entity these fields were always about. Cloned here, before
+        // `patch` moves into the write, for the same reason `capture`'s own
+        // copy is: this is what THIS write actually sent, not what the fact
+        // ends up carrying.
+        let patch_fields = patch.fields.clone();
         // **A write that landed is never reported as failed** (rule 130): see
         // `capture`'s own note on the same shape.
         let (written, fold_behind) =
@@ -467,6 +478,11 @@ impl Jojobot {
                 if let Some(behind) = fold_behind {
                     crate::answer::note_fold_behind(&mut body, behind);
                 }
+                let echoed_defaults = self
+                    .memory
+                    .echoed_defaults(&fact.subject, &patch_fields)
+                    .await;
+                crate::answer::note_echoes_defaults(&mut body, &echoed_defaults);
                 // **Only when the caller named a day AND their run has one of
                 // its own AND the two disagree.** Reparsed rather than
                 // threaded through the moved patch — `parse_date` already
@@ -3130,6 +3146,80 @@ mod tests {
                 )))
                 .unwrap_or(false),
             "the same session shadowing the same argument again is not taught again: {second}"
+        );
+    }
+
+    /// **The same wiring as `capture`'s, for `update_fact`.** `update_fact`
+    /// carries no entity of its own — only a `FactAddress`, home and local id
+    /// — so this reaches no extra store read: the written fact's own
+    /// `subject`, already returned by the write below, is what
+    /// `echoed_defaults` is asked about. `FactPatch` cannot move a fact to a
+    /// new subject, so what comes back is the entity these fields were
+    /// always about.
+    ///
+    /// Paired exactly as `capture`'s own case is: a field equal to today's
+    /// default carries one note naming it, and an ordinary field carries
+    /// none.
+    #[tokio::test]
+    async fn an_edited_field_equal_to_todays_default_is_named_in_the_receipt() {
+        let subject = EntityId::person("person:milhouse");
+        let jojobot =
+            handler_field_provisioned(subject, "one_liner", "The disposable implementer.");
+        ensure(&jojobot, "person:milhouse").await;
+        let posted = capture_ok(
+            &jojobot,
+            capture_args("person:milhouse", "milhouse's own record"),
+        )
+        .await;
+        let address = posted["address"]
+            .as_str()
+            .expect("a capture receipt carries its own address")
+            .to_string();
+
+        let echoing = json_of(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    fields: Some(
+                        [(
+                            "one_liner".to_string(),
+                            "The disposable implementer.".to_string(),
+                        )]
+                        .into_iter()
+                        .collect(),
+                    ),
+                    ..update_args(&address)
+                }))
+                .await
+                .expect("update ok"),
+        );
+        let notes = echoing["echoes_defaults"]
+            .as_array()
+            .expect("an array of notes");
+        assert_eq!(notes.len(), 1, "{echoing}");
+        assert!(
+            notes[0]
+                .as_str()
+                .expect("a note string")
+                .contains("one_liner"),
+            "the note names the echoing key: {echoing}"
+        );
+
+        let ordinary = json_of(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    fields: Some(
+                        [("greeting".to_string(), "Hey, it's Milhouse.".to_string())]
+                            .into_iter()
+                            .collect(),
+                    ),
+                    ..update_args(&address)
+                }))
+                .await
+                .expect("update ok"),
+        );
+        assert!(
+            ordinary.get("echoes_defaults").is_none(),
+            "a field with no shipped default must carry no note: {ordinary}"
         );
     }
 }
