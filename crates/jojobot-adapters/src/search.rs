@@ -624,6 +624,13 @@ impl FullTextIndex {
     /// `began` is where the mark sequence stood **before** the board read that
     /// produced `messages` — see [`ReadingPoint`]. It is what lets this clear a
     /// failure it began after and leave one that happened while it was reading.
+    ///
+    /// **Assumes `messages` never carries one id twice, and does not check
+    /// it** — the same assumption [`ingest_changes`](Self::ingest_changes)
+    /// carries, on this half's own store. It holds today because every real
+    /// caller builds `messages` from one plain board read —
+    /// `Mailboxes::scan_messages`, one row per message id — never from
+    /// concatenating two reads.
     pub fn ingest_mail_changes(
         &self,
         messages: &[Message],
@@ -826,6 +833,17 @@ impl FullTextIndex {
     /// work, given the [`ReadingPoint`] its caller took before reading the
     /// store, so a failure that lands while this reading is still in flight
     /// survives it rather than being cleared by a reading that never saw it.
+    ///
+    /// **Assumes `sessions` never carries one run id twice, and does not
+    /// check it** — the same assumption [`ingest_changes`](Self::ingest_changes)
+    /// carries, on this half's own store, and sharper here: each session in
+    /// `rewrite` diffs its own beats against the mirror independently, so two
+    /// entries sharing a run id would each re-add every beat they hold,
+    /// including one the other already added — a search test in this module
+    /// builds exactly that batch by hand to prove the read-side dedupe
+    /// survives it. It holds in production because every real caller builds
+    /// `sessions` from one plain read of the store — `Sessions::all_sessions`,
+    /// one row per run id — never from concatenating two reads.
     pub fn ingest_sessions_changes(
         &self,
         sessions: &[jojobot_domain::session::Session],
@@ -959,6 +977,10 @@ impl FullTextIndex {
     /// Memory silently emptied `search`'s mail half and then vouched for it.
     /// Only the boot ordering in `main.rs` — untested, and no invariant —
     /// happened to hide it.
+    ///
+    /// **`scan` must never carry one doc id twice** — see
+    /// [`ingest_changes`](Self::ingest_changes)'s own doc for why that holds
+    /// today and what would break it.
     pub fn ingest_all(
         &self,
         scan: &[DocScan],
@@ -987,6 +1009,18 @@ impl FullTextIndex {
     ///
     /// The coverage flags are set either way: reaching the store is what they
     /// report, and a scan that found nothing new still reached it.
+    ///
+    /// **Assumes `scan` never carries one doc id twice, and does not check
+    /// it.** `changed_and_gone` compares the whole list against the
+    /// mirror, never against itself, so two entries sharing a doc id inside
+    /// one call would both be written — the case this whole module's own
+    /// `identity`-based read-side dedupe exists to survive, but at the write
+    /// side nothing here would catch it. It holds today because every real
+    /// caller builds `scan` from one plain read of the store — `Memory::scan`
+    /// reads the `entity` table by its own primary key, one row per handle —
+    /// never by concatenating two reads or two partial scans into one call.
+    /// A caller that batched a catch-up read on top of an earlier one, rather
+    /// than replacing it, would need this to check.
     pub fn ingest_changes(
         &self,
         scan: &[DocScan],
