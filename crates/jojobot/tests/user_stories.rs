@@ -93,6 +93,8 @@ mod spotlight;
 mod stale_handle;
 #[path = "user_stories/statusbar.rs"]
 mod statusbar;
+#[path = "user_stories/synthesis.rs"]
+mod synthesis;
 #[path = "user_stories/talkingpast.rs"]
 mod talkingpast;
 /// One claim, two runs, two zones — and both answers are right.
