@@ -90,7 +90,6 @@ const ROSTER: &[&str] = &[
     "view:contract-no-such-view",
     "view:contract-asked-by-view",
     "view:contract-supplied-rename-target",
-    "view:loop",
     "view:loops",
     "view:marked-things",
     "view:matches-nothing",
@@ -1366,11 +1365,20 @@ fn the_roster_carries_no_name_the_workspace_has_stopped_using() {
     // two questions stop being opposites: a name built out of two literals
     // would be caught as off-roster by one test and reported as an unused
     // entry by the other, and adding it to the roster could not satisfy both.
+    //
+    // **`handles_in`, never a raw substring check.** A roster entry that is
+    // the PREFIX of some other, longer handle (a `person` named "milhouse"
+    // sitting inside one named "milhouse-extra") is a real substring of the
+    // corpus even when nothing ever wrote the entry itself — a `contains`
+    // check reads that as "used" forever, exactly the false negative
+    // `violations_in`'s own near-miss handling exists to avoid on the other
+    // side of this gate.
+    let found = handles_in(&corpus);
     let built = two_part_handles_in(&corpus);
     let orphaned: Vec<&str> = ROSTER
         .iter()
         .copied()
-        .filter(|handle| !corpus.contains(handle) && !built.iter().any(|b| b == handle))
+        .filter(|handle| !found.iter().any(|f| f == handle) && !built.iter().any(|b| b == handle))
         .collect();
     assert!(
         orphaned.is_empty(),
