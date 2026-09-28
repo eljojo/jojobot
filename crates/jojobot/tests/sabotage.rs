@@ -209,3 +209,236 @@ fn a_site_that_is_not_there_is_refused_as_an_absence() {
         "a refused sabotage wrote to the file anyway",
     );
 }
+
+/// **`SIGKILL`'s own hole, and what closes it: a later invocation names what
+/// a hard kill left behind.**
+///
+/// Every case below runs its own invocations under a private state
+/// directory — the mechanism's own record is one shared file otherwise, and
+/// tests run concurrently.
+fn private_state(named: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("sabotage-state-{named}"));
+    let _ = fs::remove_dir_all(&dir);
+    dir
+}
+
+/// [`sabotage`], with the tool pointed at a state directory this case owns.
+fn sabotage_with_state(
+    state: &std::path::Path,
+    path: &PathBuf,
+    old: &str,
+    new: &str,
+    command: &[&str],
+) -> (String, Option<i32>) {
+    let ran = Command::new(tool())
+        .env("SABOTAGE_STATE_DIR", state)
+        .arg(path)
+        .arg(old)
+        .arg(new)
+        .arg("--")
+        .args(command)
+        .output()
+        .expect("the tool runs");
+    let said = format!(
+        "{}{}",
+        String::from_utf8_lossy(&ran.stdout),
+        String::from_utf8_lossy(&ran.stderr)
+    );
+    (said, ran.status.code())
+}
+
+/// 🚨 **The case the mechanism exists for: a hard kill, and a later
+/// invocation that finds it.**
+///
+/// `SIGTERM` is caught above and the file comes back — this is the one
+/// ending nothing can catch, so the file stays mutated on purpose, and what
+/// is proven here is that the NEXT invocation says so, names the file, and
+/// hands over the exact command that restores it — never that it restores
+/// anything itself, which is excluded on purpose.
+#[test]
+fn a_hard_kill_leaves_the_next_invocation_naming_the_outstanding_mutation() {
+    let state = private_state("hard-kill");
+    let held = "the answer is 41\nand a second line\n";
+    let path = a_file("hard-killed", held);
+
+    let mut running = Command::new(tool())
+        .env("SABOTAGE_STATE_DIR", &state)
+        .arg(&path)
+        .arg("41")
+        .arg("42")
+        .arg("--")
+        .args(["sleep", "30"])
+        .stdout(Stdio::null())
+        .spawn()
+        .expect("the tool starts");
+
+    let mut mutated = false;
+    for _ in 0..200 {
+        if fs::read_to_string(&path).is_ok_and(|now| now.contains("42")) {
+            mutated = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    assert!(
+        mutated,
+        "the file was never sabotaged, so what follows proves nothing",
+    );
+
+    Command::new("kill")
+        .arg("-KILL")
+        .arg(running.id().to_string())
+        .status()
+        .expect("the case can send a hard kill");
+    running.wait().expect("the tool ends");
+
+    assert_eq!(
+        fs::read_to_string(&path).expect("the file is there"),
+        "the answer is 42\nand a second line\n",
+        "a hard kill is the one ending nothing can catch — the file staying mutated is the \
+         hole this mechanism exists beside, not one it closes",
+    );
+
+    // A second, unrelated invocation — the report is not scoped to the same
+    // file or command, because a hard kill's evidence has to surface on
+    // whatever sabotage happens to run next.
+    let other = a_file("hard-kill-bystander", "nothing to see here\n");
+    let (said, code) = sabotage_with_state(&state, &other, "nothing", "something", &["true"]);
+    assert_eq!(
+        code,
+        Some(0),
+        "the bystander invocation itself is ordinary: {said}"
+    );
+    assert!(
+        said.contains("SABOTAGE OUTSTANDING") && said.contains(path.to_str().unwrap()),
+        "the next invocation does not name the file the hard kill left mutated: {said}",
+    );
+    assert!(
+        said.contains("cp ") && said.contains(path.to_str().unwrap()),
+        "the next invocation does not hand over the exact restore command: {said}",
+    );
+
+    // **No automatic restore, ever.** The report names the command; it does
+    // not run it.
+    assert_eq!(
+        fs::read_to_string(&path).expect("the file is there"),
+        "the answer is 42\nand a second line\n",
+        "a later invocation restored the file itself, which is excluded — it only reports",
+    );
+}
+
+/// **Paired with the case above, and it is the one that matters.** A
+/// sabotage that restores cleanly — pass or fail, it does not matter which —
+/// leaves nothing for the next invocation to report. A tool that always
+/// warns would pass the positive above alone.
+#[test]
+fn a_sabotage_that_restores_cleanly_leaves_nothing_for_the_next_invocation_to_report() {
+    let state = private_state("clean-restore");
+    let held = "the answer is 41\n";
+
+    let path = a_file("restores-clean-pass", held);
+    sabotage_with_state(&state, &path, "41", "42", &["true"]);
+    let path2 = a_file("restores-clean-fail", held);
+    sabotage_with_state(&state, &path2, "41", "42", &["false"]);
+
+    let bystander = a_file("clean-restore-bystander", "nothing to see here\n");
+    let (said, code) = sabotage_with_state(&state, &bystander, "nothing", "something", &["true"]);
+    assert_eq!(
+        code,
+        Some(0),
+        "the bystander invocation itself is ordinary: {said}"
+    );
+    assert!(
+        !said.contains("SABOTAGE OUTSTANDING"),
+        "a run that restored itself, whether it passed or failed, left something for the \
+         next invocation to report: {said}",
+    );
+}
+
+/// **The other half of pairing it**: a sabotage refused before it ever
+/// mutates leaves nothing behind either, because it never wrote a record to
+/// begin with.
+#[test]
+fn a_sabotage_refused_before_it_mutates_leaves_nothing_for_the_next_invocation_to_report() {
+    let state = private_state("refused-before-mutating");
+    let path = a_file(
+        "refused-ambiguous",
+        "the answer is 41\nthe answer is 41 again\n",
+    );
+    let (refused, code) = sabotage_with_state(&state, &path, "41", "42", &["true"]);
+    assert_eq!(
+        code,
+        Some(2),
+        "the ambiguous site should have been refused: {refused}"
+    );
+
+    let bystander = a_file("refused-bystander", "nothing to see here\n");
+    let (said, code) = sabotage_with_state(&state, &bystander, "nothing", "something", &["true"]);
+    assert_eq!(
+        code,
+        Some(0),
+        "the bystander invocation itself is ordinary: {said}"
+    );
+    assert!(
+        !said.contains("SABOTAGE OUTSTANDING"),
+        "a sabotage refused before it mutated anything still left a record: {said}",
+    );
+}
+
+/// **A stale entry whose file already matches its kept copy must not cry
+/// wolf.** Somebody put it back by hand — the same bytes a `cp` from the
+/// kept copy would have produced — and a later invocation that still warned
+/// about it would be a tool worth learning to ignore.
+#[test]
+fn an_outstanding_mutation_restored_by_hand_is_not_reported_again() {
+    let state = private_state("restored-by-hand");
+    let held = "the answer is 41\nand a second line\n";
+    let path = a_file("hand-restored", held);
+
+    let mut running = Command::new(tool())
+        .env("SABOTAGE_STATE_DIR", &state)
+        .arg(&path)
+        .arg("41")
+        .arg("42")
+        .arg("--")
+        .args(["sleep", "30"])
+        .stdout(Stdio::null())
+        .spawn()
+        .expect("the tool starts");
+
+    let mut mutated = false;
+    for _ in 0..200 {
+        if fs::read_to_string(&path).is_ok_and(|now| now.contains("42")) {
+            mutated = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    assert!(
+        mutated,
+        "the file was never sabotaged, so the restore below proves nothing"
+    );
+
+    Command::new("kill")
+        .arg("-KILL")
+        .arg(running.id().to_string())
+        .status()
+        .expect("the case can send a hard kill");
+    running.wait().expect("the tool ends");
+
+    // The operator's own repair: put the original text back, exactly as the
+    // named restore command would have.
+    fs::write(&path, held).expect("the case can restore the file by hand");
+
+    let bystander = a_file("hand-restored-bystander", "nothing to see here\n");
+    let (said, code) = sabotage_with_state(&state, &bystander, "nothing", "something", &["true"]);
+    assert_eq!(
+        code,
+        Some(0),
+        "the bystander invocation itself is ordinary: {said}"
+    );
+    assert!(
+        !said.contains("SABOTAGE OUTSTANDING"),
+        "a mutation the operator already restored by hand was reported anyway: {said}",
+    );
+}

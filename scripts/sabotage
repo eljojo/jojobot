@@ -49,8 +49,14 @@ A tool built to stop somebody reaching for a closed verb cannot reach for one.
 
 ⚠️ **`SIGKILL` cannot be caught, by this or by anything.** A hard kill of this
 process leaves the file mutated, and the copy is named on stdout when the run
-starts so a person can put it back by hand. That is the one hole and it is
-stated rather than papered over.
+starts so a person can put it back by hand. **That copy's own path used to be
+the only record of it** — printed once, to a terminal that scrolls, with
+nothing else that remembered it. A later invocation has nothing to look for
+and the evidence goes with the scrollback, which is the gap this closes: every
+invocation writes where it is about to mutate before it does, clears that
+record once it restores, and a later invocation that finds one left behind
+says so — the file, and the exact command that puts it back. It never gates:
+a caller that ignores the notice is exactly as free to run as before.
 """
 
 import os
@@ -62,6 +68,103 @@ import tempfile
 
 
 USAGE = "usage: scripts/sabotage <file> <from> <to> -- <command...>"
+
+# **Where an in-flight mutation is recorded, so a later invocation can find
+# what a hard kill left behind.** `SABOTAGE_STATE_DIR` is a caller's override
+# — the test suite sets it, so concurrent test runs each get their own file
+# rather than racing on one shared default. Outside a test, the default is a
+# fixed path under the system temp directory: fixed, so a later invocation
+# looks in the same place the interrupted one wrote to, and under the temp
+# directory rather than the tracked tree, so there is nothing here for git to
+# see.
+STATE_DIR = os.environ.get("SABOTAGE_STATE_DIR") or os.path.join(
+    tempfile.gettempdir(), "jojobot-sabotage"
+)
+STATE_FILE = os.path.join(STATE_DIR, "in-flight")
+
+
+def _read_in_flight():
+    """Every mutation an earlier run marked and never cleared, as recorded."""
+    if not os.path.isfile(STATE_FILE):
+        return []
+    entries = []
+    with open(STATE_FILE, encoding="utf-8") as reading:
+        for line in reading:
+            target, tab, kept = line.rstrip("\n").partition("\t")
+            if tab and target and kept:
+                entries.append((target, kept))
+    return entries
+
+
+def _write_in_flight(entries):
+    os.makedirs(STATE_DIR, exist_ok=True)
+    with open(STATE_FILE, "w", encoding="utf-8") as writing:
+        for target, kept in entries:
+            writing.write(f"{target}\t{kept}\n")
+
+
+def mark_in_flight(path, kept):
+    """**Written before the mutation, so a hard kill still leaves a trace.**
+
+    Nothing after this line is guaranteed to run — that is the whole reason
+    it exists — so everything this record needs has to be true already.
+    """
+    _write_in_flight([*_read_in_flight(), (path, kept)])
+
+
+def clear_in_flight(path, kept):
+    """**Written after the restore, in the same `finally` that performs it.**
+
+    Reached by every catchable ending — a pass, a fail, a raise, `SIGINT`,
+    `SIGTERM`, `SIGHUP` — which is exactly the set this record does not need
+    to survive. Only `SIGKILL` skips it, which is the one case the record is
+    for.
+    """
+    _write_in_flight(
+        [(t, k) for t, k in _read_in_flight() if (t, k) != (path, kept)]
+    )
+
+
+def report_outstanding():
+    """**What an earlier run left mutated, named with its own restore command.**
+
+    Runs first, in every invocation, whatever that invocation goes on to do —
+    it is a report, never a gate, so a caller ignoring it is exactly as free
+    to run as one who never saw it.
+
+    **An entry whose file already reads as its kept copy is not reported.**
+    Somebody put it back — by hand, or some other way — and a tool that kept
+    warning about a mutation that is no longer there would be a tool worth
+    learning to ignore. Checked by the bytes, not by whether the tool did the
+    restoring, because the operator restoring a file by hand is exactly as
+    good an ending as this tool's own `finally` reaching it. An entry whose
+    kept copy is itself gone cannot be verified or restored either way, so it
+    is dropped rather than reported on evidence that no longer exists.
+
+    Every entry still genuinely outstanding is kept on record, so it is
+    reported again on the next invocation too, until it is actually resolved.
+    """
+    entries = _read_in_flight()
+    remaining = []
+    for target, kept in entries:
+        if not os.path.isfile(kept):
+            continue
+        if os.path.isfile(target) and _same_bytes(target, kept):
+            continue
+        print(
+            f"SABOTAGE OUTSTANDING: {target} is still mutated from a run that never "
+            f"restored it — an earlier sabotage was killed outright rather than ended. "
+            f"Put it back with: cp {kept} {target}",
+            flush=True,
+        )
+        remaining.append((target, kept))
+    if remaining != entries:
+        _write_in_flight(remaining)
+
+
+def _same_bytes(one, other):
+    with open(one, "rb") as a, open(other, "rb") as b:
+        return a.read() == b.read()
 
 
 def refuse(why):
@@ -150,6 +253,7 @@ def disagreement(code, said):
 
 
 def main(argv):
+    report_outstanding()
     broken = self_check()
     if broken:
         return refuse(broken)
@@ -189,6 +293,10 @@ def main(argv):
     ).name
     shutil.copyfile(path, kept)
     print(f"SABOTAGE {path}: kept at {kept}", flush=True)
+    # **Written before the mutation below, on purpose.** A hard kill of this
+    # process can land at any point after this line, and the one thing every
+    # such ending has in common is that this record must already be true.
+    mark_in_flight(os.path.abspath(path), kept)
 
     # **Asked to stop is a way of ending, not a way of skipping the restore.**
     # Turning the signal into an exception is what lets one `finally` cover
@@ -223,6 +331,7 @@ def main(argv):
     finally:
         shutil.copyfile(kept, path)
         os.unlink(kept)
+        clear_in_flight(os.path.abspath(path), kept)
         print(f"SABOTAGE RESTORED {path}", flush=True)
 
 
