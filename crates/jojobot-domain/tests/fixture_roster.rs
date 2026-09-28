@@ -1105,33 +1105,25 @@ fn names_somebody(block: &str, names: &[String]) -> bool {
         || names.iter().any(|name| says_word(block, name, true))
 }
 
-/// **Every commit that this checkout has not pushed**, as its short name and
-/// its message.
-///
-/// The range is READ rather than configured: whatever is on `HEAD` and not on
-/// `origin/main`. Nobody maintains a count, and a push shortens the range by
-/// itself.
+/// Every commit in `range`, as its short name and its message.
 ///
 /// **It reads the message and never the diff.** What a commit changed is not
 /// this check's business; what it SAYS is.
 ///
 /// ⚠️ **A range this cannot read is a failure rather than a pass.** No git, no
-/// repository, no `origin/main` to compare against — in each case the check did
-/// not run, and reporting that as a clean range would be the exact lie every
-/// other gate in this file is built to avoid.
-fn unpushed_commits() -> Vec<(String, String)> {
+/// repository, no far end of the range to compare against — in each case the
+/// check did not run, and reporting that as a clean range would be the exact
+/// lie every other gate in this file is built to avoid.
+fn commits_in_range(range: &str) -> Vec<(String, String)> {
     let out = std::process::Command::new("git")
-        .args(["log", "--format=%h%x00%B%x01", "origin/main..HEAD"])
+        .args(["log", "--format=%h%x00%B%x01", range])
         .current_dir(workspace_root())
         .output()
-        .expect(
-            "this check reads the unpushed commit messages and needs git on the PATH. \
-             It did not run.",
-        );
+        .expect("this check reads commit messages and needs git on the PATH. It did not run.");
     assert!(
         out.status.success(),
-        "the unpushed range could not be read, so this check did not run — it compares \
-         HEAD against origin/main, and one of them is missing here: {}",
+        "the range {range} could not be read, so this check did not run — one end of it is \
+         missing here: {}",
         String::from_utf8_lossy(&out.stderr).trim()
     );
     String::from_utf8_lossy(&out.stdout)
@@ -1139,6 +1131,39 @@ fn unpushed_commits() -> Vec<(String, String)> {
         .filter_map(|commit| commit.trim().split_once('\u{0}'))
         .map(|(name, message)| (name.to_string(), message.to_string()))
         .collect()
+}
+
+/// **Every commit that this checkout has not pushed**, as its short name and
+/// its message. Feeds the pronoun check, which keeps this range.
+///
+/// The range is READ rather than configured: whatever is on `HEAD` and not on
+/// `origin/main`. Nobody maintains a count, and a push shortens the range by
+/// itself.
+fn unpushed_commits() -> Vec<(String, String)> {
+    commits_in_range("origin/main..HEAD")
+}
+
+/// **The commit that introduced the handle check on commit messages.**
+/// [`commits_checked_for_handles`] reads from here, never from `origin/main`.
+///
+/// **A fixed ref, not the pushed boundary, and that is deliberate.** The
+/// handle check is new; commits already in the unpushed range were written
+/// before it existed and were swept by hand at this boundary instead — two
+/// hits, a `thing` named `phone` and a `thing` named `already-here`, each
+/// quoting a pre-rename fixture handle to explain the rename, read as
+/// synthetic labels rather than life specifics. Judging them by a rule they
+/// could not have known about would make the very first run of this check
+/// red on `main`, which is the one outcome this whole file exists to
+/// prevent. A message written AFTER this commit has no such excuse.
+const COMMIT_HANDLE_CHECK_BOUNDARY: &str = "99681a26";
+
+/// **Every commit this checkout has made since the handle check began**, as
+/// its short name and its message. [`off_roster_handles_in`] is asked of
+/// this range, never of [`unpushed_commits`]'s — see
+/// [`COMMIT_HANDLE_CHECK_BOUNDARY`] for why the two checks read different
+/// ranges.
+fn commits_checked_for_handles() -> Vec<(String, String)> {
+    commits_in_range(&format!("{COMMIT_HANDLE_CHECK_BOUNDARY}..HEAD"))
 }
 
 /// **Every pronoun in these messages with nobody to stand for**, as
@@ -1738,7 +1763,8 @@ fn the_check_reads_a_commit_for_the_operator_and_one_for_a_character_apart() {
     );
 }
 
-/// **A commit message is held to the roster too.** Handle-shaped text is
+/// **A commit message is held to the roster too, from
+/// [`COMMIT_HANDLE_CHECK_BOUNDARY`] forward.** Handle-shaped text is
 /// handle-shaped text wherever it sits, and this repository is public the
 /// moment a push makes it so — the same reasoning
 /// [`no_unpushed_commit_message_writes_a_pronoun_for_the_operator`] states for
@@ -1751,8 +1777,8 @@ fn the_check_reads_a_commit_for_the_operator_and_one_for_a_character_apart() {
 /// enforced by attention, exactly as every other comment and doc string in
 /// this repository is; no machine reads prose for a life specific.
 #[test]
-fn no_unpushed_commit_message_quotes_an_off_roster_handle() {
-    let violations = off_roster_handles_in(&unpushed_commits());
+fn no_commit_message_since_the_boundary_quotes_an_off_roster_handle() {
+    let violations = off_roster_handles_in(&commits_checked_for_handles());
     assert!(
         violations.is_empty(),
         "these commit messages quote a handle this workspace's roster does not list. These \
@@ -1795,6 +1821,43 @@ fn the_check_reads_one_off_roster_handle_and_one_roster_handle_apart() {
         !violations.iter().any(|line| line.starts_with("bbbbbbb")),
         "…and a commit quoting only a roster handle must pass, or the report above is the \
          check flagging everything rather than working: {violations:?}"
+    );
+}
+
+/// This checkout's own current commit, short form — so a case can prove the
+/// checked range reaches the present rather than something stale.
+fn current_head() -> String {
+    let out = std::process::Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .current_dir(workspace_root())
+        .output()
+        .expect("this check reads HEAD and needs git on the PATH. It did not run.");
+    assert!(
+        out.status.success(),
+        "HEAD could not be read: {}",
+        String::from_utf8_lossy(&out.stderr).trim()
+    );
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+/// **The checked range reaches HEAD, not a boundary frozen in the past.**
+///
+/// [`COMMIT_HANDLE_CHECK_BOUNDARY`] is a fixed commit, unlike
+/// [`unpushed_commits`]'s `origin/main`, which moves on its own with every
+/// push. A fixed lower bound proves nothing about the upper one — this is
+/// the case that does: a commit written today, quoting an off-roster handle,
+/// would only be caught if `COMMIT_HANDLE_CHECK_BOUNDARY..HEAD` still ends at
+/// HEAD. It is asserted directly, over the real range, because a boundary
+/// that quietly stopped tracking HEAD would leave every later commit
+/// unchecked with nothing here to notice.
+#[test]
+fn the_handle_check_range_reaches_head() {
+    let commits = commits_checked_for_handles();
+    let head = current_head();
+    assert!(
+        commits.iter().any(|(hash, _)| hash == &head),
+        "the range COMMIT_HANDLE_CHECK_BOUNDARY..HEAD must include HEAD ({head}), or a commit \
+         quoting an off-roster handle written today would not be caught: {commits:?}"
     );
 }
 
