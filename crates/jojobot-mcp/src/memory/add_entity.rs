@@ -88,6 +88,15 @@ pub struct AddEntityArgs {
     pub(crate) sid: Option<String>,
 }
 
+/// **A deliberate, visible act**: this verb's own refusal is allowed to
+/// promise an override because this impl says its `Args` really carries
+/// one. See [`AcceptsOverride`].
+impl AcceptsOverride for AddEntityArgs {
+    fn override_token(&self) -> Option<&str> {
+        self.override_token.as_deref()
+    }
+}
+
 impl Jojobot {
     /// The box that comes with a bot, opened in the same act that creates it.
     ///
@@ -179,6 +188,9 @@ impl Jojobot {
         // Kept for the refusal below: which handle the guard turned back is
         // what says whether it was this entity or the one it named as parent.
         let creating = id.clone();
+        // Taken before `args`' fields are moved into `new` below — this
+        // owns its own copy, so it survives the moves that follow.
+        let token_slot = TokenSlot::from(&args);
         let new = NewEntity {
             id,
             name: args.name,
@@ -285,7 +297,7 @@ impl Jojobot {
             } => Ok(blocked_result(
                 &attempted,
                 &candidates,
-                Blocked::Creating(args.override_token.as_deref()),
+                Blocked::Creating(token_slot),
             )),
         }
     }

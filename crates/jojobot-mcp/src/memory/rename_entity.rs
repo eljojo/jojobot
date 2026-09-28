@@ -44,6 +44,15 @@ pub struct RenameEntityArgs {
     pub(crate) sid: Option<String>,
 }
 
+/// **A deliberate, visible act**: this verb's own refusal is allowed to
+/// promise an override because this impl says its `Args` really carries
+/// one. See [`AcceptsOverride`].
+impl AcceptsOverride for RenameEntityArgs {
+    fn override_token(&self) -> Option<&str> {
+        self.override_token.as_deref()
+    }
+}
+
 impl Jojobot {
     /// **The mail world's half of a rename**, called after the entity
     /// world's own write has already landed.
@@ -247,7 +256,7 @@ impl Jojobot {
             } => Ok(blocked_result(
                 &attempted,
                 &candidates,
-                Blocked::Renaming(args.override_token.as_deref()),
+                Blocked::Renaming(TokenSlot::from(&args)),
             )),
         }
     }

@@ -9,37 +9,78 @@
 
 use super::*;
 
+/// **A verb whose own `Args` genuinely carries an `override_token` field.**
+/// The only way to implement this is to write `fn override_token` naming a
+/// real field, in a visible `impl` beside that struct's own definition — so
+/// the three verbs that accept one implement it and nothing else does, on
+/// purpose, in a place a reader finds. [`TokenSlot::from`] is the only
+/// thing that reads this trait, and it is the only way to build a
+/// [`TokenSlot`].
+pub(crate) trait AcceptsOverride {
+    fn override_token(&self) -> Option<&str>;
+}
+
+/// **Evidence that a promising arm is being built from a verb that actually
+/// accepts an override.** Its field is private to this module, so nothing
+/// outside `TokenSlot::from` can construct one — not `None`, not
+/// `Default::default()`, not a bare literal. The only door in is a
+/// reference to something implementing [`AcceptsOverride`], and the only
+/// things that implement it are the three `Args` structs with a real
+/// `override_token` field.
+///
+/// Owns its value rather than borrowing it: a call site builds this once,
+/// from `args`, and then goes on to move `args`' other fields into the
+/// write it is about to make — a borrow would still be alive for that and
+/// refuse to compile for an unrelated reason, which would make the error a
+/// caller sees here about lifetimes rather than about the guard.
+///
+/// The value inside plays no role in [`blocked_result`] — the token it
+/// mints is a pure function of `attempted` and `candidates`, unchanged by
+/// what rides here. The slot's only job is existing: a verb with no
+/// `override_token` field has no `AcceptsOverride` impl to read through, so
+/// it has no way to build one at all.
+///
+/// **This is not unforgeable, and does not claim to be.** Nothing stops a
+/// hurried author from writing a fresh `impl AcceptsOverride for
+/// SomeArgs { fn override_token(&self) -> Option<&str> { None } }` beside
+/// the call and wiring a promising arm to a verb that still has no real
+/// slot — the type system cannot see that the `None` is invented. What it
+/// buys is that doing so is never silent: it is a whole new `impl` block,
+/// naming the trait, in a place a diff shows and a reader can ask "why does
+/// this verb suddenly accept overrides?" — never a one-line change to an
+/// existing call, which is what the gap before this looked like.
+pub(crate) struct TokenSlot(#[allow(dead_code)] Option<String>);
+
+impl TokenSlot {
+    pub(crate) fn from(args: &impl AcceptsOverride) -> Self {
+        TokenSlot(args.override_token().map(str::to_string))
+    }
+}
+
 /// Which gate stopped a write — because the way out of each one is different,
 /// and one copy-pasted paragraph telling a rename to "pick a more qualified
 /// slug" is worse than no advice at all.
 ///
-/// **The three arms that promise an `override_token` each carry the verb's
-/// own `override_token` field, and use it for nothing.** The field is
-/// evidence, not an ingredient: `blocked_result` mints its own token from
-/// `attempted` and `candidates` regardless of what is passed here. What the
-/// parameter buys is that a verb whose own `Args` carries no
-/// `override_token` field has nothing to pass — the call does not compile —
-/// so a promising arm can never be wired to a gate with no token to promise
-/// about. Before this, nothing here tied the choice of arm to what the verb
-/// actually accepts, and the one place that went wrong (`add_entity`'s
-/// parent refusal, 5e2d18a7) was fixed by routing around the shared body
-/// rather than by anything that would have stopped a second one.
-// The three `Option<&str>` fields are read by nothing below — that is the
-// whole mechanism, not an oversight, so the warning they would otherwise
-// raise is silenced here rather than by reaching for the value.
-#[allow(dead_code)]
-pub(crate) enum Blocked<'a> {
+/// **The three arms that promise an `override_token` each take a
+/// [`TokenSlot`], never the value itself.** Before this, nothing tied the
+/// choice of arm to what the verb actually accepts, and the one place that
+/// went wrong (`add_entity`'s parent refusal, 5e2d18a7) was fixed by
+/// routing around the shared body rather than by anything that would have
+/// stopped a second one.
+pub(crate) enum Blocked {
     /// A creation: the handle is being minted here, so an exact collision is
-    /// unforgivable and the token covers only a shared *name*.
-    Creating(Option<&'a str>),
+    /// unforgivable and the token covers only a shared *name*. The
+    /// [`TokenSlot`] is never read — see its own doc for why holding one at
+    /// all is the point.
+    Creating(#[allow(dead_code)] TokenSlot),
     /// A relabel — a change to a name or an alias. No handle is moving, so
     /// nothing here is unforgivable.
-    Relabelling(Option<&'a str>),
+    Relabelling(#[allow(dead_code)] TokenSlot),
     /// A rename's destination handle. Unlike [`Relabelling`](Self::Relabelling)
     /// a handle IS moving here — that is the whole verb — so the advice must
     /// not say otherwise; unlike [`Creating`](Self::Creating) the thing is
     /// not new, it already answers to a different name.
-    Renaming(Option<&'a str>),
+    Renaming(#[allow(dead_code)] TokenSlot),
     /// A write that only **names** an entity (a capture's subject, an edge's
     /// object). It cannot create one, so there is no token to hand back and no
     /// `override_token` on the verb.
@@ -58,7 +99,7 @@ pub(crate) enum Blocked<'a> {
 pub(crate) fn blocked_result(
     attempted: &EntityId,
     candidates: &[EntityMatch],
-    gate: Blocked<'_>,
+    gate: Blocked,
 ) -> CallToolResult {
     let exact = candidates
         .iter()

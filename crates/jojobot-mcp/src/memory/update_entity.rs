@@ -39,6 +39,15 @@ pub struct UpdateEntityArgs {
     pub(crate) sid: Option<String>,
 }
 
+/// **A deliberate, visible act**: this verb's own refusal is allowed to
+/// promise an override because this impl says its `Args` really carries
+/// one. See [`AcceptsOverride`].
+impl AcceptsOverride for UpdateEntityArgs {
+    fn override_token(&self) -> Option<&str> {
+        self.override_token.as_deref()
+    }
+}
+
 /// Edit an entity's metadata in place. The handle itself never changes, and
 /// any change to what it is CALLED — name or aliases — is screened by the
 /// write guard just as a creation is.
@@ -70,6 +79,9 @@ impl Jojobot {
             return Ok(refused);
         }
         let handle = EntityId::person(&args.handle);
+        // Taken before `args`' fields are moved into `patch` below — this
+        // owns its own copy, so it survives the moves that follow.
+        let token_slot = TokenSlot::from(&args);
         let patch = EntityPatch {
             name: args.name,
             aliases: args.aliases,
@@ -108,7 +120,7 @@ impl Jojobot {
             } => Ok(blocked_result(
                 &attempted,
                 &candidates,
-                Blocked::Relabelling(args.override_token.as_deref()),
+                Blocked::Relabelling(token_slot),
             )),
         }
     }
