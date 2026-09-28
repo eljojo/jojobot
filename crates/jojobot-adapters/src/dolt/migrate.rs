@@ -513,6 +513,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0060_journal_entry_closing_focus.sql"),
         leaves: Leaves::Column("journal_entry", "closing_focus"),
     },
+    Migration {
+        version: "0061_displaced_type_field",
+        sql: include_str!("../../migrations/0061_displaced_type_field.sql"),
+        leaves: Leaves::Table("displaced_type_field"),
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a
@@ -943,6 +948,7 @@ mod tests {
         "0058_message_quarantined_at",
         "0059_message_quarantine_reason",
         "0060_journal_entry_closing_focus",
+        "0061_displaced_type_field",
     ];
 
     /// **A migration set of this test's own, carrying the shape no shipped

@@ -43,6 +43,11 @@ pub struct InMemoryMemory {
     /// the real store keeps them as rows and the order they were declared in
     /// is part of what each one says.
     types: Mutex<Vec<crate::memory::types::DeclaredType>>,
+    /// **A caller's own declaration, kept after a shipped write took the name
+    /// over.** At most one per name, ever: once a name is shipped, a caller's
+    /// write over it is refused, so the name never returns to `Declared` for
+    /// this to capture a second time.
+    displaced_types: Mutex<Vec<crate::memory::types::Displaced>>,
     /// The kinds, one per token, with where each came from. Rows in the real
     /// store, so a `Vec` here for the same reason the types are one.
     kinds: Mutex<Vec<(String, crate::memory::types::Origin)>>,
@@ -2208,12 +2213,19 @@ impl Memory for InMemoryMemory {
         crate::memory::types::validate_type(&declared)?;
         let declared = declared.normalized();
         let mut held = self.types.lock().unwrap();
-        crate::memory::types::guard_replacement(
-            &declared,
-            held.iter()
-                .find(|t| t.name == declared.name)
-                .map(|t| t.origin),
-        )?;
+        let prior = held.iter().find(|t| t.name == declared.name).cloned();
+        if let Err(MemoryError::ShippedType { name, .. }) =
+            crate::memory::types::guard_replacement(&declared, prior.as_ref().map(|t| t.origin))
+        {
+            let displaced = self
+                .displaced_types
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|d| d.name == name)
+                .cloned();
+            return Err(MemoryError::ShippedType { name, displaced });
+        }
         // **Neither half writes over the other's keys**, and this is the same
         // line `keys_of_kind` holds from the other side: the two share this
         // place and the name alone cannot say which of them wrote a row.
@@ -2227,6 +2239,24 @@ impl Memory for InMemoryMemory {
                 "'{}' already names a kind, and its keys are not this declaration's to replace",
                 declared.name
             )));
+        }
+        // **A shipped write landing on a caller's own declaration is not a
+        // refusal** — see `guard_replacement` — so this is the one place
+        // that remembers what it took. Reached at most once per name: once
+        // this write lands, the name is shipped, and a caller's write over
+        // it is refused before it ever reaches here again.
+        if declared.origin == crate::memory::types::Origin::Shipped
+            && let Some(prior) = &prior
+            && prior.origin == crate::memory::types::Origin::Declared
+        {
+            self.displaced_types
+                .lock()
+                .unwrap()
+                .push(crate::memory::types::Displaced {
+                    name: declared.name.clone(),
+                    fields: prior.fields.clone(),
+                    replaced_on: self.clock.today_in(&jiff::tz::TimeZone::UTC),
+                });
         }
         // Replaced whole, the way the real store replaces the rows sharing the
         // name: a type is the keys it names now.

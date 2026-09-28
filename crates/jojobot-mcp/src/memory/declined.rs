@@ -360,14 +360,31 @@ pub(crate) fn memory_declined(
                  there, and a read hands back both."
             ),
         )),
-        MemoryError::ShippedType { ref name } => Ok(blocked_body(
+        MemoryError::ShippedType {
+            ref name,
+            ref displaced,
+        } => Ok(blocked_body(
             &EntityId(name.clone()),
             &[],
             format!(
                 "Nothing was written: {e}. A shipped type cannot be extended, shrunk or replaced \
                  from here, so sending this call again will not change the answer — changing one \
                  is a change to the software. Declare a type of your own instead: call {verb} with \
-                 a different name, and that type is yours to declare and redeclare as you like."
+                 a different name, and that type is yours to declare and redeclare as you like.{}",
+                match displaced {
+                    None => String::new(),
+                    Some(d) => format!(
+                        " Before this: '{name}' held keys {}, declared by a caller, until {}, \
+                         when the software's own declaration took the name over. Those keys are \
+                         gone from '{name}'; declare them under a name of your own to keep them.",
+                        d.fields
+                            .iter()
+                            .map(|f| f.key.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        d.replaced_on,
+                    ),
+                }
             ),
         )),
         // **The write is well formed and the record is real** — what it would

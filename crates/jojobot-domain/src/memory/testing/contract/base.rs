@@ -7950,6 +7950,103 @@ pub async fn a_shipped_type_refuses_a_callers_redeclaration<M: Memory>(store: &M
     );
 }
 
+/// **A shipped write landing on a caller's own declaration is not a refusal,
+/// and it is not silent either.**
+///
+/// [`a_shipped_type_refuses_a_callers_redeclaration`] covers the direction
+/// `guard_replacement` closes: a caller cannot write over a type the
+/// software ships. This is the other direction, which that guard never
+/// checked and still does not — the software's own write replaces a
+/// caller's declaration on purpose. Redeclaring the name is refused exactly
+/// as before; the refusal now also names what was there.
+///
+/// **Three claims, and the middle one is the point of this case**: the
+/// caller's keys are really gone from the type itself, unaffected by any of
+/// this; the refusal that follows names them; and a second shipped write —
+/// the software's own row replaced a second time, the way a reboot repeats
+/// the seed — does not touch, or duplicate, what the first one remembered.
+pub async fn a_shipped_write_displacing_a_callers_type_is_remembered<M: Memory>(store: &M) {
+    let theirs = DeclaredType::new(
+        "contract-roster",
+        vec![Field::required("shift_lead", ValueType::Reference)],
+    );
+    declare(store, theirs.clone()).await;
+
+    let shipped = DeclaredType::shipped(
+        "contract-roster",
+        vec![Field::required("starts", ValueType::Date)],
+    );
+    declare(store, shipped.clone()).await;
+    assert_eq!(
+        read_type(store, "contract-roster").await,
+        shipped,
+        "the software's write replaced the caller's type, exactly as an ordinary replacement \
+         does",
+    );
+
+    let redeclare = || {
+        store.declare_type(DeclaredType::new(
+            "contract-roster",
+            vec![Field::required("starts", ValueType::Date)],
+        ))
+    };
+    let Err(MemoryError::ShippedType { displaced, .. }) = redeclare().await else {
+        panic!("redeclaring a shipped name is still refused");
+    };
+    let displaced =
+        displaced.unwrap_or_else(|| panic!("the refusal names what the caller's own type held"));
+    assert_eq!(
+        displaced.fields, theirs.fields,
+        "the keys the caller's declaration named, exactly as declared",
+    );
+
+    // The pair this rests on: a second shipped write, landing on the
+    // software's OWN previous row rather than a caller's — a reboot
+    // repeating the seed — must not touch or duplicate what the first
+    // write remembered.
+    declare(store, shipped.clone()).await;
+    let Err(MemoryError::ShippedType {
+        displaced: still, ..
+    }) = redeclare().await
+    else {
+        panic!("redeclaring a shipped name is still refused");
+    };
+    assert_eq!(
+        still,
+        Some(displaced),
+        "a second shipped write, over its own previous row, leaves what the first one \
+         remembered exactly as it was",
+    );
+}
+
+/// **A shipped type declared for the first time displaces nothing** — the
+/// positive [`a_shipped_write_displacing_a_callers_type_is_remembered`]
+/// rests on. Without it, a store that always reported SOME displacement on
+/// a shipped redeclaration would pass that case for the wrong reason, and
+/// every ordinary boot — landing on a name that was never a caller's —
+/// would cry wolf.
+pub async fn a_shipped_type_declared_fresh_displaces_nothing<M: Memory>(store: &M) {
+    let shipped = DeclaredType::shipped(
+        "contract-fresh-rota",
+        vec![Field::required("starts", ValueType::Date)],
+    );
+    declare(store, shipped).await;
+
+    let refused = store
+        .declare_type(DeclaredType::new(
+            "contract-fresh-rota",
+            vec![Field::required("starts", ValueType::Date)],
+        ))
+        .await;
+    let Err(MemoryError::ShippedType { displaced, .. }) = refused else {
+        panic!("redeclaring a shipped name is still refused: {refused:?}");
+    };
+    assert_eq!(
+        displaced, None,
+        "nothing was ever a caller's under this name, so the refusal names nothing",
+    );
+}
+
 /// **Two types may name one key and mean their own thing by it — through
 /// the store.**
 ///
@@ -11466,6 +11563,8 @@ pub async fn run_all<M: Memory>(store: &M) {
     declaring_a_type_again_replaces_its_keys(store).await;
     a_type_with_no_keys_is_refused_and_writes_nothing(store).await;
     a_shipped_type_refuses_a_callers_redeclaration(store).await;
+    a_shipped_write_displacing_a_callers_type_is_remembered(store).await;
+    a_shipped_type_declared_fresh_displaces_nothing(store).await;
     two_stored_types_may_name_one_key(store).await;
     a_stored_type_matches_a_record_that_never_declared_it(store).await;
 

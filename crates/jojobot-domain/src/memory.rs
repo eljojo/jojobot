@@ -3540,6 +3540,12 @@ pub enum MemoryError {
     ShippedType {
         /// The type name that was declared.
         name: String,
+        /// **What a caller's own declaration of this name held, when the
+        /// software's write took it over.** `None` when nothing was ever
+        /// displaced — the name was the software's from the start, or this
+        /// store has no record of what a caller held. See
+        /// [`types::Displaced`].
+        displaced: Option<types::Displaced>,
     },
     /// **The text repeats what the software already supplies here.**
     ///

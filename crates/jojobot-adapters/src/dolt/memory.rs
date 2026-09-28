@@ -39,7 +39,9 @@ use jojobot_domain::memory::{
     kinds::{self, NotAKind},
     merge_account, normalize_content, normalize_details, normalize_prose, referenced_by,
     retraction_of, screen_entity_patch, search, standing_of, stood_after, stood_after_capture,
-    types::{DeclaredType, Field, Fold, Origin, ValueType, guard_replacement, validate_type},
+    types::{
+        DeclaredType, Displaced, Field, Fold, Origin, ValueType, guard_replacement, validate_type,
+    },
     validate_content, validate_details, validate_edge, validate_entity, validate_field,
     validate_fields, validate_happened_span, validate_prose, validate_provenance_source,
     validate_subject, validate_write_subject, writes_of,
@@ -3788,8 +3790,23 @@ impl Memory for DoltMemory {
                 .fetch_optional(&mut *tx)
                 .await
                 .map_err(store)?;
-        guard_replacement(&declared, held.as_deref().map(read_origin))?;
+        let held_origin = held.as_deref().map(read_origin);
+        if let Err(MemoryError::ShippedType { name, .. }) =
+            guard_replacement(&declared, held_origin)
+        {
+            let displaced = fetch_displaced(&mut tx, &name).await?;
+            return Err(MemoryError::ShippedType { name, displaced });
+        }
         owned_by_the_other_half(&mut tx, &declared.name, KEYS_OF_A_KIND).await?;
+        // **A shipped write landing on a caller's own declaration is not a
+        // refusal** — the guard above only stops the other direction. This
+        // is the one place that remembers what it took, read here before the
+        // delete below removes it. Reached at most once per name: once this
+        // write lands, the name is shipped, and a caller's write over it is
+        // refused before it ever reaches here again.
+        if declared.origin == Origin::Shipped && held_origin == Some(Origin::Declared) {
+            displace(&mut tx, &declared.name, &self.clock).await?;
+        }
         sqlx::query("DELETE FROM type_field WHERE type_name = ? AND owner = ?")
             .bind(&declared.name)
             .bind(KEYS_OF_A_TYPE)
@@ -4061,6 +4078,103 @@ fn gather_types(rows: &[sqlx::mysql::MySqlRow]) -> Result<Vec<DeclaredType>, Mem
         }
     }
     Ok(types)
+}
+
+/// **What a caller's own declaration held under `name`, read here before a
+/// shipped write's own DELETE removes it — the one place that remembers.**
+///
+/// A no-op when `name` names nothing yet (a shipped type declared for the
+/// first time) or already names a shipped row (a normal reboot, landing on a
+/// previous build's own declaration): both read as `held_origin !=
+/// Some(Declared)` at the call site, which is the whole of the guard.
+async fn displace(
+    tx: &mut Transaction<'_, MySql>,
+    name: &str,
+    clock: &Clock,
+) -> Result<(), MemoryError> {
+    let prior_rows = sqlx::query(
+        "SELECT type_name, key_name, holds, folds, origin, required, one_of FROM type_field \
+         WHERE type_name = ? ORDER BY ordinal",
+    )
+    .bind(name)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(store)?;
+    let Some(prior) = gather_types(&prior_rows)?
+        .into_iter()
+        .find(|t| t.name == name)
+    else {
+        return Ok(());
+    };
+    let today = clock.today_in(&jiff::tz::TimeZone::UTC);
+    for (ordinal, field) in prior.fields.iter().enumerate() {
+        sqlx::query(
+            "INSERT INTO displaced_type_field \
+             (type_name, key_name, ordinal, holds, folds, required, one_of, replaced_on) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(name)
+        .bind(&field.key)
+        .bind(ordinal as i64 + 1)
+        .bind(field.holds_token())
+        .bind(field.folds.as_token())
+        .bind(field.required)
+        .bind(field.one_of_cell())
+        .bind(today.to_string())
+        .execute(&mut **tx)
+        .await
+        .map_err(store)?;
+    }
+    Ok(())
+}
+
+/// **A caller's own declaration, read back beside the refusal a
+/// redeclaration of a shipped name meets.** `None` when nothing was ever
+/// displaced under `name`.
+async fn fetch_displaced(
+    tx: &mut Transaction<'_, MySql>,
+    name: &str,
+) -> Result<Option<Displaced>, MemoryError> {
+    let rows = sqlx::query(
+        "SELECT key_name, holds, folds, required, one_of, replaced_on FROM displaced_type_field \
+         WHERE type_name = ? ORDER BY ordinal",
+    )
+    .bind(name)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(store)?;
+    if rows.is_empty() {
+        return Ok(None);
+    }
+    let mut fields = Vec::with_capacity(rows.len());
+    let mut replaced_on: Option<Date> = None;
+    for row in &rows {
+        let key: String = row.get("key_name");
+        let holds_token: String = row.get("holds");
+        let held = Field::of_token(&key, &holds_token);
+        if held.is_none() && unresolvable_only_because_unloaded(&holds_token) {
+            return Err(MemoryError::KindsNeverLoaded { attempted: None });
+        }
+        fields.push(Field {
+            folds: Fold::of_token(&row.get::<String, _>("folds")).unwrap_or_default(),
+            required: row.get::<bool, _>("required"),
+            one_of: Field::one_of_from_cell(row.get::<Option<String>, _>("one_of").as_deref()),
+            ..held.unwrap_or_else(|| Field::new(&key, ValueType::Text))
+        });
+        if replaced_on.is_none() {
+            replaced_on = Some(
+                row.try_get::<String, _>("replaced_on")
+                    .map_err(store)?
+                    .parse::<Date>()
+                    .map_err(|_| unreadable("its replaced-on day cannot be read as a date"))?,
+            );
+        }
+    }
+    Ok(Some(Displaced {
+        name: name.to_string(),
+        fields,
+        replaced_on: replaced_on.expect("at least one row was read, so a date was too"),
+    }))
 }
 
 /// Write one whole entity — the row and the aliases under it — replacing

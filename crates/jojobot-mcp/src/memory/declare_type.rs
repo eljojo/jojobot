@@ -442,6 +442,94 @@ mod tests {
         );
     }
 
+    /// 🚨 **A shipped write that lands on a caller's own declaration is not
+    /// silent.**
+    ///
+    /// The failing case this proves: before this, `declare_type` refused a
+    /// redeclaration by name alone. The caller's own keys — real ones, held
+    /// until the software's write took the name over — were gone with no
+    /// trace anywhere the served surface reaches. The refusal now names
+    /// them.
+    ///
+    /// `jojobot.memory.declare_type` stands in for the boot-time seed here,
+    /// the same way [`declaring_over_a_shipped_type_is_refused_and_writes_nothing`]
+    /// stands in for it: the seed is not a tool a caller can invoke, so
+    /// nothing on the served surface can trigger a shipped write directly.
+    /// What IS on the served surface, and what this asserts on, is the
+    /// refusal a caller meets afterwards.
+    #[tokio::test]
+    async fn redeclaring_a_name_the_build_displaced_names_what_it_held() {
+        let jojobot = handler();
+        writing_as(&jojobot);
+        jojobot
+            .declare_type(Parameters(declare_args("roster", &["shift_lead"])))
+            .await
+            .expect("the caller's own declaration lands");
+
+        let today = jiff::Timestamp::now()
+            .to_zoned(jiff::tz::TimeZone::UTC)
+            .date();
+        jojobot
+            .memory
+            .declare_type(DeclaredType::shipped(
+                "roster",
+                vec![Field::new("starts", ValueType::Date)],
+            ))
+            .await
+            .expect("the software's own write replaces a caller's");
+
+        let result = jojobot
+            .declare_type(Parameters(declare_args("roster", &["starts"])))
+            .await
+            .expect("a refusal is an answer, not a protocol failure");
+
+        let body = blocked(&result);
+        let advice = body["how_to_proceed"]
+            .as_str()
+            .unwrap_or_else(|| panic!("a refusal carries its way forward: {body}"));
+        assert!(
+            advice.contains("shift_lead"),
+            "names the key the caller's own declaration held: {advice}"
+        );
+        assert!(
+            advice.contains(&today.to_string()),
+            "…and the day the software's write took the name over: {advice}"
+        );
+    }
+
+    /// **The positive the case above rests on**: a shipped type declared for
+    /// the first time — never a caller's — names nothing displaced. Without
+    /// this, a refusal that always invented something to say would pass the
+    /// case above for the wrong reason.
+    #[tokio::test]
+    async fn redeclaring_a_name_that_was_always_shipped_names_nothing_displaced() {
+        let jojobot = handler();
+        writing_as(&jojobot);
+        jojobot
+            .memory
+            .declare_type(DeclaredType::shipped(
+                "always-shipped",
+                vec![Field::new("starts", ValueType::Date)],
+            ))
+            .await
+            .expect("the software declares its own types");
+
+        let result = jojobot
+            .declare_type(Parameters(declare_args("always-shipped", &["starts"])))
+            .await
+            .expect("a refusal is an answer, not a protocol failure");
+
+        let body = blocked(&result);
+        let advice = body["how_to_proceed"]
+            .as_str()
+            .unwrap_or_else(|| panic!("a refusal carries its way forward: {body}"));
+        assert!(
+            !advice.contains("Before this"),
+            "nothing was ever a caller's under this name, so nothing is named as displaced: \
+             {advice}"
+        );
+    }
+
     /// **Where a type came from reaches the wire — on the type, and on every
     /// type in the list beside it.**
     ///

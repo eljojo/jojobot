@@ -38,6 +38,8 @@
 
 use std::collections::BTreeMap;
 
+use jiff::civil::Date;
+
 use super::{EntityId, EntityKind, MemoryError};
 
 /// **What a key is declared to hold.**
@@ -633,6 +635,22 @@ pub struct DeclaredType {
     pub origin: Origin,
 }
 
+/// **What a caller's own declaration held, under a name the build later
+/// shipped and took over.**
+///
+/// [`guard_replacement`] lets a shipped write land on a declared row — that is
+/// not a refusal, so nothing else remembers what it took. This is read beside
+/// the refusal a caller meets trying to touch the name again, so the loss is
+/// never silent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Displaced {
+    pub name: String,
+    /// The keys the caller's own declaration named, exactly as declared.
+    pub fields: Vec<Field>,
+    /// The day the build's write took the name over.
+    pub replaced_on: Date,
+}
+
 /// A key whose value does not hold what the type said it would.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Mistyped {
@@ -1025,6 +1043,10 @@ pub fn guard_replacement(incoming: &DeclaredType, held: Option<Origin>) -> Resul
     if incoming.origin == Origin::Declared && held == Some(Origin::Shipped) {
         return Err(MemoryError::ShippedType {
             name: incoming.name.trim().to_string(),
+            // This function has no store to read one back from. A caller
+            // meeting this refusal is met again, by the store, with the
+            // displaced record attached when one exists.
+            displaced: None,
         });
     }
     Ok(())
