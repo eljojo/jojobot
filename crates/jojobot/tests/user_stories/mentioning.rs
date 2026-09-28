@@ -308,3 +308,68 @@ async fn a_posted_message_written_before_a_rename_renders_it_on_the_way_out() {
         .says("place:shelbyville")
         .never_says("place:shelbyvile");
 }
+
+/// **"Everything that points at this thing" reaches all three routes, each
+/// told apart from the others** — an edge somebody drew on purpose, a
+/// mention sitting in a claim's own words, and a `refs` entry naming it with
+/// no claim about how. None of the three is the same claim as the others,
+/// and a walk that named no shape at all is what reaches them together.
+#[tokio::test]
+async fn a_walk_with_no_shape_named_reaches_an_edge_a_mention_and_a_ref_at_once() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+
+    s.add("topic:widgets", "The Widgets Project").await;
+    s.add("person:milhouse", "Milhouse").await;
+    s.add("person:nelson", "Nelson").await;
+    s.add("person:bart", "Bart").await;
+
+    s.fact_about(
+        "person:milhouse",
+        "is the one actually running it",
+        "about",
+        "topic:widgets",
+    )
+    .await;
+
+    s.call(
+        "capture",
+        json!({
+            "subject": "person:nelson",
+            "content": "helped pull an all-nighter on @topic:widgets before the deadline",
+            "provenance": "testimony",
+        }),
+    )
+    .await;
+
+    s.call(
+        "capture",
+        json!({
+            "subject": "person:bart",
+            "content": "was asked to keep his mouth shut about the schedule",
+            "provenance": "testimony",
+            "refs": ["topic:widgets"],
+        }),
+    )
+    .await;
+
+    let walked = s
+        .shape(
+            "everything that points at the widgets project",
+            json!({
+                "subject": "topic:widgets",
+                "follow": {"direction": "in"},
+            }),
+        )
+        .await;
+
+    walked
+        .says("person:milhouse")
+        .says("person:nelson")
+        .says("\"mention\":true")
+        .says("person:bart")
+        .says("\"ref\":true");
+
+    s.wrap("found everyone touching the widgets project, however each one pointed at it")
+        .await;
+}

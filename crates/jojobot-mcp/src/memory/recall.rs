@@ -63,10 +63,17 @@ pub struct KeyFilterArgs {
 }
 
 /// The `follow` argument of a `recall` — which edges to walk, and how far.
+/// Leave both `shape` and `relation` unset and a walk also reaches a
+/// mention (an entity named in a claim's own words) and a ref (an entity a
+/// claim touches with no claim about how) — each labelled mention or ref,
+/// never as an edge. Naming a shape or a relation narrows to that alone:
+/// neither has one.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct FollowArgs {
     /// Narrow to one shape (`location` · `membership` · `attendance` · `about`
-    /// · `connection`). Omit for **any** edge — "whatever it is connected to".
+    /// · `connection`). Omit for **any** edge — "whatever it is connected to"
+    /// — which is also what reaches a mention or a ref; naming a shape here
+    /// reaches edges of that shape alone.
     #[serde(default)]
     pub(crate) shape: Option<String>,
     /// **A declared relation to walk instead of an edge.** A relation is a KEY
@@ -1048,6 +1055,12 @@ fn object_json(
         let link = match &via.link {
             graph::Link::Edge(shape) => serde_json::json!({ "type": shape.as_name() }),
             graph::Link::Relation(name) => serde_json::json!({ "relation": name }),
+            // **Never rendered as an edge.** `type` is the edge's own key —
+            // a schema.org predicate — so a mention or a ref gets a key of
+            // its own rather than borrowing one a reader would read as a
+            // deliberate link somebody drew on purpose.
+            graph::Link::Mention => serde_json::json!({ "mention": true }),
+            graph::Link::Ref => serde_json::json!({ "ref": true }),
         };
         let mut link = link;
         if let Some(fields) = link.as_object_mut() {
@@ -1232,7 +1245,12 @@ impl Jojobot {
                        from a party `in` reaches its guests and from a guest `out` reaches the \
                        party. A RELATION is the other kind of link, and a DECLARATION is what \
                        makes one: a KEY some type declared to hold a `reference` points at \
-                       another entity, so it is walkable. Name the key and use `direction` — \
+                       another entity, so it is walkable. LEAVE shape AND relation BOTH UNSET \
+                       and a walk also reaches a MENTION (an entity named in a claim's own \
+                       words) and a REF (an entity a claim touches with no claim about how), \
+                       each labelled mention or ref rather than as an edge — name a shape or a \
+                       relation and neither answers, because neither has one. Name the key and \
+                       use `direction` — \
                        `out` reaches what a record points at ('owner' from a pet reaches the \
                        person), `in` reaches every record pointing here through that key ('owner' \
                        from that person reaches the pets). Inbound is scoped by the KEY ALONE: it \
@@ -2078,6 +2096,7 @@ impl Jojobot {
 mod tests {
     use super::*;
     use crate::harness::*;
+    use crate::memory::RenameEntityArgs;
     use crate::memory::testing::*;
     use crate::session::testing::journal_entry;
     use jojobot_domain::mailbox::testing::InMemoryMailboxes;
@@ -6390,6 +6409,275 @@ mod tests {
             built_on: None,
             backing: None,
         }
+    }
+
+    /// **`follow`'s own served description names what an unscoped walk now
+    /// reaches** — a capability whose own verb description does not mention
+    /// it has no path to it.
+    #[test]
+    fn an_unscoped_follow_names_mention_and_ref_on_the_verbs_own_description() {
+        let tools = Jojobot::tool_router().list_all();
+        let recall = tools
+            .iter()
+            .find(|t| t.name.as_ref() == "recall")
+            .expect("recall is a tool");
+        let tool_description = recall.description.as_deref().unwrap_or_default();
+        assert!(
+            tool_description.contains("MENTION"),
+            "the tool-level description does not name mention: {tool_description}"
+        );
+        assert!(
+            tool_description.contains("REF"),
+            "the tool-level description does not name ref: {tool_description}"
+        );
+    }
+
+    /// **An unscoped `follow` reaches an edge, a mention and a ref at once,
+    /// each labelled apart from the others** — proven over the production
+    /// stack (`mention::Mentioning` in front of memory), because a bare
+    /// store would pass this for the wrong reason: an unrendered mention is
+    /// ordinary text, not a link.
+    #[tokio::test]
+    async fn an_unscoped_follow_in_reaches_the_edge_the_mention_and_the_ref_labelled_apart() {
+        let jojobot = handler_mentioning();
+        ensure(&jojobot, "topic:all-rules").await;
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                object: Some("topic:all-rules".into()),
+                shape: Some("connection".into()),
+                ..capture_args(
+                    "person:homer",
+                    "draws an edge, its own words never repeat the target's name",
+                )
+            },
+        )
+        .await;
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                ..capture_args(
+                    "person:gayle",
+                    "mentions @topic:all-rules directly in its own words",
+                )
+            },
+        )
+        .await;
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                refs: Some(vec!["topic:all-rules".into()]),
+                ..capture_args("person:hugo", "touches it without saying how")
+            },
+        )
+        .await;
+
+        let walked = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    subject: Some("topic:all-rules".into()),
+                    follow: Some(FollowArgs {
+                        direction: Some("in".into()),
+                        ..no_follow()
+                    }),
+                    ..of_nothing()
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        let reached = walked["objects"][0]["connected"]
+            .as_array()
+            .expect("connected objects");
+        assert_eq!(reached.len(), 3, "all three routes are reached: {walked}");
+        let via_of = |handle: &str| {
+            reached
+                .iter()
+                .find(|o| o["id"] == handle)
+                .unwrap_or_else(|| panic!("{handle} was not reached: {walked}"))["via"]
+                .clone()
+        };
+        assert_eq!(
+            via_of("person:homer")["type"],
+            EdgeShape::Connection.as_name(),
+            "the edge writer is labelled as its edge shape: {walked}"
+        );
+        assert_eq!(
+            via_of("person:gayle")["mention"],
+            true,
+            "the mention writer is labelled as a mention, never as an edge: {walked}"
+        );
+        assert_eq!(
+            via_of("person:hugo")["ref"],
+            true,
+            "the ref writer is labelled as a ref: {walked}"
+        );
+    }
+
+    /// **A shaped walk answers exactly as it always has**: only the edge
+    /// claim, the negative paired with the positive above so a version that
+    /// dropped the shape filter entirely could not pass both.
+    #[tokio::test]
+    async fn a_follow_scoped_to_one_edge_shape_never_returns_a_mention_or_a_ref() {
+        let jojobot = handler_mentioning();
+        ensure(&jojobot, "topic:all-rules").await;
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                object: Some("topic:all-rules".into()),
+                shape: Some("connection".into()),
+                ..capture_args(
+                    "person:homer",
+                    "draws an edge, its own words never repeat the target's name",
+                )
+            },
+        )
+        .await;
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                ..capture_args(
+                    "person:gayle",
+                    "mentions @topic:all-rules directly in its own words",
+                )
+            },
+        )
+        .await;
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                refs: Some(vec!["topic:all-rules".into()]),
+                ..capture_args("person:hugo", "touches it without saying how")
+            },
+        )
+        .await;
+
+        let walked = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    subject: Some("topic:all-rules".into()),
+                    follow: Some(FollowArgs {
+                        shape: Some("connection".into()),
+                        direction: Some("in".into()),
+                        ..no_follow()
+                    }),
+                    ..of_nothing()
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        let reached = walked["objects"][0]["connected"]
+            .as_array()
+            .expect("connected objects");
+        assert_eq!(
+            reached.iter().map(|o| o["id"].clone()).collect::<Vec<_>>(),
+            vec!["person:homer"],
+            "only the edge claim answers a walk scoped to its own shape: {walked}"
+        );
+    }
+
+    /// **The outbound mirror**: from the subject whose claim mentions the
+    /// target, an unscoped walk out reaches it, labelled as a mention.
+    #[tokio::test]
+    async fn an_unscoped_follow_out_reaches_the_target_of_its_own_mention() {
+        let jojobot = handler_mentioning();
+        ensure(&jojobot, "topic:all-rules").await;
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                ..capture_args(
+                    "person:gayle",
+                    "mentions @topic:all-rules directly in its own words",
+                )
+            },
+        )
+        .await;
+
+        let walked = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    subject: Some("person:gayle".into()),
+                    follow: Some(FollowArgs {
+                        direction: Some("out".into()),
+                        ..no_follow()
+                    }),
+                    ..of_nothing()
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        let reached = walked["objects"][0]["connected"]
+            .as_array()
+            .expect("connected objects");
+        assert_eq!(
+            reached.iter().map(|o| o["id"].clone()).collect::<Vec<_>>(),
+            vec!["topic:all-rules"],
+            "the mentioned target is reached going out: {walked}"
+        );
+        assert_eq!(
+            reached[0]["via"]["mention"], true,
+            "labelled as a mention: {walked}"
+        );
+    }
+
+    /// **A rename of the target is still followed through a mention** — the
+    /// reversal is rebuilt fresh from already-rendered facts on every walk,
+    /// so it never holds a stale handle to begin with.
+    #[tokio::test]
+    async fn a_rename_of_the_target_is_still_followed_through_a_mention() {
+        let jojobot = handler_mentioning();
+        ensure(&jojobot, "topic:all-rules").await;
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                ..capture_args(
+                    "person:gayle",
+                    "mentions @topic:all-rules directly in its own words",
+                )
+            },
+        )
+        .await;
+
+        let sid = writing_as(&jojobot);
+        let renamed = jojobot
+            .rename_entity(Parameters(RenameEntityArgs {
+                handle: "topic:all-rules".into(),
+                to: "topic:the-five-words".into(),
+                parent: None,
+                recorded_at: None,
+                override_token: None,
+                sid: Some(sid),
+            }))
+            .await
+            .expect("rename_entity call ok");
+        assert_ne!(
+            json_of(&renamed)["status"],
+            "blocked",
+            "{}",
+            text_of(&renamed)
+        );
+
+        let walked = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    subject: Some("topic:the-five-words".into()),
+                    follow: Some(FollowArgs {
+                        direction: Some("in".into()),
+                        ..no_follow()
+                    }),
+                    ..of_nothing()
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        let reached = walked["objects"][0]["connected"]
+            .as_array()
+            .expect("connected objects");
+        assert_eq!(
+            reached.iter().map(|o| o["id"].clone()).collect::<Vec<_>>(),
+            vec!["person:gayle"],
+            "the mention still resolves through the rename: {walked}"
+        );
+        assert_eq!(reached[0]["via"]["mention"], true, "{walked}");
     }
 
     /// 🚨 **Discoverability: the verb's own description names the

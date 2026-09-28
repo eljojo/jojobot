@@ -95,6 +95,30 @@ pub(crate) fn handler_shipped() -> Jojobot {
     )
 }
 
+/// **A handler wired with `mention::Mentioning` in front of memory**, the
+/// same decorator `jojobot/src/wiring.rs` wraps the real store in.
+///
+/// [`handler`]'s store is bare: a mention written through it stores the raw
+/// `@kind:slug` text a caller typed rather than the row's permanent badge,
+/// so anything reading it back — including a `follow` walk's mention
+/// reversal — sees ordinary words, not a link. That is the right store for
+/// a case about something else; a case about mentions themselves needs this
+/// one, or it is proving the mechanism against a store production never
+/// runs.
+pub(crate) fn handler_mentioning() -> Jojobot {
+    let bare = Arc::new(InMemoryMemory::booted());
+    let mentioning: Arc<dyn jojobot_domain::memory::Memory> =
+        Arc::new(jojobot_domain::memory::mention::Mentioning::new(bare));
+    Jojobot::new(
+        mentioning,
+        Arc::new(SpySearch::default()),
+        Arc::new(InMemoryMailboxes::knowing_any_owner()),
+        Arc::new(InMemorySessions::new()),
+        Arc::new(InMemoryTeachings::new()),
+        seeded_registry(),
+    )
+}
+
 /// **A handler wrapped in one shipped field default of the test's own
 /// choosing** — for a case about the mechanism, never the real shipped data
 /// [`handler_shipped`] proves.

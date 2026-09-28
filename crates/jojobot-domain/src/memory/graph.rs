@@ -20,7 +20,7 @@ use std::collections::{BTreeMap, HashSet};
 
 use super::{
     Edge, EdgeShape, Entity, EntityId, EntityKind, Fact, FactAddress, FactId, FactStatus,
-    MemoryError, guard, search::DocScan, types, validate_subject,
+    MemoryError, guard, mention, search::DocScan, types, validate_subject,
 };
 
 /// **How far a walk may go.** A bound rather than a preference: an edge may
@@ -520,14 +520,24 @@ pub enum Link {
     Edge(EdgeShape),
     /// A declared relation, by the name it was followed under.
     Relation(String),
+    /// **A handle written into a claim's own words** — an admission that the
+    /// link is there, weaker even than [`EdgeShape::Connection`]'s: nobody
+    /// drew it on purpose, an entity's name just appears in a sentence. Never
+    /// rendered as an edge, so a reader cannot mistake one for the other.
+    Mention,
+    /// **A claim's `refs`** — the entities it touches with no claim about how.
+    Ref,
 }
 
 impl Link {
-    /// The token this reads as — the shape's own, or the relation's name.
+    /// The token this reads as — the shape's own, the relation's name, or a
+    /// fixed word for the two kinds of link with no name of their own.
     pub fn token(&self) -> &str {
         match self {
             Link::Edge(shape) => shape.as_token(),
             Link::Relation(name) => name.as_str(),
+            Link::Mention => "mention",
+            Link::Ref => "ref",
         }
     }
 }
@@ -1365,6 +1375,24 @@ struct Ctx<'a> {
     /// For each entity, the edges drawn AT it: the shape, and the entity whose
     /// record draws it. The reverse of the edge cell, built once.
     inbound: BTreeMap<EntityId, Vec<(EdgeShape, EntityId, bool)>>,
+    /// For each entity, who mentioned it: the subject of every claim whose
+    /// own words name it. The reverse of a mention, built in the same pass
+    /// as `inbound`.
+    ///
+    /// **Needs facts already RENDERED** — a stored mention is a badge, not a
+    /// handle, until something turns it back into one. `Ctx::of` is handed
+    /// whatever `DocScan`s its caller fetched; over a bare `Memory` port
+    /// (no `mention::Mentioning` decorator in front of it) a fact's content
+    /// still carries the badge, `mention::named` finds nothing to resolve,
+    /// and this map answers empty for a mention that is genuinely there.
+    /// Production wires `Mentioning` in front of every store (`jojobot/src/
+    /// wiring.rs`) for exactly this reason.
+    mentioned_by: BTreeMap<EntityId, Vec<(EntityId, bool)>>,
+    /// For each entity, who ref'd it: the subject of every claim whose
+    /// `refs` names it. The reverse of `Fact::refs`, built in the same pass
+    /// as `inbound`. Needs no rendering — `refs` is already handle form by
+    /// the time a scan reaches here.
+    ref_by: BTreeMap<EntityId, Vec<(EntityId, bool)>>,
     /// Every fact once, whatever page it sits on — what a reverse relation
     /// reads, because it asks who points here and the answer is on their pages
     /// rather than on this one.
@@ -1381,6 +1409,8 @@ impl<'a> Ctx<'a> {
         let mut fields = BTreeMap::new();
         let mut facts: BTreeMap<&EntityId, Vec<&Fact>> = BTreeMap::new();
         let mut inbound: BTreeMap<EntityId, Vec<(EdgeShape, EntityId, bool)>> = BTreeMap::new();
+        let mut mentioned_by: BTreeMap<EntityId, Vec<(EntityId, bool)>> = BTreeMap::new();
+        let mut ref_by: BTreeMap<EntityId, Vec<(EntityId, bool)>> = BTreeMap::new();
 
         for doc in scanned {
             if let Some(entity) = doc.entity.as_ref() {
@@ -1403,6 +1433,26 @@ impl<'a> Ctx<'a> {
                         fact.status == FactStatus::Archived,
                     ));
                 }
+                let retracted = fact.status == FactStatus::Archived;
+                let mentioned = mention::named(&fact.content).into_iter().chain(
+                    fact.details
+                        .as_deref()
+                        .map(mention::named)
+                        .into_iter()
+                        .flatten(),
+                );
+                for target in mentioned {
+                    mentioned_by
+                        .entry(target)
+                        .or_default()
+                        .push((fact.subject.clone(), retracted));
+                }
+                for target in &fact.refs {
+                    ref_by
+                        .entry(target.clone())
+                        .or_default()
+                        .push((fact.subject.clone(), retracted));
+                }
             }
         }
 
@@ -1415,6 +1465,18 @@ impl<'a> Ctx<'a> {
             bucket.retain(|f| seen.insert((f.home.clone(), f.id.clone())));
         }
         for bucket in inbound.values_mut() {
+            let mut seen = HashSet::new();
+            bucket.retain(|link| seen.insert(link.clone()));
+        }
+        // **A fact can name the same target twice** — `@X` written twice in
+        // one sentence, or in both `content` and `details` — and a `refs`
+        // list is free-form, so the caller could repeat an entry. One claim
+        // draws one link to a reader, whichever route it used.
+        for bucket in mentioned_by.values_mut() {
+            let mut seen = HashSet::new();
+            bucket.retain(|link| seen.insert(link.clone()));
+        }
+        for bucket in ref_by.values_mut() {
             let mut seen = HashSet::new();
             bucket.retain(|link| seen.insert(link.clone()));
         }
@@ -1433,6 +1495,8 @@ impl<'a> Ctx<'a> {
             fields,
             facts,
             inbound,
+            mentioned_by,
+            ref_by,
             all,
             declarations,
         }
@@ -1787,48 +1851,20 @@ impl<'a> Ctx<'a> {
     /// nothing checks a record's values against a declaration — so a key
     /// holding a handle nobody has created is ordinary and drops out here.
     fn neighbours(&self, id: &EntityId, from: &[&Fact], follow: &Follow) -> Vec<(Via, EntityId)> {
+        let direction = follow.direction();
         let mut found: Vec<(Via, EntityId)> = match &follow.along {
-            Along::Relation(name) => self.along_relation(id, from, name, follow.direction()),
-            along => {
-                let shape = match along {
-                    Along::Edge(shape) => Some(*shape),
-                    _ => None,
-                };
-                let direction = follow.direction();
-                match direction {
-                    Direction::Out => from
-                        .iter()
-                        .filter_map(|f| f.edge.as_ref().map(|e| (*f, e)))
-                        .filter(|(_, e)| shape.is_none_or(|s| e.shape == s))
-                        .map(|(f, e)| {
-                            (
-                                Via {
-                                    link: Link::Edge(e.shape),
-                                    direction,
-                                    retracted: f.status == FactStatus::Archived,
-                                },
-                                e.object.clone(),
-                            )
-                        })
-                        .collect(),
-                    Direction::In => self
-                        .inbound
-                        .get(id)
-                        .into_iter()
-                        .flatten()
-                        .filter(|(shape_at, _, _)| shape.is_none_or(|s| *shape_at == s))
-                        .map(|(shape_at, drawn_by, retracted)| {
-                            (
-                                Via {
-                                    link: Link::Edge(*shape_at),
-                                    direction,
-                                    retracted: *retracted,
-                                },
-                                drawn_by.clone(),
-                            )
-                        })
-                        .collect(),
-                }
+            Along::Relation(name) => self.along_relation(id, from, name, direction),
+            Along::Edge(shape) => self.along_edge(id, from, Some(*shape), direction),
+            // **A mention and a ref have no shape, so they answer only an
+            // unscoped walk** — the same walk that already meant "whatever
+            // it is connected to" before either existed. A walk scoped to
+            // one edge shape or a relation is unchanged: naming a shape asks
+            // for that shape, never for the two weaker admissions beside it.
+            Along::AnyEdge => {
+                let mut found = self.along_edge(id, from, None, direction);
+                found.extend(self.along_mention(id, from, direction));
+                found.extend(self.along_ref(id, from, direction));
+                found
             }
         };
         found.retain(|(_, reached)| self.entities.contains_key(reached));
@@ -1844,6 +1880,152 @@ impl<'a> Ctx<'a> {
         });
         found.dedup_by(|a, b| a.1 == b.1 && a.0.link == b.0.link);
         found
+    }
+
+    /// The entities an edge reaches from `id`, in the direction asked for —
+    /// `shape` narrows to one, `None` is any.
+    fn along_edge(
+        &self,
+        id: &EntityId,
+        from: &[&Fact],
+        shape: Option<EdgeShape>,
+        direction: Direction,
+    ) -> Vec<(Via, EntityId)> {
+        match direction {
+            Direction::Out => from
+                .iter()
+                .filter_map(|f| f.edge.as_ref().map(|e| (*f, e)))
+                .filter(|(_, e)| shape.is_none_or(|s| e.shape == s))
+                .map(|(f, e)| {
+                    (
+                        Via {
+                            link: Link::Edge(e.shape),
+                            direction,
+                            retracted: f.status == FactStatus::Archived,
+                        },
+                        e.object.clone(),
+                    )
+                })
+                .collect(),
+            Direction::In => self
+                .inbound
+                .get(id)
+                .into_iter()
+                .flatten()
+                .filter(|(shape_at, _, _)| shape.is_none_or(|s| *shape_at == s))
+                .map(|(shape_at, drawn_by, retracted)| {
+                    (
+                        Via {
+                            link: Link::Edge(*shape_at),
+                            direction,
+                            retracted: *retracted,
+                        },
+                        drawn_by.clone(),
+                    )
+                })
+                .collect(),
+        }
+    }
+
+    /// The entities a mention reaches from `id`, in the direction asked for.
+    /// **Out** reads `from`'s own content and details directly — the same
+    /// pass `mention::named` runs over one fact rather than a scan of
+    /// everything. **In** reads [`Ctx::mentioned_by`], the reverse built once
+    /// when this walk began.
+    fn along_mention(
+        &self,
+        id: &EntityId,
+        from: &[&Fact],
+        direction: Direction,
+    ) -> Vec<(Via, EntityId)> {
+        match direction {
+            Direction::Out => from
+                .iter()
+                .flat_map(|f| {
+                    let retracted = f.status == FactStatus::Archived;
+                    mention::named(&f.content)
+                        .into_iter()
+                        .chain(
+                            f.details
+                                .as_deref()
+                                .map(mention::named)
+                                .into_iter()
+                                .flatten(),
+                        )
+                        .map(move |target| {
+                            (
+                                Via {
+                                    link: Link::Mention,
+                                    direction,
+                                    retracted,
+                                },
+                                target,
+                            )
+                        })
+                })
+                .collect(),
+            Direction::In => self
+                .mentioned_by
+                .get(id)
+                .into_iter()
+                .flatten()
+                .map(|(mentioned_by, retracted)| {
+                    (
+                        Via {
+                            link: Link::Mention,
+                            direction,
+                            retracted: *retracted,
+                        },
+                        mentioned_by.clone(),
+                    )
+                })
+                .collect(),
+        }
+    }
+
+    /// The entities a `refs` entry reaches from `id`, in the direction asked
+    /// for — the mirror of [`Ctx::along_mention`], over a structured list
+    /// rather than text.
+    fn along_ref(
+        &self,
+        id: &EntityId,
+        from: &[&Fact],
+        direction: Direction,
+    ) -> Vec<(Via, EntityId)> {
+        match direction {
+            Direction::Out => from
+                .iter()
+                .flat_map(|f| {
+                    let retracted = f.status == FactStatus::Archived;
+                    f.refs.iter().map(move |target| {
+                        (
+                            Via {
+                                link: Link::Ref,
+                                direction,
+                                retracted,
+                            },
+                            target.clone(),
+                        )
+                    })
+                })
+                .collect(),
+            Direction::In => self
+                .ref_by
+                .get(id)
+                .into_iter()
+                .flatten()
+                .map(|(referrer, retracted)| {
+                    (
+                        Via {
+                            link: Link::Ref,
+                            direction,
+                            retracted: *retracted,
+                        },
+                        referrer.clone(),
+                    )
+                })
+                .collect(),
+        }
     }
 
     /// The entities a declared relation reaches from `id`, in the direction
@@ -3995,6 +4177,172 @@ mod tests {
         assert!(
             stands[0].via.as_ref().is_some_and(|v| !v.retracted),
             "while the guest whose claim stands reaches it unmarked: {stands:?}",
+        );
+    }
+
+    /// A corpus with one target reached by all three routes at once: a claim
+    /// drawing an edge, a claim mentioning the target in its own words, and a
+    /// claim naming it in `refs` — nothing else in common between the three.
+    fn three_routes_to_one_target() -> Vec<DocScan> {
+        vec![
+            doc(entity("topic:all-rules", "All Rules"), "", Vec::new()),
+            doc(
+                entity("person:homer", "Homer"),
+                "",
+                vec![edged(
+                    "person:homer",
+                    "f1",
+                    "draws an edge, its own words never repeat the target's name",
+                    EdgeShape::Connection,
+                    "topic:all-rules",
+                )],
+            ),
+            doc(
+                entity("person:gayle", "Gayle"),
+                "",
+                vec![fact(
+                    "person:gayle",
+                    "f1",
+                    "mentions @topic:all-rules directly in its own words",
+                )],
+            ),
+            doc(
+                entity("person:hugo", "Hugo"),
+                "",
+                vec![Fact {
+                    refs: vec![EntityId("topic:all-rules".into())],
+                    ..fact("person:hugo", "f1", "touches it without saying how")
+                }],
+            ),
+        ]
+    }
+
+    /// **An unscoped walk reaches a mention and a ref beside an edge, each
+    /// labelled with how it got there** — the shape `Along::AnyEdge` exists
+    /// for, once a mention or a ref can answer it too.
+    #[test]
+    fn an_unscoped_walk_in_reaches_the_edge_the_mention_and_the_ref() {
+        let scanned = three_routes_to_one_target();
+        let found = resolved(
+            &scanned,
+            &[],
+            &GraphQuery {
+                select: Selection {
+                    subject: Some(EntityId("topic:all-rules".into())),
+                    ..Selection::default()
+                },
+                follow: Some(Follow {
+                    along: Along::AnyEdge,
+                    direction: Some(Direction::In),
+                    ..Follow::hop()
+                }),
+                ..GraphQuery::default()
+            },
+        )
+        .expect("a subject with a walk");
+        let reached = &found[0].connected;
+
+        assert_eq!(
+            handles(reached),
+            vec!["person:gayle", "person:homer", "person:hugo"],
+            "all three routes are reached, and nothing else is: {reached:?}",
+        );
+        let via_of = |handle: &str| {
+            reached
+                .iter()
+                .find(|o| o.entity.id.as_str() == handle)
+                .expect("the handle is among the reached")
+                .via
+                .as_ref()
+                .expect("a reached object says how the walk got to it")
+        };
+        assert_eq!(
+            via_of("person:homer").link,
+            Link::Edge(EdgeShape::Connection),
+            "the edge writer is labelled as an edge: {reached:?}",
+        );
+        assert_eq!(
+            via_of("person:gayle").link,
+            Link::Mention,
+            "the mention writer is labelled as a mention, never as an edge: {reached:?}",
+        );
+        assert_eq!(
+            via_of("person:hugo").link,
+            Link::Ref,
+            "the ref writer is labelled as a ref: {reached:?}",
+        );
+    }
+
+    /// **A shaped walk answers exactly as it always has** — a mention and a
+    /// ref have no shape, so they never answer one, and a walk that names an
+    /// edge shape must not start returning them as an accidental side effect
+    /// of the map that now exists beside `inbound`.
+    #[test]
+    fn a_walk_scoped_to_one_edge_shape_never_returns_a_mention_or_a_ref() {
+        let scanned = three_routes_to_one_target();
+        let found = resolved(
+            &scanned,
+            &[],
+            &GraphQuery {
+                select: Selection {
+                    subject: Some(EntityId("topic:all-rules".into())),
+                    ..Selection::default()
+                },
+                follow: Some(Follow {
+                    along: Along::Edge(EdgeShape::Connection),
+                    direction: Some(Direction::In),
+                    ..Follow::hop()
+                }),
+                ..GraphQuery::default()
+            },
+        )
+        .expect("a subject with a walk");
+        let reached = &found[0].connected;
+
+        assert_eq!(
+            handles(reached),
+            vec!["person:homer"],
+            "only the edge claim answers a walk scoped to its own shape: {reached:?}",
+        );
+    }
+
+    /// **The outbound mirror**: from the subject whose claim mentions the
+    /// target, an unscoped walk out reaches it, labelled as a mention.
+    #[test]
+    fn an_unscoped_walk_out_reaches_the_target_of_its_own_mention() {
+        let scanned = three_routes_to_one_target();
+        let found = resolved(
+            &scanned,
+            &[],
+            &GraphQuery {
+                select: Selection {
+                    subject: Some(EntityId("person:gayle".into())),
+                    ..Selection::default()
+                },
+                follow: Some(Follow {
+                    along: Along::AnyEdge,
+                    direction: Some(Direction::Out),
+                    ..Follow::hop()
+                }),
+                ..GraphQuery::default()
+            },
+        )
+        .expect("a subject with a walk");
+        let reached = &found[0].connected;
+
+        assert_eq!(
+            handles(reached),
+            vec!["topic:all-rules"],
+            "the mentioned target is reached going out: {reached:?}",
+        );
+        assert_eq!(
+            reached[0]
+                .via
+                .as_ref()
+                .expect("a reached object says how the walk got to it")
+                .link,
+            Link::Mention,
+            "labelled as a mention: {reached:?}",
         );
     }
 
