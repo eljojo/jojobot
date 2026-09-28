@@ -109,6 +109,7 @@ mod tests {
             &jojobot
                 .list_entities(Parameters(ListEntitiesArgs {
                     kind: None,
+                    parent: None,
                     sid: None,
                 }))
                 .await

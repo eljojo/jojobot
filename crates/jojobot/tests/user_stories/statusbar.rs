@@ -64,12 +64,9 @@ async fn an_answer_says_there_is_mail_waiting_even_when_nothing_asked() {
     // caller whose call was turned back at the door is as much a caller about
     // to decide what to do next as any other.
     let at_the_door = s
-        .refused(
-            "list_entities",
-            json!({ "kind": "bot", "parent": "bot:gamma" }),
-        )
+        .refused("list_entities", json!({ "kind": "bot", "sort": "name" }))
         .await;
-    at_the_door.says("does not implement parent");
+    at_the_door.says("does not implement sort");
     at_the_door.says("\"mail_waiting\":1");
 
     // ── taking delivery ends it ─────────────────────────────────────────────

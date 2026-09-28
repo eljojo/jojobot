@@ -260,6 +260,7 @@ mod tests {
             &jojobot
                 .list_entities(Parameters(ListEntitiesArgs {
                     kind: Some("person".into()),
+                    parent: None,
                     sid: Some(crate::harness::TEST_SID.into()),
                 }))
                 .await
@@ -355,6 +356,7 @@ mod tests {
             &jojobot
                 .list_entities(Parameters(ListEntitiesArgs {
                     kind: Some("person".into()),
+                    parent: None,
                     sid: Some(crate::harness::TEST_SID.into()),
                 }))
                 .await

@@ -59,6 +59,17 @@ async fn which_of_the_loops_have_gone_quiet() {
     s.add_under("bot:otto", "rhythm:weekly-review", "Weekly review")
         .await;
 
+    // **What is Snowball's own job — as opposed to everyone's?** The three
+    // loops sit under three different things; asking what is directly under
+    // the cat has to reach the worming loop and nothing that belongs to the
+    // bike or to Otto.
+    let snowballs = s
+        .call("list_entities", json!({"parent": "pet:snowball"}))
+        .await;
+    snowballs.says("rhythm:worming");
+    snowballs.never_says("rhythm:chain-check");
+    snowballs.never_says("rhythm:weekly-review");
+
     // The schedules. `advances_from` has no default and each of these picks its
     // own, because the two answers only diverge when a check-in is late — and
     // that is exactly when picking wrong stops being visible.

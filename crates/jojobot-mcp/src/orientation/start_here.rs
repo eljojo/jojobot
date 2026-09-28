@@ -994,6 +994,7 @@ mod tests {
             &jojobot
                 .list_entities(Parameters(ListEntitiesArgs {
                     kind: Some("bot".into()),
+                    parent: None,
                     sid: Some(crate::harness::TEST_SID.into()),
                 }))
                 .await

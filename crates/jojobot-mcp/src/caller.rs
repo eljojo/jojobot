@@ -1146,7 +1146,11 @@ mod tests {
                     "entities",
                     json_of(
                         &jojobot
-                            .list_entities(Parameters(ListEntitiesArgs { kind: None, sid }))
+                            .list_entities(Parameters(ListEntitiesArgs {
+                                kind: None,
+                                parent: None,
+                                sid,
+                            }))
                             .await
                             .expect("call ok"),
                     ),

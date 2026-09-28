@@ -2560,6 +2560,7 @@ mod a_write_needs_an_identity {
             &jojobot
                 .list_entities(Parameters(ListEntitiesArgs {
                     kind: Some("place".into()),
+                    parent: None,
                     sid: Some(sid.clone()),
                 }))
                 .await
@@ -2622,6 +2623,7 @@ mod a_write_needs_an_identity {
             &jojobot
                 .list_entities(Parameters(ListEntitiesArgs {
                     kind: Some("place".into()),
+                    parent: None,
                     sid: None,
                 }))
                 .await

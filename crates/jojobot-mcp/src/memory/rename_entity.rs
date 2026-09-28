@@ -394,6 +394,7 @@ mod tests {
             &jojobot
                 .list_entities(Parameters(ListEntitiesArgs {
                     kind: Some("person".into()),
+                    parent: None,
                     sid: None,
                 }))
                 .await
@@ -703,6 +704,7 @@ mod tests {
             &jojobot
                 .list_entities(Parameters(ListEntitiesArgs {
                     kind: Some("bot".into()),
+                    parent: None,
                     sid: None,
                 }))
                 .await
