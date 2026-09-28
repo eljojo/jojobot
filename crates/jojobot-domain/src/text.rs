@@ -25,20 +25,11 @@
 //! nowhere, so its golden sits here beside it rather than at a call site.
 
 /// Whether the ellipsis a cut adds is counted against the budget.
-///
-/// **A real disagreement between call sites, kept rather than reconciled.** The
-/// focus line's budget is the field's whole capacity — the store refuses 201
-/// characters, so the ellipsis has to fit inside the 200. A card title's budget
-/// is how much text is worth showing, and the ellipsis rides on top. Picking
-/// one and applying it to both would have been the tidier-looking change and
-/// would have rewritten stored titles on two boards.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ellipsis {
     /// The budget is the field's capacity: text is cut to `budget - 1` so the
     /// ellipsis fits inside it.
     WithinBudget,
-    /// The budget is how much text to keep: the ellipsis is added beyond it.
-    BeyondBudget,
 }
 
 /// One field's rules for taking prose and making it fit.
@@ -101,7 +92,6 @@ impl Fitted {
             // budget of zero is no strategy anyone here declares, and it must
             // still not be an arithmetic panic in a library type.
             Ellipsis::WithinBudget => self.budget.saturating_sub(1),
-            Ellipsis::BeyondBudget => self.budget,
         };
         let mut kept = String::new();
         for word in flat.split(' ') {
@@ -137,20 +127,6 @@ pub const FOCUS_LINE: Fitted = Fitted {
     flatten: true,
     strip_unprintable: true,
     when_empty: Some(FRESH_FOCUS),
-};
-
-/// **The head of a message card's title** — the subject, or the opening of the
-/// body when the poster declared none.
-///
-/// No fallback: this is a fragment after `"<sender>: "`, so a message whose
-/// head is empty still renders a title that says who it is from.
-pub const MESSAGE_TITLE: Fitted = Fitted {
-    name: "message-title",
-    budget: 60,
-    ellipsis: Ellipsis::BeyondBudget,
-    flatten: true,
-    strip_unprintable: false,
-    when_empty: None,
 };
 
 /// **The opening of a long block, wherever the whole block is not shown up
@@ -656,58 +632,6 @@ pub fn first_changed(fields: &[(&'static str, Compare, String, String)]) -> Opti
 mod tests {
     use super::*;
 
-    /// The mechanics, once, where they live — each call site's own golden pins
-    /// the bytes it stores.
-    #[test]
-    fn text_that_fits_is_returned_whole() {
-        assert_eq!(MESSAGE_TITLE.render("short"), "short");
-        assert_eq!(
-            MESSAGE_TITLE.render(&"w".repeat(60)),
-            "w".repeat(60),
-            "to the last character"
-        );
-    }
-
-    #[test]
-    fn a_cut_lands_on_a_word_and_says_it_cut() {
-        let cut = MESSAGE_TITLE
-            .render("counted the crates and reconciled them against the manifest twice over");
-        assert!(cut.ends_with('…'));
-        assert!(
-            !cut.trim_end_matches('…').ends_with(' '),
-            "on the word, not the space after it"
-        );
-    }
-
-    /// **Where the ellipsis is counted from is the difference the strategies
-    /// exist to keep.** Same text, same budget, two fields, two answers — and
-    /// the one character between them is the whole disagreement: a field whose
-    /// store refuses `budget + 1` needs the ellipsis to fit inside.
-    ///
-    /// It shows on the unbroken word, where the cut is exactly at the limit
-    /// rather than at whatever word boundary happens to precede it.
-    #[test]
-    fn the_two_ellipsis_conventions_differ_by_the_ellipsis() {
-        let within = Fitted {
-            ellipsis: Ellipsis::WithinBudget,
-            ..MESSAGE_TITLE
-        };
-        let text = "x".repeat(200);
-        assert_eq!(
-            MESSAGE_TITLE.render(&text).chars().count(),
-            MESSAGE_TITLE.budget + 1
-        );
-        assert_eq!(within.render(&text).chars().count(), within.budget);
-    }
-
-    /// A word with no boundary inside the budget is cut anyway — a field that
-    /// grew without limit would be worse than one that cut mid-word.
-    #[test]
-    fn an_unbroken_word_is_cut_rather_than_running_forever() {
-        let cut = MESSAGE_TITLE.render(&"x".repeat(200));
-        assert_eq!(cut, format!("{}…", "x".repeat(60)));
-    }
-
     /// Only the fenced-block neighbour strips, and only it falls back.
     #[test]
     fn stripping_and_the_empty_fallback_belong_to_the_strategy() {
@@ -715,9 +639,7 @@ mod tests {
             FOCUS_LINE.render("a `fence` and a \u{7}bell"),
             "a fence and a bell"
         );
-        assert_eq!(MESSAGE_TITLE.render("a `fence`"), "a `fence`");
         assert_eq!(FOCUS_LINE.render("   "), FRESH_FOCUS);
-        assert_eq!(MESSAGE_TITLE.render("   "), "");
     }
 
     /// **The body digest's golden**, kept here because this strategy is the one
@@ -888,10 +810,6 @@ mod tests {
         assert_eq!(
             OUTCOME_NOTES.render("filed  under   shipments"),
             "filed  under   shipments"
-        );
-        assert_eq!(
-            MESSAGE_TITLE.render("filed  under   shipments"),
-            "filed under shipments"
         );
     }
 }
