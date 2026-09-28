@@ -337,6 +337,33 @@ pub(crate) fn note_recorded_at_mismatch(
     );
 }
 
+/// **Say which written fields equal what this build ships as their default
+/// today.** Never a refusal and never a reason the write skipped storing
+/// anything — the value lands exactly as sent either way; this only says
+/// what the coincidence means. Silent when nothing echoes, which is every
+/// ordinary call: most fields have no shipped default to echo, and most
+/// callers are not sending one back.
+pub(crate) fn note_echoes_defaults(body: &mut serde_json::Value, keys: &[String]) {
+    if keys.is_empty() {
+        return;
+    }
+    let Some(fields) = body.as_object_mut() else {
+        return;
+    };
+    let notes: Vec<serde_json::Value> = keys
+        .iter()
+        .map(|key| {
+            format!(
+                "{key} equals what this build ships as its default today. Stored as you sent \
+                 it, it keeps this value through a later upgrade; left out, it would have \
+                 followed the shipped default instead."
+            )
+            .into()
+        })
+        .collect();
+    fields.insert("echoes_defaults".into(), notes.into());
+}
+
 /// **State what now stands, and what this write left alone.**
 ///
 /// A fact about the CALLER'S OWN EFFECT on the store, derivable from the verb's

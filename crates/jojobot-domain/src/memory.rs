@@ -4422,6 +4422,31 @@ pub trait Memory: Send + Sync {
     /// answers with different repairs.
     async fn fields(&self, entity: &EntityId) -> Result<BTreeMap<String, String>, MemoryError>;
 
+    /// **Which of these field keys, for this entity, would exactly echo what
+    /// this build ships as their default today** — never a refusal and never
+    /// a reason to skip storing anything, only a fact worth naming.
+    ///
+    /// **The bytes are the same either way, and that is the whole design
+    /// constraint.** A caller who deliberately chose today's default value
+    /// and a caller who echoed one back by accident (reading a resolved
+    /// value, then sending the whole thing back) send the identical write —
+    /// nothing here can tell the two apart, so nothing here refuses or
+    /// silently drops either one. The value is always stored as sent, exactly
+    /// as it is today; this only says which keys, if any, happen to equal a
+    /// shipped default, so a caller can learn what that means for them.
+    ///
+    /// **Empty everywhere nothing is shipped.** Defaulted to answering no
+    /// echoes at all — only a layer that actually resolves shipped defaults
+    /// (a decorator over what the build supplies) has anything to compare
+    /// against, and every other implementor has no defaults to echo.
+    async fn echoed_defaults(
+        &self,
+        _entity: &EntityId,
+        _fields: &BTreeMap<String, String>,
+    ) -> Vec<String> {
+        Vec::new()
+    }
+
     /// **The same answer as [`fields`](Memory::fields), carrying a monotone
     /// marker for the writes it reflects.**
     ///

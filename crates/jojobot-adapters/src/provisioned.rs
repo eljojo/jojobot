@@ -232,6 +232,30 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
         folded.extend(held);
         Ok(folded)
     }
+
+    /// **The one comparison this layer can make that the store underneath
+    /// cannot**: only `Provisioned` holds what the build ships, so only here
+    /// can a write be compared against it. Per-key exact-value equality
+    /// against [`Provisions::fields_for`] — never the line-window prose
+    /// comparison [`guard_extension`] runs for [`set_prose`](Self::set_prose),
+    /// which is the wrong shape for a bag of independent scalars. Nothing here
+    /// changes what gets written; a caller (`capture`, in this build) reads
+    /// this beside the write to build its own receipt.
+    async fn echoed_defaults(
+        &self,
+        entity: &EntityId,
+        fields: &BTreeMap<String, String>,
+    ) -> Vec<String> {
+        let defaults = self.provisions.fields_for(entity);
+        let mut echoed: Vec<String> = fields
+            .iter()
+            .filter(|(key, value)| defaults.get(key.as_str()) == Some(*value))
+            .map(|(key, _)| key.clone())
+            .collect();
+        echoed.sort();
+        echoed
+    }
+
     async fn backing(
         &self,
         entity: &EntityId,
@@ -787,6 +811,113 @@ mod tests {
             after.get("one_liner").map(String::as_str),
             Some("Files the weekly note."),
             "the operator's own write replaces the default rather than sitting beside it: {after:?}",
+        );
+    }
+
+    /// **The three answers an echoed default has to keep apart, in one read
+    /// of the store**: a written value equal to today's default is named and
+    /// then frozen at exactly what was written, through an upgrade that
+    /// changes the default; a key nobody ever wrote keeps following the
+    /// default wherever it moves; and a real customisation — a value that
+    /// never matched any default — is never named and is unaffected either
+    /// way.
+    ///
+    /// All three from one setup, because each covers how the others pass on
+    /// a build that treats every field alike: only the first would pass on a
+    /// build that names every key; only the second on a build that freezes
+    /// everything at capture time; only the third on a build that names
+    /// every write, customisation included.
+    #[tokio::test]
+    async fn an_echoed_default_is_named_and_frozen_while_an_unwritten_key_still_follows_it() {
+        let store = InMemoryMemory::booted();
+        let bot = EntityId("bot:gamma".into());
+        store
+            .add_entity(NewEntity::new(bot.clone(), "Gamma", "jojobot"))
+            .await
+            .expect("the identity is created")
+            .written()
+            .expect("an empty board blocks nothing");
+        let over = Provisioned::new(
+            store,
+            Provisions::new(vec![
+                Provision::field(bot.clone(), "one_liner", "The disposable implementer."),
+                Provision::field(bot.clone(), "boot", "on-demand"),
+                Provision::field(bot.clone(), "role", "dev"),
+            ]),
+        );
+
+        // The caller sends one_liner equal to today's default (the echo,
+        // whether deliberate or an accidental round trip) and boot as a real
+        // customisation that happens to differ from today's default.
+        let sent = BTreeMap::from([
+            (
+                "one_liner".to_string(),
+                "The disposable implementer.".to_string(),
+            ),
+            ("boot".to_string(), "always-on".to_string()),
+        ]);
+        let echoed = over.echoed_defaults(&bot, &sent).await;
+        assert_eq!(
+            echoed,
+            vec!["one_liner".to_string()],
+            "only the key that equals today's default is named, never the customisation: \
+             {echoed:?}",
+        );
+
+        over.capture(NewFact {
+            fields: sent,
+            ..NewFact::about(
+                bot.clone(),
+                "gamma's own fields, one of them a deliberate match on today's default",
+                Date::constant(2026, 4, 18),
+            )
+        })
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("nothing collides");
+
+        // The upgrade: a later build, over the same store, shipping different
+        // defaults for all three keys. Nothing migrates and nothing runs.
+        let upgraded = Provisioned::new(
+            over.inner,
+            Provisions::new(vec![
+                Provision::field(bot.clone(), "one_liner", "An upgraded one-liner."),
+                Provision::field(bot.clone(), "boot", "always-on-by-default"),
+                Provision::field(bot.clone(), "role", "senior-dev"),
+            ]),
+        );
+
+        let after = upgraded.fields(&bot).await.expect("fields read");
+        assert_eq!(
+            after.get("one_liner").map(String::as_str),
+            Some("The disposable implementer."),
+            "the echoed value stays exactly what was written, through an upgrade that changed \
+             the default: {after:?}",
+        );
+        assert_eq!(
+            after.get("boot").map(String::as_str),
+            Some("always-on"),
+            "the real customisation is unaffected by the upgrade: {after:?}",
+        );
+        assert_eq!(
+            after.get("role").map(String::as_str),
+            Some("senior-dev"),
+            "a key nobody ever wrote keeps following the default, wherever it moves: {after:?}",
+        );
+
+        // The comparison is live, not a memory taken at capture time: sending
+        // the ONE echoed value again after the upgrade no longer names it,
+        // because it no longer equals what this build ships today.
+        let sent_again = BTreeMap::from([(
+            "one_liner".to_string(),
+            "The disposable implementer.".to_string(),
+        )]);
+        let echoed_after_upgrade = upgraded.echoed_defaults(&bot, &sent_again).await;
+        assert!(
+            echoed_after_upgrade.is_empty(),
+            "a value that no longer matches any current default must not be named: \
+             {echoed_after_upgrade:?}",
         );
     }
 

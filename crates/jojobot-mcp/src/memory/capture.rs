@@ -637,7 +637,10 @@ impl Jojobot {
                        nothing, which is what makes them not `about` edges. NOTHING HAS TO BE \
                        DECLARED FIRST and no name for the class of thing is asked for: a key you \
                        invent is kept as you wrote it, and a type is something the keys answer \
-                       rather than something you announce. derived_from names the claim this one \
+                       rather than something you announce. A field you send that equals what \
+                       jojobot ships as its default today is stored exactly as you sent it either \
+                       way, and the receipt's echoes_defaults names which key that was. \
+                       derived_from names the claim this one \
                        was worked out from, as its address — use it when the source is another \
                        claim, not an entity. IT ANSWERS WITH A RECEIPT, NOT THE RECORD: the \
                        address that edits it, the subject as it was qualified, the date, the \
@@ -818,6 +821,12 @@ impl Jojobot {
         // caller believed was doing the work — see [`CHECK_IN_DATE_TEACHING`].
         let check_in_dates_disagree =
             checked_in && new.happened_at.is_some_and(|day| day != new.recorded_at);
+        // **Checked before the write, on exactly what is about to be sent** —
+        // never a reason to refuse or to drop a key, only a fact worth
+        // naming on the receipt (see `Memory::echoed_defaults`'s own doc for
+        // why nothing here can tell a deliberate match from an accidental
+        // echo, and does not try to).
+        let echoed_defaults = self.memory.echoed_defaults(&new.subject, &new.fields).await;
         // Routed through the declined path rather than straight to the mapper:
         // a fact the validators refuse is a caller mistake, and it comes back
         // as an answer with a way forward (rule 68).
@@ -849,6 +858,7 @@ impl Jojobot {
                 if let Some(behind) = fold_behind {
                     crate::answer::note_fold_behind(&mut body, behind);
                 }
+                crate::answer::note_echoes_defaults(&mut body, &echoed_defaults);
                 // **Only when the caller named a day AND their run has one of
                 // its own AND the two disagree.** `recorded_at` above is
                 // already the resolved day — equal to what the caller sent
@@ -3420,5 +3430,70 @@ mod tests {
             panic!("the write carries the same sentence the boot shows: {sixth}")
         });
         assert!(note.contains("skill"), "{note}");
+    }
+
+    /// **The echo note reaches the receipt — the wiring, not only the
+    /// mechanism [`jojobot_adapters::provisioned::Provisioned`]'s own tests
+    /// already prove.** A case that only called `Memory::echoed_defaults`
+    /// directly would prove the comparison and nothing about whether this
+    /// verb ever asks it.
+    ///
+    /// **Paired in one case**: a field equal to today's shipped default
+    /// carries the note naming it, and an ordinary field with no shipped
+    /// default carries none — without the second half this passes on a verb
+    /// that names every field it is handed.
+    #[tokio::test]
+    async fn a_captured_field_equal_to_todays_default_is_named_in_the_receipt() {
+        let subject = EntityId::person("person:milhouse");
+        let jojobot =
+            handler_field_provisioned(subject, "one_liner", "The disposable implementer.");
+        ensure(&jojobot, "person:milhouse").await;
+
+        let echoing = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                fields: Some(
+                    [(
+                        "one_liner".to_string(),
+                        "The disposable implementer.".to_string(),
+                    )]
+                    .into_iter()
+                    .collect(),
+                ),
+                ..capture_args(
+                    "person:milhouse",
+                    "milhouse's own one-liner, matching today's default",
+                )
+            },
+        )
+        .await;
+        let notes = echoing["echoes_defaults"]
+            .as_array()
+            .expect("an array of notes");
+        assert_eq!(notes.len(), 1, "{echoing}");
+        assert!(
+            notes[0]
+                .as_str()
+                .expect("a note string")
+                .contains("one_liner"),
+            "the note names the echoing key: {echoing}"
+        );
+
+        let ordinary = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                fields: Some(
+                    [("greeting".to_string(), "Hey, it's Milhouse.".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..capture_args("person:milhouse", "milhouse's own greeting field")
+            },
+        )
+        .await;
+        assert!(
+            ordinary.get("echoes_defaults").is_none(),
+            "a field with no shipped default must carry no note: {ordinary}"
+        );
     }
 }

@@ -95,6 +95,26 @@ pub(crate) fn handler_shipped() -> Jojobot {
     )
 }
 
+/// **A handler wrapped in one shipped field default of the test's own
+/// choosing** — for a case about the mechanism, never the real shipped data
+/// [`handler_shipped`] proves.
+pub(crate) fn handler_field_provisioned(at: EntityId, key: &str, value: &str) -> Jojobot {
+    let supplied = jojobot_domain::memory::owned::Provisions::new(vec![
+        jojobot_domain::memory::owned::Provision::field(at, key, value),
+    ]);
+    Jojobot::new(
+        Arc::new(jojobot_adapters::provisioned::Provisioned::new(
+            InMemoryMemory::booted().knowing(supplied.clone()),
+            supplied,
+        )),
+        Arc::new(SpySearch::default()),
+        Arc::new(InMemoryMailboxes::knowing_any_owner()),
+        Arc::new(InMemorySessions::new()),
+        Arc::new(InMemoryTeachings::new()),
+        seeded_registry(),
+    )
+}
+
 /// **A handler told which carriers answer for a due moment** — how a test puts
 /// a carrier the read has never seen in front of it.
 pub(crate) fn handler_carrying(
