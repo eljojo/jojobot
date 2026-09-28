@@ -4208,6 +4208,193 @@ mod tests {
         );
     }
 
+    /// **The same shape, for an entity.** `identity` keys an entity on its
+    /// id, never its name or fields, so two copies of one entity's own doc
+    /// disagreeing about what it is called are one entity and must be one
+    /// hit — the same catching-up reindex the fact case covers, one layer up.
+    #[tokio::test]
+    async fn one_entity_scanned_into_two_docs_answers_once() {
+        let index = index_of(vec![
+            scan(
+                "doc-a-stale",
+                Some(entity("person:milhouse", "Milhouse, quimby-forty")),
+                "",
+                vec![],
+            ),
+            scan(
+                "doc-b-fresh",
+                Some(entity(
+                    "person:milhouse",
+                    "Milhouse Van Houten, quimby-forty",
+                )),
+                "",
+                vec![],
+            ),
+        ]);
+
+        let found: Vec<String> = index
+            .search(&SearchQuery::text("quimby-forty"))
+            .expect("search ok")
+            .iter()
+            .filter_map(|hit| match hit {
+                Hit::Entity { entity, .. } => Some(entity.id.to_string()),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(
+            found.len(),
+            1,
+            "one entity sitting in two docs must answer once, not once per doc: {found:?}",
+        );
+    }
+
+    /// **The same shape, for prose.** `identity` keys a prose hit on its
+    /// `doc_id` alone — the one thing that has to name the SAME page for two
+    /// writes to collide at all, unlike a fact or an entity, which carry
+    /// their own address independent of which doc they arrived through. Two
+    /// writes under one doc id, with different bodies, are one page's prose
+    /// and must be one hit.
+    #[tokio::test]
+    async fn one_pages_prose_scanned_into_two_docs_answers_once() {
+        let index = index_of(vec![
+            scan(
+                "doc-milhouse",
+                None,
+                "the couch needs a leg fixed, quimby-forty",
+                vec![],
+            ),
+            scan(
+                "doc-milhouse",
+                None,
+                "the couch is fixed now, quimby-forty",
+                vec![],
+            ),
+        ]);
+
+        let found: Vec<String> = index
+            .search(&SearchQuery::text("quimby-forty"))
+            .expect("search ok")
+            .iter()
+            .filter_map(|hit| match hit {
+                Hit::Prose { doc_id, .. } => Some(doc_id.clone()),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(
+            found.len(),
+            1,
+            "one page's prose written twice must answer once, not once per write: {found:?}",
+        );
+    }
+
+    /// **The same shape, for mail.** `identity` keys a message hit on its
+    /// mailbox and id, never its body — a message a board read handed over
+    /// twice, once before and once after an edit, is one message and must be
+    /// one hit.
+    #[tokio::test]
+    async fn one_message_scanned_into_two_writes_answers_once() {
+        let index = FullTextIndex::open().expect("index opens");
+        index
+            .ingest_mail(&[
+                message(
+                    "42",
+                    "inbox",
+                    "milhouse",
+                    None,
+                    "the shipment is short a crate, quimby-forty",
+                    MessageState::New,
+                ),
+                message(
+                    "42",
+                    "inbox",
+                    "milhouse",
+                    None,
+                    "the shipment arrived complete after all, quimby-forty",
+                    MessageState::Read,
+                ),
+            ])
+            .expect("ingest mail");
+
+        let found: Vec<String> = index
+            .search(&asking_for_mail("quimby-forty"))
+            .expect("search ok")
+            .iter()
+            .filter_map(|hit| match hit {
+                Hit::Message { message, .. } => Some(format!("{}/{}", message.mailbox, message.id)),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(
+            found.len(),
+            1,
+            "one message written twice must answer once, not once per write: {found:?}",
+        );
+    }
+
+    /// **The same shape, for a session's own beat.** A run's entries are
+    /// diffed against the mirror per beat id, one run at a time — so two
+    /// overlapping reads of ONE run in a single ingest each diff against the
+    /// same empty mirror and each re-add every beat they hold, including one
+    /// the other write already added. This is the real shape an append-only
+    /// chronology takes: the run gains a beat, and a catching-up reindex
+    /// writes the new beat while the old one's own text is untouched, so its
+    /// snippet is identical in both writes — `identity` keys a session hit on
+    /// (bot, run, snippet), and the older beat is one hit, however many
+    /// writes it survived unchanged through.
+    #[tokio::test]
+    async fn one_beat_scanned_into_two_writes_of_a_run_answers_once() {
+        let stale = run(
+            "run-1",
+            "bot:milhouse",
+            "chasing a bug",
+            "the couch needs a leg fixed, quimby-forty",
+        );
+        let mut fresh = stale.clone();
+        // **`focus` moves on; the old beat's own text does not.** Giving the
+        // two writes a different focus is what makes the identity arm worth
+        // sabotaging: swap it for `working_on` (which carries `focus`) and
+        // the two writes of the SAME beat stop matching, because that field
+        // is the one thing that genuinely differs between them.
+        fresh.focus = "found it, wrapping up".into();
+        fresh.entries.push(jojobot_domain::session::JournalEntry {
+            id: jojobot_domain::session::EntryId("e2".into()),
+            at: jiff::Timestamp::from_second(1_780_000_100).expect("a fixed instant"),
+            text: "found it".into(),
+            touched: None,
+            beat: None,
+            on: None,
+        });
+
+        let index = FullTextIndex::open().expect("index opens");
+        index
+            .ingest_sessions(&[stale, fresh])
+            .expect("sessions ingested");
+
+        let found: Vec<String> = index
+            .search(&SearchQuery {
+                text: Some("quimby-forty".into()),
+                asked_by: Some(EntityId("bot:milhouse".into())),
+                ..SearchQuery::default()
+            })
+            .expect("search ok")
+            .iter()
+            .filter_map(|hit| match hit {
+                Hit::Session { session, .. } => Some(session.0.clone()),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(
+            found.len(),
+            1,
+            "one beat written twice by two overlapping reads of one run must answer once: \
+             {found:?}",
+        );
+    }
+
     /// The limit is honoured, and defaults to twenty.
     #[tokio::test]
     async fn the_limit_caps_the_list_and_defaults_to_twenty() {
