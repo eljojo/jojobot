@@ -255,7 +255,7 @@ impl DoltSessions {
             attempted: id.to_string(),
         })?;
         let entries = sqlx::query(
-            "SELECT id, at, text, touched, beat, happened_on FROM journal_entry
+            "SELECT id, at, text, touched, beat, happened_on, closing_focus FROM journal_entry
              WHERE session = ? ORDER BY ordinal",
         )
         .bind(id.as_str())
@@ -465,6 +465,9 @@ fn entry_from(row: &sqlx::mysql::MySqlRow) -> Result<JournalEntry, SessionError>
         text: row.try_get::<String, _>("text").map_err(store)?,
         touched: touched.as_deref().map(instant).transpose()?,
         beat: row.try_get::<Option<String>, _>("beat").map_err(store)?,
+        closing_focus: row
+            .try_get::<Option<String>, _>("closing_focus")
+            .map_err(store)?,
     })
 }
 
@@ -697,8 +700,9 @@ impl Sessions for DoltSessions {
             .await?,
         );
         sqlx::query(
-            "INSERT INTO journal_entry (session, id, ordinal, at, text, touched, beat, happened_on)
-             VALUES (?, ?, ?, ?, ?, NULL, ?, ?)",
+            "INSERT INTO journal_entry
+                 (session, id, ordinal, at, text, touched, beat, happened_on, closing_focus)
+             VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?)",
         )
         .bind(id.as_str())
         .bind(entry_id.as_str())
@@ -707,6 +711,7 @@ impl Sessions for DoltSessions {
         .bind(normalize_entry(&entry.text))
         .bind(entry.beat.as_deref())
         .bind(entry.on.map(|day| day.to_string()))
+        .bind(entry.closing_focus.as_deref())
         .execute(&mut *tx)
         .await
         .map_err(store)?;
@@ -949,7 +954,8 @@ async fn read_entry(
     entry: &EntryId,
 ) -> Result<JournalEntry, SessionError> {
     let row = sqlx::query(
-        "SELECT id, at, text, touched, beat, happened_on FROM journal_entry WHERE session = ? AND id = ?",
+        "SELECT id, at, text, touched, beat, happened_on, closing_focus FROM journal_entry \
+         WHERE session = ? AND id = ?",
     )
     .bind(session.as_str())
     .bind(entry.as_str())

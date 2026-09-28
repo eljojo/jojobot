@@ -2599,6 +2599,7 @@ mod tests {
                 text: text.into(),
                 touched: None,
                 beat: None,
+                closing_focus: None,
             }],
         })
     }

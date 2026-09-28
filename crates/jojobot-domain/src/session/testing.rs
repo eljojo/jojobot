@@ -174,6 +174,7 @@ impl Sessions for InMemorySessions {
             text: normalize_entry(&entry.text),
             touched: None,
             beat: entry.beat,
+            closing_focus: entry.closing_focus,
         };
         sessions[at].entries.push(recorded.clone());
         Ok(recorded)
@@ -1194,6 +1195,36 @@ pub mod contract {
         );
     }
 
+    /// **`wrap_session`'s own field survives a write and a read, and an
+    /// ordinary entry carries none.** Paired, in one round trip: a store that
+    /// answered every entry with the same value — the run's current focus,
+    /// say — would satisfy the first half and fail silently on the second.
+    pub async fn a_closing_focus_survives_the_round_trip_and_an_ordinary_entry_carries_none(
+        store: &dyn Sessions,
+    ) {
+        let session = begin(store, "gamma", "the first run", 0).await;
+        journal(store, &session.id, "read the hand-off", 60).await;
+        store
+            .append(
+                &session.id,
+                NewEntry::manual("the seam is cut", at(120), None)
+                    .closing(Some("cutting the codec seam".to_string())),
+            )
+            .await
+            .expect("append ok");
+
+        let read = store.read_session(&session.id).await.expect("read ok");
+        assert_eq!(
+            read.entries[0].closing_focus, None,
+            "an ordinary entry carries no closing focus"
+        );
+        assert_eq!(
+            read.entries[1].closing_focus.as_deref(),
+            Some("cutting the codec seam"),
+            "the closing entry's own field survives the round trip"
+        );
+    }
+
     /// The whole spec, against one store. Each case runs on a **fresh** store,
     /// so nothing here depends on the order the others ran in.
     /// 🚨 **A stated day survives a write and a read**, on the run and on the
@@ -1385,6 +1416,7 @@ pub mod contract {
         malformed_input_is_refused(&fresh()).await;
         a_handle_that_is_not_drawn_is_refused(&fresh()).await;
         an_entry_survives_the_round_trip(&fresh()).await;
+        a_closing_focus_survives_the_round_trip_and_an_ordinary_entry_carries_none(&fresh()).await;
         a_stated_day_survives_a_write_and_a_read(&fresh()).await;
         a_moved_day_is_stored_and_can_be_moved_again(&fresh()).await;
     }

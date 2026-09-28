@@ -138,6 +138,10 @@ pub(crate) fn entry_json(entry: &JournalEntry) -> serde_json::Value {
         "at": entry.at.to_string(),
         "text": entry.text,
         "beat": entry.beat,
+        // **`wrap_session`'s own field, null on every other entry.** The run's
+        // focus as it stood at the close, kept beside the story rather than
+        // glued onto its front — see `wrap_session`'s own doc for why.
+        "closing_focus": entry.closing_focus,
     })
 }
 

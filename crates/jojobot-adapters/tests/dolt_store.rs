@@ -4293,6 +4293,7 @@ async fn session_write_summary_answers_the_real_store() {
                 at: started,
                 beat: None,
                 on: None,
+                closing_focus: None,
             },
         )
         .await
@@ -4336,6 +4337,7 @@ async fn session_write_summary_answers_the_real_store() {
                 at: started,
                 beat: Some("test-beat".into()),
                 on: None,
+                closing_focus: None,
             },
         )
         .await
@@ -4477,6 +4479,7 @@ async fn session_write_summary_answers_the_real_store() {
                 at: started,
                 beat: None,
                 on: None,
+                closing_focus: None,
             },
         )
         .await

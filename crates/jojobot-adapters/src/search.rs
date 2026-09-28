@@ -4400,6 +4400,7 @@ mod tests {
             touched: None,
             beat: None,
             on: None,
+            closing_focus: None,
         });
 
         let index = FullTextIndex::open().expect("index opens");
@@ -5180,6 +5181,7 @@ mod tests {
                 touched: None,
                 beat: None,
                 on: None,
+                closing_focus: None,
             }],
         }
     }
@@ -5677,6 +5679,7 @@ mod tests {
                     touched: None,
                     beat: None,
                     on: None,
+                    closing_focus: None,
                 })
                 .collect(),
         }

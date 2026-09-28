@@ -1018,15 +1018,20 @@ mod tests {
             .await
             .expect("read ok");
         let texts: Vec<&str> = read.entries.iter().map(|e| e.text.as_str()).collect();
-        // The closing entry carries the unpublished focus folded into the
-        // story — one entry for one moment, which is the operator's ruling.
+        // The story is stored exactly as written; the closing entry's own
+        // field carries the unpublished focus beside it, never folded in.
         assert_eq!(
             texts,
             vec![
                 "read the hand-off and scoped the slice properly",
-                "building the session context\n\nbuilt the session context; the sweep is lazy until M8",
+                "built the session context; the sweep is lazy until M8",
             ],
-            "two entries: the amended one, and the story with the flushed focus"
+            "two entries: the amended one, and the story, unchanged"
+        );
+        assert_eq!(
+            read.entries[1].closing_focus.as_deref(),
+            Some("building the session context"),
+            "…with the unpublished focus on the closing entry's own field"
         );
     }
 

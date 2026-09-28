@@ -75,20 +75,16 @@ impl Jojobot {
         // by whether its own half is already done, and a retry finishes what the
         // first attempt started rather than repeating it.
         let story = jojobot_domain::session::normalize_entry(&args.story);
-        // **The current unpublished beat is flushed INTO the story, as ONE
-        // entry.** A session's focus is truth about the run, rewritten in place,
-        // and becomes chronology only once something has happened (rule 81).
-        // Wrapping is the last thing that happens, so the focus that never
-        // became a beat becomes one here.
+        // **The run's own focus rides beside the story, as a FIELD, never
+        // glued onto its front as text.** A session's focus is a machine
+        // label — set as a side effect by several verbs, "posted to
+        // mailboxes", "wrote charters for" — not prose a reader with no
+        // context should meet as the opening line of the one entry written
+        // for them. The story is the text exactly as written; what the run
+        // was doing at the close rides on `closing_focus` instead.
         //
-        // One entry, not two beside each other: the focus and the story are the
-        // same moment, and a chronology ending on two records of it leaves a
-        // reader unable to tell which is the account. Chronological inside —
-        // the focus is what the run was doing, the story is what became of it.
-        //
-        // Read before the guard below, so the retry looks for the composed text
-        // rather than the story alone. A retry that searched for half of what it
-        // wrote would tell it twice.
+        // Read before the guard below, so the retry looks for the story alone
+        // — which is now the whole of what a retry could have written twice.
         let focus = match self.sessions.read_session(&session).await {
             Ok(read) => jojobot_domain::session::normalize_entry(&read.focus),
             // Unreadable is not "no focus", but the append below fails in that
@@ -96,17 +92,19 @@ impl Jojobot {
             // line, never duplicating the story.
             Err(_) => String::new(),
         };
-        // **A focus DERIVED from this same story is not an unpublished beat.** A
-        // wrap that is the session's first write creates the card with a focus
-        // made out of the story itself (`display_line`), so folding it back in
-        // would tell the story twice inside one entry — and it would not compare
-        // equal, because the derived form is flattened to one display line.
-        // Compared through the same derivation, which is the only form the two
-        // can meet in.
-        let story = if focus.is_empty() || display_line(&story) == focus {
-            story
+        // **A focus DERIVED from this same story carries nothing new.** A
+        // wrap that is the session's first write creates the card with a
+        // focus made out of the story itself (`display_line`), so keeping it
+        // as a field would say, in other words, exactly what the story
+        // already says — and it would not compare equal on the nose, because
+        // the derived form is flattened to one display line. Compared through
+        // the same derivation, which is the only form the two can meet in.
+        // Either way, `None` adds no field, rather than one that repeats the
+        // entry it sits on.
+        let closing_focus = if focus.is_empty() || display_line(&story) == focus {
+            None
         } else {
-            format!("{focus}\n\n{story}")
+            Some(focus)
         };
         // **Anywhere in the chronology, not just at its tail.** The retry is the
         // move left after a failed close, and the natural thing to write between
@@ -129,7 +127,7 @@ impl Jojobot {
                 .sessions
                 .append(
                     &session,
-                    NewEntry::manual(&story, self.clock().now(), caller.day),
+                    NewEntry::manual(&story, self.clock().now(), caller.day).closing(closing_focus),
                 )
                 .await
             {
@@ -287,22 +285,18 @@ mod tests {
         );
     }
 
-    /// **Wrapping flushes the current unpublished beat INTO the story, as one
-    /// entry.** The operator's ruling, and the "one entry" half is the part a
-    /// reasonable implementation gets wrong: *"it should be both but it should
-    /// be one entry."*
+    /// **Wrapping keeps the current unpublished focus beside the story, as a
+    /// FIELD on the closing entry — never glued onto its front as text.** The
+    /// operator's ruling. A session's `focus` is a machine label, set as a
+    /// side effect of several verbs (`journal`'s own `focus` argument among
+    /// them), not prose a reader with no context should meet as the opening
+    /// line of the one entry written for them.
     ///
-    /// A session's `focus` is current truth, rewritten in place, and it becomes
-    /// chronology only once something has happened (rule 81). Wrapping IS
-    /// something happening — it is the last thing that happens — so the focus
-    /// that never became a beat becomes one. Writing it as a SECOND entry beside
-    /// the story would leave the chronology ending on two records of one moment,
-    /// and a reader unable to tell which was the account.
-    ///
-    /// Ordering is chronological: the focus was what the run was doing, the
-    /// story is the account of it, so the focus comes first inside the entry.
+    /// **Both halves, in one read**: the story is stored exactly as written,
+    /// with nothing prepended, and the unpublished focus still reaches the
+    /// record — as `closing_focus`, not inside `text`.
     #[tokio::test]
-    async fn wrapping_flushes_the_unpublished_focus_into_the_story_as_one_entry() {
+    async fn wrapping_keeps_the_unpublished_focus_as_a_field_and_the_story_unchanged() {
         let store = Arc::new(InMemorySessions::new());
         let jojobot = with_sessions(store.clone());
         make_bot(&jojobot, "gamma").await;
@@ -325,38 +319,37 @@ mod tests {
                 .to_string(),
         );
 
-        jojobot
-            .wrap_session(Parameters(WrapSessionArgs {
-                story: "the seam is cut and the suite is green".into(),
-                sid,
-            }))
-            .await
-            .expect("wrap ok");
+        let wrapped = json_of(
+            &jojobot
+                .wrap_session(Parameters(WrapSessionArgs {
+                    story: "the seam is cut and the suite is green".into(),
+                    sid,
+                }))
+                .await
+                .expect("wrap ok"),
+        );
+        assert_eq!(
+            wrapped["entry"]["closing_focus"], "cutting the codec seam",
+            "the receipt names it too, not only the stored record: {wrapped}"
+        );
 
         let read = store.read_session(&session).await.expect("read ok");
-        let told: Vec<&str> = read
-            .entries
-            .iter()
-            .filter(|e| !e.is_auto())
-            .map(|e| e.text.as_str())
-            .collect();
+        let told: Vec<&jojobot_domain::session::JournalEntry> =
+            read.entries.iter().filter(|e| !e.is_auto()).collect();
         assert_eq!(
             told.len(),
             2,
             "the beat, then ONE closing entry — never two for one moment: {told:?}"
         );
         let last = told[1];
-        assert!(
-            last.contains("cutting the codec seam"),
-            "the unpublished focus was flushed: {last:?}"
+        assert_eq!(
+            last.text, "the seam is cut and the suite is green",
+            "the story is stored exactly as written, with nothing prepended",
         );
-        assert!(
-            last.contains("the seam is cut and the suite is green"),
-            "…into the story, not beside it: {last:?}"
-        );
-        assert!(
-            last.find("cutting the codec seam") < last.find("the seam is cut"),
-            "…and in the order they happened: {last:?}"
+        assert_eq!(
+            last.closing_focus.as_deref(),
+            Some("cutting the codec seam"),
+            "…and the unpublished focus still reaches the record, as a field beside it",
         );
     }
 
@@ -552,10 +545,15 @@ mod tests {
         let chronology = wrapped["session"]["chronology"]
             .as_array()
             .expect("the record's own chronology");
+        let closing = chronology.last().expect("the closing entry");
         assert_eq!(
-            chronology.last().expect("the closing entry")["text"],
-            "booted, found nothing to do",
+            closing["text"], "booted, found nothing to do",
             "with nothing open to fold in, the closing entry is the story alone: {wrapped}"
+        );
+        assert_eq!(
+            closing["closing_focus"],
+            serde_json::Value::Null,
+            "a run with no focus adds no field, not an empty one: {wrapped}"
         );
     }
 

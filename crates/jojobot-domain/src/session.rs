@@ -495,6 +495,16 @@ pub struct JournalEntry {
     /// session's account of itself.
     #[serde(default)]
     pub beat: Option<String>,
+    /// **The run's own focus, exactly as it stood when this entry closed the
+    /// session** — `wrap_session`'s own field, and nothing else ever sets it.
+    ///
+    /// It used to be glued onto the front of the story as text; a focus is a
+    /// machine label set as a side effect of several verbs, so a story that
+    /// opened on one read as a fragment to a reader with no context. The
+    /// story is the text exactly as written now, and this carries what the
+    /// run was doing beside it, never inside it.
+    #[serde(default)]
+    pub closing_focus: Option<String>,
 }
 
 impl JournalEntry {
@@ -518,6 +528,10 @@ pub struct NewEntry {
     /// run stated none. Passed in for the reason `at` is: the domain reads no
     /// clock and invents no frame.
     pub on: Option<Date>,
+    /// **The run's own focus, when this entry is closing the session.**
+    /// `None` for every ordinary entry — only `wrap_session` ever sets it, via
+    /// [`NewEntry::closing`].
+    pub closing_focus: Option<String>,
 }
 
 impl NewEntry {
@@ -528,6 +542,7 @@ impl NewEntry {
             at,
             on,
             beat: None,
+            closing_focus: None,
         }
     }
 
@@ -543,7 +558,17 @@ impl NewEntry {
             at,
             on,
             beat: Some(class.into()),
+            closing_focus: None,
         }
+    }
+
+    /// **Mark this entry as the one closing the session**, carrying the run's
+    /// own focus at that moment. `None` when the run had none, which adds no
+    /// field rather than an empty one.
+    #[must_use]
+    pub fn closing(mut self, focus: Option<String>) -> Self {
+        self.closing_focus = focus;
+        self
     }
 }
 
@@ -1363,6 +1388,7 @@ mod projection_tests {
                     text: "set out to read the gate".to_string(),
                     touched: None,
                     beat: None,
+                    closing_focus: None,
                 },
                 JournalEntry {
                     id: EntryId("e2".into()),
@@ -1371,6 +1397,7 @@ mod projection_tests {
                     text: "found the scan reads handles only".to_string(),
                     touched: None,
                     beat: None,
+                    closing_focus: None,
                 },
             ],
         };
@@ -1664,6 +1691,7 @@ mod tests {
                     touched: None,
                     beat: Some((*class).to_string()),
                     text: text.clone(),
+                    closing_focus: None,
                 };
                 let read = parse_beat(phrase, &entry)
                     .unwrap_or_else(|| panic!("{class} must read back its own line: {text:?}"));
@@ -1728,6 +1756,7 @@ mod tests {
             touched: None,
             beat: Some("capture".into()),
             text: text.to_string(),
+            closing_focus: None,
         };
         for hand_edited in [
             "captured facts about milhouse and a few others",
@@ -1755,6 +1784,7 @@ mod tests {
             touched: None,
             beat: beat.map(str::to_string),
             text: text.to_string(),
+            closing_focus: None,
         };
         let session = Session {
             timezone: None,
@@ -2065,6 +2095,7 @@ mod tests {
                 text: "did a thing".into(),
                 touched: None,
                 beat: None,
+                closing_focus: None,
             }],
         };
 
@@ -2136,6 +2167,7 @@ mod tests {
                 text: "did a thing".into(),
                 touched: None,
                 beat: None,
+                closing_focus: None,
             }],
             ..bare.clone()
         };
@@ -2268,6 +2300,7 @@ mod tests {
             text: new.text,
             touched: None,
             beat: new.beat,
+            closing_focus: new.closing_focus,
         };
         assert!(!entry(manual).is_auto());
         assert!(entry(auto).is_auto());

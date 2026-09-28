@@ -508,6 +508,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0059_message_quarantine_reason.sql"),
         leaves: Leaves::Column("message", "quarantine_reason"),
     },
+    Migration {
+        version: "0060_journal_entry_closing_focus",
+        sql: include_str!("../../migrations/0060_journal_entry_closing_focus.sql"),
+        leaves: Leaves::Column("journal_entry", "closing_focus"),
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a
@@ -937,6 +942,7 @@ mod tests {
         "0057_message_quarantined_by",
         "0058_message_quarantined_at",
         "0059_message_quarantine_reason",
+        "0060_journal_entry_closing_focus",
     ];
 
     /// **A migration set of this test's own, carrying the shape no shipped
