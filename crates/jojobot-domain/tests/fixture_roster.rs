@@ -43,6 +43,12 @@
 //! unlisted handle, and no capture field outside [`CAPTURE_KEYS`]. It is not a
 //! clearance for the text around either. What holds that line is somebody's
 //! attention, and there is no third gate behind it.
+//!
+//! **A commit message in the unpushed range is text on its way in too**, and it
+//! gets the same handle-shaped check every source file does — see
+//! [`off_roster_handles_in`] — beside its own pronoun check. Ordinary prose in a
+//! commit message is exactly as out of scope as ordinary prose anywhere else: no
+//! machine reads it for a life specific, by the same standing rule.
 
 use jojobot_domain::memory::EntityKind;
 use std::fs;
@@ -1161,6 +1167,30 @@ fn operator_pronouns_in(commits: &[(String, String)]) -> Vec<String> {
     unattached
 }
 
+/// **Every off-roster handle in these messages**, as `commit: handle`.
+///
+/// The same rule the source check uses, asked of a commit message: a handle is
+/// handle-shaped text wherever it sits, and a commit message is text on its way
+/// into the repository exactly as a comment is. Reuses [`violations_in`]'s own
+/// extraction — [`handles_in`] and [`two_part_handles_in`] — against [`ROSTER`],
+/// never a second parser.
+fn off_roster_handles_in(commits: &[(String, String)]) -> Vec<String> {
+    let mut violations = Vec::new();
+    for (commit, message) in commits {
+        for handle in handles_in(message)
+            .into_iter()
+            .chain(two_part_handles_in(message))
+        {
+            if !ROSTER.contains(&handle.as_str()) {
+                violations.push(format!("{commit}: {handle}"));
+            }
+        }
+    }
+    violations.sort();
+    violations.dedup();
+    violations
+}
+
 /// A workspace of this test's own, removed when it is done — so a case about
 /// what the gate scans can put a file where it wants one without writing into
 /// the repository the real gate is reading in the same run.
@@ -1705,6 +1735,66 @@ fn the_check_reads_a_commit_for_the_operator_and_one_for_a_character_apart() {
         !unattached.iter().any(|line| line.starts_with("bbbbbbb")),
         "…and a pronoun for a character the block names must pass, or the report above is \
          the check flagging everything rather than working: {unattached:?}"
+    );
+}
+
+/// **A commit message is held to the roster too.** Handle-shaped text is
+/// handle-shaped text wherever it sits, and this repository is public the
+/// moment a push makes it so — the same reasoning
+/// [`no_unpushed_commit_message_writes_a_pronoun_for_the_operator`] states for
+/// pronouns applies here, on the OTHER thing a message can leak: a real handle
+/// quoted while describing a bug.
+///
+/// **Ordinary prose is out of scope, by a standing rule.** This checks
+/// handle-shaped text only — `kind:slug`, or the two-literal constructor
+/// shape — never a name written in words. A commit message otherwise stays
+/// enforced by attention, exactly as every other comment and doc string in
+/// this repository is; no machine reads prose for a life specific.
+#[test]
+fn no_unpushed_commit_message_quotes_an_off_roster_handle() {
+    let violations = off_roster_handles_in(&unpushed_commits());
+    assert!(
+        violations.is_empty(),
+        "these commit messages quote a handle this workspace's roster does not list. These \
+         commits are not pushed yet, so fixing the message is still cheap — swap the real \
+         handle for a fixture name, or add the fixture to the roster if it genuinely is one:\n{}",
+        violations.join("\n")
+    );
+}
+
+/// **Both halves, or the case above proves nothing.** One message quotes a
+/// handle no roster entry matches; one quotes only a listed handle and
+/// ordinary prose. A reader that flagged nothing would satisfy the first
+/// case's assertion by being blind, and one that flagged everything would be
+/// switched off by the first author it caught.
+#[test]
+fn the_check_reads_one_off_roster_handle_and_one_roster_handle_apart() {
+    let unlisted = unlisted_handle("person");
+    let commits = vec![
+        (
+            "aaaaaaa".to_string(),
+            format!("mailbox: the read handed {unlisted} the wrong body"),
+        ),
+        (
+            "bbbbbbb".to_string(),
+            "mailbox: the read handed person:milhouse the wrong body, and ordinary prose \
+             about the fix besides"
+                .to_string(),
+        ),
+    ];
+
+    let violations = off_roster_handles_in(&commits);
+
+    assert!(
+        violations
+            .iter()
+            .any(|line| line.starts_with("aaaaaaa") && line.contains(&unlisted)),
+        "a commit quoting an off-roster handle has to be reported: {violations:?}"
+    );
+    assert!(
+        !violations.iter().any(|line| line.starts_with("bbbbbbb")),
+        "…and a commit quoting only a roster handle must pass, or the report above is the \
+         check flagging everything rather than working: {violations:?}"
     );
 }
 
