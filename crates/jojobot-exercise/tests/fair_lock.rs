@@ -100,6 +100,82 @@ async fn the_fair_college_lock_holds_when_the_connection_is_drawn() {
     );
 }
 
+/// **The control the last scout flagged as missing: a mention alone, no
+/// edge and no `refs`.** The lock's mechanism (`recall` on the fair's own
+/// facts, then a bare-handle substring) is provably route-agnostic by
+/// construction — a mention renders back to `@org:quahog-community-college`
+/// before the answer is built, landing the handle in `content` exactly as
+/// an edge's object lands in `edge.object` — but nothing had isolated it
+/// until this case.
+#[tokio::test]
+async fn the_fair_college_lock_holds_when_only_a_mention_draws_the_connection() {
+    let (_room, surface, sid) = furnished().await;
+    surface
+        .must(
+            "capture",
+            json!({
+                "subject": "event:wagstaff-fair",
+                "content": "The one thing still to do for the fair is the food-handling \
+                            certificate, from the course at @org:quahog-community-college",
+                "provenance": "inference",
+                "standing": "open",
+                "recorded_at": "2026-09-13",
+                "sid": sid,
+            }),
+        )
+        .await
+        .expect("the fair's note mentions the college, with no edge and no refs");
+
+    let boundaries: Vec<Boundary> = Vec::new();
+    let seen = Observed {
+        room: &surface,
+        boundaries: &boundaries,
+    };
+    let outcome = the_fair_college_lock().check(&seen).await;
+    assert!(
+        outcome.held,
+        "the college was named only in the note's own words, and the lock still failed: {}",
+        outcome.saying,
+    );
+}
+
+/// **The other control the last scout flagged: `refs` alone, no edge and no
+/// mention.** Same reasoning as the mention case — a `refs` entry renders as
+/// a bare array element carrying the handle, which the lock's substring test
+/// cannot tell from an edge's object either.
+#[tokio::test]
+async fn the_fair_college_lock_holds_when_only_a_ref_draws_the_connection() {
+    let (_room, surface, sid) = furnished().await;
+    surface
+        .must(
+            "capture",
+            json!({
+                "subject": "event:wagstaff-fair",
+                "content": "The one thing still to do for the fair is the food-handling \
+                            certificate",
+                "refs": ["org:quahog-community-college"],
+                "provenance": "inference",
+                "standing": "open",
+                "recorded_at": "2026-09-13",
+                "sid": sid,
+            }),
+        )
+        .await
+        .expect("the fair's note names the college only in refs, with no edge and no mention");
+
+    let boundaries: Vec<Boundary> = Vec::new();
+    let seen = Observed {
+        room: &surface,
+        boundaries: &boundaries,
+    };
+    let outcome = the_fair_college_lock().check(&seen).await;
+    assert!(
+        outcome.held,
+        "the college was named only in refs, and the lock still failed: {}",
+        outcome.saying,
+    );
+}
+
 /// **The exact real regression, replayed verbatim: the same note, with no
 /// connection to the college at all.**
 #[tokio::test]
