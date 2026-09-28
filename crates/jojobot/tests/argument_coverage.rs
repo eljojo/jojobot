@@ -15,10 +15,23 @@
 //! would — and only a person reading the call sites can tell that apart from
 //! a real gap.
 //!
-//! **A known limit, stated rather than implied**: a call whose arguments are
-//! built away from the verb's name is not seen; a zero here may be that.
-//! Matching is textual, not a parse of the call expression — see
-//! [`call_sites`] for what it actually reads.
+//! **A story rarely spells a verb's own name.** It calls a DSL wrapper —
+//! `s.shape(..., json!({"answers_type": "trip"}))` calls `recall` without
+//! `"recall"` ever appearing in the story — so a check keyed on the verb's
+//! literal name alone would read the wrapper's 77 call sites as zero. See
+//! [`dsl_wrappers`] for how a wrapper is found: derived from dsl.rs's own
+//! source, never a hand-kept alias list.
+//!
+//! **A known limit, stated rather than implied**: an argument built on a
+//! separate line from the call that sends it is not seen, whether the call
+//! names its verb directly or through a wrapper — a zero here may be that.
+//! Matching is textual, not a parse of the call expression. **Nor is a
+//! wrapper taking its arguments as named Rust parameters rather than a
+//! `json!` object** — `Session::merge_entities`'s own `recorded_at`
+//! parameter is invisible the same way, because there is no `{...}` for
+//! [`sites_for_anchor`] to read. And a method whose body names either no
+//! real verb or more than one is not derived as anybody's wrapper at all —
+//! see [`dsl_wrappers`]'s own doc for what that excludes today.
 
 use std::path::PathBuf;
 
@@ -76,18 +89,16 @@ fn balanced_span(text: &str) -> Option<&str> {
     None
 }
 
-/// **Every call site of `verb` in `text`**, as the whole brace-balanced
-/// arguments object that follows its name — `.call("verb", json!({ ... }))`
-/// and `.refused("verb", json!({ ... }))` alike, since a refusal is still a
-/// story reaching the argument. Matched on the quoted verb name rather than
-/// on `.call`/`.refused` so a story that names the verb any other way this
-/// suite ever grows is still found.
-fn call_sites<'a>(text: &'a str, verb: &str) -> Vec<&'a str> {
-    let needle = format!("\"{verb}\"");
+/// **Every occurrence of `anchor` in `text`**, as the whole brace-balanced
+/// object that follows it — the arguments a call sends, whatever the anchor
+/// actually is: a quoted verb name (`"recall"`) or a wrapper method's own
+/// call syntax (`.shape(`). Reused for both, so the two cannot come to read
+/// a call two different ways.
+fn sites_for_anchor<'a>(text: &'a str, anchor: &str) -> Vec<&'a str> {
     let mut sites = Vec::new();
     let mut from = 0;
-    while let Some(found) = text[from..].find(&needle) {
-        let after = from + found + needle.len();
+    while let Some(found) = text[from..].find(anchor) {
+        let after = from + found + anchor.len();
         from = after;
         let Some(open) = text[after..].find('{') else {
             continue;
@@ -97,6 +108,63 @@ fn call_sites<'a>(text: &'a str, verb: &str) -> Vec<&'a str> {
         }
     }
     sites
+}
+
+/// **Every DSL wrapper method, and the one served verb its own body
+/// dispatches to** — derived by reading dsl.rs itself, never a hand-kept
+/// alias list. A `pub async fn` whose body names EXACTLY ONE of `tool_names`
+/// as a quoted string literal is that verb's wrapper — `Session::shape`
+/// names only `"recall"`, so a story calling `.shape(...)` is calling
+/// `recall` as surely as one that spells it.
+///
+/// **A method naming none of them, or more than one, is not derived as a
+/// wrapper at all.** The low-level dispatch methods (`Session::call`,
+/// `Session::write`, `Session::read`) take the verb as a parameter rather
+/// than a literal, so none of `tool_names` appears in their own bodies —
+/// correctly excluded, since treating them as `SOMEONE`'s wrapper would be a
+/// guess about which verb a caller happened to pass. A method naming two is
+/// excluded for the opposite reason: which one a given call site meant is
+/// not this rule's to decide.
+fn dsl_wrappers(tool_names: &[String]) -> Vec<(String, String)> {
+    let dsl = std::fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/user_stories/dsl.rs"),
+    )
+    .expect("dsl.rs reads");
+    derive_wrappers_from(&dsl, tool_names)
+}
+
+/// **The parsing rule itself**, apart from reading the real file — so a test
+/// can hand it a few lines of fabricated source and check what it derives,
+/// without that case depending on dsl.rs staying a particular shape forever.
+/// [`dsl_wrappers`] is this, read over the real file.
+fn derive_wrappers_from(dsl: &str, tool_names: &[String]) -> Vec<(String, String)> {
+    let mut wrappers = Vec::new();
+    let mut from = 0;
+    while let Some(found) = dsl[from..].find("pub async fn ") {
+        let name_start = from + found + "pub async fn ".len();
+        let Some(paren) = dsl[name_start..].find('(') else {
+            break;
+        };
+        let name = dsl[name_start..name_start + paren].trim().to_string();
+        let Some(sig_open) = dsl[name_start..].find('{') else {
+            from = name_start;
+            continue;
+        };
+        let body_start = name_start + sig_open;
+        let Some(body) = balanced_span(&dsl[body_start..]) else {
+            from = body_start;
+            continue;
+        };
+        let named: Vec<&String> = tool_names
+            .iter()
+            .filter(|tool| body.contains(&format!("\"{tool}\"")))
+            .collect();
+        if let [one] = named[..] {
+            wrappers.push((name, (*one).clone()));
+        }
+        from = body_start + body.len();
+    }
+    wrappers
 }
 
 /// **The one exemption, derived from a real mechanism rather than
@@ -115,26 +183,44 @@ fn call_sites<'a>(text: &'a str, verb: &str) -> Vec<&'a str> {
 const INJECTED_ARGUMENTS: &[&str] = &["sid"];
 
 /// **Whether any story calls `verb` with `argument` among its keys**, at any
-/// depth inside that call's own arguments object — or the argument is one
-/// the story DSL injects on every call regardless of what any story wrote,
-/// see [`INJECTED_ARGUMENTS`].
-fn covered(sources: &[(PathBuf, String)], verb: &str, argument: &str) -> bool {
+/// depth inside that call's own arguments object — reached directly, by
+/// `verb`'s own quoted name, or through any `wrappers` entry naming `verb` —
+/// or the argument is one the story DSL injects on every call regardless of
+/// what any story wrote, see [`INJECTED_ARGUMENTS`].
+fn covered(
+    sources: &[(PathBuf, String)],
+    verb: &str,
+    argument: &str,
+    wrappers: &[(String, String)],
+) -> bool {
     if INJECTED_ARGUMENTS.contains(&argument) {
         return true;
     }
+    let mut anchors = vec![format!("\"{verb}\"")];
+    anchors.extend(
+        wrappers
+            .iter()
+            .filter(|(_, wrapped)| wrapped == verb)
+            .map(|(name, _)| format!(".{name}(")),
+    );
     let needle = format!("\"{argument}\"");
     sources.iter().any(|(_, text)| {
-        call_sites(text, verb)
-            .iter()
-            .any(|site| site.contains(&needle))
+        anchors.iter().any(|anchor| {
+            sites_for_anchor(text, anchor)
+                .iter()
+                .any(|site| site.contains(&needle))
+        })
     })
 }
 
 /// **Every (verb, argument) pair the surface publishes, and whether the
-/// story suite ever calls that verb with that argument.**
+/// story suite ever calls that verb with that argument** — directly, or
+/// through a DSL wrapper method (see [`dsl_wrappers`]).
 fn argument_coverage() -> Vec<(String, String, bool)> {
     let sources = story_sources();
     let tools = Jojobot::tool_router().list_all();
+    let tool_names: Vec<String> = tools.iter().map(|t| t.name.to_string()).collect();
+    let wrappers = dsl_wrappers(&tool_names);
     let mut rows = Vec::new();
     for tool in &tools {
         let schema = serde_json::to_value(&tool.input_schema).expect("the schema serializes");
@@ -143,7 +229,7 @@ fn argument_coverage() -> Vec<(String, String, bool)> {
         names.sort();
         names.dedup();
         for name in names {
-            let is_covered = covered(&sources, &tool.name, &name);
+            let is_covered = covered(&sources, &tool.name, &name, &wrappers);
             rows.push((tool.name.to_string(), name, is_covered));
         }
     }
@@ -185,7 +271,7 @@ mod tests {
     fn a_call_naming_the_argument_marks_it_covered() {
         let sources =
             source("s.call(\"declare_type\", json!({ \"name\": \"x\", \"fields\": [] })).await;");
-        assert!(covered(&sources, "declare_type", "fields"));
+        assert!(covered(&sources, "declare_type", "fields", &[]));
     }
 
     /// 🚨 **What the report exists to catch**: a call to the verb that never
@@ -193,7 +279,7 @@ mod tests {
     #[test]
     fn a_call_that_never_names_the_argument_is_not_covered() {
         let sources = source("s.call(\"declare_type\", json!({ \"name\": \"x\" })).await;");
-        assert!(!covered(&sources, "declare_type", "fields"));
+        assert!(!covered(&sources, "declare_type", "fields", &[]));
     }
 
     /// **`sid` counts as covered even where no story ever calls the verb at
@@ -202,7 +288,7 @@ mod tests {
     /// nothing else here could make this pass by accident.
     #[test]
     fn the_sid_exemption_applies_with_no_call_site_at_all() {
-        assert!(covered(&[], "declare_type", "sid"));
+        assert!(covered(&[], "declare_type", "sid", &[]));
     }
 
     /// **An argument nested under a sub-object is still found** — `follow`
@@ -213,7 +299,7 @@ mod tests {
     fn a_nested_argument_under_a_sub_object_is_still_found() {
         let sources =
             source("s.call(\"recall\", json!({ \"follow\": { \"fits_type\": \"pet\" } })).await;");
-        assert!(covered(&sources, "recall", "fits_type"));
+        assert!(covered(&sources, "recall", "fits_type", &[]));
     }
 
     /// **Coverage is scoped to the verb actually called.** `fits_type` is
@@ -223,9 +309,9 @@ mod tests {
     #[test]
     fn coverage_is_scoped_to_the_verb_actually_called() {
         let sources = source("s.call(\"search\", json!({ \"fits_type\": \"pet\" })).await;");
-        assert!(covered(&sources, "search", "fits_type"));
+        assert!(covered(&sources, "search", "fits_type", &[]));
         assert!(
-            !covered(&sources, "recall", "fits_type"),
+            !covered(&sources, "recall", "fits_type", &[]),
             "recall was never called here at all"
         );
     }
@@ -239,7 +325,60 @@ mod tests {
         let sources = source(
             "s.refused(\"declare_type\", json!({ \"name\": \"x\", \"fields\": [] })).await;",
         );
-        assert!(covered(&sources, "declare_type", "fields"));
+        assert!(covered(&sources, "declare_type", "fields", &[]));
+    }
+
+    /// **A DSL wrapper counts as its own verb's call site.** `shape` maps to
+    /// `recall` — derived here rather than declared, so the story below
+    /// never spells `"recall"` at all, exactly as `typing.rs` and
+    /// `vocabulary.rs` do not.
+    #[test]
+    fn a_call_through_a_derived_wrapper_counts_as_coverage() {
+        let sources =
+            source("s.shape(\"what fits\", json!({ \"answers_type\": \"trip\" })).await;");
+        let wrappers = vec![("shape".to_string(), "recall".to_string())];
+        assert!(covered(&sources, "recall", "answers_type", &wrappers));
+    }
+
+    /// **The wrapper only covers the verb it was derived for.** A `shape`
+    /// call carrying `answers_type` says nothing about `search`, which has
+    /// its own argument of the same name and was never called here.
+    #[test]
+    fn a_wrapper_derived_for_one_verb_does_not_cover_another() {
+        let sources =
+            source("s.shape(\"what fits\", json!({ \"answers_type\": \"trip\" })).await;");
+        let wrappers = vec![("shape".to_string(), "recall".to_string())];
+        assert!(!covered(&sources, "search", "answers_type", &wrappers));
+    }
+
+    /// **`dsl_wrappers` reads dsl.rs itself**: `Session::shape` names only
+    /// `"recall"` in its own body, so it is derived as `recall`'s wrapper —
+    /// the same claim [`the_shape_wrapper_still_maps_to_recall`] pins against
+    /// dsl.rs as it stands today.
+    #[test]
+    fn a_method_naming_one_real_verb_is_derived_as_its_wrapper() {
+        let dsl = "pub async fn shape(&self, what: &str, args: Value) -> Answer { \
+                    self.read(what.to_string(), \"recall\", args).await }";
+        let tools = vec!["recall".to_string(), "search".to_string()];
+        assert_eq!(
+            derive_wrappers_from(dsl, &tools),
+            vec![("shape".to_string(), "recall".to_string())],
+        );
+    }
+
+    /// **A method naming no real verb, or more than one, is not a wrapper**
+    /// — the two ways a call site cannot say what it means. `write` takes
+    /// the verb as a parameter rather than a literal, and a fabricated
+    /// method naming both `recall` and `search` names neither on its own.
+    #[test]
+    fn a_method_naming_none_or_two_real_verbs_is_not_derived() {
+        let dsl = "pub async fn write(&self, tool: &str, args: Value) { call(tool, args).await; } \
+                   pub async fn ambiguous(&self) { let _ = \"recall\"; let _ = \"search\"; }";
+        let tools = vec!["recall".to_string(), "search".to_string()];
+        assert_eq!(
+            derive_wrappers_from(dsl, &tools),
+            Vec::<(String, String)>::new()
+        );
     }
 
     /// **What a check that reads nothing would print**: every argument on
@@ -279,6 +418,38 @@ mod tests {
             dsl.contains("args[\"sid\"] = self.sid"),
             "Session::riding no longer injects sid the way INJECTED_ARGUMENTS assumes — read \
              riding() in dsl.rs and update the exemption to match what it actually does"
+        );
+    }
+
+    /// 🚨 **The wrapper derivation cannot outlive its reason either.** If
+    /// `Session::shape` ever stops being `recall`'s wrapper — a rewrite that
+    /// makes it call some other verb, or names two — this goes red the same
+    /// day, over the real dsl.rs rather than a fabricated snippet.
+    #[test]
+    fn the_shape_wrapper_still_maps_to_recall() {
+        let tools = Jojobot::tool_router().list_all();
+        let tool_names: Vec<String> = tools.iter().map(|t| t.name.to_string()).collect();
+        let wrappers = dsl_wrappers(&tool_names);
+        assert!(
+            wrappers.contains(&("shape".to_string(), "recall".to_string())),
+            "Session::shape no longer derives as recall's wrapper — read shape() in dsl.rs: \
+             {wrappers:?}"
+        );
+    }
+
+    /// **A low-level dispatch method is not treated as anybody's wrapper** —
+    /// proven over the real file, not a fabricated one. `Session::call`
+    /// takes the verb as a parameter rather than a literal, so it must never
+    /// be derived as one verb's alone.
+    #[test]
+    fn a_low_level_dispatch_method_is_not_derived_as_a_wrapper() {
+        let tools = Jojobot::tool_router().list_all();
+        let tool_names: Vec<String> = tools.iter().map(|t| t.name.to_string()).collect();
+        let wrappers = dsl_wrappers(&tool_names);
+        assert!(
+            !wrappers.iter().any(|(name, _)| name == "call"),
+            "Session::call takes the verb as a parameter and names none as a literal — it must \
+             never be derived as a wrapper: {wrappers:?}"
         );
     }
 }
