@@ -223,3 +223,62 @@ async fn a_merge_follows_a_pointer_drawn_before_the_folded_sides_own_rename() {
 
     story.finish().await;
 }
+
+/// **The correction lands on a spelling that resembles somebody else** —
+/// `rename_entity`'s destination faces the same near-miss guard `add_entity`
+/// does, and the round trip is the same shape: blocked with candidates,
+/// checked, and lifted with the token the refusal minted.
+///
+/// **The negative the override rests on**: Barney Gumble's own record is
+/// never touched. The guard is asking whether the DESTINATION resembles
+/// somebody real, not moving anything until it is answered.
+#[tokio::test]
+async fn a_rename_onto_a_spelling_that_resembles_someone_else_is_confirmed_and_lands() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+
+    s.add("person:barney-gumble", "Barney Gumble").await;
+    s.fact("person:barney-gumble", "drinks at Moe's").await;
+
+    // Filed under a shorthand at the time — now corrected to what was
+    // actually meant, which happens to closely resemble Barney's own
+    // handle.
+    s.add("person:barn", "Barn").await;
+    s.fact("person:barn", "fixes the tractor").await;
+
+    let refusal = s
+        .refused(
+            "rename_entity",
+            json!({"handle": "person:barn", "to": "person:barney-gumbel"}),
+        )
+        .await;
+    refusal.says("person:barney-gumble");
+
+    s.call(
+        "rename_entity",
+        json!({
+            "handle": "person:barn", "to": "person:barney-gumbel",
+            "override_token": refusal.advised("override_token"),
+        }),
+    )
+    .await
+    .says("person:barney-gumbel");
+
+    // **The positive**: the corrected handle now carries what was filed
+    // under the shorthand.
+    s.recall("person:barney-gumbel")
+        .await
+        .says("fixes the tractor");
+
+    // **The negative**: the entity the guard flagged as a resemblance was
+    // never moved, retyped or touched — it is exactly where it was.
+    s.recall("person:barney-gumble")
+        .await
+        .says("drinks at Moe's")
+        .never_says("fixes the tractor");
+
+    s.wrap("confirmed the two were different people and pushed the correction through")
+        .await;
+
+    story.finish().await;
+}

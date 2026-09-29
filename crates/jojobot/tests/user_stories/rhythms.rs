@@ -241,6 +241,40 @@ async fn which_of_the_loops_have_gone_quiet() {
     .await
     .says("\"wrote\":false");
 
+    // ── the loop was filed under the wrong bike from the start ───────────────
+    //
+    // It turns out the chain being tracked was always the road bike's, not
+    // the gravel bike's. Renaming a handle to itself is refused outright
+    // (a different guard, not this one — `'rhythm:chain-check' cannot be
+    // renamed to itself`), so reparenting alone needs a slug that actually
+    // moves; this one is renamed to say which bike it means, in the same
+    // call that moves it.
+    s.add("thing:road-bike", "The Road Bike").await;
+    s.call(
+        "rename_entity",
+        json!({
+            "handle": "rhythm:chain-check", "to": "rhythm:road-bike-chain-check",
+            "parent": "thing:road-bike",
+        }),
+    )
+    .await;
+
+    // **The positive `parent` rests on**: asking what is directly under the
+    // road bike now reaches the loop, and the gravel bike no longer answers
+    // for it.
+    s.call("list_entities", json!({"parent": "thing:road-bike"}))
+        .await
+        .says("rhythm:road-bike-chain-check");
+    s.call("list_entities", json!({"parent": "thing:gravel-bike"}))
+        .await
+        .never_says("rhythm:road-bike-chain-check");
+
+    // **The negative: naming one handle moves only that one.** Snowball's
+    // own loop was never named in the call, so it is exactly where it was.
+    s.call("list_entities", json!({"parent": "pet:snowball"}))
+        .await
+        .says("rhythm:worming");
+
     s.wrap("a skip and a run, and only the record tells them apart")
         .await;
     story.finish().await;
