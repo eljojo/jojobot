@@ -99,6 +99,75 @@ fn number_before(words: &[&str], label: &str) -> Option<usize> {
     idx.checked_sub(1).and_then(|i| words[i].parse().ok())
 }
 
+/// **A tracked source file and how many lines it holds now.**
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileSize {
+    pub path: String,
+    pub lines: usize,
+}
+
+/// **A tracked source file and how many lines it gained since the base
+/// ref.** Negative when a file shrank; only positive deltas are reported.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileGrowth {
+    pub path: String,
+    pub delta: i64,
+}
+
+/// A file over this many lines is reported, decision log 273 (the
+/// operator's ruling on repo scalability). Overturnable — this is a report,
+/// not a gate.
+pub const OVERSIZED_LINES: usize = 2000;
+
+/// A file that grew by more than this many lines in one batch is reported.
+pub const GROWTH_LINES: i64 = 200;
+
+/// **Every file over [`OVERSIZED_LINES`], largest first.** A tree with none
+/// over the threshold returns an empty list — this names files, never a
+/// count of zero dressed up as a name.
+pub fn oversized_files(files: &[FileSize]) -> Vec<&FileSize> {
+    let mut over: Vec<&FileSize> = files.iter().filter(|f| f.lines > OVERSIZED_LINES).collect();
+    over.sort_by(|a, b| b.lines.cmp(&a.lines).then_with(|| a.path.cmp(&b.path)));
+    over
+}
+
+/// **Every file that grew by more than [`GROWTH_LINES`], largest delta
+/// first.** A shrunk or unchanged file is never in this list — only growth
+/// is what a size tripwire exists to catch.
+pub fn grown_files(files: &[FileGrowth]) -> Vec<&FileGrowth> {
+    let mut grown: Vec<&FileGrowth> = files.iter().filter(|f| f.delta > GROWTH_LINES).collect();
+    grown.sort_by(|a, b| b.delta.cmp(&a.delta).then_with(|| a.path.cmp(&b.path)));
+    grown
+}
+
+/// **The two lists, rendered.** Report only: nothing here is a verdict, and
+/// nothing here ever changes `Summary::green`.
+pub fn render_size_report(oversized: &[&FileSize], grown: &[&FileGrowth], base: &str) -> String {
+    let mut out = String::new();
+    out.push_str(&format!(
+        "files over {OVERSIZED_LINES} lines: {}\n",
+        oversized.len()
+    ));
+    for f in oversized {
+        out.push_str(&format!("  {} ({} lines)\n", f.path, f.lines));
+    }
+    if base.is_empty() {
+        out.push_str(&format!(
+            "files grown over {GROWTH_LINES} lines: unknown — no base ref (origin/main not \
+             found)\n"
+        ));
+    } else {
+        out.push_str(&format!(
+            "files grown over {GROWTH_LINES} lines against {base}: {}\n",
+            grown.len()
+        ));
+        for f in grown {
+            out.push_str(&format!("  {} (+{} lines)\n", f.path, f.delta));
+        }
+    }
+    out
+}
+
 /// **A single ten-line-or-fewer verdict a caller reads instead of the raw
 /// stream.** Every phase this build runs — `fmt-check`, `test`, `lint` — adds
 /// one line; a failing `test` phase adds a few more, capped, never the whole
@@ -196,6 +265,108 @@ impl Summary {
 impl Default for Summary {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod size_report_tests {
+    use super::*;
+
+    fn size(path: &str, lines: usize) -> FileSize {
+        FileSize {
+            path: path.to_string(),
+            lines,
+        }
+    }
+
+    fn growth(path: &str, delta: i64) -> FileGrowth {
+        FileGrowth {
+            path: path.to_string(),
+            delta,
+        }
+    }
+
+    /// **A tree with an oversized file names it, largest first.**
+    #[test]
+    fn an_oversized_file_is_named_largest_first() {
+        let files = [
+            size("crates/a/src/lib.rs", 500),
+            size("crates/b/src/lib.rs", 2001),
+        ];
+        let over = oversized_files(&files);
+        assert_eq!(
+            over.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(),
+            vec!["crates/b/src/lib.rs"],
+            "the file at the threshold's boundary must not appear: {over:?}",
+        );
+    }
+
+    /// **The paired negative: a tree with nothing over the threshold names
+    /// nothing.** Not a count of zero dressed up as a name — an empty list.
+    #[test]
+    fn a_tree_with_nothing_oversized_names_nothing() {
+        let files = [
+            size("crates/a/src/lib.rs", 500),
+            size("crates/b/src/lib.rs", OVERSIZED_LINES),
+        ];
+        assert!(
+            oversized_files(&files).is_empty(),
+            "a file exactly AT the threshold is not OVER it",
+        );
+    }
+
+    /// **A tree with a file that grew past the threshold names it.**
+    #[test]
+    fn a_grown_file_is_named_largest_delta_first() {
+        let files = [
+            growth("crates/a/src/lib.rs", 50),
+            growth("crates/b/src/lib.rs", 201),
+        ];
+        let grown = grown_files(&files);
+        assert_eq!(
+            grown.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(),
+            vec!["crates/b/src/lib.rs"],
+        );
+    }
+
+    /// **The paired negative: nothing grew past the threshold, nothing is
+    /// named** — a file that shrank is not growth, and a delta exactly at
+    /// the threshold is not past it.
+    #[test]
+    fn a_tree_with_nothing_grown_names_nothing() {
+        let files = [
+            growth("crates/a/src/lib.rs", -300),
+            growth("crates/b/src/lib.rs", GROWTH_LINES),
+        ];
+        assert!(grown_files(&files).is_empty());
+    }
+
+    /// **The rendered report names the file, not only a count.**
+    #[test]
+    fn the_rendered_report_names_an_oversized_and_a_grown_file() {
+        let big = size("crates/b/src/lib.rs", 2500);
+        let over = vec![&big];
+        let moved = growth("crates/c/src/lib.rs", 300);
+        let up = vec![&moved];
+        let rendered = render_size_report(&over, &up, "abc1234");
+        assert!(
+            rendered.contains("crates/b/src/lib.rs (2500 lines)"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("crates/c/src/lib.rs (+300 lines)"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("abc1234"), "{rendered}");
+    }
+
+    /// **No base ref says so, rather than reporting an empty list that reads
+    /// like a clean tree.**
+    #[test]
+    fn no_base_ref_is_named_rather_than_read_as_nothing_grown() {
+        let rendered = render_size_report(&[], &[], "");
+        assert!(rendered.contains("unknown"), "{rendered}");
+        assert!(!rendered.contains("against"), "{rendered}");
     }
 }
 

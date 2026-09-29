@@ -22,7 +22,10 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 
-use jojobot_bar::{Summary, summarize_test_output, test_healthy};
+use jojobot_bar::{
+    FileGrowth, FileSize, Summary, grown_files, oversized_files, render_size_report,
+    summarize_test_output, test_healthy,
+};
 
 /// **The cargo binary the outer `make` recipe was told to use.** The
 /// Makefile's own `CARGO ?= cargo` is an override hook, and this reads the
@@ -96,11 +99,79 @@ fn finish(summary: &mut Summary, log_path: &Path) {
     print!("{}", summary.render());
 }
 
+/// One `git` invocation, stdout as text. Empty on any failure — a caller
+/// missing `origin/main` or running outside a repo gets nothing to report
+/// rather than a crash.
+fn git_stdout(args: &[&str]) -> String {
+    Command::new("git")
+        .args(args)
+        .output()
+        .ok()
+        .filter(|out| out.status.success())
+        .map(|out| String::from_utf8_lossy(&out.stdout).into_owned())
+        .unwrap_or_default()
+}
+
+/// **Decision log 273, and rule 235: a standing duty gets a mechanism.**
+/// Every tracked `.rs` file's current line count, and — against the merge
+/// base with `origin/main`, the last pushed commit — how much each changed
+/// file grew. Report only: nothing here touches `summary.green`.
+fn size_report() -> String {
+    let tracked = git_stdout(&["ls-files", "--", "*.rs"]);
+    let sizes: Vec<FileSize> = tracked
+        .lines()
+        .filter_map(|path| {
+            fs::read_to_string(path).ok().map(|text| FileSize {
+                path: path.to_string(),
+                lines: text.lines().count(),
+            })
+        })
+        .collect();
+    let over = oversized_files(&sizes);
+
+    let base = git_stdout(&["merge-base", "HEAD", "origin/main"])
+        .trim()
+        .to_string();
+    let mut growths = Vec::new();
+    if !base.is_empty() {
+        let changed = git_stdout(&[
+            "diff",
+            "--name-only",
+            &format!("{base}..HEAD"),
+            "--",
+            "*.rs",
+        ]);
+        for path in changed.lines() {
+            if !Path::new(path).is_file() {
+                continue; // deleted since the base
+            }
+            let now = fs::read_to_string(path)
+                .map(|t| t.lines().count())
+                .unwrap_or(0);
+            let then = git_stdout(&["show", &format!("{base}:{path}")])
+                .lines()
+                .count();
+            growths.push(FileGrowth {
+                path: path.to_string(),
+                delta: now as i64 - then as i64,
+            });
+        }
+    }
+    let grown = grown_files(&growths);
+
+    render_size_report(&over, &grown, &base)
+}
+
 fn run_check() -> std::io::Result<ExitCode> {
     let cargo = cargo_bin();
     let log_path = PathBuf::from("target/bar/check.log");
     fresh_log(&log_path)?;
     let mut summary = Summary::new();
+
+    // **Printed first, and unconditionally.** A standing duty gets a
+    // mechanism rather than diligence (rule 235) — this runs whichever
+    // phase below fails or passes, and never touches `summary.green`.
+    print!("{}", size_report());
 
     let (ok, _) = run_phase(
         &log_path,
