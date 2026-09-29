@@ -557,77 +557,6 @@ pub fn same_prose_value(wrote: &str, read: &str) -> bool {
     as_one_emphasis_marker(wrote) == as_one_emphasis_marker(&stripped)
 }
 
-/// How a field's two sides are compared — the caller knows which its field is,
-/// and this is the only place the choice is spelled.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Compare {
-    /// A value that rides in a table cell, so the store's own escaping and
-    /// marker respelling do not count as a change. See [`same_cell_value`].
-    Cell,
-    /// Free markdown the operator wrote, which the store parses and re-emits.
-    /// It cannot be escaped on the way in without corrupting the operator's own
-    /// formatting, so it is compared knowing what the store does. See
-    /// [`same_prose_value`].
-    Prose,
-    /// Machinery, or content the store leaves alone: an id, a date, a state, a
-    /// fenced body. Byte-exact.
-    Exact,
-}
-
-/// **The one field that did not survive, and the bytes on each side.**
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Changed {
-    /// What the field is called to a caller — never where it is kept.
-    pub(crate) field: &'static str,
-    /// What was written.
-    pub(crate) wrote: String,
-    /// What came back.
-    pub(crate) read: String,
-}
-
-impl std::fmt::Display for Changed {
-    /// **Names the field and shows the bytes, and says nothing about where the
-    /// value sits.** A page, a table, a row or a cell in this sentence would be
-    /// jojobot telling a caller about its store, which is the one thing no
-    /// answer does.
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "the {} came back changed: wrote {:?}, read {:?}",
-            self.field, self.wrote, self.read
-        )
-    }
-}
-
-/// **The first field that changed, or `None` if the record survived.**
-///
-/// One mechanism for every guard on every rail, rather than one per rail —
-/// three copies of this decision is how one of them comes to disagree about
-/// what counts as a change.
-///
-/// A refusal must never interpolate two whole records into a sentence and
-/// leave the reader to diff them: that once cost two failed writes, a page a
-/// person had to repair by hand, and a wrong cause passed on as established,
-/// all because nobody could see WHICH field differed. One field and its two
-/// values is the whole of what a caller needs to act.
-///
-/// First rather than all, deliberately: the caller's next move is the same
-/// whichever one it is, and a list invites diffing again.
-pub fn first_changed(fields: &[(&'static str, Compare, String, String)]) -> Option<Changed> {
-    fields
-        .iter()
-        .find(|(_, how, wrote, read)| match how {
-            Compare::Cell => !same_cell_value(wrote, read),
-            Compare::Prose => !same_prose_value(wrote, read),
-            Compare::Exact => wrote != read,
-        })
-        .map(|(field, _, wrote, read)| Changed {
-            field,
-            wrote: wrote.clone(),
-            read: read.clone(),
-        })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -750,55 +679,6 @@ mod tests {
             assert!(
                 !same_cell_value(wrote, read),
                 "a changed value must still be caught: {wrote:?} vs {read:?}"
-            );
-        }
-    }
-
-    /// **A refusal names one field and its two values.**
-    #[test]
-    fn the_first_changed_field_is_named_with_its_bytes() {
-        let survived = first_changed(&[
-            ("subject", Compare::Cell, "a ~ b".into(), "a \\~ b".into()),
-            (
-                "body",
-                Compare::Exact,
-                "unchanged".into(),
-                "unchanged".into(),
-            ),
-        ]);
-        assert_eq!(survived, None, "the store's own escaping is not a change");
-
-        let changed = first_changed(&[
-            ("subject", Compare::Cell, "a ~ b".into(), "a \\~ b".into()),
-            (
-                "body",
-                Compare::Exact,
-                "as written".into(),
-                "as stored".into(),
-            ),
-        ])
-        .expect("a changed field is found");
-        assert_eq!(changed.field, "body");
-        assert_eq!(
-            changed.to_string(),
-            "the body came back changed: wrote \"as written\", read \"as stored\""
-        );
-    }
-
-    /// **A refusal says nothing about where the value is kept.** The sentence
-    /// reaches an agent, and jojobot's storage is not an agent's business.
-    #[test]
-    fn a_refusal_names_no_part_of_the_store() {
-        let said = first_changed(&[("focus", Compare::Exact, "before".into(), "after".into())])
-            .expect("a change")
-            .to_string()
-            .to_lowercase();
-        for leak in [
-            "page", "table", "row", "cell", "column", "document", "fence",
-        ] {
-            assert!(
-                !said.contains(leak),
-                "a refusal must not name {leak:?}: {said}"
             );
         }
     }
@@ -938,36 +818,6 @@ mod prose_forgives_what_was_measured {
         // one was written is forgiven, but a backslash that simply vanished is
         // not.
         assert!(!same(r"c:\dir\file", "c:dirfile"));
-    }
-
-    /// **The arm is wired to the comparison.** Without this, the tests above
-    /// pass against a `Compare::Prose` that still compares byte-exact — they
-    /// call the function directly and never touch the dispatch. Watched: the
-    /// three cases above stayed green with the arm reverted.
-    #[test]
-    fn the_prose_arm_dispatches_to_the_prose_comparison() {
-        assert_eq!(
-            first_changed(&[(
-                "prose",
-                Compare::Prose,
-                "2 * 3".to_string(),
-                r"2 \* 3".to_string(),
-            )]),
-            None,
-            "a store-added escape must not read as a change through the arm"
-        );
-        // Paired: the arm still reports real loss, so `None` above is
-        // forgiveness rather than a comparison that never fires.
-        assert!(
-            first_changed(&[(
-                "prose",
-                Compare::Prose,
-                "shuts at nine".to_string(),
-                "shuts at ten".to_string(),
-            )])
-            .is_some(),
-            "the arm must still catch a changed word"
-        );
     }
 
     /// **One direction only**, which is the rule `same_cell_value`'s own
