@@ -326,6 +326,27 @@ fn changed_and_gone<R: PartialEq + Clone>(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReadingPoint(u64);
 
+/// **Test-only fault injection for the write path.** Every knob defaults to
+/// inert, and a production `FullTextIndex` never arms one — nothing outside
+/// `#[cfg(any(test, feature = "testing"))]` code can reach the setters below.
+/// `search()` never reads this: the fields it touches are `index` and
+/// `reader`, and this struct is checked only from the write path
+/// (`write_message`, and `ingest_mail_changes`'s own commit and reload),
+/// which is what lets a real caller's real staging-then-commit order run
+/// under an injected failure, rather than a stand-in replacing the whole
+/// function.
+#[derive(Debug, Default)]
+struct WriteFault {
+    /// Fail the Nth call to `add_document` (0-indexed) rather than let it
+    /// reach tantivy. `None`: never fail.
+    fail_add_document_at: RwLock<Option<usize>>,
+    add_document_calls: std::sync::atomic::AtomicUsize,
+    /// Fail the next `commit`, once, then go inert again.
+    fail_commit: std::sync::atomic::AtomicBool,
+    /// Fail the next `reload`, once, then go inert again.
+    fail_reload: std::sync::atomic::AtomicBool,
+}
+
 /// The in-RAM full-text index over entities, facts and prose.
 pub struct FullTextIndex {
     index: Index,
@@ -431,6 +452,8 @@ pub struct FullTextIndex {
     /// only by a reading whose own [`ReadingPoint`] began after the failure
     /// landed — never by one already in flight when it happened.
     session_refresh_failed_at: std::sync::atomic::AtomicU64,
+    /// See [`WriteFault`]. Inert in every production index.
+    write_fault: WriteFault,
 }
 
 impl FullTextIndex {
@@ -475,6 +498,7 @@ impl FullTextIndex {
             session_entries_deleted: std::sync::atomic::AtomicUsize::new(0),
             session_loaded: std::sync::atomic::AtomicBool::new(false),
             session_refresh_failed_at: std::sync::atomic::AtomicU64::new(0),
+            write_fault: WriteFault::default(),
         })
     }
 
@@ -490,6 +514,38 @@ impl FullTextIndex {
     pub fn session_entries_deleted(&self) -> usize {
         self.session_entries_deleted
             .load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// **Fail the Nth call to `add_document` (0-indexed), instead of letting
+    /// it reach tantivy.** Test-only — reached only from a test or the
+    /// `testing` feature, never from production code. Checked from inside
+    /// `write_message`, on the real write path, so a real caller's real
+    /// staging-then-commit order runs under the injected failure.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn fail_add_document_at(&self, n: usize) {
+        *self
+            .write_fault
+            .fail_add_document_at
+            .write()
+            .expect("write fault poisoned") = Some(n);
+    }
+
+    /// **Fail the next `commit`, once.** Test-only, see
+    /// [`fail_add_document_at`](Self::fail_add_document_at).
+    #[cfg(any(test, feature = "testing"))]
+    pub fn fail_next_commit(&self) {
+        self.write_fault
+            .fail_commit
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    /// **Fail the next `reload`, once.** Test-only, see
+    /// [`fail_add_document_at`](Self::fail_add_document_at).
+    #[cfg(any(test, feature = "testing"))]
+    pub fn fail_next_reload(&self) {
+        self.write_fault
+            .fail_reload
+            .store(true, std::sync::atomic::Ordering::Release);
     }
 
     /// Record that the board read behind this answer could not reach the store,
@@ -656,8 +712,20 @@ impl FullTextIndex {
             for id in evict.iter().chain(rewrite.iter().map(|m| &m.id.0)) {
                 writer.delete_term(Term::from_field_text(self.fields.message_id, id));
             }
+            // **No staged operation outlives a failed ingest.** A delete
+            // staged above, or a document written by an earlier iteration of
+            // this same loop, is uncommitted tantivy state sitting in the
+            // shared writer — the next commit from ANYWHERE, mail or memory,
+            // would otherwise apply it alongside whatever that unrelated
+            // call actually meant to write. Rolling back on the way out
+            // undoes exactly what this call staged and nothing this call did
+            // not: `IndexWriter::rollback` discards everything since the
+            // last commit, and nothing here committed yet.
             for message in &rewrite {
-                self.write_message(&writer, message)?;
+                if let Err(e) = self.write_message(&writer, message) {
+                    let _ = writer.rollback();
+                    return Err(e);
+                }
             }
             // **Set before the commit, deliberately.** Whichever side of the
             // commit this lands on, a concurrent searcher can see one and not
@@ -668,6 +736,14 @@ impl FullTextIndex {
             // denying it searched any.
             self.mail_loaded
                 .store(true, std::sync::atomic::Ordering::Release);
+            if self
+                .write_fault
+                .fail_commit
+                .swap(false, std::sync::atomic::Ordering::AcqRel)
+            {
+                let _ = writer.rollback();
+                return Err(store_err("test fault: commit"));
+            }
             writer.commit().map_err(store_err)?;
             drop(writer);
             *self.messages.write().expect("mail mirror poisoned") = messages.to_vec();
@@ -692,6 +768,13 @@ impl FullTextIndex {
             );
         }
         if changed > 0 {
+            if self
+                .write_fault
+                .fail_reload
+                .swap(false, std::sync::atomic::Ordering::AcqRel)
+            {
+                return Err(store_err("test fault: reload"));
+            }
             self.reader.reload().map_err(store_err)?;
         }
         Ok(changed)
@@ -733,6 +816,19 @@ impl FullTextIndex {
     /// asks "what did the pm box say about the kiln" in one query, and a subject
     /// is a title precisely so it can be found by.
     fn write_message(&self, writer: &IndexWriter, message: &Message) -> Result<(), MemoryError> {
+        let called = self
+            .write_fault
+            .add_document_calls
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        if *self
+            .write_fault
+            .fail_add_document_at
+            .read()
+            .expect("write fault poisoned")
+            == Some(called)
+        {
+            return Err(store_err("test fault: add_document"));
+        }
         let f = &self.fields;
         writer
             .add_document(doc!(
@@ -2867,24 +2963,34 @@ impl Refresh for IndexedMailboxes {
     /// rule 130 forbids. The memory half gets this free — `rescan` chains the
     /// store read and the index write through one `?`.
     ///
-    /// **This branch is UNPROVEN, and no test can reach it today.** The window
-    /// is an index write that fails after a board read that landed. Nothing in
-    /// the suite can open it: `payload_json` cannot fail over a `Message`, which
-    /// is strings, an enum and a timestamp with no map and no float; tantivy's
-    /// `add_document` fails only once the writer thread is dead; `commit` and
-    /// `reload` over a RAM index have no failure to inject. The index is a
-    /// concrete `Arc<FullTextIndex>` with no trait between it and this
-    /// decorator, so nothing can be faked at that seam either. Reaching it takes
-    /// a fault injector inside `FullTextIndex` — deliberately not built, because
-    /// that puts a `cfg`-gated branch through the type every search goes
-    /// through. **Read the coverage here as absent, not as passing.**
+    /// **This branch is now proven.** The window is an index write that fails
+    /// after a board read that landed — `payload_json` still cannot fail over
+    /// a `Message`, and tantivy's own internals still cannot be made to fail
+    /// from outside, but `FullTextIndex` carries a narrow, always-inert fault
+    /// injector on its own write path (`write_message`, and
+    /// `ingest_mail_changes`'s own `commit` and `reload`), reached only from
+    /// `#[cfg(any(test, feature = "testing"))]` code. It sits outside
+    /// `search()` entirely — that method touches `index` and `reader`, never
+    /// the fault or the writer — so the branch every search goes through
+    /// gained nothing. `a_commit_failure_and_a_reload_failure_each_surface_as_an_error`
+    /// proves this branch: a commit or a reload failure after a landed board
+    /// read reaches `mail_refresh_failed`, the same way a failed board read
+    /// itself always could. **What it does NOT reach: a real disk.** The
+    /// index is still `Index::create_in_ram`, in every build, so this proves
+    /// the branch reachable and the failure surfaced — never a real I/O
+    /// error, which does not exist here to inject.
     ///
-    /// **A second consequence of that same failure is not addressed here.**
-    /// `ingest_mail_changes` stages every `delete_term` before it writes any
-    /// message, so a failure part-way leaves uncommitted deletes in the shared
-    /// writer and the next commit from anywhere applies them — messages still on
-    /// the board stop being served. That fix is a rollback, unprovable for the
-    /// identical reason, and it is carded rather than shipped blind.
+    /// **The second consequence of that same failure is fixed, not merely
+    /// addressed.** `ingest_mail_changes` stages every `delete_term` before it
+    /// writes any message; on a write failing partway, the writer is rolled
+    /// back to its last commit before the error is returned, so nothing
+    /// staged by the failed call — not its deletes, not documents an earlier
+    /// iteration of its own loop already added — survives to be picked up by
+    /// the next commit from anywhere else.
+    /// `a_failed_write_does_not_leave_its_staged_delete_for_a_later_commit`
+    /// proves it: watched red without the rollback (a message neither call
+    /// touched vanished from search after an unrelated commit), green with
+    /// it.
     async fn refresh(&self) {
         let began = self.index.reading_begins();
         match self.inner.scan_messages().await {
@@ -8043,6 +8149,127 @@ mod tests {
         assert!(
             mixed.iter().any(|h| matches!(h, Hit::Message { .. })),
             "{mixed:?}"
+        );
+    }
+
+    /// **A failed write mid-ingest must not leave its own staged delete for a
+    /// LATER, unrelated commit to apply.** A rewrite stages the old posting's
+    /// delete before writing the new one; if the write fails, that delete is
+    /// still sitting in the shared writer, uncommitted — and without a
+    /// rollback, the next successful ingest of something else entirely
+    /// commits it too, dropping a message neither call meant to touch out of
+    /// search.
+    #[tokio::test]
+    async fn a_failed_write_does_not_leave_its_staged_delete_for_a_later_commit() {
+        let index = index_of(vec![]);
+        index
+            .ingest_mail(&[message(
+                "1",
+                "pm",
+                "dev",
+                None,
+                "original body unique-needle-survivor",
+                MessageState::New,
+            )])
+            .expect("the first ingest lands");
+        assert!(
+            index
+                .search(&asking_for_mail("unique-needle-survivor"))
+                .expect("search ok")
+                .iter()
+                .any(|h| matches!(h, Hit::Message { message, .. } if message.id.as_str() == "1")),
+            "findable before anything goes wrong",
+        );
+
+        // Rewriting it stages the old posting's delete, then the write that
+        // was meant to replace it is made to fail.
+        index.fail_add_document_at(1);
+        let failed = index.ingest_mail(&[message(
+            "1",
+            "pm",
+            "dev",
+            None,
+            "rewritten body unique-needle-rewrite",
+            MessageState::New,
+        )]);
+        assert!(
+            failed.is_err(),
+            "the injected fault must surface: {failed:?}"
+        );
+
+        // An unrelated, entirely successful ingest — of a different message,
+        // alongside the board's own unchanged report of message 1's ORIGINAL
+        // content. `ingest_mail_changes` reads a full board state each call,
+        // so leaving message 1 out here would evict it legitimately, which
+        // is a different question from the one this case asks: whether the
+        // FAILED call's own staged delete survives a commit that never
+        // touched message 1 at all.
+        index
+            .ingest_mail(&[
+                message(
+                    "1",
+                    "pm",
+                    "dev",
+                    None,
+                    "original body unique-needle-survivor",
+                    MessageState::New,
+                ),
+                message(
+                    "2",
+                    "pm",
+                    "dev",
+                    None,
+                    "an unrelated message unique-needle-other",
+                    MessageState::New,
+                ),
+            ])
+            .expect("the unrelated ingest lands");
+
+        // The original message must still be findable: the failed call's own
+        // staged delete must not have been left for this unrelated commit to
+        // apply.
+        let hits = index
+            .search(&asking_for_mail("unique-needle-survivor"))
+            .expect("search ok");
+        assert!(
+            hits.iter()
+                .any(|h| matches!(h, Hit::Message { message, .. } if message.id.as_str() == "1")),
+            "the failed call's own staged delete must not survive it: {hits:?}",
+        );
+    }
+
+    /// **The paired proof that commit and reload failures surface, rather
+    /// than being reported as a success.** Each is a stated failure the
+    /// caller can see — `ingest_mail_changes` returns `Err`, never `Ok` with
+    /// silently mangled state.
+    #[tokio::test]
+    async fn a_commit_failure_and_a_reload_failure_each_surface_as_an_error() {
+        let index = index_of(vec![]);
+        index.fail_next_commit();
+        let commit_failed =
+            index.ingest_mail(&[message("1", "pm", "dev", None, "body", MessageState::New)]);
+        assert!(
+            commit_failed.is_err(),
+            "a commit failure must not read as success: {commit_failed:?}"
+        );
+
+        // The negative it rests on: with no fault armed, the same call lands.
+        index
+            .ingest_mail(&[message("1", "pm", "dev", None, "body", MessageState::New)])
+            .expect("an ordinary ingest still lands");
+
+        index.fail_next_reload();
+        let reload_failed = index.ingest_mail(&[message(
+            "2",
+            "pm",
+            "dev",
+            None,
+            "other body",
+            MessageState::New,
+        )]);
+        assert!(
+            reload_failed.is_err(),
+            "a reload failure must not read as success: {reload_failed:?}"
         );
     }
 
