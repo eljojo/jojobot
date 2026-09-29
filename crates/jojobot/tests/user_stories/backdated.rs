@@ -121,6 +121,33 @@ async fn a_run_working_through_a_past_week_writes_in_that_week() {
         .says(&format!("\"overdue_as_of\":\"{MARCH}\""))
         .never_says("rhythm:descale");
 
+    // ── retracting, and naming when the retraction itself was decided ───────
+    //
+    // The claim below turns out to have been about somebody else entirely.
+    // `retract`'s own `recorded_at` is the day the RETRACTION record was
+    // made — decided back in February, only now being caught up on while
+    // this run works through March.
+    let mistaken = march
+        .call(
+            "capture",
+            json!({
+                "subject": "person:milhouse", "content": "won the raffle at the fair",
+                "provenance": "testimony",
+            }),
+        )
+        .await
+        .field("address");
+    march
+        .call(
+            "retract",
+            json!({
+                "address": &mistaken, "reason": "was actually about somebody else",
+                "recorded_at": "2026-02-20",
+            }),
+        )
+        .await
+        .says("\"recorded_at\":\"2026-02-20\"");
+
     march.wrap("worked through the March week").await;
 
     // ── a run that says nothing is still answered by the clock ──────────────

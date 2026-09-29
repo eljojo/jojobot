@@ -187,6 +187,47 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
         "and the record itself still says it was cut: {cut}"
     );
 
+    // ── a message that turns out not to be real work ─────────────────────────
+    //
+    // A duplicate dispatch, posted by mistake. Nothing happened on it, so
+    // `notes` would misstate an outcome that never occurred — gamma
+    // quarantines it instead of retiring it, a decision rather than
+    // storage damage.
+    let stray = g
+        .call(
+            "post_message",
+            json!({
+                "to": "gamma",
+                "subject": "Build the second field",
+                "body": "Ignore this one, it went out twice by mistake.",
+            }),
+        )
+        .await
+        .field("id");
+    let quarantined = g
+        .call(
+            "mark_processed",
+            json!({
+                "message_id": &stray,
+                "quarantine": "posted twice by mistake, this copy is not real work",
+            }),
+        )
+        .await;
+    quarantined.says("\"state\":\"quarantined\"");
+    quarantined.says("\"quarantined_by\":\"gamma\"");
+    quarantined.says("posted twice by mistake, this copy is not real work");
+
+    // **The negative: naming one id quarantines only that one.** Reading it
+    // back is refused, naming the decision rather than damage — and the
+    // first dispatch, already processed, reads exactly as it did before.
+    g.refused("read_message", json!({"message_id": &stray}))
+        .await
+        .says("posted twice by mistake, this copy is not real work");
+    g.call("read_message", json!({"message_id": &dispatched}))
+        .await
+        .says("Build the second field")
+        .says("report back");
+
     g.wrap("did the work and reported").await;
 
     // The round trip completes across three sessions that never shared a

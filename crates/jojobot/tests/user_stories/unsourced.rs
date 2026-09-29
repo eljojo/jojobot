@@ -176,6 +176,28 @@ async fn an_unsourced_candidate_is_visibly_unsourced() {
     .await
     .says("worth a second look regardless");
 
+    // **The pointer was wrong** — on reflection this second opinion did not
+    // actually rest on the guess, it just happened to land the same day.
+    // `clear_derived_from` takes the lineage off rather than pointing it
+    // somewhere else guessed at.
+    s.call(
+        "update_fact",
+        json!({"address": &second_opinion, "clear_derived_from": true}),
+    )
+    .await;
+    s.shape(
+        "what was built on the unsourced guess",
+        json!({"built_on": &riverbend_guess}),
+    )
+    .await
+    .never_says("worth a second look regardless");
+    // **The negative: clearing the lineage did not touch the claim itself.**
+    // It is still on the record, exactly worded, simply not filed as
+    // resting on anything.
+    s.recall("place:riverbend")
+        .await
+        .says("worth a second look regardless");
+
     // No verb or argument named `checked` exists — only the claim-to-claim
     // capability above.
     s.has_no_verb("checked", &["update_fact", "capture"]).await;

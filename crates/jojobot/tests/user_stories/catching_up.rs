@@ -107,5 +107,29 @@ async fn a_sitting_checks_its_own_history_before_starting_something_new() {
         "③ itself, still open: {runs}",
     );
 
+    // ── the same read, capped to fewer than all three ────────────────────────
+    //
+    // Newest first, so a `limit` narrower than the total keeps ③ and ②
+    // and leaves ① out — and the answer says so rather than reading like a
+    // bot with only two runs to its name.
+    let capped = third.call("list_runs", json!({"limit": 2})).await.json();
+    assert_eq!(capped["count"], 2, "{capped}");
+    assert_eq!(capped["runs_total"], 3, "{capped}");
+    assert_eq!(capped["not_shown"]["count"], 1, "{capped}");
+    let capped_focuses: Vec<&str> = capped["runs"]
+        .as_array()
+        .expect("a list")
+        .iter()
+        .map(|r| r["working_on"].as_str().unwrap_or_default())
+        .collect();
+    assert!(
+        capped_focuses.contains(&"checking its own past runs before starting"),
+        "the newest run is not among the two kept: {capped}",
+    );
+    assert!(
+        !capped_focuses.contains(&"counting the donut inventory"),
+        "the oldest run is not the one a narrower limit should drop: {capped}",
+    );
+
     story.finish().await;
 }

@@ -85,6 +85,31 @@ async fn one_summary_stands_for_three_separate_notes() {
         whole.raw(),
     );
 
+    // ── calling it off: an ordinary record again ─────────────────────────────
+    //
+    // The synthesis was premature. `clear_stands_for` takes the mark off,
+    // leaving an ordinary record that stands for nothing — its own words
+    // untouched, and the sources it drew together untouched too.
+    s.call(
+        "update_fact",
+        json!({"address": &summary, "clear_stands_for": true}),
+    )
+    .await;
+    // **The elision it carried is gone with the mark.** An ordinary read
+    // now shows the sources directly, exactly as it would for three claims
+    // that were never gathered under anything.
+    let after = s.recall("person:gayle").await;
+    after
+        .says("the costume needs another fitting")
+        .says("too small in the shoulders")
+        .says("run long past the wrist")
+        .says("darker than the swatch");
+    assert!(
+        after.json()["objects"][0].get("stood_for").is_none(),
+        "nothing stands for anything now, so nothing should say something was left out: {}",
+        after.raw(),
+    );
+
     s.wrap("filed one summary standing for three separate notes")
         .await;
 

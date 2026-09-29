@@ -97,6 +97,40 @@ async fn a_counter_adds_its_writes_up_and_still_lists_them() {
     .await
     .says("\"holds\":\"reference:place\"");
 
+    // ── a key narrowed to a small, known, finite set ─────────────────────────
+    //
+    // `one_of` is for the three states a task moves through, never an
+    // open-ended list somebody has to maintain — reached for here on a
+    // chore's own stage.
+    s.call(
+        "declare_type",
+        json!({
+            "name": "chore",
+            "fields": [{
+                "key": "stage", "one_of": ["not_started", "in_progress", "done"],
+            }],
+        }),
+    )
+    .await
+    .says("\"one_of\":[\"not_started\",\"in_progress\",\"done\"]");
+
+    // **The negative: a set nothing can satisfy is refused at the door.** A
+    // value carrying a comma cannot be told apart from two values once the
+    // set is stored as one comma-separated line, so it is refused rather
+    // than silently split.
+    s.refused(
+        "declare_type",
+        json!({
+            "name": "chore",
+            "fields": [{
+                "key": "stage", "one_of": ["not_started", "half, done"],
+            }],
+        }),
+    )
+    .await
+    .says("comma")
+    .says("stage");
+
     // ── three sittings, one donut each ──────────────────────────────────────
     //
     // Nobody adds anything up here. Each record says what happened that day,
