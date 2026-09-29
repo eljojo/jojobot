@@ -97,6 +97,8 @@ mod statusbar;
 mod synthesis;
 #[path = "user_stories/talkingpast.rs"]
 mod talkingpast;
+#[path = "user_stories/thought_room.rs"]
+mod thought_room;
 /// One claim, two runs, two zones — and both answers are right.
 #[path = "user_stories/timezones.rs"]
 mod timezones;
