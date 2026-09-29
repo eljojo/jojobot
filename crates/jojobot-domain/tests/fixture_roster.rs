@@ -210,6 +210,7 @@ const ROSTER: &[&str] = &[
     "person:badge-collision-blocker",
     "person:badge-collision-holder",
     "person:badge-collision-retried",
+    "person:apu",
     "person:badge-collision-stuck",
     "person:badge-gamma",
     "person:barney-gumble",
@@ -283,6 +284,7 @@ const ROSTER: &[&str] = &[
     "person:nobody-such-handle",
     "person:otto",
     "person:patana",
+    "person:skinner",
     "person:someone-else",
     // Bob's Burgers.
     "person:teddy",
