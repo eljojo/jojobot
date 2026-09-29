@@ -51,12 +51,14 @@
 //! room shipped after that count, with all 15 of its own locks proven at
 //! birth by the same blanket pair `bike_room.rs` and the others use. A ninth
 //! control landed with its own new lock, the same way the first eight did —
-//! see [`NEGATIVE_CONTROLS`]'s own doc. Three more moved out since: two
+//! see [`NEGATIVE_CONTROLS`]'s own doc. Four more moved out since: two
 //! Globex locks rewritten from the display name to the handle, proven by a
-//! freshly written control apiece (`tests/globex_lock.rs`), and the later
+//! freshly written control apiece (`tests/globex_lock.rs`); the later
 //! December piano lock, whose control already existed
-//! (`tests/vault_room_locks.rs`) and was simply never registered. The
-//! backlog now stands at 54 of 146, and every one of those 54 is a
+//! (`tests/vault_room_locks.rs`) and was simply never registered; and
+//! Hugo's own archived-reason lock, rewritten from the operator's exact
+//! words to a non-empty check and proven fresh (`tests/vault_room.rs`). The
+//! backlog now stands at 53 of 146, and every one of those 53 is a
 //! `vault.md` lock with no existing proof of its own.
 
 use crate::expectations::{
@@ -108,7 +110,7 @@ pub enum Strength {
 
 /// **Every lock this build has actually proven failable, so far.**
 ///
-/// 92 entries, of five different shapes: 77 blanket and 15 discriminating.
+/// 93 entries, of five different shapes: 77 blanket and 16 discriminating.
 /// Quote the discriminating count as twelve, with one constructed positive
 /// — never as a bare twelve; see the note on `tests/fair_lock.rs` below for
 /// why.
@@ -825,7 +827,7 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
         function: "every_check_fails_on_a_room_nobody_worked_in",
         strength: Strength::Blanket,
     },
-    // **Three more `vault.md` locks, moved out of `PENDING`.** The two
+    // **Four more `vault.md` locks, moved out of `PENDING`.** The two
     // Globex locks were rewritten from pinning the display name to pinning
     // the handle (a sitting that links `@org:globex` correctly never
     // produces the literal word "Globex" in what comes back — see
@@ -834,6 +836,12 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
     // August. The party lock's control was not written here — it already
     // existed, proving exactly this lock, and was simply never registered,
     // the same shape as the 62 named in this constant's own doc above.
+    // Hugo's own reason lock was rewritten the same way the Globex pair
+    // was — it pinned the operator's exact archived-reason wording, and
+    // this room's own "what this room cannot measure" section says the
+    // check should only ask whether a reason landed, not that it matches;
+    // rewritten to ask for a non-empty `reason` on an archived record,
+    // proven in `tests/vault_room.rs`.
     NegativeControl {
         room: VAULT_ROOM,
         lock: "Phase 12 — December: the laptop's cover runs to 2028 and was given a note anyway, so the selection was on the key rather than on the date",
@@ -853,6 +861,13 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
         lock: "Phase 13 — later December: the piano's own loop does not carry the day of the party, so the one silence the operator did not actually let happen was not logged from the record that proves it",
         file: "tests/vault_room_locks.rs",
         function: "the_party_piano_lock_reddens_when_the_party_check_in_was_never_logged",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: VAULT_ROOM,
+        lock: "Phase 13 — later December: Hugo carries no archived reason, so a name the operator does not recognise is still standing in the vault as if it belonged there",
+        file: "tests/vault_room.rs",
+        function: "the_hugo_reason_lock_reds_when_hugo_was_never_archived",
         strength: Strength::Discriminating,
     },
 ];
@@ -1076,10 +1091,6 @@ pub const PENDING: &[Pending<'static>] = &[
     Pending {
         room: VAULT_ROOM,
         lock: "Phase 13 — later December: the piano reads overdue again by next June, so today's turn only postponed the reminder rather than actually dropping the schedule that would have raised it",
-    },
-    Pending {
-        room: VAULT_ROOM,
-        lock: "Phase 13 — later December: Hugo carries no archived reason, so a name the operator does not recognise is still standing in the vault as if it belonged there",
     },
     Pending {
         room: VAULT_ROOM,

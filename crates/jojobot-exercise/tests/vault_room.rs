@@ -117,6 +117,20 @@ fn the_ticket_deadline_lock() -> lock::Lock {
         .expect("the vault ships the ticket-deadline lock")
 }
 
+/// **December's Hugo-reason lock, read straight off the shipped document.**
+/// Matched by its own sentence for the same reason `the_counted_listing_lock`
+/// is.
+fn the_hugo_reason_lock() -> lock::Lock {
+    lock::locks_of(expectations::VAULT_ROOM)
+        .into_iter()
+        .find(|found| {
+            found
+                .name()
+                .contains("still standing in the vault as if it belonged there")
+        })
+        .expect("the vault ships Hugo's own archived-reason lock")
+}
+
 /// **A session for one sitting, in the day that sitting is in** — the same
 /// shape `year_room.rs`'s own `sitting` takes, copied rather than reinvented:
 /// each phase is a run of its own, on its own day, and a boot meeting a run
@@ -255,6 +269,50 @@ async fn the_count_lock_holds_once_exactly_hugo_is_archived() {
     assert!(
         outcome.held,
         "exactly one archival (Hugo) did not satisfy the count lock: {}",
+        outcome.saying,
+    );
+}
+
+/// **The negative Hugo's own reason lock rests on: nobody archived him at
+/// all, so the lock must red.**
+///
+/// Furniture, untouched: no `archived` object exists on the record at all,
+/// so neither `carries "reason":"` nor the presence of `person:hugo` in an
+/// archived answer can be satisfied.
+#[tokio::test]
+async fn the_hugo_reason_lock_reds_when_hugo_was_never_archived() {
+    let (_room, surface, _sid) = furnished().await;
+    let boundaries: Vec<Boundary> = Vec::new();
+    let seen = Observed {
+        room: &surface,
+        boundaries: &boundaries,
+    };
+    let outcome = the_hugo_reason_lock().check(&seen).await;
+    assert!(
+        !outcome.held,
+        "Hugo was never archived, and his own reason lock held anyway: {}",
+        outcome.saying,
+    );
+}
+
+/// **The positive: archived with a reason in the operator's own words, and
+/// the lock holds.** The lock no longer pins those words — see this room's
+/// own commit — so this also stands as the receipt that a real answer,
+/// worded exactly as the operator said it, still satisfies the rewritten
+/// check.
+#[tokio::test]
+async fn the_hugo_reason_lock_holds_once_archived_with_a_reason() {
+    let (_room, surface, sid) = furnished().await;
+    archive(&surface, &sid, "person:hugo", "not real to me").await;
+    let boundaries: Vec<Boundary> = Vec::new();
+    let seen = Observed {
+        room: &surface,
+        boundaries: &boundaries,
+    };
+    let outcome = the_hugo_reason_lock().check(&seen).await;
+    assert!(
+        outcome.held,
+        "Hugo was archived with a reason, and his own reason lock still failed: {}",
         outcome.saying,
     );
 }
