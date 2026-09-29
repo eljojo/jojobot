@@ -712,20 +712,16 @@ impl FullTextIndex {
             for id in evict.iter().chain(rewrite.iter().map(|m| &m.id.0)) {
                 writer.delete_term(Term::from_field_text(self.fields.message_id, id));
             }
-            // **No staged operation outlives a failed ingest.** A delete
-            // staged above, or a document written by an earlier iteration of
-            // this same loop, is uncommitted tantivy state sitting in the
-            // shared writer — the next commit from ANYWHERE, mail or memory,
-            // would otherwise apply it alongside whatever that unrelated
-            // call actually meant to write. Rolling back on the way out
-            // undoes exactly what this call staged and nothing this call did
-            // not: `IndexWriter::rollback` discards everything since the
-            // last commit, and nothing here committed yet.
+            // **No staged operation outlives a failed ingest** — see
+            // [`Self::rollback_on_err`]. A delete staged above, or a document
+            // written by an earlier iteration of this same loop, is
+            // uncommitted tantivy state sitting in the shared writer, and
+            // the next commit from ANYWHERE, mail or memory, would otherwise
+            // apply it alongside whatever that unrelated call actually
+            // meant to write.
             for message in &rewrite {
-                if let Err(e) = self.write_message(&writer, message) {
-                    let _ = writer.rollback();
-                    return Err(e);
-                }
+                let wrote = self.write_message(&writer, message);
+                Self::rollback_on_err(&mut writer, wrote)?;
             }
             // **Set before the commit, deliberately.** Whichever side of the
             // commit this lands on, a concurrent searcher can see one and not
@@ -796,7 +792,8 @@ impl FullTextIndex {
             self.fields.message_id,
             message.id.as_str(),
         ));
-        self.write_message(&writer, message)?;
+        let wrote = self.write_message(&writer, message);
+        Self::rollback_on_err(&mut writer, wrote)?;
         // Before the commit, for the reason `ingest_mail` sets its flag early.
         self.mail_touched
             .store(true, std::sync::atomic::Ordering::Release);
@@ -815,18 +812,44 @@ impl FullTextIndex {
     /// searchable**, not only the body: the box and the sender are how a reader
     /// asks "what did the pm box say about the kiln" in one query, and a subject
     /// is a title precisely so it can be found by.
-    fn write_message(&self, writer: &IndexWriter, message: &Message) -> Result<(), MemoryError> {
+    /// **The one fault check every write in the index shares** —
+    /// `write_message`, `write_doc` and `write_session_entry` all ask this
+    /// before their own `add_document`, so the Nth call counted is the Nth
+    /// document the index tries to add, whichever of the three is making
+    /// it. Always inert outside a test that has armed it.
+    fn should_fail_this_write(&self) -> bool {
         let called = self
             .write_fault
             .add_document_calls
             .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
-        if *self
+        *self
             .write_fault
             .fail_add_document_at
             .read()
             .expect("write fault poisoned")
             == Some(called)
-        {
+    }
+
+    /// **The one place every ingest rolls back.** If `result` is an error,
+    /// the writer is rolled back to its last commit before the error is
+    /// returned — so nothing this call staged before the failing write (a
+    /// `delete_term`, a document an earlier iteration of its own loop
+    /// already added) survives it to be picked up by a later, unrelated
+    /// commit from anywhere else. `IndexWriter::rollback` replaces the
+    /// writer in place (`*self = new_index_writer`), so the same instance
+    /// stays usable for the caller's next real write.
+    fn rollback_on_err<T>(
+        writer: &mut IndexWriter,
+        result: Result<T, MemoryError>,
+    ) -> Result<T, MemoryError> {
+        if result.is_err() {
+            let _ = writer.rollback();
+        }
+        result
+    }
+
+    fn write_message(&self, writer: &IndexWriter, message: &Message) -> Result<(), MemoryError> {
+        if self.should_fail_this_write() {
             return Err(store_err("test fault: add_document"));
         }
         let f = &self.fields;
@@ -859,6 +882,9 @@ impl FullTextIndex {
         session: &jojobot_domain::session::Session,
         entry: &jojobot_domain::session::JournalEntry,
     ) -> Result<(), MemoryError> {
+        if self.should_fail_this_write() {
+            return Err(store_err("test fault: add_document"));
+        }
         let f = &self.fields;
         writer
             .add_document(doc!(
@@ -1039,7 +1065,8 @@ impl FullTextIndex {
             for change in changes {
                 match change {
                     EntryChange::Add(entry) => {
-                        self.write_session_entry(&writer, session, entry)?;
+                        let wrote = self.write_session_entry(&writer, session, entry);
+                        Self::rollback_on_err(&mut writer, wrote)?;
                     }
                     EntryChange::Replace(entry) => {
                         writer.delete_term(Term::from_field_text(
@@ -1048,7 +1075,8 @@ impl FullTextIndex {
                         ));
                         self.session_entries_deleted
                             .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
-                        self.write_session_entry(&writer, session, entry)?;
+                        let wrote = self.write_session_entry(&writer, session, entry);
+                        Self::rollback_on_err(&mut writer, wrote)?;
                     }
                     EntryChange::Remove(id) => {
                         writer.delete_term(Term::from_field_text(self.fields.entry_id, id));
@@ -1150,7 +1178,8 @@ impl FullTextIndex {
                     .as_ref()
                     .and_then(|e| history.get(&e.id))
                     .unwrap_or(&none);
-                self.write_doc(&writer, doc, terms)?;
+                let wrote = self.write_doc(&writer, doc, terms);
+                Self::rollback_on_err(&mut writer, wrote)?;
             }
             // Before the commit, for the reason `ingest_mail` sets its flag early.
             self.memory_loaded
@@ -1205,7 +1234,8 @@ impl FullTextIndex {
     pub fn ingest_doc(&self, doc: &DocScan, history: &FactHistoryTerms) -> Result<(), MemoryError> {
         let mut writer = self.writer.write().expect("index writer poisoned");
         writer.delete_term(Term::from_field_text(self.fields.doc_id, &doc.doc_id));
-        self.write_doc(&writer, doc, history)?;
+        let wrote = self.write_doc(&writer, doc, history);
+        Self::rollback_on_err(&mut writer, wrote)?;
         // Before the commit, for the reason `ingest_mail` sets its flag early.
         self.memory_touched
             .store(true, std::sync::atomic::Ordering::Release);
@@ -1314,6 +1344,9 @@ impl FullTextIndex {
             for key in scan.fields.keys() {
                 document.add_text(f.meta_key, key.trim());
             }
+            if self.should_fail_this_write() {
+                return Err(store_err("test fault: add_document"));
+            }
             writer.add_document(document).map_err(store_err)?;
         }
 
@@ -1394,6 +1427,9 @@ impl FullTextIndex {
             for key in fact.fields.keys() {
                 document.add_text(f.meta_key, key.trim());
             }
+            if self.should_fail_this_write() {
+                return Err(store_err("test fault: add_document"));
+            }
             writer.add_document(document).map_err(store_err)?;
         }
 
@@ -1411,6 +1447,9 @@ impl FullTextIndex {
             );
             if let Some(kind) = owner_kind {
                 document.add_text(f.kind, kind.as_token());
+            }
+            if self.should_fail_this_write() {
+                return Err(store_err("test fault: add_document"));
             }
             writer.add_document(document).map_err(store_err)?;
         }
@@ -8270,6 +8309,315 @@ mod tests {
         assert!(
             reload_failed.is_err(),
             "a reload failure must not read as success: {reload_failed:?}"
+        );
+    }
+
+    /// **The same proof, on `ingest_message`'s single-item path.** No board
+    /// diff to get wrong here — the fault sits in the same shared writer, so
+    /// the failed call's staged delete is exactly as reachable by a later,
+    /// unrelated commit.
+    #[tokio::test]
+    async fn a_failed_single_message_write_does_not_leave_its_staged_delete_for_a_later_commit() {
+        let index = index_of(vec![]);
+        index
+            .ingest_message(&message(
+                "1",
+                "pm",
+                "dev",
+                None,
+                "original body unique-needle-survivor",
+                MessageState::New,
+            ))
+            .expect("the first write lands");
+        assert!(
+            index
+                .search(&asking_for_mail("unique-needle-survivor"))
+                .expect("search ok")
+                .iter()
+                .any(|h| matches!(h, Hit::Message { message, .. } if message.id.as_str() == "1")),
+            "findable before anything goes wrong",
+        );
+
+        index.fail_add_document_at(1);
+        let failed = index.ingest_message(&message(
+            "1",
+            "pm",
+            "dev",
+            None,
+            "rewritten body unique-needle-rewrite",
+            MessageState::New,
+        ));
+        assert!(
+            failed.is_err(),
+            "the injected fault must surface: {failed:?}"
+        );
+
+        index
+            .ingest_message(&message(
+                "2",
+                "pm",
+                "dev",
+                None,
+                "an unrelated message unique-needle-other",
+                MessageState::New,
+            ))
+            .expect("the unrelated write lands");
+
+        let hits = index
+            .search(&asking_for_mail("unique-needle-survivor"))
+            .expect("search ok");
+        assert!(
+            hits.iter()
+                .any(|h| matches!(h, Hit::Message { message, .. } if message.id.as_str() == "1")),
+            "the failed call's own staged delete must not survive it: {hits:?}",
+        );
+    }
+
+    /// **The same proof, on the sessions half.** Amending a beat stages the
+    /// old posting's delete before writing the new one, exactly as a mail
+    /// rewrite does; a failed amend must not leave that delete for a later,
+    /// unrelated commit to apply.
+    #[tokio::test]
+    async fn a_failed_session_entry_write_does_not_leave_its_staged_delete_for_a_later_commit() {
+        let index = FullTextIndex::open().expect("index opens");
+        index
+            .ingest_sessions(&[run_of(
+                "s-gamma",
+                "bot:gamma",
+                &[
+                    ("e1", "the damper is hand-cut"),
+                    ("e2", "original beat unique-needle-survivor"),
+                    ("e3", "the glaze is mixed"),
+                ],
+            )])
+            .expect("the first ingest lands");
+        assert!(
+            finds(&index, "bot:gamma", "unique-needle-survivor"),
+            "findable before anything goes wrong",
+        );
+
+        // Amending e2 stages its old posting's delete, then the write meant
+        // to replace it is made to fail.
+        index.fail_add_document_at(3);
+        let failed = index.ingest_sessions(&[run_of(
+            "s-gamma",
+            "bot:gamma",
+            &[
+                ("e1", "the damper is hand-cut"),
+                ("e2", "rewritten beat unique-needle-rewrite"),
+                ("e3", "the glaze is mixed"),
+            ],
+        )]);
+        assert!(
+            failed.is_err(),
+            "the injected fault must surface: {failed:?}"
+        );
+
+        // An unrelated, entirely successful ingest — a different run
+        // entirely, alongside this run's own unchanged report of its
+        // ORIGINAL entries. `ingest_sessions_changes` reads a full board
+        // state each call, so leaving s-gamma out here would evict it
+        // legitimately, a different question from the one this case asks.
+        index
+            .ingest_sessions(&[
+                run_of(
+                    "s-gamma",
+                    "bot:gamma",
+                    &[
+                        ("e1", "the damper is hand-cut"),
+                        ("e2", "original beat unique-needle-survivor"),
+                        ("e3", "the glaze is mixed"),
+                    ],
+                ),
+                run_of(
+                    "s-other",
+                    "bot:otto",
+                    &[("f1", "an unrelated beat unique-needle-other")],
+                ),
+            ])
+            .expect("the unrelated ingest lands");
+
+        assert!(
+            finds(&index, "bot:gamma", "unique-needle-survivor"),
+            "the failed call's own staged delete must not survive it",
+        );
+    }
+
+    /// **The same proof, on the memory half's batch path.** `ingest_changes`
+    /// stages a document's delete before rewriting it; a failed rewrite must
+    /// not leave that delete for a later, unrelated commit to apply.
+    #[tokio::test]
+    async fn a_failed_doc_write_does_not_leave_its_staged_delete_for_a_later_commit() {
+        let index = FullTextIndex::open().expect("index opens");
+        index
+            .ingest_all(
+                &[scan(
+                    "doc-1",
+                    Some(entity("person:alpha", "Alpha")),
+                    "",
+                    vec![fact(
+                        "person:alpha",
+                        "f1",
+                        "keeps a ferret unique-needle-survivor",
+                        date(2026, 1, 1),
+                    )],
+                )],
+                index.reading_begins(),
+                &Default::default(),
+            )
+            .expect("the first ingest lands");
+        assert_eq!(
+            index
+                .search(&SearchQuery::text("unique-needle-survivor"))
+                .expect("search ok")
+                .len(),
+            1,
+            "findable before anything goes wrong",
+        );
+
+        // Rewriting it stages the old posting's delete, then the write that
+        // was meant to replace it is made to fail.
+        index.fail_add_document_at(2);
+        let failed = index.ingest_all(
+            &[scan(
+                "doc-1",
+                Some(entity("person:alpha", "Alpha")),
+                "",
+                vec![fact(
+                    "person:alpha",
+                    "f1",
+                    "keeps a tortoise unique-needle-rewrite",
+                    date(2026, 1, 1),
+                )],
+            )],
+            index.reading_begins(),
+            &Default::default(),
+        );
+        assert!(
+            failed.is_err(),
+            "the injected fault must surface: {failed:?}"
+        );
+
+        // An unrelated, entirely successful ingest — a different document
+        // entirely, alongside doc-1's own unchanged, pre-failure state.
+        index
+            .ingest_all(
+                &[
+                    scan(
+                        "doc-1",
+                        Some(entity("person:alpha", "Alpha")),
+                        "",
+                        vec![fact(
+                            "person:alpha",
+                            "f1",
+                            "keeps a ferret unique-needle-survivor",
+                            date(2026, 1, 1),
+                        )],
+                    ),
+                    scan(
+                        "doc-2",
+                        Some(entity("person:beta", "Beta")),
+                        "",
+                        vec![fact(
+                            "person:beta",
+                            "f2",
+                            "an unrelated fact unique-needle-other",
+                            date(2026, 1, 1),
+                        )],
+                    ),
+                ],
+                index.reading_begins(),
+                &Default::default(),
+            )
+            .expect("the unrelated ingest lands");
+
+        let hits = index
+            .search(&SearchQuery::text("unique-needle-survivor"))
+            .expect("search ok");
+        assert!(
+            hits.iter()
+                .any(|h| matches!(h, Hit::Fact { fact, .. } if fact.id.as_str() == "f1")),
+            "the failed call's own staged delete must not survive it: {hits:?}",
+        );
+    }
+
+    /// **The same proof, on `ingest_doc`'s single-item path.** No board diff
+    /// to get wrong here — the fault sits in the same shared writer, so the
+    /// failed call's staged delete is exactly as reachable by a later,
+    /// unrelated commit.
+    #[tokio::test]
+    async fn a_failed_single_doc_write_does_not_leave_its_staged_delete_for_a_later_commit() {
+        let index = FullTextIndex::open().expect("index opens");
+        let none = FactHistoryTerms::new();
+        index
+            .ingest_doc(
+                &scan(
+                    "doc-1",
+                    Some(entity("person:alpha", "Alpha")),
+                    "",
+                    vec![fact(
+                        "person:alpha",
+                        "f1",
+                        "keeps a ferret unique-needle-survivor",
+                        date(2026, 1, 1),
+                    )],
+                ),
+                &none,
+            )
+            .expect("the first write lands");
+        assert_eq!(
+            index
+                .search(&SearchQuery::text("unique-needle-survivor"))
+                .expect("search ok")
+                .len(),
+            1,
+            "findable before anything goes wrong",
+        );
+
+        index.fail_add_document_at(2);
+        let failed = index.ingest_doc(
+            &scan(
+                "doc-1",
+                Some(entity("person:alpha", "Alpha")),
+                "",
+                vec![fact(
+                    "person:alpha",
+                    "f1",
+                    "keeps a tortoise unique-needle-rewrite",
+                    date(2026, 1, 1),
+                )],
+            ),
+            &none,
+        );
+        assert!(
+            failed.is_err(),
+            "the injected fault must surface: {failed:?}"
+        );
+
+        index
+            .ingest_doc(
+                &scan(
+                    "doc-2",
+                    Some(entity("person:beta", "Beta")),
+                    "",
+                    vec![fact(
+                        "person:beta",
+                        "f2",
+                        "an unrelated fact unique-needle-other",
+                        date(2026, 1, 1),
+                    )],
+                ),
+                &none,
+            )
+            .expect("the unrelated write lands");
+
+        let hits = index
+            .search(&SearchQuery::text("unique-needle-survivor"))
+            .expect("search ok");
+        assert!(
+            hits.iter()
+                .any(|h| matches!(h, Hit::Fact { fact, .. } if fact.id.as_str() == "f1")),
+            "the failed call's own staged delete must not survive it: {hits:?}",
         );
     }
 
