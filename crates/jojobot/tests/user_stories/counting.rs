@@ -231,6 +231,65 @@ async fn a_counter_adds_its_writes_up_and_still_lists_them() {
     three_at_once.never_says("person:homer");
     three_at_once.never_says("person:bart");
 
+    // ── the negative `history_most` rests on: Bart's history fits already ────
+    //
+    // Bart has one donut write. Asking for room for five costs nothing — the
+    // history is not cut, and the answer says so by carrying no `older` line
+    // at all.
+    let bart_history = s
+        .shape(
+            "bart's whole donut history, room to spare",
+            json!({ "subject": "person:bart", "history": "donuts", "history_most": 5 }),
+        )
+        .await;
+    bart_history.number("/objects/0/history/count", 1);
+    bart_history.number("/objects/0/history/shown", 1);
+    bart_history.never_says("older writes are not here");
+
+    // ── and the positive: Homer's three writes, room for two ─────────────────
+    //
+    // The window keeps the newest end and says what it left out — a caller
+    // reading a capped history is not left to wonder whether one exists.
+    let homer_capped = s
+        .shape(
+            "only the two most recent donut occasions, not the whole history",
+            json!({ "subject": "person:homer", "history": "donuts", "history_most": 2 }),
+        )
+        .await;
+    homer_capped.number("/objects/0/history/count", 3);
+    homer_capped.number("/objects/0/history/shown", 2);
+    homer_capped.says("older writes are not here");
+
+    // ── which moods are already on record, before writing a fourth ───────────
+    //
+    // The same idea `history_most` serves for occasions: a caller picking a
+    // spelling reads what is already in use rather than guessing a fresh one.
+    // Three people, three moods, none capped — the answer carries all of them
+    // and says nothing was left out.
+    let moods = s
+        .shape(
+            "which moods are already on record",
+            json!({ "kind": "person", "values": "mood" }),
+        )
+        .await;
+    moods.number("/values/distinct", 3);
+    moods.number("/values/left_out", 0);
+    moods.says("\"value\":\"content\"");
+    moods.says("\"value\":\"queasy\"");
+    moods.says("\"value\":\"smug\"");
+
+    // ── and the positive: only the two most-used moods, not all three ────────
+    let moods_capped = s
+        .shape(
+            "only the two most common moods, not all three",
+            json!({ "kind": "person", "values": "mood", "values_most": 2 }),
+        )
+        .await;
+    moods_capped.number("/values/distinct", 3);
+    moods_capped.number("/values/left_out", 1);
+    moods_capped.says("raise values_most to reach them");
+    moods_capped.never_says("\"value\":\"smug\"");
+
     s.wrap("counted the donuts").await;
     story.finish().await;
 }
