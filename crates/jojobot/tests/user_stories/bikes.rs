@@ -56,6 +56,136 @@ async fn keeping_track_of_bikes() {
         .says("\"happened_at\":null")
         .says("had it serviced over the summer");
 
+    // ── a stretch of days, not one ──────────────────────────────────────────
+    //
+    // `happened_through` is the far end, sent alongside `happened_at` at
+    // write time — a trip rather than a single day.
+    let trip = s
+        .call(
+            "capture",
+            json!({
+                "subject": "thing:gravel-bike",
+                "content": "rode down the coast for a long weekend",
+                "provenance": "testimony",
+                "happened_at": "2024-05-24",
+                "happened_through": "2024-05-26",
+            }),
+        )
+        .await
+        .field("address");
+    let read = s.recall("thing:gravel-bike").await;
+    read.claim(&trip)
+        .says("\"happened_at\":\"2024-05-24\"")
+        .says("\"happened_through\":\"2024-05-26\"");
+    // **The negative**: a single day carries no far end at all.
+    read.claim(&bought).says("\"happened_through\":null");
+
+    // ── learning a day late, and walking an approximation back ─────────────
+    //
+    // The receipt for the summer service turns up. `update_fact.happened_at`
+    // is the same field capture carries, learned late rather than at write
+    // time.
+    s.call(
+        "update_fact",
+        json!({"address": serviced, "happened_at": "2024-07-03"}),
+    )
+    .await;
+    s.recall("thing:gravel-bike")
+        .await
+        .claim(&serviced)
+        .says("\"happened_at\":\"2024-07-03\"");
+
+    // The receipt turns out to be for a different bike entirely.
+    // `clear_happened_at` takes the guess off rather than replacing it with
+    // another one.
+    s.call(
+        "update_fact",
+        json!({"address": serviced, "clear_happened_at": true}),
+    )
+    .await;
+    s.recall("thing:gravel-bike")
+        .await
+        .claim(&serviced)
+        .says("\"happened_at\":null");
+
+    // ── the far end, learned late and then un-learned ───────────────────────
+    //
+    // The coast trip above ran a day longer than first said.
+    // `update_fact.happened_through` is the same correction, on the far end.
+    s.call(
+        "update_fact",
+        json!({"address": trip, "happened_through": "2024-05-27"}),
+    )
+    .await;
+    s.recall("thing:gravel-bike")
+        .await
+        .claim(&trip)
+        .says("\"happened_through\":\"2024-05-27\"");
+
+    // The extra day turns out to belong to a different trip. `clear_
+    // happened_through` leaves a single day again, rather than another
+    // guessed far end.
+    s.call(
+        "update_fact",
+        json!({"address": trip, "clear_happened_through": true}),
+    )
+    .await;
+    s.recall("thing:gravel-bike")
+        .await
+        .claim(&trip)
+        .says("\"happened_through\":null");
+
+    // ── when the claim was made, corrected after the fact ────────────────────
+    //
+    // The warranty sentence below was actually worked out from the receipt
+    // months before it was ever typed in here. `update_fact.recorded_at`
+    // rewrites the day the CLAIM was made — a different question from either
+    // `happened_at` field above, which is about the bike, not the record.
+    let warranty = s
+        .fact(
+            "thing:gravel-bike",
+            "frame warranty runs five years from purchase",
+        )
+        .await;
+    s.call(
+        "update_fact",
+        json!({"address": warranty, "recorded_at": "2024-04-12"}),
+    )
+    .await;
+    s.recall("thing:gravel-bike")
+        .await
+        .claim(&warranty)
+        .says("\"recorded_at\":\"2024-04-12\"");
+
+    // ── a reading that stops being trusted, and a mind changed about that ────
+    //
+    // The warranty terms could change before the cover runs out, so the claim
+    // above is marked good only until then. Past the day, nothing sweeps and
+    // nothing reminds — a later read just stops being told it can be trusted.
+    s.call(
+        "update_fact",
+        json!({"address": warranty, "stale_after": "2029-04-11"}),
+    )
+    .await;
+    s.recall("thing:gravel-bike")
+        .await
+        .claim(&warranty)
+        .says("\"stale_after\":\"2029-04-11\"");
+
+    // The shop confirms the terms do not change. `clear_stale_after` takes
+    // the expiry off, leaving a claim that makes no promise about how long
+    // it stays good — which is a different thing from promising it always
+    // will.
+    s.call(
+        "update_fact",
+        json!({"address": warranty, "clear_stale_after": true}),
+    )
+    .await;
+    s.recall("thing:gravel-bike")
+        .await
+        .claim(&warranty)
+        .never_says("stale_after");
+
     // An occurrence can also go under a key of its own on a typed record, where
     // its meaning is the key name; the service in session 2 goes in that way.
     // Both routes are open and neither is forced.

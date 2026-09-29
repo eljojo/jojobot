@@ -135,18 +135,20 @@ async fn a_full_room_borrows_once_and_a_drop_frees_a_slot() {
     // of two — not full — so naming a drop here costs nothing. The couch
     // stays live and the new thought simply joins it.
     s2.add("thing:the-radiator", "The Radiator").await;
-    s2.call(
-        "capture",
-        json!({
-            "subject": "bot:milhouse",
-            "content": "the radiator is banging again",
-            "shape": "connection",
-            "object": "thing:the-radiator",
-            "drop": &couch,
-            "drop_because": "not actually why I'm writing this one",
-        }),
-    )
-    .await;
+    let radiator = s2
+        .call(
+            "capture",
+            json!({
+                "subject": "bot:milhouse",
+                "content": "the radiator is banging again",
+                "shape": "connection",
+                "object": "thing:the-radiator",
+                "drop": &couch,
+                "drop_because": "not actually why I'm writing this one",
+            }),
+        )
+        .await
+        .field("address");
     let not_full = s2.recall("bot:milhouse").await;
     not_full
         .says("the couch needs a leg fixed")
@@ -156,6 +158,36 @@ async fn a_full_room_borrows_once_and_a_drop_frees_a_slot() {
         "the room was not full, so naming a drop must not have archived anything: {}",
         not_full.raw(),
     );
+
+    // ── a thought still matters, and nothing about it needs to change ────────
+    //
+    // `keep` is the designed way to say a live thought still earns its slot,
+    // without writing a change that is not there. It is the one call this
+    // verb refuses when nothing else is named — everywhere else, naming no
+    // change at all is refused outright.
+    s2.call("update_fact", json!({"address": &radiator, "keep": true}))
+        .await;
+    s2.recall("bot:milhouse")
+        .await
+        .claim(&radiator)
+        .says("the radiator is banging again");
+
+    // **The negative**: `keep` names no change on its own, so pairing it
+    // with one that actually changes the claim is refused rather than
+    // silently taking the edit and ignoring the flag.
+    s2.refused(
+        "update_fact",
+        json!({
+            "address": &radiator, "keep": true,
+            "content": "the radiator is fine now, actually",
+        }),
+    )
+    .await;
+    s2.recall("bot:milhouse")
+        .await
+        .claim(&radiator)
+        .says("the radiator is banging again")
+        .never_says("the radiator is fine now");
 
     // Now the room genuinely holds two of two: full. Dropping the couch
     // frees the slot the third thought takes.
