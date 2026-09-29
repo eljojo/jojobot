@@ -51,9 +51,13 @@
 //! room shipped after that count, with all 15 of its own locks proven at
 //! birth by the same blanket pair `bike_room.rs` and the others use. A ninth
 //! control landed with its own new lock, the same way the first eight did —
-//! see [`NEGATIVE_CONTROLS`]'s own doc. The backlog now stands at 57 of 146,
-//! and every one of those 57 is a `vault.md` lock with no existing proof of
-//! its own.
+//! see [`NEGATIVE_CONTROLS`]'s own doc. Three more moved out since: two
+//! Globex locks rewritten from the display name to the handle, proven by a
+//! freshly written control apiece (`tests/globex_lock.rs`), and the later
+//! December piano lock, whose control already existed
+//! (`tests/vault_room_locks.rs`) and was simply never registered. The
+//! backlog now stands at 54 of 146, and every one of those 54 is a
+//! `vault.md` lock with no existing proof of its own.
 
 use crate::expectations::{
     BIKE_ROOM, DECISIONS_ROOM, HANDOVER_ROOM, LOOP_ROOM, VAULT_ROOM, YEAR_ROOM,
@@ -104,7 +108,7 @@ pub enum Strength {
 
 /// **Every lock this build has actually proven failable, so far.**
 ///
-/// 89 entries, of five different shapes: 77 blanket and 12 discriminating.
+/// 92 entries, of five different shapes: 77 blanket and 15 discriminating.
 /// Quote the discriminating count as twelve, with one constructed positive
 /// — never as a bare twelve; see the note on `tests/fair_lock.rs` below for
 /// why.
@@ -821,6 +825,36 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
         function: "every_check_fails_on_a_room_nobody_worked_in",
         strength: Strength::Blanket,
     },
+    // **Three more `vault.md` locks, moved out of `PENDING`.** The two
+    // Globex locks were rewritten from pinning the display name to pinning
+    // the handle (a sitting that links `@org:globex` correctly never
+    // produces the literal word "Globex" in what comes back — see
+    // `tests/globex_lock.rs`'s own doc); the fix and the control are one
+    // move, the same shape `tests/piano_lock.rs` already used for April and
+    // August. The party lock's control was not written here — it already
+    // existed, proving exactly this lock, and was simply never registered,
+    // the same shape as the 62 named in this constant's own doc above.
+    NegativeControl {
+        room: VAULT_ROOM,
+        lock: "Phase 12 — December: the laptop's cover runs to 2028 and was given a note anyway, so the selection was on the key rather than on the date",
+        file: "tests/globex_lock.rs",
+        function: "the_laptop_lock_reds_when_the_source_is_never_linked",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: VAULT_ROOM,
+        lock: "Phase 12 — December: the phone's cover runs to 2028 and was given a note anyway, so the selection was on the key rather than on the date",
+        file: "tests/globex_lock.rs",
+        function: "the_phone_lock_reds_when_the_source_is_never_linked",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: VAULT_ROOM,
+        lock: "Phase 13 — later December: the piano's own loop does not carry the day of the party, so the one silence the operator did not actually let happen was not logged from the record that proves it",
+        file: "tests/vault_room_locks.rs",
+        function: "the_party_piano_lock_reddens_when_the_party_check_in_was_never_logged",
+        strength: Strength::Discriminating,
+    },
 ];
 
 /// **One lock shipped with no negative control yet**, named rather than left
@@ -1013,23 +1047,11 @@ pub const PENDING: &[Pending<'static>] = &[
     },
     Pending {
         room: VAULT_ROOM,
-        lock: "Phase 12 — December: the laptop's cover runs to 2028 and was given a note anyway, so the selection was on the key rather than on the date",
-    },
-    Pending {
-        room: VAULT_ROOM,
-        lock: "Phase 12 — December: the phone's cover runs to 2028 and was given a note anyway, so the selection was on the key rather than on the date",
-    },
-    Pending {
-        room: VAULT_ROOM,
         lock: "Phase 12 — December: the key the operator dates windows by cannot be compared as a date, so the question \"what runs out by the end of March\" is unaskable and was answered, if at all, by reading every thing there is",
     },
     Pending {
         room: VAULT_ROOM,
         lock: "Phase 12 — December: asking what is overdue across every runs_out thing, naming no kind, either misses the one window that has already passed or fails to say how many of the rest it correctly left out",
-    },
-    Pending {
-        room: VAULT_ROOM,
-        lock: "Phase 13 — later December: the piano's own loop does not carry the day of the party, so the one silence the operator did not actually let happen was not logged from the record that proves it",
     },
     Pending {
         room: VAULT_ROOM,

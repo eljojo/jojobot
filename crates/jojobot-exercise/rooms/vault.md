@@ -809,14 +809,14 @@ say     December: the desk's return period closed in March and was flagged anywa
 # that do not need anything.
 recall {"subject": "machine:theta", "facts": true}
 carries "runs_out":"2028-01-10"
-carries Globex
+carries org:globex
 carries "status":"active"
 lacks   "recorded_at":"2026-12-06"
 say     December: the laptop's cover runs to 2028 and was given a note anyway, so the selection was on the key rather than on the date
 
 recall {"fields": [{"key": "runs_out", "value": "2028-07-10"}], "facts": true}
 carries "runs_out":"2028-07-10"
-carries Globex again
+carries org:globex
 carries "status":"active"
 lacks   "recorded_at":"2026-12-06"
 say     December: the phone's cover runs to 2028 and was given a note anyway, so the selection was on the key rather than on the date
@@ -899,7 +899,7 @@ May and August; the floor went considering, doing, done.
 # nothing that was checked.
 recall {"subject": "rhythm:sit-at-the-piano", "facts": true}
 carries "2026-12-05"
-carries played for about an hour
+carries Tina
 carries "status":"active"
 say     later December: the piano's own loop does not carry the day of the party, so the one silence the operator did not actually let happen was not logged from the record that proves it
 

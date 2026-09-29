@@ -401,7 +401,8 @@ async fn january(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "machine:theta", "content": "bought 2026-01-10 from Globex, two years of cover from that day",
-               "provenance": "testimony", "fields": {"runs_out": "2028-01-10"}}),
+               "provenance": "testimony", "shape": "about", "object": "org:globex",
+               "fields": {"runs_out": "2028-01-10"}}),
     )
     .await;
     did(
@@ -668,7 +669,8 @@ async fn july(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "thing:mobile-phone", "content": "new phone on the 10th, from Globex again, two years of cover",
-               "provenance": "testimony", "fields": {"runs_out": "2028-07-10"}}),
+               "provenance": "testimony", "shape": "about", "object": "org:globex",
+               "fields": {"runs_out": "2028-07-10"}}),
     )
     .await;
     did(
