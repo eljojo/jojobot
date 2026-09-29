@@ -6568,6 +6568,121 @@ pub async fn a_rename_and_a_recreated_handle_does_not_hijack_a_parent<M: Memory>
     );
 }
 
+/// **A same-handle rename reparents when the parent actually differs.** The
+/// handle is not moving, but that is not "nothing changing" once the parent
+/// does — `to` naming the same handle as `from` is how a caller reparents
+/// without also picking a new slug, since a reslug and a reparent are
+/// independent axes of this one verb.
+pub async fn a_same_handle_rename_with_a_different_parent_reparents<M: Memory>(store: &M) {
+    let old_home = EntityId("thing:contract-reparent-warehouse".into());
+    let new_home = EntityId("thing:contract-reparent-workshop".into());
+    let child = EntityId("thing:contract-reparent-crate".into());
+    add(
+        store,
+        NewEntity::new(old_home.clone(), "Warehouse", "the roster"),
+    )
+    .await;
+    add(
+        store,
+        NewEntity::new(new_home.clone(), "Workshop", "the roster"),
+    )
+    .await;
+    add(
+        store,
+        NewEntity {
+            parent: Some(old_home.clone()),
+            ..NewEntity::new(child.clone(), "Crate", "the roster")
+        },
+    )
+    .await;
+
+    let renamed = store
+        .rename_entity(
+            &child,
+            &child,
+            Some(new_home.clone()),
+            date(2026, 6, 1),
+            None,
+        )
+        .await
+        .expect("a same-handle call naming a different parent is a reparent")
+        .written()
+        .expect("a genuine reparent must not be screened as a collision with itself");
+    assert_eq!(renamed.id, child, "the handle itself must not move");
+    assert_eq!(renamed.parent.as_ref(), Some(&new_home));
+
+    let seen = read_entity(store, &child).await;
+    assert_eq!(
+        seen.parent.as_ref(),
+        Some(&new_home),
+        "the move reads back the way it was written: {seen:?}",
+    );
+}
+
+/// **The paired negative.** Naming the same handle with no parent at all, or
+/// the parent the thing already has, asks for nothing to happen — refused
+/// exactly as a same-handle call always was, before this verb learned to
+/// reparent.
+pub async fn a_same_handle_rename_naming_no_real_change_is_still_refused<M: Memory>(store: &M) {
+    let home = EntityId("thing:contract-reparent-cellar".into());
+    let child = EntityId("thing:contract-reparent-satchel".into());
+    add(store, NewEntity::new(home.clone(), "Cellar", "the roster")).await;
+    add(
+        store,
+        NewEntity {
+            parent: Some(home.clone()),
+            ..NewEntity::new(child.clone(), "Satchel", "the roster")
+        },
+    )
+    .await;
+
+    let no_parent_named = store
+        .rename_entity(&child, &child, None, date(2026, 6, 1), None)
+        .await;
+    assert!(
+        matches!(no_parent_named, Err(MemoryError::NothingToRename { .. })),
+        "naming the same handle with no parent changes nothing: {no_parent_named:?}",
+    );
+
+    let same_parent_named = store
+        .rename_entity(&child, &child, Some(home.clone()), date(2026, 6, 1), None)
+        .await;
+    assert!(
+        matches!(same_parent_named, Err(MemoryError::NothingToRename { .. })),
+        "naming the parent it already has changes nothing: {same_parent_named:?}",
+    );
+}
+
+/// **An unknown parent is blocked with candidates, never read as
+/// "unchanged."** A same-handle call naming a parent that does not exist is
+/// asking for something real, and the near-miss guard is what answers it —
+/// not the no-op refusal the two tests above rest on.
+pub async fn a_same_handle_rename_naming_an_unknown_parent_is_blocked<M: Memory>(store: &M) {
+    let child = EntityId("thing:contract-reparent-hamper".into());
+    add(store, NewEntity::new(child.clone(), "Hamper", "the roster")).await;
+
+    let unknown_parent = EntityId("thing:contract-reparent-phantom".into());
+    let result = store
+        .rename_entity(
+            &child,
+            &child,
+            Some(unknown_parent.clone()),
+            date(2026, 6, 1),
+            None,
+        )
+        .await
+        .expect("a blocked write is an answer, not a protocol failure");
+    match result {
+        Guarded::Blocked { attempted, .. } => {
+            assert_eq!(
+                attempted, unknown_parent,
+                "the refusal names what it could not find",
+            );
+        }
+        Guarded::Written(_) => panic!("an unknown parent must not be treated as unchanged"),
+    }
+}
+
 /// **An entity keeps the other names it answers to**, through the store and
 /// back. A nickname that survives only in the caller's request is a nickname
 /// the next session has never heard of.
@@ -11575,6 +11690,9 @@ pub async fn run_all<M: Memory>(store: &M) {
     a_rename_and_a_recreated_handle_does_not_hijack_an_edge(store).await;
     a_rename_and_a_recreated_handle_does_not_hijack_a_ref(store).await;
     a_rename_and_a_recreated_handle_does_not_hijack_a_parent(store).await;
+    a_same_handle_rename_with_a_different_parent_reparents(store).await;
+    a_same_handle_rename_naming_no_real_change_is_still_refused(store).await;
+    a_same_handle_rename_naming_an_unknown_parent_is_blocked(store).await;
     malformed_entity_fields_are_rejected(store).await;
     a_cross_link_takes_the_task_layers_own_grammar(store).await;
     a_field_at_the_validators_limit_survives_storage(store).await;

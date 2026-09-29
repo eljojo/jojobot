@@ -244,16 +244,17 @@ async fn which_of_the_loops_have_gone_quiet() {
     // ── the loop was filed under the wrong bike from the start ───────────────
     //
     // It turns out the chain being tracked was always the road bike's, not
-    // the gravel bike's. Renaming a handle to itself is refused outright
-    // (a different guard, not this one — `'rhythm:chain-check' cannot be
-    // renamed to itself`), so reparenting alone needs a slug that actually
-    // moves; this one is renamed to say which bike it means, in the same
-    // call that moves it.
+    // the gravel bike's — the loop itself is correctly named, only its
+    // parent is wrong. `to` names the same handle back: a reparent needs no
+    // reslug, since the two are independent axes of this one verb. An
+    // earlier draft worked around a since-fixed guard by renaming the loop
+    // to `rhythm:road-bike-chain-check` alongside the reparent — the fix
+    // below is what let this beat go back to naming the same handle.
     s.add("thing:road-bike", "The Road Bike").await;
     s.call(
         "rename_entity",
         json!({
-            "handle": "rhythm:chain-check", "to": "rhythm:road-bike-chain-check",
+            "handle": "rhythm:chain-check", "to": "rhythm:chain-check",
             "parent": "thing:road-bike",
         }),
     )
@@ -264,10 +265,10 @@ async fn which_of_the_loops_have_gone_quiet() {
     // for it.
     s.call("list_entities", json!({"parent": "thing:road-bike"}))
         .await
-        .says("rhythm:road-bike-chain-check");
+        .says("rhythm:chain-check");
     s.call("list_entities", json!({"parent": "thing:gravel-bike"}))
         .await
-        .never_says("rhythm:road-bike-chain-check");
+        .never_says("rhythm:chain-check");
 
     // **The negative: naming one handle moves only that one.** Snowball's
     // own loop was never named in the call, so it is exactly where it was.

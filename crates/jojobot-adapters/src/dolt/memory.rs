@@ -1994,11 +1994,6 @@ impl Memory for DoltMemory {
         override_token: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         validate_write_subject(from)?;
-        if from == to {
-            return Err(MemoryError::NothingToRename {
-                attempted: from.to_string(),
-            });
-        }
         let mut tx = self.pool.begin().await.map_err(store)?;
         // **A row, never a supplied record** — the same exception
         // `update_entity` reads off: a rename mutates a stored row, and a
@@ -2038,6 +2033,32 @@ impl Memory for DoltMemory {
                 attempted: from.to_string(),
                 into: into.to_string(),
             });
+        }
+        // **A same handle only reparents when the parent actually
+        // differs** — compared as storage keys, the same rule the fake's
+        // copy of this guard carries, so a former spelling of the parent it
+        // already has is recognised as no change too. An unresolvable new
+        // parent is never "unchanged": that is the near-miss guard's own
+        // question, asked below with candidates rather than with this
+        // refusal.
+        if from == to {
+            let target_key = match &parent {
+                Some(new_parent) => self.resolve(&mut tx, new_parent).await?.map(|(key, _)| key),
+                None => None,
+            };
+            let current_key = match &entity.parent {
+                Some(current) => self.resolve(&mut tx, current).await?.map(|(key, _)| key),
+                None => None,
+            };
+            let unchanged = match &parent {
+                None => true,
+                Some(_) => target_key.is_some() && target_key == current_key,
+            };
+            if unchanged {
+                return Err(MemoryError::NothingToRename {
+                    attempted: from.to_string(),
+                });
+            }
         }
         let effective_parent = parent.clone().or_else(|| entity.parent.clone());
         validate_entity(
@@ -2130,24 +2151,30 @@ impl Memory for DoltMemory {
         // a handle to one it already left — so the ordinal is this former
         // handle's own next one, the same [`Self::append_writes`] pattern,
         // never an assumption that this is its first.
-        let highest: Option<i64> = sqlx::query_scalar(
-            "SELECT MAX(ordinal) FROM entity_former_handle WHERE former_handle = ?",
-        )
-        .bind(from.as_str())
-        .fetch_one(&mut *tx)
-        .await
-        .map_err(store)?;
-        sqlx::query(
-            "INSERT INTO entity_former_handle (former_handle, badge, changed_at, ordinal) \
-             VALUES (?, ?, ?, ?)",
-        )
-        .bind(from.as_str())
-        .bind(&badge)
-        .bind(date.to_string())
-        .bind(highest.unwrap_or(0) + 1)
-        .execute(&mut *tx)
-        .await
-        .map_err(store)?;
+        //
+        // **A same-handle reparent is not a former handle of itself** — the
+        // handle never moved, so there is nothing here for a later resolve
+        // to walk back through.
+        if from != to {
+            let highest: Option<i64> = sqlx::query_scalar(
+                "SELECT MAX(ordinal) FROM entity_former_handle WHERE former_handle = ?",
+            )
+            .bind(from.as_str())
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(store)?;
+            sqlx::query(
+                "INSERT INTO entity_former_handle (former_handle, badge, changed_at, ordinal) \
+                 VALUES (?, ?, ?, ?)",
+            )
+            .bind(from.as_str())
+            .bind(&badge)
+            .bind(date.to_string())
+            .bind(highest.unwrap_or(0) + 1)
+            .execute(&mut *tx)
+            .await
+            .map_err(store)?;
+        }
         append_entity_write(&mut tx, to, &self.clock).await?;
         tx.commit().await.map_err(store)?;
         Ok(Guarded::Written(renamed))

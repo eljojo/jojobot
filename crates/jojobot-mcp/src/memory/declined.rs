@@ -451,9 +451,10 @@ pub(crate) fn memory_declined(
             &EntityId(attempted.clone()),
             &[],
             format!(
-                "Nothing was renamed: {e}. Sending this again with the same handle on both \
-                 sides will not change the answer — name a destination that differs from \
-                 '{attempted}'."
+                "Nothing was renamed: {e}. Sending this again with the same handle, the same \
+                 parent and nothing else different will not change the answer — name a \
+                 destination that differs from '{attempted}', or a parent that differs from the \
+                 one it already has."
             ),
         )),
         // **Stale, not absent** (rule 261): the caller's evidence is real, it

@@ -785,11 +785,6 @@ impl Memory for InMemoryMemory {
         override_token: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         validate_write_subject(from)?;
-        if from == to {
-            return Err(MemoryError::NothingToRename {
-                attempted: from.to_string(),
-            });
-        }
         // **A row, never a supplied record** — the same exception
         // `update_entity` reads off: a rename mutates a stored row, and a
         // build-shipped record has none to mutate. Looking this up through
@@ -834,6 +829,26 @@ impl Memory for InMemoryMemory {
                 attempted: from.to_string(),
                 into: into.to_string(),
             });
+        }
+        // **A same handle only reparents when the parent actually
+        // differs.** Compared as badges rather than as the handle a caller
+        // spelled it with, so naming a former spelling of the parent it
+        // already has is recognised as no change too — never as a
+        // reparent that happens to land on the same place. An unresolvable
+        // new parent is never "unchanged": that is the near-miss guard's
+        // question, asked below, and answered with candidates rather than
+        // with this refusal.
+        if from == to {
+            let target_badge = parent.as_ref().and_then(|p| self.storage_key(p));
+            let unchanged = match &parent {
+                None => true,
+                Some(_) => target_badge.is_some() && target_badge == entity.parent,
+            };
+            if unchanged {
+                return Err(MemoryError::NothingToRename {
+                    attempted: from.to_string(),
+                });
+            }
         }
         // **`entity.parent` is stored as a badge** (rule 268), so it is
         // resolved back to the handle it answers to today before it reaches
@@ -908,14 +923,19 @@ impl Memory for InMemoryMemory {
             }
         }
         drop(entities);
-        self.former_handles
-            .lock()
-            .expect("fake mutex poisoned")
-            .push(FormerHandle {
-                former: from.clone(),
-                badge: entity.badge.clone().expect("a written row wears a badge"),
-                changed_at: date,
-            });
+        // **A same-handle reparent is not a former handle of itself.** The
+        // handle never moved, so there is nothing here for a later resolve
+        // to walk back through.
+        if from != to {
+            self.former_handles
+                .lock()
+                .expect("fake mutex poisoned")
+                .push(FormerHandle {
+                    former: from.clone(),
+                    badge: entity.badge.clone().expect("a written row wears a badge"),
+                    changed_at: date,
+                });
+        }
         Ok(Guarded::Written(renamed))
     }
 

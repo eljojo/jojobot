@@ -3743,9 +3743,13 @@ pub enum MemoryError {
         /// Where it forwards to — the handle to use instead.
         into: String,
     },
-    /// **Nothing was named to rename, because the two handles are one
-    /// handle.**
-    #[error("'{attempted}' cannot be renamed to itself: name a different handle")]
+    /// **Nothing was named to rename.** The source and destination are one
+    /// handle, and the call named no parent that differs from the one the
+    /// thing already has — so nothing about the call would change anything.
+    #[error(
+        "'{attempted}' names no change: give a different handle, or a parent that differs from \
+         the one it already has"
+    )]
     NothingToRename {
         /// The handle that was given as both the source and the destination.
         attempted: String,

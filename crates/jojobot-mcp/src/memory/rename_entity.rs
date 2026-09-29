@@ -24,7 +24,11 @@ pub struct RenameEntityArgs {
     /// this same call.
     pub(crate) to: String,
     /// Reparent onto this handle. Omit to leave the current parent alone.
-    /// **There is no way to clear a parent through this verb.**
+    /// **There is no way to clear a parent through this verb.** `to` may
+    /// name the same handle as `handle` when this is the only thing
+    /// changing — a reparent with no reslug — but naming the same handle
+    /// with no parent, or the parent it already has, is refused: that call
+    /// would change nothing.
     #[serde(default)]
     pub(crate) parent: Option<String>,
     /// The day this rename was made, `YYYY-MM-DD`. Defaults to today in the
@@ -153,7 +157,10 @@ impl Jojobot {
                        fully qualified — a bare slug is refused rather than guessed at, because \
                        guessing one would be guessing whether this call is a reslug or a retype. \
                        `parent` reparents when given and leaves the current parent alone when \
-                       omitted; there is no way to clear a parent through this verb. The \
+                       omitted; there is no way to clear a parent through this verb. `to` may \
+                       name the same handle as `handle` when only the parent is moving — a \
+                       reparent needs no reslug — but naming the same handle with no `parent`, or \
+                       the parent it already has, is refused: that call would change nothing. The \
                        destination faces the same near-miss guard a creation does: a collision \
                        with something that resembles it comes back status: blocked with \
                        candidates, liftable with override_token unless the collision is an exact \
