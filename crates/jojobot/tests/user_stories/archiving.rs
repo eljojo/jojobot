@@ -26,7 +26,10 @@ async fn a_mistaken_entry_drops_out_of_the_default_list_and_stays_reachable_by_n
     s.fact("person:skinner", "runs the school").await;
 
     // ── the positive: browsing lists both, before anything is archived ───────
-    s.list("person").await.says("person:apu").says("person:skinner");
+    s.list("person")
+        .await
+        .says("person:apu")
+        .says("person:skinner");
 
     // ── archiving names the handle and the reason, and the receipt echoes
     //    both back ───────────────────────────────────────────────────────────
