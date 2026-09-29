@@ -148,6 +148,70 @@ async fn a_run_working_through_a_past_week_writes_in_that_week() {
         .await
         .says("\"recorded_at\":\"2026-02-20\"");
 
+    // ── most recent by when it happened, not by when it was written down ────
+    //
+    // Two notes, the same words, so text relevance ties and only
+    // `search.clock` decides the order. One was written up today, while
+    // catching up, about something that happened back in January; the
+    // other was jotted down back in January about something that happened
+    // today. Same words, opposite clocks, opposite answers.
+    const CLOCK_QUERY: &str = "browsed the record shop bins for an hour";
+    let written_up_late = march
+        .call(
+            "capture",
+            json!({
+                "subject": "person:milhouse", "content": CLOCK_QUERY,
+                "provenance": "testimony",
+                "recorded_at": MARCH, "happened_at": "2026-01-05",
+            }),
+        )
+        .await
+        .field("address");
+    let happened_recently = march
+        .call(
+            "capture",
+            json!({
+                "subject": "person:milhouse", "content": CLOCK_QUERY,
+                "provenance": "testimony",
+                "recorded_at": "2026-01-05", "happened_at": MARCH,
+            }),
+        )
+        .await
+        .field("address");
+
+    let by_recorded_on = march
+        .call("search", json!({"query": CLOCK_QUERY}))
+        .await
+        .json();
+    assert_eq!(
+        by_recorded_on["results"][0]["address"], written_up_late,
+        "by default, ranking reads recorded_on — the note written up today \
+         comes first: {by_recorded_on}",
+    );
+    assert_eq!(
+        by_recorded_on["results"][1]["address"], happened_recently,
+        "{by_recorded_on}",
+    );
+
+    // **The negative: the other clock gives the other answer.** A build
+    // that ignored `clock` would pass one of these two and not the other.
+    let by_happened_at = march
+        .call(
+            "search",
+            json!({"query": CLOCK_QUERY, "clock": "happened_at"}),
+        )
+        .await
+        .json();
+    assert_eq!(
+        by_happened_at["results"][0]["address"], happened_recently,
+        "by happened_at, the note about something that happened today \
+         comes first, whichever day it was written up: {by_happened_at}",
+    );
+    assert_eq!(
+        by_happened_at["results"][1]["address"], written_up_late,
+        "{by_happened_at}",
+    );
+
     march.wrap("worked through the March week").await;
 
     // ── a run that says nothing is still answered by the clock ──────────────
