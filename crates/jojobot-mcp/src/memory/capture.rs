@@ -711,8 +711,22 @@ impl Jojobot {
         // before anything else about this write, on the caller's own
         // identity against the subject it is about to write — never a kind
         // question, see `refuses_own_ceiling`.
+        //
+        // **Compared as the handle the subject answers to now.** A subject
+        // typed as a handle the caller's own bot used to wear still names the
+        // bot, and the session is bound to its current one. The resolving read
+        // is spent only on a write that names a ceiling key, and a read that
+        // fails refuses the write rather than waving it through.
+        let ceiling_subject = if jojobot_domain::memory::names_a_ceiling(&fields) {
+            match self.current_handle(&subject).await {
+                Ok(current) => current,
+                Err(e) => return memory_declined("capture", e),
+            }
+        } else {
+            subject.clone()
+        };
         if let Some(refused) =
-            jojobot_domain::memory::refuses_own_ceiling(&subject, &caller.bot, &fields)
+            jojobot_domain::memory::refuses_own_ceiling(&ceiling_subject, &caller.bot, &fields)
         {
             return memory_declined("capture", refused);
         }

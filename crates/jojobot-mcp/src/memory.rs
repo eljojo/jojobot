@@ -77,6 +77,20 @@ pub(crate) fn router() -> ToolRouter<Jojobot> {
 }
 
 impl Jojobot {
+    /// **The handle a thing answers to now, for a name it may have worn once.**
+    ///
+    /// A guard that compares who a write is about with who is making it must
+    /// compare current handles: a session is rebound to its bot's new handle
+    /// on a rename, while the subject of a write is whatever the caller typed.
+    /// A name nothing ever answered to comes back unchanged, so the write's
+    /// own refusal for an unknown entity still speaks.
+    pub(crate) async fn current_handle(&self, id: &EntityId) -> Result<EntityId, MemoryError> {
+        let known = self.memory.list_entities(None).await?;
+        let former = self.memory.former_handles().await?;
+        Ok(jojobot_domain::memory::resolve_handle(id, &known, &former)
+            .map_or_else(|| id.clone(), |entity| entity.id.clone()))
+    }
+
     /// **A type name, resolved to the declaration it stands for — once, here.**
     ///
     /// Everything below this point takes the KEYS rather than the name, so

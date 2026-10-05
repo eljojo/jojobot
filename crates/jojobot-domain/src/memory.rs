@@ -1826,6 +1826,14 @@ pub const DEFAULT_THOUGHT_BODY_CAP: usize = 200;
 /// [`refuses_own_ceiling_change`] the same way.
 const SELF_CEILING_KEYS: [&str; 2] = [THOUGHT_CAPACITY, THOUGHT_BODY_CAP];
 
+/// **Whether a write's own fields name a ceiling key.** The cheap question a
+/// caller asks before it spends a read on resolving who the write is about.
+pub fn names_a_ceiling(fields: &BTreeMap<String, String>) -> bool {
+    SELF_CEILING_KEYS
+        .iter()
+        .any(|key| fields.contains_key(*key))
+}
+
 /// **The thing a ceiling binds cannot write that ceiling.**
 ///
 /// `subject` is who the write is about; `caller` is who is making it. A

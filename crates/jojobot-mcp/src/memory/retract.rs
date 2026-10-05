@@ -76,7 +76,18 @@ impl Jojobot {
         // through `update_fact` would — see that verb's own copy of this
         // check. Checked against the record's OWN fields, the ones it was
         // captured or last edited with.
-        let carried = self.memory.recall(&address.home).await.unwrap_or_default();
+        //
+        // **A store that cannot be read refuses, it does not pass.** The guard
+        // cannot say the record carries no role field when it could not read
+        // the record. Any other error means the home resolves to nothing, so
+        // there is nothing to guard and the write below gives its own answer.
+        let carried = match self.memory.recall(&address.home).await {
+            Ok(carried) => carried,
+            Err(e @ (MemoryError::Store(_) | MemoryError::Conflict)) => {
+                return memory_declined("retract", e);
+            }
+            Err(_) => Vec::new(),
+        };
         let refused = carried
             .iter()
             .find(|fact| fact.address() == address)
@@ -808,5 +819,48 @@ mod tests {
             Some(&claimed_at_before),
             "the claim path must still renew once the side door is closed: {renewed:?}"
         );
+    }
+
+    /// **A store that cannot be read refuses a retraction of a role's own
+    /// record.** The guard reads the record to see whether it carries a role
+    /// field, and a read that failed used to read as "carries none". Paired
+    /// with the healthy store, where taking back an ordinary claim still
+    /// lands.
+    #[tokio::test]
+    async fn retract_refuses_a_role_record_when_the_store_cannot_be_read() {
+        let (healthy, blind) = crate::memory::testing::healthy_and_blind_to_claims();
+        let claim_address = crate::memory::testing::a_claimed_role(&healthy).await;
+
+        let refused = blind
+            .retract(Parameters(retract_args(
+                &claim_address,
+                "the store is down",
+            )))
+            .await;
+        let Err(err) = refused else {
+            panic!("a retraction went through while the store could not be read");
+        };
+        assert!(
+            err.message.contains("storage"),
+            "the refusal must name the storage failure and what to do next: {}",
+            err.message
+        );
+        let bot = EntityId("bot:gamma".into());
+        let after = healthy.memory.fields(&bot).await.expect("fields ok");
+        assert!(
+            after.contains_key("role/dev-dispatch/holder"),
+            "the claim's holder left the fold with the store unreadable: {after:?}"
+        );
+
+        // The positive half: the same verb on a store that reads, over an
+        // ordinary claim, lands.
+        let address = a_record(&healthy, "an ordinary claim").await;
+        let landed = json_of(
+            &healthy
+                .retract(Parameters(retract_args(&address, "it did not happen")))
+                .await
+                .expect("retract ok"),
+        );
+        assert_eq!(landed["retracted"]["status"], "archived", "{landed}");
     }
 }

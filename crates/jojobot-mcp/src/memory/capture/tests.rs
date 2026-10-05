@@ -2124,6 +2124,81 @@ async fn a_bot_cannot_raise_its_own_thought_capacity() {
     );
 }
 
+/// **A renamed bot cannot raise its own ceiling through the handle it used to
+/// wear.** The session is rebound to the bot's new handle on a rename, and the
+/// capture's subject is whatever was typed, so comparing the two as typed let
+/// the old handle through. Paired with the same capture on a different bot
+/// through a handle it used to wear, which lands.
+#[tokio::test]
+async fn a_renamed_bot_cannot_raise_its_own_ceiling_through_its_former_handle() {
+    let jojobot = handler();
+    // `capture_args`'s own sid resolves to bot:otto.
+    ensure(&jojobot, "bot:otto").await;
+    ensure(&jojobot, "bot:milhouse").await;
+    for (from, to) in [("bot:otto", "bot:delta"), ("bot:milhouse", "bot:sigma")] {
+        let renamed = json_of(
+            &jojobot
+                .rename_entity(Parameters(crate::memory::rename_entity::RenameEntityArgs {
+                    handle: from.into(),
+                    to: to.into(),
+                    parent: None,
+                    recorded_at: None,
+                    override_token: None,
+                    sid: Some(crate::harness::TEST_SID.into()),
+                }))
+                .await
+                .expect("rename ok"),
+        );
+        assert_ne!(renamed["status"], "blocked", "{renamed}");
+    }
+    let ceiling = || {
+        Some(
+            [(
+                jojobot_domain::memory::THOUGHT_CAPACITY.to_string(),
+                "5".to_string(),
+            )]
+            .into_iter()
+            .collect(),
+        )
+    };
+
+    let refused = blocked(
+        &jojobot
+            .capture(Parameters(CaptureArgs {
+                fields: ceiling(),
+                ..capture_args("bot:otto", "raising my own ceiling by the old name")
+            }))
+            .await
+            .expect("a refusal is an answer, not a failure"),
+    );
+    assert_eq!(refused["wrote"], false, "{refused}");
+    let after = fields_of(&jojobot, "bot:delta").await;
+    assert!(
+        after
+            .get(jojobot_domain::memory::THOUGHT_CAPACITY)
+            .is_none(),
+        "the refused write must not be readable back: {after}"
+    );
+
+    // The positive half: another bot's ceiling, named by a handle that bot
+    // used to wear, is somebody else's to set and lands.
+    let landed = capture_ok(
+        &jojobot,
+        CaptureArgs {
+            fields: ceiling(),
+            ..capture_args("bot:milhouse", "capacity is five")
+        },
+    )
+    .await;
+    assert_ne!(landed["status"], "blocked", "{landed}");
+    let other = fields_of(&jojobot, "bot:sigma").await;
+    assert_eq!(
+        other[jojobot_domain::memory::THOUGHT_CAPACITY],
+        "5",
+        "a different identity's write must land: {other}"
+    );
+}
+
 /// **The positive half of [`a_bot_cannot_raise_its_own_thought_capacity`].**
 /// A DIFFERENT identity setting the same key, on the same kind of
 /// subject, lands — proving the guard is about who is asking, never

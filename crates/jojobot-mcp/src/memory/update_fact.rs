@@ -438,7 +438,15 @@ impl Jojobot {
         // against the record's OWN fields — the ones it was captured or last
         // edited with — because that is what would leave the fold.
         if archives_this_write {
-            let carried = self.memory.recall(&address.home).await.unwrap_or_default();
+            // **A store that cannot be read refuses, it does not pass** — see
+            // `retract`'s own copy of this check.
+            let carried = match self.memory.recall(&address.home).await {
+                Ok(carried) => carried,
+                Err(e @ (MemoryError::Store(_) | MemoryError::Conflict)) => {
+                    return memory_declined("update_fact", e);
+                }
+                Err(_) => Vec::new(),
+            };
             let refused = carried
                 .iter()
                 .find(|fact| fact.address() == address)

@@ -2530,3 +2530,52 @@ async fn an_edit_into_a_room_counts_a_thought_that_aged_out_the_way_capture_does
         "the old thought aged out of a room at capacity one, so the edit lands: {landed}"
     );
 }
+
+/// **A store that cannot be read refuses an archive of a role's own record.**
+/// The guard reads the record to see whether it carries a role field, and a
+/// read that failed used to read as "carries none". Paired with the healthy
+/// store, where archiving an ordinary claim still lands.
+#[tokio::test]
+async fn update_fact_refuses_to_archive_a_role_record_when_the_store_cannot_be_read() {
+    let (healthy, blind) = healthy_and_blind_to_claims();
+    let claim_address = a_claimed_role(&healthy).await;
+
+    let refused = blind
+        .update_fact(Parameters(UpdateFactArgs {
+            status: Some("archived".into()),
+            ..update_args(&claim_address)
+        }))
+        .await;
+    let Err(err) = refused else {
+        panic!("an archive went through while the store could not be read");
+    };
+    assert!(
+        err.message.contains("storage"),
+        "the refusal must name the storage failure and what to do next: {}",
+        err.message
+    );
+    let after = healthy
+        .memory
+        .fields(&EntityId("bot:gamma".into()))
+        .await
+        .expect("fields ok");
+    assert!(
+        after.contains_key("role/dev-dispatch/holder"),
+        "the claim's holder left the fold with the store unreadable: {after:?}"
+    );
+
+    // The positive half: the same patch on a store that reads, over an
+    // ordinary claim, lands.
+    let ordinary =
+        address_of(&capture_ok(&healthy, capture_args("person:alpha", "ordinary")).await);
+    let landed = json_of(
+        &healthy
+            .update_fact(Parameters(UpdateFactArgs {
+                status: Some("archived".into()),
+                ..update_args(&ordinary)
+            }))
+            .await
+            .expect("update_fact ok"),
+    );
+    assert_ne!(landed["status"], "blocked", "{landed}");
+}

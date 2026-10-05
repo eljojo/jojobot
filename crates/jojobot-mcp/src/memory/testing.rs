@@ -340,6 +340,69 @@ pub(crate) enum Down {
     /// The kind vocabulary — the read the boot door names the shipped kinds
     /// from, and the one whose failure must not read as a build shipping none.
     Vocabulary,
+    /// A claim read, the one a guard on the record's own fields depends on
+    /// before it lets a retraction or an archive through.
+    Recall,
+}
+
+/// **Two handlers over ONE store, the second unable to read a claim.** They
+/// share the store, the mail, the sessions and the registry, so a record the
+/// first writes is the record the second is asked to take back — and a write
+/// the blind one lets through is visible through the healthy one.
+pub(crate) fn healthy_and_blind_to_claims() -> (Jojobot, Jojobot) {
+    let memory = Arc::new(InMemoryMemory::booted());
+    let boxes = Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner());
+    let sessions = Arc::new(jojobot_domain::session::testing::InMemorySessions::new());
+    let teachings = Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new());
+    let registry = seeded_registry();
+    let build = |store: Arc<dyn Memory>| {
+        Jojobot::new(
+            store,
+            Arc::new(SpySearch::default()),
+            boxes.clone(),
+            sessions.clone(),
+            teachings.clone(),
+            registry.clone(),
+        )
+    };
+    (
+        build(memory.clone()),
+        build(Arc::new(DownMemory(Down::Recall, memory))),
+    )
+}
+
+/// **A role claim taken at the boot door**, and the address of the record that
+/// carries its holder and claim moment — the record whose retraction or archive
+/// would take both off the fold.
+pub(crate) async fn a_claimed_role(jojobot: &Jojobot) -> String {
+    make_bot(jojobot, "gamma").await;
+    let booted = json_of(
+        &jojobot
+            .start_here(Parameters(OrientArgs {
+                claim: Some("dev-dispatch".into()),
+                timezone: None,
+                bot: Some("gamma".into()),
+                brief: None,
+                skill: None,
+                section: None,
+                resume: None,
+                sid: None,
+                today: None,
+            }))
+            .await
+            .expect("start_here ok"),
+    );
+    assert_eq!(booted["session"]["claim"]["status"], "taken", "{booted}");
+    jojobot
+        .memory
+        .recall(&EntityId("bot:gamma".into()))
+        .await
+        .expect("recall ok")
+        .into_iter()
+        .find(|fact| fact.fields.contains_key("role/dev-dispatch/holder"))
+        .expect("the claim left a fact carrying its own fields")
+        .address()
+        .to_string()
 }
 
 /// A handler whose mailbox world answers nothing, over a memory the caller
@@ -358,7 +421,7 @@ impl Memory for DownMemory {
     async fn list_entities(&self, kind: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError> {
         match self.0 {
             Down::EntityIndex => Err(MemoryError::Store("the entity index cannot be read".into())),
-            Down::TypeRoster | Down::Vocabulary => self.1.list_entities(kind).await,
+            Down::TypeRoster | Down::Vocabulary | Down::Recall => self.1.list_entities(kind).await,
         }
     }
     async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
@@ -386,7 +449,7 @@ impl Memory for DownMemory {
             Down::Vocabulary => Err(MemoryError::Store(
                 "the kind vocabulary cannot be read".into(),
             )),
-            Down::EntityIndex | Down::TypeRoster => self.1.declared_kinds().await,
+            Down::EntityIndex | Down::TypeRoster | Down::Recall => self.1.declared_kinds().await,
         }
     }
 
@@ -399,8 +462,7 @@ impl Memory for DownMemory {
     ) -> Result<Vec<jojobot_domain::memory::types::DeclaredType>, MemoryError> {
         match self.0 {
             Down::TypeRoster => Err(MemoryError::Store("the type roster cannot be read".into())),
-            Down::Vocabulary => self.1.declared_types().await,
-            Down::EntityIndex => self.1.declared_types().await,
+            Down::Vocabulary | Down::EntityIndex | Down::Recall => self.1.declared_types().await,
         }
     }
     async fn update_entity(
@@ -429,7 +491,10 @@ impl Memory for DownMemory {
         self.1.capture(fact).await
     }
     async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
-        self.1.recall(subject).await
+        match self.0 {
+            Down::Recall => Err(MemoryError::Store("a claim cannot be read".into())),
+            Down::EntityIndex | Down::TypeRoster | Down::Vocabulary => self.1.recall(subject).await,
+        }
     }
     async fn history(
         &self,
