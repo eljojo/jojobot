@@ -80,6 +80,9 @@ async fn the_stack_the_binary_builds_answers_what_the_layer_beneath_implements()
 
     let supplied = supplied();
     let bare = DoltMemory::open(server.pool().clone()).knowing(supplied.clone());
+    // A clone shares the store's counters, and `open_provisioned` takes the
+    // store itself.
+    let counted = bare.clone();
     let resolved = jojobot::wiring::open_provisioned(bare, supplied)
         .await
         .expect("the build's provisions do not collide with an empty store");
@@ -174,6 +177,128 @@ async fn the_stack_the_binary_builds_answers_what_the_layer_beneath_implements()
             .map(String::as_str),
         Some(GAMMA_DEFAULT),
         "the fold is refreshed from the versioned read, so it must hold the shipped default too"
+    );
+
+    // ── backing, built_on, referring_to, claim_histories: implemented by the
+    //    store, defaulted on the port ────────────────────────────────────────
+    //
+    // Each is asked of the outermost layer. The store counts every run of its
+    // own override, so a layer that drops the method and answers with the
+    // port's default body leaves the count where it was. The positive beside
+    // each is that the answer is right: a count says which path ran and
+    // nothing about whether it answered.
+    let kettle = created(indexed.as_ref(), "thing:kettle", "Kettle").await;
+    let tuned = indexed
+        .capture(NewFact {
+            fields: fields(&[("pitch", "low")]),
+            ..NewFact::about(gamma.clone(), "gamma tuned the piano", date(2026, 9, 4))
+        })
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("nothing collides");
+    let derived = indexed
+        .capture(NewFact {
+            derived_from: Some(tuned.address()),
+            fields: fields(&[("fires", piano.as_str())]),
+            ..NewFact::about(
+                gamma.clone(),
+                format!("gamma boiled @{kettle}"),
+                date(2026, 9, 5),
+            )
+        })
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("nothing collides");
+
+    let before = counted.targeted_reads();
+    let backing = indexed.backing(&gamma).await.expect("backing answers");
+    assert_eq!(
+        counted.targeted_reads(),
+        before + 1,
+        "backing reached the store's own read, not the port's default"
+    );
+    assert_eq!(
+        backing.get("pitch").map(|b| &b.fact),
+        Some(&tuned.id),
+        "the key's backing names the claim that wrote it: {backing:?}"
+    );
+
+    let before = counted.targeted_reads();
+    let built = indexed
+        .built_on(&tuned.address())
+        .await
+        .expect("built_on answers");
+    assert_eq!(
+        counted.targeted_reads(),
+        before + 1,
+        "built_on reached the store's own read, not the port's default"
+    );
+    assert_eq!(
+        built.iter().map(|f| &f.id).collect::<Vec<_>>(),
+        vec![&derived.id],
+        "the claim standing on it comes back: {built:?}"
+    );
+
+    let before = counted.targeted_reads();
+    let pointing = indexed
+        .referring_to(&piano)
+        .await
+        .expect("referring_to answers");
+    assert_eq!(
+        counted.targeted_reads(),
+        before + 1,
+        "referring_to reached the store's own read, not the port's default"
+    );
+    assert_eq!(
+        pointing.iter().map(|f| &f.id).collect::<Vec<_>>(),
+        vec![&derived.id],
+        "the record naming the handle in a field comes back: {pointing:?}"
+    );
+
+    let before = counted.targeted_reads();
+    let chains = indexed
+        .claim_histories(&gamma)
+        .await
+        .expect("claim_histories answers");
+    assert_eq!(
+        counted.targeted_reads(),
+        before + 1,
+        "claim_histories reached the store's own read, not the port's default"
+    );
+    assert_eq!(
+        chains.get(&derived.id).map(Vec::len),
+        Some(1),
+        "a claim with one write has an entry with one element: {chains:?}"
+    );
+
+    // The mention resolves in the layer that owns the resolution: a rename
+    // changes what a past claim reads as, and the batched read must agree
+    // with the single-claim read beside it.
+    let teapot = EntityId("thing:teapot".into());
+    indexed
+        .rename_entity(&kettle, &teapot, None, date(2026, 9, 6), None)
+        .await
+        .expect("rename ok")
+        .written()
+        .expect("the rename is not blocked");
+    let chains = indexed
+        .claim_histories(&gamma)
+        .await
+        .expect("claim_histories answers");
+    let content = &chains[&derived.id][0].content;
+    assert!(
+        content.contains(teapot.as_str()) && !content.contains("kettle"),
+        "a mention reads as the handle the thing answers to now: {content:?}"
+    );
+    let single = indexed
+        .claim_history(&derived.address())
+        .await
+        .expect("claim_history answers");
+    assert_eq!(
+        single[0].content, *content,
+        "the batched read renders exactly what the single read does"
     );
 
     // ── the session summaries: implemented by the store ─────────────────────

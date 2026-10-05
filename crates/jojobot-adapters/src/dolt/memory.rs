@@ -65,6 +65,14 @@ pub struct DoltMemory {
     /// store or only the one (or few) it actually needed. Shared across a
     /// clone, exactly as the pool it counts calls against is.
     index_listings: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    /// **How many times one of this store's own overrides of a defaulted
+    /// read has run** — `backing`, `built_on`, `referring_to` and
+    /// `claim_histories`. Test-only instrumentation for the one property a
+    /// decorator stack hides: whether a call that entered at the top reached
+    /// the store's targeted query or was answered, slowly, by the port's
+    /// default body in a layer above it. Shared across a clone, like the
+    /// listing count.
+    targeted_reads: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     /// Where a badge comes from. **A value rather than a call**, so the
     /// collision path can be watched through the verb that mints: entropy will
     /// not produce a collision on demand.
@@ -98,6 +106,7 @@ impl DoltMemory {
         DoltMemory {
             pool,
             index_listings: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            targeted_reads: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             draw: ids::drawing(),
             supplied: Provisions::default(),
             clock: Clock::default(),
@@ -112,6 +121,20 @@ impl DoltMemory {
     pub fn index_listings(&self) -> usize {
         self.index_listings
             .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// **How many times this store's own `backing`, `built_on`,
+    /// `referring_to` or `claim_histories` has run.** Test-only: a caller
+    /// measures a delta across one call made through the layers above.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn targeted_reads(&self) -> usize {
+        self.targeted_reads
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn counted_targeted_read(&self) {
+        self.targeted_reads
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// **The store, told what the build supplies over it.** Only the existence
@@ -141,6 +164,7 @@ impl DoltMemory {
         DoltMemory {
             pool,
             index_listings: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            targeted_reads: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             draw,
             supplied: Provisions::default(),
             clock: Clock::default(),
@@ -2712,6 +2736,7 @@ impl Memory for DoltMemory {
         &self,
         entity: &EntityId,
     ) -> Result<std::collections::HashMap<FactId, Vec<ClaimWrite>>, MemoryError> {
+        self.counted_targeted_read();
         let mut tx = self.pool.begin().await.map_err(store)?;
         // The full listing is built only on the miss — see `fields`'s own
         // comment for why.
@@ -3512,6 +3537,7 @@ impl Memory for DoltMemory {
         entity: &EntityId,
     ) -> Result<std::collections::BTreeMap<String, jojobot_domain::memory::FieldBacking>, MemoryError>
     {
+        self.counted_targeted_read();
         let mut tx = self.pool.begin().await.map_err(store)?;
         // **The same gate every read beside it keeps** (rule 234): the rows
         // plus what the build supplies. The port derives this read from
@@ -3540,6 +3566,7 @@ impl Memory for DoltMemory {
     /// claim are a query.
     async fn built_on(&self, source: &FactAddress) -> Result<Vec<Fact>, MemoryError> {
         validate_subject(&source.home)?;
+        self.counted_targeted_read();
         let mut tx = self.pool.begin().await.map_err(store)?;
         // **The column holds the badge, and a caller's address names a
         // handle.** Resolved here for the same reason every other addressed
@@ -3576,6 +3603,7 @@ impl Memory for DoltMemory {
     /// pointer that is no longer there.
     async fn referring_to(&self, target: &EntityId) -> Result<Vec<Fact>, MemoryError> {
         validate_subject(target)?;
+        self.counted_targeted_read();
         let mut tx = self.pool.begin().await.map_err(store)?;
         let rows = sqlx::query("SELECT DISTINCT entity FROM field_write WHERE value = ?")
             .bind(target.as_str())

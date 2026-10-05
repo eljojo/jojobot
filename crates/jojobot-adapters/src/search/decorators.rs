@@ -252,6 +252,16 @@ impl Memory for IndexedMemory {
         self.inner.claim_history(address).await
     }
 
+    /// **Straight through, and it does not touch the index**, for the reason
+    /// [`claim_history`](Self::claim_history) does not. A decorator that
+    /// leaves this to the trait default serves the default in production.
+    async fn claim_histories(
+        &self,
+        entity: &EntityId,
+    ) -> Result<std::collections::HashMap<FactId, Vec<ClaimWrite>>, MemoryError> {
+        self.inner.claim_histories(entity).await
+    }
+
     /// **Straight through, and it does not touch the index.** What a thing
     /// holds is decided by the order its keys were written, which is the
     /// store's record and not something a projection could re-derive.

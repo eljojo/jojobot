@@ -674,6 +674,27 @@ impl super::Memory for Mentioning {
         }
         Ok(chain)
     }
+    /// **Every chain renders exactly as [`Self::claim_history`] renders one**,
+    /// so the batched read and the single read cannot disagree about what a
+    /// mention in an earlier wording says.
+    async fn claim_histories(
+        &self,
+        entity: &EntityId,
+    ) -> Result<std::collections::HashMap<super::FactId, Vec<super::ClaimWrite>>, super::MemoryError>
+    {
+        let mut chains = self.inner.claim_histories(entity).await?;
+        if chains.values().all(Vec::is_empty) {
+            return Ok(chains);
+        }
+        let known = self.known().await?;
+        for write in chains.values_mut().flatten() {
+            write.content = rendered(&write.content, &known);
+            if let Some(details) = &write.details {
+                write.details = Some(rendered(details, &known));
+            }
+        }
+        Ok(chains)
+    }
     /// **Resolved exactly as a fact's own fields are.** A thing-scope filter
     /// compares this map, and a record-scope filter compares a resolved
     /// fact's — both need to see today's handle under a reference-typed key,

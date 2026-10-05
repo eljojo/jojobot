@@ -27,9 +27,9 @@ use async_trait::async_trait;
 use jiff::civil::Date;
 
 use jojobot_domain::memory::{
-    ClaimWrite, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactPatch,
-    FieldWrite, FormerHandle, Guarded, Landed, Memory, MemoryError, Merge, NewEntity, NewFact,
-    Retraction, WriteSummary,
+    ClaimWrite, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactId, FactPatch,
+    FieldBacking, FieldWrite, FormerHandle, Guarded, Landed, Memory, MemoryError, Merge, NewEntity,
+    NewFact, Retraction, WriteSummary,
     search::{self, DocScan},
     types::{self, DeclaredType},
 };
@@ -210,6 +210,16 @@ impl Memory for Folded {
         self.inner.claim_history(address).await
     }
 
+    /// **Straight through**, for the reason [`backing`](Self::backing) is: the
+    /// default walks `recall` and `claim_history` one claim at a time over a
+    /// store that reads the whole entity in one query.
+    async fn claim_histories(
+        &self,
+        entity: &EntityId,
+    ) -> Result<HashMap<FactId, Vec<ClaimWrite>>, MemoryError> {
+        self.inner.claim_histories(entity).await
+    }
+
     async fn update_fact(
         &self,
         address: &FactAddress,
@@ -314,6 +324,26 @@ impl Memory for Folded {
         fields: &BTreeMap<String, String>,
     ) -> Vec<String> {
         self.inner.echoed_defaults(entity, fields).await
+    }
+
+    /// **Straight through.** The cache holds folded values only; which claim
+    /// backs a key is read off the writes, which the store keeps. A default
+    /// body here would be served in production over the store's own read.
+    async fn backing(
+        &self,
+        entity: &EntityId,
+    ) -> Result<BTreeMap<String, FieldBacking>, MemoryError> {
+        self.inner.backing(entity).await
+    }
+
+    /// **Straight through**, for the reason [`backing`](Self::backing) is.
+    async fn built_on(&self, source: &FactAddress) -> Result<Vec<Fact>, MemoryError> {
+        self.inner.built_on(source).await
+    }
+
+    /// **Straight through**, for the reason [`backing`](Self::backing) is.
+    async fn referring_to(&self, target: &EntityId) -> Result<Vec<Fact>, MemoryError> {
+        self.inner.referring_to(target).await
     }
 
     /// **A declaration can change how EVERY entity's existing writes fold**

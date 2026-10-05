@@ -38,7 +38,7 @@ use jiff::civil::Date;
 
 use jojobot_domain::memory::owned::{Provisions, extended, guard_extension};
 use jojobot_domain::memory::{
-    ClaimWrite, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactPatch,
+    ClaimWrite, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactId, FactPatch,
     FieldBacking, FieldWrite, FormerHandle, Guarded, Memory, MemoryError, Merge, NewEntity,
     NewFact, Retraction, WriteSummary, guard, search, types,
 };
@@ -400,6 +400,12 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
     }
     async fn claim_history(&self, address: &FactAddress) -> Result<Vec<ClaimWrite>, MemoryError> {
         self.inner.claim_history(address).await
+    }
+    async fn claim_histories(
+        &self,
+        entity: &EntityId,
+    ) -> Result<std::collections::HashMap<FactId, Vec<ClaimWrite>>, MemoryError> {
+        self.inner.claim_histories(entity).await
     }
     async fn retract(
         &self,
