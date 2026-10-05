@@ -735,15 +735,7 @@ impl FullTextIndex {
             // denying it searched any.
             self.mail_loaded
                 .store(true, std::sync::atomic::Ordering::Release);
-            if self
-                .write_fault
-                .fail_commit
-                .swap(false, std::sync::atomic::Ordering::AcqRel)
-            {
-                let _ = writer.rollback();
-                return Err(store_err("test fault: commit"));
-            }
-            writer.commit().map_err(store_err)?;
+            self.commit_or_rollback(&mut writer)?;
             drop(writer);
             *self.messages.write().expect("mail mirror poisoned") = messages.to_vec();
         }
@@ -800,7 +792,7 @@ impl FullTextIndex {
         // Before the commit, for the reason `ingest_mail` sets its flag early.
         self.mail_touched
             .store(true, std::sync::atomic::Ordering::Release);
-        writer.commit().map_err(store_err)?;
+        self.commit_or_rollback(&mut writer)?;
         drop(writer);
 
         let mut mirror = self.messages.write().expect("mail mirror poisoned");
@@ -849,6 +841,26 @@ impl FullTextIndex {
             let _ = writer.rollback();
         }
         result
+    }
+
+    /// **The one place every ingest commits.** A commit that errors leaves
+    /// its staged deletes and documents in the shared writer, so the writer
+    /// is rolled back before the error returns — the same guarantee
+    /// [`Self::rollback_on_err`] gives a staging error. The injected fault
+    /// stands in for a failed `commit` and does NOT roll back itself, so a
+    /// site that skipped this helper would leave its staging behind under
+    /// test exactly as it would in production.
+    fn commit_or_rollback(&self, writer: &mut IndexWriter) -> Result<(), MemoryError> {
+        let committed = if self
+            .write_fault
+            .fail_commit
+            .swap(false, std::sync::atomic::Ordering::AcqRel)
+        {
+            Err(store_err("test fault: commit"))
+        } else {
+            writer.commit().map(|_| ()).map_err(store_err)
+        };
+        Self::rollback_on_err(writer, committed)
     }
 
     fn write_message(&self, writer: &IndexWriter, message: &Message) -> Result<(), MemoryError> {
@@ -1089,7 +1101,7 @@ impl FullTextIndex {
                 }
             }
         }
-        writer.commit().map_err(store_err)?;
+        self.commit_or_rollback(&mut writer)?;
         drop(writer);
         *self.sessions.write().expect("session mirror poisoned") = sessions.to_vec();
         self.reader.reload().map_err(store_err)?;
@@ -1187,7 +1199,7 @@ impl FullTextIndex {
             // Before the commit, for the reason `ingest_mail` sets its flag early.
             self.memory_loaded
                 .store(true, std::sync::atomic::Ordering::Release);
-            writer.commit().map_err(store_err)?;
+            self.commit_or_rollback(&mut writer)?;
             drop(writer);
             *self.docs.write().expect("doc mirror poisoned") =
                 scan.iter().map(DocMirror::of).collect();
@@ -1242,7 +1254,7 @@ impl FullTextIndex {
         // Before the commit, for the reason `ingest_mail` sets its flag early.
         self.memory_touched
             .store(true, std::sync::atomic::Ordering::Release);
-        writer.commit().map_err(store_err)?;
+        self.commit_or_rollback(&mut writer)?;
         drop(writer);
 
         let mut mirror = self.docs.write().expect("doc mirror poisoned");
@@ -1285,7 +1297,7 @@ impl FullTextIndex {
 
         let mut writer = self.writer.write().expect("index writer poisoned");
         writer.delete_term(Term::from_field_text(self.fields.doc_id, &doc_id));
-        writer.commit().map_err(store_err)?;
+        self.commit_or_rollback(&mut writer)?;
         drop(writer);
 
         self.docs

@@ -5570,6 +5570,251 @@ async fn a_failed_single_doc_write_does_not_leave_its_staged_delete_for_a_later_
     );
 }
 
+/// The ids of the messages a mail search returns for one distinctive word.
+fn mail_ids_for(index: &FullTextIndex, needle: &str) -> Vec<String> {
+    index
+        .search(&asking_for_mail(needle))
+        .expect("search ok")
+        .iter()
+        .filter_map(|h| match h {
+            Hit::Message { message, .. } => Some(message.id.as_str().to_string()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The ids of the facts a memory search returns for one distinctive word.
+fn fact_ids_for(index: &FullTextIndex, needle: &str) -> Vec<String> {
+    index
+        .search(&SearchQuery::text(needle))
+        .expect("search ok")
+        .iter()
+        .filter_map(|h| match h {
+            Hit::Fact { fact, .. } => Some(fact.id.as_str().to_string()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// **A commit that fails must not leave its staged operations for the next
+/// commit.** The fault is injected on `commit` itself, after staging has
+/// succeeded: the rewrite's delete and its new document are both in the
+/// shared writer, uncommitted. Every case below follows the failed call with
+/// an unrelated commit and asserts three things: the original document
+/// survives, the failed call's rewrite is absent, and the unrelated call's
+/// own document is there — the last so the other two cannot pass over an
+/// empty index.
+#[tokio::test]
+async fn a_failed_mail_batch_commit_leaves_nothing_for_a_later_commit() {
+    let index = index_of(vec![]);
+    let original = message("1", "pm", "dev", None, "original quokka", MessageState::New);
+    index
+        .ingest_mail(std::slice::from_ref(&original))
+        .expect("the first ingest lands");
+    assert_eq!(mail_ids_for(&index, "quokka"), ["1"]);
+
+    index.fail_next_commit();
+    let failed = index.ingest_mail(&[message(
+        "1",
+        "pm",
+        "dev",
+        None,
+        "rewritten pangolin",
+        MessageState::New,
+    )]);
+    assert!(failed.is_err(), "the commit fault must surface: {failed:?}");
+
+    index
+        .ingest_mail(&[
+            original,
+            message(
+                "2",
+                "pm",
+                "dev",
+                None,
+                "unrelated axolotl",
+                MessageState::New,
+            ),
+        ])
+        .expect("the unrelated ingest lands");
+
+    assert_eq!(mail_ids_for(&index, "axolotl"), ["2"]);
+    assert_eq!(mail_ids_for(&index, "quokka"), ["1"]);
+    assert!(mail_ids_for(&index, "pangolin").is_empty());
+}
+
+#[tokio::test]
+async fn a_failed_single_message_commit_leaves_nothing_for_a_later_commit() {
+    let index = index_of(vec![]);
+    index
+        .ingest_message(&message(
+            "1",
+            "pm",
+            "dev",
+            None,
+            "original quokka",
+            MessageState::New,
+        ))
+        .expect("the first write lands");
+    assert_eq!(mail_ids_for(&index, "quokka"), ["1"]);
+
+    index.fail_next_commit();
+    let failed = index.ingest_message(&message(
+        "1",
+        "pm",
+        "dev",
+        None,
+        "rewritten pangolin",
+        MessageState::New,
+    ));
+    assert!(failed.is_err(), "the commit fault must surface: {failed:?}");
+
+    index
+        .ingest_message(&message(
+            "2",
+            "pm",
+            "dev",
+            None,
+            "unrelated axolotl",
+            MessageState::New,
+        ))
+        .expect("the unrelated write lands");
+
+    assert_eq!(mail_ids_for(&index, "axolotl"), ["2"]);
+    assert_eq!(mail_ids_for(&index, "quokka"), ["1"]);
+    assert!(mail_ids_for(&index, "pangolin").is_empty());
+}
+
+#[tokio::test]
+async fn a_failed_session_commit_leaves_nothing_for_a_later_commit() {
+    let index = FullTextIndex::open().expect("index opens");
+    let original = run_of("s-gamma", "bot:gamma", &[("e1", "original quokka")]);
+    index
+        .ingest_sessions(std::slice::from_ref(&original))
+        .expect("the first ingest lands");
+    assert!(finds(&index, "bot:gamma", "quokka"));
+
+    index.fail_next_commit();
+    let failed = index.ingest_sessions(&[run_of(
+        "s-gamma",
+        "bot:gamma",
+        &[("e1", "rewritten pangolin")],
+    )]);
+    assert!(failed.is_err(), "the commit fault must surface: {failed:?}");
+
+    index
+        .ingest_sessions(&[
+            original,
+            run_of("s-other", "bot:otto", &[("f1", "unrelated axolotl")]),
+        ])
+        .expect("the unrelated ingest lands");
+
+    assert!(finds(&index, "bot:otto", "axolotl"));
+    assert!(finds(&index, "bot:gamma", "quokka"));
+    assert!(!finds(&index, "bot:gamma", "pangolin"));
+}
+
+fn alpha_scan(content: &str) -> DocScan {
+    scan(
+        "doc-1",
+        Some(entity("person:alpha", "Alpha")),
+        "",
+        vec![fact("person:alpha", "f1", content, date(2026, 1, 1))],
+    )
+}
+
+fn beta_scan() -> DocScan {
+    scan(
+        "doc-2",
+        Some(entity("person:beta", "Beta")),
+        "",
+        vec![fact(
+            "person:beta",
+            "f2",
+            "unrelated axolotl",
+            date(2026, 1, 1),
+        )],
+    )
+}
+
+#[tokio::test]
+async fn a_failed_doc_batch_commit_leaves_nothing_for_a_later_commit() {
+    let index = FullTextIndex::open().expect("index opens");
+    index
+        .ingest_all(
+            &[alpha_scan("original quokka")],
+            index.reading_begins(),
+            &Default::default(),
+        )
+        .expect("the first ingest lands");
+    assert_eq!(fact_ids_for(&index, "quokka"), ["f1"]);
+
+    index.fail_next_commit();
+    let failed = index.ingest_all(
+        &[alpha_scan("rewritten pangolin")],
+        index.reading_begins(),
+        &Default::default(),
+    );
+    assert!(failed.is_err(), "the commit fault must surface: {failed:?}");
+
+    index
+        .ingest_all(
+            &[alpha_scan("original quokka"), beta_scan()],
+            index.reading_begins(),
+            &Default::default(),
+        )
+        .expect("the unrelated ingest lands");
+
+    assert_eq!(fact_ids_for(&index, "axolotl"), ["f2"]);
+    assert_eq!(fact_ids_for(&index, "quokka"), ["f1"]);
+    assert!(fact_ids_for(&index, "pangolin").is_empty());
+}
+
+#[tokio::test]
+async fn a_failed_single_doc_commit_leaves_nothing_for_a_later_commit() {
+    let index = FullTextIndex::open().expect("index opens");
+    let none = FactHistoryTerms::new();
+    index
+        .ingest_doc(&alpha_scan("original quokka"), &none)
+        .expect("the first write lands");
+    assert_eq!(fact_ids_for(&index, "quokka"), ["f1"]);
+
+    index.fail_next_commit();
+    let failed = index.ingest_doc(&alpha_scan("rewritten pangolin"), &none);
+    assert!(failed.is_err(), "the commit fault must surface: {failed:?}");
+
+    index
+        .ingest_doc(&beta_scan(), &none)
+        .expect("the unrelated write lands");
+
+    assert_eq!(fact_ids_for(&index, "axolotl"), ["f2"]);
+    assert_eq!(fact_ids_for(&index, "quokka"), ["f1"]);
+    assert!(fact_ids_for(&index, "pangolin").is_empty());
+}
+
+/// `forget` stages only a delete, so the leftover would drop the document
+/// the failed call meant to evict from a commit that never named it.
+#[tokio::test]
+async fn a_failed_forget_commit_leaves_nothing_for_a_later_commit() {
+    let index = FullTextIndex::open().expect("index opens");
+    let none = FactHistoryTerms::new();
+    index
+        .ingest_doc(&alpha_scan("original quokka"), &none)
+        .expect("the first write lands");
+    assert_eq!(fact_ids_for(&index, "quokka"), ["f1"]);
+
+    index.fail_next_commit();
+    let failed = index.forget(&EntityId("person:alpha".into()));
+    assert!(failed.is_err(), "the commit fault must surface: {failed:?}");
+
+    index
+        .ingest_doc(&beta_scan(), &none)
+        .expect("the unrelated write lands");
+
+    assert_eq!(fact_ids_for(&index, "axolotl"), ["f2"]);
+    assert_eq!(fact_ids_for(&index, "quokka"), ["f1"]);
+}
+
 /// **Every state is searchable, `processed` included** — an archive is
 /// exactly where an old report lives, and the state is on the hit, so a
 /// caller can tell live work from history without a second call.
