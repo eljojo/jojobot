@@ -1234,11 +1234,14 @@ impl Jojobot {
                        fit it names the walk that returns the rest. A BOT'S OWN THOUGHTS AGE \
                        QUIETLY, AND FACTS SAYS SO UNASKED: asking facts of a bot carrying \
                        thought_capacity (capture's connection edges drawn on the bot's own \
-                       handle — see capture's shape) adds a room block naming the capacity, how \
+                       handle — see capture's shape) adds a `room` block naming the capacity, how \
                        many count against it now, and how many have gone quiet from being untouched \
                        too long — still there, marked aged_out on the fact itself, excluded from \
-                       the count rather than hidden. A write that would go over the capacity is \
-                       refused the same way; this is the same room, read rather than written. \
+                       the count rather than hidden. THE BLOCK IS SENT ONLY WHEN AT LEAST ONE \
+                       THOUGHT HAS GONE QUIET: no block means none has, and the room is \
+                       exactly as full as its live thoughts. A write that would go over the \
+                       capacity is refused the same way; this is the same room, read rather \
+                       than written. \
                        WHICH EDGES: follow {shape, direction, depth}, and \
                        THE ANSWER NESTS — a walked object carries the objects it reached, each \
                        carrying its own. EACH HOP IS BOUNDED: a wide fan-in comes back cut to \

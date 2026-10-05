@@ -5217,3 +5217,57 @@ async fn a_fits_type_that_reached_nothing_names_the_types_keys() {
         .collect();
     assert!(names.contains(&"leaves_on"), "{empty}");
 }
+
+/// **No `room` block when nothing has aged out**, which is what the verb's
+/// description says: the block is sent only when at least one thought has gone
+/// quiet, so its absence means none has. Paired with
+/// [`a_bots_room_read_says_what_aged_out_without_a_write`], where the block is
+/// there because one has.
+#[tokio::test]
+async fn a_room_nothing_has_aged_out_of_carries_no_room_block() {
+    let jojobot = handler();
+    let bot = "bot:mcp-thought-aging";
+    ensure(&jojobot, bot).await;
+    capture_ok(
+        &jojobot,
+        CaptureArgs {
+            fields: Some(
+                [(
+                    jojobot_domain::memory::THOUGHT_CAPACITY.to_string(),
+                    "2".to_string(),
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            ..capture_args(bot, "capacity is two")
+        },
+    )
+    .await;
+    capture_ok(
+        &jojobot,
+        CaptureArgs {
+            shape: Some("connection".into()),
+            object: Some("thing:the-couch".into()),
+            ..capture_args(bot, "the couch needs a leg fixed")
+        },
+    )
+    .await;
+
+    let recalled = json_of(
+        &jojobot
+            .recall(Parameters(recall_args(bot)))
+            .await
+            .expect("recall ok"),
+    );
+    let object = &recalled["objects"][0];
+    assert!(
+        object["facts"].as_array().is_some_and(|facts| facts
+            .iter()
+            .any(|f| f["content"].as_str().is_some_and(|c| c.contains("couch")))),
+        "the thought is there, or the absence below proves nothing: {object}"
+    );
+    assert!(
+        object.get("room").is_none(),
+        "nothing has aged out, so no room block is sent: {object}"
+    );
+}

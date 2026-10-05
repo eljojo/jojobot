@@ -562,6 +562,12 @@ fn the_recall_description_names_session_runs_and_withheld() {
     assert_description_names("recall", &["`session`", "`withheld`"]);
 }
 
+/// **`recall`'s description names the `room` block and when it is sent.**
+#[test]
+fn the_recall_description_names_the_room_block_and_when_it_appears() {
+    assert_description_names("recall", &["`room`", "aged_out"]);
+}
+
 /// **`recall`'s description says an empty `answers_type` still names the
 /// type's keys**, in the answer's own key for them.
 #[test]
