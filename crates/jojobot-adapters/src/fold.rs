@@ -276,17 +276,17 @@ impl Memory for Folded {
         date: Date,
     ) -> Result<Merge, MemoryError> {
         let done = self.inner.merge(folded, survivor, reason, date).await?;
-        // **Both sides attempted regardless of whether the first fails.** The
-        // merge already landed on both; a caller told only the folded side is
-        // behind while the survivor's own refresh never even ran would learn
-        // that the hard way on its next stale read.
-        let folded_refreshed = self.refresh(folded).await;
-        let survivor_refreshed = self.refresh(survivor).await;
-        match (folded_refreshed, survivor_refreshed) {
-            (Ok(()), Ok(())) => Ok(done),
-            (Err(source), _) | (Ok(()), Err(source)) => {
-                Err(fold_behind(Landed::Merge(Box::new(done)), source))
-            }
+        // **The merged-away handle's entry is dropped, never refreshed.** A
+        // merge moves its writes to the survivor, so the store's version
+        // marker for it falls below what this cache installed, and
+        // [`refresh`](Self::refresh) refuses a read that is behind what it
+        // holds: the old fields would be served until a restart. A dropped
+        // entry sends the next read to the store, which is the answer, the
+        // way a rename does it.
+        self.cache.write().expect("fold lock").remove(folded);
+        match self.refresh(survivor).await {
+            Ok(()) => Ok(done),
+            Err(source) => Err(fold_behind(Landed::Merge(Box::new(done)), source)),
         }
     }
 

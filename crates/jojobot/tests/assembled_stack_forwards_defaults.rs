@@ -313,6 +313,58 @@ async fn the_stack_the_binary_builds_answers_what_the_layer_beneath_implements()
         "the batched read renders exactly what the single read does"
     );
 
+    // ── a merge: the store's version marker is a count of the thing's own
+    //    writes, and a merge moves them to the survivor ───────────────────────
+    //
+    // The merged-away handle's count falls to nothing, which is below what the
+    // fold installed when it was written, so a refresh that has to beat the
+    // installed version is refused and the old fields are served until a
+    // restart.
+    let alpha = created(indexed.as_ref(), "person:alpha", "Alpha").await;
+    let beta = created(indexed.as_ref(), "person:beta", "Beta").await;
+    indexed
+        .capture(NewFact {
+            fields: fields(&[("due_on", "2026-09-14")]),
+            ..NewFact::about(alpha.clone(), "alpha's own due date", date(2026, 9, 1))
+        })
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("nothing collides");
+    assert_eq!(
+        indexed
+            .fields(&alpha)
+            .await
+            .expect("fields answer")
+            .get("due_on")
+            .map(String::as_str),
+        Some("2026-09-14"),
+        "the thing holds the key before the merge, which is what the negative below rests on"
+    );
+    indexed
+        .merge(&alpha, &beta, Some("same thing"), date(2026, 9, 7))
+        .await
+        .expect("merge ok");
+    assert_eq!(
+        indexed
+            .fields(&beta)
+            .await
+            .expect("fields answer")
+            .get("due_on")
+            .map(String::as_str),
+        Some("2026-09-14"),
+        "the survivor holds what moved"
+    );
+    assert_eq!(
+        indexed
+            .fields(&alpha)
+            .await
+            .expect("the merged-away handle still answers")
+            .get("due_on"),
+        None,
+        "the merged-away handle must not go on serving what it held before the merge"
+    );
+
     // ── the session summaries: implemented by the store ─────────────────────
     let began = |sid: &str, focus: String, at: &str| NewSession {
         bot: gamma.clone(),
