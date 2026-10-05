@@ -3346,6 +3346,80 @@ async fn a_fields_miss_still_answers_with_its_near_candidates() {
     store.stop().await;
 }
 
+/// **`fields_versioned` defers the listing the same way.** It is the read
+/// every write refresh makes, so a listing built on its hit path is paid on
+/// every write.
+#[tokio::test]
+async fn a_fields_versioned_hit_answers_with_no_full_listing_and_a_miss_still_gets_candidates() {
+    let scratch = Scratch::new("resolve_fields_versioned");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("memory")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+
+    let memory = DoltMemory::open(pool);
+    let gamma = EntityId::person("person:gamma");
+    memory
+        .add_entity(NewEntity::new(gamma.clone(), "Gamma", "user-named"))
+        .await
+        .expect("add ok")
+        .written()
+        .expect("not blocked");
+    memory
+        .capture(NewFact {
+            fields: std::collections::BTreeMap::from([(
+                "due_on".to_string(),
+                "2026-09-14".to_string(),
+            )]),
+            ..NewFact::about(gamma.clone(), "seeded", date(2026, 9, 1))
+        })
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("not blocked");
+
+    let before = memory.index_listings();
+    let (fields, written) = memory
+        .fields_versioned(&gamma)
+        .await
+        .expect("fields_versioned ok");
+    assert_eq!(
+        fields.get("due_on"),
+        Some(&"2026-09-14".to_string()),
+        "the hit still answers correctly"
+    );
+    assert_eq!(written, 1, "the count is the one write the entity holds");
+    assert_eq!(
+        memory.index_listings(),
+        before,
+        "a hit must not build the full listing"
+    );
+
+    let before = memory.index_listings();
+    let err = memory
+        .fields_versioned(&EntityId::person("person:gama"))
+        .await
+        .expect_err("an unwritten near-miss handle must not resolve");
+    match err {
+        MemoryError::UnknownEntity { nearest, .. } => assert!(
+            !nearest.is_empty(),
+            "a near-miss must still come back with candidates"
+        ),
+        other => panic!("expected UnknownEntity, got {other:?}"),
+    }
+    assert!(
+        memory.index_listings() > before,
+        "a miss must still build the listing, which is what the candidates come from"
+    );
+
+    store.stop().await;
+}
+
 /// **`recall` deferred the same way `fields` did.** Same read, shared with
 /// the store's own read-then-fix over every site that built the listing
 /// eagerly before a resolve.
