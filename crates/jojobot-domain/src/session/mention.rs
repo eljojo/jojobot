@@ -22,7 +22,8 @@ use crate::memory::{
 use jiff::civil::Date;
 
 use super::{
-    EntryId, JournalEntry, NewEntry, NewSession, Session, SessionError, SessionId, Sessions,
+    EntryId, JournalEntry, NewEntry, NewSession, Session, SessionError, SessionId, SessionSummary,
+    Sessions,
 };
 
 /// Wraps any [`Sessions`] so a handle written into a session's focus or its
@@ -95,6 +96,11 @@ impl Mentioning {
         entry.text = mention::rendered(&entry.text, known);
     }
 
+    fn render_summary(summary: &mut SessionSummary, known: &[Entity]) {
+        summary.bot = Self::current_handle_for(&summary.bot, known);
+        summary.focus = mention::rendered(&summary.focus, known);
+    }
+
     fn render_session(session: &mut Session, known: &[Entity]) {
         session.bot = Self::current_handle_for(&session.bot, known);
         session.focus = mention::rendered(&session.focus, known);
@@ -132,6 +138,42 @@ impl Sessions for Mentioning {
             Self::render_session(session, &known);
         }
         Ok(sessions)
+    }
+
+    /// **Resolved to the storage key and rendered back, exactly as
+    /// [`sessions_of`](Sessions::sessions_of) does — but answered by what the
+    /// store beneath offers, rather than by the trait default reading every
+    /// run in full.** Forwarding the caller's handle unchanged would miss a
+    /// renamed bot's runs, which are stored under its badge.
+    async fn summaries_of(&self, bot: &EntityId) -> Result<Vec<SessionSummary>, SessionError> {
+        let known = self.known().await?;
+        let former = self.former().await?;
+        let key = Self::storage_key_for(bot, &known, &former);
+        let mut summaries = self.inner.summaries_of(&key).await?;
+        for summary in &mut summaries {
+            Self::render_summary(summary, &known);
+        }
+        Ok(summaries)
+    }
+
+    async fn all_summaries(&self) -> Result<Vec<SessionSummary>, SessionError> {
+        let mut summaries = self.inner.all_summaries().await?;
+        if summaries.is_empty() {
+            return Ok(summaries);
+        }
+        let known = self.known().await?;
+        for summary in &mut summaries {
+            Self::render_summary(summary, &known);
+        }
+        Ok(summaries)
+    }
+
+    /// **Straight through.** The signal counts writes to the store and says
+    /// nothing in text, so there is nothing here to resolve. Left to the
+    /// default it answers `None`, and every refresh above this layer then
+    /// reads the whole board.
+    async fn write_summary(&self) -> Result<Option<(i64, Option<jiff::Timestamp>)>, SessionError> {
+        self.inner.write_summary().await
     }
 
     async fn all_sessions(&self) -> Result<Vec<Session>, SessionError> {

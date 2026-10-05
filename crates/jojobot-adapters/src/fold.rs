@@ -305,6 +305,17 @@ impl Memory for Folded {
         self.inner.write_summary().await
     }
 
+    /// **Straight through.** Only `Provisioned` beneath this layer holds what
+    /// the build ships, so a default body here would answer "no echoes" for
+    /// every write in production.
+    async fn echoed_defaults(
+        &self,
+        entity: &EntityId,
+        fields: &BTreeMap<String, String>,
+    ) -> Vec<String> {
+        self.inner.echoed_defaults(entity, fields).await
+    }
+
     /// **A declaration can change how EVERY entity's existing writes fold**
     /// — `newest` against a counter — so there is no one handle to refresh
     /// the way a capture refreshes its own home. The whole cache is rebuilt

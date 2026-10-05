@@ -285,6 +285,17 @@ impl Memory for IndexedMemory {
         self.inner.referring_to(target).await
     }
 
+    /// **Straight through, and it does not touch the index.** What this build
+    /// ships as a default is known to `Provisioned` alone; the default body
+    /// here would say no write ever echoes one.
+    async fn echoed_defaults(
+        &self,
+        entity: &EntityId,
+        fields: &BTreeMap<String, String>,
+    ) -> Vec<String> {
+        self.inner.echoed_defaults(entity, fields).await
+    }
+
     async fn update_fact(
         &self,
         address: &FactAddress,

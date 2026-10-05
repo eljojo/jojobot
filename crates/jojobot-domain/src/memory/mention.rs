@@ -800,6 +800,17 @@ impl super::Memory for Mentioning {
         self.inner.write_summary().await
     }
 
+    /// **Straight through.** The comparison is per key against what the
+    /// build ships, which only the layer beneath holds; resolving a handle
+    /// into a mention changes neither side of it.
+    async fn echoed_defaults(
+        &self,
+        entity: &EntityId,
+        fields: &std::collections::BTreeMap<String, String>,
+    ) -> Vec<String> {
+        self.inner.echoed_defaults(entity, fields).await
+    }
+
     async fn scan_entity(
         &self,
         entity: &EntityId,

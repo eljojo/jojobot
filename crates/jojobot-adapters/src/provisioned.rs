@@ -246,6 +246,20 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
         Ok(folded)
     }
 
+    /// **The same fold as [`fields`](Self::fields), under the store's own
+    /// marker.** `Folded` caches what this answers, so the shipped defaults
+    /// have to be in it, and its stale-read guard compares the marker, so it
+    /// has to be the store's rather than the trait default's `0`.
+    async fn fields_versioned(
+        &self,
+        entity: &EntityId,
+    ) -> Result<(BTreeMap<String, String>, u64), MemoryError> {
+        let (held, version) = self.inner.fields_versioned(entity).await?;
+        let mut folded = self.unwritten_defaults(entity);
+        folded.extend(held);
+        Ok((folded, version))
+    }
+
     /// **The one comparison this layer can make that the store underneath
     /// cannot**: only `Provisioned` holds what the build ships, so only here
     /// can a write be compared against it. Per-key exact-value equality
