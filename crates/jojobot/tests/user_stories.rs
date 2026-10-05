@@ -73,6 +73,8 @@ mod kitchensink;
 mod mentioning;
 #[path = "user_stories/moving.rs"]
 mod moving;
+#[path = "user_stories/my_past_runs.rs"]
+mod my_past_runs;
 #[path = "user_stories/party.rs"]
 mod party;
 #[path = "user_stories/pets.rs"]

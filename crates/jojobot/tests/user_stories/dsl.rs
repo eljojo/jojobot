@@ -290,6 +290,28 @@ impl Story {
         Self::serve(bot, Self::wired(InMemoryMemory::booted())).await
     }
 
+    /// **A fresh jojobot nobody has written to**, served for the identity every
+    /// instance arrives holding. [`begin`](Story::begin) stands its bot up by
+    /// writing as that identity, which leaves a run behind in every story; this
+    /// one skips the stand-up, and a boot writes no run until the first write,
+    /// so the index holds no session at all.
+    pub async fn begin_with_nothing_written() -> Self {
+        let mail = Arc::new(InMemoryMailboxes::knowing_any_owner());
+        let runs = Arc::new(InMemorySessions::new());
+        let bot = jojobot_mcp::seed::DEFAULT_BOT
+            .strip_prefix("bot:")
+            .expect("a bot handle carries its kind prefix");
+        Self::spawn(
+            bot,
+            Self::wired(InMemoryMemory::booted()),
+            mail,
+            runs,
+            jojobot_domain::clock::Clock::default(),
+            false,
+        )
+        .await
+    }
+
     /// The store, plus what this build supplies over it — everything short of
     /// `jojobot::wiring::assemble_memory`'s own `Folded` and `Mentioning`
     /// wraps, which `spawn` calls, exactly as `main.rs` does, so the two
