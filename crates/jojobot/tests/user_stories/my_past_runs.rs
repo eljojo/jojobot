@@ -227,3 +227,73 @@ async fn a_caller_with_no_identity_is_told_runs_exist_and_shown_none() {
     );
     empty.finish().await;
 }
+
+#[tokio::test]
+async fn a_colleagues_run_is_never_named_slugged_or_attributed_to_another_bot() {
+    const FOCUS: &str = "pricing the replacement wheels";
+    let story = Story::begin("bot:otto").await;
+    let otto = story.session().await;
+    otto.add("bot:epsilon", "Epsilon").await;
+    let epsilon = story.as_bot("bot:epsilon").await;
+    epsilon
+        .call(
+            "journal",
+            json!({ "entry": "started on the wheels", "focus": FOCUS }),
+        )
+        .await;
+
+    // The run's own id, read by its owner.
+    let own = my_past_runs(&epsilon).await;
+    let run_id = runs_found(&own)
+        .iter()
+        .find(|run| run["name"] == FOCUS)
+        .unwrap_or_else(|| panic!("epsilon's run is named for its focus: {own}"))["id"]
+        .as_str()
+        .expect("a run carries its id")
+        .to_string();
+    // Three ways of naming that run: a near miss of its id, the slug of its
+    // focus, and the exact id.
+    let mut near_miss = run_id.clone();
+    let last = near_miss.pop().expect("an id is not empty");
+    near_miss.push(if last == 'a' { 'b' } else { 'a' });
+    let by_focus = format!("session:{}", FOCUS.replace(' ', "-"));
+    let subjects = [near_miss, by_focus, run_id.clone()];
+
+    // The other bot names each of them and is told neither whose it is nor
+    // what it was about, only that it is not its own or does not exist.
+    for subject in &subjects {
+        let answered = otto
+            .refused("recall", json!({ "kind": "session", "subject": subject }))
+            .await;
+        let text = answered.json().to_string().replace(subject.as_str(), "");
+        assert!(
+            !text.contains("wheels"),
+            "naming {subject} gave another bot a run's focus text: {text}"
+        );
+        assert!(
+            !text.contains("bot:epsilon"),
+            "naming {subject} told another bot whose run it is: {text}"
+        );
+    }
+
+    // The positive each negative depends on: the owner is shown its own run
+    // for the exact id, and offered it by name for the other two, so the
+    // checks above can see what they claim is absent.
+    for subject in &subjects {
+        let asked = json!({ "kind": "session", "subject": subject });
+        if *subject == run_id {
+            let answered = epsilon.call("recall", asked).await.json();
+            assert_eq!(
+                answered["objects"][0]["name"], FOCUS,
+                "the owner reads its own run by its exact id: {answered}"
+            );
+        } else {
+            let answered = epsilon.refused("recall", asked).await.json();
+            assert!(
+                answered.to_string().contains("wheels"),
+                "the owner is offered its own run for {subject}: {answered}"
+            );
+        }
+    }
+    story.finish().await;
+}

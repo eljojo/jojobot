@@ -467,9 +467,8 @@ fn a_runs_owner_scoping_already_works_on_its_projected_shape() {
         history: None,
     };
     match resolve(&scanned, &[], &naming) {
-        Err(MemoryError::NotYours { attempted, owner }) => {
+        Err(MemoryError::NotYours { attempted }) => {
             assert_eq!(attempted, "session:contract-delta-run");
-            assert_eq!(owner, "bot:delta");
         }
         other => panic!(
             "another bot's run must be refused as somebody else's, never as absent and \

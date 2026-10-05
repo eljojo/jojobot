@@ -3646,12 +3646,14 @@ pub enum MemoryError {
     /// only makes every other answer less believable. **A caller has to be able
     /// to tell "you may not read this" from "there is nothing here", because
     /// the two ask for different next moves.**
-    #[error("'{attempted}' belongs to {owner}, and only its owner reads it")]
+    ///
+    /// **It does not say whose.** Which identity holds a run is a fact about
+    /// somebody else's work, and the caller only needs to know the object is
+    /// not its own.
+    #[error("'{attempted}' is not yours, and only its owner reads it")]
     NotYours {
         /// The handle that was named.
         attempted: String,
-        /// The identity it belongs to.
-        owner: String,
     },
     /// **A thing's room is at capacity, and the write named nothing to
     /// drop.**

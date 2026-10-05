@@ -4791,8 +4791,13 @@ async fn a_bots_session_is_not_readable_by_a_different_bot() {
     // regressed to "unknown" would still be `status: blocked` and would
     // still pass a check that stopped at that.
     assert!(
-        how.contains("bot:otto") && how.contains("not yours"),
+        how.contains("not yours"),
         "a different bot's run must be refused as somebody else's, never as absent: {how}",
+    );
+    // It says the run is not the caller's and does not say whose it is.
+    assert!(
+        !how.contains("bot:otto"),
+        "the refusal named the bot that owns the run: {how}",
     );
     assert!(
         !refused

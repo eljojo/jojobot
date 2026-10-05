@@ -1510,9 +1510,20 @@ impl<'a> Ctx<'a> {
             // empty answer: an empty answer reads as "nothing is recorded" and
             // a caller cannot repair a typo from it.
             if !self.entities.contains_key(subject) {
+                // **The screen sees only what the caller may read.** An owned
+                // thing is named for its own words (a run is named for its
+                // focus), so offering it as a near miss, or confirming it as a
+                // same-name match, would hand its words to a caller that owns
+                // none of it.
+                let readable: Vec<Entity> = self
+                    .index
+                    .iter()
+                    .filter(|e| self.readable_by(&e.id, select))
+                    .cloned()
+                    .collect();
                 return Err(MemoryError::UnknownEntity {
                     attempted: subject.to_string(),
-                    nearest: guard::screen(subject, &[], &self.index),
+                    nearest: guard::screen(subject, &[], &readable),
                 });
             }
             // **Naming a handle skips every filter below, which is why the
@@ -1521,11 +1532,6 @@ impl<'a> Ctx<'a> {
             if !self.readable_by(subject, select) {
                 return Err(MemoryError::NotYours {
                     attempted: subject.to_string(),
-                    owner: self
-                        .owners
-                        .get(subject)
-                        .map(|owner| owner.to_string())
-                        .unwrap_or_default(),
                 });
             }
             return Ok(vec![subject.clone()]);
@@ -2163,9 +2169,29 @@ where
             match super::resolve_handle(subject, &entities, &former) {
                 Some(current) => Some(current.id.clone()),
                 None => {
+                    // **The screen sees only what the caller may read.** A run
+                    // is named for its focus and owned by a bot, so offering
+                    // it as a near miss, or confirming it as a same-name
+                    // match, would hand its words to a caller that owns none
+                    // of it. The same rule `Ctx::readable_by` states for an
+                    // answer, applied before there is a `Ctx`.
+                    let hidden: HashSet<&EntityId> = sessions
+                        .iter()
+                        .filter(|doc| {
+                            doc.owner
+                                .as_ref()
+                                .is_some_and(|owner| select.asked_by.as_ref() != Some(owner))
+                        })
+                        .filter_map(|doc| doc.entity.as_ref().map(|e| &e.id))
+                        .collect();
+                    let readable: Vec<Entity> = entities
+                        .iter()
+                        .filter(|e| !hidden.contains(&e.id))
+                        .cloned()
+                        .collect();
                     return Err(MemoryError::UnknownEntity {
                         attempted: subject.to_string(),
-                        nearest: guard::screen(subject, &[], &entities),
+                        nearest: guard::screen(subject, &[], &readable),
                     });
                 }
             }
