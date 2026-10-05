@@ -125,3 +125,51 @@ async fn nothing_of_mine_reads_differently_from_nothing_at_all() {
     );
     empty.finish().await;
 }
+
+#[tokio::test]
+async fn a_caller_with_no_identity_is_told_runs_exist_and_shown_none() {
+    // ── ① an instance with a run on it, asked by a caller carrying no sid ───
+    let story = Story::begin("bot:otto").await;
+    let otto = story.session().await;
+    otto.journal("otto surveyed the east trail and found the bridge closed")
+        .await;
+    let (answered, no_handle) = story
+        .call("recall", json!({ "kind": "session", "prose": true }))
+        .await;
+    assert!(
+        no_handle.is_none(),
+        "a recall mints no session, so the caller still has no identity"
+    );
+    let answered = answered.json();
+    assert!(
+        runs_found(&answered).is_empty(),
+        "a caller with no identity owns no run, so it is shown none: {answered}"
+    );
+    assert!(
+        answered["withheld"].as_u64().is_some_and(|n| n >= 1),
+        "a run exists here and the empty list must say so rather than read as an empty \
+         index: {answered}"
+    );
+    assert!(
+        !answered.to_string().contains("east trail"),
+        "a run's words reached a caller that owns none: {answered}"
+    );
+    story.finish().await;
+
+    // ── ② an instance where nobody has written anything ─────────────────────
+    let empty = Story::begin_with_nothing_written().await;
+    let (answered, _) = empty
+        .call("recall", json!({ "kind": "session", "prose": true }))
+        .await;
+    let answered = answered.json();
+    assert!(
+        runs_found(&answered).is_empty(),
+        "no run exists on an instance nobody has written to: {answered}"
+    );
+    assert_eq!(
+        answered["withheld"].as_u64(),
+        Some(0),
+        "an index with nothing in it withholds none, which is not the answer in ①: {answered}"
+    );
+    empty.finish().await;
+}

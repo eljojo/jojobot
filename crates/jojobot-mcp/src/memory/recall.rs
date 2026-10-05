@@ -1637,18 +1637,21 @@ impl Jojobot {
                 .as_ref()
                 .is_some_and(|s| s.kind() == Some(EntityKind::SESSION));
         let session_docs: Vec<jojobot_domain::memory::search::DocScan> = if wants_sessions {
-            match &caller {
-                // A caller with no identity owns no runs, and `graph::walk`'s
-                // own owner check would exclude every session anyway — this
-                // just saves the read.
-                None => Vec::new(),
-                Some(caller) => match self.sessions.all_summaries().await {
-                    Ok(runs) => runs
-                        .iter()
-                        .map(jojobot_domain::session::projected_summary)
-                        .collect(),
-                    Err(e) => return session_declined(e, caller.sid.as_str()),
-                },
+            // **Read for a caller with no identity too.** It owns no run, so
+            // the walk's owner check excludes every one, but the exclusion
+            // is what is counted as `withheld`. Skipping the read made an
+            // anonymous "nothing here" read exactly like an empty index.
+            match self.sessions.all_summaries().await {
+                Ok(runs) => runs
+                    .iter()
+                    .map(jojobot_domain::session::projected_summary)
+                    .collect(),
+                Err(e) => {
+                    return session_declined(
+                        e,
+                        caller.as_ref().map_or("", |caller| caller.sid.as_str()),
+                    );
+                }
             }
         } else {
             Vec::new()
