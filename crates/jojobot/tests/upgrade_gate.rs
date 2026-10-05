@@ -76,6 +76,10 @@ async fn the_current_binary_boots_on_a_store_an_older_binary_filled() {
         .env("JOJOBOT_BIND", format!("127.0.0.1:{http_port}"))
         .env("JOJOBOT_ALLOW_NO_AUTH", "1")
         .env_remove("JOJOBOT_ISSUER")
+        // The serving line is an info event. An inherited RUST_LOG can filter it
+        // out: the package build exports RUST_LOG="", which parses as a filter
+        // with no directives and hides every info line.
+        .env("RUST_LOG", "info")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true)
