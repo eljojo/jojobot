@@ -18,7 +18,12 @@ fn write_recording_cargo(dir: &std::path::Path) -> std::path::PathBuf {
     let script = r#"#!/bin/sh
 echo "$*" >> "$(dirname "$0")/argv.log"
 case " $* " in
-  *" --list "*) echo 'some::test::name: test'; exit 0 ;;
+  *" --list "*)
+    case " $* " in
+      *" --ignored "*) ;;
+      *) echo 'some::test::name: test' ;;
+    esac
+    exit 0 ;;
 esac
 case "$1" in
   test) echo 'test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s'; exit 0 ;;

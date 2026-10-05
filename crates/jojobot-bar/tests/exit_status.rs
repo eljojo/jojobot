@@ -11,7 +11,8 @@ use std::process::Command;
 /// **A fake `cargo` that mimics a crashed sibling suite.** `fmt`, `build`
 /// and `clippy` succeed silently; a real `-- --list` still lists one test,
 /// so `narrow`'s zero-selection guard does not fire before the phase this
-/// test targets ever runs; a real test run prints one clean `test result:`
+/// test targets ever runs, and lists none of them as ignored; a real test
+/// run prints one clean `test result:`
 /// line — as a sibling suite under `--no-fail-fast` would — and then exits
 /// non-zero, exactly as the crashed suite that printed nothing could not
 /// stop it from doing.
@@ -20,7 +21,12 @@ fn write_fake_cargo(dir: &std::path::Path) -> std::path::PathBuf {
     let mut f = fs::File::create(&path).expect("write fake cargo");
     let script = r#"#!/bin/sh
 case " $* " in
-  *" --list "*) echo 'some::test::name: test'; exit 0 ;;
+  *" --list "*)
+    case " $* " in
+      *" --ignored "*) ;;
+      *) echo 'some::test::name: test' ;;
+    esac
+    exit 0 ;;
 esac
 case "$1" in
   test) echo 'test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s'; exit 1 ;;
