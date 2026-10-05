@@ -1065,33 +1065,33 @@ async fn every_lock_holds_once_the_vault_is_worked() {
 /// own case. **This was the second room left uncovered**, this time for
 /// nothing more than the room not having asked yet.
 ///
-/// **Green, not blind.** Seven of the nine needles this case first found
-/// were scoped to their own sitting — a companion needle only that
-/// sitting's own record or content could satisfy, added beside the
-/// ambiguous one, the same shape October's own dependency lock already
-/// uses. **Two are named exceptions rather than fixes**: `overdue_excluded`
-/// and `archived_excluded` are read from the answer's own envelope —
-/// outside every object `recall` and `list_entities` return — and
-/// [`jojobot_exercise::lock::NeedleVerdict::is_finding`] treats every
-/// envelope match as a finding regardless of what else the lock carries, on
-/// purpose: an envelope value is not about any one sitting, so no partner
-/// needle could ever pin one to its own. Turning either into a `check`
-/// hatch would misuse that escape valve — `checks.rs`'s own doc says a
-/// hatch names something the query-and-assertion vocabulary cannot say, and
-/// this one says it fine; the needle-hygiene walker's blind spot is
-/// envelope aggregates, not the query surface. Reported to pm rather than
-/// forced or swept: named here, the same way `needle_hygiene_coverage.rs`'s
-/// own `PENDING` names a room-level gap, so a NEW finding still reds this
-/// case instead of hiding beside these two.
-const ACCEPTED_ENVELOPE_FINDINGS: &[&str] = &["\"overdue_excluded\":4", "\"archived_excluded\":1"];
+/// **Green, not blind.** Eight of the nine needles this case first found
+/// were scoped to their own sitting. Seven by a companion needle only that
+/// sitting's own record or content could satisfy, the same shape October's own
+/// dependency lock already uses. One, `archived_excluded`, is an envelope
+/// value no partner needle can pin, so `needle_summary` is given the run's
+/// boundaries and drops an envelope needle that is false before its lock's
+/// own phase and true after it.
+///
+/// **`overdue_excluded` is the one named exception, and no needle can scope
+/// it.** It counts the whole room's `runs_out` carriers on the day asked, so
+/// no December record can appear in the answer to pin it to December, and it
+/// appears in no boundary text for the boundary test to read. Turning it into
+/// a `check` hatch would misuse that escape valve — `checks.rs`'s own doc says
+/// a hatch names something the query-and-assertion vocabulary cannot say, and
+/// this one says it fine. It is named here, the same way
+/// `needle_hygiene_coverage.rs`'s own `PENDING` names a room-level gap, so a
+/// NEW finding still reds this case instead of hiding beside it.
+const ACCEPTED_ENVELOPE_FINDINGS: &[&str] = &["\"overdue_excluded\":4"];
 
 #[tokio::test]
 async fn no_lock_here_rests_on_a_needle_that_matches_somewhere_else() {
     let (_room, surface, _sid) = furnished().await;
-    let _ = worked_the_vault(&surface, &room_document()).await;
+    let boundaries = worked_the_vault(&surface, &room_document()).await;
     let summary = jojobot_exercise::lock::needle_summary(
         &surface,
         &jojobot_exercise::lock::locks_of(expectations::VAULT_ROOM),
+        &boundaries,
     )
     .await;
     assert!(

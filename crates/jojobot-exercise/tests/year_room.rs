@@ -4447,6 +4447,7 @@ async fn no_lock_here_rests_on_a_needle_that_matches_somewhere_else() {
     let summary = jojobot_exercise::lock::needle_summary(
         &surface,
         &jojobot_exercise::lock::locks_of(expectations::YEAR_ROOM),
+        &[],
     )
     .await;
     // ⚠️ **The findings come first, and the order is load-bearing.** The

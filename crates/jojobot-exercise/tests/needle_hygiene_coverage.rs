@@ -40,12 +40,12 @@ struct Pending<'a> {
     reason: &'a str,
 }
 
-/// **Empty on purpose.** `VAULT_ROOM` moved to `COVERED` once seven of its
-/// nine ambiguous needles were scoped to their own sitting; the two that
-/// cannot be — `overdue_excluded` and `archived_excluded`, both envelope
-/// matches — are named as accepted exceptions inside `vault_room.rs`'s own
-/// case rather than kept here, because they are not gaps in coverage: the
-/// case is written, green, and watching for anything new.
+/// **Empty on purpose.** `VAULT_ROOM` moved to `COVERED` once eight of its
+/// nine ambiguous needles were scoped to their own sitting; the one that
+/// cannot be — `overdue_excluded`, an envelope match — is named as an
+/// accepted exception inside `vault_room.rs`'s own case rather than kept
+/// here, because it is not a gap in coverage: the case is written, green, and
+/// watching for anything new.
 const PENDING: &[Pending<'static>] = &[];
 
 /// **A shipped room with no named entry, covered or pending, is a room

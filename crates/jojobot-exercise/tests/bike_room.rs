@@ -472,6 +472,7 @@ async fn no_lock_here_rests_on_a_needle_that_matches_somewhere_else() {
     let summary = jojobot_exercise::lock::needle_summary(
         &surface,
         &jojobot_exercise::lock::locks_of(expectations::BIKE_ROOM),
+        &[],
     )
     .await;
     assert!(

@@ -1026,9 +1026,30 @@ pub struct NeedleVerdict {
     pub lock: String,
     pub needle: String,
     pub matched: Matched,
+    /// The phase key of the lock's own heading, `None` for a lock written
+    /// under none.
+    pub phase: Option<String>,
 }
 
 impl NeedleVerdict {
+    /// **Whether the lock's own phase is what made this needle true.**
+    ///
+    /// An envelope value is not about any one sitting, so no partner needle
+    /// can pin it to its own. A boundary text can: the needle is false in the
+    /// reading taken before the lock's phase and true in the one taken after
+    /// it. That scopes it to its own sitting. A needle true in both, or in
+    /// neither, or a lock with no phase or no recorded boundary, is not
+    /// scoped — so this can only remove a finding, never add one.
+    pub fn is_scoped_to_its_phase(&self, boundaries: &[crate::run::Boundary]) -> bool {
+        let Some(phase) = self.phase.as_deref() else {
+            return false;
+        };
+        let Some((before, after)) = crate::run::boundary_pair(boundaries, phase) else {
+            return false;
+        };
+        !before.world.contains(&self.needle) && after.world.contains(&self.needle)
+    }
+
     /// **Whether this needle is a finding rather than a note.**
     ///
     /// ⭐ **An ambiguous needle is harmless when its own lock carries another
@@ -1149,6 +1170,7 @@ pub async fn needle_verdicts(
                 lock: lock.name.clone(),
                 needle: needle.clone(),
                 matched,
+                phase: lock.phase_key.clone(),
             });
         }
         all.push(here);
@@ -1174,7 +1196,16 @@ pub struct NeedleSummary {
 }
 
 /// Ask every lock and fold the verdicts into what a room's case asserts.
-pub async fn needle_summary(room: &crate::surface::Surface, locks: &[Lock]) -> NeedleSummary {
+///
+/// `boundaries` are the readings the run took at each phase boundary. An
+/// envelope needle that its own phase made true is not a finding, see
+/// [`NeedleVerdict::is_scoped_to_its_phase`]. A room with no boundaries passes
+/// none, and every envelope needle stays a finding.
+pub async fn needle_summary(
+    room: &crate::surface::Surface,
+    locks: &[Lock],
+    boundaries: &[crate::run::Boundary],
+) -> NeedleSummary {
     let mut summary = NeedleSummary::default();
     for one_lock in needle_verdicts(room, locks).await {
         for verdict in &one_lock {
@@ -1190,7 +1221,7 @@ pub async fn needle_summary(room: &crate::surface::Surface, locks: &[Lock]) -> N
                 .filter(|other| other.needle != verdict.needle)
                 .map(|other| &other.matched)
                 .collect();
-            if verdict.is_finding(&partners) {
+            if verdict.is_finding(&partners) && !verdict.is_scoped_to_its_phase(boundaries) {
                 summary
                     .findings
                     .push(format!("{} — {}", verdict.lock, verdict.needle));
@@ -1666,5 +1697,68 @@ mod standing_tests {
             "unparsable arguments were exempted rather than flagged: {:?}",
             found.iter().map(|f| &f.needle).collect::<Vec<_>>(),
         );
+    }
+
+    /// A boundary shaped as a run takes it: the inventory, one newline, then
+    /// everything the index sees.
+    fn reading(before: &str, entities: &str) -> crate::run::Boundary {
+        crate::run::Boundary {
+            before: before.to_string(),
+            mail: String::new(),
+            world: format!("{entities}\n{{\"results\":[]}}"),
+            runs_offered: 0,
+            board: String::new(),
+        }
+    }
+
+    fn envelope_verdict(phase: Option<&str>) -> NeedleVerdict {
+        NeedleVerdict {
+            lock: "Phase 2 — the second sitting: a lock".to_string(),
+            needle: "\"archived_excluded\":1".to_string(),
+            matched: Matched::Envelope(".archived_excluded".to_string()),
+            phase: phase.map(str::to_string),
+        }
+    }
+
+    /// **The sitting that made an envelope needle true owns it.** False in the
+    /// reading before the lock's phase and true in the one after: scoped.
+    #[test]
+    fn an_envelope_needle_its_own_phase_made_true_is_scoped_to_that_phase() {
+        let boundaries = [
+            reading("Phase 2 — the second sitting", "{\"archived_excluded\":0}"),
+            reading("Phase 3 — the third sitting", "{\"archived_excluded\":1}"),
+        ];
+        assert!(envelope_verdict(Some("Phase 2")).is_scoped_to_its_phase(&boundaries));
+    }
+
+    /// **The half that keeps the guard from excusing everything.** A needle
+    /// already true before the lock's phase was made true by something else,
+    /// so it stays a finding.
+    #[test]
+    fn an_envelope_needle_already_true_before_its_phase_is_not_scoped() {
+        let boundaries = [
+            reading("Phase 2 — the second sitting", "{\"archived_excluded\":1}"),
+            reading("Phase 3 — the third sitting", "{\"archived_excluded\":1}"),
+        ];
+        assert!(!envelope_verdict(Some("Phase 2")).is_scoped_to_its_phase(&boundaries));
+    }
+
+    /// **Neither half alone scopes it, and nothing recorded scopes nothing.**
+    /// True in no boundary, a lock under no phase heading, and a phase the run
+    /// recorded no boundary for each leave the needle a finding.
+    #[test]
+    fn an_envelope_needle_with_no_boundary_evidence_is_not_scoped() {
+        let silent = [
+            reading("Phase 2 — the second sitting", "{\"archived_excluded\":0}"),
+            reading("Phase 3 — the third sitting", "{\"archived_excluded\":0}"),
+        ];
+        assert!(!envelope_verdict(Some("Phase 2")).is_scoped_to_its_phase(&silent));
+        let made_true = [
+            reading("Phase 2 — the second sitting", "{\"archived_excluded\":0}"),
+            reading("Phase 3 — the third sitting", "{\"archived_excluded\":1}"),
+        ];
+        assert!(!envelope_verdict(None).is_scoped_to_its_phase(&made_true));
+        assert!(!envelope_verdict(Some("Phase 2")).is_scoped_to_its_phase(&[]));
+        assert!(!envelope_verdict(Some("Phase 9")).is_scoped_to_its_phase(&made_true));
     }
 }

@@ -139,7 +139,7 @@ fn phase_order(label: &str) -> u32 {
 /// match only counts when nothing right after it is another digit —
 /// `"Phase 1 — ..."` and bare `"Phase 1"` both still match; `"Phase 10"`
 /// and `"Phase 12"` no longer can.
-fn boundary_pair<'a>(
+pub(crate) fn boundary_pair<'a>(
     boundaries: &'a [Boundary],
     phase: &str,
 ) -> Option<(&'a Boundary, &'a Boundary)> {
