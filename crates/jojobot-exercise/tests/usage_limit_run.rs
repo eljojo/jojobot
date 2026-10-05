@@ -1,0 +1,163 @@
+//! **A run that hits the usage limit stops launching sittings.**
+//!
+//! `stops_the_run` is unit-tested on its own, and that left the `break` in
+//! `go()` that reads its answer unwatched: removing it changed no case. This
+//! drives the whole of `go()` against a room it spawns, with a stand-in for the
+//! agent CLI that prints the CLI's own limit words and exits non-zero at a
+//! chosen sitting. Nothing here reaches the network or spends anything.
+//!
+//! **Paired with the same run where the limit never comes.** A build that
+//! always stopped after the first sitting would pass the half that checks
+//! later sittings did not launch, and a build that never stopped would pass
+//! the half that checks a lock never reads FAILED on a run that did not
+//! finish. Both ends move only when the `break` does.
+
+use std::os::unix::fs::PermissionsExt;
+use std::path::PathBuf;
+
+use jojobot_exercise::agent::Agent;
+use jojobot_exercise::playbook::Playbook;
+use jojobot_exercise::run::{self, Expectation, Observed, Outcome, Results};
+use jojobot_exercise::surface::Seed;
+
+/// A lock that never holds. On a finished run it must read FAILED; on one that
+/// ran out of runway it must not.
+struct NeverHolds;
+
+#[async_trait::async_trait]
+impl Expectation for NeverHolds {
+    fn name(&self) -> &str {
+        "a lock that fails on its own merits"
+    }
+
+    async fn check(&self, _seen: &Observed<'_>) -> Outcome {
+        Outcome {
+            name: self.name().to_string(),
+            held: false,
+            applies: true,
+            refused: false,
+            saying: "the room does not carry it".to_string(),
+        }
+    }
+}
+
+const PLAYBOOK: &str = "\
+## Phase 1 — the first sitting
+
+> Do the first thing.
+
+## Phase 2 — the second sitting
+
+> Do the second thing.
+
+## Phase 3 — the third sitting
+
+> Do the third thing.
+";
+
+/// A directory this case owns alone, removed when it is done.
+struct Scratch(PathBuf);
+
+impl Scratch {
+    fn new() -> Scratch {
+        let path = std::env::temp_dir().join(format!(
+            "jojobot-exercise-usage-limit-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("a clock after 1970")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&path).expect("a scratch directory");
+        Scratch(path)
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// Drive `go()` with an agent that hits the limit on its `limit_at`th launch,
+/// and say how many times it was launched.
+async fn run_with_limit_at(limit_at: usize) -> (Results, usize) {
+    let scratch = Scratch::new();
+    let launches = scratch.0.join("launches");
+    let program = scratch.0.join("fake-agent");
+    std::fs::write(
+        &program,
+        format!(
+            "#!/bin/sh\n\
+             echo launched >> '{launches}'\n\
+             if [ \"$(wc -l < '{launches}')\" -ge {limit_at} ]; then\n\
+             echo 'Claude usage limit reached. Your limit resets 3pm' >&2\n\
+             exit 1\n\
+             fi\n",
+            launches = launches.display(),
+        ),
+    )
+    .expect("the stand-in agent is written");
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755))
+        .expect("the stand-in agent is executable");
+
+    let playbook = Playbook::parse("usage-limit", PLAYBOOK).expect("the playbook parses");
+    let agent = Agent::new("sonnet").launching(program.to_str().expect("a utf-8 path"));
+    let expectations: Vec<Box<dyn Expectation>> = vec![Box::new(NeverHolds)];
+    let results = run::go(&playbook, &agent, &Seed::new(), &expectations)
+        .await
+        .expect("the run goes through");
+    let launched = std::fs::read_to_string(&launches)
+        .unwrap_or_default()
+        .lines()
+        .count();
+    (results, launched)
+}
+
+#[tokio::test]
+async fn a_limit_in_the_second_sitting_stops_the_third_from_launching() {
+    let (results, launched) = run_with_limit_at(2).await;
+    assert_eq!(
+        launched, 2,
+        "the sitting after the limit was launched anyway"
+    );
+    let incomplete = results
+        .incomplete
+        .as_ref()
+        .expect("a run that hit the limit says it did not finish");
+    assert!(
+        incomplete.phase.starts_with("Phase 2"),
+        "the run names the sitting that hit the limit: {}",
+        incomplete.phase,
+    );
+    assert_eq!(incomplete.reset.as_deref(), Some("3pm"));
+    assert!(!results.held(), "an incomplete run must never hold");
+    let rendered = results.rendered(None);
+    assert!(
+        rendered.contains("INCOMPLETE"),
+        "the verdict does not say the run is incomplete: {rendered}"
+    );
+    assert!(
+        rendered.contains("[not run] a lock that fails on its own merits"),
+        "a lock on an incomplete run must read as not run: {rendered}"
+    );
+    assert!(
+        !rendered.contains("[FAILED] a lock that fails on its own merits"),
+        "a lock the run never gave a fair chance read as FAILED: {rendered}"
+    );
+}
+
+#[tokio::test]
+async fn the_same_run_with_no_limit_launches_every_sitting_and_the_lock_fails() {
+    let (results, launched) = run_with_limit_at(99).await;
+    assert_eq!(launched, 3, "every sitting launches when no limit comes");
+    assert!(
+        results.incomplete.is_none(),
+        "a run that never hit a limit is not incomplete"
+    );
+    let rendered = results.rendered(None);
+    assert!(
+        rendered.contains("[FAILED] a lock that fails on its own merits"),
+        "a lock that really fails on a finished run must read FAILED: {rendered}"
+    );
+}

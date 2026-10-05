@@ -192,11 +192,11 @@ pub struct Incomplete {
 }
 
 /// **Whether one phase's own result means the run stops here** — pure, and
-/// deliberately pulled out of `go()`'s loop. Nothing in this crate drives a
-/// live agent through a usage limit, so the decision has to be testable on
-/// its own or it is not tested at all: removing the `break` in `go()` that
-/// reads this answer left every case in the crate green, which is what
-/// having no seam for a fake agent actually means.
+/// deliberately pulled out of `go()`'s loop so the decision is testable on
+/// its own. That does not cover the `break` in `go()` that reads this answer:
+/// `tests/usage_limit_run.rs` drives `go()` with a stand-in agent
+/// ([`Agent::launching`]) that hits the limit, and goes red when the `break`
+/// is removed.
 ///
 /// `None` is the ordinary case: the phase's own deliveries answered, and
 /// the run goes on to the next one. `Some` names the phase this was and

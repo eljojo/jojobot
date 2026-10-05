@@ -143,6 +143,10 @@ fn usage_limit_in(printed: &str, succeeded: bool) -> Option<UsageLimit> {
 /// The shipped agent, driven headless.
 pub struct Agent {
     model: String,
+    /// **The program a phase launches** — the agent CLI unless a case swaps in
+    /// a stand-in with [`Agent::launching`]. The line it is given is built the
+    /// same either way, so a stand-in is driven exactly as the CLI would be.
+    program: String,
     cwd: std::path::PathBuf,
 }
 
@@ -239,8 +243,17 @@ impl Agent {
     pub fn new(model: &str) -> Agent {
         Agent {
             model: model.to_string(),
+            program: CLI.to_string(),
             cwd: unbriefed_dir(),
         }
+    }
+
+    /// **Launch `program` instead of the agent CLI.** The seam that lets a case
+    /// drive `go()` with a stand-in that prints what the CLI prints, so what
+    /// the run does with a usage limit is watched without a paid sitting.
+    pub fn launching(mut self, program: &str) -> Agent {
+        self.program = program.to_string();
+        self
     }
 
     pub fn model(&self) -> &str {
@@ -310,7 +323,7 @@ impl Agent {
         ]);
         args.push(prompt.to_string());
         Invocation {
-            program: CLI.to_string(),
+            program: self.program.clone(),
             args,
             cwd: self.cwd.clone(),
         }
