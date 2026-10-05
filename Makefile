@@ -34,7 +34,7 @@ help: ## List the targets
 # thing to `target/bar/check.log`, and prints a short verdict built from what
 # it captured directly rather than from a pipe.
 check: ## The DONE bar: formatted, green, clippy-clean
-	CARGO=$(CARGO) $(CARGO) run -q -p jojobot-bar -- check
+	CARGO=$(CARGO) $(CARGO) run -q --locked -p jojobot-bar -- check
 
 # **The inner loop, scoped to one crate.** Run it between edits.
 #
@@ -88,7 +88,7 @@ CRATE ?=
 FILTER ?=
 narrow: ## The inner loop: one crate's tests and lint, plus the format check
 	@test -n "$(CRATE)" || { echo "make narrow needs a crate: make narrow CRATE=<name>"; exit 2; }
-	CARGO=$(CARGO) $(CARGO) run -q -p jojobot-bar -- narrow --crate $(CRATE) $(if $(FILTER),--filter $(FILTER),)
+	CARGO=$(CARGO) $(CARGO) run -q --locked -p jojobot-bar -- narrow --crate $(CRATE) $(if $(FILTER),--filter $(FILTER),)
 
 # 🚨 **Every target reports, and the count is what a reader takes from it.**
 #
@@ -174,7 +174,7 @@ PLAYBOOK ?=
 MODEL ?=
 TRANSCRIPT ?=
 paid: build ## Drive a REAL model through a playbook — reaches the network and COSTS MONEY
-	$(CARGO) run -q -p jojobot-exercise -- \
+	$(CARGO) run -q --locked -p jojobot-exercise -- \
 		$(if $(PLAYBOOK),--playbook $(PLAYBOOK),) $(if $(MODEL),--model $(MODEL),) \
 		$(if $(TRANSCRIPT),--transcript $(TRANSCRIPT),)
 

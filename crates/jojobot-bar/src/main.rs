@@ -200,9 +200,9 @@ fn run_check() -> std::io::Result<ExitCode> {
     // ordinary green run.
     let (ok, text) = run_phase(
         &log_path,
-        "cargo build --workspace",
+        "cargo build --workspace --locked",
         &cargo,
-        &["build", "--workspace"],
+        &["build", "--workspace", "--locked"],
     )?;
     if !ok {
         let verdict = summarize_test_output(&text);
@@ -308,9 +308,9 @@ fn run_narrow(args: &[String]) -> std::io::Result<ExitCode> {
 
     let (ok, text) = run_phase(
         &log_path,
-        "cargo build --workspace",
+        "cargo build --workspace --locked",
         &cargo,
-        &["build", "--workspace"],
+        &["build", "--workspace", "--locked"],
     )?;
     if !ok {
         let verdict = summarize_test_output(&text);
