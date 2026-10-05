@@ -259,7 +259,8 @@ async fn a_type_declared_today_finds_records_written_before_it() {
 /// **A strict question over a crowd of half-finished things must still find
 /// the finished one.** Every delivery but one is missing a key, and the one
 /// that has them all is long-winded, which ranks it below every one of the
-/// others. A search that kept the best few things carrying any key and then
+/// others. **Its keys came in over three sittings**, so it is whole only as a
+/// thing and no single record says so. A search that kept the best few things carrying any key and then
 /// asked which of those fit would answer "none", and "none" reads exactly as
 /// "nothing is complete".
 #[tokio::test]
@@ -312,23 +313,44 @@ async fn a_strict_question_finds_the_one_complete_thing_among_many_unfinished_on
         .await;
     }
 
-    // The finished one: every key, and a great many others beside them.
-    s.add("thing:house-keys", "The House Keys").await;
-    let mut whole = serde_json::Map::new();
-    for (key, value) in [
-        ("arrives", "2026-08-10"),
-        ("crates", "4"),
-        ("driver", "beta"),
-    ] {
-        whole.insert(key.to_string(), json!(value));
-    }
-    for n in 0..300 {
-        whole.insert(format!("note-{n}"), json!("x"));
+    // **The finished one is written the way a thing is: a piece at a time.**
+    // The date comes in on the day it is booked, the crate count a day later,
+    // and the driver with the manifest when the van is loaded. No single
+    // record holds all three keys, so the delivery only fits the type through
+    // what the three sittings add up to.
+    s.add("thing:record-crate", "The Record Crate").await;
+    s.event_with(
+        "thing:record-crate",
+        "the record crate is booked for delivery",
+        json!({ "arrives": "2026-08-10" }),
+        &[],
+    )
+    .await;
+    s.event_with(
+        "thing:record-crate",
+        "the record crate is counted",
+        json!({ "crates": "4" }),
+        &[],
+    )
+    .await;
+    // **A manifest long enough to rank below every unfinished delivery**, which
+    // is what makes the depth cut measure something: a long delivery is the one
+    // a cut keeping the best few would lose.
+    let mut loaded = serde_json::Map::new();
+    loaded.insert("driver".to_string(), json!("beta"));
+    for n in 0..150 {
+        let line = [
+            "sleeved record, mint",
+            "box of tapes, taped shut",
+            "turntable in a flight case",
+            "stack of jackets, tied with string",
+        ][n % 4];
+        loaded.insert(format!("manifest-{n}"), json!(line));
     }
     s.event_with(
-        "thing:house-keys",
-        "the delivery with everything written down",
-        json!(whole),
+        "thing:record-crate",
+        "the van is loaded and the manifest is written down",
+        json!(loaded),
         &[],
     )
     .await;
@@ -340,12 +362,12 @@ async fn a_strict_question_finds_the_one_complete_thing_among_many_unfinished_on
         .call("search", json!({ "answers_type": "delivery", "limit": 1 }))
         .await;
     tolerant.says("unfinished-");
-    tolerant.never_says("thing:house-keys");
+    tolerant.never_says("thing:record-crate");
 
     // The strict question, at the same limit, finds it.
     let whole = s
         .call("search", json!({ "fits_type": "delivery", "limit": 1 }))
         .await;
-    whole.says("thing:house-keys");
+    whole.says("thing:record-crate");
     whole.never_says("unfinished-");
 }
