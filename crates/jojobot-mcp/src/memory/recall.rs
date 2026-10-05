@@ -1645,16 +1645,27 @@ impl Jojobot {
                 .subject
                 .as_ref()
                 .is_some_and(|s| s.kind() == Some(EntityKind::SESSION));
+        // **How many runs a caller with no identity is told exist.** It owns
+        // none, so it is shown none and told only the count.
+        let mut runs_counted_for_nobody = 0usize;
         let session_docs: Vec<jojobot_domain::memory::search::DocScan> = if wants_sessions {
-            // **Read for a caller with no identity too.** It owns no run, so
-            // the walk's owner check excludes every one, but the exclusion
-            // is what is counted as `withheld`. Skipping the read made an
-            // anonymous "nothing here" read exactly like an empty index.
             match self.sessions.all_summaries().await {
-                Ok(runs) => runs
+                Ok(runs) if caller.is_some() => runs
                     .iter()
                     .map(jojobot_domain::session::projected_summary)
                     .collect(),
+                // 🚨 **Counted, never fed to the walk.** A run's entity is named
+                // for its focus text and owned by a bot, and the walk's near-miss
+                // screen and its not-yours answer both say so. A caller with no
+                // identity that reached them could read another bot's focus by
+                // naming a near miss of a run's id, and its owner by naming the
+                // id. Skipping the read altogether made an anonymous "nothing
+                // here" read exactly like an empty index, so the runs are
+                // counted and nothing else of them is kept.
+                Ok(runs) => {
+                    runs_counted_for_nobody = runs.len();
+                    Vec::new()
+                }
                 Err(e) => {
                     return session_declined(
                         e,
@@ -1674,6 +1685,13 @@ impl Jojobot {
         } = match graph::walk(self.memory.as_ref(), &session_docs, &query).await {
             Ok(answer) => answer,
             Err(e) => return memory_declined("recall", e),
+        };
+        // The count above, only for a browse of every run: a named subject
+        // that is a run never reaches here for a caller with no identity.
+        let withheld = if query.select.kind == Some(EntityKind::SESSION) {
+            withheld + runs_counted_for_nobody
+        } else {
+            withheld
         };
         // **The chronology, read only for a run the walk actually kept.**
         // `session_docs` above is cheap on purpose — no beat's text left the

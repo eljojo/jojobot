@@ -5072,3 +5072,96 @@ async fn a_bots_room_read_says_what_aged_out_without_a_write() {
         "ageing must not archive a row a plain read passes over: {old_fact}"
     );
 }
+
+/// 🚨 **A caller with no identity is told how many runs exist and nothing
+/// else.** A run's entity is named for its focus text and owned by a bot, and
+/// the walk's near-miss screen and its not-yours branch both say so. Feeding
+/// the runs into the walk for a caller that owns none let a near miss of a
+/// run's id return the focus text of somebody else's run, a subject equal to
+/// the slugified focus confirm it, and an exact id name the owner.
+///
+/// Paired with the count itself, which is still the number of runs that exist:
+/// an answer that said nothing at all would pass every negative below.
+#[tokio::test]
+async fn a_caller_with_no_identity_is_told_how_many_runs_exist_and_nothing_else() {
+    const FOCUS: &str = "pricing the replacement wheels";
+    let jojobot = handler();
+    let sid = writing_as(&jojobot);
+    jojobot
+        .journal(Parameters(crate::session::JournalArgs {
+            entry: "started on the wheels".into(),
+            focus: Some(FOCUS.into()),
+            sid: sid.clone(),
+        }))
+        .await
+        .expect("journal ok");
+
+    let runs_query = |sid: Option<String>, subject: Option<String>| RecallArgs {
+        subject,
+        kind: Some("session".into()),
+        sid,
+        ..recall_args("person:unused")
+    };
+    // What an identified caller sees: its own run shown, the rest counted.
+    let identified = json_of(
+        &jojobot
+            .recall(Parameters(runs_query(Some(sid.clone()), None)))
+            .await
+            .expect("recall ok"),
+    );
+    let own = identified["objects"].as_array().expect("a list").len() as u64;
+    assert_eq!(own, 1, "the run exists and is the caller's: {identified}");
+    let run_id = identified["objects"][0]["id"]
+        .as_str()
+        .expect("a run carries its id")
+        .to_string();
+    let everything = own + identified["withheld"].as_u64().expect("a count");
+
+    let text_of_answer = |answered: Result<CallToolResult, McpError>| match answered {
+        Ok(result) => text_of(&result),
+        Err(error) => error.message.to_string(),
+    };
+
+    // The count: every run that exists, shown none.
+    let anonymous = json_of(
+        &jojobot
+            .recall(Parameters(runs_query(None, None)))
+            .await
+            .expect("recall ok"),
+    );
+    assert!(
+        anonymous["objects"].as_array().expect("a list").is_empty(),
+        "a caller with no identity owns no run: {anonymous}"
+    );
+    assert_eq!(
+        anonymous["withheld"].as_u64(),
+        Some(everything),
+        "withheld is the number of runs that exist: {anonymous}"
+    );
+
+    // Every way of naming a run: a near miss of its id, the slug of its focus,
+    // and its exact id.
+    let mut near_miss = run_id.clone();
+    let last = near_miss.pop().expect("an id is not empty");
+    near_miss.push(if last == 'a' { 'b' } else { 'a' });
+    let by_focus = format!("session:{}", jojobot_domain::memory::guard::slugify(FOCUS));
+    for subject in [near_miss, by_focus, run_id] {
+        let text = text_of_answer(
+            jojobot
+                .recall(Parameters(runs_query(None, Some(subject.clone()))))
+                .await,
+        );
+        assert!(!text.is_empty(), "{subject} got no answer at all");
+        // The caller's own words come back to it in the answer, and a subject
+        // spelled from the focus carries the focus. That is an echo, not a leak.
+        let text = text.replace(subject.as_str(), "");
+        assert!(
+            !text.contains("wheels"),
+            "naming {subject} gave a caller with no identity a run's focus text: {text}"
+        );
+        assert!(
+            !text.contains("bot:otto"),
+            "naming {subject} gave a caller with no identity a run's owner: {text}"
+        );
+    }
+}
