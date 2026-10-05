@@ -748,6 +748,7 @@ impl Jojobot {
                     "status": "unavailable",
                     "note": "the memory world could not be read, so this claim was neither \
                              granted nor refused. Nothing was written.",
+                    "how_to_proceed": claim_unavailable_way_forward(role),
                 });
             }
         };
@@ -820,10 +821,23 @@ impl Jojobot {
                     "status": "unavailable",
                     "note": "the claim was decided but could not be written. Nothing is \
                              held.",
+                    "how_to_proceed": claim_unavailable_way_forward(role),
                 })
             }
         }
     }
+}
+
+/// **What to do about a claim the store could not decide.** Said once for both
+/// places it happens, the read that precedes the claim and the write that makes
+/// it, so the two cannot come to say different things.
+fn claim_unavailable_way_forward(role: &str) -> String {
+    format!(
+        "Nothing is held. Call start_here again with the same claim for '{role}' in a \
+         moment. If it still comes back unavailable, the store cannot decide the claim now: \
+         carry on without holding '{role}', and tell the operator, because the store needs a \
+         person."
+    )
 }
 
 #[cfg(test)]
@@ -881,6 +895,45 @@ mod tests {
         assert!(
             note.to_lowercase().contains("retry") || note.to_lowercase().contains("try again"),
             "the answer must tell the caller a retry is the right move: {note}"
+        );
+    }
+
+    /// **A claim the store could not decide comes back `unavailable` and says
+    /// what to do next.** Nothing was written and nothing is held, which is
+    /// what the outcome says; what a caller does about it is the other half,
+    /// and `conflict` and `refused` both already carry theirs.
+    #[tokio::test]
+    async fn an_unavailable_claim_says_what_to_do_next() {
+        let (healthy, blind) = healthy_and_down(Down::Writes);
+        make_bot(&healthy, "gamma").await;
+
+        let booted = json_of(
+            &blind
+                .start_here(Parameters(OrientArgs {
+                    claim: Some("dev-dispatch".into()),
+                    timezone: None,
+                    bot: Some("gamma".into()),
+                    brief: None,
+                    skill: None,
+                    section: None,
+                    resume: None,
+                    sid: None,
+                    today: None,
+                }))
+                .await
+                .expect("start_here ok"),
+        );
+        let claim = &booted["session"]["claim"];
+        assert_eq!(
+            claim["status"], "unavailable",
+            "the store cannot write the claim, so it is undecided: {booted}"
+        );
+        let how = claim["how_to_proceed"]
+            .as_str()
+            .unwrap_or_else(|| panic!("an unavailable claim must say what to do next: {booted}"));
+        assert!(
+            how.contains("dev-dispatch"),
+            "the way forward names the role it is about: {how}"
         );
     }
 

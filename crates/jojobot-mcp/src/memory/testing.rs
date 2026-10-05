@@ -343,6 +343,9 @@ pub(crate) enum Down {
     /// A claim read, the one a guard on the record's own fields depends on
     /// before it lets a retraction or an archive through.
     Recall,
+    /// Every write of a claim: a capture and an edit both fail with a store
+    /// error, while every read answers.
+    Writes,
 }
 
 /// **Two handlers over ONE store, the second unable to read a claim.** They
@@ -350,6 +353,12 @@ pub(crate) enum Down {
 /// first writes is the record the second is asked to take back — and a write
 /// the blind one lets through is visible through the healthy one.
 pub(crate) fn healthy_and_blind_to_claims() -> (Jojobot, Jojobot) {
+    healthy_and_down(Down::Recall)
+}
+
+/// **Two handlers over one store, the second with `down` failing.** See
+/// [`healthy_and_blind_to_claims`].
+pub(crate) fn healthy_and_down(down: Down) -> (Jojobot, Jojobot) {
     let memory = Arc::new(InMemoryMemory::booted());
     let boxes = Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner());
     let sessions = Arc::new(jojobot_domain::session::testing::InMemorySessions::new());
@@ -367,7 +376,7 @@ pub(crate) fn healthy_and_blind_to_claims() -> (Jojobot, Jojobot) {
     };
     (
         build(memory.clone()),
-        build(Arc::new(DownMemory(Down::Recall, memory))),
+        build(Arc::new(DownMemory(down, memory))),
     )
 }
 
@@ -448,7 +457,9 @@ impl Memory for DownMemory {
     async fn list_entities(&self, kind: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError> {
         match self.0 {
             Down::EntityIndex => Err(MemoryError::Store("the entity index cannot be read".into())),
-            Down::TypeRoster | Down::Vocabulary | Down::Recall => self.1.list_entities(kind).await,
+            Down::TypeRoster | Down::Vocabulary | Down::Recall | Down::Writes => {
+                self.1.list_entities(kind).await
+            }
         }
     }
     async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
@@ -476,7 +487,9 @@ impl Memory for DownMemory {
             Down::Vocabulary => Err(MemoryError::Store(
                 "the kind vocabulary cannot be read".into(),
             )),
-            Down::EntityIndex | Down::TypeRoster | Down::Recall => self.1.declared_kinds().await,
+            Down::EntityIndex | Down::TypeRoster | Down::Recall | Down::Writes => {
+                self.1.declared_kinds().await
+            }
         }
     }
 
@@ -489,7 +502,9 @@ impl Memory for DownMemory {
     ) -> Result<Vec<jojobot_domain::memory::types::DeclaredType>, MemoryError> {
         match self.0 {
             Down::TypeRoster => Err(MemoryError::Store("the type roster cannot be read".into())),
-            Down::Vocabulary | Down::EntityIndex | Down::Recall => self.1.declared_types().await,
+            Down::Vocabulary | Down::EntityIndex | Down::Recall | Down::Writes => {
+                self.1.declared_types().await
+            }
         }
     }
     async fn update_entity(
@@ -515,12 +530,19 @@ impl Memory for DownMemory {
         self.1.archive_entity(id, reason).await
     }
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
-        self.1.capture(fact).await
+        match self.0 {
+            Down::Writes => Err(MemoryError::Store("a claim cannot be written".into())),
+            Down::EntityIndex | Down::TypeRoster | Down::Vocabulary | Down::Recall => {
+                self.1.capture(fact).await
+            }
+        }
     }
     async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
         match self.0 {
             Down::Recall => Err(MemoryError::Store("a claim cannot be read".into())),
-            Down::EntityIndex | Down::TypeRoster | Down::Vocabulary => self.1.recall(subject).await,
+            Down::EntityIndex | Down::TypeRoster | Down::Vocabulary | Down::Writes => {
+                self.1.recall(subject).await
+            }
         }
     }
     async fn history(
@@ -548,7 +570,12 @@ impl Memory for DownMemory {
         patch: FactPatch,
         caller: &EntityId,
     ) -> Result<Guarded<Fact>, MemoryError> {
-        self.1.update_fact(address, patch, caller).await
+        match self.0 {
+            Down::Writes => Err(MemoryError::Store("a claim cannot be written".into())),
+            Down::EntityIndex | Down::TypeRoster | Down::Vocabulary | Down::Recall => {
+                self.1.update_fact(address, patch, caller).await
+            }
+        }
     }
     async fn retract(
         &self,

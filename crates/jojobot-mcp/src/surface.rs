@@ -597,7 +597,13 @@ fn the_list_runs_description_points_at_recall_for_a_chronology() {
 fn the_start_here_description_names_claim_and_its_outcomes() {
     assert_description_names(
         "start_here",
-        &["`claim`", "`taken`", "`refused`", "`conflict`"],
+        &[
+            "`claim`",
+            "`taken`",
+            "`refused`",
+            "`conflict`",
+            "`unavailable`",
+        ],
     );
 }
 

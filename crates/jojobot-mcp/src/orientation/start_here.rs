@@ -94,9 +94,11 @@ pub struct OrientArgs {
     /// **A role to claim, by a name you choose.** Boot names this when you
     /// want jojobot to refuse a second claimant while your claim is fresh —
     /// this comes back `taken`, `refused` naming who holds it and until
-    /// when, or `conflict` when the claim collided with another write
-    /// landing the same instant. **A conflict is the store working
-    /// correctly, not a mistake in what you sent** — retry the same call.
+    /// when, `conflict` when the claim collided with another write
+    /// landing the same instant, or `unavailable` when the store could not
+    /// decide it. **A conflict is the store working correctly, not a
+    /// mistake in what you sent** — retry the same call. **An unavailable
+    /// claim holds nothing**, and its answer says what to do next.
     /// Naming none is the ordinary boot: unchanged, and two sessions
     /// working two separate slices never meet a lease neither of them
     /// claimed.
@@ -169,9 +171,11 @@ impl Jojobot {
                        The `sid` you carry is never turned away here, whatever became of it: this \
                        is the door you come back to. PASS `claim` WITH A ROLE NAME TO HOLD THAT \
                        ROLE for 45 minutes, so two sessions never work one role at once: the \
-                       answer says `taken`, `refused` (naming who holds it and until when) or \
-                       `conflict` (the same call, retried, is the answer). Any write renews \
-                       the lease and wrapping releases it."
+                       answer says `taken`, `refused` (naming who holds it and until when), \
+                       `conflict` (the same call, retried, is the answer) or `unavailable` \
+                       (the store could not decide the claim, nothing is held, and the answer \
+                       says what to do next). Any write renews the lease and wrapping \
+                       releases it."
     )]
     pub(crate) async fn start_here(
         &self,
