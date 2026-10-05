@@ -46,7 +46,9 @@ impl Jojobot {
                        OF THE RECORD, not all of it: a long run's answer would be one no client \
                        can read. `entry_count` is the whole length, and `chronology_elided` with \
                        `entries_omitted` says how much is not here. Nothing was dropped from the \
-                       record — what was written is stored whole."
+                       record — what was written is stored whole. THE FOCUS AS IT STOOD AT THE \
+                       CLOSE rides on the closing entry as `closing_focus`, beside the story \
+                       rather than inside its text; every other entry carries it as null."
     )]
     pub(crate) async fn wrap_session(
         &self,

@@ -41,7 +41,9 @@ impl Jojobot {
                        have acted, and only then. Three refusals wear the status: blocked shape — \
                        an id that names nothing at all, an id naming an item jojobot cannot read \
                        (which comes back saying why, and needs a person rather than a retry), and a \
-                       message that is not yours to take."
+                       message that is not yours to take. A message a DIFFERENT run posted than \
+                       the one reading it carries `written_by_other_run`, naming that run and \
+                       whether it has since ended."
     )]
     pub(crate) async fn read_message(
         &self,

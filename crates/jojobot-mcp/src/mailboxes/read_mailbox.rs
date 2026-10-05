@@ -209,7 +209,10 @@ impl Jojobot {
                        way it changes what is SHIPPED, never what is owed. Each message may also \
                        carry `sender_mail_waiting_at_send`, stamped once when it was posted — see \
                        `post_message`'s own description for what it means; `null` there is unknown, \
-                       never zero."
+                       never zero. A message that a DIFFERENT run posted than the one reading it \
+                       carries `written_by_other_run`, naming that run and whether it has since \
+                       ended (`null` when that could not be read); a message your own run posted \
+                       does not carry the key."
     )]
     pub(crate) async fn read_mailbox(
         &self,

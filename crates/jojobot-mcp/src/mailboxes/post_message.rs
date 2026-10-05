@@ -258,7 +258,9 @@ impl Jojobot {
                        `in_reply_to` links this message to the one it answers: optional, it must \
                        name a message that exists (a miss comes back blocked, nothing written), \
                        and it says only that the two are one exchange — it does not deliver the \
-                       original, handle it, or oblige anybody."
+                       original, handle it, or oblige anybody. Messages riding back under \
+                       your_mail carry `written_by_other_run` when a different run posted them, \
+                       exactly as read_mailbox's own description says."
     )]
     pub(crate) async fn post_message(
         &self,

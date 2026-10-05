@@ -1144,7 +1144,9 @@ impl Jojobot {
                        YOUR OWN PAST RUNS ARE A KIND: kind `session` reads this identity's own \
                        past runs and no other's, and prose: true brings back a run's chronology \
                        — list_runs gives each run's state and focus line, and this is the read \
-                       for what it did. A selection that reaches another identity's runs counts \
+                       for what it did. THE FOCUS A RUN CLOSED ON IS NOT IN THAT PROSE: \
+                       wrap_session's closing entry carries it as `closing_focus`. A selection \
+                       that reaches another identity's runs counts \
                        them as `withheld` and shows none of them, so an empty list with \
                        withheld above zero means runs exist that are not yours, and an empty \
                        list with withheld at zero means none exist. A call with no sid owns \

@@ -575,6 +575,25 @@ fn the_capture_description_names_starred() {
     assert_description_names("capture", &["`starred`"]);
 }
 
+/// **The verbs whose answers carry `written_by_other_run` name it**, since the
+/// key is absent on a message the reader's own run posted and an agent that was
+/// never told it exists reads the absence as nothing.
+#[test]
+fn the_mailbox_verbs_name_written_by_other_run() {
+    for verb in ["read_mailbox", "read_message", "post_message"] {
+        assert_description_names(verb, &["written_by_other_run"]);
+    }
+}
+
+/// **`wrap_session` names `closing_focus`, and `recall` points at it.** A run's
+/// closing focus rides the closing entry beside the story and never inside its
+/// text, and a read of the run's prose does not carry it.
+#[test]
+fn wrap_session_names_closing_focus_and_recall_points_at_it() {
+    assert_description_names("wrap_session", &["closing_focus"]);
+    assert_description_names("recall", &["wrap_session", "closing_focus"]);
+}
+
 /// **`recall`'s description says an empty `answers_type` still names the
 /// type's keys**, in the answer's own key for them.
 #[test]
