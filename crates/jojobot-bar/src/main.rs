@@ -260,6 +260,14 @@ fn run_check() -> std::io::Result<ExitCode> {
     })
 }
 
+/// How many tests a `-- --list` run printed: one `name: test` line each.
+fn count_listed_tests(listing: &str) -> usize {
+    listing
+        .lines()
+        .filter(|l| l.trim_end().ends_with(": test"))
+        .count()
+}
+
 fn run_narrow(args: &[String]) -> std::io::Result<ExitCode> {
     let cargo = cargo_bin();
     let mut krate: Option<String> = None;
@@ -341,17 +349,32 @@ fn run_narrow(args: &[String]) -> std::io::Result<ExitCode> {
         &cargo,
         &list_args,
     )?;
-    let selected = list_text
-        .lines()
-        .filter(|l| l.trim_end().ends_with(": test"))
-        .count();
+    // **Only tests that will run count.** A plain `--list` prints an
+    // `#[ignore]`d test beside the others, so the same selection is listed
+    // again with `--ignored`, which prints that subset alone, and the
+    // difference is what a test run would execute.
+    let listed = count_listed_tests(&list_text);
+    let mut ignored_args = list_args.clone();
+    ignored_args.push("--ignored");
+    let (_, ignored_text) = run_phase(
+        &log_path,
+        "cargo test -p <crate> [filter] -- --list --ignored",
+        &cargo,
+        &ignored_args,
+    )?;
+    let ignored = count_listed_tests(&ignored_text);
+    let selected = listed.saturating_sub(ignored);
     if selected == 0 {
-        let detail = match &filter {
-            Some(f) => format!(
+        let detail = match (&filter, listed) {
+            (Some(f), 0) => format!(
                 "FILTER='{f}' selected no tests in {krate} — FILTER is a substring of a test's \
                  full path, not a regex"
             ),
-            None => format!("{krate} has no tests"),
+            (None, 0) => format!("{krate} has no tests"),
+            (Some(f), _) => {
+                format!("FILTER='{f}' matched only ignored tests in {krate} — nothing would run")
+            }
+            (None, _) => format!("every test in {krate} is ignored — nothing would run"),
         };
         summary.phase_failed("test", &detail);
         summary.phase_skipped("lint");
