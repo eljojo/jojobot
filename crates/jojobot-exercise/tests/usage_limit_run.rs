@@ -79,9 +79,12 @@ impl Drop for Scratch {
     }
 }
 
-/// Drive `go()` with an agent that hits the limit on its `limit_at`th launch,
-/// and say how many times it was launched.
-async fn run_with_limit_at(limit_at: usize) -> (Results, usize) {
+/// The CLI's own words when the usage limit stops it.
+const LIMIT_WORDS: &str = "Claude usage limit reached. Your limit resets 3pm";
+
+/// Drive `go()` with an agent that prints `stderr` and exits 1 on its
+/// `fail_at`th launch, and say how many times it was launched.
+async fn run_failing_at(fail_at: usize, stderr: &str) -> (Results, usize) {
     let scratch = Scratch::new();
     let launches = scratch.0.join("launches");
     let program = scratch.0.join("fake-agent");
@@ -90,8 +93,8 @@ async fn run_with_limit_at(limit_at: usize) -> (Results, usize) {
         format!(
             "#!/bin/sh\n\
              echo launched >> '{launches}'\n\
-             if [ \"$(wc -l < '{launches}')\" -ge {limit_at} ]; then\n\
-             echo 'Claude usage limit reached. Your limit resets 3pm' >&2\n\
+             if [ \"$(wc -l < '{launches}')\" -eq {fail_at} ]; then\n\
+             echo '{stderr}' >&2\n\
              exit 1\n\
              fi\n",
             launches = launches.display(),
@@ -116,7 +119,7 @@ async fn run_with_limit_at(limit_at: usize) -> (Results, usize) {
 
 #[tokio::test]
 async fn a_limit_in_the_second_sitting_stops_the_third_from_launching() {
-    let (results, launched) = run_with_limit_at(2).await;
+    let (results, launched) = run_failing_at(2, LIMIT_WORDS).await;
     assert_eq!(
         launched, 2,
         "the sitting after the limit was launched anyway"
@@ -149,7 +152,7 @@ async fn a_limit_in_the_second_sitting_stops_the_third_from_launching() {
 
 #[tokio::test]
 async fn the_same_run_with_no_limit_launches_every_sitting_and_the_lock_fails() {
-    let (results, launched) = run_with_limit_at(99).await;
+    let (results, launched) = run_failing_at(99, LIMIT_WORDS).await;
     assert_eq!(launched, 3, "every sitting launches when no limit comes");
     assert!(
         results.incomplete.is_none(),
@@ -159,5 +162,27 @@ async fn the_same_run_with_no_limit_launches_every_sitting_and_the_lock_fails() 
     assert!(
         rendered.contains("[FAILED] a lock that fails on its own merits"),
         "a lock that really fails on a finished run must read FAILED: {rendered}"
+    );
+}
+
+#[tokio::test]
+async fn an_ordinary_failure_in_the_second_sitting_is_not_a_limit() {
+    let (results, launched) = run_failing_at(2, "error: the model could not be reached").await;
+    assert_eq!(
+        launched, 3,
+        "a failure that is not a usage limit stopped the run"
+    );
+    assert!(
+        results.incomplete.is_none(),
+        "an ordinary non-zero exit was read as a usage limit"
+    );
+    let rendered = results.rendered(None);
+    assert!(
+        rendered.contains("[FAILED] a lock that fails on its own merits"),
+        "a lock on a run that finished must read FAILED: {rendered}"
+    );
+    assert!(
+        !rendered.contains("[not run]"),
+        "a lock on a run that finished read as not run: {rendered}"
     );
 }
