@@ -167,7 +167,11 @@ impl Jojobot {
                        `sid` if you are already carrying one and the answer says whether it still \
                        addresses your session; leave it off on a first boot, when you have none. \
                        The `sid` you carry is never turned away here, whatever became of it: this \
-                       is the door you come back to."
+                       is the door you come back to. PASS `claim` WITH A ROLE NAME TO HOLD THAT \
+                       ROLE for 45 minutes, so two sessions never work one role at once: the \
+                       answer says `taken`, `refused` (naming who holds it and until when) or \
+                       `conflict` (the same call, retried, is the answer). Any write renews \
+                       the lease and wrapping releases it."
     )]
     pub(crate) async fn start_here(
         &self,

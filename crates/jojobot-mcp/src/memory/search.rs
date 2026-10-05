@@ -606,7 +606,10 @@ impl Jojobot {
                        `stale` (the index holds an older version of one entity than \
                        the store, so a hit may be a version the store has moved past). The hits \
                        are real either way, and \
-                       `recall` reads the store itself. No \
+                       `recall` reads the store itself. `clock` picks the day ranking reads: \
+                       `recorded_on` (the default — the day a claim was said) or \
+                       happened_at (the day the thing itself did); a claim with no \
+                       happened_at ranks by recorded_on, and `rank_fallbacks` counts them. No \
                        pagination — raise `limit` or ask a better question."
     )]
     pub(crate) async fn search(

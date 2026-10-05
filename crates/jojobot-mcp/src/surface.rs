@@ -526,6 +526,61 @@ fn capture_documents_its_thought_room_mechanics() {
     );
 }
 
+/// The identifiers a caller must find in `verb`'s own description to know a
+/// capability exists. An agent chooses a verb from that text before it reads
+/// a schema, so a capability documented only on an argument is one it never
+/// reaches for. The words around the identifiers are free to change.
+fn assert_description_names(verb: &str, names: &[&str]) {
+    let tools = Jojobot::tool_router().list_all();
+    let description = tools
+        .iter()
+        .find(|t| t.name.as_ref() == verb)
+        .unwrap_or_else(|| panic!("the surface offers {verb}"))
+        .description
+        .as_deref()
+        .unwrap_or_default()
+        .to_string();
+    for name in names {
+        assert!(
+            description.contains(name),
+            "{verb}'s description does not name `{name}`: {description}"
+        );
+    }
+}
+
+/// **`search`'s description names the `clock` choice** and the two days it
+/// picks between.
+#[test]
+fn the_search_description_names_its_clock() {
+    assert_description_names("search", &["`clock`", "recorded_on", "happened_at"]);
+}
+
+/// **`start_here`'s description names `claim`** and the three outcomes it
+/// answers with.
+#[test]
+fn the_start_here_description_names_claim_and_its_outcomes() {
+    assert_description_names(
+        "start_here",
+        &["`claim`", "`taken`", "`refused`", "`conflict`"],
+    );
+}
+
+/// **`capture`'s description names the thought room** — what makes a claim
+/// a thought, the ceiling, and the two ways a full room takes one more.
+#[test]
+fn the_capture_description_names_the_thought_room() {
+    assert_description_names(
+        "capture",
+        &[
+            "`thought`",
+            "`thought_capacity`",
+            "`drop`",
+            "`drop_because`",
+            "`borrow`",
+        ],
+    );
+}
+
 /// **The whole tool surface, named.** Production jojobot never deletes
 /// anything: the standing rule is structural at the store (the Mailboxes
 /// port has no delete operation at all), and this pins the other end — that

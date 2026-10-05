@@ -648,7 +648,12 @@ impl Jojobot {
                        named none of those learns what was recorded — and how many keys landed, \
                        with your claim elided and said to be. The write is still verified \
                        against the store before it is called a success; what stops is shipping \
-                       you the words you just sent. recall the subject to read it back."
+                       you the words you just sent. recall the subject to read it back. A \
+                       `thought` is a claim drawn as a connection edge with your OWN bot \
+                       handle as the subject; `thought_capacity` caps how many are live at \
+                       once. When the room is full, name one to `drop` and say why in \
+                       `drop_because` (required with it), or pass `borrow` to land one over \
+                       capacity — once, as the emergency reserve."
     )]
     pub(crate) async fn capture(
         &self,
