@@ -785,6 +785,11 @@ impl Jojobot {
             Err(MemoryError::RoleTaken { holder, until, .. }) => serde_json::json!({
                 "role": role,
                 "status": "refused",
+                "how_to_proceed": crate::memory::role_taken_way_forward(
+                    role,
+                    &holder,
+                    &until.to_string(),
+                ),
                 "holder": holder,
                 "until": until.to_string(),
             }),

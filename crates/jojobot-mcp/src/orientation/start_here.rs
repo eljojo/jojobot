@@ -1125,6 +1125,18 @@ mod tests {
             second["session"]["claim"]["until"].is_string(),
             "…and until when: {second}"
         );
+        // **And what to do about it**, naming the two things a caller acts on:
+        // who holds it and until when.
+        let how = second["session"]["claim"]["how_to_proceed"]
+            .as_str()
+            .unwrap_or_else(|| panic!("a refused claim says how to proceed: {second}"));
+        let until = second["session"]["claim"]["until"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(
+            how.contains(holder_sid.as_str()) && how.contains(until),
+            "the way forward names the holder and the day it lapses: {how}"
+        );
     }
 
     /// **The same claimant renewing its own claim is never refused, and a

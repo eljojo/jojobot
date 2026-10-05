@@ -674,8 +674,8 @@ pub(crate) fn memory_declined(
                 "holder": holder,
                 "until": until.to_string(),
                 "how_to_proceed": format!(
-                    "Nothing was written: {e}. Wait until {until}, or ask '{holder}' to release \
-                     '{role}' by wrapping its session."
+                    "Nothing was written: {e}. {}",
+                    role_taken_way_forward(role, holder, &until.to_string())
                 ),
             });
             Ok(CallToolResult::success(vec![ContentBlock::text(
@@ -684,6 +684,13 @@ pub(crate) fn memory_declined(
         }
         other => Err(memory_error(other)),
     }
+}
+
+/// **What to do about a role somebody else holds** — said once, for the
+/// refusal a write gets and for the `refused` outcome of a claim at the boot
+/// door, so the two cannot come to say different things.
+pub(crate) fn role_taken_way_forward(role: &str, holder: &str, until: &str) -> String {
+    format!("Wait until {until}, or ask '{holder}' to release '{role}' by wrapping its session.")
 }
 
 /// Map a domain [`MemoryError`] to an MCP error, splitting client mistakes
