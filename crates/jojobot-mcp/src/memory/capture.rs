@@ -653,7 +653,12 @@ impl Jojobot {
                        handle as the subject; `thought_capacity` caps how many are live at \
                        once. When the room is full, name one to `drop` and say why in \
                        `drop_because` (required with it), or pass `borrow` to land one over \
-                       capacity — once, as the emergency reserve."
+                       capacity — once, as the emergency reserve. A RULE FOR YOUR OWN BOOT: \
+                       capture it on your own bot handle with `starred` set to \"true\" in fields \
+                       and it competes for one of the few seats your boot spends on rules. An \
+                       unstarred rule is kept all the same and reads back with recall's facts; \
+                       when a new star pushes the oldest starred rule off its seat, the receipt \
+                       names it."
     )]
     pub(crate) async fn capture(
         &self,
