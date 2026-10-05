@@ -3605,8 +3605,17 @@ impl Memory for DoltMemory {
         validate_subject(target)?;
         self.counted_targeted_read();
         let mut tx = self.pool.begin().await.map_err(store)?;
-        let rows = sqlx::query("SELECT DISTINCT entity FROM field_write WHERE value = ?")
+        // **A reference-typed value is stored as the target's storage key, an
+        // undeclared one as the handle a caller wrote**, so the write rows are
+        // asked for both. The records are still decided from their composed
+        // fields below, where either form reads as the handle.
+        let key = match self.resolve(&mut tx, target).await? {
+            Some((key, _)) => key,
+            None => target.clone(),
+        };
+        let rows = sqlx::query("SELECT DISTINCT entity FROM field_write WHERE value IN (?, ?)")
             .bind(target.as_str())
+            .bind(key.as_str())
             .fetch_all(&mut *tx)
             .await
             .map_err(store)?;

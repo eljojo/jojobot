@@ -1769,6 +1769,97 @@ pub async fn referring_to_answers_from_the_far_end<M: Memory>(store: &M) {
     );
 }
 
+/// **A reference key is stored as the target's permanent id and read back as
+/// its handle, so a read that asks for a handle has to match both.** The
+/// declared key is the shape the build ships for an entitlement's `admits`;
+/// the undeclared one is the shape the case above covers, and it is here
+/// again so the two are asked of one store in one answer.
+pub async fn referring_to_follows_a_declared_reference_key<M: Memory>(store: &M) {
+    store
+        .declare_type(DeclaredType::new(
+            "contract-pointing",
+            vec![Field::required("contract_points_at", ValueType::Reference)],
+        ))
+        .await
+        .expect("the declaration lands");
+    let gate = EntityId("event:contract-declared-gate".into());
+    let other = EntityId("event:contract-declared-other".into());
+    let holder = EntityId("person:contract-declared-holder".into());
+    let plain = EntityId("person:contract-undeclared-keyholder".into());
+    let bystander = EntityId("person:contract-declared-bystander".into());
+    for (id, name) in [
+        (&gate, "Contract Declared Gate"),
+        (&other, "Contract Declared Other"),
+        (&holder, "Contract Declared Holder"),
+        (&plain, "Contract Declared Plain Holder"),
+        (&bystander, "Contract Declared Bystander"),
+    ] {
+        add(store, NewEntity::new(id.clone(), name, "contract-fixture")).await;
+    }
+    let pointing_through =
+        |key: &str, target: &EntityId| -> std::collections::BTreeMap<String, String> {
+            [(key.to_string(), target.to_string())]
+                .into_iter()
+                .collect()
+        };
+
+    let declared = capture(
+        store,
+        NewFact {
+            fields: pointing_through("contract_points_at", &gate),
+            ..NewFact::about(
+                holder.clone(),
+                "points through a declared key",
+                date(2026, 8, 1),
+            )
+        },
+    )
+    .await;
+    let undeclared = capture(
+        store,
+        NewFact {
+            fields: pointing_through("contract_names", &gate),
+            ..NewFact::about(
+                plain.clone(),
+                "points through an undeclared key",
+                date(2026, 8, 1),
+            )
+        },
+    )
+    .await;
+    capture(
+        store,
+        NewFact {
+            fields: pointing_through("contract_points_at", &other),
+            ..NewFact::about(
+                bystander.clone(),
+                "points at the other one",
+                date(2026, 8, 1),
+            )
+        },
+    )
+    .await;
+
+    let mut found: Vec<String> = store
+        .referring_to(&gate)
+        .await
+        .expect("a store answers who points here")
+        .iter()
+        .map(|fact| fact.address().to_string())
+        .collect();
+    found.sort();
+    let mut expected = vec![
+        declared.address().to_string(),
+        undeclared.address().to_string(),
+    ];
+    expected.sort();
+    assert_eq!(
+        found, expected,
+        "a record pointing through a declared reference key is found beside one pointing through an \
+         undeclared key, and the record pointing at the other target is not",
+    );
+}
+
 pub async fn a_child_names_its_parent_and_reads_back<M: Memory>(store: &M) {
     let parent = EntityId("project:contract-monorail".into());
     let child = EntityId("project:contract-monorail-funding".into());
@@ -11833,6 +11924,7 @@ pub async fn run_all<M: Memory>(store: &M) {
     a_summed_key_has_no_backing_to_report(store).await;
     a_machine_read_claim_names_what_it_was_read_from(store).await;
     referring_to_answers_from_the_far_end(store).await;
+    referring_to_follows_a_declared_reference_key(store).await;
     a_child_names_its_parent_and_reads_back(store).await;
     children_are_handles_and_one_level_deep(store).await;
     a_write_that_rewrites_a_child_leaves_it_where_it_was(store).await;

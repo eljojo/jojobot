@@ -23,6 +23,7 @@ use jojobot_adapters::dolt::sessions::DoltSessions;
 use jojobot_adapters::owners::MemoryOwners;
 use jojobot_adapters::testing::free_port;
 use jojobot_domain::memory::owned::Provision;
+use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
 use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact};
 use jojobot_domain::session::{NewEntry, NewSession, Sid};
 
@@ -197,6 +198,17 @@ async fn the_stack_the_binary_builds_answers_what_the_layer_beneath_implements()
         .expect("capture ok")
         .written()
         .expect("nothing collides");
+    // **Declared a reference**, the way the build declares an entitlement's
+    // `admits`: the store keeps such a value as the target's permanent id and
+    // reads it back as the handle, so a pointer read that asks the store for
+    // the handle alone finds nothing.
+    indexed
+        .declare_type(DeclaredType::new(
+            "assembled-pointing",
+            vec![Field::required("fires", ValueType::Reference)],
+        ))
+        .await
+        .expect("the declaration lands");
     let derived = indexed
         .capture(NewFact {
             derived_from: Some(tuned.address()),
