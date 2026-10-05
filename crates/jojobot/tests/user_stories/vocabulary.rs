@@ -191,3 +191,72 @@ async fn the_software_ships_a_vocabulary_a_session_never_declared() {
         .await;
     story.finish().await;
 }
+
+#[tokio::test]
+async fn a_cold_session_asking_for_a_type_nothing_holds_is_told_its_keys_and_writes_under_them() {
+    // **A session that was told nothing.** The boot lists the shipped types by
+    // name only, so the first question it can ask is `answers_type: trip`, and
+    // an empty answer that said nothing more sent it away without the spelling
+    // of a single key.
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    s.add("event:trail-survey", "The Trail Survey").await;
+    s.add("place:springfield", "Springfield").await;
+    s.add("place:north-trail", "The North Trail").await;
+
+    // ── nothing is a trip yet, and the answer says what one is ──────────────
+    let asked = s
+        .call("recall", json!({ "answers_type": "trip" }))
+        .await
+        .json();
+    assert!(
+        asked["objects"].as_array().is_some_and(Vec::is_empty),
+        "nothing carries a trip's keys yet, or this proves nothing: {asked}"
+    );
+    let described = asked["type_keys"]
+        .as_array()
+        .and_then(|types| types.iter().find(|t| t["name"] == "trip"))
+        .unwrap_or_else(|| {
+            panic!("the empty answer does not describe the type it was asked about: {asked}")
+        });
+    let keys = described["fields"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the type's keys are a list: {described}"));
+    let named: Vec<&str> = keys.iter().filter_map(|k| k["key"].as_str()).collect();
+    for key in ["departs_from", "arrives_at", "leaves_on", "returns_on"] {
+        assert!(named.contains(&key), "{key} is not named in {described}");
+    }
+
+    // ── a session writes under exactly the keys it was told, by what each holds ─
+    let mut fields = serde_json::Map::new();
+    for key in keys {
+        let name = key["key"].as_str().expect("a key has a name");
+        let value = match key["holds"].as_str().expect("a key says what it holds") {
+            "date" => "2026-09-03",
+            "reference" => "place:springfield",
+            other => panic!("a trip key holds {other}, which this story cannot write"),
+        };
+        fields.insert(name.to_string(), json!(value));
+    }
+    s.event_with(
+        "event:trail-survey",
+        "four days up the trail",
+        serde_json::Value::Object(fields),
+        &[],
+    )
+    .await;
+
+    // ── and the keys it wrote are the ones the store asks by ────────────────
+    let found = s
+        .call(
+            "recall",
+            json!({ "fields": [{ "key": "leaves_on", "value": "2026-09-03" }] }),
+        )
+        .await
+        .json();
+    assert_eq!(
+        found["objects"][0]["id"], "event:trail-survey",
+        "a thing written under the keys the answer named is found by them: {found}"
+    );
+    story.finish().await;
+}

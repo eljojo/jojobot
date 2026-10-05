@@ -5170,3 +5170,50 @@ async fn a_caller_with_no_identity_is_told_how_many_runs_exist_and_nothing_else(
         );
     }
 }
+
+/// **`fits_type` on a walk that reaches nothing says what the type is**, as
+/// `answers_type` on a selection that finds nothing does.
+#[tokio::test]
+async fn a_fits_type_that_reached_nothing_names_the_types_keys() {
+    let jojobot = handler();
+    jojobot
+        .declare_type(Parameters(DeclareTypeArgs {
+            name: "trip".into(),
+            fields: vec![FieldArgs {
+                key: "leaves_on".into(),
+                holds: Some("date".into()),
+                folds: None,
+                required: false,
+                one_of: None,
+            }],
+            sid: Some(crate::harness::TEST_SID.into()),
+        }))
+        .await
+        .expect("declare_type ok");
+    ensure(&jojobot, "person:alpha").await;
+    let walk = |fits: &str| RecallArgs {
+        follow: Some(FollowArgs {
+            shape: None,
+            relation: None,
+            direction: Some("out".into()),
+            depth: None,
+            keeping: None,
+            fits_type: Some(fits.into()),
+        }),
+        ..recall_args("person:alpha")
+    };
+
+    let empty = json_of(
+        &jojobot
+            .recall(Parameters(walk("trip")))
+            .await
+            .expect("recall ok"),
+    );
+    let names: Vec<&str> = empty["type_keys"][0]["fields"]
+        .as_array()
+        .expect("a walk that reached nothing describes the type it was asked for")
+        .iter()
+        .filter_map(|key| key["key"].as_str())
+        .collect();
+    assert!(names.contains(&"leaves_on"), "{empty}");
+}

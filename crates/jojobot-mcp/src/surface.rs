@@ -562,6 +562,13 @@ fn the_recall_description_names_session_runs_and_withheld() {
     assert_description_names("recall", &["`session`", "`withheld`"]);
 }
 
+/// **`recall`'s description says an empty `answers_type` still names the
+/// type's keys**, in the answer's own key for them.
+#[test]
+fn the_recall_description_names_type_keys() {
+    assert_description_names("recall", &["type_keys"]);
+}
+
 /// **`merge_entities` names the refusal a merge into your own bot can meet**,
 /// and the two ways past it.
 #[test]

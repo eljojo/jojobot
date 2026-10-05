@@ -1281,7 +1281,10 @@ impl Jojobot {
                        the nearest handles, never as an empty answer. An object that draws edges \
                        the walk did not follow says so; an empty `connected` with no such note is \
                        an object with nothing beyond it. A query that narrows nothing is refused: \
-                       name at least one of subject, kind, answers_type or fields."
+                       name at least one of subject, kind, answers_type or fields. AN \
+                       answers_type THAT SELECTS NOTHING STILL SAYS WHAT THE TYPE IS: the \
+                       answer carries type_keys, the type's keys and what each holds, so the \
+                       spelling to write under it is in the empty answer."
     )]
     pub(crate) async fn recall(
         &self,
@@ -1350,6 +1353,11 @@ impl Jojobot {
                 Err(refused) => return Ok(refused),
             },
         };
+        // **Kept for the answer.** Both resolved declarations move into the
+        // query below, and an answer that selects nothing under them has to be
+        // able to say what they are.
+        let asked_answers = answers_type.clone();
+        let asked_fits = fits_type.clone();
         // **Two link vocabularies, and a call names one of them.** An edge
         // shape and a relation describe different things — a link nobody typed,
         // and a link a declaration made — so a call carrying both is refused
@@ -2076,6 +2084,33 @@ impl Jojobot {
         }
         for (wanted, displaced) in &type_displaced {
             crate::answer::note_type_displaced(&mut body, wanted, displaced.as_ref());
+        }
+        // 🚨 **An answer that selected nothing under a type says what the type
+        // is.** The boot names the shipped types and nothing about their keys,
+        // so a session that asks for one it has never written finds out what
+        // to write from the empty answer or from nowhere: a zero count that
+        // named no key sent a run away without the spelling of a single one,
+        // and what it wrote instead was unreachable by the keys the store asks
+        // by. The same declaration `declare_type` answers with, so the
+        // spelling read here is the spelling to write.
+        //
+        // `answers_type` selects the objects, so it is asked when none came
+        // back. `fits_type` narrows what a walk reaches, so it is asked when
+        // the walk reached nothing.
+        let nothing_selected = found.is_empty();
+        let nothing_reached = found.iter().all(|object| object.connected.is_empty());
+        let described: Vec<&DeclaredType> = asked_answers
+            .iter()
+            .filter(|_| nothing_selected)
+            .chain(asked_fits.iter().filter(|_| nothing_reached))
+            .collect();
+        if !described.is_empty() {
+            body["type_keys"] = serde_json::Value::Array(
+                described
+                    .into_iter()
+                    .map(crate::memory::wire::declared_type_json)
+                    .collect(),
+            );
         }
         // **A caller with no identity owns no run, and the count above is all
         // it can see of them.** Say how to read its own, because "withheld" on
