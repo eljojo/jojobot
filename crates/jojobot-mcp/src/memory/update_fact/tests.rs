@@ -2701,3 +2701,44 @@ async fn update_fact_refuses_to_archive_a_role_record_when_the_store_cannot_be_r
     );
     assert_ne!(landed["status"], "blocked", "{landed}");
 }
+
+/// **A role's own record cannot be archived through the handle its bot wore
+/// before a rename**, for the reason `retract`'s own case gives. Paired with
+/// archiving an ordinary claim through the former handle, which lands.
+#[tokio::test]
+async fn update_fact_refuses_to_archive_a_role_record_addressed_by_a_former_handle() {
+    let jojobot = handler();
+    let (claim, ordinary) = a_role_and_an_ordinary_claim_under_a_former_handle(&jojobot).await;
+    assert!(claim.starts_with("bot:gamma#"), "{claim}");
+
+    let refused = blocked(
+        &jojobot
+            .update_fact(Parameters(UpdateFactArgs {
+                status: Some("archived".into()),
+                ..update_args(&claim)
+            }))
+            .await
+            .expect("a refusal is an answer, not a protocol failure"),
+    );
+    assert_eq!(refused["wrote"], false, "{refused}");
+    let after = jojobot
+        .memory
+        .fields(&EntityId("bot:delta".into()))
+        .await
+        .expect("fields ok");
+    assert!(
+        after.contains_key("role/dev-dispatch/holder"),
+        "the claim's holder left the fold through a former handle: {after:?}"
+    );
+
+    let landed = json_of(
+        &jojobot
+            .update_fact(Parameters(UpdateFactArgs {
+                status: Some("archived".into()),
+                ..update_args(&ordinary)
+            }))
+            .await
+            .expect("update_fact ok"),
+    );
+    assert_ne!(landed["status"], "blocked", "{landed}");
+}

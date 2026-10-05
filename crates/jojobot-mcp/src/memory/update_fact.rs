@@ -440,7 +440,15 @@ impl Jojobot {
         if archives_this_write {
             // **A store that cannot be read refuses, it does not pass** — see
             // `retract`'s own copy of this check.
-            let carried = match self.memory.recall(&address.home).await {
+            //
+            // **Found by local id within the home it resolves to now**, for the
+            // reason `retract`'s own copy gives: an address typed under a former
+            // handle never equals the address a read serves.
+            let home = match self.current_handle(&address.home).await {
+                Ok(home) => home,
+                Err(e) => return memory_declined("update_fact", e),
+            };
+            let carried = match self.memory.recall(&home).await {
                 Ok(carried) => carried,
                 Err(e @ (MemoryError::Store(_) | MemoryError::Conflict)) => {
                     return memory_declined("update_fact", e);
@@ -449,7 +457,7 @@ impl Jojobot {
             };
             let refused = carried
                 .iter()
-                .find(|fact| fact.address() == address)
+                .find(|fact| fact.id == address.local)
                 .and_then(|fact| jojobot_domain::memory::refuses_role_fields(fact.fields.keys()));
             if let Some(refused) = refused {
                 return memory_declined("update_fact", refused);

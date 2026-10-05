@@ -405,6 +405,33 @@ pub(crate) async fn a_claimed_role(jojobot: &Jojobot) -> String {
         .to_string()
 }
 
+/// **A bot that claimed a role and holds an ordinary claim, renamed since.**
+/// Returns the address of the record that carries the role's holder and claim
+/// moment and the address of the ordinary claim, both typed under the handle the
+/// bot wore before the rename.
+pub(crate) async fn a_role_and_an_ordinary_claim_under_a_former_handle(
+    jojobot: &Jojobot,
+) -> (String, String) {
+    let claim = a_claimed_role(jojobot).await;
+    let ordinary =
+        address_of(&capture_ok(jojobot, capture_args("bot:gamma", "an ordinary claim")).await);
+    let renamed = json_of(
+        &jojobot
+            .rename_entity(Parameters(RenameEntityArgs {
+                handle: "bot:gamma".into(),
+                to: "bot:delta".into(),
+                parent: None,
+                recorded_at: None,
+                override_token: None,
+                sid: Some(TEST_SID.into()),
+            }))
+            .await
+            .expect("rename ok"),
+    );
+    assert_ne!(renamed["status"], "blocked", "{renamed}");
+    (claim, ordinary)
+}
+
 /// A handler whose mailbox world answers nothing, over a memory the caller
 /// may already have populated — a bot has to be stood up while the world is
 /// up, since a claim that cannot be screened is refused.

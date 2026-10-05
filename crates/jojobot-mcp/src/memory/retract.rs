@@ -81,7 +81,17 @@ impl Jojobot {
         // cannot say the record carries no role field when it could not read
         // the record. Any other error means the home resolves to nothing, so
         // there is nothing to guard and the write below gives its own answer.
-        let carried = match self.memory.recall(&address.home).await {
+        //
+        // **The record is found by its local id within the home it resolves
+        // to now.** A read serves the current handle, so an address typed under
+        // a handle the bot wore before a rename never equals the address of the
+        // record it names. The home is resolved first, and a resolving read that
+        // fails refuses like the claim read does.
+        let home = match self.current_handle(&address.home).await {
+            Ok(home) => home,
+            Err(e) => return memory_declined("retract", e),
+        };
+        let carried = match self.memory.recall(&home).await {
             Ok(carried) => carried,
             Err(e @ (MemoryError::Store(_) | MemoryError::Conflict)) => {
                 return memory_declined("retract", e);
@@ -90,7 +100,7 @@ impl Jojobot {
         };
         let refused = carried
             .iter()
-            .find(|fact| fact.address() == address)
+            .find(|fact| fact.id == address.local)
             .and_then(|fact| jojobot_domain::memory::refuses_role_fields(fact.fields.keys()));
         if let Some(refused) = refused {
             return memory_declined("retract", refused);
@@ -858,6 +868,45 @@ mod tests {
         let landed = json_of(
             &healthy
                 .retract(Parameters(retract_args(&address, "it did not happen")))
+                .await
+                .expect("retract ok"),
+        );
+        assert_eq!(landed["retracted"]["status"], "archived", "{landed}");
+    }
+
+    /// **A role's own record cannot be taken back through the handle its bot
+    /// wore before a rename.** The guard looks the record up by the address
+    /// the caller typed, and a facts read serves the current handle, so a
+    /// former-handle address matched nothing and the guard passed. Paired with
+    /// the same act on an ordinary claim through the former handle, which lands.
+    #[tokio::test]
+    async fn retract_refuses_a_role_record_addressed_by_a_former_handle() {
+        let jojobot = handler();
+        let (claim, ordinary) =
+            crate::memory::testing::a_role_and_an_ordinary_claim_under_a_former_handle(&jojobot)
+                .await;
+        assert!(claim.starts_with("bot:gamma#"), "{claim}");
+
+        let refused = blocked(
+            &jojobot
+                .retract(Parameters(retract_args(&claim, "trying to clear the way")))
+                .await
+                .expect("a refusal is an answer, not a protocol failure"),
+        );
+        assert_eq!(refused["wrote"], false, "{refused}");
+        let after = jojobot
+            .memory
+            .fields(&EntityId("bot:delta".into()))
+            .await
+            .expect("fields ok");
+        assert!(
+            after.contains_key("role/dev-dispatch/holder"),
+            "the claim's holder left the fold through a former handle: {after:?}"
+        );
+
+        let landed = json_of(
+            &jojobot
+                .retract(Parameters(retract_args(&ordinary, "it did not happen")))
                 .await
                 .expect("retract ok"),
         );
