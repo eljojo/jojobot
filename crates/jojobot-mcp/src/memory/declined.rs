@@ -554,7 +554,20 @@ pub(crate) fn memory_declined(
                 // the reserve again. Exactly at capacity is the one moment
                 // `borrow` is genuinely on the table, so it is the one
                 // moment the refusal names it.
-                "how_to_proceed": if live > capacity {
+                "how_to_proceed": if verb == "update_fact" {
+                    // **An edit has no drop and no borrow**, so naming either
+                    // would send the caller round a loop (rule 68). Archiving
+                    // a live thought and writing the thought through capture
+                    // are the two moves it has.
+                    format!(
+                        "Nothing was written: '{subject}'s room already holds {live} of \
+                         {capacity}, and {verb} cannot make room in it. Archive one of the \
+                         thoughts above with update_fact (status: archived, and details saying \
+                         why it no longer earns its slot), then re-call {verb} — or write this \
+                         thought through capture, which can archive one thought as it writes \
+                         this one."
+                    )
+                } else if live > capacity {
                     format!(
                         "Nothing was written: '{subject}'s room already holds {live} of \
                          {capacity} — its emergency reserve is already spent. Re-call {verb} \

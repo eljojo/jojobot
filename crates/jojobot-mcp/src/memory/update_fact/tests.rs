@@ -2368,3 +2368,165 @@ async fn an_edited_field_equal_to_todays_default_is_named_in_the_receipt() {
         "a field with no shipped default must carry no note: {ordinary}"
     );
 }
+
+/// A bot at capacity one, holding one thought and one plain claim that an
+/// edit could turn into a second thought. Returns the handler and the plain
+/// claim's address.
+async fn a_full_room_and_a_claim_that_would_join_it(jojobot: &Jojobot, bot: &str) -> String {
+    ensure(jojobot, bot).await;
+    ensure(jojobot, "thing:the-couch").await;
+    ensure(jojobot, "thing:the-air-filter").await;
+    capture_ok(
+        jojobot,
+        CaptureArgs {
+            fields: Some(
+                [(
+                    jojobot_domain::memory::THOUGHT_CAPACITY.to_string(),
+                    "1".to_string(),
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            ..capture_args(bot, "capacity is one")
+        },
+    )
+    .await;
+    capture_ok(
+        jojobot,
+        CaptureArgs {
+            shape: Some("connection".into()),
+            object: Some("thing:the-couch".into()),
+            ..capture_args(bot, "the couch needs a leg fixed")
+        },
+    )
+    .await;
+    let plain = capture_ok(jojobot, capture_args(bot, "the filter is in the hall")).await;
+    address_of(&plain)
+}
+
+/// 🚨 **A refusal names only moves the refusing verb has** (rule 68). The
+/// room-full answer is shared with `capture`, whose arguments include a drop
+/// and a borrow; `update_fact` has neither, so advice to re-call it naming
+/// either sends an agent in a loop.
+///
+/// Paired with `capture`'s own refusal at the same state, which must still
+/// offer both: without that half this passes on a refusal that stopped
+/// naming any way forward.
+#[tokio::test]
+async fn a_full_room_refusal_names_only_moves_the_refusing_verb_has() {
+    let jojobot = handler();
+    let bot = "bot:mcp-seats-update";
+    let plain = a_full_room_and_a_claim_that_would_join_it(&jojobot, bot).await;
+
+    let refused = blocked(
+        &jojobot
+            .update_fact(Parameters(UpdateFactArgs {
+                shape: Some("connection".into()),
+                object: Some("thing:the-air-filter".into()),
+                ..update_args(&plain)
+            }))
+            .await
+            .expect("a refusal is an answer, not a failure"),
+    );
+    assert_eq!(refused["wrote"], false, "{refused}");
+    let how = refused["how_to_proceed"]
+        .as_str()
+        .expect("a blocked answer says how to proceed");
+    for argument in ["drop", "drop_because", "borrow"] {
+        assert!(
+            !how.contains(argument),
+            "update_fact has no `{argument}` argument, so the refusal must not name it: {how}"
+        );
+    }
+    let update_fact_args =
+        serde_json::to_value(schemars::schema_for!(UpdateFactArgs)).expect("the schema serialises");
+    assert!(
+        update_fact_args["properties"].get("status").is_some(),
+        "the way forward below names `status`, so update_fact must have it"
+    );
+    assert!(
+        how.contains("status") && how.contains("archived"),
+        "the way forward is archiving a live thought through this verb: {how}"
+    );
+    assert!(
+        how.contains("capture"),
+        "the other way forward is making the change through capture, which can archive one \
+         as it writes: {how}"
+    );
+
+    let capture_refused = blocked(
+        &jojobot
+            .capture(Parameters(CaptureArgs {
+                shape: Some("connection".into()),
+                object: Some("thing:the-air-filter".into()),
+                ..capture_args(bot, "the air filter is due")
+            }))
+            .await
+            .expect("a refusal is an answer, not a failure"),
+    );
+    let capture_how = capture_refused["how_to_proceed"]
+        .as_str()
+        .expect("a blocked answer says how to proceed");
+    assert!(
+        capture_how.contains("drop_because") && capture_how.contains("borrow"),
+        "capture has both moves and still offers them: {capture_how}"
+    );
+}
+
+/// 🚨 **An edit counts the room the way `capture` does, through the served
+/// verbs.** The cutoff comes from the bot's own runs, which only the verb can
+/// read, so this has to travel `update_fact` rather than the port: a bot that
+/// has run `AGES_AFTER_RUNS` times has aged its old thought out of the count,
+/// and an edit that makes a second thought lands with nothing dropped.
+///
+/// Paired with the same edit before any run exists, which is refused.
+#[tokio::test]
+async fn an_edit_into_a_room_counts_a_thought_that_aged_out_the_way_capture_does() {
+    let sessions = Arc::new(jojobot_domain::session::testing::InMemorySessions::new());
+    let jojobot = Jojobot::new(
+        Arc::new(InMemoryMemory::booted()),
+        Arc::new(SpySearch::default()),
+        Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
+        sessions.clone(),
+        Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+        seeded_registry(),
+    );
+    let bot = "bot:mcp-thought-aging";
+    let plain = a_full_room_and_a_claim_that_would_join_it(&jojobot, bot).await;
+    let join = || UpdateFactArgs {
+        shape: Some("connection".into()),
+        object: Some("thing:the-air-filter".into()),
+        ..update_args(&plain)
+    };
+
+    let refused = blocked(
+        &jojobot
+            .update_fact(Parameters(join()))
+            .await
+            .expect("a refusal is an answer, not a failure"),
+    );
+    assert_eq!(
+        refused["aged_out"], 0,
+        "before any run exists nothing has aged: {refused}"
+    );
+
+    for n in 0..jojobot_domain::memory::AGES_AFTER_RUNS {
+        sessions
+            .begin(jojobot_domain::session::NewSession {
+                bot: EntityId(bot.to_string()),
+                sid: jojobot_domain::session::Sid(format!("ar{n:02}")),
+                focus: "working".into(),
+                started_at: jiff::Timestamp::now(),
+                timezone: None,
+                started_on: None,
+            })
+            .await
+            .expect("seeding a run");
+    }
+
+    let landed = update_ok(&jojobot, join()).await;
+    assert_eq!(
+        landed["content_head"], "the filter is in the hall",
+        "the old thought aged out of a room at capacity one, so the edit lands: {landed}"
+    );
+}

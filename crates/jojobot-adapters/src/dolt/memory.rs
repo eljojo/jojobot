@@ -3091,10 +3091,19 @@ impl Memory for DoltMemory {
                 .into_iter()
                 .filter(|f| f.id != fact.id)
                 .collect();
-            let mut room_after = jojobot_domain::memory::thought_room(&others);
-            room_after.push(fact.clone());
+            let mut room = jojobot_domain::memory::thought_room(&others);
+            let mut aged_out = 0;
+            // **Ageing's cost is paid only when the room might be full**,
+            // exactly as `capture` pays it, and the cutoff is the caller's.
+            if capacity.is_some_and(|capacity| room.len() >= capacity) {
+                let ids: Vec<FactId> = room.iter().map(|f| f.id.clone()).collect();
+                let touched = Self::touched_moments(&mut tx, &key, &ids).await?;
+                let split = jojobot_domain::memory::split_by_age(room, &touched, patch.aged_before);
+                aged_out = split.aged_out.len();
+                room = split.live;
+            }
             if let Some(err) =
-                jojobot_domain::memory::refuses_room_overflow(&handle, &room_after, capacity)
+                jojobot_domain::memory::refuses_room_overflow(&handle, room, capacity, aged_out)
             {
                 return Err(err);
             }

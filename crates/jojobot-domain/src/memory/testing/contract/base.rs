@@ -4434,6 +4434,111 @@ pub async fn an_aged_thought_frees_the_room<M: Memory>(store: &M) {
     }
 }
 
+/// 🚨 **An edit that makes a claim a thought counts the room the way a
+/// capture counts it: a thought aged out of the room does not fill a slot.**
+/// Paired in one case: the same edit, refused when nothing is aged out and
+/// landed when the caller's cutoff ages the one live thought, and the
+/// refusal that follows says how many aged thoughts it left out of the
+/// count. Without the first half the second passes on a store that ignores
+/// capacity on an edit.
+pub async fn an_edit_into_a_room_counts_it_the_way_a_capture_does<M: Memory>(store: &M) {
+    let bot = EntityId("bot:contract-edit-ages-room".into());
+    let a = EntityId("thing:the-couch".into());
+    let b = EntityId("thing:the-air-filter".into());
+    let c = EntityId("thing:the-furnace".into());
+    ensure(store, &bot).await;
+    ensure(store, &b).await;
+    ensure(store, &c).await;
+
+    capture(
+        store,
+        NewFact {
+            fields: [(THOUGHT_CAPACITY.to_string(), "1".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(bot.clone(), "capacity is one", date(2026, 7, 1))
+        },
+    )
+    .await;
+    let old = capture(
+        store,
+        NewFact {
+            edge: Some(Edge::new(EdgeShape::Connection, a.clone())),
+            ..NewFact::about(bot.clone(), "the couch needs a leg fixed", date(2026, 7, 2))
+        },
+    )
+    .await;
+    let plain = capture(
+        store,
+        NewFact::about(bot.clone(), "the filter is in the hall", date(2026, 7, 3)),
+    )
+    .await;
+
+    let cutoff = jiff::Timestamp::now();
+    let draw = |object: &EntityId, aged_before| FactPatch {
+        edge: Some(Edge::new(EdgeShape::Connection, object.clone())),
+        aged_before,
+        ..Default::default()
+    };
+
+    // No cutoff: the one live thought fills the one slot.
+    let refused = store
+        .update_fact(&plain.address(), draw(&b, None), &other_caller())
+        .await
+        .expect_err("a full room refuses an edit that makes a second thought");
+    match refused {
+        MemoryError::RoomFull { aged_out, .. } => assert_eq!(aged_out, 0, "nothing is aged yet"),
+        other => panic!("expected RoomFull, got {other:?}"),
+    }
+
+    // With a cutoff after the old thought's last write, the old thought is
+    // aged out of the count and the same edit lands, with nothing dropped.
+    let landed = store
+        .update_fact(&plain.address(), draw(&b, Some(cutoff)), &other_caller())
+        .await
+        .expect("the aged thought frees the slot")
+        .written()
+        .unwrap_or_else(|| panic!("the guard must not block an edit into a room with a free slot"));
+    assert_eq!(landed.content, "the filter is in the hall");
+    let after = store.recall(&bot).await.expect("recall ok");
+    let old_read = after
+        .iter()
+        .find(|f| f.id == old.id)
+        .expect("the aged thought is still there");
+    assert_eq!(
+        old_read.status,
+        FactStatus::Active,
+        "ageing must not archive a row: {old_read:?}"
+    );
+
+    // The room now nominally holds two. A third is refused, and the refusal
+    // names the one thought it did not count.
+    let second_plain = capture(
+        store,
+        NewFact::about(
+            bot.clone(),
+            "the furnace is in the cellar",
+            date(2026, 7, 4),
+        ),
+    )
+    .await;
+    let refused = store
+        .update_fact(
+            &second_plain.address(),
+            draw(&c, Some(cutoff)),
+            &other_caller(),
+        )
+        .await
+        .expect_err("the fresh thought still fills the one slot");
+    match refused {
+        MemoryError::RoomFull { aged_out, live, .. } => {
+            assert_eq!(aged_out, 1, "the refusal says one thought was not counted");
+            assert_eq!(live, 1, "the room as it stands is the one fresh thought");
+        }
+        other => panic!("expected RoomFull, got {other:?}"),
+    }
+}
+
 /// 🚨 **An archived thought stops occupying a slot the moment it is
 /// archived** — proven on its own, not assumed from the status filter a
 /// capacity check happens to also use. An ordinary `update_fact` archive,
@@ -11641,6 +11746,7 @@ pub async fn run_all<M: Memory>(store: &M) {
     a_non_bots_room_enforces_its_capacity_too(store).await;
     a_borrow_crosses_the_ceiling_exactly_once(store).await;
     an_aged_thought_frees_the_room(store).await;
+    an_edit_into_a_room_counts_it_the_way_a_capture_does(store).await;
     an_archived_thought_frees_its_slot(store).await;
     a_dropped_thoughts_edge_survives_the_pointers_own_rename(store).await;
     every_edge_shape_reads_back(store).await;

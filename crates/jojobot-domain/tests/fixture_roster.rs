@@ -104,6 +104,7 @@ const ROSTER: &[&str] = &[
     "bot:contract-ceiling-fold",
     "bot:contract-ceiling-room-via-edit",
     "bot:contract-ceiling-room-with-space",
+    "bot:contract-edit-ages-room",
     "bot:contract-migrate-bot-column-delta",
     "bot:contract-migrate-bot-column-gamma",
     "bot:contract-migrate-bot-column-sigma",

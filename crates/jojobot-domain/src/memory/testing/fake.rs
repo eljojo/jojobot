@@ -355,6 +355,27 @@ impl InMemoryMemory {
         Some((key, entity.id.clone()))
     }
 
+    /// **Each thought's last write moment**, keyed by its local id — what
+    /// ageing reads, never the claim's own `recorded_at`. A write kept before
+    /// the substrate recorded a moment has no entry, so it is never aged.
+    fn touched_moments(
+        &self,
+        home: &EntityId,
+        room: &[Fact],
+    ) -> std::collections::HashMap<FactId, jiff::Timestamp> {
+        let writes = self.claim_writes.lock().expect("fake mutex poisoned");
+        room.iter()
+            .filter_map(|f| {
+                writes
+                    .iter()
+                    .filter(|(h, id, _)| h == home && id == &f.id)
+                    .filter_map(|(_, _, w)| w.written_at)
+                    .max()
+                    .map(|at| (f.id.clone(), at))
+            })
+            .collect()
+    }
+
     /// The storage key alone, for a caller that has no use for the handle.
     fn storage_key(&self, id: &EntityId) -> Option<EntityId> {
         self.resolve(id).map(|(key, _)| key)
@@ -1145,20 +1166,7 @@ impl Memory for InMemoryMemory {
                 // actually be full** — a bot nowhere near capacity never
                 // pays for a touch-moment lookup on every write.
                 if nominal_room.len() >= capacity {
-                    let touched: std::collections::HashMap<FactId, jiff::Timestamp> = {
-                        let writes = self.claim_writes.lock().expect("fake mutex poisoned");
-                        nominal_room
-                            .iter()
-                            .filter_map(|f| {
-                                writes
-                                    .iter()
-                                    .filter(|(h, id, _)| *h == home && id == &f.id)
-                                    .filter_map(|(_, _, w)| w.written_at)
-                                    .max()
-                                    .map(|at| (f.id.clone(), at))
-                            })
-                            .collect()
-                    };
+                    let touched = self.touched_moments(&home, &nominal_room);
                     let split =
                         super::super::split_by_age(nominal_room, &touched, fact.aged_before);
                     if split.live.len() >= capacity {
@@ -1731,9 +1739,17 @@ impl Memory for InMemoryMemory {
                 .filter(|f| f.home == home && f.id != edited.id)
                 .cloned()
                 .collect();
-            let mut room_after = super::super::thought_room(&others);
-            room_after.push(edited.clone());
-            if let Some(err) = super::super::refuses_room_overflow(&handle, &room_after, capacity) {
+            let mut room = super::super::thought_room(&others);
+            let mut aged_out = 0;
+            if capacity.is_some_and(|capacity| room.len() >= capacity) {
+                let touched = self.touched_moments(&home, &room);
+                let split = super::super::split_by_age(room, &touched, patch.aged_before);
+                aged_out = split.aged_out.len();
+                room = split.live;
+            }
+            if let Some(err) =
+                super::super::refuses_room_overflow(&handle, room, capacity, aged_out)
+            {
                 return Err(err);
             }
         }

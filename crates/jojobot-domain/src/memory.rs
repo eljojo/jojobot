@@ -742,6 +742,12 @@ pub struct FactPatch {
     /// testimony AND to settle one that is open. jojobot infers freely; it
     /// never blesses on its own, on either axis.
     pub confirmed_by_user: bool,
+    /// **The moment before which a thought already in the room this edit
+    /// joins counts as aged out** — [`NewFact::aged_before`], for an edit.
+    /// Computed by the caller from the bot's own run-start moments and set
+    /// only when the edit could make the record a thought; it names no
+    /// change, so it never makes a patch a change.
+    pub aged_before: Option<jiff::Timestamp>,
 }
 
 /// The promotion gate: a claim may only become testimony on the user's explicit
@@ -1883,31 +1889,33 @@ pub fn refuses_own_ceiling_change(
         })
 }
 
-/// **Whether the room a write leaves behind holds more than its capacity.**
+/// **Whether an edit that makes a claim a thought has no slot to take.**
 ///
-/// [`capture`](crate::memory::Memory::capture)'s own room check runs ageing
-/// and a named drop, because a capture is always ADDING to a room that may
-/// already be sitting at capacity, and something has to be named to make
-/// way. An edit is a narrower question: `room_after` is the room exactly as
-/// the edit would leave it — every other active connection-edged fact the
-/// subject already carries, plus this one if the edit leaves it
-/// connection-edged and active — and there is no ageing or drop to weigh,
-/// because an edit that does not grow the room past capacity needs neither
-/// and one that does is refused outright, the same answer capture gives a
-/// caller who named nothing to drop.
+/// `room` is the room as it stands: every OTHER active connection-edged
+/// fact the subject carries, with the ones [`split_by_age`] left out of the
+/// count already removed and counted in `aged_out`. The edited record is not
+/// in it, so a refusal lists only thoughts a caller could archive to make
+/// way, and `live` is what the room holds now, exactly as a capture's
+/// refusal reports it.
+///
+/// An edit has no drop and no borrow: an edit that finds the room full is
+/// refused outright, and the way forward is archiving a live thought or
+/// writing the thought through [`capture`](crate::memory::Memory::capture),
+/// which can name a drop.
 pub fn refuses_room_overflow(
     home: &EntityId,
-    room_after: &[Fact],
+    room: Vec<Fact>,
     capacity: Option<usize>,
+    aged_out: usize,
 ) -> Option<MemoryError> {
     let capacity = capacity?;
-    if room_after.len() > capacity {
+    if room.len() >= capacity {
         Some(MemoryError::RoomFull {
             subject: home.to_string(),
-            live: room_after.len(),
+            live: room.len(),
             capacity,
-            room: room_after.to_vec(),
-            aged_out: 0,
+            room,
+            aged_out,
         })
     } else {
         None

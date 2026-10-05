@@ -371,6 +371,7 @@ impl Jojobot {
                 Ok(edge) => edge,
                 Err(refused) => return Ok(refused),
             },
+            aged_before: None,
         };
         // **`keep` is the one designed way to re-assert a claim on purpose,
         // and the one thing this call refuses rather than silently
@@ -454,6 +455,28 @@ impl Jojobot {
         // copy is: this is what THIS write actually sent, not what the fact
         // ends up carrying.
         let patch_fields = patch.fields.clone();
+        // **The ageing cutoff, computed here and never inside `Memory`**, for
+        // the reason `capture`'s own copy is. Asked only when this edit could
+        // newly make the record a thought: it draws a connection edge or
+        // brings the record back to active. Set after the empty-patch check
+        // above, because it names no change.
+        let mut patch = patch;
+        if address.home.kind() == Some(EntityKind::BOT)
+            && (patch
+                .edge
+                .as_ref()
+                .is_some_and(|e| e.shape == EdgeShape::Connection)
+                || patch.status == Some(FactStatus::Active))
+        {
+            match self.sessions.summaries_of(&address.home).await {
+                Ok(runs) => {
+                    patch.aged_before = jojobot_domain::memory::aging_cutoff(
+                        &runs.iter().map(|r| r.started_at).collect::<Vec<_>>(),
+                    );
+                }
+                Err(e) => return session_declined(e, caller.sid.as_str()),
+            }
+        }
         // **A write that landed is never reported as failed** (rule 130): see
         // `capture`'s own note on the same shape.
         let (written, fold_behind) =
