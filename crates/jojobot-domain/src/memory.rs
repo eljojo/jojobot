@@ -1829,9 +1829,15 @@ const SELF_CEILING_KEYS: [&str; 2] = [THOUGHT_CAPACITY, THOUGHT_BODY_CAP];
 /// **Whether a write's own fields name a ceiling key.** The cheap question a
 /// caller asks before it spends a read on resolving who the write is about.
 pub fn names_a_ceiling(fields: &BTreeMap<String, String>) -> bool {
+    !ceiling_keys_in(fields).is_empty()
+}
+
+/// **The ceiling keys a bag of fields names**, in a fixed order.
+pub fn ceiling_keys_in(fields: &BTreeMap<String, String>) -> Vec<&'static str> {
     SELF_CEILING_KEYS
-        .iter()
-        .any(|key| fields.contains_key(*key))
+        .into_iter()
+        .filter(|key| fields.contains_key(*key))
+        .collect()
 }
 
 /// **The thing a ceiling binds cannot write that ceiling.**

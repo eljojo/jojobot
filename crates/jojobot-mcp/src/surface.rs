@@ -562,6 +562,16 @@ fn the_recall_description_names_session_runs_and_withheld() {
     assert_description_names("recall", &["`session`", "`withheld`"]);
 }
 
+/// **`merge_entities` names the refusal a merge into your own bot can meet**,
+/// and the two ways past it.
+#[test]
+fn the_merge_description_names_its_ceiling_refusal() {
+    assert_description_names(
+        "merge_entities",
+        &["thought_capacity", "thought_body_cap", "clear_fields"],
+    );
+}
+
 /// **`list_runs` points at the read that returns a run's chronology.**
 #[test]
 fn the_list_runs_description_points_at_recall_for_a_chronology() {

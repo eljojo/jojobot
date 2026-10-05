@@ -49,8 +49,11 @@ impl Jojobot {
                        read both with recall first. ⚠️ THE CLAIMS THAT MOVE GET NEW ADDRESSES, \
                        because an address is local to the thing that holds it — any address you \
                        were holding for the duplicate's claims is stale afterwards, and the \
-                       answer says how many moved. Naming one handle as both sides comes back \
-                       status: blocked. So does naming a handle that was already merged away, on \
+                       answer says how many moved. A MERGE INTO YOUR OWN BOT IS REFUSED WHEN THE DUPLICATE CARRIES \
+                       thought_capacity OR thought_body_cap, because the merge would raise your \
+                       own ceiling: have a different identity merge it, or take the key off the \
+                       duplicate first with update_fact and clear_fields. Naming one handle as \
+                       both sides comes back status: blocked. So does naming a handle that was already merged away, on \
                        either side, and that refusal names the handle to use instead."
     )]
     pub(crate) async fn merge_entities(
@@ -85,12 +88,25 @@ impl Jojobot {
                     Ok(carried) => carried,
                     Err(e) => return memory_declined("merge_entities", e),
                 };
-                if let Some(refused) = jojobot_domain::memory::refuses_own_ceiling(
-                    &survivor_now,
-                    &caller.bot,
-                    &carried,
-                ) {
-                    return memory_declined("merge_entities", refused);
+                let keys = jojobot_domain::memory::ceiling_keys_in(&carried);
+                if !keys.is_empty() {
+                    // **The refusal says the MERGE was refused and why**, not
+                    // that the caller tried to set a key: it sent no fields.
+                    // Both ways forward exist: a different identity performs
+                    // the merge, or the key comes off the duplicate first.
+                    let keys = keys.join(", ");
+                    return Ok(blocked_body(
+                        &duplicate_now,
+                        &[],
+                        format!(
+                            "Nothing was written. '{duplicate_now}' carries {keys}, and merging it \
+                             into '{survivor_now}', your own bot, would raise your own ceiling, \
+                             which only a different identity may do. Ask a different identity to \
+                             make this merge, or take {keys} off '{duplicate_now}' first: \
+                             update_fact the record that sets it with clear_fields, then merge \
+                             again."
+                        ),
+                    ));
                 }
             }
         }
@@ -303,6 +319,23 @@ mod tests {
                 .expect("a refusal is an answer, not a failure"),
         );
         assert_eq!(refused["wrote"], false, "{refused}");
+        // **The refusal names the merge and the duplicate**, never a key the
+        // caller sent, because the caller sent none. Identifiers only: the
+        // duplicate, the key, and the verb and argument that take the key off.
+        let how = refused["how_to_proceed"]
+            .as_str()
+            .expect("a refusal says how to proceed");
+        for named in [
+            "bot:milhouse",
+            jojobot_domain::memory::THOUGHT_CAPACITY,
+            "update_fact",
+            "clear_fields",
+        ] {
+            assert!(
+                how.contains(named),
+                "the refusal does not name {named}: {how}"
+            );
+        }
         let own = fields_of(&jojobot, "bot:otto").await;
         assert!(
             own.get(jojobot_domain::memory::THOUGHT_CAPACITY).is_none(),
@@ -313,6 +346,63 @@ mod tests {
             still_there[jojobot_domain::memory::THOUGHT_CAPACITY],
             "5",
             "the refused merge left the duplicate as it was: {still_there}"
+        );
+
+        // **The second way forward the refusal names, taken exactly as it
+        // says.** Another bot carries a ceiling; the caller takes the key off
+        // the record that sets it, and the same merge then lands.
+        ensure(&jojobot, "bot:epsilon").await;
+        let carrier = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                fields: Some(
+                    [(
+                        jojobot_domain::memory::THOUGHT_CAPACITY.to_string(),
+                        "7".to_string(),
+                    )]
+                    .into_iter()
+                    .collect(),
+                ),
+                ..capture_args("bot:epsilon", "capacity is seven")
+            },
+        )
+        .await;
+        let refused_again = blocked(
+            &jojobot
+                .merge_entities(Parameters(merge("bot:epsilon", "bot:otto")))
+                .await
+                .expect("a refusal is an answer, not a failure"),
+        );
+        assert_eq!(refused_again["wrote"], false, "{refused_again}");
+        let cleared = json_of(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    clear_fields: Some(vec![jojobot_domain::memory::THOUGHT_CAPACITY.to_string()]),
+                    ..crate::memory::testing::update_args(&crate::memory::testing::address_of(
+                        &carrier,
+                    ))
+                }))
+                .await
+                .expect("update_fact ok"),
+        );
+        assert_ne!(cleared["status"], "blocked", "{cleared}");
+        let after_clearing = json_of(
+            &jojobot
+                .merge_entities(Parameters(merge("bot:epsilon", "bot:otto")))
+                .await
+                .expect("merge ok"),
+        );
+        assert_ne!(
+            after_clearing["status"], "blocked",
+            "taking the key off the duplicate, as the refusal says, must let the merge land: \
+             {after_clearing}"
+        );
+        let own_after = fields_of(&jojobot, "bot:otto").await;
+        assert!(
+            own_after
+                .get(jojobot_domain::memory::THOUGHT_CAPACITY)
+                .is_none(),
+            "the merge that landed must not have carried a ceiling: {own_after}"
         );
 
         // The positive halves.
