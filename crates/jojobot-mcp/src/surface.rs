@@ -555,6 +555,19 @@ fn the_search_description_names_its_clock() {
     assert_description_names("search", &["`clock`", "recorded_on", "happened_at"]);
 }
 
+/// **`recall`'s description names the kind that reads a bot's own past runs**
+/// and what `withheld` says about the runs it does not show.
+#[test]
+fn the_recall_description_names_session_runs_and_withheld() {
+    assert_description_names("recall", &["`session`", "`withheld`"]);
+}
+
+/// **`list_runs` points at the read that returns a run's chronology.**
+#[test]
+fn the_list_runs_description_points_at_recall_for_a_chronology() {
+    assert_description_names("list_runs", &["recall", "`session`"]);
+}
+
 /// **`start_here`'s description names `claim`** and the three outcomes it
 /// answers with.
 #[test]

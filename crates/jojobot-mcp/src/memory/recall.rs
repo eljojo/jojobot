@@ -145,7 +145,7 @@ pub struct RecallArgs {
     /// the nearest handles, never as an empty answer.
     #[serde(default)]
     pub(crate) subject: Option<String>,
-    /// Every entity of one kind.
+    /// Every entity of one kind. `session` reads your own past runs.
     #[serde(default)]
     pub(crate) kind: Option<String>,
     /// **Objects that answer this type**, by name. Matching is STRUCTURAL — an
@@ -1141,6 +1141,15 @@ impl Jojobot {
                        when you can describe what you are after — a handle, a kind, a type, a key \
                        and its value — and use search when you are looking for something and only \
                        have words for it. \
+                       YOUR OWN PAST RUNS ARE A KIND: kind `session` reads this identity's own \
+                       past runs and no other's, and prose: true brings back a run's chronology \
+                       — list_runs gives each run's state and focus line, and this is the read \
+                       for what it did. A selection that reaches another identity's runs counts \
+                       them as `withheld` and shows none of them, so an empty list with \
+                       withheld above zero means runs exist that are not yours, and an empty \
+                       list with withheld at zero means none exist. A call with no sid owns \
+                       no run: boot with start_here and pass the sid it returns to read your \
+                       own. \
                        START WITH A VIEW IF ONE FITS: a view is a question somebody already \
                        worked out, asked for by NAME — `view: \"colleagues\"` for the identities \
                        here and what each is for, `view: \"loops\"` for the recurring things and \
@@ -2049,6 +2058,16 @@ impl Jojobot {
         }
         for (wanted, displaced) in &type_displaced {
             crate::answer::note_type_displaced(&mut body, wanted, displaced.as_ref());
+        }
+        // **A caller with no identity owns no run, and the count above is all
+        // it can see of them.** Say how to read its own, because "withheld" on
+        // its own does not.
+        if wants_sessions && caller.is_none() {
+            body["withheld_note"] = serde_json::json!(
+                "no sid was passed, so no run here is yours: withheld counts the runs that \
+                 exist and shows none of them. Boot with start_here as your bot and pass the \
+                 sid it returns on this call to read your own runs"
+            );
         }
         json_result(&body)
     }

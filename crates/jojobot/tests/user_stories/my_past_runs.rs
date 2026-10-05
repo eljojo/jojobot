@@ -154,6 +154,13 @@ async fn a_caller_with_no_identity_is_told_runs_exist_and_shown_none() {
         !answered.to_string().contains("east trail"),
         "a run's words reached a caller that owns none: {answered}"
     );
+    let how = answered["withheld_note"].as_str().unwrap_or_else(|| {
+        panic!("an anonymous read of runs says how to read its own: {answered}")
+    });
+    assert!(
+        how.contains("start_here") && how.contains("sid"),
+        "the note must name the door and the handle it returns: {how}"
+    );
     story.finish().await;
 
     // ── ② an instance where nobody has written anything ─────────────────────
