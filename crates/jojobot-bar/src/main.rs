@@ -163,15 +163,21 @@ fn size_report() -> String {
 }
 
 fn run_check() -> std::io::Result<ExitCode> {
+    let code = run_check_phases()?;
+    // **Printed after the verdict, and unconditionally.** A standing duty
+    // gets a mechanism rather than diligence (rule 235) — this runs whichever
+    // phase fails or passes, and never touches `summary.green`. It comes
+    // after the phases because it never changes the verdict, and a reader
+    // takes the verdict first.
+    print!("{}", size_report());
+    Ok(code)
+}
+
+fn run_check_phases() -> std::io::Result<ExitCode> {
     let cargo = cargo_bin();
     let log_path = PathBuf::from("target/bar/check.log");
     fresh_log(&log_path)?;
     let mut summary = Summary::new();
-
-    // **Printed first, and unconditionally.** A standing duty gets a
-    // mechanism rather than diligence (rule 235) — this runs whichever
-    // phase below fails or passes, and never touches `summary.green`.
-    print!("{}", size_report());
 
     let (ok, _) = run_phase(
         &log_path,

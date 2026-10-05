@@ -1,5 +1,5 @@
 //! **The size report never moves `bar check`'s exit code.** It is print-only,
-//! run first and unconditionally, whichever phase after it passes or fails —
+//! run after the phases and unconditionally, whichever phase passes or fails —
 //! proven here by driving the real binary against a real git tree, not by
 //! reading the library functions' return values in isolation.
 
@@ -126,6 +126,37 @@ fn a_tree_with_nothing_oversized_names_nothing_and_the_exit_code_is_unchanged() 
     assert!(
         !stdout.contains("small.rs ("),
         "the file that IS there must not be named as oversized: {stdout}"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// **The verdict is the first thing a reader meets.** The size report never
+/// moves the verdict, so it prints after the phases; a reader, or a tool
+/// reading the head of the output, gets the verdict and the phase lines
+/// before any size line. Asserted on a tree where the report has something to
+/// name, so there is a size line to be ordered against.
+#[test]
+fn the_verdict_prints_before_the_size_report() {
+    let dir = scratch_dir("order");
+    git_init(&dir);
+    fs::write(dir.join("big.rs"), "x\n".repeat(2001)).expect("write big.rs");
+    git_add(&dir, "big.rs");
+    let fake_cargo = write_fake_cargo_always_green(&dir);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+        .arg("check")
+        .current_dir(&dir)
+        .env("CARGO", &fake_cargo)
+        .output()
+        .expect("run bar check");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    let verdict = stdout.find("verdict:").expect(&stdout);
+    let size = stdout.find("big.rs (2001 lines)").expect(&stdout);
+    assert!(
+        verdict < size,
+        "the verdict must come before the size report: {stdout}"
     );
 
     let _ = fs::remove_dir_all(&dir);
