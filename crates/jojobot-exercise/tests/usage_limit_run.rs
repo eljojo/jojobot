@@ -41,6 +41,27 @@ impl Expectation for NeverHolds {
     }
 }
 
+/// A lock named for the phase it belongs to, as a lock read out of a room
+/// document is (`Phase N — the sentence`), that never holds.
+struct NeverHoldsIn(&'static str);
+
+#[async_trait::async_trait]
+impl Expectation for NeverHoldsIn {
+    fn name(&self) -> &str {
+        self.0
+    }
+
+    async fn check(&self, _seen: &Observed<'_>) -> Outcome {
+        Outcome {
+            name: self.0.to_string(),
+            held: false,
+            applies: true,
+            refused: false,
+            saying: "the room does not carry it".to_string(),
+        }
+    }
+}
+
 const PLAYBOOK: &str = "\
 ## Phase 1 — the first sitting
 
@@ -85,7 +106,15 @@ const LIMIT_WORDS: &str = "Claude usage limit reached. Your limit resets 3pm";
 /// Drive `go()` with an agent that prints `stderr` and exits 1 on its
 /// `fail_at`th launch, and say how many times it was launched.
 async fn run_failing_at(fail_at: usize, stderr: &str) -> (Results, usize) {
-    let expectations: Vec<Box<dyn Expectation>> = vec![Box::new(NeverHolds)];
+    run_failing_at_judged_by(fail_at, stderr, vec![Box::new(NeverHolds)]).await
+}
+
+/// The same drive, with the locks the run is judged by chosen by the case.
+async fn run_failing_at_judged_by(
+    fail_at: usize,
+    stderr: &str,
+    expectations: Vec<Box<dyn Expectation>>,
+) -> (Results, usize) {
     let scratch = Scratch::new();
     let launches = scratch.0.join("launches");
     let program = scratch.0.join("fake-agent");
@@ -215,5 +244,38 @@ async fn a_session_limit_is_named_as_the_agents_own_words_said_it() {
     assert!(
         !verdict.contains("usage limit"),
         "the verdict names a usage limit the agent never reported: {verdict}"
+    );
+}
+
+#[tokio::test]
+async fn a_lock_from_before_the_limit_still_reads_failed_and_later_ones_read_not_run() {
+    let expectations: Vec<Box<dyn Expectation>> = vec![
+        Box::new(NeverHoldsIn(
+            "Phase 1 \u{2014} a lock that failed on its own merits",
+        )),
+        Box::new(NeverHoldsIn(
+            "Phase 2 \u{2014} a lock in the sitting that hit the limit",
+        )),
+        Box::new(NeverHoldsIn(
+            "Phase 3 \u{2014} a lock in a sitting that never ran",
+        )),
+    ];
+    let (results, _) = run_failing_at_judged_by(2, LIMIT_WORDS, expectations).await;
+    assert!(
+        results.incomplete.is_some(),
+        "the limit must stop the run, or the case measures nothing"
+    );
+    let rendered = results.rendered(None);
+    assert!(
+        rendered.contains("[FAILED] Phase 1 \u{2014} a lock that failed on its own merits"),
+        "a lock from before the limit failed on its own and must read FAILED: {rendered}"
+    );
+    assert!(
+        rendered.contains("[not run] Phase 2 \u{2014} a lock in the sitting that hit the limit"),
+        "a lock in the sitting that hit the limit must read not run: {rendered}"
+    );
+    assert!(
+        rendered.contains("[not run] Phase 3 \u{2014} a lock in a sitting that never ran"),
+        "a lock after the limit must read not run: {rendered}"
     );
 }

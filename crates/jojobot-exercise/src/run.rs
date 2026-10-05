@@ -213,6 +213,18 @@ fn stops_the_run(hit_limit: Option<UsageLimit>, phase: &str) -> Option<Incomplet
     })
 }
 
+/// **Whether a lock sits at or after the phase that hit the limit.** A lock
+/// read out of a room document is named `Phase N — …`, and the phase that hit
+/// the limit is named the same way. A lock with no phase in its name — one a
+/// case builds by hand, or a Rust expectation — cannot be placed, and is read
+/// as cut short rather than as having had its chance.
+fn not_judged_after(cut: &Incomplete, lock: &str) -> bool {
+    match (phase_number(&cut.phase), phase_number(lock)) {
+        (Some(limit), Some(own)) => own >= limit,
+        _ => true,
+    }
+}
+
 /// Everything one run produced.
 pub struct Results {
     pub playbook: String,
@@ -684,8 +696,9 @@ impl Results {
             let _ = writeln!(
                 out,
                 "\nINCOMPLETE: the agent hit the plan's {} in {}{} and no later phase was \
-                 launched. Nothing below is a verdict on the model — the run did not finish, so \
-                 no lock past this point can say what would have held.",
+                 launched. Nothing below is a verdict on the model for a lock in that phase or \
+                 after it — the run did not finish, so none of them can say what would have \
+                 held. A lock from an earlier phase is judged as it was.",
                 incomplete.named,
                 incomplete.phase,
                 incomplete
@@ -705,17 +718,20 @@ impl Results {
         }
         for outcome in &self.outcomes {
             let mark = match (
-                self.incomplete.is_some(),
+                self.incomplete
+                    .as_ref()
+                    .is_some_and(|cut| not_judged_after(cut, &outcome.name)),
                 outcome.refused,
                 outcome.applies,
                 outcome.held,
             ) {
-                // **A run that ran out of runway never fails a lock.** Once
-                // incomplete, nothing past that point measured the room the
+                // **A lock the limit cut short never fails.** From the phase
+                // that hit the limit on, nothing measured the room the
                 // playbook would have finished furnishing — this is the same
                 // "did not happen" reading `applies` already carries for a
-                // sitting that never ran, applied to every lock rather than
-                // the ones an expectation itself knows to exempt.
+                // sitting that never ran. A lock from an EARLIER phase had
+                // its chance and is judged as it was, so a real failure
+                // before the limit is not hidden by it.
                 (true, false, true, false) => "not run",
                 (_, true, _, _) => "REFUSED",
                 (_, false, false, _) => "n/a",
