@@ -253,3 +253,99 @@ async fn a_type_declared_today_finds_records_written_before_it() {
 
     story.finish().await;
 }
+
+/// "Which of my deliveries are complete?" — asked when most of them are not.
+///
+/// **A strict question over a crowd of half-finished things must still find
+/// the finished one.** Every delivery but one is missing a key, and the one
+/// that has them all is long-winded, which ranks it below every one of the
+/// others. A search that kept the best few things carrying any key and then
+/// asked which of those fit would answer "none", and "none" reads exactly as
+/// "nothing is complete".
+#[tokio::test]
+async fn a_strict_question_finds_the_one_complete_thing_among_many_unfinished_ones() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.call(
+        "declare_type",
+        json!({
+            "name": "delivery",
+            "fields": [
+                { "key": "arrives", "holds": "date", "required": true },
+                { "key": "crates", "holds": "number", "required": true },
+                { "key": "driver", "holds": "text", "required": true },
+            ],
+        }),
+    )
+    .await;
+
+    // Many unfinished deliveries, each short of one key. Wider than the depth
+    // a limit of one buys.
+    let pairs = [
+        json!({ "arrives": "2026-08-11", "crates": "4" }),
+        json!({ "crates": "4", "driver": "beta" }),
+        json!({ "arrives": "2026-08-11", "driver": "beta" }),
+    ];
+    // **Names the guard's near-miss screen leaves alone.** Handles that differ
+    // by a digit are one typo apart and are refused as the same thing, so each
+    // delivery gets a word of its own, spelled from a fixed sequence.
+    let mut seed: u32 = 7;
+    let mut word = || -> String {
+        (0..8)
+            .map(|_| {
+                seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+                char::from(b'a' + ((seed >> 16) % 26) as u8)
+            })
+            .collect()
+    };
+    for n in 0..45 {
+        let word = word();
+        let slug = format!("unfinished-{word}");
+        let handle = format!("thing:{slug}");
+        s.add(&handle, &format!("Unfinished {word}")).await;
+        s.event_with(
+            &handle,
+            "a delivery nobody finished writing down",
+            pairs[n % 3].clone(),
+            &[],
+        )
+        .await;
+    }
+
+    // The finished one: every key, and a great many others beside them.
+    s.add("thing:house-keys", "The House Keys").await;
+    let mut whole = serde_json::Map::new();
+    for (key, value) in [
+        ("arrives", "2026-08-10"),
+        ("crates", "4"),
+        ("driver", "beta"),
+    ] {
+        whole.insert(key.to_string(), json!(value));
+    }
+    for n in 0..300 {
+        whole.insert(format!("note-{n}"), json!("x"));
+    }
+    s.event_with(
+        "thing:house-keys",
+        "the delivery with everything written down",
+        json!(whole),
+        &[],
+    )
+    .await;
+
+    // The positive the strict answer rests on, and the ranking it relies on:
+    // the tolerant question at the same limit keeps one of the unfinished
+    // ones, so the finished thing is NOT what the depth cut keeps first.
+    let tolerant = s
+        .call("search", json!({ "answers_type": "delivery", "limit": 1 }))
+        .await;
+    tolerant.says("unfinished-");
+    tolerant.never_says("thing:house-keys");
+
+    // The strict question, at the same limit, finds it.
+    let whole = s
+        .call("search", json!({ "fits_type": "delivery", "limit": 1 }))
+        .await;
+    whole.says("thing:house-keys");
+    whole.never_says("unfinished-");
+}

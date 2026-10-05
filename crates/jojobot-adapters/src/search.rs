@@ -1600,7 +1600,15 @@ impl FullTextIndex {
     /// that did not happen to rank in the top few — and for a type-only query
     /// nothing ranks, so which things survived would be an arbitrary tie-break
     /// reported as "nothing answers this type".
-    fn type_clause(&self, declared: &DeclaredType) -> (Occur, Box<dyn Query>) {
+    ///
+    /// **The strict question selects on every key.** A thing fits a type only
+    /// if it carries all of them, so the clause is a conjunction and the depth
+    /// cut keeps the best of the things that can fit rather than the best of
+    /// everything carrying one key. What the clause cannot see is a key held
+    /// with a value of the wrong kind; [`whole`] still drops those after the
+    /// cut.
+    fn type_clause(&self, declared: &DeclaredType, strictly: bool) -> (Occur, Box<dyn Query>) {
+        let occur = if strictly { Occur::Must } else { Occur::Should };
         let keys: Vec<(Occur, Box<dyn Query>)> = declared
             .fields
             .iter()
@@ -1609,7 +1617,7 @@ impl FullTextIndex {
                     Term::from_field_text(self.fields.meta_key, field.key.trim()),
                     IndexRecordOption::Basic,
                 ));
-                (Occur::Should, q)
+                (occur, q)
             })
             .collect();
         (Occur::Must, Box::new(BooleanQuery::new(keys)))
@@ -1675,8 +1683,8 @@ impl FullTextIndex {
         // Prose and messages carry no keys, so the same clause that selects the
         // things that answer excludes them — which is the honest answer to "is
         // a message one of my services".
-        if let Some((declared, _)) = query.typed() {
-            clauses.push(self.type_clause(declared));
+        if let Some((declared, strictly)) = query.typed() {
+            clauses.push(self.type_clause(declared, strictly));
         }
         clauses
     }

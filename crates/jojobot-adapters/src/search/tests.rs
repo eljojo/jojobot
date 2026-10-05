@@ -1087,6 +1087,129 @@ async fn a_type_query_reaches_past_the_candidate_depth() {
     }
 }
 
+/// 🚨 **The strict question selects before the depth cut, exactly as the
+/// tolerant one does.** A thing answers a type when it carries any of its
+/// keys, so the selecting clause is a disjunction, and the page cut after
+/// ranking keeps the best few of everything that carries ONE key. A strict
+/// question run over that page answers with whatever whole things happened to
+/// rank into it — none, when many half-finished things outrank the finished
+/// one — and an empty answer reads as "nothing fits this type".
+///
+/// The crowd here is wider than the depth a limit of one buys. Each member
+/// carries two of the type's three keys, so no key is rare; the finished thing
+/// carries all three among a great many others, which makes its key field long
+/// and ranks it below every one of them. The same read asks the tolerant
+/// question and the strict one at the same limit, and the positive the strict
+/// one rests on is the finished thing coming back.
+#[tokio::test]
+async fn a_strict_type_query_reaches_a_whole_thing_ranked_below_the_partial_ones() {
+    use jojobot_domain::memory::types::{Field as Key, ValueType};
+    let declared = DeclaredType::new(
+        "delivery",
+        vec![
+            Key::required("arrives", ValueType::Date),
+            Key::required("crates", ValueType::Number),
+            Key::required("driver", ValueType::Text),
+        ],
+    );
+    let carrying = |handle: &str, keys: Vec<(String, String)>| {
+        scan(
+            &format!("doc-{handle}"),
+            Some(entity(handle, "Somebody Else")),
+            "",
+            vec![Fact {
+                fields: keys.into_iter().collect(),
+                ..fact(
+                    handle,
+                    "f1",
+                    "an ordinary claim, with keys on it",
+                    date(2026, 1, 1),
+                )
+            }],
+        )
+    };
+    let key = |k: &str, v: &str| (k.to_string(), v.to_string());
+
+    // More half-finished things than a limit of one has depth for.
+    let crowd = candidate_depth(1) * 3;
+    let pairs = [
+        ("arrives", "2026-08-11", "crates", "4"),
+        ("crates", "4", "driver", "beta"),
+        ("arrives", "2026-08-11", "driver", "beta"),
+    ];
+    let mut scans: Vec<DocScan> = (0..crowd)
+        .map(|n| {
+            let (a, av, b, bv) = pairs[n % pairs.len()];
+            carrying(
+                &format!("person:{}", "p".repeat(n + 1)),
+                vec![key(a, av), key(b, bv)],
+            )
+        })
+        .collect();
+    // The finished one: every key, and so many others beside them that its
+    // key field is long and each match counts for less.
+    let mut whole = vec![
+        key("arrives", "2026-08-10"),
+        key("crates", "4"),
+        key("driver", "beta"),
+    ];
+    whole.extend((0..300).map(|n| key(&format!("other-{n}"), "x")));
+    scans.push(carrying("person:milhouse", whole));
+    let index = index_of(scans);
+
+    let ids = |query: SearchQuery| -> Vec<String> {
+        index
+            .search(&query)
+            .expect("search ok")
+            .iter()
+            .filter_map(|h| match h {
+                Hit::Entity { entity, .. } => Some(entity.id.to_string()),
+                _ => None,
+            })
+            .collect()
+    };
+
+    // The positive the rest rests on: the tolerant question's whole answer
+    // holds every thing, so the crowd and the finished thing are all indexed.
+    let everything = ids(SearchQuery {
+        answers_type: Some(declared.clone()),
+        limit: 500,
+        ..Default::default()
+    });
+    assert_eq!(
+        everything.len(),
+        crowd + 1,
+        "every thing carrying a key of the type is in the corpus"
+    );
+
+    // The tolerant question at limit one answers with one of the crowd,
+    // which is the ranking this case relies on: the finished thing is not
+    // what the depth cut keeps first.
+    let tolerant = ids(SearchQuery {
+        answers_type: Some(declared.clone()),
+        limit: 1,
+        ..Default::default()
+    });
+    assert_eq!(tolerant.len(), 1);
+    assert_ne!(
+        tolerant,
+        vec!["person:milhouse".to_string()],
+        "the finished thing must rank below the crowd for this case to measure anything"
+    );
+
+    for limit in [1, 5] {
+        assert_eq!(
+            ids(SearchQuery {
+                fits_type: Some(declared.clone()),
+                limit,
+                ..Default::default()
+            }),
+            vec!["person:milhouse".to_string()],
+            "the one thing carrying every key fits at limit {limit}, however far down it ranks"
+        );
+    }
+}
+
 /// **A pinned hit is a hit, so the type filter governs it too.**
 ///
 /// An exact naming of an entity is prepended to the answer, and that path
