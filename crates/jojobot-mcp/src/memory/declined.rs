@@ -547,6 +547,10 @@ pub(crate) fn memory_declined(
                 // wait instead of dropping needs to know that count is
                 // already excluding some.
                 "aged_out": aged_out,
+                // **How many thoughts an edit has to archive before it can
+                // land**, as a number a caller does not have to read out of
+                // a sentence. `null` for a verb that has other ways forward.
+                "archive_needed": (verb == "update_fact").then(|| live + 1 - capacity),
                 // **The offer names the state it is actually in.** A room
                 // already OVER its capacity is a borrow already outstanding
                 // — offering another would stack debt the ceiling exists to
@@ -559,13 +563,22 @@ pub(crate) fn memory_declined(
                     // would send the caller round a loop (rule 68). Archiving
                     // a live thought and writing the thought through capture
                     // are the two moves it has.
+                    //
+                    // **How many, because one is not always enough.** The edit
+                    // adds a thought, so the room has to end below its
+                    // capacity first. A room an earlier borrow left over its
+                    // capacity needs more than one archived, and the count is
+                    // the same arithmetic in every case.
+                    let archive = match live + 1 - capacity {
+                        1 => "one of the thoughts above".to_string(),
+                        n => format!("{n} of the thoughts above"),
+                    };
                     format!(
                         "Nothing was written: '{subject}'s room already holds {live} of \
-                         {capacity}, and {verb} cannot make room in it. Archive one of the \
-                         thoughts above with update_fact (status: archived, and details saying \
-                         why it no longer earns its slot), then re-call {verb} — or write this \
-                         thought through capture, which can archive one thought as it writes \
-                         this one."
+                         {capacity}, and {verb} cannot make room in it. Archive {archive} with \
+                         update_fact (status: archived, and details saying why it no longer \
+                         earns its slot), then re-call {verb} — or write this thought through \
+                         capture, which can archive one thought as it writes this one."
                     )
                 } else if live > capacity {
                     format!(

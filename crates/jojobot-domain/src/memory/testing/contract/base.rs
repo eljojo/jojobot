@@ -3650,6 +3650,14 @@ pub async fn a_bots_room_enforces_its_capacity<M: Memory>(store: &M) {
                 2,
                 "the refusal must carry the room itself: {room:?}"
             );
+            for thought in &room {
+                assert_eq!(
+                    thought.address().home,
+                    bot,
+                    "a thought in the refusal must be addressed by the handle, since a caller \
+                     names one of them as its drop"
+                );
+            }
         }
         other => panic!("expected RoomFull, got {other:?}"),
     }
@@ -4481,10 +4489,24 @@ pub async fn an_edit_to_a_thought_already_in_an_over_capacity_room_still_lands<M
         )
         .await
         .expect_err("drawing a new thought into an over-capacity room must be refused");
-    assert!(
-        matches!(refused, MemoryError::RoomFull { .. }),
-        "expected RoomFull, got {refused:?}"
-    );
+    // **The refusal lists the room by addresses a caller can edit by.** Its
+    // way forward is to archive thoughts from this list, so an address under
+    // the permanent id rather than the handle is one `update_fact` refuses.
+    match refused {
+        MemoryError::RoomFull { room, live, .. } => {
+            assert_eq!(live, 2, "the room holds the thought and the borrowed one");
+            assert_eq!(room.len(), live, "the refusal carries the room itself");
+            for thought in &room {
+                assert_eq!(
+                    thought.address().home,
+                    bot,
+                    "a thought in the refusal must be addressed by the handle the caller \
+                     reached the room by, not the permanent id underneath it"
+                );
+            }
+        }
+        other => panic!("expected RoomFull, got {other:?}"),
+    }
 }
 
 /// **The emergency reserve — usable once, and only once.** A full room with

@@ -1181,7 +1181,17 @@ impl Memory for InMemoryMemory {
                             subject: subject_entity.id.to_string(),
                             live: room.len(),
                             capacity,
-                            room,
+                            // **The room's thoughts are served under the
+                            // handle too**, as the real store serves them: a
+                            // caller names one of these addresses as its drop.
+                            room: room
+                                .into_iter()
+                                .map(|f| Fact {
+                                    home: subject_entity.id.clone(),
+                                    subject: subject_entity.id.clone(),
+                                    ..f
+                                })
+                                .collect(),
                             aged_out,
                         };
                         match (&fact.drop, &fact.drop_because) {
@@ -1749,6 +1759,16 @@ impl Memory for InMemoryMemory {
                 aged_out = split.aged_out.len();
                 room = split.live;
             }
+            // **Served under the handle**, as the real store serves them: the
+            // refusal's way forward is to archive one of these by address.
+            let room = room
+                .into_iter()
+                .map(|f| Fact {
+                    home: handle.clone(),
+                    subject: handle.clone(),
+                    ..f
+                })
+                .collect();
             if let Some(err) =
                 super::super::refuses_room_overflow(&handle, room, capacity, aged_out)
             {

@@ -2473,6 +2473,128 @@ async fn a_full_room_refusal_names_only_moves_the_refusing_verb_has() {
     );
 }
 
+/// 🚨 **A room an earlier borrow left over its capacity needs more than one
+/// archive before an edit can add a thought**, and the refusal says how many.
+/// Following it exactly lets the re-call land; one fewer does not. Paired with
+/// the room exactly at capacity, where the count is one.
+#[tokio::test]
+async fn an_over_capacity_refusal_says_how_many_to_archive_and_that_many_is_enough() {
+    let jojobot = handler();
+    let bot = "bot:mcp-seats-update";
+    let plain = a_full_room_and_a_claim_that_would_join_it(&jojobot, bot).await;
+    ensure(&jojobot, "thing:the-gutter").await;
+    let edit = || UpdateFactArgs {
+        shape: Some("connection".into()),
+        object: Some("thing:the-gutter".into()),
+        ..update_args(&plain)
+    };
+
+    // At capacity one with one thought live: one archive is the count.
+    let at_capacity = blocked(
+        &jojobot
+            .update_fact(Parameters(edit()))
+            .await
+            .expect("a refusal is an answer, not a failure"),
+    );
+    assert_eq!(at_capacity["archive_needed"], 1, "{at_capacity}");
+
+    // One borrow later the room holds two against a capacity of one.
+    capture_ok(
+        &jojobot,
+        CaptureArgs {
+            shape: Some("connection".into()),
+            object: Some("thing:the-air-filter".into()),
+            borrow: Some(true),
+            ..capture_args(bot, "the filter needs changing")
+        },
+    )
+    .await;
+    let refused = blocked(
+        &jojobot
+            .update_fact(Parameters(edit()))
+            .await
+            .expect("a refusal is an answer, not a failure"),
+    );
+    assert_eq!(refused["wrote"], false, "{refused}");
+    assert_eq!(
+        refused["archive_needed"], 2,
+        "live 2 over capacity 1: {refused}"
+    );
+    let how = refused["how_to_proceed"]
+        .as_str()
+        .expect("a blocked answer says how to proceed");
+    // The count a reader meets is the word after "Archive", the same number
+    // the structured field carries.
+    let said = how
+        .split("Archive ")
+        .nth(1)
+        .and_then(|rest| rest.split_whitespace().next());
+    assert_eq!(
+        said,
+        Some("2"),
+        "the way forward must say how many to archive: {how}"
+    );
+    for argument in ["drop", "drop_because", "borrow"] {
+        assert!(
+            !how.contains(argument),
+            "update_fact has no `{argument}` argument, so the refusal must not name it: {how}"
+        );
+    }
+    let room: Vec<String> = refused["room"]
+        .as_array()
+        .expect("the refusal lists the room")
+        .iter()
+        .map(|thought| {
+            thought["address"]
+                .as_str()
+                .expect("a thought carries its address")
+                .to_string()
+        })
+        .collect();
+    assert_eq!(room.len(), 2, "{refused}");
+
+    // One archive is not enough: the room still holds as many as its capacity.
+    let archive = |address: &str| UpdateFactArgs {
+        status: Some("archived".into()),
+        details: Some("no longer earns its slot".into()),
+        ..update_args(address)
+    };
+    let one = json_of(
+        &jojobot
+            .update_fact(Parameters(archive(&room[0])))
+            .await
+            .expect("archive ok"),
+    );
+    assert_ne!(one["status"], "blocked", "{one}");
+    let still = blocked(
+        &jojobot
+            .update_fact(Parameters(edit()))
+            .await
+            .expect("a refusal is an answer, not a failure"),
+    );
+    assert_eq!(still["wrote"], false, "one archive was not enough: {still}");
+    assert_eq!(still["archive_needed"], 1, "{still}");
+
+    // The rest of what the refusal said, followed exactly, lets it land.
+    let two = json_of(
+        &jojobot
+            .update_fact(Parameters(archive(&room[1])))
+            .await
+            .expect("archive ok"),
+    );
+    assert_ne!(two["status"], "blocked", "{two}");
+    let landed = json_of(
+        &jojobot
+            .update_fact(Parameters(edit()))
+            .await
+            .expect("update_fact ok"),
+    );
+    assert_ne!(
+        landed["status"], "blocked",
+        "following the count must let the edit land: {landed}"
+    );
+}
+
 /// 🚨 **An edit counts the room the way `capture` does, through the served
 /// verbs.** The cutoff comes from the bot's own runs, which only the verb can
 /// read, so this has to travel `update_fact` rather than the port: a bot that
