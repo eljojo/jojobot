@@ -2,8 +2,10 @@
 //!
 //! A bot's own past sittings are records of kind `session`, and `recall`
 //! already selects by kind — so a bot asks about its own history the way it
-//! asks about anything else, with no verb of its own. **The part that needs a
-//! story is the boundary.** A bot finds ITS OWN runs and never another bot's,
+//! asks about anything else. `list_runs` answers too, with each run's state and
+//! a focus line, and it is exercised in `catching_up.rs`; only `recall` of kind
+//! `session` with prose reads a run's chronology, which is why this story reads
+//! it that way. **The part that needs a story is the boundary.** A bot finds ITS OWN runs and never another bot's,
 //! and what it is not shown is COUNTED rather than dropped, because "nothing
 //! of mine" and "something exists that is not mine" are different facts and a
 //! bot acts on each differently: the first sends it to start fresh, the
@@ -91,6 +93,40 @@ async fn a_bot_finds_its_own_past_work_and_is_told_a_colleagues_exists() {
         "a colleague's words reached a bot that does not own them: {answered}"
     );
 
+    // ── ③ "what did I do last time": a NEW sitting reads the earlier one ────
+    // Ownership is the bot's, never the session's. Every read above came from
+    // the session that wrote the run, so a build scoping runs by session would
+    // pass all of it.
+    let later = story.session_on("2026-10-12", Some("new")).await;
+    assert_ne!(
+        later.sid(),
+        otto.sid(),
+        "a second sitting, not the first again"
+    );
+    let last_time = my_past_runs(&later).await;
+    let found = runs_found(&last_time);
+    assert_eq!(
+        found.len(),
+        1,
+        "the later sitting must find the earlier one's run, and only it: {last_time}"
+    );
+    assert!(
+        found[0]["prose"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("east trail"),
+        "the earlier sitting's run must read back whole: {last_time}"
+    );
+    assert_eq!(
+        last_time["withheld"].as_u64(),
+        Some(withheld_before + 1),
+        "the colleague's run is still counted, from a later sitting too: {last_time}"
+    );
+    assert!(
+        !last_time.to_string().contains("replacement wheels"),
+        "a colleague's words reached a later sitting of a different bot: {last_time}"
+    );
+
     story.finish().await;
 }
 
@@ -133,6 +169,16 @@ async fn a_caller_with_no_identity_is_told_runs_exist_and_shown_none() {
     let otto = story.session().await;
     otto.journal("otto surveyed the east trail and found the bridge closed")
         .await;
+    // What an identified caller sees: its own run shown, the rest counted.
+    let identified = my_past_runs(&otto).await;
+    let own_runs = runs_found(&identified).len() as u64;
+    let others = identified["withheld"]
+        .as_u64()
+        .unwrap_or_else(|| panic!("a kind browse says how many runs it withheld: {identified}"));
+    assert!(
+        own_runs >= 1,
+        "otto's run is indexed, or the count below proves nothing: {identified}"
+    );
     let (answered, no_handle) = story
         .call("recall", json!({ "kind": "session", "prose": true }))
         .await;
@@ -145,10 +191,11 @@ async fn a_caller_with_no_identity_is_told_runs_exist_and_shown_none() {
         runs_found(&answered).is_empty(),
         "a caller with no identity owns no run, so it is shown none: {answered}"
     );
-    assert!(
-        answered["withheld"].as_u64().is_some_and(|n| n >= 1),
-        "a run exists here and the empty list must say so rather than read as an empty \
-         index: {answered}"
+    assert_eq!(
+        answered["withheld"].as_u64(),
+        Some(own_runs + others),
+        "every run on the instance, otto's included, is counted for a caller that owns none: \
+         {answered}"
     );
     assert!(
         !answered.to_string().contains("east trail"),
