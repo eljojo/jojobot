@@ -44,7 +44,7 @@ impl Jojobot {
                        when it began, when it last had anything to show for itself, and how many \
                        beats its chronology holds — never the chronology itself, which grows \
                        without bound and is not what this answers. For a run's chronology \
-                       without resuming it, read recall with kind `session` and prose: true. Read a live or abandoned run's \
+                       without resuming it, read recall with kind: session and prose: true. Read a live or abandoned run's \
                        beats by resuming it through start_here; the most recently wrapped run's \
                        closing story arrives there too, as the handover, on every boot of this \
                        identity. Each run also carries `served`: the total characters this run has \

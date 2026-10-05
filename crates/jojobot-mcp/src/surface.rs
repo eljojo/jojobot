@@ -575,7 +575,7 @@ fn the_merge_description_names_its_ceiling_refusal() {
 /// **`list_runs` points at the read that returns a run's chronology.**
 #[test]
 fn the_list_runs_description_points_at_recall_for_a_chronology() {
-    assert_description_names("list_runs", &["recall", "`session`"]);
+    assert_description_names("list_runs", &["recall", "kind: session"]);
 }
 
 /// **`start_here`'s description names `claim`** and the three outcomes it

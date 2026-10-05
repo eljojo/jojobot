@@ -5100,7 +5100,7 @@ async fn a_caller_with_no_identity_is_told_how_many_runs_exist_and_nothing_else(
         subject,
         kind: Some("session".into()),
         sid,
-        ..recall_args("person:unused")
+        ..recall_args("person:bart")
     };
     // What an identified caller sees: its own run shown, the rest counted.
     let identified = json_of(
