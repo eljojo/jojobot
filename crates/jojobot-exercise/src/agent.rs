@@ -113,6 +113,8 @@ pub struct Worked {
 /// failure.** A run out of runway is not the model failing, and the two must
 /// not read alike.
 pub struct UsageLimit {
+    /// **Which limit the CLI's words named**: `usage limit` or `session limit`.
+    pub named: &'static str,
     /// When the limit resets, in the CLI's own words after "resets" — `None`
     /// when it said nothing about that.
     pub reset: Option<String>,
@@ -129,15 +131,19 @@ fn usage_limit_in(printed: &str, succeeded: bool) -> Option<UsageLimit> {
         return None;
     }
     let lower = printed.to_lowercase();
-    if !lower.contains("session limit") && !lower.contains("usage limit") {
+    let named = if lower.contains("usage limit") {
+        "usage limit"
+    } else if lower.contains("session limit") {
+        "session limit"
+    } else {
         return None;
-    }
+    };
     let reset = printed.split_once("resets").and_then(|(_, after)| {
         let after = after.trim_start_matches([':', ' ']);
         let line = after.lines().next().unwrap_or(after).trim();
         (!line.is_empty()).then(|| line.to_string())
     });
-    Some(UsageLimit { reset })
+    Some(UsageLimit { named, reset })
 }
 
 /// The shipped agent, driven headless.

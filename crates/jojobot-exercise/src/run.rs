@@ -185,7 +185,11 @@ pub struct Said {
 /// model did not get the chance" from "the model got the chance and did not
 /// hold".
 pub struct Incomplete {
-    /// The phase after which no further sitting was launched.
+    /// Which limit the agent reported, in its own words: `usage limit` or
+    /// `session limit`.
+    pub named: &'static str,
+    /// The phase whose sitting hit the limit, after which no further sitting
+    /// was launched.
     pub phase: String,
     /// When the limit resets, in the CLI's own words, when it said.
     pub reset: Option<String>,
@@ -203,6 +207,7 @@ pub struct Incomplete {
 /// carries the reset time onward, when the CLI gave one.
 fn stops_the_run(hit_limit: Option<UsageLimit>, phase: &str) -> Option<Incomplete> {
     hit_limit.map(|limit| Incomplete {
+        named: limit.named,
         phase: phase.to_string(),
         reset: limit.reset,
     })
@@ -678,9 +683,10 @@ impl Results {
         if let Some(incomplete) = &self.incomplete {
             let _ = writeln!(
                 out,
-                "\nINCOMPLETE: the agent ran out of runway after {}{} and no later phase was \
+                "\nINCOMPLETE: the agent hit the plan's {} in {}{} and no later phase was \
                  launched. Nothing below is a verdict on the model — the run did not finish, so \
                  no lock past this point can say what would have held.",
+                incomplete.named,
                 incomplete.phase,
                 incomplete
                     .reset
@@ -1535,6 +1541,7 @@ mod tests {
 
         let stop = stops_the_run(
             Some(UsageLimit {
+                named: "usage limit",
                 reset: Some("2:40pm".to_string()),
             }),
             "Phase 4 — the deadline",
@@ -1546,8 +1553,14 @@ mod tests {
         );
         assert_eq!(stop.reset.as_deref(), Some("2:40pm"));
 
-        let no_reset = stops_the_run(Some(UsageLimit { reset: None }), "Phase 2 — silent")
-            .expect("a limit with no reset time still stops the run");
+        let no_reset = stops_the_run(
+            Some(UsageLimit {
+                named: "usage limit",
+                reset: None,
+            }),
+            "Phase 2 — silent",
+        )
+        .expect("a limit with no reset time still stops the run");
         assert_eq!(
             no_reset.reset, None,
             "a limit that named no reset time must not invent one",
@@ -1575,6 +1588,7 @@ mod tests {
         cut_short.after = "furnished".to_string();
         cut_short.outcomes = vec![outcome("a lock that otherwise held", true)];
         cut_short.incomplete = Some(Incomplete {
+            named: "usage limit",
             phase: "Phase 1 — the room".to_string(),
             reset: Some("2:40pm".to_string()),
         });

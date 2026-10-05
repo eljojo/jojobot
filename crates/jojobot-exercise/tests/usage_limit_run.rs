@@ -85,6 +85,7 @@ const LIMIT_WORDS: &str = "Claude usage limit reached. Your limit resets 3pm";
 /// Drive `go()` with an agent that prints `stderr` and exits 1 on its
 /// `fail_at`th launch, and say how many times it was launched.
 async fn run_failing_at(fail_at: usize, stderr: &str) -> (Results, usize) {
+    let expectations: Vec<Box<dyn Expectation>> = vec![Box::new(NeverHolds)];
     let scratch = Scratch::new();
     let launches = scratch.0.join("launches");
     let program = scratch.0.join("fake-agent");
@@ -106,7 +107,6 @@ async fn run_failing_at(fail_at: usize, stderr: &str) -> (Results, usize) {
 
     let playbook = Playbook::parse("usage-limit", PLAYBOOK).expect("the playbook parses");
     let agent = Agent::new("sonnet").launching(program.to_str().expect("a utf-8 path"));
-    let expectations: Vec<Box<dyn Expectation>> = vec![Box::new(NeverHolds)];
     let results = run::go(&playbook, &agent, &Seed::new(), &expectations)
         .await
         .expect("the run goes through");
@@ -115,6 +115,15 @@ async fn run_failing_at(fail_at: usize, stderr: &str) -> (Results, usize) {
         .lines()
         .count();
     (results, launched)
+}
+
+/// The line of a rendered verdict that says the run is incomplete.
+fn incomplete_line(rendered: &str) -> String {
+    rendered
+        .lines()
+        .find(|line| line.contains("INCOMPLETE"))
+        .unwrap_or_else(|| panic!("the verdict has no INCOMPLETE line: {rendered}"))
+        .to_string()
 }
 
 #[tokio::test]
@@ -139,6 +148,13 @@ async fn a_limit_in_the_second_sitting_stops_the_third_from_launching() {
     assert!(
         rendered.contains("INCOMPLETE"),
         "the verdict does not say the run is incomplete: {rendered}"
+    );
+    // The agent's own words are echoed in the transcript above, so the cause
+    // is asked of the verdict line itself.
+    let verdict = incomplete_line(&rendered);
+    assert!(
+        verdict.contains("usage limit"),
+        "the verdict line does not name the cause: {verdict}"
     );
     assert!(
         rendered.contains("[not run] a lock that fails on its own merits"),
@@ -184,5 +200,20 @@ async fn an_ordinary_failure_in_the_second_sitting_is_not_a_limit() {
     assert!(
         !rendered.contains("[not run]"),
         "a lock on a run that finished read as not run: {rendered}"
+    );
+}
+
+#[tokio::test]
+async fn a_session_limit_is_named_as_the_agents_own_words_said_it() {
+    let (results, _) =
+        run_failing_at(2, "Claude session limit reached. Your limit resets 3pm").await;
+    let verdict = incomplete_line(&results.rendered(None));
+    assert!(
+        verdict.contains("session limit"),
+        "the verdict does not name the session limit the agent reported: {verdict}"
+    );
+    assert!(
+        !verdict.contains("usage limit"),
+        "the verdict names a usage limit the agent never reported: {verdict}"
     );
 }
