@@ -79,6 +79,10 @@ async fn the_real_server_binary_serves_a_store_a_previous_process_already_wrote_
         .env("JOJOBOT_BIND", format!("127.0.0.1:{http_port}"))
         .env("JOJOBOT_ALLOW_NO_AUTH", "1")
         .env_remove("JOJOBOT_ISSUER")
+        // The serving line is an info event. An inherited RUST_LOG can filter it
+        // out: the package build exports RUST_LOG="", which parses as a filter
+        // with no directives and hides every info line.
+        .env("RUST_LOG", "info")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true)
