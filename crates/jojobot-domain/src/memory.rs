@@ -1806,16 +1806,18 @@ pub const THOUGHT_CAPACITY: &str = "thought_capacity";
 
 /// **The key a thought's own body cap is read from** — folded exactly like
 /// [`THOUGHT_CAPACITY`], on the container that holds the room rather than on
-/// the thought itself. Unlike capacity, absence is not "uncapped": a thought
-/// is enforceable only because its body is short enough that restating what
-/// it points at will not fit (`pm/feature-briefs/carried-state.md`), so a
-/// container that never wrote this key still gets [`DEFAULT_THOUGHT_BODY_CAP`].
+/// the thought itself. A container that writes it is bound by it wherever
+/// it is set. A container that never wrote it is bound by
+/// [`DEFAULT_THOUGHT_BODY_CAP`] only if it carries a [`THOUGHT_CAPACITY`]:
+/// the default is part of what a capacity means, never a rule on a thing
+/// that has no room.
 pub const THOUGHT_BODY_CAP: &str = "thought_body_cap";
 
-/// **The cap a container's room enforces when it has never written
-/// [`THOUGHT_BODY_CAP`] of its own.** The operator's choice, not a
-/// structural constant — a container may still widen or narrow it, subject
-/// to the same self-ceiling rule [`THOUGHT_CAPACITY`] carries.
+/// **The cap a container's room enforces when it carries a
+/// [`THOUGHT_CAPACITY`] and has never written [`THOUGHT_BODY_CAP`] of its
+/// own.** The operator's choice, not a structural constant — a container may
+/// still widen or narrow it, subject to the same self-ceiling rule
+/// [`THOUGHT_CAPACITY`] carries.
 pub const DEFAULT_THOUGHT_BODY_CAP: usize = 200;
 
 /// **The keys a thing cannot set for itself** — its own room's capacity and
@@ -1923,17 +1925,21 @@ pub fn refuses_room_overflow(
 }
 
 /// **Whether a thought's content leaves it over its own container's body
-/// cap** — [`DEFAULT_THOUGHT_BODY_CAP`] when the container has never written
-/// [`THOUGHT_BODY_CAP`] of its own. Only asked of a write that leaves `home`
-/// carrying an active, connection-edged claim on itself: an ordinary claim
-/// is never capped (`pm/feature-briefs/carried-state.md`), so the caller
-/// decides whether this write makes or keeps a thought before it asks.
+/// cap.** `cap` is what the container wrote as [`THOUGHT_BODY_CAP`], and it
+/// binds wherever it is set. With none, [`DEFAULT_THOUGHT_BODY_CAP`] binds
+/// only a container that carries a [`THOUGHT_CAPACITY`] — `capacity` is that
+/// value as the container folds to — and a container with neither is not
+/// capped at all. Only asked of a write that leaves `home` carrying an
+/// active, connection-edged claim on itself: an ordinary claim is never
+/// capped (`pm/feature-briefs/carried-state.md`), so the caller decides
+/// whether this write makes or keeps a thought before it asks.
 pub fn refuses_thought_over_cap(
     home: &EntityId,
     content: &str,
     cap: Option<usize>,
+    capacity: Option<usize>,
 ) -> Option<MemoryError> {
-    let cap = cap.unwrap_or(DEFAULT_THOUGHT_BODY_CAP);
+    let cap = cap.or_else(|| capacity.map(|_| DEFAULT_THOUGHT_BODY_CAP))?;
     let len = content.chars().count();
     if len > cap {
         Some(MemoryError::ThoughtTooLong {

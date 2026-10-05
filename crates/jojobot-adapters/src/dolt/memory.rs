@@ -2353,16 +2353,17 @@ impl Memory for DoltMemory {
             let cap = held
                 .get(jojobot_domain::memory::THOUGHT_BODY_CAP)
                 .and_then(|v| v.trim().parse::<usize>().ok());
+            let capacity = held
+                .get(jojobot_domain::memory::THOUGHT_CAPACITY)
+                .and_then(|v| v.trim().parse::<usize>().ok());
             if let Some(err) = jojobot_domain::memory::refuses_thought_over_cap(
                 &subject_handle,
                 &jojobot_domain::memory::normalize_content(&fact.content),
                 cap,
+                capacity,
             ) {
                 return Err(err);
             }
-            let capacity = held
-                .get(jojobot_domain::memory::THOUGHT_CAPACITY)
-                .and_then(|v| v.trim().parse::<usize>().ok());
             if let Some(capacity) = capacity {
                 let existing = self.facts_of(&mut tx, &home).await?;
                 let nominal_room = jojobot_domain::memory::thought_room(&existing);
@@ -3060,6 +3061,9 @@ impl Memory for DoltMemory {
         // capacity, before either check existed must still take an edit
         // that does not touch the content the cap protects or the room
         // membership the capacity protects.
+        let capacity = after_fold
+            .get(jojobot_domain::memory::THOUGHT_CAPACITY)
+            .and_then(|v| v.trim().parse::<usize>().ok());
         if becomes_thought && (patch.content.is_some() || !was_thought) {
             // **The body cap, checked before the room has anything to say.**
             // A thought over its container's cap is refused whether or not
@@ -3067,9 +3071,12 @@ impl Memory for DoltMemory {
             let cap = after_fold
                 .get(jojobot_domain::memory::THOUGHT_BODY_CAP)
                 .and_then(|v| v.trim().parse::<usize>().ok());
-            if let Some(err) =
-                jojobot_domain::memory::refuses_thought_over_cap(&handle, &fact.content, cap)
-            {
+            if let Some(err) = jojobot_domain::memory::refuses_thought_over_cap(
+                &handle,
+                &fact.content,
+                cap,
+                capacity,
+            ) {
                 return Err(err);
             }
         }
@@ -3078,9 +3085,6 @@ impl Memory for DoltMemory {
         // edit changes — a room already over capacity (a borrow, or seeded
         // that way) is an allowed state an unrelated edit must not re-judge.
         if becomes_thought && !was_thought {
-            let capacity = after_fold
-                .get(jojobot_domain::memory::THOUGHT_CAPACITY)
-                .and_then(|v| v.trim().parse::<usize>().ok());
             // **The storage key, not the display handle** — `facts_of` reads
             // by the badge a row is filed under (see its own doc comment),
             // exactly as `writes_on` above is called with `fact.home` rather

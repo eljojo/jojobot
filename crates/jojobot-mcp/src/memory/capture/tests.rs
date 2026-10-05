@@ -2353,12 +2353,32 @@ async fn a_borrow_lands_visibly_and_a_second_one_is_refused() {
 /// served surface**, and the way forward names the repair the brief
 /// itself describes — move the substance onto what the thought points
 /// at, and keep the thought itself short.
+///
+/// The default cap binds a container that carries a thought capacity, so
+/// this one is given one. Paired with a bot that carries none, which lands
+/// the same over-cap claim: without that half this passes on a build that
+/// caps every thought.
 #[tokio::test]
 async fn a_thought_over_the_body_cap_is_refused_through_the_served_surface() {
     let jojobot = handler();
     let bot = "bot:mcp-thought-body-cap";
     ensure(&jojobot, bot).await;
     ensure(&jojobot, "thing:jukebox").await;
+    capture_ok(
+        &jojobot,
+        CaptureArgs {
+            fields: Some(
+                [(
+                    jojobot_domain::memory::THOUGHT_CAPACITY.to_string(),
+                    "10".to_string(),
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            ..capture_args(bot, "capacity is ten")
+        },
+    )
+    .await;
 
     let over_cap = "x".repeat(jojobot_domain::memory::DEFAULT_THOUGHT_BODY_CAP + 1);
     let refused = json_of(
@@ -2394,6 +2414,19 @@ async fn a_thought_over_the_body_cap_is_refused_through_the_served_surface() {
     )
     .await;
     assert_ne!(landed["status"], "blocked", "{landed}");
+
+    // A bot that carries no capacity is not bound by the default cap.
+    ensure(&jojobot, "bot:milhouse").await;
+    let unbound = capture_ok(
+        &jojobot,
+        CaptureArgs {
+            shape: Some("connection".into()),
+            object: Some("thing:jukebox".into()),
+            ..capture_args("bot:milhouse", &over_cap)
+        },
+    )
+    .await;
+    assert_ne!(unbound["status"], "blocked", "{unbound}");
 }
 
 /// **Starring a rule past the boot's seats does not refuse the write —

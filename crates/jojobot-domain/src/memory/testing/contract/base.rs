@@ -3856,11 +3856,12 @@ pub async fn update_fact_drawing_a_connection_edge_into_a_full_room_is_refused<M
 }
 
 /// **A thought's body is capped, at its container's own value or the
-/// default.** [`DEFAULT_THOUGHT_BODY_CAP`] governs a container that has
-/// never written [`THOUGHT_BODY_CAP`] of its own; a container that has
-/// governs at that value instead. Either way the boundary is exact: at the
-/// cap lands, one character over is refused. An ordinary claim — no
-/// connection edge — is never capped, at any length.
+/// default.** [`DEFAULT_THOUGHT_BODY_CAP`] governs a container that carries
+/// a [`THOUGHT_CAPACITY`] and has never written [`THOUGHT_BODY_CAP`] of its
+/// own; a container that has written one governs at that value instead,
+/// capacity or not. Either way the boundary is exact: at the cap lands, one
+/// character over is refused. An ordinary claim — no connection edge — is
+/// never capped, at any length.
 pub async fn a_thoughts_body_is_capped_at_its_containers_own_value_or_the_default<M: Memory>(
     store: &M,
 ) {
@@ -3870,6 +3871,16 @@ pub async fn a_thoughts_body_is_capped_at_its_containers_own_value_or_the_defaul
     ensure(store, &bot).await;
     ensure(store, &a).await;
     ensure(store, &b).await;
+    capture(
+        store,
+        NewFact {
+            fields: [(THOUGHT_CAPACITY.to_string(), "10".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(bot.clone(), "capacity is ten", date(2026, 8, 9))
+        },
+    )
+    .await;
 
     let at_cap = "x".repeat(DEFAULT_THOUGHT_BODY_CAP);
     capture(
@@ -3900,7 +3911,8 @@ pub async fn a_thoughts_body_is_capped_at_its_containers_own_value_or_the_defaul
         other => panic!("expected ThoughtTooLong, got {other:?}"),
     }
 
-    // A container with its own field caps at its own value, not the default.
+    // A container with its own field caps at its own value, not the default,
+    // and it is bound by it with no capacity at all.
     let narrow = EntityId("bot:contract-thought-body-cap-custom".into());
     let c = EntityId("thing:the-fern".into());
     let d = EntityId("thing:teapot".into());
@@ -3951,6 +3963,122 @@ pub async fn a_thoughts_body_is_capped_at_its_containers_own_value_or_the_defaul
     )
     .await;
     assert_eq!(long_plain.content.chars().count(), plain_len);
+}
+
+/// **The default body cap binds only a thing that carries a thought
+/// capacity of its own** (decision 347). The same long connection-edged
+/// claim lands on a thing with no capacity and is refused on a thing that
+/// has one, through a fresh capture and through the edit that makes an
+/// ordinary claim a thought. Paired in one case: each refusal rests on the
+/// landing beside it, so a store that never capped anything fails the
+/// second half and a store that capped everything fails the first.
+pub async fn the_default_body_cap_binds_only_a_thing_that_carries_a_capacity<M: Memory>(store: &M) {
+    let free = EntityId("person:contract-no-capacity-long-thought".into());
+    let bound = EntityId("thing:contract-capacity-long-thought".into());
+    let a = EntityId("thing:jukebox".into());
+    let b = EntityId("thing:battery".into());
+    let c = EntityId("thing:the-fern".into());
+    let d = EntityId("thing:teapot".into());
+    for id in [&free, &bound, &a, &b, &c, &d] {
+        ensure(store, id).await;
+    }
+    capture(
+        store,
+        NewFact {
+            fields: [(THOUGHT_CAPACITY.to_string(), "10".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(bound.clone(), "capacity is ten", date(2026, 10, 1))
+        },
+    )
+    .await;
+    let long = "x".repeat(DEFAULT_THOUGHT_BODY_CAP + 1);
+
+    // A fresh capture.
+    let landed = capture(
+        store,
+        NewFact {
+            edge: Some(Edge::new(EdgeShape::Connection, a.clone())),
+            ..NewFact::about(free.clone(), &long, date(2026, 10, 2))
+        },
+    )
+    .await;
+    assert_eq!(landed.content.chars().count(), long.chars().count());
+    let refused = store
+        .capture(NewFact {
+            edge: Some(Edge::new(EdgeShape::Connection, a.clone())),
+            ..NewFact::about(bound.clone(), &long, date(2026, 10, 3))
+        })
+        .await
+        .expect_err("the same claim on a thing with a capacity is over the default cap");
+    assert!(
+        matches!(refused, MemoryError::ThoughtTooLong { .. }),
+        "expected ThoughtTooLong, got {refused:?}"
+    );
+
+    // The edit that makes an ordinary claim a thought.
+    let long_free = capture(
+        store,
+        NewFact::about(free.clone(), &long, date(2026, 10, 4)),
+    )
+    .await;
+    store
+        .update_fact(
+            &long_free.address(),
+            FactPatch {
+                edge: Some(Edge::new(EdgeShape::Connection, b.clone())),
+                ..Default::default()
+            },
+            &other_caller(),
+        )
+        .await
+        .expect("update_fact ok")
+        .written()
+        .expect("a thing with no capacity is not bound by the default cap on an edit either");
+    let long_bound = capture(
+        store,
+        NewFact::about(bound.clone(), &long, date(2026, 10, 5)),
+    )
+    .await;
+    let refused = store
+        .update_fact(
+            &long_bound.address(),
+            FactPatch {
+                edge: Some(Edge::new(EdgeShape::Connection, c.clone())),
+                ..Default::default()
+            },
+            &other_caller(),
+        )
+        .await
+        .expect_err("the edit makes a thought over the default cap on a thing with a capacity");
+    assert!(
+        matches!(refused, MemoryError::ThoughtTooLong { .. }),
+        "expected ThoughtTooLong, got {refused:?}"
+    );
+
+    // An explicit cap binds wherever it is set: the thing with no capacity
+    // and a cap of its own is refused over that cap.
+    capture(
+        store,
+        NewFact {
+            fields: [(THOUGHT_BODY_CAP.to_string(), "5".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(free.clone(), "cap is five", date(2026, 10, 6))
+        },
+    )
+    .await;
+    let refused = store
+        .capture(NewFact {
+            edge: Some(Edge::new(EdgeShape::Connection, d.clone())),
+            ..NewFact::about(free.clone(), "abcdef", date(2026, 10, 7))
+        })
+        .await
+        .expect_err("an explicit cap binds a thing with no capacity");
+    match refused {
+        MemoryError::ThoughtTooLong { cap, .. } => assert_eq!(cap, 5),
+        other => panic!("expected ThoughtTooLong, got {other:?}"),
+    }
 }
 
 /// **`update_fact` faces the same cap capture does** — rewriting a thought's
@@ -11735,6 +11863,7 @@ pub async fn run_all<M: Memory>(store: &M) {
     the_ceiling_guard_reads_the_fold_across_every_edit_and_retract_path(store).await;
     update_fact_drawing_a_connection_edge_into_a_full_room_is_refused(store).await;
     a_thoughts_body_is_capped_at_its_containers_own_value_or_the_default(store).await;
+    the_default_body_cap_binds_only_a_thing_that_carries_a_capacity(store).await;
     update_fact_over_the_body_cap_is_refused_on_content_and_on_the_edge_that_makes_it_a_thought(
         store,
     )

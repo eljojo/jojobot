@@ -1148,16 +1148,17 @@ impl Memory for InMemoryMemory {
             let cap = folded
                 .get(super::super::THOUGHT_BODY_CAP)
                 .and_then(|v| v.trim().parse::<usize>().ok());
+            let capacity = folded
+                .get(super::super::THOUGHT_CAPACITY)
+                .and_then(|v| v.trim().parse::<usize>().ok());
             if let Some(err) = super::super::refuses_thought_over_cap(
                 &subject_entity.id,
                 &normalize_content(&fact.content),
                 cap,
+                capacity,
             ) {
                 return Err(err);
             }
-            let capacity = folded
-                .get(super::super::THOUGHT_CAPACITY)
-                .and_then(|v| v.trim().parse::<usize>().ok());
             if let Some(capacity) = capacity {
                 let existing_owned: Vec<Fact> =
                     facts.iter().filter(|f| f.home == home).cloned().collect();
@@ -1719,11 +1720,15 @@ impl Memory for InMemoryMemory {
         // thought — never on an edit that leaves an existing thought's
         // content exactly as it was** — see the real store's identical
         // comment on its own copy of this check.
+        let capacity = after
+            .get(super::super::THOUGHT_CAPACITY)
+            .and_then(|v| v.trim().parse::<usize>().ok());
         if becomes_thought && (patch.content.is_some() || !was_thought) {
             let cap = after
                 .get(super::super::THOUGHT_BODY_CAP)
                 .and_then(|v| v.trim().parse::<usize>().ok());
-            if let Some(err) = super::super::refuses_thought_over_cap(&handle, &edited.content, cap)
+            if let Some(err) =
+                super::super::refuses_thought_over_cap(&handle, &edited.content, cap, capacity)
             {
                 return Err(err);
             }
@@ -1731,9 +1736,6 @@ impl Memory for InMemoryMemory {
         // **The room only grows when a record newly joins it** — see the
         // real store's identical comment on its own copy of this check.
         if becomes_thought && !was_thought {
-            let capacity = after
-                .get(super::super::THOUGHT_CAPACITY)
-                .and_then(|v| v.trim().parse::<usize>().ok());
             let others: Vec<Fact> = facts
                 .iter()
                 .filter(|f| f.home == home && f.id != edited.id)
