@@ -334,7 +334,7 @@ pub(crate) fn parse_zone(raw: Option<&str>) -> Result<jiff::tz::TimeZone, McpErr
         McpError::invalid_params(
             format!(
                 "'{name}' is no timezone this build can resolve: {e}. Send an IANA name, like \
-                 'America/Toronto' or 'Europe/Berlin', or send none and days are resolved in \
+                 'America/New_York' or 'Europe/Madrid', or send none and days are resolved in \
                  {FALLBACK_ZONE}."
             ),
             None,
@@ -417,25 +417,18 @@ mod tests {
 
     /// **The refusal for a name that is no zone offers the standing example
     /// zones** — a zone name is an identifier a caller may copy into its next
-    /// call, so the examples are pinned by name, and the retired ones by
-    /// absence.
+    /// call, so the examples are pinned by name.
     #[test]
     fn the_refusal_for_no_zone_offers_the_standing_example_zones() {
         let refused = parse_zone(Some("Nowhere/Atall"))
             .expect_err("that is no zone")
             .to_string();
-        for offered in ["America/Toronto", "Europe/Berlin"] {
+        for offered in ["America/New_York", "Europe/Madrid"] {
             assert!(
                 refused.contains(offered),
                 "the refusal omits {offered}: {refused}"
             );
             parse_zone(Some(offered)).unwrap_or_else(|e| panic!("{offered} is a zone: {e}"));
-        }
-        for retired in ["America/New_York", "Europe/Madrid"] {
-            assert!(
-                !refused.contains(retired),
-                "the refusal still offers the retired {retired}: {refused}"
-            );
         }
     }
 

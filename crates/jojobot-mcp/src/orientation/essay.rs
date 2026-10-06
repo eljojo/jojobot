@@ -43,13 +43,13 @@ jojobot is a personal-assistant server: the durable memory and message rail behi
 
 ## Your session's frame
 
-**Your session carries its own timezone, and you supply it.** Pass `timezone` to `start_here` — an IANA name like `America/Toronto` — and everything day-grained is answered in it: the date a `capture` gets when you name none, and whether a recurring loop has fallen due. **jojobot never assumes a zone**, because the frame belongs to the caller and a server that picked one would date the operator's evening as tomorrow. Send it again when you resume from somewhere else; sending none on a resume keeps the zone the run already had. Send none at all and days are resolved in UTC, which is a stated fallback rather than a setting.
+**Your session carries its own timezone, and you supply it.** Pass `timezone` to `start_here` — an IANA name like `America/New_York` — and everything day-grained is answered in it: the date a `capture` gets when you name none, and whether a recurring loop has fallen due. **jojobot never assumes a zone**, because the frame belongs to the caller and a server that picked one would date the operator's evening as tomorrow. Send it again when you resume from somewhere else; sending none on a resume keeps the zone the run already had. Send none at all and days are resolved in UTC, which is a stated fallback rather than a setting.
 
 **And your session carries its own DAY, when it is not the day the server is having.** Pass `today` to `start_here` — a calendar day like `2026-03-15` — and everything in that run is in that day: a `capture` that names no date gets it, your beats are stamped with it, and the sweep that decides whether your other runs went quiet reads it. The zone says how to name a day; this says WHICH DAY YOU ARE IN, and no zone can tell the server that. **jojobot never derives it and never advances it** — there is no clock behind this, only what you stated. **A write that names its own date still wins**, which is how a run working through a stretch of time records a claim about any day but the one it is standing in.
 
 Send it when your run is not happening now: a session catching up on last week, an instance restored from a backup, a run working through a period. Send none and days come off the clock in your zone, which is what they always did.
 
-⚠️ **Two sessions in different zones WILL disagree about what today is for one stored claim, and that is correct.** A claim captured at nine in the evening in Toronto is the 18th there and the 19th in Berlin; a loop due today has arrived for the run whose day it already is and has not for the run still on yesterday. Both are reading the same claim and answering in their own frame. **It is not a fault and there is nothing to work around** — if you meet it and start compensating, you will write a wrong date into the store to fix a right one.
+⚠️ **Two sessions in different zones WILL disagree about what today is for one stored claim, and that is correct.** A claim captured at nine in the evening in New York is the 18th there and the 19th in Madrid; a loop due today has arrived for the run whose day it already is and has not for the run still on yesterday. Both are reading the same claim and answering in their own frame. **It is not a fault and there is nothing to work around** — if you meet it and start compensating, you will write a wrong date into the store to fix a right one.
 
 **This is the short form.** The rest of this — mailboxes, more worked examples, the six refusal shapes, and the rest of what a bot and a session are — reads the same way, in full, from a boot with room for it: call `start_here` again, naming no bot, or this one with nothing else competing for its answer's ceiling.
 "#;
@@ -470,25 +470,20 @@ mod tests {
         );
     }
 
-    /// **The essay's example zones are `America/Toronto` and a second zone
-    /// that disagrees with it about the day** — never the two it used to
-    /// carry. A zone name is an identifier a session may copy into a call, so
-    /// the example it learns from is pinned by name. The retired names are
-    /// asserted absent beside the positive.
+    /// **The essay's example zones are `America/New_York` and a second zone
+    /// that disagrees with it about the day.** A zone name is an identifier a
+    /// session may copy into a call, so the example it learns from is pinned
+    /// by name, and so is the pair of places the day-disagreement sentence
+    /// uses.
     #[test]
     fn the_essay_teaches_its_timezone_by_the_standing_example_zone() {
         let essay = super::orientation();
         assert!(
-            names(&essay, "America/Toronto"),
+            names(&essay, "America/New_York"),
             "the example zone is missing"
         );
-        assert!(names(&essay, "Berlin"), "the second zone is missing");
-        for retired in ["America/New_York", "New York", "Madrid"] {
-            assert!(
-                !essay.contains(retired),
-                "the essay still carries the retired example `{retired}`"
-            );
-        }
+        assert!(names(&essay, "New York"), "the first place is missing");
+        assert!(names(&essay, "Madrid"), "the second place is missing");
     }
 
     fn names(text: &str, token: &str) -> bool {
