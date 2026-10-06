@@ -1,0 +1,182 @@
+diff -ruN a/crates/jojobot-exercise/tests/adoption_e3.rs b/crates/jojobot-exercise/tests/adoption_e3.rs
+--- a/crates/jojobot-exercise/tests/adoption_e3.rs
++++ b/crates/jojobot-exercise/tests/adoption_e3.rs
+@@ -0,0 +1,80 @@
++//! **Experiment E3 only: the receipt of a write teaches the shipped date types,
++//! once per session, when a date is sent under a key no declared type names.**
++//!
++//! Applied with the patch that makes it true, to a throwaway export, and never
++//! to main.
++
++use jojobot_exercise::room::{Room, server_binary};
++use jojobot_exercise::surface::Surface;
++use serde_json::{Value, json};
++
++async fn session() -> (Room, Surface, String) {
++    let (room, surface) = Room::open_with_client(&server_binary().expect("a jojobot binary"))
++        .await
++        .expect("a room");
++    let booted = surface
++        .must("start_here", json!({"bot": "assistant", "brief": true}))
++        .await
++        .expect("the shipped identity boots");
++    let sid = booted["session"]["sid"]
++        .as_str()
++        .expect("a sid")
++        .to_string();
++    surface
++        .call(
++            "add_entity",
++            json!({"kind": "thing", "handle": "floor-pump", "name": "The Floor Pump",
++                   "source": "user-named", "sid": sid}),
++        )
++        .await;
++    (room, surface, sid)
++}
++
++/// What the receipt of one capture taught, as text.
++async fn taught_by(surface: &Surface, sid: &str, fields: Value) -> String {
++    let answer = surface
++        .call(
++            "capture",
++            json!({"subject": "thing:floor-pump", "content": "a claim", "provenance": "testimony",
++                   "fields": fields, "sid": sid}),
++        )
++        .await;
++    let body: Value = serde_json::from_str(&answer).expect("the receipt is json");
++    body["teaching"].to_string()
++}
++
++#[tokio::test]
++async fn a_date_under_an_undeclared_key_teaches_the_shipped_types_once() {
++    let (_room, surface, sid) = session().await;
++    let first = taught_by(&surface, &sid, json!({"needed_by": "2026-10-20"})).await;
++    assert!(
++        first.contains("runs_out") && first.contains("decide_by"),
++        "the first such write teaches the shipped keys: {first}",
++    );
++    let second = taught_by(&surface, &sid, json!({"closed_until": "2026-10-21"})).await;
++    assert!(
++        !second.contains("runs_out"),
++        "the teaching fires once per session: {second}",
++    );
++}
++
++#[tokio::test]
++async fn a_shipped_key_or_a_non_date_teaches_nothing_and_spends_nothing() {
++    let (_room, surface, sid) = session().await;
++    let shipped = taught_by(&surface, &sid, json!({"runs_out": "2026-11-03"})).await;
++    assert!(
++        !shipped.contains("decide_by"),
++        "a shipped key was taught about: {shipped}"
++    );
++    let text = taught_by(&surface, &sid, json!({"nickname": "pumpy"})).await;
++    assert!(
++        !text.contains("decide_by"),
++        "a non-date was taught about: {text}"
++    );
++    // **The one teaching was not spent on either call above.**
++    let invented = taught_by(&surface, &sid, json!({"needed_by": "2026-10-20"})).await;
++    assert!(
++        invented.contains("decide_by"),
++        "the teaching was spent on a call that did not fire it: {invented}",
++    );
++}
+diff -ruN a/crates/jojobot-mcp/src/memory/capture.rs b/crates/jojobot-mcp/src/memory/capture.rs
+--- a/crates/jojobot-mcp/src/memory/capture.rs
++++ b/crates/jojobot-mcp/src/memory/capture.rs
+@@ -712,6 +712,7 @@
+         // and a moved due moment both add keys below, and this is about what
+         // the CALLER sent, never what jojobot added on its own.
+         let sent_field_keys: Vec<String> = fields.keys().cloned().collect();
++        let sent_fields = fields.clone();
+         // **The thing a ceiling binds cannot write that ceiling.** Checked
+         // before anything else about this write, on the caller's own
+         // identity against the subject it is about to write — never a kind
+@@ -952,6 +953,16 @@
+                 // capture's alone.** The motivating case is exactly a
+                 // capture carrying `status`, an argument only update_fact
+                 // has — checking capture's own schema alone would miss it.
++                if self.sent_a_date_under_an_undeclared_key(&sent_fields).await
++                    && self
++                        .first_contact(crate::teaching::UNDECLARED_DATE_DOMAIN, Some(&caller))
++                        .await
++                {
++                    crate::answer::note_teaching(
++                        &mut body,
++                        crate::teaching::UNDECLARED_DATE_TEACHING,
++                    );
++                }
+                 if !sent_field_keys.is_empty()
+                     && let Some(capture_properties) =
+                         crate::teaching::published_arguments("capture")
+diff -ruN a/crates/jojobot-mcp/src/memory/update_fact.rs b/crates/jojobot-mcp/src/memory/update_fact.rs
+--- a/crates/jojobot-mcp/src/memory/update_fact.rs
++++ b/crates/jojobot-mcp/src/memory/update_fact.rs
+@@ -294,6 +294,7 @@
+         // reason `capture`'s own copy is: this is about what the CALLER
+         // sent, never what jojobot added on its own.
+         let sent_field_keys: Vec<String> = fields.keys().cloned().collect();
++        let sent_fields = fields.clone();
+         // **The thing a ceiling binds cannot write that ceiling — checked on
+         // the fold, atomically with the write, inside `self.memory.update_fact`
+         // below.** A raw check here on `fields` alone would miss a clear, a
+@@ -577,6 +578,16 @@
+                 // **Against the UNION of both verbs' arguments** — see
+                 // `capture`'s own copy: an update_fact carrying `check_in`,
+                 // capture's own argument, is caught the same way.
++                if self.sent_a_date_under_an_undeclared_key(&sent_fields).await
++                    && self
++                        .first_contact(crate::teaching::UNDECLARED_DATE_DOMAIN, Some(&caller))
++                        .await
++                {
++                    crate::answer::note_teaching(
++                        &mut body,
++                        crate::teaching::UNDECLARED_DATE_TEACHING,
++                    );
++                }
+                 if !sent_field_keys.is_empty()
+                     && let Some(update_fact_properties) =
+                         crate::teaching::published_arguments("update_fact")
+diff -ruN a/crates/jojobot-mcp/src/teaching.rs b/crates/jojobot-mcp/src/teaching.rs
+--- a/crates/jojobot-mcp/src/teaching.rs
++++ b/crates/jojobot-mcp/src/teaching.rs
+@@ -1754,3 +1754,38 @@
+         );
+     }
+ }
++
++/// **Experiment E3 only: a date under a key no declared type names.**
++pub(crate) const UNDECLARED_DATE_DOMAIN: &str = "undeclared-date";
++
++pub(crate) const UNDECLARED_DATE_TEACHING: &str = "A date you sent sits under a key no declared \
++    type names. Some shipped types already say what a date is for, and a thing carrying their \
++    key is what the questions about what is owed and late read: runs-out (key runs_out) is the \
++    day something runs out — a supply, a subscription, a membership, whatever runs out; \
++    decide-by (key decide_by) is the day a decision has to be made by — a project, a plan, an \
++    offer with a window; trip (keys leaves_on and returns_on, with departs_from and arrives_at) \
++    is when somebody is away; entitlement (keys valid_from and valid_until, with admits) is the \
++    window something admits somebody to. If one of these is what you meant, update_fact the \
++    record to set that key and clear_fields the other. If none is, nothing here is wrong: the \
++    write stands as sent.";
++
++impl Jojobot {
++    /// **Whether a write sent a date-shaped value under a key no declared type
++    /// names.** The test is the shape of the value and the absence of the key
++    /// from every declaration; it judges nothing about what the key means. A
++    /// store that cannot say what is declared answers `false`.
++    pub(crate) async fn sent_a_date_under_an_undeclared_key(
++        &self,
++        sent: &std::collections::BTreeMap<String, String>,
++    ) -> bool {
++        let Ok(types) = self.memory.declared_types().await else {
++            return false;
++        };
++        sent.iter().any(|(key, value)| {
++            value.trim().parse::<jiff::civil::Date>().is_ok()
++                && !types
++                    .iter()
++                    .any(|declared| declared.fields.iter().any(|field| &field.key == key))
++        })
++    }
++}

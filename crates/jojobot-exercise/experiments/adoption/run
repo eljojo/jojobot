@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# **COSTS MONEY.** Drives a real model through the adoption rooms and prints
+# one row per run from each run's call log. It is never reached from
+# `make check`, and nothing here runs by accident.
+#
+#     nix develop -c crates/jojobot-exercise/experiments/adoption/run <E0|E1|E2|E3|all> <runs> [model]
+#
+#   E0  baseline        rooms/adoption.md on this tree
+#   E1  wording         rooms/adoption-wording.md on this tree
+#   E2  boot names keys rooms/adoption.md on a throwaway export + e2-boot-names-keys.patch
+#   E3  receipt teaches rooms/adoption.md on a throwaway export + e3-receipt-teaches-type.patch
+#
+# E2 and E3 are surface changes for the experiment ONLY. Each is applied to a
+# throwaway export of HEAD, built there, and proven there by its own case before
+# any run is billed. Nothing is ever applied to this tree.
+#
+# `all` runs the conditions in rounds, so a drift in the model's behaviour over
+# the hours it takes lands on every condition alike.
+#
+# Kept under $OUT (default transcripts/adoption/, which is gitignored): for each
+# run <condition>-<n>.md (the transcript) and <condition>-<n>.jsonl (the raw
+# call stream the table is read from). The table is printed at the end and can
+# be printed again, free, with: adoption_rows $OUT
+set -euo pipefail
+
+here=$(cd "$(dirname "$0")" && pwd)
+repo=$(git -C "$here" rev-parse --show-toplevel)
+which=${1:?"which condition: E0, E1, E2, E3 or all"}
+runs=${2:?"how many runs per condition"}
+model=${3:-}
+out=${OUT:-$repo/transcripts/adoption}
+work=$(mktemp -d "${TMPDIR:-/tmp}/adoption-XXXXXX")
+mkdir -p "$out"
+
+case "$which" in
+    all) conditions=(E0 E1 E2 E3) ;;
+    E0 | E1 | E2 | E3) conditions=("$which") ;;
+    *) echo "unknown condition: $which" >&2; exit 2 ;;
+esac
+
+# Where each condition runs, and which room it is driven by.
+declare -A tree room
+for c in "${conditions[@]}"; do
+    case "$c" in
+        E0) tree[$c]=$repo; room[$c]=rooms/adoption.md ;;
+        E1) tree[$c]=$repo; room[$c]=rooms/adoption-wording.md ;;
+        E2) tree[$c]=$work/E2; room[$c]=rooms/adoption.md ;;
+        E3) tree[$c]=$work/E3; room[$c]=rooms/adoption.md ;;
+    esac
+done
+
+# **An export builds into a target directory of its own.** Cargo records the
+# source files a unit was built from by the path they had, so two trees sharing
+# one target directory can each be told the other's build is fresh, and an arm
+# would then run the wrong binary and report it as its own.
+target_of() {
+    if [[ ${tree[$1]} == "$repo" ]]; then
+        echo "${CARGO_TARGET_DIR:-$repo/target}"
+    else
+        echo "${tree[$1]}/target"
+    fi
+}
+
+# **An arm is made, built and proven before anything is billed.**
+export_arm() {
+    local c=$1 patch=$2 test=$3
+    mkdir -p "${tree[$c]}"
+    git -C "$repo" archive HEAD | tar -x -C "${tree[$c]}"
+    (cd "${tree[$c]}" && git apply --check "$here/$patch" && git apply "$here/$patch")
+    (cd "${tree[$c]}" && export CARGO_TARGET_DIR=$(target_of "$c") \
+        && cargo build -q --workspace \
+        && cargo test -q -p jojobot-exercise --test "$test")
+}
+for c in "${conditions[@]}"; do
+    case "$c" in
+        E2) export_arm E2 e2-boot-names-keys.patch adoption_e2 ;;
+        E3) export_arm E3 e3-receipt-teaches-type.patch adoption_e3 ;;
+        *) (cd "$repo" && cargo build -q --workspace) ;;
+    esac
+done
+
+for ((n = 1; n <= runs; n++)); do
+    for c in "${conditions[@]}"; do
+        echo "== $c run $n" >&2
+        # A run that fails its locks exits non-zero and is still a row: the
+        # table reads the call log, and the locks are not the output.
+        (cd "${tree[$c]}" && export CARGO_TARGET_DIR=$(target_of "$c") \
+            && cargo run -q -p jojobot-exercise -- \
+            --playbook "${room[$c]}" ${model:+--model "$model"} \
+            --transcript "$out/$c-$n.md") || echo "($c run $n exited non-zero)" >&2
+    done
+done
+
+(cd "$repo" && cargo run -q -p jojobot-exercise --bin adoption_rows -- "$out")

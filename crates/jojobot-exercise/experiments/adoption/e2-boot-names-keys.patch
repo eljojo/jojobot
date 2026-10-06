@@ -1,0 +1,59 @@
+diff -ruN a/crates/jojobot-exercise/tests/adoption_e2.rs b/crates/jojobot-exercise/tests/adoption_e2.rs
+--- a/crates/jojobot-exercise/tests/adoption_e2.rs
++++ b/crates/jojobot-exercise/tests/adoption_e2.rs
+@@ -0,0 +1,34 @@
++//! **Experiment E2 only: the boot names each declared type's keys.**
++//!
++//! Applied with the patch that makes it true, to a throwaway export, and never
++//! to main.
++
++use jojobot_exercise::room::{Room, server_binary};
++use serde_json::json;
++
++#[tokio::test]
++async fn the_boot_names_the_keys_of_every_declared_type() {
++    let (_room, surface) = Room::open_with_client(&server_binary().expect("a jojobot binary"))
++        .await
++        .expect("a room");
++    let booted = surface
++        .must("start_here", json!({"bot": "assistant", "brief": true}))
++        .await
++        .expect("the shipped identity boots");
++    let types = booted["snapshot"]["vocabulary"]["types"]
++        .as_array()
++        .expect("the boot lists the declared types");
++    let keys_of = |name: &str| {
++        types
++            .iter()
++            .find(|t| t["type"] == name)
++            .unwrap_or_else(|| panic!("{name} is not listed: {types:?}"))["keys"]
++            .clone()
++    };
++    assert_eq!(keys_of("runs-out"), json!(["runs_out"]));
++    assert_eq!(keys_of("decide-by"), json!(["decide_by"]));
++    assert_eq!(
++        keys_of("trip"),
++        json!(["departs_from", "arrives_at", "leaves_on", "returns_on"]),
++    );
++}
+diff -ruN a/crates/jojobot-mcp/src/orientation/orient.rs b/crates/jojobot-mcp/src/orientation/orient.rs
+--- a/crates/jojobot-mcp/src/orientation/orient.rs
++++ b/crates/jojobot-mcp/src/orientation/orient.rs
+@@ -519,7 +519,16 @@
+             Ok(types) => {
+                 let mut named: Vec<serde_json::Value> = types
+                     .iter()
+-                    .map(|declared| serde_json::json!({ "type": declared.name }))
++                    .map(|declared| {
++                        serde_json::json!({
++                            "type": declared.name,
++                            "keys": declared
++                                .fields
++                                .iter()
++                                .map(|field| field.key.clone())
++                                .collect::<Vec<_>>(),
++                        })
++                    })
+                     .collect();
+                 named.sort_by_key(|t| t["type"].as_str().unwrap_or("").to_string());
+                 vocabulary["types_available"] = serde_json::json!(true);
