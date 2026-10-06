@@ -939,6 +939,35 @@ pub fn snooze_day_of(
     Ok(Some(day))
 }
 
+/// **Whether a loop's held snooze day is in force**, and the day, for a reader
+/// of the bare fields. The key stays in the record after a ran or skipped
+/// check-in, because no write can take a key off a loop, and nothing in the
+/// fields tells a live snooze from a spent one except the outcome.
+///
+/// `None` when the loop holds no snooze day at all, a blank one included.
+pub fn snooze_standing(fields: &BTreeMap<String, String>) -> Option<SnoozeStanding> {
+    let until = fields
+        .get(SNOOZED_UNTIL)
+        .map(|held| held.trim())
+        .filter(|held| !held.is_empty())?;
+    let in_force = fields
+        .get(OUTCOME)
+        .is_some_and(|held| Outcome::of_token(held) == Some(Outcome::Snoozed));
+    Some(SnoozeStanding {
+        until: until.to_string(),
+        in_force,
+    })
+}
+
+/// A held snooze day and whether it is in force. See [`snooze_standing`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SnoozeStanding {
+    /// The day as held, unparsed: a reader is told what the record says.
+    pub until: String,
+    /// Whether the loop's last check-in is the snooze that named it.
+    pub in_force: bool,
+}
+
 /// **What a check-in writes**, given what the rhythm holds now.
 ///
 /// The caller supplies the outcome and the day; everything else is arithmetic

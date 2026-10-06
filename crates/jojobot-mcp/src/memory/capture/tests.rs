@@ -475,6 +475,53 @@ async fn a_snooze_holds_the_loop_back_until_its_day_and_a_run_ends_it() {
     assert_eq!(held["due_on"], "2026-08-19", "{held}");
 }
 
+/// **A recall of a loop says whether its snooze day is in force.** The old day
+/// stays in the record after a run, because no write can take a key off a loop,
+/// and a reader of the bare fields could not tell it from a live snooze. So
+/// the answer states it beside the fields, on both sides, and says nothing on
+/// a loop that was never snoozed.
+#[tokio::test]
+async fn a_recall_says_whether_the_snooze_day_is_in_force() {
+    let jojobot = handler();
+    a_weekly_rhythm(&jojobot, "descale", "2026-08-01", "check_in_date").await;
+    let snooze_of = |body: &serde_json::Value| body["objects"][0]["snooze"].clone();
+    let recalled = || async {
+        json_of(
+            &jojobot
+                .recall(Parameters(recall_args("rhythm:descale")))
+                .await
+                .expect("recall ok"),
+        )
+    };
+
+    assert_eq!(
+        snooze_of(&recalled().await),
+        serde_json::Value::Null,
+        "a loop never snoozed carries no snooze answer"
+    );
+
+    capture_ok(&jojobot, a_snooze_until(Some("2026-08-20"), "2026-08-10")).await;
+    let snooze = snooze_of(&recalled().await);
+    assert_eq!(snooze["until"], "2026-08-20", "{snooze}");
+    assert_eq!(snooze["in_force"], true, "{snooze}");
+
+    capture_ok(
+        &jojobot,
+        CaptureArgs {
+            check_in: Some("ran".into()),
+            recorded_at: Some("2026-08-12".into()),
+            ..capture_args("rhythm:descale", "back early, descaled it")
+        },
+    )
+    .await;
+    let snooze = snooze_of(&recalled().await);
+    assert_eq!(snooze["until"], "2026-08-20", "{snooze}");
+    assert_eq!(
+        snooze["in_force"], false,
+        "the last check-in was a run, so the old day is history: {snooze}"
+    );
+}
+
 /// **A snooze that names no usable day is refused with what to send, and
 /// nothing is written.** The refusals ride beside one that lands, or a build
 /// that refused every snooze would pass.

@@ -2060,6 +2060,16 @@ impl Jojobot {
                             }
                         }
                     }
+                    // **A held snooze day says whether it is in force.** The
+                    // key stays in the fields after a ran or skipped check-in,
+                    // and a reader of the fields alone would take the old day
+                    // for a live snooze.
+                    if let Some(standing) = attention::snooze_standing(&o.fields) {
+                        rendered["snooze"] = serde_json::json!({
+                            "until": standing.until,
+                            "in_force": standing.in_force,
+                        });
+                    }
                     rendered["held"] = held;
                     match backing {
                         Some(backing) => {
