@@ -625,9 +625,6 @@ impl FullTextIndex {
             .insert(entity.clone(), at);
     }
 
-    /// **Where the mark sequence stands right now.** Take this BEFORE reading the
-    /// store and hand it to the ingest that follows, so the ingest clears what
-    /// its own reading covered and nothing newer.
     /// Say that what the sessions store's runs read as has changed without a
     /// session write — see the `names_epoch` field.
     pub fn names_changed(&self) {
@@ -640,6 +637,9 @@ impl FullTextIndex {
         self.names_epoch.load(std::sync::atomic::Ordering::SeqCst)
     }
 
+    /// **Where the mark sequence stands right now.** Take this BEFORE reading the
+    /// store and hand it to the ingest that follows, so the ingest clears what
+    /// its own reading covered and nothing newer.
     pub fn reading_begins(&self) -> ReadingPoint {
         ReadingPoint(self.mark_seq.load(std::sync::atomic::Ordering::Acquire))
     }
