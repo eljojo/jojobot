@@ -845,23 +845,6 @@ impl Jojobot {
                 });
             }
         };
-        // **A holder this server does not know is not holding anything.**
-        // Session handles live in this process only, so after a restart every
-        // stored claim names a session that cannot release it, and the lease
-        // would refuse everybody else for the rest of its time. The release is
-        // the store's own compare-and-write on that holder, so a holder that
-        // is live, or one that renewed an instant ago, is not displaced by it;
-        // the claim below is still decided by the store against what it then
-        // holds.
-        if let Ok(fields) = self.memory.fields(bot).await
-            && let Some(holder) = fields
-                .get(&holder_key)
-                .map(|held| held.trim())
-                .filter(|held| !held.is_empty() && *held != claimant)
-            && self.registry.lookup(holder).is_none()
-        {
-            self.release_role_claims(bot, holder).await;
-        }
         let written = match &existing {
             Some(found) => {
                 self.memory
