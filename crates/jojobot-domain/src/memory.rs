@@ -748,6 +748,59 @@ pub struct FactPatch {
     /// only when the edit could make the record a thought; it names no
     /// change, so it never makes a patch a change.
     pub aged_before: Option<jiff::Timestamp>,
+    /// **This edit renews or releases a role's lease, and says whose.** The
+    /// store applies it only while that sid still holds the role — see
+    /// [`crate::session::RoleMove`]. A patch with none is an ordinary edit or
+    /// a claim, which the store decides as it always did.
+    pub role_move: Option<crate::session::RoleMove>,
+}
+
+/// **The role a patch writes to, if it writes to one** — named by a renewal's
+/// or a release's own move, or by a claim's two fields.
+pub fn role_of_patch(patch: &FactPatch) -> Option<String> {
+    match &patch.role_move {
+        Some(role_move) => Some(role_move.role.clone()),
+        None => crate::session::role_write_in(&patch.fields).map(|(role, _, _)| role),
+    }
+}
+
+/// **The store's atomic decision on a patch that writes to a role**, taken
+/// against the thing's folded fields in the same act as the write: `None`
+/// lets it land. A renewal or a release applies only while its own sid holds
+/// the role, so one that arrives after the holder gave the role up is
+/// refused; a claim is decided by [`crate::session::claim_role`].
+pub fn refuses_role_patch(
+    patch: &FactPatch,
+    role: &str,
+    folded: &BTreeMap<String, String>,
+) -> Option<MemoryError> {
+    let current_holder = folded.get(&crate::session::role_holder_key(role));
+    if let Some(role_move) = &patch.role_move {
+        return (current_holder.map(String::as_str) != Some(role_move.claimant.as_str())).then(
+            || MemoryError::RoleNotHeld {
+                role: role.to_string(),
+                claimant: role_move.claimant.clone(),
+            },
+        );
+    }
+    let (_, claimant, now) = crate::session::role_write_in(&patch.fields)?;
+    let current_claimed_at = folded
+        .get(&crate::session::role_claimed_at_key(role))
+        .and_then(|s| s.parse().ok());
+    match crate::session::claim_role(
+        &claimant,
+        current_holder.map(String::as_str),
+        current_claimed_at,
+        now,
+        crate::session::LEASE_FRESHNESS,
+    ) {
+        crate::session::LeaseClaim::Refused { holder, until } => Some(MemoryError::RoleTaken {
+            role: role.to_string(),
+            holder,
+            until,
+        }),
+        crate::session::LeaseClaim::Taken => None,
+    }
 }
 
 /// The promotion gate: a claim may only become testimony on the user's explicit
@@ -2051,7 +2104,12 @@ pub fn rules_in_force(recalled: &[Fact]) -> Vec<Fact> {
                 .as_ref()
                 .is_some_and(|e| e.shape == EdgeShape::Connection)
         })
-        .filter(|rule| crate::session::role_write_in(&rule.fields).is_none())
+        .filter(|rule| {
+            !rule
+                .fields
+                .keys()
+                .any(|key| crate::session::role_from_field_key(key).is_some())
+        })
         .cloned()
         .collect()
 }
@@ -3822,6 +3880,17 @@ pub enum MemoryError {
         holder: String,
         /// When the hold goes stale on its own, absent a renewal.
         until: jiff::Timestamp,
+    },
+    /// **A renewal or a release arrived for a role its sid no longer holds.**
+    /// Not a failure of anything: the holder gave the role up, or somebody
+    /// else holds it, and applying the write would lease the role to a session
+    /// that is over. See [`crate::session::RoleMove`].
+    #[error("'{role}' is not held by '{claimant}'")]
+    RoleNotHeld {
+        /// The role the write named.
+        role: String,
+        /// The session id it acted for.
+        claimant: String,
     },
     /// The named entity doesn't exist. Same rule: report, never create.
     #[error("no entity '{attempted}'{}", nearest_handles(nearest))]

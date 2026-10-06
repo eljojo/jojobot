@@ -287,6 +287,101 @@ mod tests {
         );
     }
 
+    /// **A write that was in flight when its session wrapped cannot lease the
+    /// role again.** The renewal such a write ends in runs after the wrap has
+    /// released the claim, and a renewal that took the role back would hold it
+    /// for a session that is over. The release clears the holder, and a renewal
+    /// applies only while the holder is still the renewing sid.
+    ///
+    /// **Paired**: before the wrap, the same renewal is accepted and keeps the
+    /// role against a rival, which is what tells "renewal refused after a wrap"
+    /// from "renewal never works".
+    #[tokio::test]
+    async fn a_renewal_after_a_wrap_does_not_lease_the_role_again() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        let boot = |claim: &str| OrientArgs {
+            claim: Some(claim.into()),
+            timezone: None,
+            bot: Some("gamma".into()),
+            brief: None,
+            skill: None,
+            section: None,
+            resume: Some("new".into()),
+            sid: None,
+            today: None,
+        };
+        let claimed = json_of(
+            &jojobot
+                .start_here(Parameters(boot("dev-dispatch")))
+                .await
+                .expect("start_here ok"),
+        );
+        let holder_sid = sid_of(&claimed).expect("a handle");
+        assert_eq!(claimed["session"]["claim"]["status"], "taken", "{claimed}");
+        let bot = EntityId("bot:gamma".into());
+
+        // The positive: a live holder's renewal is accepted, so a rival is
+        // still refused afterwards.
+        jojobot
+            .renew_role_claims(&bot, &holder_sid, jiff::Timestamp::now())
+            .await;
+        let rival = json_of(
+            &jojobot
+                .start_here(Parameters(boot("dev-dispatch")))
+                .await
+                .expect("start_here ok"),
+        );
+        assert_eq!(rival["session"]["claim"]["status"], "refused", "{rival}");
+
+        jojobot
+            .wrap_session(Parameters(WrapSessionArgs {
+                story: "done".into(),
+                sid: holder_sid.clone(),
+            }))
+            .await
+            .expect("wrap ok");
+
+        // The write that was in flight renews now.
+        jojobot
+            .renew_role_claims(&bot, &holder_sid, jiff::Timestamp::now())
+            .await;
+        let fresh = json_of(
+            &jojobot
+                .start_here(Parameters(boot("dev-dispatch")))
+                .await
+                .expect("start_here ok"),
+        );
+        assert_eq!(
+            fresh["session"]["claim"]["status"], "taken",
+            "a renewal from a wrapped session leased the role to it again: {fresh}"
+        );
+
+        // **The claim record is the same record throughout**: a release and a
+        // fresh claim do not multiply it, and a released one is still lease
+        // bookkeeping rather than a rule the bot is held to.
+        let held = jojobot
+            .memory
+            .recall(&bot)
+            .await
+            .expect("recall ok")
+            .into_iter()
+            .filter(|fact| {
+                fact.fields
+                    .keys()
+                    .any(|key| jojobot_domain::session::role_from_field_key(key).is_some())
+            })
+            .count();
+        assert_eq!(held, 1, "a claim record was written again");
+        assert!(
+            jojobot_domain::memory::rules_in_force(
+                &jojobot.memory.recall(&bot).await.expect("recall ok")
+            )
+            .is_empty(),
+            "lease bookkeeping read as a rule"
+        );
+    }
+
     /// **Wrapping keeps the current unpublished focus beside the story, as a
     /// FIELD on the closing entry — never glued onto its front as text.** The
     /// operator's ruling. A session's `focus` is a machine label, set as a

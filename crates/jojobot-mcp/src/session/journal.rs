@@ -245,10 +245,11 @@ impl Jojobot {
     /// [`Jojobot::renew_role_claims`] does, rather than a graph-wide search
     /// for the sid.
     ///
-    /// Cleared through the ordinary field-edit path
-    /// ([`Memory::update_fact`], `clear_fields`), the same call a renewal
-    /// makes, so a racing fresh claimant meets a record with nothing left
-    /// on it rather than a bespoke release mechanism.
+    /// **The holder is cleared**, through the ordinary field-edit path
+    /// ([`Memory::update_fact`], `clear_fields`), and the moment is written as
+    /// the epoch. A write of this session's that was in flight when the wrap
+    /// landed then finds no holder to renew: the store applies a renewal only
+    /// while its own sid still holds the role.
     ///
     /// Best-effort: a read or write failure here is logged and never turns a
     /// wrap that landed into a failed call.
@@ -257,26 +258,24 @@ impl Jojobot {
             .await;
     }
 
-    /// **The one mechanism behind claim, renew and release alike: a
-    /// self-claim, atomic against the store's live state, differing only in
-    /// what `claimed_at` is written as.** Renewing writes `now`, exactly the
-    /// shape a fresh claim writes; releasing writes the UNIX epoch, which
-    /// reads as stale to the very next [`crate::session::claim_role`] call —
-    /// functionally identical to clearing the fields, without a second
-    /// atomic-check shape for the store to carry.
+    /// **The one mechanism behind renew and release: a move the store
+    /// applies only while this sid still holds the role.** A renewal writes
+    /// the holder and `now`; a release clears the holder and writes the UNIX
+    /// epoch. Both carry a [`RoleMove`], which is what tells the store they
+    /// are not claims: a claim may take a role nobody holds, so a renewal
+    /// decided as a claim would lease the role again to a session whose
+    /// release landed an instant earlier.
     ///
-    /// **Both are compare-and-write, not read-then-write.** Both go through
-    /// `role_write_in` writing BOTH of a role's fields together, so
-    /// [`crate::session::claim_role`]'s own guard runs, atomically, inside
-    /// the store's write: `holder != claimant` refuses it. A rival that took
-    /// over between this function's own pre-read and its write is
-    /// protected by that guard, not by the pre-read, which exists only to
-    /// find which roles are worth attempting — the same shape the claim
-    /// path's own pre-read already has.
+    /// **Both are compare-and-write, not read-then-write.** The store checks
+    /// the holder in the same act as the write, so a rival that took over, or
+    /// a release that landed, between this function's own pre-read and its
+    /// write is protected by that check, not by the pre-read, which exists
+    /// only to find which roles are worth attempting.
     ///
-    /// **A `RoleTaken` refusal here is success, not failure**: it is
-    /// exactly "apply only while the holder is still this sid; otherwise
-    /// change nothing", so it is not logged as an error. A `Conflict` is
+    /// **A `RoleTaken` or `RoleNotHeld` refusal here is success, not
+    /// failure**: it is exactly "apply only while the holder is still this
+    /// sid; otherwise change nothing", so it is not logged as an error. A
+    /// `Conflict` is
     /// retried once — the store's own optimistic concurrency caught a
     /// genuine simultaneous write, and retrying the same call is the
     /// documented, correct response to it, not a guess.
@@ -326,19 +325,43 @@ impl Jojobot {
                 continue;
             };
             let address = FactAddress::new(bot.clone(), backing.fact.clone());
-            let patch = || FactPatch {
-                fields: std::collections::BTreeMap::from([
-                    (holder_key.clone(), claimant.to_string()),
-                    (claimed_at_key.clone(), at.to_string()),
-                ]),
-                ..Default::default()
+            let kind = if verb == "release" {
+                jojobot_domain::session::RoleMoveKind::Release
+            } else {
+                jojobot_domain::session::RoleMoveKind::Renew
+            };
+            let role_move = || {
+                Some(jojobot_domain::session::RoleMove {
+                    kind,
+                    role: role.clone(),
+                    claimant: claimant.to_string(),
+                })
+            };
+            let patch = || match kind {
+                jojobot_domain::session::RoleMoveKind::Renew => FactPatch {
+                    fields: std::collections::BTreeMap::from([
+                        (holder_key.clone(), claimant.to_string()),
+                        (claimed_at_key.clone(), at.to_string()),
+                    ]),
+                    role_move: role_move(),
+                    ..Default::default()
+                },
+                jojobot_domain::session::RoleMoveKind::Release => FactPatch {
+                    fields: std::collections::BTreeMap::from([(
+                        claimed_at_key.clone(),
+                        at.to_string(),
+                    )]),
+                    clear_fields: vec![holder_key.clone()],
+                    role_move: role_move(),
+                    ..Default::default()
+                },
             };
             let mut outcome = self.memory.update_fact(&address, patch(), bot).await;
             if matches!(outcome, Err(MemoryError::Conflict)) {
                 outcome = self.memory.update_fact(&address, patch(), bot).await;
             }
             match outcome {
-                Ok(_) | Err(MemoryError::RoleTaken { .. }) => {}
+                Ok(_) | Err(MemoryError::RoleTaken { .. } | MemoryError::RoleNotHeld { .. }) => {}
                 Err(e) => {
                     tracing::warn!(error = %e, %bot, role, verb, "a role claim write failed");
                 }

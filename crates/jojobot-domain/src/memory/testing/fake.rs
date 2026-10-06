@@ -1595,27 +1595,11 @@ impl Memory for InMemoryMemory {
         // atomically with the write it gates** — the same check `capture`
         // runs, against the same folded state under the same lock, so a
         // renewal and a fresh claim are one mechanism rather than two.
-        if let Some((role, claimant, now)) = crate::session::role_write_in(&patch.fields) {
+        if let Some(role) = super::super::role_of_patch(&patch) {
             let folded =
                 super::super::folded_fields(&self.writes_on(&key, &facts), &self.declarations());
-            let current_holder = folded.get(&crate::session::role_holder_key(&role));
-            let current_claimed_at = folded
-                .get(&crate::session::role_claimed_at_key(&role))
-                .and_then(|s| s.parse().ok());
-            if let crate::session::LeaseClaim::Refused { holder, until } =
-                crate::session::claim_role(
-                    &claimant,
-                    current_holder.map(String::as_str),
-                    current_claimed_at,
-                    now,
-                    crate::session::LEASE_FRESHNESS,
-                )
-            {
-                return Err(MemoryError::RoleTaken {
-                    role,
-                    holder,
-                    until,
-                });
+            if let Some(refused) = super::super::refuses_role_patch(&patch, &role, &folded) {
+                return Err(refused);
             }
         }
         // **The patch is applied to the record as it reads now**, so a set that

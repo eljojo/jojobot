@@ -268,9 +268,121 @@ pub async fn a_stale_holders_own_write_is_refused_once_a_rival_has_taken_over<M:
     );
 }
 
+/// **A renewal that arrives after the holder's release is refused, and the
+/// role stays free.** This is the interleaving a write in flight makes with
+/// its session's wrap: the renewal read the claim while the session still held
+/// it, the release landed, and only then does the renewal write. Taken as a
+/// claim it would lease the role to a session that is over; as a renewal it
+/// applies only while its own sid holds the role.
+///
+/// **Both halves**, or a store that refused every renewal would pass: the same
+/// renewal lands while its sid holds the role, and a fresh claimant takes the
+/// role the instant after the release.
+pub async fn a_renewal_after_a_release_is_refused_and_the_role_stays_free<M: Memory>(store: &M) {
+    let bot = EntityId("bot:contract-role-renew-after-release".into());
+    ensure(store, &bot).await;
+    let t0 = crate::session::testing::contract::epoch() + jiff::SignedDuration::from_secs(60);
+    let later = t0 + jiff::SignedDuration::from_secs(60);
+    let move_of = |kind| {
+        Some(crate::session::RoleMove {
+            kind,
+            role: ROLE.to_string(),
+            claimant: "delta".to_string(),
+        })
+    };
+    let renew = |at| FactPatch {
+        fields: role_fields("delta", at),
+        role_move: move_of(crate::session::RoleMoveKind::Renew),
+        ..FactPatch::default()
+    };
+
+    let claimed = capture(
+        store,
+        NewFact {
+            fields: role_fields("delta", t0),
+            ..NewFact::about(bot.clone(), "delta claims the role", date(2026, 7, 1))
+        },
+    )
+    .await;
+
+    // The positive: while delta holds the role, its renewal lands.
+    let renewed = store
+        .update_fact(&claimed.address(), renew(later), &bot)
+        .await;
+    assert!(
+        matches!(renewed, Ok(Guarded::Written(_))),
+        "a holder's own renewal must land, or this proves nothing: {renewed:?}"
+    );
+
+    // The release lands: the holder is cleared and the moment reads as stale.
+    let released = store
+        .update_fact(
+            &claimed.address(),
+            FactPatch {
+                fields: [(
+                    crate::session::role_claimed_at_key(ROLE),
+                    jiff::Timestamp::UNIX_EPOCH.to_string(),
+                )]
+                .into_iter()
+                .collect(),
+                clear_fields: vec![crate::session::role_holder_key(ROLE)],
+                role_move: move_of(crate::session::RoleMoveKind::Release),
+                ..FactPatch::default()
+            },
+            &bot,
+        )
+        .await;
+    assert!(
+        matches!(released, Ok(Guarded::Written(_))),
+        "the holder's own release must land: {released:?}"
+    );
+    let fields = folded_fields_of(store, &bot).await;
+    assert_eq!(
+        fields.get(&crate::session::role_holder_key(ROLE)),
+        None,
+        "a release clears the holder: {fields:?}"
+    );
+
+    // The renewal that was in flight arrives now.
+    let late = store
+        .update_fact(
+            &claimed.address(),
+            renew(later + jiff::SignedDuration::from_secs(1)),
+            &bot,
+        )
+        .await;
+    assert!(
+        matches!(late, Err(MemoryError::RoleNotHeld { .. })),
+        "a renewal after the release must be refused: {late:?}"
+    );
+    let fields = folded_fields_of(store, &bot).await;
+    assert_eq!(
+        fields.get(&crate::session::role_holder_key(ROLE)),
+        None,
+        "a refused renewal leaves the role free: {fields:?}"
+    );
+
+    // And the role is free for a fresh claimant at once.
+    let fresh = store
+        .update_fact(
+            &claimed.address(),
+            FactPatch {
+                fields: role_fields("epsilon", later + jiff::SignedDuration::from_secs(2)),
+                ..FactPatch::default()
+            },
+            &bot,
+        )
+        .await;
+    assert!(
+        matches!(fresh, Ok(Guarded::Written(_))),
+        "a fresh claimant takes the released role: {fresh:?}"
+    );
+}
+
 pub async fn run_all_role_claims<M: Memory>(store: &M) {
     a_second_capture_racing_the_first_is_refused(store).await;
     a_rival_update_fact_claim_is_refused_while_the_lease_is_fresh(store).await;
     two_concurrent_captures_race_and_exactly_one_wins(store).await;
     a_stale_holders_own_write_is_refused_once_a_rival_has_taken_over(store).await;
+    a_renewal_after_a_release_is_refused_and_the_role_stays_free(store).await;
 }

@@ -372,6 +372,7 @@ impl Jojobot {
                 Err(refused) => return Ok(refused),
             },
             aged_before: None,
+            role_move: None,
         };
         // **`keep` is the one designed way to re-assert a claim on purpose,
         // and the one thing this call refuses rather than silently

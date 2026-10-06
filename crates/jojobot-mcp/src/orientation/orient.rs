@@ -806,7 +806,12 @@ impl Jojobot {
         let existing = match self.memory.recall(bot).await {
             Ok(facts) => facts
                 .into_iter()
-                .find(|f| f.fields.contains_key(&holder_key)),
+                // **Either key names the claim record**: a release clears the
+                // holder and keeps the moment, and the next claim patches that
+                // record rather than writing a second one.
+                .find(|f| {
+                    f.fields.contains_key(&holder_key) || f.fields.contains_key(&claimed_at_key)
+                }),
             Err(e) => {
                 tracing::warn!(
                     error = %e, %bot, role,

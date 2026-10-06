@@ -301,6 +301,33 @@ pub fn lease_verdict(
     }
 }
 
+/// **What a write to a role's own fields is, when it is not a claim.**
+///
+/// A renewal and a release both name the holder they act for, and the store
+/// applies them ONLY WHILE that sid still holds the role. A claim may take a
+/// role nobody holds, so a renewal that was decided as a claim would lease
+/// the role again to a session whose release landed an instant earlier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RoleMoveKind {
+    /// Keeps the holder's lease fresh: writes the holder and a new moment.
+    Renew,
+    /// Gives the role up: clears the holder and writes a moment that reads as
+    /// stale.
+    Release,
+}
+
+/// **A renewal or a release, naming whose it is.** Set only by this crate's
+/// own code, never by a caller of a verb.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoleMove {
+    /// Which of the two this is.
+    pub kind: RoleMoveKind,
+    /// The role it acts on.
+    pub role: String,
+    /// The session id it acts for.
+    pub claimant: String,
+}
+
 /// One claim's outcome.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LeaseClaim {

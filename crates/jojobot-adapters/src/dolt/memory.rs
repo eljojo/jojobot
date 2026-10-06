@@ -2928,26 +2928,12 @@ impl Memory for DoltMemory {
         // atomically with the write it gates** — the same check `capture`
         // runs, against the same folded state under the same transaction,
         // so a renewal and a fresh claim are one mechanism rather than two.
-        if let Some((role, claimant, now)) = jojobot_domain::session::role_write_in(&patch.fields) {
+        if let Some(role) = jojobot_domain::memory::role_of_patch(&patch) {
             let folded = Self::held_by(&mut tx, &key).await?;
-            let current_holder = folded.get(&jojobot_domain::session::role_holder_key(&role));
-            let current_claimed_at = folded
-                .get(&jojobot_domain::session::role_claimed_at_key(&role))
-                .and_then(|s| s.parse().ok());
-            if let jojobot_domain::session::LeaseClaim::Refused { holder, until } =
-                jojobot_domain::session::claim_role(
-                    &claimant,
-                    current_holder.map(String::as_str),
-                    current_claimed_at,
-                    now,
-                    jojobot_domain::session::LEASE_FRESHNESS,
-                )
+            if let Some(refused) =
+                jojobot_domain::memory::refuses_role_patch(&patch, &role, &folded)
             {
-                return Err(MemoryError::RoleTaken {
-                    role,
-                    holder,
-                    until,
-                });
+                return Err(refused);
             }
         }
         // What the ADDRESSED RECORD carries right now — read off before the

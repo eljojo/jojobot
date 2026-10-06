@@ -759,6 +759,7 @@ pub(crate) fn memory_error(e: MemoryError) -> McpError {
         | MemoryError::BreaksType { .. }
         | MemoryError::BreaksSchedule { .. }
         | MemoryError::BootTooHeavy { .. }
+        | MemoryError::RoleNotHeld { .. }
         | MemoryError::UnknownFact { .. }
         | MemoryError::UnknownEntity { .. }
         | MemoryError::NotYours { .. }
