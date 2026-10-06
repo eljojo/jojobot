@@ -5371,6 +5371,36 @@ async fn a_merge_carries_the_duplicates_names_and_leaves_both_pages() {
             .is_some_and(|said| said.contains("place:ocean-avenue")),
         "the receipt does not say where the duplicate's page stays: {receipt}",
     );
+    // **The receipt says what a recall of the folded handle returns**, and the
+    // recall returns exactly that: a status naming the survivor, with no page
+    // of its own. The survivor's handle is the positive the absence of
+    // "forwards" rests on.
+    let said = receipt["prose_stayed"].as_str().expect("prose_stayed");
+    assert!(
+        said.contains("merged_into") && said.contains("place:moes-tavern"),
+        "the receipt does not say the folded handle names its survivor: {receipt}",
+    );
+    assert!(
+        !said.contains("forwards"),
+        "the receipt still says the folded handle forwards: {receipt}",
+    );
+    let husk = json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                subject: Some("place:ocean-avenue".into()),
+                prose: Some(true),
+                ..of_nothing()
+            }))
+            .await
+            .expect("recall ok"),
+    )["objects"][0]
+        .clone();
+    assert_eq!(husk["status"], "merged", "{husk}");
+    assert_eq!(husk["merged_into"], "place:moes-tavern", "{husk}");
+    assert!(
+        husk.get("prose").is_none(),
+        "the folded handle serves prose: {husk}"
+    );
 
     let survivor = json_of(
         &jojobot

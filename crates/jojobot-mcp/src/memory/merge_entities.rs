@@ -144,8 +144,8 @@ impl Jojobot {
         let mut body = serde_json::json!({
             "survivor": entity_json(&done.survivor),
             // **The handle that went, said back with where it now sends a
-            // reader.** A caller holding it needs to know it still answers and
-            // no longer names a thing of its own.
+            // reader.** A recall of it answers that it was merged and names the
+            // survivor in `merged_into`, and holds nothing of its own.
             "merged": done.folded.as_str(),
             "now_resolves_to": done.survivor.id.as_str(),
             // **The account, because it is what makes the act readable later.**
@@ -156,12 +156,14 @@ impl Jojobot {
             "claims_moved": done.rehomed,
             "addresses_changed": done.rehomed > 0,
             // **What did not move, said back.** The survivor keeps its own page
-            // and the duplicate's stays readable where it was, so a caller who
+            // and the duplicate's page is not carried over, so a caller who
             // wanted the two combined knows to do that by hand.
             "prose_stayed": format!(
-                "the survivor keeps its own prose; the duplicate's prose stays readable on {}, \
-                 which forwards",
+                "the survivor keeps its own prose and the duplicate's prose is not carried over; \
+                 a recall of {} answers status merged with merged_into naming {}, and serves no \
+                 prose of its own",
                 done.folded.as_str(),
+                done.survivor.id.as_str(),
             ),
         });
         if let Some(behind) = fold_behind {
