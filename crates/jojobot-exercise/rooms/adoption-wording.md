@@ -25,8 +25,10 @@ where the store ended up.**
 
 ## The two facts
 
-* **A loan that has to end on a day** — the shipped `runs-out` type, key
-  `runs_out`.
+* **A loan that has to end on a day** — a promise, whose day is the key
+  `promised_by`. A thing under the shipped `runs-out` type, key `runs_out`,
+  holds the same day, and it counts as a shipped date key in the call-log table
+  and not as the loan's own.
 * **A decision that has to be made by a day** — the shipped `decide-by` type,
   key `decide_by`.
 
@@ -53,12 +55,15 @@ written for it and no hand-authored orientation reaches it.
 > start jojobot as assistant — Ned Flanders lent me his hedge trimmer and the loan runs out on 2026-11-03. Also I have to decide by 2026-10-20 about the tickets for the Krusty show. Keep track of both for me.
 
 ```locks
-# Each lock is the key a shipped type holds, with the day the entry gave. A
-# model that wrote the day under a key of its own leaves neither: the day is
-# in the store and nothing the type's reads can find.
-recall {"fields": [{"key": "runs_out", "value": "2026-11-03"}]}
-carries "runs_out":"2026-11-03"
-say     the loan's last day is not under the key the shipped type holds, so nothing that asks what runs out can find it
+# Each lock is where the store ended up, with the day the entry gave. The
+# loan's lock asks the day something is owed by, `due_on`, which jojobot stores
+# for every shipped type that owes by a day: a promise and a thing under
+# `runs_out` both leave it. The decision's lock asks the key its type holds. A
+# model that wrote the day under a key of its own leaves neither: the day is in
+# the store and nothing the types' reads can find.
+recall {"fields": [{"key": "due_on", "value": "2026-11-03"}]}
+carries "due_on":"2026-11-03"
+say     the loan's last day is not owed by the day it was given, so nothing that asks what is owed can find it
 
 recall {"fields": [{"key": "decide_by", "value": "2026-10-20"}]}
 carries "decide_by":"2026-10-20"
@@ -67,6 +72,6 @@ say     the day the tickets have to be sorted by is not under the key the shippe
 
 ## What this room cannot measure
 
-**Why a model chose the key it chose.** A run that wrote `runs_out` after
+**Why a model chose the key it chose.** A run that wrote `promised_by` after
 looking and one that wrote it from habit leave the same store. The call log says
 which calls came first; the transcript says what the model thought.

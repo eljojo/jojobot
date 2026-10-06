@@ -872,7 +872,7 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
     },
     NegativeControl {
         room: expectations::ADOPTION_ROOM,
-        lock: "Phase 1 — the loan's last day is not under the key the shipped type holds, so nothing that asks what runs out can find it",
+        lock: "Phase 1 — the loan's last day is not owed by the day it was given, so nothing that asks what is owed can find it",
         file: "tests/adoption_room.rs",
         function: "the_loan_lock_reds_under_an_invented_key_and_the_decision_lock_holds",
         strength: Strength::Discriminating,
@@ -886,7 +886,7 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
     },
     NegativeControl {
         room: expectations::ADOPTION_WORDING_ROOM,
-        lock: "Phase 1 — the loan's last day is not under the key the shipped type holds, so nothing that asks what runs out can find it",
+        lock: "Phase 1 — the loan's last day is not owed by the day it was given, so nothing that asks what is owed can find it",
         file: "tests/adoption_room.rs",
         function: "the_loan_lock_reds_under_an_invented_key_and_the_decision_lock_holds",
         strength: Strength::Discriminating,

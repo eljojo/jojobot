@@ -14,14 +14,19 @@
 /// **One fact a room hands over, and the shipped type that exists for it.**
 ///
 /// The type's name and the key it holds are both here because a model looks a
-/// type up by either spelling, and the room's own lock asks about the key. The
-/// day is how a write is told to belong to this fact: a call log carries no
-/// subject that says which fact a record is about, and the day the entry gave
-/// is the one thing both share.
+/// type up by either spelling. `key` is what a caller WRITES, which is what the
+/// call log shows. `asked` is what the room's lock asks the store about: the
+/// same key for a type that holds the day where it was written, and the due
+/// moment jojobot computes from the day for a fact that has more than one
+/// shipped home, so that every home holds the lock. The day is how a write is
+/// told to belong to this fact: a call log carries no subject that says which
+/// fact a record is about, and the day the entry gave is the one thing both
+/// share.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Fact {
     pub type_name: &'static str,
     pub key: &'static str,
+    pub asked: &'static str,
     pub day: &'static str,
 }
 
@@ -30,8 +35,9 @@ pub struct Fact {
 /// A loop's dates (`counts_from`, `last_check_in`) are a cadence and not a
 /// deadline, so a model that used one for a deadline did not move toward a
 /// shipped deadline type.
-pub const SHIPPED_DATE_KEYS: [&str; 6] = [
+pub const SHIPPED_DATE_KEYS: [&str; 7] = [
     "runs_out",
+    "promised_by",
     "decide_by",
     "valid_from",
     "valid_until",
@@ -41,15 +47,22 @@ pub const SHIPPED_DATE_KEYS: [&str; 6] = [
 
 /// **The two facts the adoption rooms hand over**: a loan that has to end on a
 /// day, and a decision that has to be made by a day.
+///
+/// The loan's home is a promise, whose day is `promised_by`. A loan under
+/// `runs_out` is still in the store under a shipped key, so it reads as "some
+/// shipped date key" and not as the loan's own. The room's lock asks for the
+/// stored due moment, `due_on`, which a loan holds under either key.
 pub const FACTS: [Fact; 2] = [
     Fact {
-        type_name: "runs-out",
-        key: "runs_out",
+        type_name: "promise",
+        key: "promised_by",
+        asked: "due_on",
         day: "2026-11-03",
     },
     Fact {
         type_name: "decide-by",
         key: "decide_by",
+        asked: "decide_by",
         day: "2026-10-20",
     },
 ];
@@ -325,6 +338,7 @@ mod tests {
         [Fact {
             type_name,
             key,
+            asked: key,
             day,
         }]
     }
@@ -399,6 +413,34 @@ mod tests {
         let row = read("E0", 1, &fixture("adoption-adopted.jsonl"), &facts);
         assert_eq!(row.used, Used::Partly, "{row:?}");
         assert_eq!(row.used_any, Used::Partly, "{row:?}");
+    }
+
+    /// **The loan's own key is a promise's day, and `runs_out` is only some
+    /// shipped date key.**
+    ///
+    /// The recorded adopted run's write, with its key and day replaced by the
+    /// room's: the same call, the same shape, another key. A write under
+    /// `promised_by` against the loan's day is the loan's own key, and one under
+    /// `runs_out` against the same day is a shipped key that is not the loan's.
+    #[test]
+    fn the_loan_scores_under_a_promises_day_and_runs_out_is_only_some_shipped_key() {
+        let adopted = fixture("adoption-adopted.jsonl");
+        let loan = &FACTS[..1];
+        let promised = adopted
+            .replace("decide_by", "promised_by")
+            .replace("2026-10-10", FACTS[0].day);
+        let row = read("E0", 1, &promised, loan);
+        assert_eq!(row.keys_written, vec!["promised_by".to_string()], "{row:?}");
+        assert_eq!(row.used, Used::Yes, "{row:?}");
+        assert_eq!(row.used_any, Used::Yes, "{row:?}");
+
+        let on_the_thing = adopted
+            .replace("decide_by", "runs_out")
+            .replace("2026-10-10", FACTS[0].day);
+        let row = read("E0", 1, &on_the_thing, loan);
+        assert_eq!(row.keys_written, vec!["runs_out".to_string()], "{row:?}");
+        assert_eq!(row.used, Used::No, "{row:?}");
+        assert_eq!(row.used_any, Used::Yes, "{row:?}");
     }
 
     /// **A write that takes keys off is a correction.**

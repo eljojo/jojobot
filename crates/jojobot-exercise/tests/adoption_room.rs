@@ -239,16 +239,18 @@ fn the_wording_arm_changes_the_words_and_nothing_else() {
 ///
 /// `adoption::FACTS` is what the call-log reader asks about and the locks are
 /// what the store is asked about. A key that moved in one and not the other
-/// would make the table and the locks disagree about what a run did.
+/// would make the table and the locks disagree about what a run did. A fact
+/// the store holds under more than one shipped home is asked about by the due
+/// moment all of them leave, and says so in `asked`.
 #[test]
 fn the_facts_the_harness_reads_are_the_keys_the_locks_ask_for() {
     for which in BOTH {
         let text = std::fs::read_to_string(expectations::room_document(which)).expect("readable");
         for fact in FACTS {
             assert!(
-                text.contains(&format!("\"key\": \"{}\"", fact.key)),
+                text.contains(&format!("\"key\": \"{}\"", fact.asked)),
                 "{which} has no lock asking for {}",
-                fact.key,
+                fact.asked,
             );
         }
     }
@@ -303,6 +305,91 @@ async fn every_lock_holds_when_the_facts_are_filed_under_the_shipped_keys() {
                 saying(&outcomes)
             );
         }
+    }
+}
+
+/// **The loan filed as a promise, with the key the harness reads for it.**
+///
+/// A promise needs somebody whose job it is to keep it, so the occupant makes
+/// that person first. The key is `FACTS[0].key`, not a literal: a key the
+/// store does not know leaves no due moment, so the lock holding is what says
+/// the harness reads the key the store owes by.
+async fn the_loan_as_a_promise(room: &Surface, sid: &str, key: &str) {
+    for args in [
+        json!({"kind": "person", "handle": "ned-flanders", "name": "Ned Flanders",
+               "source": "user-named"}),
+        json!({"kind": "promise", "handle": "return-the-wrench", "name": "Return the wrench",
+               "source": "user-named", "parent": "person:ned-flanders"}),
+    ] {
+        as_the_occupant(room, sid, "add_entity", args).await;
+    }
+    as_the_occupant(
+        room,
+        sid,
+        "capture",
+        json!({
+            "subject": "promise:return-the-wrench",
+            "content": "On loan; it has to go back.",
+            "provenance": "testimony",
+            "fields": {key: "2026-11-03"},
+        }),
+    )
+    .await;
+}
+
+/// **The loan lock judges the end state: a promise holds it as `runs_out`
+/// does, and a promise under a key of the model's own reds it.**
+///
+/// Every other fact is right in both runs, so only the loan differs. The
+/// decision's lock holds throughout.
+#[tokio::test]
+async fn the_loan_lock_holds_for_a_promise_and_reds_when_the_promise_has_an_invented_key() {
+    for which in BOTH {
+        let (_room, surface, sid) = furnished(which).await;
+        with_the_two_things(&surface, &sid).await;
+        the_loan_as_a_promise(&surface, &sid, FACTS[0].key).await;
+        as_the_occupant(
+            &surface,
+            &sid,
+            "capture",
+            json!({
+                "subject": "event:wagstaff-fair",
+                "content": "The tickets have to be sorted by a day.",
+                "provenance": "testimony",
+                "fields": {"decide_by": "2026-10-20"},
+            }),
+        )
+        .await;
+        let outcomes = judge_all(&surface, which).await;
+        assert!(
+            outcomes.iter().all(|o| o.held),
+            "{which}: a loan filed as a promise: {}",
+            saying(&outcomes)
+        );
+
+        let (_room, surface, sid) = furnished(which).await;
+        with_the_two_things(&surface, &sid).await;
+        the_loan_as_a_promise(&surface, &sid, "needed_by").await;
+        as_the_occupant(
+            &surface,
+            &sid,
+            "capture",
+            json!({
+                "subject": "event:wagstaff-fair",
+                "content": "The tickets have to be sorted by a day.",
+                "provenance": "testimony",
+                "fields": {"decide_by": "2026-10-20"},
+            }),
+        )
+        .await;
+        let outcomes = judge_all(&surface, which).await;
+        let held: Vec<bool> = outcomes.iter().map(|o| o.held).collect();
+        assert_eq!(
+            held,
+            vec![false, true],
+            "{which}: a promise under an invented key: {}",
+            saying(&outcomes)
+        );
     }
 }
 
