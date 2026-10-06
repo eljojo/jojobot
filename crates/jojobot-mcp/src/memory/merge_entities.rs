@@ -596,6 +596,78 @@ mod tests {
         assert_eq!(fits["merged"], "thing:kettle", "{fits}");
     }
 
+    /// **A merge into a room with no capacity does not tell the caller to
+    /// archive.** The room is empty, so there is nothing to archive; what is
+    /// true is that a different identity has to raise `thought_capacity` first.
+    /// The capacity-one case above is the paired positive: the same refusal
+    /// there still says to archive.
+    #[tokio::test]
+    async fn a_merge_into_a_room_with_no_capacity_names_who_raises_the_ceiling() {
+        use crate::memory::testing::{capture_args, capture_ok, ensure};
+
+        let jojobot = handler();
+        let sid = writing_as(&jojobot);
+        ensure(&jojobot, "bot:otto").await;
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                fields: Some(
+                    [(
+                        jojobot_domain::memory::THOUGHT_CAPACITY.to_string(),
+                        "0".to_string(),
+                    )]
+                    .into_iter()
+                    .collect(),
+                ),
+                ..capture_args("bot:milhouse", "capacity is none")
+            },
+        )
+        .await;
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                shape: Some("connection".into()),
+                object: Some("thing:the-air-filter".into()),
+                ..capture_args("thing:jukebox", "the jukebox needs a needle")
+            },
+        )
+        .await;
+
+        let refused = blocked(
+            &jojobot
+                .merge_entities(Parameters(MergeArgs {
+                    duplicate: "thing:jukebox".into(),
+                    survivor: "bot:milhouse".into(),
+                    reason: None,
+                    recorded_at: None,
+                    sid: Some(sid.clone()),
+                }))
+                .await
+                .expect("a refusal is an answer, not a failure"),
+        );
+        assert_eq!(refused["wrote"], false, "{refused}");
+        let how = refused["how_to_proceed"]
+            .as_str()
+            .expect("a refusal says how to proceed");
+        for named in [
+            jojobot_domain::memory::THOUGHT_CAPACITY,
+            "different identity",
+        ] {
+            assert!(
+                how.contains(named),
+                "the refusal does not name {named}: {how}"
+            );
+        }
+        assert!(
+            !how.contains("archived"),
+            "the refusal sends the caller to archive thoughts in a room that holds none: {how}"
+        );
+        assert!(
+            refused["archive_needed"].is_null(),
+            "the refusal counts thoughts to archive in a room that holds none: {refused}"
+        );
+    }
+
     /// **A merge cannot land a thought over the survivor's body cap.** The
     /// refusal names where the thought is now, on the duplicate, because the
     /// caller never wrote it on the survivor; shortening it there, as the

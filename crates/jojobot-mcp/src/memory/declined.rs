@@ -682,6 +682,10 @@ pub(crate) fn memory_declined(
             incoming,
             ref room,
         } => {
+            // **A room with no capacity holds nothing**, so there is no thought
+            // to archive. The ceiling has to move first, and it is not this
+            // caller's to move — the branch `RoomFull` takes for the same room.
+            let empty_room_without_capacity = live == 0 && capacity == 0;
             let archive_needed = live + incoming - capacity;
             let body = serde_json::json!({
                 "status": "blocked",
@@ -695,13 +699,22 @@ pub(crate) fn memory_declined(
                     }))
                     .collect::<Vec<_>>(),
                 "incoming": incoming,
-                "archive_needed": archive_needed,
-                "how_to_proceed": format!(
-                    "Nothing was merged: '{subject}'s room holds {live} of {capacity}, and this \
-                     merge brings {incoming} more thoughts. Archive {archive_needed} of the \
-                     thoughts above with update_fact (status: archived, and details saying why \
-                     it no longer earns its slot), then re-call {verb}."
-                ),
+                "archive_needed": (!empty_room_without_capacity).then_some(archive_needed),
+                "how_to_proceed": if empty_room_without_capacity {
+                    format!(
+                        "Nothing was merged: '{subject}'s room has a capacity of 0, so it holds \
+                         no thoughts and this merge brings {incoming}. There is none to archive. \
+                         A different identity has to give '{subject}' a thought_capacity above \
+                         0 — ask another bot, or the operator — then re-call {verb}."
+                    )
+                } else {
+                    format!(
+                        "Nothing was merged: '{subject}'s room holds {live} of {capacity}, and \
+                         this merge brings {incoming} more thoughts. Archive {archive_needed} of \
+                         the thoughts above with update_fact (status: archived, and details \
+                         saying why it no longer earns its slot), then re-call {verb}."
+                    )
+                },
             });
             Ok(CallToolResult::success(vec![ContentBlock::text(
                 body.to_string(),
