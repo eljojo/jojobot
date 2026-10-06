@@ -1861,6 +1861,87 @@ pub async fn referring_to_follows_a_declared_reference_key<M: Memory>(store: &M)
     );
 }
 
+/// **A reference to a thing that was renamed is found under the handle the
+/// thing wears now.** A declared reference is stored as the target's permanent
+/// id and read back as its current handle, so the far end of the link has to
+/// follow a rename. A record pointing at some other thing is not in the
+/// answer, so a store that returned every holder cannot pass.
+pub async fn referring_to_finds_a_reference_to_a_renamed_target<M: Memory>(store: &M) {
+    store
+        .declare_type(DeclaredType::new(
+            "contract-renamed-pointing",
+            vec![Field::required(
+                "contract_renamed_points_at",
+                ValueType::Reference,
+            )],
+        ))
+        .await
+        .expect("the declaration lands");
+    let was = EntityId("event:contract-renamed-gate-was".into());
+    let now = EntityId("event:contract-renamed-gate-now".into());
+    let other = EntityId("event:contract-renamed-other".into());
+    let holder = EntityId("person:contract-renamed-holder".into());
+    let bystander = EntityId("person:contract-renamed-bystander".into());
+    for (id, name) in [
+        (&was, "Contract Renamed Gate Was"),
+        (&other, "Contract Renamed Other"),
+        (&holder, "Contract Renamed Holder"),
+        (&bystander, "Contract Renamed Bystander"),
+    ] {
+        add(store, NewEntity::new(id.clone(), name, "contract-fixture")).await;
+    }
+    let pointing_at = |target: &EntityId| -> std::collections::BTreeMap<String, String> {
+        [("contract_renamed_points_at".to_string(), target.to_string())]
+            .into_iter()
+            .collect()
+    };
+    let held = capture(
+        store,
+        NewFact {
+            fields: pointing_at(&was),
+            ..NewFact::about(
+                holder.clone(),
+                "points at the gate before it is renamed",
+                date(2026, 8, 1),
+            )
+        },
+    )
+    .await;
+    capture(
+        store,
+        NewFact {
+            fields: pointing_at(&other),
+            ..NewFact::about(
+                bystander.clone(),
+                "points at the other one",
+                date(2026, 8, 1),
+            )
+        },
+    )
+    .await;
+
+    store
+        .rename_entity(&was, &now, None, date(2026, 8, 2), None)
+        .await
+        .expect("the rename lands")
+        .written()
+        .expect("nothing collides with the new handle");
+
+    let found: Vec<String> = store
+        .referring_to(&now)
+        .await
+        .expect("a store answers who points here")
+        .iter()
+        .map(|fact| fact.address().to_string())
+        .collect();
+    assert_eq!(
+        found,
+        vec![held.address().to_string()],
+        "the record pointing at the renamed gate is found under its current handle, and the one \
+         pointing at the other target is not",
+    );
+}
+
 pub async fn a_child_names_its_parent_and_reads_back<M: Memory>(store: &M) {
     let parent = EntityId("project:contract-monorail".into());
     let child = EntityId("project:contract-monorail-funding".into());
@@ -12613,6 +12694,7 @@ pub async fn run_all<M: Memory>(store: &M) {
     a_machine_read_claim_names_what_it_was_read_from(store).await;
     referring_to_answers_from_the_far_end(store).await;
     referring_to_follows_a_declared_reference_key(store).await;
+    referring_to_finds_a_reference_to_a_renamed_target(store).await;
     a_child_names_its_parent_and_reads_back(store).await;
     children_are_handles_and_one_level_deep(store).await;
     a_write_that_rewrites_a_child_leaves_it_where_it_was(store).await;
