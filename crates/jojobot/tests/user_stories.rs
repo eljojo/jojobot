@@ -57,6 +57,8 @@ mod dsl;
 mod duplicates;
 #[path = "user_stories/entitlements.rs"]
 mod entitlements;
+#[path = "user_stories/first_post.rs"]
+mod first_post;
 #[path = "user_stories/gigs.rs"]
 mod gigs;
 #[path = "user_stories/handover.rs"]

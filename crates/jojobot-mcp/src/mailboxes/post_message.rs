@@ -313,14 +313,33 @@ impl Jojobot {
         // sender's own answer where it never reaches anybody who did not send
         // this.
         let sender_mail_waiting_at_send = self.own_new_count(&caller.bot).await;
-        // **Stamped here, alongside `sender_mail_waiting_at_send`, from the
-        // same `caller` this call already resolved.** `caller.card` is `None`
-        // until this run's first write has materialized a card — the one gap
-        // this leaves is a session's own very first write being the post
-        // itself, which stamps `None` and reads back as unknown rather than
-        // as "this run" or "another run". That is the safe direction to be
-        // wrong in: it never falsely claims either.
-        let posted_by_session = caller.card.as_ref().map(|card| card.as_str().to_string());
+        // **Stamped here, alongside `sender_mail_waiting_at_send`.** A run's
+        // record is made lazily by its first write, and a post can BE that
+        // first write: stamping before the record existed left the message
+        // with no run, so `written_by_other_run` stayed silent for exactly the
+        // message a fresh run opened with. The record is made here, under the
+        // same gate a beat takes, when the caller has none yet.
+        //
+        // A post the store then refuses (a reply naming nothing) has still
+        // opened the run's record. The record carries no claim about the post:
+        // it is the run, which exists because the caller is writing.
+        let posted_by_session = match caller.card.as_ref() {
+            Some(card) => Some(card.as_str().to_string()),
+            None => {
+                let gate = self.registry.gate(&self.gate_key(Some(&args.sid)));
+                let serialized = gate.lock().await;
+                // Re-read inside the gate: a racing write may have made the
+                // record since, and a second one is the fork the gate prevents.
+                match self.caller(Some(&args.sid)) {
+                    Ok(Some(inside)) => self
+                        .session_for(&serialized, &inside, None, None)
+                        .await
+                        .ok()
+                        .map(|card| card.as_str().to_string()),
+                    _ => None,
+                }
+            }
+        };
         let new = NewMessage {
             mailbox: destination,
             body: args.body,
