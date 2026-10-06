@@ -16,7 +16,7 @@
 
 **That splits a bot's rules in two.**
 
-- **The floor rides the boot.** A few rules bind on every turn whatever the task — how this bot speaks, what it never does, how it reads its own state. **The boot carries them in a small, fixed number of seats, counted in things rather than characters.** A count is something every writer can know about before writing, which a character budget is not.
+- **The floor rides the boot.** Some rules bind on every turn whatever the task — how this bot speaks, what it never does, how it reads its own state. **So does any rule that bears on everything**: drawn as an edge to every thread it is noise on every walk, and drawn to none it is invisible. **The boot carries the floor in seats, and the number of seats is a ceiling on the bot like any other** (see *Containers — a bounded thing refuses what would overfill it*): sized to the bot, set by somebody other than the bot, and bounded overall by what one boot answer can carry. A worker on one slice needs a handful; a bot holding somebody's life needs far more.
 - **Everything else is fetched when it applies.** A rule that binds at one moment rides on whatever is read at that moment: the skill fetched for that job, the refusal a verb gives on that path, the thread for the feature being worked. ⭐ **The place a rule lives is chosen by asking when it bites.**
 
 ## The seats are chosen, never accumulated
@@ -45,6 +45,8 @@
 
 **Which rulings bear on which feature cannot be derived from the feature.** A ruling that decides a feature can share no word with it. ⭐ **So every edge is drawn once, by somebody who has read both ends and judged that the ruling would change what gets built** — not by whether it mentions the feature.
 
+**An edge points where the rule FIRES, not only at what it is about.** A rule about smoky air bites when somebody plans Homer's Saturday, not only when somebody asks about the air; an edge to the subject alone is never walked at the moment that matters.
+
 **Knowing which rulings bear on which feature is the same knowledge as knowing how to file them.** The key and the tree are one artifact, built in one pass.
 
 ## A ruling's life
@@ -61,7 +63,7 @@
 
 **Not a skill.** A skill is a procedure for a kind of job. A rule may ride on a skill because that is when it bites, but it is not one.
 
-**Not everything at boot, and not a bigger boot.** Raising the seats is the "load more" half of the problem.
+**Not everything at boot.** Seats are sized to what binds every turn; a seat spent on a rule that only binds sometimes is the "load more" half of the problem.
 
 **Not an enumeration.** A ruling is a design principle. Building it as a list of today's cases makes it fire only on today's cases.
 
