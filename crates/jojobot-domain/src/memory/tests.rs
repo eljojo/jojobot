@@ -1025,3 +1025,63 @@ fn provenance_tokens_round_trip_and_degrade_to_inference() {
     assert_eq!(Provenance::from_token(""), Provenance::Inference);
     assert_eq!(Provenance::from_token("garbled"), Provenance::Inference);
 }
+
+/// **A bot's seats are the number it carries, and anything that is not a whole
+/// number above zero reads as no key at all.** Each non-number is paired with
+/// the number that is read, or a reader that ignored the key would pass them.
+#[test]
+fn a_bots_seats_read_a_whole_number_and_nothing_else() {
+    let held = |value: &str| -> BTreeMap<String, String> {
+        [(RULE_SEATS.to_string(), value.to_string())]
+            .into_iter()
+            .collect()
+    };
+    assert_eq!(rule_seats_of(&held("8")), 8);
+    assert_eq!(rule_seats_of(&held(" 12 ")), 12);
+    let default = crate::text::CARRIED_RULES;
+    assert_eq!(rule_seats_of(&BTreeMap::new()), default);
+    assert_eq!(rule_seats_of(&held("0")), default);
+    assert_eq!(rule_seats_of(&held("many")), default);
+    assert_eq!(rule_seats_of(&held("-3")), default);
+}
+
+/// **The seats-full sentence and the displaced rule follow the bot's own
+/// seats.** At the count nothing is displaced; one over it, the oldest is.
+#[test]
+fn the_seat_status_counts_against_the_bots_own_seats() {
+    let starred = |n: usize| -> Vec<Fact> {
+        (1..=n)
+            .map(|i| Fact {
+                id: FactId(format!("f{i}")),
+                home: EntityId("bot:gamma".into()),
+                subject: EntityId("bot:gamma".into()),
+                content: format!("rule {i}"),
+                details: None,
+                provenance: Provenance::Testimony,
+                standing: Standing::Settled,
+                status: FactStatus::Active,
+                recorded_at: jiff::civil::date(2026, 8, 1),
+                happened_at: None,
+                happened_through: None,
+                edge: None,
+                fields: [("starred".to_string(), "true".to_string())]
+                    .into_iter()
+                    .collect(),
+                refs: Vec::new(),
+                derived_from: None,
+                stands_for: Vec::new(),
+                inserted_at: None,
+                stale_after: None,
+            })
+            .collect()
+    };
+    assert!(carried_seats_status(&starred(7), 8).is_none());
+    let full = carried_seats_status(&starred(8), 8).expect("every seat taken says so");
+    assert_eq!(full.starred, 8);
+    assert!(full.dropped.is_none(), "nothing is displaced at the count");
+    let over = carried_seats_status(&starred(9), 8).expect("one over says so");
+    assert_eq!(
+        over.dropped.expect("the oldest is displaced").to_string(),
+        "bot:gamma#f1"
+    );
+}

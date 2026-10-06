@@ -29,7 +29,11 @@ impl Jojobot {
             return;
         };
         let in_force = jojobot_domain::memory::rules_in_force(&all);
-        let Some(seats) = jojobot_domain::memory::carried_seats_status(&in_force) else {
+        let seat_count = jojobot_domain::memory::rule_seats_of(
+            &self.memory.fields(&fact.subject).await.unwrap_or_default(),
+        );
+        let Some(seats) = jojobot_domain::memory::carried_seats_status(&in_force, seat_count)
+        else {
             return;
         };
         let Some(dropped) = &seats.dropped else {

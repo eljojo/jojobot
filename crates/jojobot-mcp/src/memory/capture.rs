@@ -136,7 +136,10 @@ pub struct CaptureArgs {
     /// boot spends on its rules.** Going home unmarked is normal, not a
     /// failure: an unstarred rule is fetched with `facts: true` when it is
     /// needed rather than shown by default. Seats are few on purpose —
-    /// starring everything is the same as starring nothing.
+    /// starring everything is the same as starring nothing. **How many seats
+    /// a bot has is `rule_seats`, written about it by a different identity** —
+    /// a bot cannot raise its own — and a star or a count that would leave
+    /// the boot over its size ceiling is refused, naming the overage.
     #[serde(default)]
     pub(crate) fields: Option<std::collections::BTreeMap<String, String>>,
     /// The entities this record touches, as `kind:slug` — **each must already
@@ -839,6 +842,15 @@ impl Jojobot {
             borrow: args.borrow.unwrap_or(false),
             aged_before,
         };
+        // **A star or a seat count that would take the bot's boot over its
+        // ceiling is refused here**, before anything lands — see
+        // `refuses_a_boot_floor_over`.
+        if let Some(refused) = self
+            .refuses_a_boot_floor_for_capture(&new, &caller.bot)
+            .await
+        {
+            return memory_declined("capture", refused);
+        }
         // **Disagreement, not presence alone.** A check-in with no
         // `happened_at` has asked no question, and one where both fields
         // name the same day already got the schedule right, whichever the

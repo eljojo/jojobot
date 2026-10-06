@@ -471,6 +471,15 @@ impl Jojobot {
         // copy is: this is what THIS write actually sent, not what the fact
         // ends up carrying.
         let patch_fields = patch.fields.clone();
+        // **A star or a seat count that would take the bot's boot over its
+        // ceiling is refused here**, before anything lands — see
+        // `refuses_a_boot_floor_over`.
+        if let Some(refused) = self
+            .refuses_a_boot_floor_for_edit(&address, &patch, &caller.bot)
+            .await
+        {
+            return memory_declined("update_fact", refused);
+        }
         // **The ageing cutoff, computed here and never inside `Memory`**, for
         // the reason `capture`'s own copy is. Asked only when this edit could
         // newly make the record a thought: it draws a connection edge or

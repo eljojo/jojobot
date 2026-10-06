@@ -86,6 +86,8 @@ mod pretending;
 mod receipts;
 #[path = "user_stories/rhythms.rs"]
 mod rhythms;
+#[path = "user_stories/rule_seats.rs"]
+mod rule_seats;
 /// One charter, and a session never learns which half the build supplied.
 #[path = "user_stories/shipping.rs"]
 mod shipping;

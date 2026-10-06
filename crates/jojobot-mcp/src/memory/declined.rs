@@ -403,6 +403,18 @@ pub(crate) fn memory_declined(
                 keys.join(", ")
             ),
         )),
+        // **Three ways down, and the caller picks the one that costs least.**
+        // Which rules are starred and how many seats a bot has are data, so
+        // none of them is chosen for the caller.
+        MemoryError::BootTooHeavy { ref subject, .. } => Ok(blocked_body(
+            &EntityId(String::new()),
+            &[],
+            format!(
+                "Nothing was written: {e}. Unstar a rule on {subject} with update_fact, shorten \
+                 the rules that are starred, or lower rule_seats — and a rule that binds at one \
+                 moment is better carried by a skill than by a seat."
+            ),
+        )),
         // **The way forward is one more key in the SAME call.** The cadence is
         // fine and the loop is fine; what is missing is the date it counts
         // from, and a caller who sends it now makes the loop whole in one
@@ -734,6 +746,7 @@ pub(crate) fn memory_error(e: MemoryError) -> McpError {
         | MemoryError::BreaksFit { .. }
         | MemoryError::BreaksType { .. }
         | MemoryError::BreaksSchedule { .. }
+        | MemoryError::BootTooHeavy { .. }
         | MemoryError::UnknownFact { .. }
         | MemoryError::UnknownEntity { .. }
         | MemoryError::NotYours { .. }

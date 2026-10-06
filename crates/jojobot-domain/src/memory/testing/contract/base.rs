@@ -1,7 +1,8 @@
 use super::support::{add, capture, edit, ensure, other_caller};
 use super::*;
 use crate::memory::{
-    DEFAULT_THOUGHT_BODY_CAP, READ_FROM, READ_REF, THOUGHT_BODY_CAP, THOUGHT_CAPACITY, thought_room,
+    DEFAULT_THOUGHT_BODY_CAP, READ_FROM, READ_REF, RULE_SEATS, THOUGHT_BODY_CAP, THOUGHT_CAPACITY,
+    thought_room,
 };
 
 /// Add an entity the guard is expected to **refuse first** — the way a
@@ -3694,6 +3695,43 @@ pub async fn a_bots_room_enforces_its_capacity<M: Memory>(store: &M) {
         room.iter().any(|f| f.id == landed.id),
         "the new thought is in the room: {room:?}"
     );
+}
+
+/// **A bot's own boot seats are not its own to set.** The seat count is a
+/// ceiling the bot it binds cannot write, exactly as its room's capacity is:
+/// an edit naming it is refused for the bot that owns the handle and lands for
+/// another identity. Both halves, or a guard that refused every identity would
+/// pass.
+pub async fn a_bots_own_boot_seats_are_not_its_own_to_set<M: Memory>(store: &M) {
+    let bot = EntityId("bot:contract-ceiling-fold".into());
+    ensure(store, &bot).await;
+    let record = capture(
+        store,
+        NewFact::about(
+            bot.clone(),
+            "a rule about nothing in particular",
+            date(2026, 8, 1),
+        ),
+    )
+    .await;
+    let patch = FactPatch {
+        fields: [(RULE_SEATS.to_string(), "8".to_string())]
+            .into_iter()
+            .collect(),
+        ..Default::default()
+    };
+    let refused = store
+        .update_fact(&record.address(), patch.clone(), &bot)
+        .await
+        .expect_err("a bot cannot raise its own seats");
+    assert!(
+        matches!(&refused, MemoryError::SelfCeiling { key, .. } if key == RULE_SEATS),
+        "expected SelfCeiling naming the seat key, got {refused:?}"
+    );
+    store
+        .update_fact(&record.address(), patch, &other_caller())
+        .await
+        .expect("the same change lands for another identity");
 }
 
 /// **The ceiling guard reads the FOLD, not the key this write spells.**
@@ -12167,6 +12205,7 @@ pub async fn run_all<M: Memory>(store: &M) {
     a_pet_is_its_own_kind_in_the_store(store).await;
     a_rhythm_is_refused_without_a_parent(store).await;
     a_rhythm_holding_a_cadence_and_no_advances_from_is_refused(store).await;
+    a_bots_own_boot_seats_are_not_its_own_to_set(store).await;
     a_thing_reads_back_as_its_fields_folded(store).await;
     the_newest_write_wins_however_old_the_record_it_landed_in(store).await;
     a_cleared_key_is_not_resurrected_by_an_older_record(store).await;

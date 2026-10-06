@@ -68,6 +68,25 @@ pub(crate) fn booting_unknown(
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])
 }
 
+/// **The rules a boot carries: the marked ones, newest first, up to the
+/// seats.** Selected newest-first and served in the store's own order — the
+/// seats decide WHICH records ride along; they do not reorder the ones that
+/// do. A boot and a write that measures the boot's floor both read it here,
+/// so they cannot disagree about which rules ride.
+pub(crate) fn carried_rules(in_force: &[Fact], seats: usize) -> Vec<&Fact> {
+    let keep: std::collections::HashSet<_> = in_force
+        .iter()
+        .rev()
+        .filter(|rule| rule.fields.get("starred").is_some_and(|v| v == "true"))
+        .take(seats)
+        .map(|rule| rule.address())
+        .collect();
+    in_force
+        .iter()
+        .filter(|rule| keep.contains(&rule.address()))
+        .collect()
+}
+
 impl Jojobot {
     /// Who this session is: the bot's record, the charter its prose carries,
     /// the rules its facts carry, and the live state of the box it owns.
@@ -148,20 +167,13 @@ impl Jojobot {
         // first when more are marked than fit, the same tie-break every
         // other ranked list in this file uses — not a heuristic, just a
         // deterministic order to stop at.
-        let keep: std::collections::HashSet<_> = in_force
-            .iter()
-            .rev()
-            .filter(|rule| rule.fields.get("starred").is_some_and(|v| v == "true"))
-            .take(jojobot_domain::text::CARRIED_RULES)
-            .map(|rule| rule.address())
-            .collect();
-        // **Selected newest-first above, served in the store's own order
-        // here** — the cap decides WHICH records ride along; it does not
-        // reorder the ones that do.
-        let carried: Vec<_> = in_force
-            .iter()
-            .filter(|rule| keep.contains(&rule.address()))
-            .collect();
+        // **The seats are the bot's own**, read off the fields it folds to the
+        // way every other per-bot ceiling is. A store that cannot answer
+        // leaves the default, which is what a bot with no key has.
+        let seat_count = jojobot_domain::memory::rule_seats_of(
+            &self.memory.fields(bot).await.unwrap_or_default(),
+        );
+        let carried = carried_rules(&in_force, seat_count);
         let carried_count = carried.len();
         // **Unranked here, deliberately.** Ranking this identity's own prose
         // against the essay's needs the essay's own size, and that lives in
@@ -193,7 +205,7 @@ impl Jojobot {
         // its condition. [`jojobot_domain::memory::carried_seats_status`] is
         // the same call a write that stars a rule makes, so the two say the
         // same thing about the same count.
-        let seats = jojobot_domain::memory::carried_seats_status(&in_force);
+        let seats = jojobot_domain::memory::carried_seats_status(&in_force, seat_count);
         if let Some(obj) = body.as_object_mut() {
             if carried_count < total_in_force {
                 obj.insert("rules_elided".into(), true.into());

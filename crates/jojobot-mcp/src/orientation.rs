@@ -16,6 +16,7 @@ use crate::*;
 pub mod attach;
 pub mod charter;
 pub mod essay;
+pub mod floor;
 pub mod identity;
 pub mod orient;
 pub mod ping;

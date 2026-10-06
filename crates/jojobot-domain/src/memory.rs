@@ -1820,11 +1820,27 @@ pub const THOUGHT_BODY_CAP: &str = "thought_body_cap";
 /// [`THOUGHT_CAPACITY`] carries.
 pub const DEFAULT_THOUGHT_BODY_CAP: usize = 200;
 
-/// **The keys a thing cannot set for itself** — its own room's capacity and
-/// its own thoughts' body cap. Both bind the caller who owns the container
-/// they are read off, so both face [`refuses_own_ceiling`] and
-/// [`refuses_own_ceiling_change`] the same way.
-const SELF_CEILING_KEYS: [&str; 2] = [THOUGHT_CAPACITY, THOUGHT_BODY_CAP];
+/// **The key a bot's own boot seats are read from** — an ordinary field,
+/// folded like [`THOUGHT_CAPACITY`]. It is how many of the bot's marked rules
+/// one boot carries. A bot with none carries [`crate::text::CARRIED_RULES`].
+pub const RULE_SEATS: &str = "rule_seats";
+
+/// **How many seats a bot's boot has**, from the fields it folds to. A value
+/// that is not a whole number above zero reads as no key at all, so a bot
+/// never boots with nothing because of a mistyped number.
+pub fn rule_seats_of(fields: &BTreeMap<String, String>) -> usize {
+    fields
+        .get(RULE_SEATS)
+        .and_then(|held| held.trim().parse::<usize>().ok())
+        .filter(|seats| *seats > 0)
+        .unwrap_or(crate::text::CARRIED_RULES)
+}
+
+/// **The keys a thing cannot set for itself** — its own room's capacity, its
+/// own thoughts' body cap and its own boot seats. Each binds the caller who
+/// owns the thing it is read off, so all of them face [`refuses_own_ceiling`]
+/// and [`refuses_own_ceiling_change`] the same way.
+const SELF_CEILING_KEYS: [&str; 3] = [THOUGHT_CAPACITY, THOUGHT_BODY_CAP, RULE_SEATS];
 
 /// **Whether a write's own fields name a ceiling key.** The cheap question a
 /// caller asks before it spends a read on resolving who the write is about.
@@ -2041,7 +2057,7 @@ pub struct CarriedSeats {
     /// How many in-force rules carry `fields.starred == "true"`.
     pub starred: usize,
     /// The sentence to show — present once `starred` reaches
-    /// [`crate::text::CARRIED_RULES`], whatever it goes on to say beyond
+    /// the bot's seats, whatever it goes on to say beyond
     /// that.
     pub sentence: String,
     /// **The oldest starred rule, once there are more of them than seats.**
@@ -2056,18 +2072,18 @@ pub struct CarriedSeats {
 /// oldest first, the same order the boot's own selection reads before it
 /// reverses to take the newest.
 ///
-/// `None` short of [`crate::text::CARRIED_RULES`] starred rules: there is
+/// `None` short of `seats` starred rules: there is
 /// nothing to say yet, and a caller under the cap gets no sentence at all.
-pub fn carried_seats_status(in_force: &[Fact]) -> Option<CarriedSeats> {
+pub fn carried_seats_status(in_force: &[Fact], seats: usize) -> Option<CarriedSeats> {
     let starred: Vec<&Fact> = in_force
         .iter()
         .filter(|rule| rule.fields.get("starred").is_some_and(|v| v == "true"))
         .collect();
     let count = starred.len();
-    if count < crate::text::CARRIED_RULES {
+    if count < seats {
         return None;
     }
-    let dropped = (count > crate::text::CARRIED_RULES)
+    let dropped = (count > seats)
         .then(|| starred.first().map(|rule| rule.address()))
         .flatten();
     Some(CarriedSeats {
@@ -2077,7 +2093,7 @@ pub fn carried_seats_status(in_force: &[Fact]) -> Option<CarriedSeats> {
              exist. The seats are for rules that bind on every turn; a rule that binds at one \
              moment is better carried by what is read at that moment, such as a skill fetched \
              for that job.",
-            crate::text::CARRIED_RULES,
+            seats,
         ),
         dropped,
     })
@@ -3633,6 +3649,25 @@ pub enum MemoryError {
     BreaksSchedule {
         /// The values `advances_from` takes.
         accepts: Vec<String>,
+    },
+    /// **The write would leave a bot's boot over its size ceiling.**
+    ///
+    /// What a boot cannot cut — the essay's core, the snapshot, the charter,
+    /// every carried rule's own words — already measures more than the
+    /// ceiling allows. The boot never declines, so the refusal is made here,
+    /// when the star or the seat count that would cause it is written.
+    #[error(
+        "this would leave the boot of '{subject}' with {floor} characters it cannot cut, over \
+         the {budget} a boot may carry by {over}",
+        over = floor - budget
+    )]
+    BootTooHeavy {
+        /// The bot whose boot would be too heavy.
+        subject: String,
+        /// The size of what the boot cannot cut, once this write lands.
+        floor: usize,
+        /// What one boot may carry.
+        budget: usize,
     },
     /// **The write would put a value in a key that the key does not hold, on a
     /// thing that already fits the type.**

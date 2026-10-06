@@ -25,7 +25,7 @@ fn own_mail_json(mailbox: &jojobot_domain::mailbox::Mailbox) -> serde_json::Valu
 /// **Null out one rule's `details`, marked** — the same shape whichever
 /// caller reaches for it: a ranked cut, or the floor measurement below that
 /// has to know the answer's size with every rule's reasoning already gone.
-fn elide_rule_details(rule: &mut serde_json::Value) {
+pub(super) fn elide_rule_details(rule: &mut serde_json::Value) {
     let Some(details) = rule["details"].as_str().map(str::to_string) else {
         return;
     };
@@ -236,6 +236,88 @@ fn essay_for_boot(brief: bool, identity: &serde_json::Value, budget: usize) -> E
     }
 }
 
+/// **The entity half of the snapshot**, summarised from the one index read a
+/// whole answer shares. A free function so the boot and a write that measures
+/// the boot's floor summarise the same way.
+pub(super) fn entity_summary(
+    index: &Result<Vec<Entity>, jojobot_domain::memory::MemoryError>,
+) -> serde_json::Value {
+    match index {
+        Ok(entities) => {
+            // **The snapshot is a BROWSE, and a browse excludes an
+            // archived entity** — the same broad-door/direct-door split
+            // a claim's own archived state already has (`list_entities`
+            // holds it too). Offering an archived bot as one to boot as
+            // is the harm the operator's ruling is about; booting AS it
+            // by name is the direct door and is untouched by this — see
+            // `identity`, which reads `index` rather than this filtered
+            // view.
+            let browsable = || entities.iter().filter(|e| e.browsable());
+            let mut by_kind = std::collections::BTreeMap::<&str, usize>::new();
+            for e in browsable() {
+                let kind = e.id.as_str().split(':').next().unwrap_or("unknown");
+                *by_kind.entry(kind).or_default() += 1;
+            }
+            // **The one kind that is NAMED and not merely counted**, because
+            // it is the only one this door asks you to pick from. An
+            // anonymous boot could see that five identities exist and could
+            // not learn one to boot as — while the refusal for an unknown
+            // bot lists every real one, so the only route to a usable name
+            // was to guess a wrong one and read it off the complaint. The
+            // door's own suggested next step was unreachable from the door.
+            //
+            // **Names only, and the refusal's own spelling.** Counts and
+            // charters belong to a caller weighing its own work; this one
+            // owns nothing and is choosing an identity. `bots`, full
+            // handles, so one record has one shape wherever it appears.
+            let mut bots: Vec<&str> = browsable()
+                .filter(|e| e.kind == EntityKind::BOT)
+                .map(|e| e.id.as_str())
+                .collect();
+            bots.sort_unstable();
+            serde_json::json!({
+                "available": true,
+                "count": entities.len(),
+                "by_kind": by_kind,
+                "bots": bots,
+            })
+        }
+        Err(_) => serde_json::json!({
+            "available": false,
+            "note": "the memory world is not reachable right now — its tools will say why",
+        }),
+    }
+}
+
+/// **What a boot cannot cut, in characters** — the sum `orient` measures and a
+/// write that would grow it measures too, so the two cannot disagree about it.
+/// The essay's core rides in it for every boot that is not `brief`, exactly
+/// like the charter: it always ships and is never ranked, so its true cost is
+/// counted here, once.
+pub(super) fn floor_len(
+    brief: bool,
+    snapshot: &serde_json::Value,
+    identity_floor: &serde_json::Value,
+    session: &serde_json::Value,
+    carried: &serde_json::Value,
+    clock: Option<serde_json::Value>,
+) -> usize {
+    let core = (!brief).then_some(essay::ORIENTATION_CORE);
+    serde_json::json!({
+        "orientation": core,
+        "orientation_elided": true,
+        "skills": skills::index(),
+        "snapshot": snapshot,
+        "identity": identity_floor,
+        "session": session,
+        "carried_session": carried,
+        "clock": clock,
+    })
+    .to_string()
+    .chars()
+    .count()
+}
+
 /// The door's own arguments, already validated — bundled so `orient` takes
 /// one argument rather than growing a new parameter every time the door
 /// learns a new one.
@@ -279,51 +361,7 @@ impl Jojobot {
         // Best-effort per world: orientation must land even when one world is
         // down — a fresh agent on a half-configured server still gets the map.
         let index = self.memory.list_entities(None).await;
-        let entities = match &index {
-            Ok(entities) => {
-                // **The snapshot is a BROWSE, and a browse excludes an
-                // archived entity** — the same broad-door/direct-door split
-                // a claim's own archived state already has (`list_entities`
-                // holds it too). Offering an archived bot as one to boot as
-                // is the harm the operator's ruling is about; booting AS it
-                // by name is the direct door and is untouched by this — see
-                // `identity`, which reads `index` rather than this filtered
-                // view.
-                let browsable = || entities.iter().filter(|e| e.browsable());
-                let mut by_kind = std::collections::BTreeMap::<&str, usize>::new();
-                for e in browsable() {
-                    let kind = e.id.as_str().split(':').next().unwrap_or("unknown");
-                    *by_kind.entry(kind).or_default() += 1;
-                }
-                // **The one kind that is NAMED and not merely counted**, because
-                // it is the only one this door asks you to pick from. An
-                // anonymous boot could see that five identities exist and could
-                // not learn one to boot as — while the refusal for an unknown
-                // bot lists every real one, so the only route to a usable name
-                // was to guess a wrong one and read it off the complaint. The
-                // door's own suggested next step was unreachable from the door.
-                //
-                // **Names only, and the refusal's own spelling.** Counts and
-                // charters belong to a caller weighing its own work; this one
-                // owns nothing and is choosing an identity. `bots`, full
-                // handles, so one record has one shape wherever it appears.
-                let mut bots: Vec<&str> = browsable()
-                    .filter(|e| e.kind == EntityKind::BOT)
-                    .map(|e| e.id.as_str())
-                    .collect();
-                bots.sort_unstable();
-                serde_json::json!({
-                    "available": true,
-                    "count": entities.len(),
-                    "by_kind": by_kind,
-                    "bots": bots,
-                })
-            }
-            Err(_) => serde_json::json!({
-                "available": false,
-                "note": "the memory world is not reachable right now — its tools will say why",
-            }),
-        };
+        let entities = entity_summary(&index);
         // A memory world that is down cannot answer who anybody is; the
         // snapshot below already says so, and this stays null rather than
         // claiming the identity is missing.
@@ -380,6 +418,181 @@ impl Jojobot {
         // it, so a boot that listed boxes beside bots would ask a caller to
         // hold two directories and the correspondence between them. Addressing
         // is by handle; a box name is not something anybody needs.
+        let snapshot = self.snapshot_block(bot, entities).await;
+        // **Only after the identity resolved.** A name that is no bot boots
+        // nothing, so it starts no session and sweeps nothing either — binding
+        // a connection to an identity jojobot just refused would be a session
+        // belonging to nobody.
+        let mut session = match bot {
+            None => serde_json::Value::Null,
+            Some(bot) => match self.attach(bot, resume, timezone, today).await {
+                Ok(session) => session,
+                // A handle that addresses nothing stops the whole answer.
+                // Handing back orientation around it would bury the one thing
+                // the caller has to act on.
+                Err(refused) => return Ok(refused),
+            },
+        };
+        // **The lease's own half: decided only once this call's sid is
+        // known.** A role named without a resulting handle (the resume-or-new
+        // choice came back instead) decides nothing — there is no claimant
+        // yet, and the caller answers the choice, then names the role again.
+        if let (Some(bot), Some(role)) = (bot, claim) {
+            let sid = session
+                .get("sid")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
+            if let Some(sid) = sid {
+                let now = self.clock().now();
+                let today_or_clock = today.unwrap_or_else(|| {
+                    self.clock().today_in(
+                        &timezone
+                            .and_then(|name| jiff::tz::TimeZone::get(name).ok())
+                            .unwrap_or(jiff::tz::TimeZone::UTC),
+                    )
+                });
+                // **Its own gate, taken fresh.** `attach`'s gate is already
+                // released by the time control reaches here, and
+                // materializing a session record below needs the same proof
+                // of serialization `session_for` requires everywhere else it
+                // is called.
+                let gate = self.registry.gate(bot.as_str());
+                let _serialized = gate.lock().await;
+                let outcome = self
+                    .decide_role_claim(bot, role, &sid, now, today_or_clock)
+                    .await;
+                // **A GRANTED claim has done something, so its session record
+                // is written now, through the same lazy path any first write
+                // uses.** A refused claim writes nothing new — the caller
+                // that lost the race gets no card for a run that never did
+                // anything.
+                if outcome.get("status").and_then(|s| s.as_str()) == Some("taken") {
+                    match self.identified(Some(&sid)) {
+                        Ok(caller) => {
+                            let derived = format!("claimed the {role} role");
+                            if let Err(e) = self
+                                .session_for(&_serialized, &caller, None, Some(&derived))
+                                .await
+                            {
+                                tracing::warn!(
+                                    error = ?e, %sid, role,
+                                    "a granted role claim could not materialize its session \
+                                     record"
+                                );
+                            }
+                        }
+                        Err(_) => tracing::warn!(
+                            %sid, role,
+                            "a granted role claim's own sid did not resolve to a caller"
+                        ),
+                    }
+                }
+                if let Some(obj) = session.as_object_mut() {
+                    obj.insert("claim".into(), outcome);
+                }
+            }
+        }
+        // **ONE declared ceiling for the WHOLE answer** — [`text::BOOT_ANSWER`]
+        // — not for its prose alone (rule 138's own bar: a payload the client
+        // cannot read, not a field inside it). Measure the FLOOR first:
+        // everything that ships whatever the ranking below decides — bot
+        // metadata, charter whole (it is never cut, see `rank_rule_details`),
+        // the essay's own core (never cut, every boot, see `essay_for_boot`),
+        // every rule's own structural fields (address, dates, provenance,
+        // standing, status, fields, refs), session, snapshot, skills — with
+        // every rule's `details` already gone. What is LEFT of the ceiling
+        // after that floor is what the rules' `details` compete for, and —
+        // for an anonymous boot only — what the remainder's own units are
+        // ranked against; see `essay_for_boot`.
+        let mut floor_identity = identity.clone();
+        if let Some(rules) = floor_identity
+            .get_mut("rules")
+            .and_then(|r| r.as_array_mut())
+        {
+            for rule in rules.iter_mut() {
+                elide_rule_details(rule);
+            }
+        }
+        // **The essay's core rides in the floor for every boot, named or
+        // anonymous, exactly like the charter — it always ships and is
+        // never ranked, so its true cost is counted here, once, rather than
+        // competing with the rules' `details` or the remainder's own units.**
+        let floor_len = floor_len(
+            brief,
+            &snapshot,
+            &floor_identity,
+            &session,
+            &carried,
+            self.stated_clock(),
+        );
+        let remaining_for_prose = text::BOOT_ANSWER.budget.saturating_sub(floor_len);
+
+        let mut identity = identity;
+        rank_rule_details(&mut identity, remaining_for_prose);
+        let essay = essay_for_boot(brief, &identity, remaining_for_prose);
+        let mut answer = serde_json::json!({
+            "orientation": essay.text,
+            // **The elision is marked, and that is all it is.** The essay used
+            // to arrive stamped with a version so a returning session could ask
+            // whether the copy it held was current; the stamp is gone, and no
+            // staleness check replaces it. What is left is the marker every
+            // elision on this surface owes — less came back, and the caller is
+            // told so rather than left to infer withheld from empty.
+            //
+            // **False only when an anonymous boot got the whole essay** — the
+            // only shape that is ever NOT missing something; every other
+            // shape — `brief`, a named boot's core-only, or an anonymous
+            // boot the ceiling cut — is elided, and `essay_for_boot` is
+            // where that is decided.
+            "orientation_elided": essay.elided,
+            // **Names and when-to-use lines, never bodies.** A session that
+            // needs a procedure fetches it by name; a boot that shipped every
+            // one would spend a session's attention on the jobs it is not
+            // doing, and get worse with each skill added. `brief` does not
+            // narrow this — the index is what CHANGES between builds, so it is
+            // exactly what a returning caller still needs.
+            "skills": skills::index(),
+            "snapshot": snapshot,
+            "identity": identity,
+            "session": session,
+            // **The handle you arrived with, and the one this call hands you,
+            // are two different things** — so they are two fields. `session` is
+            // the run this door just started or picked up; this says what the
+            // handle you were already carrying is worth, which is what a caller
+            // that came back to a server it does not recognise is really asking.
+            "carried_session": carried,
+            // **A server acting out a day says so at the door.** Absent is the
+            // ordinary answer and means the real clock; present is the
+            // exception, and a session reads it before it writes anything.
+            "clock": self.stated_clock(),
+        });
+        // **`brief` needs no note — the caller set that flag and already
+        // knows why.** Every other reason an answer carries less than the
+        // whole essay is `essay_for_boot`'s own note, already built there:
+        // a named boot's core-only is a rule, and an anonymous boot's cut
+        // names exactly which units were left out.
+        if !brief && let Some(obj) = answer.as_object_mut() {
+            if let Some(note) = essay.note {
+                obj.insert("orientation_note".into(), note.into());
+            }
+        }
+        json_result(&answer)
+    }
+}
+
+impl Jojobot {
+    /// **The snapshot block of a boot** — the world's counts, the mail board
+    /// and the vocabulary — read from the stores as they stand. `entities` is
+    /// the entity half, already summarised from the one index read the whole
+    /// answer shares.
+    ///
+    /// It is a method of its own so a write that must measure the boot's floor
+    /// reads the same snapshot the boot serves, never a copy of it.
+    pub(crate) async fn snapshot_block(
+        &self,
+        bot: Option<&EntityId>,
+        entities: serde_json::Value,
+    ) -> serde_json::Value {
         let listed = self.mailboxes.list_mailboxes().await;
         let mail = match &listed {
             // **When there is no roster to hang mail on, mail answers for
@@ -534,172 +747,7 @@ impl Jojobot {
                 );
             }
         }
-        let snapshot =
-            serde_json::json!({ "entities": entities, "mail": mail, "vocabulary": vocabulary });
-        // **Only after the identity resolved.** A name that is no bot boots
-        // nothing, so it starts no session and sweeps nothing either — binding
-        // a connection to an identity jojobot just refused would be a session
-        // belonging to nobody.
-        let mut session = match bot {
-            None => serde_json::Value::Null,
-            Some(bot) => match self.attach(bot, resume, timezone, today).await {
-                Ok(session) => session,
-                // A handle that addresses nothing stops the whole answer.
-                // Handing back orientation around it would bury the one thing
-                // the caller has to act on.
-                Err(refused) => return Ok(refused),
-            },
-        };
-        // **The lease's own half: decided only once this call's sid is
-        // known.** A role named without a resulting handle (the resume-or-new
-        // choice came back instead) decides nothing — there is no claimant
-        // yet, and the caller answers the choice, then names the role again.
-        if let (Some(bot), Some(role)) = (bot, claim) {
-            let sid = session
-                .get("sid")
-                .and_then(|v| v.as_str())
-                .map(str::to_string);
-            if let Some(sid) = sid {
-                let now = self.clock().now();
-                let today_or_clock = today.unwrap_or_else(|| {
-                    self.clock().today_in(
-                        &timezone
-                            .and_then(|name| jiff::tz::TimeZone::get(name).ok())
-                            .unwrap_or(jiff::tz::TimeZone::UTC),
-                    )
-                });
-                // **Its own gate, taken fresh.** `attach`'s gate is already
-                // released by the time control reaches here, and
-                // materializing a session record below needs the same proof
-                // of serialization `session_for` requires everywhere else it
-                // is called.
-                let gate = self.registry.gate(bot.as_str());
-                let _serialized = gate.lock().await;
-                let outcome = self
-                    .decide_role_claim(bot, role, &sid, now, today_or_clock)
-                    .await;
-                // **A GRANTED claim has done something, so its session record
-                // is written now, through the same lazy path any first write
-                // uses.** A refused claim writes nothing new — the caller
-                // that lost the race gets no card for a run that never did
-                // anything.
-                if outcome.get("status").and_then(|s| s.as_str()) == Some("taken") {
-                    match self.identified(Some(&sid)) {
-                        Ok(caller) => {
-                            let derived = format!("claimed the {role} role");
-                            if let Err(e) = self
-                                .session_for(&_serialized, &caller, None, Some(&derived))
-                                .await
-                            {
-                                tracing::warn!(
-                                    error = ?e, %sid, role,
-                                    "a granted role claim could not materialize its session \
-                                     record"
-                                );
-                            }
-                        }
-                        Err(_) => tracing::warn!(
-                            %sid, role,
-                            "a granted role claim's own sid did not resolve to a caller"
-                        ),
-                    }
-                }
-                if let Some(obj) = session.as_object_mut() {
-                    obj.insert("claim".into(), outcome);
-                }
-            }
-        }
-        // **ONE declared ceiling for the WHOLE answer** — [`text::BOOT_ANSWER`]
-        // — not for its prose alone (rule 138's own bar: a payload the client
-        // cannot read, not a field inside it). Measure the FLOOR first:
-        // everything that ships whatever the ranking below decides — bot
-        // metadata, charter whole (it is never cut, see `rank_rule_details`),
-        // the essay's own core (never cut, every boot, see `essay_for_boot`),
-        // every rule's own structural fields (address, dates, provenance,
-        // standing, status, fields, refs), session, snapshot, skills — with
-        // every rule's `details` already gone. What is LEFT of the ceiling
-        // after that floor is what the rules' `details` compete for, and —
-        // for an anonymous boot only — what the remainder's own units are
-        // ranked against; see `essay_for_boot`.
-        let mut floor_identity = identity.clone();
-        if let Some(rules) = floor_identity
-            .get_mut("rules")
-            .and_then(|r| r.as_array_mut())
-        {
-            for rule in rules.iter_mut() {
-                elide_rule_details(rule);
-            }
-        }
-        // **The essay's core rides in the floor for every boot, named or
-        // anonymous, exactly like the charter — it always ships and is
-        // never ranked, so its true cost is counted here, once, rather than
-        // competing with the rules' `details` or the remainder's own units.**
-        let core = (!brief).then_some(essay::ORIENTATION_CORE);
-        let floor_len = serde_json::json!({
-            "orientation": core,
-            "orientation_elided": true,
-            "skills": skills::index(),
-            "snapshot": snapshot.clone(),
-            "identity": floor_identity,
-            "session": session.clone(),
-            "carried_session": carried.clone(),
-            "clock": self.stated_clock(),
-        })
-        .to_string()
-        .chars()
-        .count();
-        let remaining_for_prose = text::BOOT_ANSWER.budget.saturating_sub(floor_len);
-
-        let mut identity = identity;
-        rank_rule_details(&mut identity, remaining_for_prose);
-        let essay = essay_for_boot(brief, &identity, remaining_for_prose);
-        let mut answer = serde_json::json!({
-            "orientation": essay.text,
-            // **The elision is marked, and that is all it is.** The essay used
-            // to arrive stamped with a version so a returning session could ask
-            // whether the copy it held was current; the stamp is gone, and no
-            // staleness check replaces it. What is left is the marker every
-            // elision on this surface owes — less came back, and the caller is
-            // told so rather than left to infer withheld from empty.
-            //
-            // **False only when an anonymous boot got the whole essay** — the
-            // only shape that is ever NOT missing something; every other
-            // shape — `brief`, a named boot's core-only, or an anonymous
-            // boot the ceiling cut — is elided, and `essay_for_boot` is
-            // where that is decided.
-            "orientation_elided": essay.elided,
-            // **Names and when-to-use lines, never bodies.** A session that
-            // needs a procedure fetches it by name; a boot that shipped every
-            // one would spend a session's attention on the jobs it is not
-            // doing, and get worse with each skill added. `brief` does not
-            // narrow this — the index is what CHANGES between builds, so it is
-            // exactly what a returning caller still needs.
-            "skills": skills::index(),
-            "snapshot": snapshot,
-            "identity": identity,
-            "session": session,
-            // **The handle you arrived with, and the one this call hands you,
-            // are two different things** — so they are two fields. `session` is
-            // the run this door just started or picked up; this says what the
-            // handle you were already carrying is worth, which is what a caller
-            // that came back to a server it does not recognise is really asking.
-            "carried_session": carried,
-            // **A server acting out a day says so at the door.** Absent is the
-            // ordinary answer and means the real clock; present is the
-            // exception, and a session reads it before it writes anything.
-            "clock": self.stated_clock(),
-        });
-        // **`brief` needs no note — the caller set that flag and already
-        // knows why.** Every other reason an answer carries less than the
-        // whole essay is `essay_for_boot`'s own note, already built there:
-        // a named boot's core-only is a rule, and an anonymous boot's cut
-        // names exactly which units were left out.
-        if !brief && let Some(obj) = answer.as_object_mut() {
-            if let Some(note) = essay.note {
-                obj.insert("orientation_note".into(), note.into());
-            }
-        }
-        json_result(&answer)
+        serde_json::json!({ "entities": entities, "mail": mail, "vocabulary": vocabulary })
     }
 }
 
