@@ -556,7 +556,18 @@ impl Jojobot {
             Err(e) => return Ok(Err(memory_declined("capture", e)?)),
         };
 
-        match attention::check_in(&held, outcome, on) {
+        // **The schedule this write leaves, not the one it found.** The same
+        // call may carry the schedule's own keys (`cadence_days`,
+        // `advances_from`) beside the check-in, and the arithmetic must run on
+        // them: reading only the stored loop refused a capture for lacking a
+        // cadence it had just sent. A key the call sends wins over the stored
+        // one, exactly as it will in the fold once the write lands. The basis
+        // is never among them (`COMPUTED` refuses it above), so whether this
+        // check-in opens the loop is still read off what was stored.
+        let mut after = held.clone();
+        after.extend(sent.iter().map(|(key, value)| (key.clone(), value.clone())));
+
+        match attention::check_in(&after, outcome, on) {
             // **Observed rather than restated.** Whether the loop was opened
             // is read off what changed — a basis where the thing held none —
             // so it stays true if the domain's rule for opening one moves.

@@ -463,3 +463,116 @@ async fn a_loop_that_cannot_say_when_it_falls_due_is_refused_when_it_is_made() {
         .await;
     story.finish().await;
 }
+
+/// "I did the descale today, and it comes round every sixty days."
+///
+/// **A whole schedule and its first check-in are one act.** A model sent one
+/// capture on a new loop carrying the check-in AND the cadence and the policy,
+/// and was refused for lacking the cadence it had just sent: the check-in read
+/// the stored loop before that write's own fields landed. The arithmetic runs on
+/// the schedule the call carries, so the capture lands once and the loop is
+/// opened on the day of the check-in.
+///
+/// **Three claims in one run, so each is the positive another rests on.** The
+/// whole schedule plus the check-in lands and falls due on the day the cadence
+/// works out to; a loop that already held its schedule still takes a bare
+/// check-in; and a check-in carrying only half a schedule is still refused,
+/// because the half it lacks is not there to read.
+#[tokio::test]
+async fn a_whole_schedule_and_its_first_check_in_land_in_one_capture() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("thing:kettle", "The Kettle").await;
+    s.add_under("thing:kettle", "rhythm:descale", "Descale")
+        .await;
+    s.add_under("thing:kettle", "rhythm:polish", "Polish").await;
+    s.add_under("thing:kettle", "rhythm:deep-clean", "Deep clean")
+        .await;
+
+    // ── one capture: the schedule and the day it was first done ─────────────
+    s.call(
+        "capture",
+        json!({
+            "subject": "rhythm:descale", "content": "descaled the kettle",
+            "provenance": "testimony", "recorded_at": "2026-08-01", "check_in": "ran",
+            "fields": {"advances_from": "due_date", "cadence_days": "60"},
+        }),
+    )
+    .await;
+    // Sixty days after the first of August is the thirtieth of September, so
+    // the loop is owed on the first of October and not on the twenty-ninth of
+    // September. Both sides, because a loop that fell due on any other day
+    // would answer one of them wrongly.
+    let owed = |as_of: &str| json!({"kind": "rhythm", "overdue": {"as_of": as_of}});
+    s.shape("what is owed on the first of October", owed("2026-10-01"))
+        .await
+        .says("rhythm:descale");
+    s.shape(
+        "what is owed on the twenty-ninth of September",
+        owed("2026-09-29"),
+    )
+    .await
+    .never_says("rhythm:descale");
+
+    // ── the positive: a loop that already held its schedule still works ─────
+    s.event_with(
+        "rhythm:polish",
+        "polish it every week",
+        json!({"cadence_days": "7", "advances_from": "due_date", "counts_from": "2026-08-01"}),
+        &[],
+    )
+    .await;
+    s.call(
+        "capture",
+        json!({
+            "subject": "rhythm:polish", "content": "polished it",
+            "provenance": "testimony", "recorded_at": "2026-08-08", "check_in": "ran",
+        }),
+    )
+    .await;
+
+    // ── a key the call sends wins over the one stored ───────────────────────
+    //
+    // The same loop is checked in again on the day it fell due and the cadence
+    // is changed to fourteen days in the same capture. The arithmetic runs on
+    // the new cadence: the cycle fell due fourteen days after the eighth, the
+    // twenty-second, and the next one is due fourteen days after that, the
+    // fifth of September. On the stored seven the cycle would count from the
+    // fifteenth and the loop would be due on the twenty-ninth of August, so it
+    // would be owed on the second of September: not being owed then is the new
+    // cadence read.
+    s.call(
+        "capture",
+        json!({
+            "subject": "rhythm:polish", "content": "polished it, and it can wait longer now",
+            "provenance": "testimony", "recorded_at": "2026-08-15", "check_in": "ran",
+            "fields": {"cadence_days": "14"},
+        }),
+    )
+    .await;
+    s.shape(
+        "what is owed on the second of September",
+        owed("2026-09-02"),
+    )
+    .await
+    .never_says("rhythm:polish");
+    s.shape("what is owed on the sixth of September", owed("2026-09-06"))
+        .await
+        .says("rhythm:polish");
+
+    // ── the negative: half a schedule with the check-in is still refused ────
+    s.refused(
+        "capture",
+        json!({
+            "subject": "rhythm:deep-clean", "content": "deep cleaned it",
+            "provenance": "testimony", "recorded_at": "2026-08-01", "check_in": "ran",
+            "fields": {"advances_from": "due_date"},
+        }),
+    )
+    .await
+    .says("cadence_days");
+
+    s.wrap("one capture carried a whole schedule and its first check-in")
+        .await;
+    story.finish().await;
+}
