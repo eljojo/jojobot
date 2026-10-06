@@ -110,7 +110,7 @@ pub enum Strength {
 
 /// **Every lock this build has actually proven failable, so far.**
 ///
-/// 93 entries, of five different shapes: 77 blanket and 16 discriminating.
+/// 97 entries, of five different shapes: 77 blanket and 20 discriminating.
 /// Quote the discriminating count as twelve, with one constructed positive
 /// — never as a bare twelve; see the note on `tests/fair_lock.rs` below for
 /// why.
@@ -868,6 +868,34 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
         lock: "Phase 13 — later December: Hugo carries no archived reason, so a name the operator does not recognise is still standing in the vault as if it belonged there",
         file: "tests/vault_room.rs",
         function: "the_hugo_reason_lock_reds_when_hugo_was_never_archived",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::ADOPTION_ROOM,
+        lock: "Phase 1 — the loan's last day is not under the key the shipped type holds, so nothing that asks what runs out can find it",
+        file: "tests/adoption_room.rs",
+        function: "the_loan_lock_reds_under_an_invented_key_and_the_decision_lock_holds",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::ADOPTION_ROOM,
+        lock: "Phase 1 — the day the tickets have to be sorted by is not under the key the shipped type holds, so nothing that asks what is waiting on a decision can find it",
+        file: "tests/adoption_room.rs",
+        function: "the_decision_lock_reds_under_an_invented_key_and_the_loan_lock_holds",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::ADOPTION_WORDING_ROOM,
+        lock: "Phase 1 — the loan's last day is not under the key the shipped type holds, so nothing that asks what runs out can find it",
+        file: "tests/adoption_room.rs",
+        function: "the_loan_lock_reds_under_an_invented_key_and_the_decision_lock_holds",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::ADOPTION_WORDING_ROOM,
+        lock: "Phase 1 — the day the tickets have to be sorted by is not under the key the shipped type holds, so nothing that asks what is waiting on a decision can find it",
+        file: "tests/adoption_room.rs",
+        function: "the_decision_lock_reds_under_an_invented_key_and_the_loan_lock_holds",
         strength: Strength::Discriminating,
     },
 ];

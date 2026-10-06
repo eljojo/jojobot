@@ -40,6 +40,14 @@ pub const VAULT_ROOM: &str = "rooms/vault.md";
 /// A real design-rule register filed and queried across cold sittings.
 pub const DECISIONS_ROOM: &str = "rooms/decisions.md";
 
+/// **The adoption experiment's baseline (E0)** — one sitting, two facts a
+/// shipped type exists for, worded the way the operator talks.
+pub const ADOPTION_ROOM: &str = "rooms/adoption.md";
+
+/// **The adoption experiment's wording arm (E1)** — the same room with each
+/// fact said in its key's own word.
+pub const ADOPTION_WORDING_ROOM: &str = "rooms/adoption-wording.md";
+
 /// **The Rust half of a room that still has one** — what must be true of it
 /// afterwards, and what it is furnished with before anybody arrives.
 type InRust = (
@@ -60,13 +68,15 @@ type Room = (&'static str, Option<InRust>, bool);
 ///
 /// **Exactly one entry carries `true`** — decision log 299 — and this table is
 /// the only place that name lives; nothing outside it repeats it.
-const ROOMS: [Room; 6] = [
+const ROOMS: [Room; 8] = [
     (BIKE_ROOM, None, false),
     (LOOP_ROOM, None, false),
     (YEAR_ROOM, None, false),
     (HANDOVER_ROOM, None, false),
     (VAULT_ROOM, None, true),
     (DECISIONS_ROOM, None, false),
+    (ADOPTION_ROOM, None, false),
+    (ADOPTION_WORDING_ROOM, None, false),
 ];
 
 /// **The room a run uses when none is named** — decision log 299.
