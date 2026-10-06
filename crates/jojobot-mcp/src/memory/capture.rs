@@ -160,19 +160,21 @@ pub struct CaptureArgs {
     /// `ran` happened. `skipped` did not happen and the cycle advances anyway,
     /// with the record saying plainly that it did not — which is what lets a
     /// skipped cycle be told from a completed one later. `snoozed` does NOT
-    /// consume the cycle: the rhythm comes back at its own date and is acted on
-    /// again.
+    /// consume the cycle: it lasts until the day it names in `snoozed_until`,
+    /// and the loop comes back then and is acted on again.
     ///
     /// **jojobot does the arithmetic.** It writes `outcome`, `last_check_in`
-    /// (the `date` of this record) and, when the cycle is consumed, the new
+    /// (the day of this check-in, `recorded_at`, today when you send none) and,
+    /// when the cycle is consumed, the new
     /// `counts_from` — worked out from the rhythm's own `advances_from`. Do not
     /// compute those yourself and do not send them in `fields`.
     ///
     /// **A snooze names the day it lasts until**, as `snoozed_until` in
-    /// `fields` (`YYYY-MM-DD`), a day after this record's `date`. The loop is
+    /// `fields` (`YYYY-MM-DD`), a day after this check-in's own, which is
+    /// `recorded_at` (today when you send none). The loop is
     /// not owed again before that day, and on it the loop comes back and is
     /// acted on again; it falls due on the later of that day and its own. A
-    /// snooze with no day, or a day that is not after `date`, comes back
+    /// snooze with no day, or a day that is not after that day, comes back
     /// blocked and nothing is written. The next `ran` or `skipped` check-in
     /// ends the snooze, so send `snoozed_until` with `snoozed` only.
     ///

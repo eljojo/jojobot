@@ -1194,7 +1194,11 @@ impl Jojobot {
                        key, and the value it holds; omit the value to ask only that the key is \
                        there). WHAT OF EACH: every object always comes back as its FIELDS — \
                        every write on it folded, one value per key, the newest write of that key \
-                       winning, and a write that takes a key off takes it off the thing. Those \
+                       winning, and a write that takes a key off takes it off the thing. A LOOP \
+                       HOLDING A SNOOZE DAY carries `snooze` {until, in_force} beside its \
+                       fields: in_force is true only while the loop's last check-in is that \
+                       snooze, and after a ran or skipped check-in the day stays in the \
+                       fields as history. Those \
                        fields are what the thing HOLDS — its KIND is what it \
                        IS — and they answer most questions; the records behind them are bigger and say the same thing at \
                        length. Ask for facts when you need a claim's own wording, its \

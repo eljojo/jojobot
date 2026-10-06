@@ -291,6 +291,68 @@ fn every_kind_the_store_accepts_is_listed_where_a_caller_reads() {
     }
 }
 
+/// **`capture`'s `check_in` argument names the day a check-in is dated by, and
+/// where a snooze names its own.** There is no `date` argument on capture: the
+/// check-in's day is `recorded_at`, and an argument that named one that does not
+/// exist sent a caller looking for it. The paragraph on the three outcomes says
+/// what a snooze lasts until, in the key that carries it.
+///
+/// It pins identifiers rather than phrasing, and reads the argument's own
+/// description out of the schema a client receives.
+#[test]
+fn the_check_in_argument_names_the_day_it_is_dated_by_and_the_snooze_day() {
+    let tools = Jojobot::tool_router().list_all();
+    let capture = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "capture")
+        .expect("the surface offers capture");
+    let schema = serde_json::to_value(&capture.input_schema).expect("the schema serializes");
+    assert!(
+        schema["properties"]["recorded_at"].is_object(),
+        "the day a check-in is dated by is a real argument of capture: {schema}"
+    );
+    assert!(
+        schema["properties"]["date"].is_null(),
+        "capture has no `date` argument, so the description must not name one"
+    );
+    let described = schema["properties"]["check_in"]["description"]
+        .as_str()
+        .expect("the check_in argument carries its own description");
+    assert!(
+        described.contains("`recorded_at`"),
+        "the check-in's day is `recorded_at`, and the argument does not say so: {described}"
+    );
+    assert!(
+        !described.contains("`date`"),
+        "the argument names a `date` that capture does not take: {described}"
+    );
+    let on_the_outcomes = described
+        .split("\n\n")
+        .find(|paragraph| paragraph.contains("`snoozed`") && paragraph.contains("consume"))
+        .expect("a paragraph describes the three outcomes");
+    assert!(
+        on_the_outcomes.contains("snoozed_until"),
+        "the paragraph that says what a snooze does names the key carrying its day: \
+         {on_the_outcomes}"
+    );
+}
+
+/// **`recall`'s own description names the snooze answer and its `in_force`.** A
+/// capability only a reader of the diff knows about has no path.
+#[test]
+fn the_recall_description_names_the_snooze_answer() {
+    let tools = Jojobot::tool_router().list_all();
+    let recall = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "recall")
+        .expect("the surface offers recall");
+    let described = recall.description.as_deref().unwrap_or_default();
+    assert!(
+        described.contains("in_force") && described.contains("`snooze`"),
+        "the recall description does not name the snooze answer: {described}"
+    );
+}
+
 /// **The `overdue` argument tells a caller not to read a write's success off
 /// this filter.** A model that just edited something and checked it against
 /// this list, rather than reading the record back, took a coincidence as

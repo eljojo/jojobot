@@ -866,10 +866,19 @@ fn opens_the_loop(why: &NotSchedulable, outcome: Outcome) -> bool {
 /// nothing can keep, so the day is never defaulted.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SnoozeDayRefused {
-    /// A snooze that names no day, or a blank one.
-    Missing,
+    /// A snooze that names no day, or a blank one. Carries the day of the
+    /// check-in, which the refusal names so it can be followed without knowing it.
+    Missing {
+        /// The day of the check-in.
+        on: Date,
+    },
     /// A day that does not read as `YYYY-MM-DD`.
-    Unreadable(String),
+    Unreadable {
+        /// What was sent.
+        held: String,
+        /// The day of the check-in.
+        on: Date,
+    },
     /// A day that is not after the day of the check-in itself.
     NotAfter {
         /// The day sent.
@@ -884,16 +893,16 @@ pub enum SnoozeDayRefused {
 impl std::fmt::Display for SnoozeDayRefused {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SnoozeDayRefused::Missing => write!(
+            SnoozeDayRefused::Missing { on } => write!(
                 f,
                 "a snooze names the day it lasts until, and this one names none. Send the check-in \
                  again with '{SNOOZED_UNTIL}' in fields, as a day after this check-in's own, \
-                 YYYY-MM-DD"
+                 which is {on}, YYYY-MM-DD"
             ),
-            SnoozeDayRefused::Unreadable(held) => write!(
+            SnoozeDayRefused::Unreadable { held, on } => write!(
                 f,
                 "'{SNOOZED_UNTIL}' holds '{held}', which is not a day. Send it as YYYY-MM-DD, a \
-                 day after this check-in's own"
+                 day after this check-in's own, which is {on}"
             ),
             SnoozeDayRefused::NotAfter { day, on } => write!(
                 f,
@@ -929,10 +938,11 @@ pub fn snooze_day_of(
             Some(_) => Err(SnoozeDayRefused::NotASnooze),
         };
     }
-    let held = sent.ok_or(SnoozeDayRefused::Missing)?;
-    let day: Date = held
-        .parse()
-        .map_err(|_| SnoozeDayRefused::Unreadable(held.to_string()))?;
+    let held = sent.ok_or(SnoozeDayRefused::Missing { on })?;
+    let day: Date = held.parse().map_err(|_| SnoozeDayRefused::Unreadable {
+        held: held.to_string(),
+        on,
+    })?;
     if day <= on {
         return Err(SnoozeDayRefused::NotAfter { day, on });
     }
@@ -1234,17 +1244,30 @@ mod tests {
         );
         assert_eq!(
             snooze_day_of(Outcome::Snoozed, None, on),
-            Err(SnoozeDayRefused::Missing)
+            Err(SnoozeDayRefused::Missing { on })
         );
         assert_eq!(
             snooze_day_of(Outcome::Snoozed, Some("  "), on),
-            Err(SnoozeDayRefused::Missing),
+            Err(SnoozeDayRefused::Missing { on }),
             "a blank day is no day"
         );
         assert_eq!(
             snooze_day_of(Outcome::Snoozed, Some("next week"), on),
-            Err(SnoozeDayRefused::Unreadable("next week".to_string()))
+            Err(SnoozeDayRefused::Unreadable {
+                held: "next week".to_string(),
+                on
+            })
         );
+        // **Each refusal names the check-in's own day**, so it can be followed
+        // by a caller who does not know what that day was.
+        for refused in [
+            snooze_day_of(Outcome::Snoozed, None, on),
+            snooze_day_of(Outcome::Snoozed, Some("next week"), on),
+            snooze_day_of(Outcome::Snoozed, Some("2026-08-01"), on),
+        ] {
+            let said = refused.expect_err("each is refused").to_string();
+            assert!(said.contains("2026-08-10"), "{said}");
+        }
         assert_eq!(
             snooze_day_of(Outcome::Snoozed, Some("2026-08-10"), on),
             Err(SnoozeDayRefused::NotAfter {

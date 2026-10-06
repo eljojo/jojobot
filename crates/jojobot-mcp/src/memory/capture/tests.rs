@@ -544,11 +544,14 @@ async fn a_snooze_with_no_usable_day_is_refused_and_writes_nothing() {
         );
         assert_eq!(refused["status"], "blocked", "{day:?}: {refused}");
         assert_eq!(refused["wrote"], false, "{day:?}: {refused}");
+        let how = refused["how_to_proceed"].as_str().unwrap_or_default();
         assert!(
-            refused["how_to_proceed"]
-                .as_str()
-                .is_some_and(|how| how.contains("snoozed_until")),
+            how.contains("snoozed_until"),
             "the way forward names the key to send: {refused}"
+        );
+        assert!(
+            how.contains(on),
+            "and the check-in's own day, which the snooze day has to be after: {refused}"
         );
         let held = fields_of(&jojobot, "rhythm:descale").await;
         assert_eq!(held["outcome"], serde_json::Value::Null, "{day:?}: {held}");
