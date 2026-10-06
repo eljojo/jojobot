@@ -270,7 +270,7 @@ Shipped and live:
   KIND and it declares every key its loop uses** — a name
   and the day of the last check-in are required; the cadence in days, the day
   the next cycle counts from, which of the two dates a late check-in advances
-  from, the outcome and a note are optional. **A loop is a thing in its own
+  from, the outcome, a note and the day a snooze lasts until are optional. **A loop is a thing in its own
   right, so it carries its own events**, which keys folded onto another thing
   cannot. A walk carries its own filters, and a key's declared value type
   licenses comparison on it —
