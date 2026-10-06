@@ -60,6 +60,17 @@ pub const ADVANCES_FROM: &str = "advances_from";
 /// makes *do not send this key* a rule a caller can actually keep.
 pub const COUNTS_FROM: &str = "counts_from";
 
+/// **The day a snooze lasts until.** A snoozed loop is not owed again before
+/// this day, and on it the loop comes back and is acted on again. The loop
+/// falls due on the later of this day and its own due day, so a snooze never
+/// brings a loop forward.
+///
+/// It is written by a snooze check-in and spent by the next `ran` or `skipped`
+/// one. It does not move [`COUNTS_FROM`]: the cycle is still not consumed, so a
+/// run after the snooze counts from where the loop was, and the snooze day
+/// affects nothing past the day it names.
+pub const SNOOZED_UNTIL: &str = "snoozed_until";
+
 /// **The day of the last check-in** — what *when did I last do this* reads,
 /// and it is a different question from [`COUNTS_FROM`]. Every check-in writes
 /// it, a snooze included: a snooze is a check-in that recorded a decision, and
@@ -263,18 +274,31 @@ pub struct Schedule {
     pub(crate) advances_from: AdvancesFrom,
     /// The date this cycle counts from.
     pub(crate) counts_from: Date,
+    /// **The day a snooze lasts until**, when one is held. It never moves
+    /// [`Schedule::counts_from`]; it only holds the loop back from falling due.
+    pub(crate) snoozed_until: Option<Date>,
 }
 
 impl Schedule {
-    /// **The date this rhythm is next due**: a cadence after the date it counts
-    /// from.
-    pub fn due_on(&self) -> Date {
+    /// **The date this rhythm is next due on its own**: a cadence after the
+    /// date it counts from, whatever a snooze says. The next cycle counts from
+    /// this and never from the snooze day, which is what keeps a snooze from
+    /// moving the schedule.
+    fn cycle_due_on(&self) -> Date {
         self.counts_from
             .checked_add(jiff::Span::new().days(self.cadence_days))
             // A cadence that runs off the end of the calendar is a value no
             // rhythm carries; the saturating answer keeps the read total, and
             // a date that cannot move further is one nothing is overdue by.
             .unwrap_or(Date::MAX)
+    }
+
+    /// **The date this rhythm is next due**: the later of its own due day and
+    /// the day a snooze lasts until. A snooze holds a loop back and never
+    /// brings one forward.
+    pub fn due_on(&self) -> Date {
+        let own = self.cycle_due_on();
+        self.snoozed_until.map_or(own, |until| own.max(until))
     }
 
     /// **Has this rhythm gone quiet as of `as_of`** — due on that day or
@@ -285,19 +309,20 @@ impl Schedule {
 
     /// **The schedule this rhythm has after a check-in on `on`.**
     ///
-    /// A consuming outcome moves the date the cycle counts from; a snooze
-    /// returns the schedule unchanged, which is what makes the rhythm come back
-    /// at its own date rather than a cadence later.
+    /// A consuming outcome moves the date the cycle counts from and spends a
+    /// snooze day; a snooze returns the schedule unchanged, which is what makes
+    /// the rhythm come back at its own date rather than a cadence later.
     pub fn after(&self, outcome: Outcome, on: Date) -> Schedule {
         if !outcome.consumes_the_cycle() {
             return *self;
         }
         let counts_from = match self.advances_from {
-            AdvancesFrom::DueDate => self.due_on(),
+            AdvancesFrom::DueDate => self.cycle_due_on(),
             AdvancesFrom::CheckInDate => on,
         };
         Schedule {
             counts_from,
+            snoozed_until: None,
             ..*self
         }
     }
@@ -319,10 +344,18 @@ pub fn schedule_of(fields: &BTreeMap<String, String>) -> Result<Schedule, NotSch
         AdvancesFrom::of_token,
     )?;
     let counts_from = read(fields, COUNTS_FROM, &[], |held| held.parse::<Date>().ok())?;
+    // **Optional, unlike the three above**: most loops are not snoozed. A blank
+    // value is a key nobody wrote, and a value that is not a date is loud.
+    let snoozed_until = match read(fields, SNOOZED_UNTIL, &[], |held| held.parse::<Date>().ok()) {
+        Ok(day) => Some(day),
+        Err(why) if why.held.is_none() => None,
+        Err(why) => return Err(why),
+    };
     Ok(Schedule {
         cadence_days,
         advances_from,
         counts_from,
+        snoozed_until,
     })
 }
 
@@ -472,6 +505,7 @@ impl Carrier for Rhythms {
                 types::Field::new(CADENCE_DAYS, types::ValueType::Number),
                 types::Field::one_of(ADVANCES_FROM, AdvancesFrom::ALL.map(AdvancesFrom::as_token)),
                 types::Field::new(COUNTS_FROM, types::ValueType::Date),
+                types::Field::new(SNOOZED_UNTIL, types::ValueType::Date),
             ],
         )
     }
@@ -971,6 +1005,96 @@ mod tests {
                 .after(Outcome::Ran, today)
                 .overdue_on(today),
             "advancing from the check-in date clears it",
+        );
+    }
+
+    /// A weekly rhythm counting from the 1st, snoozed until `until`.
+    fn snoozed_until(until: &str) -> BTreeMap<String, String> {
+        let mut fields = weekly(date(2026, 8, 1), AdvancesFrom::CheckInDate);
+        fields.insert(SNOOZED_UNTIL.to_string(), until.to_string());
+        fields
+    }
+
+    /// **A snoozed loop falls due on the later of its own day and the snooze
+    /// day.** Both sides of the boundary, and both orders of the two days: a
+    /// build that always took the snooze day would pull a loop forward when the
+    /// snooze names a day before it was due anyway.
+    #[test]
+    fn a_snoozed_loop_falls_due_on_the_later_of_its_own_day_and_the_snooze_day() {
+        // Due on the 8th, snoozed until the 20th.
+        let later = snoozed_until("2026-08-20");
+        assert_eq!(Rhythms.due(&later), Due::On(date(2026, 8, 20)));
+        assert!(
+            !Rhythms.due(&later).owed_on(date(2026, 8, 19)),
+            "the day before the snooze day it is not owed, though its own day passed"
+        );
+        assert!(
+            Rhythms.due(&later).owed_on(date(2026, 8, 20)),
+            "on the snooze day it is owed"
+        );
+
+        // Due on the 8th, snoozed until the 5th: the snooze never brings it
+        // forward and never pushes it back.
+        let earlier = snoozed_until("2026-08-05");
+        assert_eq!(Rhythms.due(&earlier), Due::On(date(2026, 8, 8)));
+    }
+
+    /// **A snooze day that is blank is no snooze.** The key is spent by writing
+    /// it empty, and the reader treats a blank value as a key nobody wrote.
+    #[test]
+    fn a_blank_snooze_day_is_no_snooze() {
+        let spent = snoozed_until("  ");
+        assert_eq!(Rhythms.due(&spent), Due::On(date(2026, 8, 8)));
+    }
+
+    /// **A snooze day that does not read as a date is loud**, as every unread
+    /// key of a schedule is: a quiet fallback would owe the loop on its own day
+    /// while the record says it was put off.
+    #[test]
+    fn an_unreadable_snooze_day_is_loud() {
+        let garbled = snoozed_until("after lunch");
+        assert_eq!(Rhythms.due(&garbled), Due::Unreadable);
+    }
+
+    /// **The next cycle counts from the loop's own due day, never from the
+    /// snooze day.** Under the due-date policy a run after a snooze must land
+    /// the loop back on its own cadence; counting from the snooze day would
+    /// make the snooze move the schedule, which the outcome is defined not to.
+    #[test]
+    fn a_run_after_a_snooze_counts_from_the_loops_own_due_day() {
+        let mut fields = snoozed_until("2026-08-20");
+        fields.insert(
+            ADVANCES_FROM.to_string(),
+            AdvancesFrom::DueDate.as_token().to_string(),
+        );
+        let moved = schedule_of(&fields)
+            .expect("a whole schedule reads")
+            .after(Outcome::Ran, date(2026, 8, 21));
+        assert_eq!(
+            moved.counts_from,
+            date(2026, 8, 8),
+            "the 8th is the day the cycle fell due; the 20th is only when it was let back"
+        );
+    }
+
+    /// **Writing a snooze day moves the stored due moment**, so the owed read
+    /// needs no arithmetic of its own: the key is one the loop carrier names.
+    #[test]
+    fn a_snooze_day_moves_the_stored_due_moment() {
+        let before = weekly(date(2026, 8, 1), AdvancesFrom::CheckInDate);
+        let projected = snoozed_until("2026-08-20");
+        assert_eq!(
+            moved_due_moment(&[&Rhythms], Some(date(2026, 8, 8)), &projected),
+            DueMove::Set(date(2026, 8, 20)),
+        );
+        assert!(
+            Rhythms
+                .interface()
+                .fields
+                .iter()
+                .any(|field| field.key == SNOOZED_UNTIL),
+            "a write naming only the snooze day has to reach the mover, which asks the \
+             interface: {before:?}"
         );
     }
 
