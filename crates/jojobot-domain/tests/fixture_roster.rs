@@ -360,6 +360,7 @@ const ROSTER: &[&str] = &[
     "rhythm:weekly-review",
     "rhythm:worming",
     "thing:jukebox",
+    "thing:recorded-twin",
     "thing:the-couch",
     "thing:the-fern",
     "thing:the-gutter",

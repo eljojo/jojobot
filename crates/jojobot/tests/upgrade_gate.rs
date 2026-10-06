@@ -117,6 +117,20 @@ async fn the_current_binary_boots_on_a_store_an_older_binary_filled() {
         seen.join("\n")
     );
 
+    // **The boot's own warnings fail the gate.** Each says a half of the boot
+    // failed and carried on — the fold or the search index came up empty — so
+    // the server serves and every read of a store that was upgraded looks
+    // fine until somebody asks the half that is missing.
+    let warned: Vec<&String> = seen
+        .iter()
+        .filter(|line| line.contains("FOLD EMPTY") || line.contains("SEARCH INDEX EMPTY"))
+        .collect();
+    assert!(
+        warned.is_empty(),
+        "the current binary booted on a store recorded at {git_ref} and said part of its own \
+         boot failed: {warned:?}"
+    );
+
     let surface = Surface::connect(&format!("http://127.0.0.1:{http_port}/mcp"))
         .await
         .expect("connecting to the current binary");
@@ -202,19 +216,70 @@ async fn assert_every_recorded_record_reads_back(
         fail("the recorded fact's provenance, edge or fields", &read);
     }
 
-    // The declared type is still in the instance's own vocabulary.
-    let read = surface.call("start_here", json!({"brief": true})).await;
-    if !read.contains("upgrade-fixture-type") {
-        fail("the declared type", &read);
+    // **A reference-typed value, a claim worked out from another, and a
+    // merge** — the three shapes an upgrade of the storage has to carry and
+    // the first recording never held.
+    let read = surface
+        .call(
+            "recall",
+            json!({"subject": "person:upgrade-fixture-person", "facts": true}),
+        )
+        .await;
+    let parsed: serde_json::Value =
+        serde_json::from_str(&read).unwrap_or_else(|_| fail("the recorded claims", &read));
+    let facts = parsed["objects"][0]["facts"]
+        .as_array()
+        .unwrap_or_else(|| fail("the recorded claims' own list", &read));
+    let lived = facts
+        .iter()
+        .find(|f| f["content"] == "lives at the recorded place")
+        .unwrap_or_else(|| fail("the claim a later one is worked out from", &read));
+    let visited = facts
+        .iter()
+        .find(|f| f["content"] == "visited the recorded place")
+        .unwrap_or_else(|| fail("the claim that holds a reference", &read));
+    if visited["fields"]["venue"] != "place:upgrade-fixture-place" {
+        fail("the reference-typed value", &read);
+    }
+    if visited["derived_from"].is_null() || visited["derived_from"] != lived["address"] {
+        fail("the derived_from pointer", &read);
+    }
+    // **The survivor holds the duplicate's claim and the account of the
+    // merge**, and the duplicate's own handle still resolves, with nothing
+    // left on it.
+    let read = surface
+        .call(
+            "recall",
+            json!({"subject": "thing:upgrade-fixture-thing", "facts": true}),
+        )
+        .await;
+    if !read.contains("the twin carried a note") || !read.contains("recorded as one thing") {
+        fail("the merge", &read);
+    }
+    let read = surface
+        .call(
+            "recall",
+            json!({"subject": "thing:recorded-twin", "facts": true}),
+        )
+        .await;
+    let parsed: serde_json::Value =
+        serde_json::from_str(&read).unwrap_or_else(|_| fail("the merged handle", &read));
+    if parsed["objects"][0]["id"] != "thing:recorded-twin"
+        || read.contains("the twin carried a note")
+    {
+        fail("the merged handle", &read);
     }
 
-    // The thought: an active, connection-edged claim on the bot's own
-    // handle, still readable as one of its own thoughts.
-    let read = surface
-        .call("recall", json!({"subject": "bot:assistant", "facts": true}))
-        .await;
-    if !read.contains("a recorded thought, live in the room") {
-        fail("the recorded thought", &read);
+    // **An anonymous boot of the upgraded store is within the ceiling.** The
+    // snapshot is what grows with a store, and a boot that sizes its essay as
+    // text overshoots as soon as the snapshot leaves it no spare characters.
+    let anonymous = surface.call("start_here", json!({})).await;
+    let ceiling = jojobot_domain::text::BOOT_ANSWER.budget;
+    if anonymous.chars().count() > ceiling {
+        fail(
+            "an anonymous boot within the ceiling",
+            &format!("{} characters against {ceiling}", anonymous.chars().count()),
+        );
     }
 
     // The role-claim fields, on the bot's own folded fields.

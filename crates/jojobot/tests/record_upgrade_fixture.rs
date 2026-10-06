@@ -191,7 +191,7 @@ async fn seed_representative_records(surface: &Surface) -> String {
     }
 
     // A fact with fields, an edge, and a stated provenance.
-    surface
+    let lived = surface
         .must(
             "capture",
             json!({
@@ -206,6 +206,72 @@ async fn seed_representative_records(surface: &Surface) -> String {
         )
         .await
         .expect("the fact with fields and an edge is captured");
+
+    // **A reference-typed value.** A type that declares a key as a reference to
+    // a place, and a claim that holds one: the store keeps the permanent id the
+    // value names and the upgrade has to serve it back as the handle.
+    surface
+        .must(
+            "declare_type",
+            json!({
+                "name": "upgrade-fixture-visit",
+                "fields": [{"key": "venue", "holds": "reference:place"}],
+                "sid": sid,
+            }),
+        )
+        .await
+        .expect("the reference type is declared");
+    // **A claim worked out from another claim.** The pointer is the claim's
+    // address, and it has to read back as that address.
+    surface
+        .must(
+            "capture",
+            json!({
+                "subject": "person:upgrade-fixture-person",
+                "content": "visited the recorded place",
+                "provenance": "inference",
+                "fields": {"venue": "place:upgrade-fixture-place"},
+                "derived_from": lived["address"],
+                "sid": sid,
+            }),
+        )
+        .await
+        .expect("the reference value and the derived claim are captured");
+
+    // **A merge.** The duplicate carries a claim of its own, then folds into
+    // the survivor: its handle goes on resolving and its claim has moved.
+    surface
+        .must(
+            "add_entity",
+            json!({"kind": "thing", "handle": "recorded-twin", "name": "A Spare Copy",
+                   "source": "test", "sid": sid}),
+        )
+        .await
+        .expect("the duplicate is added");
+    surface
+        .must(
+            "capture",
+            json!({
+                "subject": "thing:recorded-twin",
+                "content": "the twin carried a note",
+                "provenance": "testimony",
+                "sid": sid,
+            }),
+        )
+        .await
+        .expect("the duplicate's claim is captured");
+    surface
+        .must(
+            "merge_entities",
+            json!({
+                "duplicate": "thing:recorded-twin",
+                "survivor": "thing:upgrade-fixture-thing",
+                "reason": "recorded as one thing",
+                "sid": sid,
+            }),
+        )
+        .await
+        .expect("the duplicate is merged into the survivor");
 
     // A declared type.
     surface
