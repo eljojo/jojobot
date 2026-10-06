@@ -955,13 +955,14 @@ impl Session {
         // an unknown `kind`, an unknown `shape` — still fails in the client and
         // never reaches the domain. A tripwire that accepted only one would
         // pass the day a refusal moved from one shape to the other.
-        let body = match self
-            .client
-            .call_tool(
+        let body = match within_a_deadline(
+            tool,
+            self.client.call_tool(
                 CallToolRequestParams::new(tool.to_string())
                     .with_arguments(args.as_object().expect("arguments are an object").clone()),
-            )
-            .await
+            ),
+        )
+        .await
         {
             Err(e) => json!({"status": "blocked", "client_error": e.to_string()}),
             Ok(result) => {
@@ -1789,14 +1790,34 @@ fn a_count_matched_as_text_is_satisfied_by_a_bigger_count() {
     );
 }
 
+/// How long a story waits for one verb before it fails the case.
+const A_VERB_MAY_TAKE: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// **A verb that never answers fails the case instead of hanging it.** A
+/// handler that panics leaves its caller waiting on a reply that cannot come,
+/// and a case that waits for ever reports nothing to anybody — not even to a
+/// sabotage run that wanted to know whether the case noticed.
+async fn within_a_deadline<T>(tool: &str, answering: impl std::future::Future<Output = T>) -> T {
+    tokio::time::timeout(A_VERB_MAY_TAKE, answering)
+        .await
+        .unwrap_or_else(|_| {
+            panic!(
+                "{tool} did not answer within {} seconds: the server may have panicked in it",
+                A_VERB_MAY_TAKE.as_secs()
+            )
+        })
+}
+
 async fn call(client: &Client, tool: &str, args: Value) -> Value {
-    let result = client
-        .call_tool(
+    let result = within_a_deadline(
+        tool,
+        client.call_tool(
             CallToolRequestParams::new(tool.to_string())
                 .with_arguments(args.as_object().expect("arguments are an object").clone()),
-        )
-        .await
-        .unwrap_or_else(|e| panic!("{tool} call failed: {e}"));
+        ),
+    )
+    .await
+    .unwrap_or_else(|e| panic!("{tool} call failed: {e}"));
     let text = result
         .content
         .first()
