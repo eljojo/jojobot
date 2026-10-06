@@ -44,6 +44,10 @@ pub const DECISIONS_ROOM: &str = "rooms/decisions.md";
 /// shipped type exists for, worded the way the operator talks.
 pub const ADOPTION_ROOM: &str = "rooms/adoption.md";
 
+/// **The repair room** — one mistake the model makes and three the room
+/// furnishes, each with a repair already on the surface and no move named.
+pub const REPAIR_ROOM: &str = "rooms/repair.md";
+
 /// **The adoption experiment's wording arm (E1)** — the same room with each
 /// fact said in its key's own word.
 pub const ADOPTION_WORDING_ROOM: &str = "rooms/adoption-wording.md";
@@ -68,7 +72,7 @@ type Room = (&'static str, Option<InRust>, bool);
 ///
 /// **Exactly one entry carries `true`** — decision log 299 — and this table is
 /// the only place that name lives; nothing outside it repeats it.
-const ROOMS: [Room; 8] = [
+const ROOMS: [Room; 9] = [
     (BIKE_ROOM, None, false),
     (LOOP_ROOM, None, false),
     (YEAR_ROOM, None, false),
@@ -77,6 +81,7 @@ const ROOMS: [Room; 8] = [
     (DECISIONS_ROOM, None, false),
     (ADOPTION_ROOM, None, false),
     (ADOPTION_WORDING_ROOM, None, false),
+    (REPAIR_ROOM, None, false),
 ];
 
 /// **The room a run uses when none is named** — decision log 299.

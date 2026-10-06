@@ -110,7 +110,7 @@ pub enum Strength {
 
 /// **Every lock this build has actually proven failable, so far.**
 ///
-/// 97 entries, of five different shapes: 77 blanket and 20 discriminating.
+/// 103 entries, of five different shapes: 77 blanket and 26 discriminating.
 /// Quote the discriminating count as twelve, with one constructed positive
 /// — never as a bare twelve; see the note on `tests/fair_lock.rs` below for
 /// why.
@@ -896,6 +896,48 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
         lock: "Phase 1 — the day the tickets have to be sorted by is not under the key the shipped type holds, so nothing that asks what is waiting on a decision can find it",
         file: "tests/adoption_room.rs",
         function: "the_decision_lock_reds_under_an_invented_key_and_the_loan_lock_holds",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::REPAIR_ROOM,
+        lock: "Phase 2 — the loan's last day is not under the key the shipped type holds, so the question about what is owed cannot find it and nothing put it right",
+        file: "tests/repair_room.rs",
+        function: "the_loan_lock_reds_when_the_loan_stays_under_an_invented_key",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::REPAIR_ROOM,
+        lock: "Phase 3 — Homer carries nothing about peanuts, so the correction never reached the person it was about",
+        file: "tests/repair_room.rs",
+        function: "the_homer_lock_reds_when_the_correction_never_reaches_homer",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::REPAIR_ROOM,
+        lock: "Phase 3 — Bart still holds the allergy the operator said is not his, so the wrong person's record was left standing",
+        file: "tests/repair_room.rs",
+        function: "the_bart_lock_reds_when_the_allergy_is_left_on_bart",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::REPAIR_ROOM,
+        lock: "Phase 3 — no place carries a merge record, so the two names for one place are still two things",
+        file: "tests/repair_room.rs",
+        function: "the_place_lock_reds_when_the_two_names_are_left_as_two_things",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::REPAIR_ROOM,
+        lock: "Phase 3 — the fern the operator gave away is still owed, or the other loop went with it",
+        file: "tests/repair_room.rs",
+        function: "the_fern_lock_reds_when_the_fern_is_left_owed",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::REPAIR_ROOM,
+        lock: "Phase 1 — the loan's last day is not on record under any key, so the first sitting never filed it",
+        file: "tests/repair_room.rs",
+        function: "the_filing_lock_reds_when_the_loan_is_never_filed",
         strength: Strength::Discriminating,
     },
 ];
