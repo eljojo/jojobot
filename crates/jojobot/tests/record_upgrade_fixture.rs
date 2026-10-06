@@ -287,6 +287,22 @@ async fn seed_representative_records(surface: &Surface) -> String {
         .await
         .expect("the type is declared");
 
+    // **A caller's type under a name a later build ships as a kind.** Last night
+    // a model invented keys for a promise, and a caller can declare a type under
+    // any name the build does not hold. The build that ships the kind has to
+    // boot on a store that already holds a type of that name.
+    surface
+        .must(
+            "declare_type",
+            json!({
+                "name": "promise",
+                "fields": [{"key": "promised_for", "holds": "date"}],
+                "sid": sid,
+            }),
+        )
+        .await
+        .expect("the caller's type under a later kind's name is declared");
+
     // A thought in a room: an active claim on the bot's own handle, drawing
     // a connection edge.
     surface

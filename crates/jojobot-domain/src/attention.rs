@@ -555,6 +555,83 @@ impl Carrier for DecideBy {
     }
 }
 
+/// **The day a promise has to be kept by.** One key, one date: a promise has
+/// no cadence and no policy, and nothing here is arithmetic.
+pub const PROMISED_BY: &str = "promised_by";
+
+/// **What a promise is about**, when there is something to point at.
+pub const REGARDING: &str = "regarding";
+
+/// **How a promise ended**, one of [`PromiseEnd`]'s words. A promise carrying
+/// none is open.
+pub const ENDED: &str = "ended";
+
+/// **The three ways a promise ends, told apart afterwards.** It was kept
+/// (`delivered`), it was let go by the one it was made to or by the one who
+/// made it (`withdrawn`), or something happened that made it moot
+/// (`overtaken`). Which of them it was is the question asked later — *which
+/// did I keep* is not *which stopped mattering* — so the record says which
+/// rather than saying only that it ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PromiseEnd {
+    /// It was kept.
+    Delivered,
+    /// It was let go.
+    Withdrawn,
+    /// It was made moot by something else.
+    Overtaken,
+}
+
+impl PromiseEnd {
+    /// Every way a promise ends, for the key that holds one.
+    pub const ALL: [PromiseEnd; 3] = [
+        PromiseEnd::Delivered,
+        PromiseEnd::Withdrawn,
+        PromiseEnd::Overtaken,
+    ];
+
+    /// The word the key holds.
+    pub fn as_token(self) -> &'static str {
+        match self {
+            PromiseEnd::Delivered => "delivered",
+            PromiseEnd::Withdrawn => "withdrawn",
+            PromiseEnd::Overtaken => "overtaken",
+        }
+    }
+}
+
+/// **The promise carrier**: a promise falls due the day it names, until it
+/// ends.
+pub struct Promises;
+
+impl Carrier for Promises {
+    fn interface(&self) -> types::DeclaredType {
+        types::DeclaredType::new(
+            "promised-by",
+            vec![types::Field::new(PROMISED_BY, types::ValueType::Date)],
+        )
+    }
+
+    /// **An ended promise owes nothing**, whichever way it ended, and the
+    /// stored due moment is taken off with it — the read finds what is owed by
+    /// that key, so ending is a write the same mover already handles. **An
+    /// open one with a day that will not parse is loud**, as every carrier's
+    /// is: a thing holding the key at all is this carrier's business.
+    fn due(&self, fields: &BTreeMap<String, String>) -> Due {
+        if fields
+            .get(ENDED)
+            .is_some_and(|held| !held.trim().is_empty())
+        {
+            return Due::Never;
+        }
+        match fields.get(PROMISED_BY).map(|held| held.trim().parse()) {
+            Some(Ok(day)) => Due::On(day),
+            Some(Err(_)) => Due::Unreadable,
+            None => Due::Never,
+        }
+    }
+}
+
 /// **What is owed, over any carrier.** The read hands a thing's folded fields;
 /// a carrier is found by which of them it structurally answers to, never by
 /// what kind produced them, and a thing no carrier's interface matches owes
@@ -569,7 +646,12 @@ pub fn owed(carriers: &[&dyn Carrier], fields: &BTreeMap<String, String>) -> Due
 
 /// The carriers this build ships.
 pub fn shipped() -> Vec<Box<dyn Carrier>> {
-    vec![Box::new(Rhythms), Box::new(RunsOut), Box::new(DecideBy)]
+    vec![
+        Box::new(Rhythms),
+        Box::new(RunsOut),
+        Box::new(DecideBy),
+        Box::new(Promises),
+    ]
 }
 
 /// **What a write does to [`DUE_ON`]: move it, remove it, or leave it.**
@@ -1231,9 +1313,38 @@ mod tests {
         );
     }
 
+    /// **A promise falls due the day it names, and stops owing the moment it
+    /// ends** — whichever way it ended. Each negative is paired with the
+    /// positive it depends on: a build that never read the day would pass the
+    /// ended halves, and one that ignored `ended` would pass the dated half.
+    #[test]
+    fn a_promise_is_owed_on_its_day_until_it_ends() {
+        let carriers: Vec<&dyn Carrier> = vec![&Promises];
+        let mut open = BTreeMap::new();
+        open.insert(PROMISED_BY.to_string(), "2026-07-01".to_string());
+        assert_eq!(owed(&carriers, &open), Due::On(date(2026, 7, 1)));
+
+        for end in PromiseEnd::ALL {
+            let mut ended = open.clone();
+            ended.insert(ENDED.to_string(), end.as_token().to_string());
+            assert_eq!(
+                owed(&carriers, &ended),
+                Due::Never,
+                "a promise that ended {} still owes",
+                end.as_token()
+            );
+        }
+        // A day that will not read is loud, as every carrier's is.
+        let mut garbled = BTreeMap::new();
+        garbled.insert(PROMISED_BY.to_string(), "soon".to_string());
+        assert_eq!(owed(&carriers, &garbled), Due::Unreadable);
+        // A thing with none of its keys owes nothing.
+        assert_eq!(owed(&carriers, &BTreeMap::new()), Due::Never);
+    }
+
     /// **A carrier is found by the keys a thing carries, never by its kind.**
     ///
-    /// `Promises` here claims no kind at all — there is nothing left on
+    /// `Pledges` here claims no kind at all — there is nothing left on
     /// [`Carrier`] to claim one with — and it is still found, purely because
     /// the fields it is handed carry its interface's key. This is the case
     /// that proves the point of routing through the structural matcher: a
@@ -1244,8 +1355,8 @@ mod tests {
     /// the shipped one: carrying none of its key still owes nothing.
     #[test]
     fn a_carrier_the_read_never_named_a_kind_for_is_still_found_by_its_keys() {
-        struct Promises;
-        impl Carrier for Promises {
+        struct Pledges;
+        impl Carrier for Pledges {
             fn interface(&self) -> types::DeclaredType {
                 types::DeclaredType::new(
                     "promises",
@@ -1261,8 +1372,8 @@ mod tests {
             }
         }
 
-        let promises = Promises;
-        let carriers: Vec<&dyn Carrier> = vec![&promises];
+        let pledges = Pledges;
+        let carriers: Vec<&dyn Carrier> = vec![&pledges];
 
         let mut promised = BTreeMap::new();
         promised.insert("promised_for".to_string(), "2026-08-01".to_string());

@@ -28,9 +28,9 @@ use super::EntityKind;
 /// change is that the set is data. What makes the shipped ones different from any
 /// other kind is not the compiler: it is that a seed writes them at every
 /// startup and a caller cannot redeclare one.
-pub const SHIPPED: [&str; 15] = [
+pub const SHIPPED: [&str; 16] = [
     "person", "project", "place", "event", "work", "thing", "org", "topic", "bot", "pet", "rhythm",
-    "machine", "view", "session", "thread",
+    "promise", "machine", "view", "session", "thread",
 ];
 
 /// **The keys a shipped kind carries**, and almost all of them carry none.
@@ -102,6 +102,25 @@ pub fn keys_of(token: &str) -> Vec<super::types::Field> {
             Field::one_of(
                 "outcome",
                 crate::attention::Outcome::ALL.map(crate::attention::Outcome::as_token),
+            ),
+        ],
+        // **A thing somebody has to do by a day.** The keys are what the
+        // owed-and-late read asks of it and what a question about it needs, and
+        // nothing that describes. **One key is required: the day.** A promise
+        // with no day owes nothing, and one whose day is taken off silently
+        // stops being owed, so once it holds a day no write may take it away.
+        // `regarding` is what it is about, optional because a promise with
+        // nothing to point at is still a promise. `ended` is how it ended,
+        // and the three words are told apart afterwards because *which
+        // promises were kept* and *which stopped mattering* are different
+        // questions; a promise carrying none is open. Being surfaced ends
+        // nothing.
+        "promise" => vec![
+            Field::required(crate::attention::PROMISED_BY, ValueType::Date),
+            Field::new(crate::attention::REGARDING, ValueType::Reference),
+            Field::one_of(
+                crate::attention::ENDED,
+                crate::attention::PromiseEnd::ALL.map(crate::attention::PromiseEnd::as_token),
             ),
         ],
         // **A question asked by name.** The keys are what a view IS: what it

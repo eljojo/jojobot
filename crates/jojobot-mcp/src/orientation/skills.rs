@@ -48,8 +48,8 @@ pub(crate) const SKILLS: &[Skill] = &[
     },
     Skill {
         name: "rhythms",
-        when_to_use: "When a recurring loop is due, or when the operator asks to look forward \
-                      over a period or back over one.",
+        when_to_use: "When a loop is due, something has to be done by a day, or the operator \
+                      asks to look ahead or back.",
         body: RHYTHMS,
     },
     Skill {
@@ -227,6 +227,25 @@ The answer says which day it used. Read it.
 
 A rhythm that holds only part of a schedule comes back overdue, with the
 fields it does hold. Ask the operator for the key it lacks. Do not guess one.
+
+## Something that has to be done by a day
+
+A promise is not a loop. It is something somebody has to do by a day: a thing
+borrowed that has to go back, a reply owed. It is an entity of kind `promise`.
+Its parent says whose job it is to keep. Write it with `add_entity` as soon as
+the operator names one.
+
+`promised_by` is the day. `regarding` is the thing it is about, when there is
+one. Two promises can be about one thing, and each keeps its own events.
+
+A promise ends when you record how: `ended` takes `delivered`, `withdrawn` or
+`overtaken`. Capture it on the promise, with the day it happened. An ended
+promise is no longer owed, and the record still says which of the three it was.
+Being shown in the owed answer ends nothing.
+
+To see what is owed, loops and promises together, call `recall` with
+`fields: [{"key": "due_on"}]` and `overdue: {}`. Add `kind: "promise"` to see
+the promises alone.
 
 ## Keep the pressure low
 

@@ -571,6 +571,7 @@ fn the_shipped_kinds_round_trip_and_the_set_is_closed() {
         (EntityKind::BOT, "bot"),
         (EntityKind::PET, "pet"),
         (EntityKind::RHYTHM, "rhythm"),
+        (EntityKind::PROMISE, "promise"),
         (EntityKind::MACHINE, "machine"),
         (EntityKind::VIEW, "view"),
         (EntityKind::SESSION, "session"),

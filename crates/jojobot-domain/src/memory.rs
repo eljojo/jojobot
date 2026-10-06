@@ -112,10 +112,28 @@ impl EntityKind {
     /// handles. A text label naming them would be identity one layer below
     /// where the near-miss guard can see it.
     ///
-    /// **It is the one kind that requires a parent** ([`validate_entity`]): the
-    /// parent says whose job the loop is, and a rhythm nobody owns is a
-    /// modelling failure rather than a valid shape.
+    /// **It is one of the two kinds that require a parent** ([`validate_entity`],
+    /// with [`EntityKind::PROMISE`]): the parent says whose job the loop is, and
+    /// a rhythm nobody owns is a modelling failure rather than a valid shape.
     pub const RHYTHM: EntityKind = EntityKind("rhythm");
+    /// **Something somebody has to do by a day**: a thing borrowed that has to
+    /// go back, a reply owed, a delivery pledged. It falls due on a date it
+    /// carries, and the question it answers is what is owed and late.
+    ///
+    /// **A kind rather than a key on the thing it is about.** A commitment
+    /// about a thing is its own object: it accumulates its own events
+    /// (chased, deferred, delivered), two commitments can exist about one
+    /// thing, and the thing's record stays about the thing — the argument that
+    /// makes a loop an entity and not a key on a plant.
+    ///
+    /// **It requires a parent**, like a rhythm: the parent says whose job it
+    /// is to keep. What it is about is a key (`regarding`), because a promise
+    /// with nothing to point at is still a promise.
+    ///
+    /// **Not a plan, and not a bigger promise.** A promise is a basic low-level
+    /// object: no cadence, no arithmetic, nothing that fires. Being surfaced
+    /// ends nothing; it ends when somebody records how.
+    pub const PROMISE: EntityKind = EntityKind("promise");
     /// A computer: a server, a laptop, a router, a virtual guest on another.
     ///
     /// **The kind names the OBJECT and not a role it plays.** `host` and
@@ -149,7 +167,7 @@ impl EntityKind {
     /// **The kinds the software ships**, in the order they are seeded and
     /// listed. Not "every kind there is": that is [`kinds::all`], which answers
     /// from what this process loaded.
-    pub const ALL: [EntityKind; 15] = [
+    pub const ALL: [EntityKind; 16] = [
         EntityKind::PERSON,
         EntityKind::PROJECT,
         EntityKind::PLACE,
@@ -161,6 +179,7 @@ impl EntityKind {
         EntityKind::BOT,
         EntityKind::PET,
         EntityKind::RHYTHM,
+        EntityKind::PROMISE,
         EntityKind::MACHINE,
         EntityKind::VIEW,
         EntityKind::SESSION,
@@ -1443,6 +1462,16 @@ pub fn validate_entity(
             "'{id}' is a rhythm and names no parent. A rhythm is a loop ON something, and the \
              parent says whose job it is — the thing maintained, or the bot that carries the \
              review. Send this again with parent set to the handle it is a loop on"
+        )));
+    }
+    // **A promise names whose job it is to keep, or it is not written** — the
+    // same rule, for the same reason: a promise under nobody would surface in
+    // what is owed with no way to say who owes it.
+    if id.kind() == Some(EntityKind::PROMISE) && parent.is_none() {
+        return Err(MemoryError::InvalidEntity(format!(
+            "'{id}' is a promise and names no parent. The parent says whose job it is to keep \
+             it — the person or the bot who owes it. Send this again with parent set to that \
+             handle"
         )));
     }
     Ok(())

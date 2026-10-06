@@ -154,7 +154,7 @@ async fn nears_happened_at_clock_reaches_the_served_surface() {
 /// is handed to the handler and turns up in the answer.
 ///
 /// **Found by its interface's key, never by a kind — the case that proves
-/// the point.** `Promises` claims no kind at all: there is nothing left on
+/// the point.** `Pledges` claims no kind at all: there is nothing left on
 /// `Carrier` to claim one with. A `person`, a kind its own code never
 /// names, still turns up the moment it carries the key — proving the read
 /// is genuinely structural and not a kind check wearing a new name.
@@ -166,9 +166,9 @@ async fn a_carrier_the_read_never_heard_of_answers_in_the_same_read() {
     /// A promise falls due on the day it says it does. Two lines of
     /// arithmetic that share nothing with a loop's, and no kind at all —
     /// `Carrier` has nowhere left to put one.
-    struct Promises;
+    struct Pledges;
 
-    impl attention::Carrier for Promises {
+    impl attention::Carrier for Pledges {
         fn interface(&self) -> jojobot_domain::memory::types::DeclaredType {
             jojobot_domain::memory::types::DeclaredType::new(
                 "promises",
@@ -189,7 +189,7 @@ async fn a_carrier_the_read_never_heard_of_answers_in_the_same_read() {
     }
 
     let mut carriers = attention::shipped();
-    carriers.push(Box::new(Promises));
+    carriers.push(Box::new(Pledges));
     let jojobot = crate::harness::handler_carrying(carriers);
     let sid = writing_as(&jojobot);
 

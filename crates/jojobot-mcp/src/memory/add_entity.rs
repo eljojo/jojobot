@@ -13,7 +13,7 @@ use crate::teaching::{
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AddEntityArgs {
     /// One of `person`, `project`, `place`, `event`, `work`, `thing`, `org`,
-    /// `topic`, `bot`, `pet`, `rhythm`, `machine`, `view`, `thread`.
+    /// `topic`, `bot`, `pet`, `rhythm`, `promise`, `machine`, `view`, `thread`.
     ///
     /// **A pet is a `pet` and not a `thing`.** `thing` is a named possession —
     /// a bike, a hand tool — and a companion animal is not one.
@@ -23,9 +23,15 @@ pub struct AddEntityArgs {
     /// is a `machine`, and so is the one it runs on.
     ///
     /// **A `rhythm` is a recurring loop** — a thing that comes round on a
-    /// cadence — and it is the one kind that REQUIRES a `parent`: the parent
-    /// says whose job the loop is. Two loops on one object are two rhythms,
-    /// which is why they are entities rather than a label on the object.
+    /// cadence — and, with `promise`, one of the two kinds that REQUIRE a
+    /// `parent`: the parent says whose job the loop is. Two loops on one object
+    /// are two rhythms, which is why they are entities rather than a label on
+    /// the object.
+    ///
+    /// **A `promise` is something somebody has to do by a day** — a borrowed
+    /// thing that has to go back. It is its own entity for the same reason: it
+    /// keeps its own events, and two can exist about one thing. Its `parent`
+    /// says whose job it is to keep.
     ///
     /// **`bot` is an ordinary kind here**, and creating one is what this verb
     /// is for: nothing about an identity is compiled in, so every bot beyond

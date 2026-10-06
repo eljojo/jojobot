@@ -395,6 +395,7 @@ mod tests {
             (EntityKind::BOT, "bot", "SoftwareApplication"),
             (EntityKind::PET, "pet", "Pet"),
             (EntityKind::RHYTHM, "rhythm", "Rhythm"),
+            (EntityKind::PROMISE, "promise", "Promise"),
             (EntityKind::MACHINE, "machine", "Machine"),
             (EntityKind::VIEW, "view", "View"),
             (EntityKind::SESSION, "session", "Session"),

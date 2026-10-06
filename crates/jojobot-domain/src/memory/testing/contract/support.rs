@@ -26,11 +26,11 @@ pub(super) async fn ensure<M: Memory + ?Sized>(store: &M, id: &EntityId) {
     if known.iter().any(|e| &e.id == id) {
         return;
     }
-    // A rhythm is refused without a parent, so provisioning one provisions
-    // the thing it is a loop on. The owner is a plain entity of the
+    // A rhythm or a promise is refused without a parent, so provisioning one
+    // provisions the thing it is a loop on, or a promise about. The owner is a plain entity of the
     // fixture's own, which keeps the rule the store enforces out of the way
     // of cases that are about something else.
-    let parent = if id.kind() == Some(EntityKind::RHYTHM) {
+    let parent = if matches!(id.kind(), Some(EntityKind::RHYTHM | EntityKind::PROMISE)) {
         let owner = EntityId::new(EntityKind::THING, format!("{}-owner", id.slug()));
         if !known.iter().any(|e| e.id == owner) {
             add(

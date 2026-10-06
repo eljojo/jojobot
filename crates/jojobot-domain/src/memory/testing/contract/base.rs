@@ -11520,6 +11520,82 @@ pub async fn a_kind_the_software_ships_lands_on_a_callers_type_of_that_name<M: M
         .expect("the contract's own kind is taken back");
 }
 
+/// **A promise is refused without a parent and, once it holds its day, may not
+/// lose it.** The parent says whose job it is to keep; the day is the one key
+/// the owed read needs, so a write that took it off would quietly stop the
+/// promise being owed.
+///
+/// Both halves, paired with the write that lands: the same promise with a
+/// parent is written, and the same edit that is refused for the day lands for
+/// a key that is not required.
+pub async fn a_promise_is_refused_without_a_parent_and_keeps_its_day<M: Memory>(store: &M) {
+    let owner = EntityId("thing:contract-kettle".into());
+    ensure(store, &owner).await;
+    let promise = EntityId("promise:contract-borrowed-wrench".into());
+
+    let refused = store
+        .add_entity(NewEntity::new(
+            promise.clone(),
+            "Return The Wrench",
+            "contract-fixture",
+        ))
+        .await
+        .expect_err("a promise under nobody is refused");
+    assert!(
+        matches!(refused, MemoryError::InvalidEntity(_)),
+        "the shape is wrong, so it is the entity that is invalid: {refused:?}",
+    );
+    let held = add(
+        store,
+        NewEntity {
+            parent: Some(owner.clone()),
+            ..NewEntity::new(promise.clone(), "Return The Wrench", "contract-fixture")
+        },
+    )
+    .await;
+    assert_eq!(held.parent.as_ref(), Some(&owner));
+    assert_eq!(held.kind, EntityKind::PROMISE);
+
+    let dated = capture(
+        store,
+        NewFact {
+            fields: [
+                ("promised_by".to_string(), "2026-07-01".to_string()),
+                ("note".to_string(), "borrowed it".to_string()),
+            ]
+            .into_iter()
+            .collect(),
+            ..NewFact::about(promise.clone(), "has to go back", date(2026, 6, 1))
+        },
+    )
+    .await;
+    let day_taken_off = store
+        .update_fact(
+            &dated.address(),
+            FactPatch {
+                clear_fields: vec!["promised_by".to_string()],
+                ..Default::default()
+            },
+            &other_caller(),
+        )
+        .await;
+    assert!(
+        matches!(day_taken_off, Err(MemoryError::BreaksFit { .. })),
+        "a promise that holds its day may not lose it: {day_taken_off:?}",
+    );
+    store
+        .update_fact(
+            &dated.address(),
+            FactPatch {
+                clear_fields: vec!["note".to_string()],
+                ..Default::default()
+            },
+            &other_caller(),
+        )
+        .await
+        .expect("a key the kind does not require goes freely");
+}
+
 /// 🚨 **A duplicate that got past the guard is repairable, and the repair
 /// is legible afterwards.**
 ///
@@ -12457,6 +12533,7 @@ pub async fn run_all<M: Memory>(store: &M) {
     a_pet_is_its_own_kind_in_the_store(store).await;
     a_rhythm_is_refused_without_a_parent(store).await;
     a_rhythm_holding_a_cadence_and_no_advances_from_is_refused(store).await;
+    a_promise_is_refused_without_a_parent_and_keeps_its_day(store).await;
     a_kind_the_software_ships_lands_on_a_callers_type_of_that_name(store).await;
     a_bots_own_boot_seats_are_not_its_own_to_set(store).await;
     a_thing_reads_back_as_its_fields_folded(store).await;

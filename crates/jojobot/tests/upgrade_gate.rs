@@ -278,6 +278,14 @@ async fn assert_every_recorded_record_reads_back(
     if !read.contains("upgrade-fixture-type") {
         fail("the declared type", &read);
     }
+    // **A kind this build ships over a type the recording's caller had declared
+    // under the same name**: the kind is there, so the seed did not stop on it.
+    if !read.contains("\"kind\":\"promise\"") {
+        fail(
+            "the shipped kind over a caller's type of the same name",
+            &read,
+        );
+    }
 
     // The thought: an active, connection-edged claim on the bot's own
     // handle, still readable as one of its own thoughts.
