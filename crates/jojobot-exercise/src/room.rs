@@ -351,8 +351,7 @@ impl Room {
         }
         drop(served_held);
         drop(store_held);
-        let mut server = spawning
-            .spawn()
+        let mut server = crate::spawn_gate::guarded(|| spawning.spawn())
             .with_context(|| format!("spawning {}", binary.display()))?;
 
         let serving = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -1242,7 +1241,8 @@ mod tests {
         super::die_with_this_run(&mut spawning);
         drop(served_held);
         drop(store_held);
-        let mut server = spawning.spawn().expect("the server starts");
+        let mut server =
+            crate::spawn_gate::guarded(|| spawning.spawn()).expect("the server starts");
         let log = server.stdout.take().expect("the server's own log");
 
         let wanted = super::serving_line(&endpoint);
@@ -1291,11 +1291,11 @@ mod tests {
             "jojobot-dies-at-once-{}-{status}",
             std::process::id(),
         ));
-        std::fs::write(&path, format!("#!/bin/sh\necho '{says}'\nexit {status}\n"))
-            .expect("the throwaway script");
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
-            .expect("the executable bit");
+        crate::spawn_gate::write_script(
+            &path,
+            &format!("#!/bin/sh\necho '{says}'\nexit {status}\n"),
+        )
+        .expect("the throwaway script");
         path
     }
 
@@ -1362,12 +1362,13 @@ mod tests {
 
         // Alive, and never going to serve — a server still bringing its store
         // up looks exactly like this from outside.
-        let server = std::process::Command::new("sleep")
+        let mut sleeper = std::process::Command::new("sleep");
+        sleeper
             .arg("60")
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .expect("a child that stays alive");
+            .stderr(std::process::Stdio::null());
+        let server =
+            crate::spawn_gate::guarded(|| sleeper.spawn()).expect("a child that stays alive");
 
         let mut room = super::Room {
             server,

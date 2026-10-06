@@ -12,7 +12,6 @@
 //! the half that checks a lock never reads FAILED on a run that did not
 //! finish. Both ends move only when the `break` does.
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 
 use jojobot_exercise::agent::Agent;
@@ -118,9 +117,9 @@ async fn run_failing_at_judged_by(
     let scratch = Scratch::new();
     let launches = scratch.0.join("launches");
     let program = scratch.0.join("fake-agent");
-    std::fs::write(
+    jojobot_exercise::spawn_gate::write_script(
         &program,
-        format!(
+        &format!(
             "#!/bin/sh\n\
              echo launched >> '{launches}'\n\
              if [ \"$(wc -l < '{launches}')\" -eq {fail_at} ]; then\n\
@@ -131,8 +130,6 @@ async fn run_failing_at_judged_by(
         ),
     )
     .expect("the stand-in agent is written");
-    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755))
-        .expect("the stand-in agent is executable");
 
     let playbook = Playbook::parse("usage-limit", PLAYBOOK).expect("the playbook parses");
     let agent = Agent::new("sonnet").launching(program.to_str().expect("a utf-8 path"));

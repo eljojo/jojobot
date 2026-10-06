@@ -222,13 +222,8 @@ async fn a_server_that_cannot_start_is_reported_after_every_attempt() {
     // every system this runs on, and a case that skips when it is missing is a
     // case that asserts nothing while reading green.
     let never_serves = std::env::temp_dir().join("jojobot-room-never-serves");
-    std::fs::write(&never_serves, "#!/bin/sh\nexit 1\n").expect("a binary on disk");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&never_serves, std::fs::Permissions::from_mode(0o755))
-            .expect("it can be run");
-    }
+    jojobot_exercise::spawn_gate::write_script(&never_serves, "#!/bin/sh\nexit 1\n")
+        .expect("a binary on disk");
 
     let said = match Room::open(&never_serves).await {
         Ok(_) => panic!("a binary that exits immediately served a room"),

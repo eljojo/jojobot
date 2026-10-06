@@ -181,24 +181,23 @@ async fn within(
     // us; a spawn does not, and inherited streams send the agent's answer to
     // whoever is watching and nowhere else — which is the very thing the
     // transcript work exists to stop.
-    let child = invocation
-        .command()
+    let mut command = invocation.command();
+    command
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         // **Killed when this call gives up on it, rather than orphaned.** A
         // process nobody is waiting for still holds its share of the room and
         // still costs money; `wait_with_output` takes the child, so dropping it
         // on the deadline is what has to do the killing.
-        .kill_on_drop(true)
-        .spawn()
-        .with_context(|| {
-            format!(
-                "running {} — the agent CLI is the operator's own tool, the same one they are \
+        .kill_on_drop(true);
+    let child = crate::spawn_gate::guarded(|| command.spawn()).with_context(|| {
+        format!(
+            "running {} — the agent CLI is the operator's own tool, the same one they are \
                  already logged in to, and this project neither ships nor installs it: it has to \
              be on PATH before a run starts",
-                invocation.program,
-            )
-        })?;
+            invocation.program,
+        )
+    })?;
     match tokio::time::timeout(deadline, child.wait_with_output()).await {
         Ok(done) => Ok(Some(done.with_context(|| {
             format!("waiting for {} to finish", invocation.program)
