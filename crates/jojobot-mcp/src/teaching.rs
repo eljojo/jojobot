@@ -128,8 +128,9 @@ pub(crate) const DUPLICATE_REPAIR_DOMAIN: &str = "duplicate-repair";
 pub(crate) const DUPLICATE_REPAIR_TEACHING: &str = "You created this past a near-miss refusal. If \
     it later turns out to be the same thing as one of those, merge_entities folds one into the \
     other: the claims, the edges drawn at it and the history under its keys move to the \
-    survivor, and the handle you merge away keeps answering and forwards. archive_entity is not \
-    that repair. It takes an entity out of default reads and leaves its claims where they are.";
+    survivor. A recall of the handle you merge away answers status merged, names the survivor \
+    in merged_into and holds nothing itself, so read the survivor instead. archive_entity is \
+    not that repair. It takes an entity out of default reads and leaves its claims where they are.";
 
 /// **The fifth domain — archiving a rhythm's claim does not stop its
 /// cadence.** Named on the call that actually raises the question: an

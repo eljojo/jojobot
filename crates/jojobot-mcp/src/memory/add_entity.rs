@@ -922,6 +922,27 @@ mod tests {
         );
     }
 
+    /// **The duplicate-repair teaching says what a recall of the merged-away
+    /// handle returns now: the `merged` status naming the survivor in
+    /// `merged_into`.** A recall of that handle holds nothing and answers as
+    /// nothing, so a teaching that says the handle "forwards" sends a caller to
+    /// expect the survivor's claims where there are none.
+    #[tokio::test]
+    async fn the_duplicate_repair_teaching_says_the_merged_handle_names_its_survivor() {
+        let jojobot = handler();
+        let sid = writing_as(&jojobot);
+        created(&jojobot, &sid, "place", "leftorium", "Leftorium").await;
+        let first = forced_past_a_near_miss(&jojobot, &sid, "wharf-road", "Leftorium").await;
+        assert!(
+            teaches(&first, "merged_into"),
+            "the teaching does not say the merged-away handle names its survivor: {first}",
+        );
+        assert!(
+            !teaches(&first, "forwards"),
+            "the teaching still says the merged-away handle forwards: {first}",
+        );
+    }
+
     /// Read a kind's things through the verb a caller uses, which is what shows
     /// them to the session.
     async fn browsed(jojobot: &Jojobot, sid: &str, kind: &str) {
