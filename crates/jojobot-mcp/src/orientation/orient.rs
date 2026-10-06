@@ -22,6 +22,17 @@ fn own_mail_json(mailbox: &jojobot_domain::mailbox::Mailbox) -> serde_json::Valu
     mail
 }
 
+/// **What a piece of text costs in the answer a caller receives**, in
+/// characters: serialized, where a newline or a quote is two. The boot's
+/// ceiling bounds that answer, so everything the boot ranks against it is
+/// sized this way. Escaping is per character, so costs add up the way text
+/// does.
+fn serialized_len(text: &str) -> usize {
+    serde_json::to_string(text)
+        .map(|quoted| quoted.chars().count().saturating_sub(2))
+        .unwrap_or_else(|_| text.chars().count())
+}
+
 /// **Null out one rule's `details`, marked** — the same shape whichever
 /// caller reaches for it: a ranked cut, or the floor measurement below that
 /// has to know the answer's size with every rule's reasoning already gone.
@@ -72,7 +83,10 @@ fn rank_rule_details(identity: &mut serde_json::Value, budget: usize) {
     if let Some(rules) = identity["rules"].as_array() {
         for i in (0..rules.len()).rev() {
             if let Some(details) = rules[i]["details"].as_str() {
-                rule_slots.push((i, details.chars().count()));
+                // **Sized serialized**, for the reason `essay_for_boot` sizes
+                // its units that way: the ceiling bounds what a caller
+                // receives, where a quote or a newline costs two characters.
+                rule_slots.push((i, serialized_len(details)));
             }
         }
     }
@@ -188,8 +202,13 @@ fn essay_for_boot(brief: bool, identity: &serde_json::Value, budget: usize) -> E
     candidates.push((None, preamble));
     candidates.extend(sections.iter().map(|s| (Some(s.heading), s.body)));
 
+    // **Sized by what a unit costs serialized, not as text.** The budget bounds
+    // the answer a caller receives, where a newline or a quote is two
+    // characters, so a unit that fits as text can take the whole answer over
+    // the ceiling while the boot says nothing was left out. Escaping is per
+    // character, so the cost of the units adds up the way their text does.
     let kept =
-        (text::Capped { budget }).head_or_none(&candidates, |(_, body)| body.chars().count());
+        (text::Capped { budget }).head_or_none(&candidates, |(_, body)| serialized_len(body));
     let kept_items = kept.kept();
 
     let mut text = essay::ORIENTATION_CORE.to_string();
@@ -1506,19 +1525,21 @@ mod tests {
     /// 🚨 **The positive half of the core/remainder bar, re-pointed at the
     /// boot that actually has this behaviour.**
     ///
-    /// A named boot can never get the whole essay — the remainder is not a
+    /// **An anonymous boot ships the whole essay when the whole answer fits
+    /// the ceiling** — core and remainder joined, byte for byte. The ceiling
+    /// decides: a store whose snapshot leaves no room for every unit ships the
+    /// units that fit and names the rest (see
+    /// `an_anonymous_boots_whole_answer_is_under_the_ceiling_or_has_dropped_everything_it_can`).
+    ///
+    /// A named boot never gets the whole essay — the remainder is not a
     /// ranking candidate for one, it is a rule (`essay_for_boot`'s own doc).
-    /// That was this case's original shape, resting on whatever margin a
-    /// light identity happened to leave; it broke the day the margin ran out
-    /// (206 characters short, on the lightest real identity measured), and
-    /// fixing the margin would only have moved the cliff. **An anonymous
-    /// boot is where "whole" is the actual, load-bearing behaviour** — no
-    /// identity to pay for, so it is what a caller who asked to be taught
-    /// the surface actually gets, and it is worth proving the essay's own
-    /// path through the cap still ships it whole rather than assuming an
-    /// anonymous boot never has to ask.
+    /// **An anonymous boot is where "whole" is the load-bearing behaviour**: no
+    /// identity to pay for, so it is what a caller who asked to be taught the
+    /// surface gets whenever the answer fits. This store is the bare double,
+    /// whose snapshot is small; a real instance's is larger, and the case
+    /// above grows the snapshot to find where the essay stops fitting.
     #[tokio::test]
-    async fn an_anonymous_boot_ships_the_essay_whole() {
+    async fn an_anonymous_boot_that_fits_the_ceiling_ships_the_essay_whole() {
         let jojobot = handler();
         let booted = json_of(
             &jojobot
@@ -1543,12 +1564,126 @@ mod tests {
         assert_eq!(
             orientation,
             crate::orientation::essay::orientation(),
-            "an anonymous boot must ship the essay whole, core and remainder joined",
+            "an anonymous boot that fits must ship the essay whole, core and remainder joined",
         );
         assert_eq!(booted["orientation_elided"], false, "{booted}");
         assert!(
             booted["orientation_note"].is_null(),
             "nothing was cut, so there is nothing to explain: {booted}"
+        );
+        // **The answer that shipped the whole essay is within the ceiling**,
+        // which is what makes "whole" the true answer and not an overshoot.
+        let whole = booted.to_string().chars().count();
+        assert!(
+            whole <= jojobot_domain::text::BOOT_ANSWER.budget,
+            "the whole essay shipped in {whole} characters, over the ceiling"
+        );
+    }
+
+    /// **Whatever the store's size, the serialized whole answer is at or under
+    /// the ceiling, or nothing that could drop is left** (rule 306). The
+    /// ceiling bounds what a caller RECEIVES, so a unit of the essay is sized
+    /// by what it costs once serialized: a newline or a quote is two
+    /// characters there and one in the text.
+    ///
+    /// A snapshot grows with the store, so the case grows it a bot at a time
+    /// and reads every boot along the way, including the ones near the edge
+    /// where the text fits and its serialization does not. **Both halves must
+    /// occur**, or a ceiling that shipped everything, or dropped everything,
+    /// would pass.
+    #[tokio::test]
+    async fn an_anonymous_boots_whole_answer_is_under_the_ceiling_or_has_dropped_everything_it_can()
+    {
+        let jojobot = handler();
+        let budget = jojobot_domain::text::BOOT_ANSWER.budget;
+        let core = crate::orientation::essay::ORIENTATION_CORE;
+        let (mut shipped_some, mut dropped_some) = (false, false);
+        for n in 0..24 {
+            // **Three of one letter each**, so no slug contains another and the
+            // creation screen takes every one as its own bot.
+            let letter = (b'a' + n as u8) as char;
+            make_bot(&jojobot, &format!("{letter}{letter}{letter}")).await;
+            let booted = json_of(
+                &jojobot
+                    .start_here(Parameters(OrientArgs {
+                        claim: None,
+                        timezone: None,
+                        bot: None,
+                        brief: Some(false),
+                        skill: None,
+                        section: None,
+                        resume: None,
+                        sid: None,
+                        today: None,
+                    }))
+                    .await
+                    .expect("start_here ok"),
+            );
+            let whole = booted.to_string().chars().count();
+            let orientation = booted["orientation"].as_str().expect("the essay");
+            assert!(orientation.starts_with(core), "the core always ships");
+            let shipped_remainder = orientation.len() > core.len();
+            shipped_some |= shipped_remainder;
+            dropped_some |= booted["orientation_elided"] == true;
+            if booted["orientation_elided"] == true {
+                assert!(
+                    booted["orientation_note"].is_string(),
+                    "what was left out is named: {booted}"
+                );
+            }
+            assert!(
+                whole <= budget || !shipped_remainder,
+                "with {n} more bots the whole answer is {whole} characters, over the {budget} \
+                 ceiling, and the essay still ships part of its remainder"
+            );
+        }
+        assert!(shipped_some, "no boot shipped any of the remainder");
+        assert!(
+            dropped_some,
+            "no boot dropped anything, so the edge was never crossed"
+        );
+    }
+
+    /// **A rule's reasoning is sized by what it costs serialized too.** Four
+    /// rules whose `details` are full of quotes fit the ceiling
+    /// as text and would take the answer past it as the caller receives them.
+    /// The newest reasoning ships and the older is left at home, marked.
+    ///
+    /// **Both halves**, or a boot that dropped every reasoning would pass.
+    #[tokio::test]
+    async fn rule_reasoning_full_of_quotes_is_ranked_by_what_it_costs_serialized() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        let heavy = "\"x\" ".repeat(750);
+        for n in 0..4 {
+            capture_ok(
+                &jojobot,
+                CaptureArgs {
+                    details: Some(heavy.clone()),
+                    fields: Some(
+                        [("starred".to_string(), "true".to_string())]
+                            .into_iter()
+                            .collect(),
+                    ),
+                    ..capture_args("bot:gamma", &format!("rule number {n}"))
+                },
+            )
+            .await;
+        }
+        let booted = boot(&jojobot, "gamma").await;
+        let rules = booted["identity"]["rules"].as_array().expect("rules");
+        assert_eq!(rules.len(), 4, "{rules:?}");
+        let kept = rules.iter().filter(|r| r["details"].is_string()).count();
+        let elided = rules.iter().filter(|r| r["details_elided"] == true).count();
+        assert!(kept >= 1, "the newest reasoning ships: {rules:?}");
+        assert!(
+            elided >= 1,
+            "the older reasoning is left at home: {rules:?}"
+        );
+        let whole = booted.to_string().chars().count();
+        assert!(
+            whole <= jojobot_domain::text::BOOT_ANSWER.budget,
+            "the whole answer is {whole} characters, over the ceiling"
         );
     }
 
@@ -2914,10 +3049,21 @@ mod essay_for_boot_budget {
     use crate::orientation::essay;
     use crate::orientation::orient::essay_for_boot;
 
+    /// **What a piece of the essay costs in the answer a caller receives** —
+    /// serialized, where a newline or a quote is two characters. The budget
+    /// bounds that answer, so every boundary here is measured the same way.
+    fn cost(text: &str) -> usize {
+        serde_json::to_string(text)
+            .expect("text serializes")
+            .chars()
+            .count()
+            - 2
+    }
+
     fn remainder_shape() -> (&'static str, Vec<&'static str>, Vec<usize>) {
         let (preamble, sections) = essay::remainder_units(essay::ORIENTATION_REMAINDER);
         let headings: Vec<&'static str> = sections.iter().map(|s| s.heading).collect();
-        let lens: Vec<usize> = sections.iter().map(|s| s.body.chars().count()).collect();
+        let lens: Vec<usize> = sections.iter().map(|s| cost(s.body)).collect();
         (preamble, headings, lens)
     }
 
@@ -2925,7 +3071,7 @@ mod essay_for_boot_budget {
     /// — the case this whole mechanism must never regress.
     #[test]
     fn a_budget_covering_the_whole_remainder_ships_it_whole() {
-        let whole_remainder_len = essay::ORIENTATION_REMAINDER.chars().count();
+        let whole_remainder_len = cost(essay::ORIENTATION_REMAINDER);
         let served = essay_for_boot(false, &serde_json::Value::Null, whole_remainder_len);
         assert_eq!(
             served.text.as_deref(),
@@ -2942,7 +3088,7 @@ mod essay_for_boot_budget {
     fn a_partial_budget_ships_the_leading_sections_and_names_the_rest() {
         let (preamble, headings, lens) = remainder_shape();
         assert!(headings.len() >= 3, "{headings:?}");
-        let budget = preamble.chars().count() + lens[0] + lens[1];
+        let budget = cost(preamble) + lens[0] + lens[1];
         let served = essay_for_boot(false, &serde_json::Value::Null, budget);
         let text = served.text.expect("some text always ships");
         assert!(text.starts_with(essay::ORIENTATION_CORE), "{text:?}");
@@ -2988,7 +3134,7 @@ mod essay_for_boot_budget {
     #[test]
     fn a_budget_covering_only_the_preamble_ships_it_alone_and_names_every_heading() {
         let (preamble, headings, _) = remainder_shape();
-        let budget = preamble.chars().count();
+        let budget = cost(preamble);
         let served = essay_for_boot(false, &serde_json::Value::Null, budget);
         let text = served.text.expect("some text always ships");
         assert!(text.starts_with(essay::ORIENTATION_CORE), "{text:?}");
@@ -3013,7 +3159,7 @@ mod essay_for_boot_budget {
     #[test]
     fn a_budget_too_tight_for_the_preamble_ships_core_only_and_names_the_opening_paragraphs() {
         let (preamble, headings, _) = remainder_shape();
-        let budget = preamble.chars().count().saturating_sub(1);
+        let budget = cost(preamble).saturating_sub(1);
         let served = essay_for_boot(false, &serde_json::Value::Null, budget);
         let text = served.text.expect("the core always ships");
         assert_eq!(text, essay::ORIENTATION_CORE, "{text:?}");

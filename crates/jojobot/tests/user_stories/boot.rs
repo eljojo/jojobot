@@ -232,3 +232,36 @@ async fn a_fresh_session_tries_to_be_useful_on_turn_one() {
 
     story.finish().await;
 }
+
+/// **A fresh instance's anonymous boot stays under the ceiling, and says so
+/// when it left part of the essay out.** The ceiling bounds the answer a
+/// caller receives, serialized: the boot sizes what it ships by what it costs
+/// there, so a caller never gets more than the ceiling while the boot claims
+/// nothing was cut. Whatever the answer left out is named, and the next call
+/// that reaches it is named beside it.
+#[tokio::test]
+async fn a_fresh_anonymous_boot_is_under_the_ceiling_and_names_what_it_left_out() {
+    let story = Story::begin_with_nothing_written().await;
+    let (anon, _) = story.call("start_here", json!({})).await;
+    let whole = anon.raw().chars().count();
+    assert!(
+        whole <= jojobot_domain::text::BOOT_ANSWER.budget,
+        "the answer is {whole} characters, over the ceiling"
+    );
+    let booted = anon.json();
+    if booted["orientation_elided"] == true {
+        assert!(
+            booted["orientation_note"].is_string(),
+            "a boot that left something out says what: {booted}"
+        );
+    } else {
+        assert!(booted["orientation_note"].is_null(), "{booted}");
+    }
+    // The core ships either way: a caller is always taught the surface.
+    assert!(
+        booted["orientation"]
+            .as_str()
+            .is_some_and(|essay| essay.starts_with("# jojobot")),
+        "{booted}"
+    );
+}
