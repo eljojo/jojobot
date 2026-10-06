@@ -221,6 +221,10 @@ answers, send both keys in one call. The loop itself is never a reason to wait.
 A loop with neither key has no schedule, and it is not late. A loop nobody
 wrote tracks nothing, and nothing later reports that it is absent.
 
+A loop with both keys falls due only once a check-in opens it. A loop that has
+never been checked in on is not late. Check in on it, dated the day it last
+happened, and the check-in opens it.
+
 ## How to find what is due
 
 Call `recall` with `kind: "rhythm"` and `overdue: {}`. You get the loops that
@@ -483,6 +487,24 @@ mod tests {
                 "the paragraph that says to write the loop does not name `{key}`: {paragraph}"
             );
         }
+    }
+
+    /// **The procedure says a check-in opens a loop that holds both schedule
+    /// keys.** Such a loop falls due only once a check-in has opened it, so a
+    /// loop nobody has checked in on is never late. A session that reads
+    /// "not late" and stops leaves the first real loop dormant for ever; the
+    /// paragraph that says so also says what opens it.
+    #[test]
+    fn the_procedure_says_a_check_in_opens_a_loop_that_holds_both_keys() {
+        let text = body("rhythms");
+        let paragraph = text
+            .split("\n\n")
+            .find(|paragraph| names(paragraph, "opens"))
+            .expect("the rhythms procedure never says what opens a loop");
+        assert!(
+            names(paragraph, "check-in"),
+            "the paragraph that says a loop is opened does not name the check-in: {paragraph}"
+        );
     }
 
     /// **The rider on a loop opened with history already behind it.** The
