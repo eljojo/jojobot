@@ -88,7 +88,8 @@ A session here starts at jojobot, not at these files. The whole protocol:
    moment you have acted on it.
 4. **Keep polling.** When the work is done you are not done: `read_mailbox`
    with `counts_only: true` costs nothing and takes delivery of nothing.
-   Poll, take whatever arrived, repeat. **A session that stops checking its
+   Poll, take whatever arrived, repeat, until your bot's own rules say when to
+   stop. **A session that stops checking its
    box is indistinguishable from one that has died** — and the next task is
    usually already waiting.
 
