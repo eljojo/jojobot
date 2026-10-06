@@ -22,11 +22,11 @@
 
 * **Ran** — it happened. The schedule moves.
 * **Skipped** — it did not happen and the cycle advances anyway. The schedule moves exactly as a run would, and only the outcome tells them apart.
-* **Snoozed** — not now. The contact is recorded and **the schedule does not move**, which is how a snoozed loop comes back at its own date rather than being pushed a whole cycle down the road.
+* **Snoozed** — not now, and not until a named day. The contact is recorded, **the schedule does not move**, and the loop is not owed again before the day the snooze names. On that day it comes back and is acted on again. **A snooze always names its day**, because *not now* with no day is a promise to come back that nothing can keep — Marge away until the 20th means the fern is not due before the 20th, and is due on it.
 
 ## Two dates, and the reason is the third outcome
 
-**A rhythm keeps the day it was last checked in on, and the day the next cycle counts from.** They are usually the same day and they diverge in three situations: a late check-in that counts from the day it was *due* rather than the day it happened, a skipped cycle, and a snooze.
+**A rhythm keeps the day it was last checked in on, and the day the next cycle counts from.** They are usually the same day and they diverge in three situations: a late check-in that counts from the day it was *due* rather than the day it happened, a skipped cycle, and a snooze. **A snooze also holds the day it lasts until**, and the loop falls due on the later of that day and its own; the next run or skip spends it.
 
 ⛔️ **One date cannot carry this.** A single *last ran* key is written by a skipped turn — so it would say the loop ran on a day the record explicitly says it did not. **A key that lies is worse than a key that is missing**, because nothing downstream can tell.
 
