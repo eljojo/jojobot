@@ -93,7 +93,9 @@ pub struct OrientArgs {
     pub(crate) timezone: Option<String>,
     /// **A role to claim, by a name you choose.** Boot names this when you
     /// want jojobot to refuse a second claimant while your claim is fresh —
-    /// this comes back `taken`, `refused` naming who holds it and until
+    /// **`taken` means your claim succeeded and YOU hold the role; it never
+    /// means somebody else has it, which is `refused`.** The answer is one of
+    /// `taken`, `refused` naming who holds it and until
     /// when, `conflict` when the claim collided with another write
     /// landing the same instant, or `unavailable` when the store could not
     /// decide it. **A conflict is the store working correctly, not a
@@ -171,7 +173,8 @@ impl Jojobot {
                        The `sid` you carry is never turned away here, whatever became of it: this \
                        is the door you come back to. PASS `claim` WITH A ROLE NAME TO HOLD THAT \
                        ROLE for 45 minutes, so two sessions never work one role at once: the \
-                       answer says `taken`, `refused` (naming who holds it and until when), \
+                       answer says `taken` (your claim succeeded and you hold the role), \
+                       `refused` (somebody else holds it, and the answer names who and until when), \
                        `conflict` (the same call, retried, is the answer) or `unavailable` \
                        (the store could not decide the claim, nothing is held, and the answer \
                        says what to do next). Any write renews the lease and wrapping \
