@@ -353,8 +353,9 @@ pub struct Entity {
     ///
     /// The row stays because nothing here is deleted, and it keeps resolving
     /// because a handle somebody wrote down must not stop answering. What it
-    /// stops being is a THING: a read that lands here is sent on, so a fold
-    /// cannot leave a husk that answers half a question and calls it whole.
+    /// stops being is a THING: a read that lands here is told where it went,
+    /// so a fold cannot leave a husk that answers half a question and calls
+    /// it whole.
     ///
     /// `None` is the ordinary case and means this thing is its own.
     #[serde(default)]

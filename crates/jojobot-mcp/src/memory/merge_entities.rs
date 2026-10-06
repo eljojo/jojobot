@@ -40,10 +40,12 @@ impl Jojobot {
                        moves to the survivor: its claims, the edges drawn at it, and the history \
                        under its keys. Beside them lands a dated record of the merge itself, on \
                        the survivor, naming the handle that went and the reason if you give one. \
-                       NOTHING IS REMOVED: the duplicate's handle keeps answering and sends a \
-                       reader to the survivor, so a handle written down anywhere still resolves \
-                       — it simply stops being a thing of its own. USE IT WHEN TWO HANDLES ARE \
-                       ONE THING. It does not ask whether they really are: that is your \
+                       NOTHING IS REMOVED: the duplicate's handle keeps answering, so a handle \
+                       written down anywhere still resolves — but a recall of it comes back with \
+                       status merged, names the survivor in merged_into and holds nothing of \
+                       its own. It does not answer as the survivor: recall the survivor to read \
+                       everything. It simply stops being a thing of its own. USE IT WHEN TWO \
+                       HANDLES ARE ONE THING. It does not ask whether they really are: that is your \
                        judgement, so putting two unrelated things together is allowed and is \
                        recorded exactly as legibly. There is no way back, so if you are unsure, \
                        read both with recall first. ⚠️ THE CLAIMS THAT MOVE GET NEW ADDRESSES, \

@@ -11601,6 +11601,92 @@ pub async fn folding_a_duplicate_makes_the_split_answer_whole<M: Memory>(store: 
     );
 }
 
+/// **A walk from a folded handle says it was folded, and into what**, and a
+/// walk from the survivor is unchanged: it holds the claim that moved and says
+/// nothing about being folded.
+///
+/// The folded handle goes on answering, but an answer that is only an empty
+/// thing reads as a thing nobody ever wrote about. The object the walk returns
+/// for it names the survivor (`Entity::merged_into`) and holds nothing of its
+/// own, so a caller can tell a folded thing from a bare one and knows where to
+/// read.
+pub async fn a_walk_from_a_folded_handle_says_where_it_went<M: Memory>(store: &M) {
+    let kept = EntityId::person("person:contract-walk-survivor");
+    let spare = EntityId::person("person:contract-walk-folded");
+    add(
+        store,
+        NewEntity::new(kept.clone(), "Walk Survivor", "contract-fixture"),
+    )
+    .await;
+    add(
+        store,
+        NewEntity::new(spare.clone(), "Walk Folded", "contract-fixture"),
+    )
+    .await;
+    capture(
+        store,
+        NewFact::about(spare.clone(), "plays the bass", date(2026, 5, 1)),
+    )
+    .await;
+    store
+        .merge(
+            &spare,
+            &kept,
+            Some("one person, filed twice"),
+            date(2026, 5, 4),
+        )
+        .await
+        .expect("the fold lands");
+
+    let walk_from = |subject: &EntityId| {
+        let subject = subject.clone();
+        async move {
+            graph::walk(
+                store,
+                &[],
+                &graph::GraphQuery {
+                    select: graph::Selection {
+                        subject: Some(subject),
+                        ..graph::Selection::default()
+                    },
+                    include: graph::Include {
+                        facts: true,
+                        prose: false,
+                        stood_for: false,
+                    },
+                    follow: None,
+                    history: None,
+                },
+            )
+            .await
+            .expect("a handle is a selection")
+            .objects
+            .into_iter()
+            .next()
+            .expect("the handle still answers")
+        }
+    };
+
+    let folded = walk_from(&spare).await;
+    assert_eq!(
+        folded.entity.merged_into.as_ref(),
+        Some(&kept),
+        "a folded handle's own answer does not say where it went: {folded:?}",
+    );
+    assert!(
+        folded.facts.is_empty(),
+        "nothing of its own remains on a folded handle: {folded:?}",
+    );
+
+    // The paired positive: the survivor holds what moved, and is not folded.
+    let survivor = walk_from(&kept).await;
+    assert_eq!(survivor.entity.merged_into, None, "{survivor:?}");
+    assert!(
+        survivor.facts.iter().any(|f| f.content == "plays the bass"),
+        "the claim that moved is not on the survivor: {survivor:?}",
+    );
+}
+
 /// **A fact address minted before a fold still resolves its handle, and
 /// now says where the claim went** — never a bare miss indistinguishable
 /// from an address that never existed.
@@ -12101,6 +12187,7 @@ pub async fn run_all<M: Memory>(store: &M) {
     folding_a_duplicate_makes_the_split_answer_whole(store).await;
     a_fold_carries_the_lineage_that_points_at_what_it_moved(store).await;
     a_fold_repoints_a_pointer_wearing_a_former_handle_of_the_folded_side(store).await;
+    a_walk_from_a_folded_handle_says_where_it_went(store).await;
     a_claims_lineage_is_walkable_from_its_source(store).await;
     a_folded_value_says_who_backs_it(store).await;
     a_summed_key_has_no_backing_to_report(store).await;

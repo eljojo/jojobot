@@ -245,8 +245,8 @@ async fn assert_every_recorded_record_reads_back(
         fail("the derived_from pointer", &read);
     }
     // **The survivor holds the duplicate's claim and the account of the
-    // merge**, and the duplicate's own handle still resolves, with nothing
-    // left on it.
+    // merge**, and the duplicate's own handle still resolves, as a status that
+    // names the survivor.
     let read = surface
         .call(
             "recall",
@@ -264,7 +264,10 @@ async fn assert_every_recorded_record_reads_back(
         .await;
     let parsed: serde_json::Value =
         serde_json::from_str(&read).unwrap_or_else(|_| fail("the merged handle", &read));
+    // **Served as a status naming the survivor, never as an empty thing.**
     if parsed["objects"][0]["id"] != "thing:recorded-twin"
+        || parsed["objects"][0]["status"] != "merged"
+        || parsed["objects"][0]["merged_into"] != "thing:upgrade-fixture-thing"
         || read.contains("the twin carried a note")
     {
         fail("the merged handle", &read);

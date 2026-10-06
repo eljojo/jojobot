@@ -233,6 +233,8 @@ const ROSTER: &[&str] = &[
     "person:contract-declared-bystander",
     "person:contract-declared-holder",
     "person:contract-undeclared-keyholder",
+    "person:contract-walk-folded",
+    "person:contract-walk-survivor",
     "person:contract-derived",
     "person:contract-no-such-chain",
     "person:contract-nobody",

@@ -106,10 +106,16 @@ async fn one_thing_filed_twice_can_be_put_back_together() {
         "the fixture did not capture the second claim under the spare handle: {second}",
     );
 
-    // NOTE — the spare handle still resolves in the store, and no read verb
-    // takes a handle and reports where it now points. A session that only has
-    // the old handle finds out by searching for it, not by being forwarded.
-    //   s.recall("person:nelson-2").await.says("now_resolves_to");
+    // **The spare handle goes on answering, and says where it went.** A read
+    // of it is never an empty thing: it names the survivor and holds nothing
+    // of its own, so a session that only has the old handle is told to read the
+    // survivor instead of concluding nobody wrote anything about it.
+    s.recall("person:nelson-2")
+        .await
+        .says("\"status\":\"merged\"")
+        .says("\"merged_into\":\"person:nelson\"")
+        .never_says("plays the bass")
+        .never_says("reads the sleeve notes");
 
     // ⭐ **The gap the NOTE above draws a line around does not include this.**
     // A caller holding the stale ADDRESS itself — the second claim's own

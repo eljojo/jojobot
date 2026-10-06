@@ -949,6 +949,31 @@ fn object_json(
     include: graph::Include,
     as_of: jiff::civil::Date,
 ) -> serde_json::Value {
+    // **A folded handle is not a thing, and it is never served as an empty
+    // one.** It goes on answering because a handle somebody wrote down must
+    // still resolve, so the answer is a status naming the survivor and carries
+    // none of the keys that would read as a thing nobody wrote about. It does
+    // NOT answer as the survivor: whether a read should resolve silently is
+    // not decided here, and this answer is correct either way (rule 261).
+    if let Some(survivor) = &object.entity.merged_into {
+        let mut body = entity_json(&object.entity);
+        if let Some(map) = body.as_object_mut() {
+            map.insert("status".into(), "merged".into());
+            map.insert("merged_into".into(), survivor.as_str().into());
+            map.insert(
+                "how_to_proceed".into(),
+                format!(
+                    "{} was folded into {survivor} and holds nothing of its own. Recall \
+                     {survivor} to read everything that was recorded about it, including the \
+                     account of the merge.",
+                    object.entity.id.as_str(),
+                    survivor = survivor.as_str(),
+                )
+                .into(),
+            );
+        }
+        return body;
+    }
     let mut body = entity_json(&object.entity);
     let Some(fields) = body.as_object_mut() else {
         return body;
