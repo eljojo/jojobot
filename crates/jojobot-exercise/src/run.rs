@@ -67,6 +67,14 @@ pub trait Expectation: Send + Sync {
         None
     }
 
+    /// **The query this asks at the end of its own phase, when it asks one
+    /// there**: the key of the phase, the verb and the arguments. The run sends
+    /// it when that phase ends and keeps the answer on the boundary, so a later
+    /// phase cannot change what this reads.
+    fn phase_end_query(&self) -> Option<(String, String, String)> {
+        None
+    }
+
     fn name(&self) -> &str;
     async fn check(&self, seen: &Observed<'_>) -> Outcome;
 }
@@ -93,6 +101,20 @@ pub struct Boundary {
     /// A boot that resumes nothing writes nothing, so taking this costs the
     /// room no state.
     pub board: String,
+    /// **What the locks that ask at a phase's end were answered when it ended.**
+    /// Each is a live query sent to the room at this boundary, never a needle
+    /// over the snapshot above.
+    pub answers: Vec<PhaseEndAnswer>,
+}
+
+/// **One query answered at the end of a phase.**
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PhaseEndAnswer {
+    /// The key of the phase that ended, `Phase 1`.
+    pub phase: String,
+    pub verb: String,
+    pub args: String,
+    pub answer: String,
 }
 
 /// The room after the run, and what it looked like at each phase boundary.
@@ -925,7 +947,8 @@ pub async fn go(
         });
         // Taken after every phase and named for the one that comes next, so a
         // claim about a change has both sides of its boundary.
-        boundaries.push(boundary(&surface, &named[at + 1]).await);
+        let asked = phase_end_queries(expectations, phase_key(&phase.name));
+        boundaries.push(boundary_asking(&surface, &named[at + 1], &asked).await);
         // **Stop launching sittings, not the run.** This phase's own effects
         // are already recorded above; what a limit forbids is spending on a
         // NEXT one the agent has no runway left to answer. Pure, so the
@@ -1300,6 +1323,46 @@ pub(crate) fn phase_key(name: &str) -> &str {
 /// still moves it. The mail half is read apart because the claims about mail
 /// are claims about what did NOT move.
 pub async fn boundary(room: &Surface, before: &str) -> Boundary {
+    boundary_asking(room, before, &[]).await
+}
+
+/// **The queries the locks of one phase ask at its end**, as the phase key, the
+/// verb and the arguments each carries.
+pub fn phase_end_queries(
+    expectations: &[Box<dyn Expectation>],
+    phase: &str,
+) -> Vec<(String, String, String)> {
+    expectations
+        .iter()
+        .filter_map(|expectation| expectation.phase_end_query())
+        .filter(|(key, _, _)| key == phase)
+        .collect()
+}
+
+/// **A boundary that also sends the given queries**, each as a live call to the
+/// room as it stands now, and keeps the answers.
+pub async fn boundary_asking(
+    room: &Surface,
+    before: &str,
+    queries: &[(String, String, String)],
+) -> Boundary {
+    let mut answers = Vec::new();
+    for (phase, verb, args) in queries {
+        // An argument list this cannot read is kept as the answer rather than
+        // skipped, so the lock that asked says why nothing was measured.
+        let answer = match serde_json::from_str::<serde_json::Value>(args) {
+            Ok(sent) => room.call(verb, sent).await,
+            Err(e) => format!(
+                "{{\"status\":\"blocked\",\"how_to_proceed\":\"the query is not json: {e}\"}}"
+            ),
+        };
+        answers.push(PhaseEndAnswer {
+            phase: phase.clone(),
+            verb: verb.clone(),
+            args: args.clone(),
+            answer,
+        });
+    }
     let entities = room.call("list_entities", json!({})).await;
     let everything = room
         .call("search", json!({"query": "*", "limit": 200}))
@@ -1323,6 +1386,7 @@ pub async fn boundary(room: &Surface, before: &str) -> Boundary {
         mail,
         world: format!("{entities}\n{everything}"),
         board,
+        answers,
     }
 }
 
@@ -1351,6 +1415,7 @@ mod tests {
             world: String::new(),
             runs_offered: 0,
             board: String::new(),
+            answers: Vec::new(),
         }
     }
 
@@ -1744,6 +1809,7 @@ mod tests {
             mail: "what the board reported".into(),
             runs_offered: 2,
             board: "the runs the door offered".into(),
+            answers: Vec::new(),
         }];
         let rendered = run.rendered(None);
         assert!(

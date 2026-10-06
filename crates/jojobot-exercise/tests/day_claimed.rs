@@ -60,6 +60,7 @@ fn at(before: &str, world: &str) -> Boundary {
         world: world.to_string(),
         board: String::new(),
         runs_offered: 0,
+        answers: Vec::new(),
     }
 }
 

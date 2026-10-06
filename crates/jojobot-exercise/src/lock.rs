@@ -111,6 +111,10 @@ pub enum Expect {
 pub(crate) enum When {
     Live,
     OwnPhase,
+    /// **The lock's own query, sent when its phase ends.** The run keeps the
+    /// answer on the boundary and the lock reads it from there, so a question
+    /// the server computes is answered as that phase left the room.
+    PhaseEnd,
 }
 
 /// One lock.
@@ -283,9 +287,9 @@ fn one(lines: &[String], phase: Option<&str>) -> Result<Lock> {
             }
             "say" => say = Some(rest),
             "window" => {
-                if rest != "own-phase" {
+                if rest != "own-phase" && rest != "phase-end" {
                     bail!(
-                        "{rest:?} is not a window this format knows — the one word it takes is `own-phase`"
+                        "{rest:?} is not a window this format knows — it takes `own-phase` or `phase-end`"
                     );
                 }
                 if phase.is_none() {
@@ -299,7 +303,10 @@ fn one(lines: &[String], phase: Option<&str>) -> Result<Lock> {
                         "a lock naming a check has no query to window — `window own-phase` is for a verb-naming lock"
                     );
                 }
-                when = When::OwnPhase;
+                when = match rest.as_str() {
+                    "phase-end" => When::PhaseEnd,
+                    _ => When::OwnPhase,
+                };
             }
             other => bail!(
                 "{other:?} asserts nothing — a lock says carries, lacks, at least N of, say, or \
@@ -355,6 +362,15 @@ impl crate::run::Expectation for Lock {
         }
     }
 
+    fn phase_end_query(&self) -> Option<(String, String, String)> {
+        match (&self.asks, self.when, &self.phase_key) {
+            (Asks::Query { verb, args }, When::PhaseEnd, Some(key)) => {
+                Some((key.clone(), verb.clone(), args.clone()))
+            }
+            _ => None,
+        }
+    }
+
     async fn check(&self, seen: &crate::run::Observed<'_>) -> crate::run::Outcome {
         let Asks::Query { verb, args } = &self.asks else {
             let Asks::Check(named) = &self.asks else {
@@ -391,6 +407,7 @@ impl crate::run::Expectation for Lock {
                 },
             };
         };
+        let args_text = args;
         let args: serde_json::Value = match serde_json::from_str(args) {
             Ok(args) => args,
             Err(e) => {
@@ -405,6 +422,34 @@ impl crate::run::Expectation for Lock {
         };
         let answer = match self.when {
             When::Live => seen.room.call(verb, args).await,
+            // **The answer the run took when this phase ended**, found by the
+            // query it was asked with. Never sent again here: a later phase
+            // may have changed what the room says.
+            When::PhaseEnd => {
+                let phase_key = self
+                    .phase_key
+                    .as_deref()
+                    .expect("window phase-end is refused at parse time under no phase heading");
+                let kept = seen.across(phase_key).and_then(|(_, after)| {
+                    after.answers.iter().find(|kept| {
+                        kept.phase == phase_key && kept.verb == *verb && kept.args == *args_text
+                    })
+                });
+                let Some(kept) = kept else {
+                    return crate::run::Outcome {
+                        name: self.name.clone(),
+                        held: false,
+                        applies: true,
+                        refused: true,
+                        saying: format!(
+                            "{}: this lock asks at the end of its own phase, and no answer was \
+                             kept for {phase_key:?}",
+                            self.say,
+                        ),
+                    };
+                };
+                kept.answer.clone()
+            }
             // **Never sent live at all.** The needles are matched against the
             // boundary taken right after this lock's own phase, sliced to
             // the query's own subject when it names one — see
@@ -1710,6 +1755,7 @@ mod standing_tests {
             world: format!("{entities}\n{{\"results\":[]}}"),
             runs_offered: 0,
             board: String::new(),
+            answers: Vec::new(),
         }
     }
 

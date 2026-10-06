@@ -16,6 +16,7 @@ fn boundary(runs: usize) -> Boundary {
         world: String::new(),
         board: String::new(),
         runs_offered: runs,
+        answers: Vec::new(),
     }
 }
 
