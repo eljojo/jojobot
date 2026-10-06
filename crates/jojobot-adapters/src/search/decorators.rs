@@ -348,6 +348,12 @@ impl Memory for IndexedMemory {
     ) -> Result<Merge, MemoryError> {
         let done = self.inner.merge(folded, survivor, reason, date).await?;
         self.refresh(folded).await;
+        // ⚠️ **This line is not what makes the survivor findable by the names it
+        // just took.** Removing it leaves the name-carry contract green: the merge
+        // already appends an entity write for the survivor, and the index
+        // re-reads a doc whose write it has not seen. It stays as the explicit
+        // statement that both sides are re-read, and nothing should lean on it
+        // as the thing that carries the result.
         self.refresh(survivor).await;
         Ok(done)
     }
