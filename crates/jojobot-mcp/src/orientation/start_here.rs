@@ -1308,6 +1308,166 @@ mod tests {
         assert_eq!(rival["session"]["claim"]["holder"], holder_sid, "{rival}");
     }
 
+    /// **A poll of one's OWN mailbox, made with one's own sid, renews that
+    /// session's role claim — the same as a write does.** A session that only
+    /// polls writes nothing, so without this its healthy claim ages out and
+    /// every sweep probes it. Both ways of reading the box renew: the count and
+    /// the delivery.
+    ///
+    /// Timeline on a stated clock: the claim is taken at t0, the poll is at
+    /// 2000s, and a rival claims at 3000s. The lease is 2700s, so t0 alone is
+    /// stale at 3000s and a renewal at 2000s is fresh. **Three controls ride
+    /// beside the positive**, each its own world: nobody polls (the claim goes
+    /// stale), ANOTHER bot polls its own box (nothing of the holder's
+    /// renews), and the holder's session wraps before it polls (a wrapped
+    /// session's poll must not lease the role again).
+    #[tokio::test]
+    async fn a_poll_of_ones_own_mailbox_renews_the_role_claim_and_no_other_read_does() {
+        struct World {
+            memory: Arc<InMemoryMemory>,
+            search: Arc<SpySearch>,
+            mailboxes: Arc<InMemoryMailboxes>,
+            sessions: Arc<InMemorySessions>,
+            teachings: Arc<jojobot_domain::teaching::testing::InMemoryTeachings>,
+            registry: Arc<crate::sid::SessionRegistry>,
+        }
+        impl World {
+            fn new() -> Self {
+                Self {
+                    memory: Arc::new(InMemoryMemory::booted()),
+                    search: Arc::new(SpySearch::default()),
+                    mailboxes: Arc::new(InMemoryMailboxes::knowing_any_owner()),
+                    sessions: Arc::new(InMemorySessions::new()),
+                    teachings: Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+                    registry: Arc::new(crate::sid::SessionRegistry::new()),
+                }
+            }
+            /// The server `elapsed_secs` after the claim was taken.
+            fn at(&self, elapsed_secs: i64) -> Jojobot {
+                Jojobot::new(
+                    self.memory.clone(),
+                    self.search.clone(),
+                    self.mailboxes.clone(),
+                    self.sessions.clone(),
+                    self.teachings.clone(),
+                    self.registry.clone(),
+                )
+                .on_clock(jojobot_domain::clock::Clock::Stated {
+                    day: "2026-06-01".parse().expect("a date"),
+                    began: jiff::Timestamp::now() - jiff::SignedDuration::from_secs(elapsed_secs),
+                })
+            }
+        }
+        let boot = |bot: &str, claim: Option<&str>| OrientArgs {
+            claim: claim.map(str::to_string),
+            timezone: None,
+            bot: Some(bot.into()),
+            brief: None,
+            skill: None,
+            section: None,
+            resume: Some("new".into()),
+            sid: None,
+            today: None,
+        };
+        let poll = |sid: &str, counts_only: bool| ReadMailboxArgs {
+            counts_only: Some(counts_only),
+            new_only: None,
+            sid: Some(sid.to_string()),
+        };
+        // The claim is taken at t0 by a session of `gamma`.
+        let claimed_in = |world: &World| {
+            let t0 = world.at(0);
+            let boot = &boot;
+            async move {
+                make_bot(&t0, "gamma").await;
+                make_bot(&t0, "alpha").await;
+                let claimed = json_of(
+                    &t0.start_here(Parameters(boot("gamma", Some("dev-dispatch"))))
+                        .await
+                        .expect("start_here ok"),
+                );
+                assert_eq!(claimed["session"]["claim"]["status"], "taken", "{claimed}");
+                sid_of(&claimed).expect("a handle")
+            }
+        };
+        let rival_at = |world: &World, secs: i64| {
+            let server = world.at(secs);
+            let boot = &boot;
+            async move {
+                json_of(
+                    &server
+                        .start_here(Parameters(boot("gamma", Some("dev-dispatch"))))
+                        .await
+                        .expect("start_here ok"),
+                )
+            }
+        };
+
+        // The positive, in both ways of reading the box.
+        for counts_only in [true, false] {
+            let world = World::new();
+            let holder = claimed_in(&world).await;
+            world
+                .at(2000)
+                .read_mailbox(Parameters(poll(&holder, counts_only)))
+                .await
+                .expect("poll ok");
+            let rival = rival_at(&world, 3000).await;
+            assert_eq!(
+                rival["session"]["claim"]["status"], "refused",
+                "a poll (counts_only: {counts_only}) must renew the holder's claim: {rival}"
+            );
+            assert_eq!(rival["session"]["claim"]["holder"], holder, "{rival}");
+        }
+
+        // Control 1: a holder that does nothing at all goes stale.
+        let world = World::new();
+        claimed_in(&world).await;
+        let rival = rival_at(&world, 3000).await;
+        assert_eq!(rival["session"]["claim"]["status"], "taken", "{rival}");
+
+        // Control 2: another bot's poll of its own box renews nothing here.
+        let world = World::new();
+        claimed_in(&world).await;
+        let other = sid_of(&json_of(
+            &world
+                .at(1000)
+                .start_here(Parameters(boot("alpha", None)))
+                .await
+                .expect("start_here ok"),
+        ))
+        .expect("a handle");
+        world
+            .at(2000)
+            .read_mailbox(Parameters(poll(&other, true)))
+            .await
+            .expect("poll ok");
+        let rival = rival_at(&world, 3000).await;
+        assert_eq!(rival["session"]["claim"]["status"], "taken", "{rival}");
+
+        // Control 3: a wrapped session's poll does not lease the role again.
+        let world = World::new();
+        let holder = claimed_in(&world).await;
+        world
+            .at(100)
+            .wrap_session(Parameters(WrapSessionArgs {
+                story: "done".into(),
+                sid: holder.clone(),
+            }))
+            .await
+            .expect("wrap ok");
+        world
+            .at(200)
+            .read_mailbox(Parameters(poll(&holder, true)))
+            .await
+            .expect("a poll from a wrapped session is an answer");
+        let rival = rival_at(&world, 300).await;
+        assert_eq!(
+            rival["session"]["claim"]["status"], "taken",
+            "a poll from a wrapped session leased the role again: {rival}"
+        );
+    }
+
     /// **A section fetched by its exact heading returns exactly that unit,
     /// whole — and nothing else from the essay.** The positive this whole
     /// mechanism rests on, paired against a neighbouring section's own

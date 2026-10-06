@@ -212,7 +212,9 @@ impl Jojobot {
                        never zero. A message that a DIFFERENT run posted than the one reading it \
                        carries `written_by_other_run`, naming that run and whether it has since \
                        ended (`null` when that could not be read); a message your own run posted \
-                       does not carry the key."
+                       does not carry the key. A POLL ALSO KEEPS YOUR ROLE: reading your own box \
+                       with your own sid renews the role claim your session holds, the same as a \
+                       write does, so a session that only polls does not go stale."
     )]
     pub(crate) async fn read_mailbox(
         &self,
@@ -222,6 +224,16 @@ impl Jojobot {
             Ok(mine) => mine,
             Err(refused) => return Ok(refused),
         };
+        // **A read of one's OWN box, made with one's own sid, renews the
+        // caller's role claims** — the same renewal a write makes. A session
+        // that only polls writes nothing, so its healthy claim would age out.
+        // It runs for the count and the delivery alike and before either, and
+        // no other read renews. The store applies it only while this sid still
+        // holds the role, so a wrapped session's poll leases nothing.
+        if let Ok(Some(caller)) = self.caller(args.sid.as_deref()) {
+            self.renew_role_claims(&caller.bot, caller.sid.as_str(), self.clock().now())
+                .await;
+        }
         // **Counting returns before the delivery path is entered at all.** Not
         // "deliver, then render less" — that would move every message out of
         // `new` and hand the caller work it only wanted to weigh, which is
