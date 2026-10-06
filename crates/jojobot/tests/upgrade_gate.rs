@@ -118,12 +118,17 @@ async fn the_current_binary_boots_on_a_store_an_older_binary_filled() {
     );
 
     // **The boot's own warnings fail the gate.** Each says a half of the boot
-    // failed and carried on — the fold or the search index came up empty — so
-    // the server serves and every read of a store that was upgraded looks
-    // fine until somebody asks the half that is missing.
+    // failed and carried on — the fold or the search index came up empty, or
+    // the kind seed stopped part way — so the server serves and every read of
+    // a store that was upgraded looks fine until somebody asks the half that
+    // is missing.
     let warned: Vec<&String> = seen
         .iter()
-        .filter(|line| line.contains("FOLD EMPTY") || line.contains("SEARCH INDEX EMPTY"))
+        .filter(|line| {
+            line.contains("FOLD EMPTY")
+                || line.contains("SEARCH INDEX EMPTY")
+                || line.contains("KINDS NOT LOADED")
+        })
         .collect();
     assert!(
         warned.is_empty(),
