@@ -2520,14 +2520,24 @@ pub fn guard_fit(
     // **A loop that cannot say when its next cycle falls due is refused when it
     // is made.** It is the loop kind's own rule and not a declaration's, so it
     // runs whether or not anything declared the kind.
-    if kind == EntityKind::RHYTHM.as_token()
-        && crate::attention::leaves_a_cadence_without_advances_from(before, after)
-    {
-        return Err(MemoryError::BreaksSchedule {
-            accepts: crate::attention::advances_from_tokens()
-                .map(str::to_string)
-                .to_vec(),
-        });
+    if kind == EntityKind::RHYTHM.as_token() {
+        let accepts = crate::attention::advances_from_tokens()
+            .map(str::to_string)
+            .to_vec();
+        if crate::attention::leaves_a_cadence_without_advances_from(before, after) {
+            return Err(MemoryError::BreaksSchedule {
+                held: crate::attention::CADENCE_DAYS.to_string(),
+                missing: crate::attention::ADVANCES_FROM.to_string(),
+                accepts,
+            });
+        }
+        if crate::attention::leaves_advances_from_without_a_cadence(before, after) {
+            return Err(MemoryError::BreaksSchedule {
+                held: crate::attention::ADVANCES_FROM.to_string(),
+                missing: crate::attention::CADENCE_DAYS.to_string(),
+                accepts: Vec::new(),
+            });
+        }
     }
     Ok(())
 }
@@ -3635,19 +3645,22 @@ pub enum MemoryError {
         /// The keys it names that the thing would no longer carry.
         keys: Vec<String>,
     },
-    /// **The write would leave a rhythm holding a cadence and no
-    /// `advances_from`.**
+    /// **The write would leave a rhythm holding one half of its schedule.**
     ///
     /// A cadence says how long a cycle is and `advances_from` says which date
-    /// the next one counts from; with only the first, nothing can say when the
-    /// loop falls due. The loop is refused when it is made so the caller can
-    /// send both in one call, rather than learning at its first check-in.
+    /// the next one counts from; with only one of them, nothing can say when
+    /// the loop falls due. The loop is refused when it is made so the caller
+    /// can send both in one call, rather than learning at its first check-in.
     #[error(
-        "this would leave a rhythm holding 'cadence_days' and no 'advances_from', so nothing \
-         could say when its next cycle falls due"
+        "this would leave a rhythm holding '{held}' and no '{missing}', so nothing could say \
+         when its next cycle falls due"
     )]
     BreaksSchedule {
-        /// The values `advances_from` takes.
+        /// The schedule key the thing would hold.
+        held: String,
+        /// The schedule key it would lack.
+        missing: String,
+        /// The values the missing key takes, when it takes a closed set.
         accepts: Vec<String>,
     },
     /// **The write would leave a bot's boot over its size ceiling.**

@@ -420,6 +420,45 @@ async fn a_loop_that_cannot_say_when_it_falls_due_is_refused_when_it_is_made() {
         .await
         .says("\"advances_from\":\"check_in_date\"");
 
+    // ── the other half of a schedule is held to the same line ───────────────
+    //
+    // `advances_from` says which date a cycle counts from, and with no
+    // cadence there is no cycle to count.
+    s.add_under("thing:kettle", "rhythm:half-made", "Half made")
+        .await;
+    s.refused(
+        "capture",
+        json!({
+            "subject": "rhythm:half-made", "content": "count from the due date",
+            "provenance": "testimony",
+            "fields": { "advances_from": "due_date" },
+        }),
+    )
+    .await
+    .says("cadence_days")
+    .says("\"wrote\":false");
+    s.recall("rhythm:half-made")
+        .await
+        .never_says("\"advances_from\"");
+    // Taking the cadence off a whole loop leaves the same shape, and is
+    // refused the same way.
+    s.refused(
+        "update_fact",
+        json!({ "address": descale, "clear_fields": ["cadence_days"] }),
+    )
+    .await
+    .says("cadence_days")
+    .says("\"wrote\":false");
+    s.recall("rhythm:descale")
+        .await
+        .says("\"cadence_days\":\"30\"");
+    // Switching a loop's schedule off is both halves in one call, and lands.
+    s.correct_fields(&descale, json!({}), &["cadence_days", "advances_from"])
+        .await;
+    s.recall("rhythm:descale")
+        .await
+        .never_says("\"cadence_days\"");
+
     s.wrap("a loop with a cadence and no schedule is refused when it is made")
         .await;
     story.finish().await;

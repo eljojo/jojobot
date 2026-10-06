@@ -683,13 +683,13 @@ async fn clearing_a_schedule_key_removes_the_stale_due_moment() {
     );
 }
 
-/// **Clearing `cadence_days` alone does not quiet the loop — it leaves
-/// `advances_from` and `counts_from` behind, which reads overdue rather
-/// than never-due.** The postcondition names exactly those two keys, and
-/// clearing them too, as the receipt says to, actually reaches
-/// never-due — proven here rather than asserted.
+/// **Clearing `cadence_days` alone is refused, and clearing it with
+/// `advances_from` leaves `counts_from` behind, which reads overdue rather
+/// than never-due.** The postcondition names that key, and clearing it
+/// too, as the receipt says to, actually reaches never-due — proven here
+/// rather than asserted.
 #[tokio::test]
-async fn a_half_cleared_schedule_names_what_is_left_and_the_act_that_finishes_it() {
+async fn a_schedule_cleared_in_part_names_what_is_left_and_the_act_that_finishes_it() {
     let jojobot = handler();
     ensure(&jojobot, "thing:kettle").await;
     jojobot
@@ -726,19 +726,32 @@ async fn a_half_cleared_schedule_names_what_is_left_and_the_act_that_finishes_it
     )
     .await;
 
-    let half_cleared = json_of(
+    // **One trigger key cleared alone is refused**: it would leave the other
+    // key holding half a schedule. Both together are a legal write, and it
+    // leaves `counts_from` behind.
+    let refused = json_of(
         &jojobot
             .update_fact(Parameters(UpdateFactArgs {
                 clear_fields: Some(vec!["cadence_days".into()]),
                 ..update_args(&address)
             }))
             .await
-            .expect("update ok"),
+            .expect("a refusal is an answer"),
     );
+    assert_eq!(refused["status"], "blocked", "{refused}");
+    assert_eq!(refused["wrote"], false, "{refused}");
+    let half_cleared = update_ok(
+        &jojobot,
+        UpdateFactArgs {
+            clear_fields: Some(vec!["cadence_days".into(), "advances_from".into()]),
+            ..update_args(&address)
+        },
+    )
+    .await;
     let said = postcondition_line(&half_cleared);
     assert!(
-        said.contains("advances_from") && said.contains("counts_from"),
-        "the postcondition must name the two schedule keys this write left behind: {said}",
+        said.contains("counts_from") && !said.contains("advances_from, counts_from"),
+        "the postcondition must name the schedule key this write left behind: {said}",
     );
 
     // The rhythm now reads overdue with the fields it still holds,
@@ -767,7 +780,7 @@ async fn a_half_cleared_schedule_names_what_is_left_and_the_act_that_finishes_it
     update_ok(
         &jojobot,
         UpdateFactArgs {
-            clear_fields: Some(vec!["advances_from".into(), "counts_from".into()]),
+            clear_fields: Some(vec!["counts_from".into()]),
             ..update_args(&address)
         },
     )

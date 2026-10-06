@@ -11345,8 +11345,8 @@ pub async fn a_rhythm_is_refused_without_a_parent<M: Memory>(store: &M) {
     assert_eq!(held.kind, EntityKind::RHYTHM);
 }
 
-/// **A rhythm holding a cadence and no `advances_from` is refused when it is
-/// written, and the refusal names the values the missing key takes.**
+/// **A rhythm holding one half of its schedule is refused when it is written, and
+/// the refusal names the key that is missing.**
 ///
 /// A cadence says how long a cycle is and `advances_from` says which date the
 /// next one counts from; with only the first, nothing can say when the loop
@@ -11367,7 +11367,7 @@ pub async fn a_rhythm_holding_a_cadence_and_no_advances_from_is_refused<M: Memor
             ..NewFact::about(polish.clone(), "polish it monthly", date(2026, 8, 1))
         })
         .await;
-    let Err(MemoryError::BreaksSchedule { accepts }) = &refused else {
+    let Err(MemoryError::BreaksSchedule { accepts, .. }) = &refused else {
         panic!("a cadence with no advances_from must be refused, got {refused:?}");
     };
     assert_eq!(
@@ -11375,6 +11375,28 @@ pub async fn a_rhythm_holding_a_cadence_and_no_advances_from_is_refused<M: Memor
         &["due_date".to_string(), "check_in_date".to_string()],
         "the refusal offers the values the missing key takes",
     );
+    assert!(
+        store
+            .recall(&polish)
+            .await
+            .expect("a recall of a refused loop")
+            .is_empty(),
+        "a refused write leaves nothing behind",
+    );
+
+    // The mirror half is the same refusal, naming the other key.
+    let mirror = store
+        .capture(NewFact {
+            fields: [("advances_from".to_string(), "due_date".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(polish.clone(), "count from the due date", date(2026, 8, 1))
+        })
+        .await;
+    let Err(MemoryError::BreaksSchedule { missing, .. }) = &mirror else {
+        panic!("an advances_from with no cadence must be refused, got {mirror:?}");
+    };
+    assert_eq!(missing, "cadence_days", "the refusal names the missing key");
     assert!(
         store
             .recall(&polish)

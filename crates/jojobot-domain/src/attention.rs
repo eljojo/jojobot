@@ -622,8 +622,11 @@ pub fn moved_due_moment(
 /// **What a write leaves behind when it clears part of a rhythm's
 /// schedule.**
 ///
-/// Clearing [`CADENCE_DAYS`] or [`ADVANCES_FROM`] is a legal write and stays
-/// legal — but on its own it does not quiet the loop. Every combination of
+/// Clearing [`CADENCE_DAYS`] and [`ADVANCES_FROM`] together is a legal write,
+/// and either one alone is refused, so the schedule is switched off in one
+/// call. That still leaves [`COUNTS_FROM`] behind, and on its own it does not
+/// quiet the loop. A loop written before that refusal can still hold half a
+/// schedule, and clearing the rest of it reaches here as well. Every combination of
 /// the three schedule keys except the empty one and the
 /// [`Due::NotYetOpened`] shape (`CADENCE_DAYS` and `ADVANCES_FROM` alone)
 /// reads [`Due::Unreadable`]: loud, and overdue from the day of the write. A
@@ -688,6 +691,29 @@ pub fn leaves_a_cadence_without_advances_from(
     let touched = before.get(CADENCE_DAYS) != after.get(CADENCE_DAYS)
         || before.get(ADVANCES_FROM) != after.get(ADVANCES_FROM);
     touched && held(after, CADENCE_DAYS) && !held(after, ADVANCES_FROM)
+}
+
+/// **Whether a write leaves a rhythm holding `advances_from` and no cadence.**
+///
+/// The other half of the same incomplete schedule: `advances_from` says which
+/// date a cycle counts from, and with no cadence there is no cycle. Asked of
+/// the same writes, for the same reason, and a loop already holding half a
+/// schedule stays repairable in the same way — see
+/// [`leaves_a_cadence_without_advances_from`]. A loop holding neither key has
+/// no schedule at all, and clearing both in one write is how a schedule is
+/// switched off.
+pub fn leaves_advances_from_without_a_cadence(
+    before: &BTreeMap<String, String>,
+    after: &BTreeMap<String, String>,
+) -> bool {
+    let held = |fields: &BTreeMap<String, String>, key: &str| {
+        fields
+            .get(key)
+            .is_some_and(|value| !value.trim().is_empty())
+    };
+    let touched = before.get(CADENCE_DAYS) != after.get(CADENCE_DAYS)
+        || before.get(ADVANCES_FROM) != after.get(ADVANCES_FROM);
+    touched && held(after, ADVANCES_FROM) && !held(after, CADENCE_DAYS)
 }
 
 /// The values `advances_from` takes, in the order a refusal offers them.
@@ -1371,6 +1397,40 @@ mod tests {
         let mut moved = half.clone();
         moved.insert(CADENCE_DAYS.to_string(), "14".to_string());
         assert!(leaves_a_cadence_without_advances_from(&half, &moved));
+    }
+
+    /// **The mirror half: `advances_from` with no cadence is the write
+    /// refused, a whole schedule and no schedule are not.** Each negative sits
+    /// beside the positive it depends on.
+    #[test]
+    fn a_write_that_leaves_advances_from_without_a_cadence_is_the_one_refused() {
+        let nothing = BTreeMap::new();
+        let mut advances_only = BTreeMap::new();
+        advances_only.insert(ADVANCES_FROM.to_string(), "due_date".to_string());
+        let mut whole = advances_only.clone();
+        whole.insert(CADENCE_DAYS.to_string(), "30".to_string());
+
+        assert!(leaves_advances_from_without_a_cadence(
+            &nothing,
+            &advances_only
+        ));
+        assert!(!leaves_advances_from_without_a_cadence(&nothing, &whole));
+        assert!(!leaves_advances_from_without_a_cadence(&nothing, &nothing));
+        // Taking the cadence off a whole schedule leaves the other key alone.
+        assert!(leaves_advances_from_without_a_cadence(
+            &whole,
+            &advances_only
+        ));
+        // Taking both off is switching the schedule off.
+        assert!(!leaves_advances_from_without_a_cadence(&whole, &nothing));
+        // A loop already holding half a schedule is not asked about a write
+        // that touches neither key.
+        let mut noted = advances_only.clone();
+        noted.insert("note".to_string(), "looked fine".to_string());
+        assert!(!leaves_advances_from_without_a_cadence(
+            &advances_only,
+            &noted
+        ));
     }
 
     /// **`counts_from` is not a trigger key.** Clearing it alone already
