@@ -905,7 +905,8 @@ async fn the_owed_read_orders_the_longest_quiet_first() {
 /// this one store's scan order.
 #[tokio::test]
 async fn an_unreadable_schedule_sorts_first_and_carries_no_distance() {
-    let jojobot = handler();
+    let memory = Arc::new(InMemoryMemory::booted());
+    let jojobot = handler_over(memory.clone());
     a_rhythm(&jojobot, "descale", "7", "2026-08-01").await;
     ensure(&jojobot, "thing:kettle").await;
     jojobot
@@ -915,18 +916,12 @@ async fn an_unreadable_schedule_sorts_first_and_carries_no_distance() {
         }))
         .await
         .expect("add ok");
-    capture_ok(
-        &jojobot,
-        CaptureArgs {
-            fields: Some(
-                [("cadence_days".to_string(), "7".to_string())]
-                    .into_iter()
-                    .collect(),
-            ),
-            ..capture_args("rhythm:half-made", "every week, roughly")
-        },
-    )
-    .await;
+    // A loop made before the schedule was checked at the making: no verb
+    // writes this any more, so it is staged the way it arose.
+    memory.fields_past_the_guard(
+        &EntityId("rhythm:half-made".into()),
+        &[("cadence_days", "7")],
+    );
 
     let found = json_of(
         &jojobot
@@ -1283,7 +1278,8 @@ async fn one_loop_falls_due_in_one_zone_and_not_yet_in_the_other() {
 
 #[tokio::test]
 async fn a_rhythm_with_half_a_schedule_is_overdue_rather_than_invisible() {
-    let jojobot = handler();
+    let memory = Arc::new(InMemoryMemory::booted());
+    let jojobot = handler_over(memory.clone());
     a_rhythm(&jojobot, "descale", "7", "2026-08-01").await;
     ensure(&jojobot, "thing:kettle").await;
     jojobot
@@ -1293,18 +1289,12 @@ async fn a_rhythm_with_half_a_schedule_is_overdue_rather_than_invisible() {
         }))
         .await
         .expect("add ok");
-    capture_ok(
-        &jojobot,
-        CaptureArgs {
-            fields: Some(
-                [("cadence_days".to_string(), "7".to_string())]
-                    .into_iter()
-                    .collect(),
-            ),
-            ..capture_args("rhythm:half-made", "every week, roughly")
-        },
-    )
-    .await;
+    // A loop made before the schedule was checked at the making: no verb
+    // writes this any more, so it is staged the way it arose.
+    memory.fields_past_the_guard(
+        &EntityId("rhythm:half-made".into()),
+        &[("cadence_days", "7")],
+    );
 
     // A date before the whole loop is due: the only reason the half-made
     // one is here is that nothing can say when it falls due.

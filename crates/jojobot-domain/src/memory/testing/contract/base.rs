@@ -11307,6 +11307,104 @@ pub async fn a_rhythm_is_refused_without_a_parent<M: Memory>(store: &M) {
     assert_eq!(held.kind, EntityKind::RHYTHM);
 }
 
+/// **A rhythm holding a cadence and no `advances_from` is refused when it is
+/// written, and the refusal names the values the missing key takes.**
+///
+/// A cadence says how long a cycle is and `advances_from` says which date the
+/// next one counts from; with only the first, nothing can say when the loop
+/// falls due. Three halves, because each alone passes on the wrong build: the
+/// refusal alone passes on a store that refuses every loop, so the same
+/// cadence with its `advances_from` lands, and a loop with no cadence at all
+/// lands too — that one is legitimate and has no schedule to be incomplete.
+/// Taking `advances_from` off a whole loop is the same refusal by the other
+/// verb, and it leaves the record as it was.
+pub async fn a_rhythm_holding_a_cadence_and_no_advances_from_is_refused<M: Memory>(store: &M) {
+    let polish = EntityId("rhythm:polish".into());
+    ensure(store, &polish).await;
+    let refused = store
+        .capture(NewFact {
+            fields: [("cadence_days".to_string(), "30".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(polish.clone(), "polish it monthly", date(2026, 8, 1))
+        })
+        .await;
+    let Err(MemoryError::BreaksSchedule { accepts }) = &refused else {
+        panic!("a cadence with no advances_from must be refused, got {refused:?}");
+    };
+    assert_eq!(
+        accepts,
+        &["due_date".to_string(), "check_in_date".to_string()],
+        "the refusal offers the values the missing key takes",
+    );
+    assert!(
+        store
+            .recall(&polish)
+            .await
+            .expect("a recall of a refused loop")
+            .is_empty(),
+        "a refused write leaves nothing behind",
+    );
+
+    // The positive the verdict rests on: the same cadence, with the key that
+    // says which date it counts from, lands.
+    let whole = capture(
+        store,
+        NewFact {
+            fields: [
+                ("cadence_days".to_string(), "30".to_string()),
+                ("advances_from".to_string(), "due_date".to_string()),
+            ]
+            .into_iter()
+            .collect(),
+            ..NewFact::about(polish.clone(), "polish it monthly", date(2026, 8, 1))
+        },
+    )
+    .await;
+
+    // A loop that carries no cadence has no schedule to be incomplete.
+    capture(
+        store,
+        NewFact {
+            fields: [("last_check_in".to_string(), "2026-08-01".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(
+                EntityId("rhythm:abseiling".into()),
+                "go when the weather turns",
+                date(2026, 8, 1),
+            )
+        },
+    )
+    .await;
+
+    // The edit verb is held to the same line, and refuses without touching
+    // the record.
+    let cleared = store
+        .update_fact(
+            &whole.address(),
+            FactPatch {
+                clear_fields: vec!["advances_from".to_string()],
+                ..Default::default()
+            },
+            &other_caller(),
+        )
+        .await;
+    assert!(
+        matches!(cleared, Err(MemoryError::BreaksSchedule { .. })),
+        "taking advances_from off a whole loop must be refused, got {cleared:?}",
+    );
+    assert_eq!(
+        read_back(store, &polish, &whole.id)
+            .await
+            .fields
+            .get("advances_from")
+            .map(String::as_str),
+        Some("due_date"),
+        "a refused edit leaves the record exactly as it was",
+    );
+}
+
 /// 🚨 **A duplicate that got past the guard is repairable, and the repair
 /// is legible afterwards.**
 ///
@@ -12068,6 +12166,7 @@ pub async fn run_all<M: Memory>(store: &M) {
     an_owned_kind_this_build_dropped_is_reclaimed(store).await;
     a_pet_is_its_own_kind_in_the_store(store).await;
     a_rhythm_is_refused_without_a_parent(store).await;
+    a_rhythm_holding_a_cadence_and_no_advances_from_is_refused(store).await;
     a_thing_reads_back_as_its_fields_folded(store).await;
     the_newest_write_wins_however_old_the_record_it_landed_in(store).await;
     a_cleared_key_is_not_resurrected_by_an_older_record(store).await;

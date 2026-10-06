@@ -1005,6 +1005,7 @@ async fn an_ordering_on_the_schedule_date_is_licensed_by_the_kind() {
                     ("last_check_in".to_string(), counts_from.to_string()),
                     ("counts_from".to_string(), counts_from.to_string()),
                     ("cadence_days".to_string(), "30".to_string()),
+                    ("advances_from".to_string(), "due_date".to_string()),
                 ]
                 .into_iter()
                 .collect(),

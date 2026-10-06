@@ -242,6 +242,63 @@ impl InMemoryMemory {
             .push(entity);
     }
 
+    /// **Stage a record's keys without the write guard seeing them** — the
+    /// state a thing holds when it was written before a rule existed.
+    ///
+    /// A loop made before a rhythm's schedule was checked at the making can
+    /// hold a cadence and no `advances_from`, and the guard now refuses to
+    /// write that. The backstops behind the guard — the check-in refusal, the
+    /// overdue read — still serve such loops, and a case about them has to
+    /// enter the state the way the state arose, which no verb can.
+    ///
+    /// **It is for standing up damage, never for convenience.** Anything a
+    /// verb can write is written with that verb.
+    pub fn fields_past_the_guard(&self, subject: &EntityId, fields: &[(&str, &str)]) {
+        let index = self.known();
+        let entity = index
+            .iter()
+            .find(|e| &e.id == subject)
+            .expect("the thing to stage keys on is there");
+        let home = match &entity.badge {
+            Some(badge) => EntityId(badge.clone()),
+            None => entity.id.clone(),
+        };
+        let mut facts = self.facts.lock().expect("fake mutex poisoned");
+        let id = FactId(format!(
+            "f{}",
+            facts.iter().filter(|f| f.home == home).count() + 1
+        ));
+        let stored = Fact {
+            id,
+            home: home.clone(),
+            subject: home,
+            content: "staged past the guard".to_string(),
+            details: None,
+            provenance: crate::memory::Provenance::Testimony,
+            standing: crate::memory::Standing::Settled,
+            status: FactStatus::Active,
+            recorded_at: jiff::civil::date(2026, 8, 1),
+            happened_at: None,
+            happened_through: None,
+            edge: None,
+            fields: Default::default(),
+            refs: Vec::new(),
+            derived_from: None,
+            stands_for: Vec::new(),
+            inserted_at: Some(self.clock.now()),
+            stale_after: None,
+        };
+        self.append_claim_write(&stored);
+        self.append_writes(
+            &stored.home,
+            &stored.id,
+            fields
+                .iter()
+                .map(|(key, value)| (key.to_string(), Some(value.to_string()))),
+        );
+        facts.push(stored);
+    }
+
     /// **Move a row to another handle, keeping the badge it wears** — staged
     /// past every verb, because no verb does this.
     ///

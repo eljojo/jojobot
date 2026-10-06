@@ -663,6 +663,38 @@ pub fn half_cleared_schedule(
     }
 }
 
+/// **Whether a write leaves a rhythm holding a cadence and no `advances_from`.**
+///
+/// That is a loop nothing can say the next due moment of: the cadence says how
+/// long a cycle is and `advances_from` says which date it counts from, and
+/// neither alone is a schedule. A check-in refuses it later; this is the same
+/// finding at the moment the loop is made or shaped, when the caller can still
+/// supply the missing key in the same call.
+///
+/// `before` and `after` are the thing's folded fields on either side of the
+/// write. **A write that touches neither key is not asked**, because a loop
+/// already holding half a schedule must stay repairable: a note on it, or a
+/// check-in's own keys, are not the write that made it half. A loop holding no
+/// cadence has no schedule to be incomplete and is never refused.
+pub fn leaves_a_cadence_without_advances_from(
+    before: &BTreeMap<String, String>,
+    after: &BTreeMap<String, String>,
+) -> bool {
+    let held = |fields: &BTreeMap<String, String>, key: &str| {
+        fields
+            .get(key)
+            .is_some_and(|value| !value.trim().is_empty())
+    };
+    let touched = before.get(CADENCE_DAYS) != after.get(CADENCE_DAYS)
+        || before.get(ADVANCES_FROM) != after.get(ADVANCES_FROM);
+    touched && held(after, CADENCE_DAYS) && !held(after, ADVANCES_FROM)
+}
+
+/// The values `advances_from` takes, in the order a refusal offers them.
+pub fn advances_from_tokens() -> [&'static str; 2] {
+    AdvancesFrom::ALL.map(AdvancesFrom::as_token)
+}
+
 /// **Whether this check-in is the one that opens the loop.**
 ///
 /// Only the basis is ever derived, and only when nobody has written one: the
@@ -1294,6 +1326,51 @@ mod tests {
             .expect("clearing advances_from leaves two keys behind — that is exactly the case");
         assert_eq!(remaining, vec![CADENCE_DAYS, COUNTS_FROM]);
         assert_eq!(Rhythms.due(&current), Due::Unreadable, "{current:?}");
+    }
+
+    /// **A cadence with no `advances_from` is the write refused; a cadence
+    /// WITH one, and no cadence at all, are not.** Each negative is read beside
+    /// the positive it depends on, or a guard that refused everything would
+    /// pass them.
+    #[test]
+    fn a_write_that_leaves_a_cadence_without_advances_from_is_the_one_refused() {
+        let nothing = BTreeMap::new();
+        let mut cadence_only = BTreeMap::new();
+        cadence_only.insert(CADENCE_DAYS.to_string(), "30".to_string());
+        let mut whole = cadence_only.clone();
+        whole.insert(ADVANCES_FROM.to_string(), "due_date".to_string());
+
+        assert!(leaves_a_cadence_without_advances_from(
+            &nothing,
+            &cadence_only
+        ));
+        assert!(!leaves_a_cadence_without_advances_from(&nothing, &whole));
+        assert!(!leaves_a_cadence_without_advances_from(&nothing, &nothing));
+        // Taking `advances_from` off a whole schedule leaves the cadence alone.
+        assert!(leaves_a_cadence_without_advances_from(
+            &whole,
+            &cadence_only
+        ));
+        // A blank value is no value.
+        let mut blank = cadence_only.clone();
+        blank.insert(ADVANCES_FROM.to_string(), "  ".to_string());
+        assert!(leaves_a_cadence_without_advances_from(&nothing, &blank));
+    }
+
+    /// **A loop already holding half a schedule stays repairable.** A write
+    /// that touches neither key is not the write that made it half, so it is
+    /// not asked.
+    #[test]
+    fn a_write_that_touches_neither_schedule_key_is_not_asked() {
+        let mut half = BTreeMap::new();
+        half.insert(CADENCE_DAYS.to_string(), "30".to_string());
+        let mut noted = half.clone();
+        noted.insert("note".to_string(), "looked fine".to_string());
+        assert!(!leaves_a_cadence_without_advances_from(&half, &noted));
+        // The paired positive: changing the cadence on that same loop is asked.
+        let mut moved = half.clone();
+        moved.insert(CADENCE_DAYS.to_string(), "14".to_string());
+        assert!(leaves_a_cadence_without_advances_from(&half, &moved));
     }
 
     /// **`counts_from` is not a trigger key.** Clearing it alone already

@@ -65,6 +65,19 @@ pub(crate) fn handler() -> Jojobot {
     )
 }
 
+/// **A handler over a store the case holds**, so a case can stage a state the
+/// verbs refuse to write — see `InMemoryMemory::fields_past_the_guard`.
+pub(crate) fn handler_over(memory: Arc<InMemoryMemory>) -> Jojobot {
+    Jojobot::new(
+        memory,
+        Arc::new(SpySearch::default()),
+        Arc::new(InMemoryMailboxes::knowing_any_owner()),
+        Arc::new(InMemorySessions::new()),
+        Arc::new(InMemoryTeachings::new()),
+        seeded_registry(),
+    )
+}
+
 /// **A handler wrapped in what this crate's OWN `provisions()` ships**, the
 /// same decorator `main.rs` wraps the real store in.
 ///

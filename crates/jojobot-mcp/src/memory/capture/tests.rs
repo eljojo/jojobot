@@ -459,7 +459,8 @@ async fn a_check_in_carries_the_callers_own_measurement() {
 /// writes nothing.
 #[tokio::test]
 async fn a_rhythm_with_no_advances_from_refuses_the_check_in_and_writes_nothing() {
-    let jojobot = handler();
+    let memory = Arc::new(InMemoryMemory::booted());
+    let jojobot = handler_over(memory.clone());
     ensure(&jojobot, "thing:kettle").await;
     jojobot
         .add_entity(Parameters(AddEntityArgs {
@@ -468,21 +469,12 @@ async fn a_rhythm_with_no_advances_from_refuses_the_check_in_and_writes_nothing(
         }))
         .await
         .expect("add ok");
-    capture_ok(
-        &jojobot,
-        CaptureArgs {
-            fields: Some(
-                [
-                    ("cadence_days".to_string(), "7".to_string()),
-                    ("counts_from".to_string(), "2026-08-01".to_string()),
-                ]
-                .into_iter()
-                .collect(),
-            ),
-            ..capture_args("rhythm:half-made", "every week, roughly")
-        },
-    )
-    .await;
+    // A loop made before the schedule was checked at the making: no verb
+    // writes this any more, so it is staged the way it arose.
+    memory.fields_past_the_guard(
+        &EntityId("rhythm:half-made".into()),
+        &[("cadence_days", "7"), ("counts_from", "2026-08-01")],
+    );
 
     let refused = json_of(
         &jojobot

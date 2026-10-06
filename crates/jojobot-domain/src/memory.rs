@@ -2501,6 +2501,18 @@ pub fn guard_fit(
             });
         }
     }
+    // **A loop that cannot say when its next cycle falls due is refused when it
+    // is made.** It is the loop kind's own rule and not a declaration's, so it
+    // runs whether or not anything declared the kind.
+    if kind == EntityKind::RHYTHM.as_token()
+        && crate::attention::leaves_a_cadence_without_advances_from(before, after)
+    {
+        return Err(MemoryError::BreaksSchedule {
+            accepts: crate::attention::advances_from_tokens()
+                .map(str::to_string)
+                .to_vec(),
+        });
+    }
     Ok(())
 }
 
@@ -3606,6 +3618,21 @@ pub enum MemoryError {
         name: String,
         /// The keys it names that the thing would no longer carry.
         keys: Vec<String>,
+    },
+    /// **The write would leave a rhythm holding a cadence and no
+    /// `advances_from`.**
+    ///
+    /// A cadence says how long a cycle is and `advances_from` says which date
+    /// the next one counts from; with only the first, nothing can say when the
+    /// loop falls due. The loop is refused when it is made so the caller can
+    /// send both in one call, rather than learning at its first check-in.
+    #[error(
+        "this would leave a rhythm holding 'cadence_days' and no 'advances_from', so nothing \
+         could say when its next cycle falls due"
+    )]
+    BreaksSchedule {
+        /// The values `advances_from` takes.
+        accepts: Vec<String>,
     },
     /// **The write would put a value in a key that the key does not hold, on a
     /// thing that already fits the type.**

@@ -403,6 +403,25 @@ pub(crate) fn memory_declined(
                 keys.join(", ")
             ),
         )),
+        // **The way forward is one more key in the SAME call.** The cadence is
+        // fine and the loop is fine; what is missing is the date it counts
+        // from, and a caller who sends it now makes the loop whole in one
+        // write instead of two.
+        MemoryError::BreaksSchedule { ref accepts } => Ok(blocked_body(
+            &EntityId(String::new()),
+            &[],
+            format!(
+                "Nothing was written: {e}. Send 'advances_from' in the same call, as {} — \
+                 'due_date' keeps the loop on its own days, 'check_in_date' counts from the day \
+                 each check-in happens. A loop with no 'cadence_days' at all is allowed and \
+                 needs neither.",
+                accepts
+                    .iter()
+                    .map(|token| format!("'{token}'"))
+                    .collect::<Vec<_>>()
+                    .join(" or "),
+            ),
+        )),
         // **The key stays and the value has to change**, which is what makes
         // this a different way forward from the one above. The caller is told
         // what the key holds in the words a declaration uses, so the repair is
@@ -714,6 +733,7 @@ pub(crate) fn memory_error(e: MemoryError) -> McpError {
         | MemoryError::RepeatsShipped
         | MemoryError::BreaksFit { .. }
         | MemoryError::BreaksType { .. }
+        | MemoryError::BreaksSchedule { .. }
         | MemoryError::UnknownFact { .. }
         | MemoryError::UnknownEntity { .. }
         | MemoryError::NotYours { .. }
