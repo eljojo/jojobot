@@ -179,14 +179,32 @@ impl InMemoryMemory {
             return Ok(());
         }
         let mut types = self.types.lock().unwrap();
-        if types
+        if let Some(prior) = types
             .iter()
-            .any(|held| held.name == token && !self.kind_keys.lock().unwrap().contains(&held.name))
+            .find(|held| held.name == token && !self.kind_keys.lock().unwrap().contains(&held.name))
+            .cloned()
         {
-            return Err(MemoryError::InvalidEntity(format!(
-                "'{token}' already names a declared type, and its keys are not this \
-                 declaration's to replace"
-            )));
+            // **A shipped kind landing on a caller's own type of that name is
+            // not a refusal** — see the real store's copy of this line: a build
+            // that adds a kind has to boot where a type already holds the name,
+            // and what the caller declared is remembered, then replaced.
+            if origin == crate::memory::types::Origin::Shipped
+                && prior.origin == crate::memory::types::Origin::Declared
+            {
+                self.displaced_types
+                    .lock()
+                    .unwrap()
+                    .push(crate::memory::types::Displaced {
+                        name: token.to_string(),
+                        fields: prior.fields.clone(),
+                        replaced_on: self.clock.today_in(&jiff::tz::TimeZone::UTC),
+                    });
+            } else {
+                return Err(MemoryError::InvalidEntity(format!(
+                    "'{token}' already names a declared type, and its keys are not this \
+                     declaration's to replace"
+                )));
+            }
         }
         types.retain(|held| held.name != token);
         types.push(DeclaredType {

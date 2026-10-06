@@ -4025,6 +4025,33 @@ impl Memory for DoltMemory {
         // every shipped kind on every boot and names none, so a delete here
         // would take away whatever that name held at each restart.
         if !declared.fields.is_empty() {
+            // **A shipped kind landing on a caller's own type of that name is
+            // not a refusal**, for the reason a shipped type landing on a
+            // caller's is not: a build that adds a kind has to boot on a store
+            // where somebody already declared a type under the name, because
+            // the seed runs on every boot and a refusal here leaves the
+            // process with no kinds loaded. The caller's keys are remembered
+            // beside the shipped ones' own displacement record, and then
+            // replaced.
+            if origin == Origin::Shipped {
+                let held_type: Option<String> = sqlx::query_scalar(
+                    "SELECT origin FROM type_field WHERE type_name = ? AND owner = ? LIMIT 1",
+                )
+                .bind(token)
+                .bind(KEYS_OF_A_TYPE)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(store)?;
+                if held_type.as_deref().map(read_origin) == Some(Origin::Declared) {
+                    displace(&mut tx, token, &self.clock).await?;
+                    sqlx::query("DELETE FROM type_field WHERE type_name = ? AND owner = ?")
+                        .bind(token)
+                        .bind(KEYS_OF_A_TYPE)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(store)?;
+                }
+            }
             owned_by_the_other_half(&mut tx, token, KEYS_OF_A_TYPE).await?;
             sqlx::query("DELETE FROM type_field WHERE type_name = ? AND owner = ?")
                 .bind(token)

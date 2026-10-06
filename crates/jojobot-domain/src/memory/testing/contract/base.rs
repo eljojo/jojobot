@@ -11467,6 +11467,59 @@ pub async fn a_rhythm_holding_a_cadence_and_no_advances_from_is_refused<M: Memor
     );
 }
 
+/// **A kind the software starts shipping lands on a caller's own type of that
+/// name without stopping the boot, and what the caller declared is
+/// remembered.** The seed runs on every start, and a refusal here leaves the
+/// process with no kinds loaded, so an instance that declared a type under a
+/// name a later build ships as a kind would come up unable to resolve a
+/// handle. The kind's keys replace the type's, exactly as a shipped type's
+/// replace a caller's, and the refusal a caller's redeclaration meets names
+/// what was displaced.
+///
+/// **Paired**: a caller's kind is still refused over a type of that name, so
+/// this is the software's write alone and not a loosened rule.
+pub async fn a_kind_the_software_ships_lands_on_a_callers_type_of_that_name<M: Memory>(store: &M) {
+    let name = "contract-promise-like";
+    let theirs = DeclaredType::new(name, vec![Field::new("promised_for", ValueType::Date)]);
+    declare(store, theirs.clone()).await;
+
+    // The caller's own kind over the caller's own type stays refused.
+    let refused = store
+        .declare_kind(
+            name,
+            Origin::Declared,
+            vec![Field::required("promised_by", ValueType::Date)],
+        )
+        .await;
+    assert!(
+        matches!(refused, Err(MemoryError::InvalidEntity(_))),
+        "a caller's kind does not replace a caller's type: {refused:?}"
+    );
+
+    // The software's write lands.
+    store
+        .declare_kind(
+            name,
+            Origin::Shipped,
+            vec![Field::required("promised_by", ValueType::Date)],
+        )
+        .await
+        .expect("a shipped kind must land where a caller's type holds the name");
+    let displaced = store
+        .displaced_type(name)
+        .await
+        .expect("the read answers")
+        .unwrap_or_else(|| panic!("what the caller's type held was not remembered"));
+    assert_eq!(
+        displaced.fields, theirs.fields,
+        "the keys the caller's declaration named, exactly as declared"
+    );
+    store
+        .reclaim_kind(name)
+        .await
+        .expect("the contract's own kind is taken back");
+}
+
 /// 🚨 **A duplicate that got past the guard is repairable, and the repair
 /// is legible afterwards.**
 ///
@@ -12404,6 +12457,7 @@ pub async fn run_all<M: Memory>(store: &M) {
     a_pet_is_its_own_kind_in_the_store(store).await;
     a_rhythm_is_refused_without_a_parent(store).await;
     a_rhythm_holding_a_cadence_and_no_advances_from_is_refused(store).await;
+    a_kind_the_software_ships_lands_on_a_callers_type_of_that_name(store).await;
     a_bots_own_boot_seats_are_not_its_own_to_set(store).await;
     a_thing_reads_back_as_its_fields_folded(store).await;
     the_newest_write_wins_however_old_the_record_it_landed_in(store).await;
