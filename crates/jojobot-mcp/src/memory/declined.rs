@@ -411,8 +411,9 @@ pub(crate) fn memory_declined(
             &[],
             format!(
                 "Nothing was written: {e}. Unstar a rule on {subject} with update_fact, shorten \
-                 the rules that are starred, or lower rule_seats — and a rule that binds at one \
-                 moment is better carried by a skill than by a seat."
+                 the rules that are starred, or have a different identity lower rule_seats on \
+                 {subject} — a bot cannot write rule_seats about itself — and a rule that binds \
+                 at one moment is better carried by a skill than by a seat."
             ),
         )),
         // **The way forward is one more key in the SAME call, or both keys

@@ -152,6 +152,27 @@ async fn a_floor_the_boot_cannot_carry_is_refused_when_it_is_written() {
         .await
         .never_says("heavyrule");
 
+    // ── the same refusal, met by the bot starring its OWN rule ──────────────
+    //
+    // `rule_seats` is a key a bot cannot write about itself, so the way out
+    // the refusal offers this caller is a different identity setting it. The
+    // two ways that are the caller's own stay offered beside it.
+    let epsilon_run = story.as_bot("bot:epsilon").await;
+    epsilon_run
+        .refused(
+            "capture",
+            json!({
+                "subject": "bot:epsilon",
+                "content": "ownheavy ".repeat(4000),
+                "fields": {"starred": "true"},
+            }),
+        )
+        .await
+        .says("different identity")
+        .says("update_fact")
+        .says("shorten")
+        .says("\"wrote\":false");
+
     // ── a seat count that does the same ─────────────────────────────────────
     //
     // Eight starred rules at the default five seats fit. Eight seats carry
