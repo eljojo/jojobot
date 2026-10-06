@@ -1926,6 +1926,35 @@ impl Memory for InMemoryMemory {
         let mut entities = self.entities.lock().expect("fake mutex poisoned");
         let mut facts = self.facts.lock().expect("fake mutex poisoned");
 
+        // **The duplicate's names go to the survivor**, exactly as the real
+        // store's fold does — see `names_to_carry`. The duplicate's aliases move
+        // and its display name stays as its own.
+        let carried = {
+            let folded_row = entities
+                .iter()
+                .find(|e| e.id == *folded)
+                .expect("checked present above");
+            let survivor_row = entities
+                .iter()
+                .find(|e| e.id == *survivor)
+                .expect("checked present above");
+            crate::memory::names_to_carry(
+                &survivor_row.name,
+                &survivor_row.aliases,
+                &folded_row.name,
+                &folded_row.aliases,
+            )
+        };
+        if !carried.is_empty() {
+            for entity in entities.iter_mut() {
+                if entity.id == *survivor {
+                    entity.aliases.extend(carried.iter().cloned());
+                } else if entity.id == *folded {
+                    entity.aliases.clear();
+                }
+            }
+        }
+
         // **`parent` re-points too, for the same reason `edge.object` and
         // `refs` do below**: it names a different row, and it is stored as
         // the badge that row wears (rule 268) — a fold is the one place that

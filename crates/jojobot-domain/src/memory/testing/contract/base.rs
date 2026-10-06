@@ -11687,6 +11687,93 @@ pub async fn a_walk_from_a_folded_handle_says_where_it_went<M: Memory>(store: &M
     );
 }
 
+/// **A fold carries the duplicate's names to the survivor and leaves the pages
+/// where they are.**
+///
+/// The duplicate's aliases, and the name it was displayed under, become
+/// aliases of the survivor, so anything that finds a thing by a name it was
+/// known by finds the survivor after the fold. The survivor keeps its own name
+/// and its own aliases and its own page; the duplicate's page stays readable on
+/// the row that forwards.
+///
+/// **Paired in one read**: the survivor still carries its own alias beside the
+/// moved ones, so a fold that REPLACED the survivor's names with the
+/// duplicate's cannot pass.
+pub async fn a_fold_moves_the_duplicates_names_to_the_survivor<M: Memory>(store: &M) {
+    let kept = EntityId::person("person:contract-names-kept");
+    let spare = EntityId::person("person:contract-names-spare");
+    add(
+        store,
+        NewEntity {
+            aliases: vec!["Kept Alias".into()],
+            ..NewEntity::new(kept.clone(), "Kept Name", "contract-fixture")
+        },
+    )
+    .await;
+    add(
+        store,
+        NewEntity {
+            aliases: vec!["Spare Alias".into()],
+            ..NewEntity::new(spare.clone(), "Spare Name", "contract-fixture")
+        },
+    )
+    .await;
+    store
+        .set_prose(&kept, "The survivor's own page.")
+        .await
+        .expect("the survivor takes prose");
+    store
+        .set_prose(&spare, "The duplicate's own page.")
+        .await
+        .expect("the duplicate takes prose");
+
+    store
+        .merge(&spare, &kept, None, date(2026, 5, 20))
+        .await
+        .expect("the fold lands");
+
+    let survivor = store
+        .list_entities(None)
+        .await
+        .expect("list_entities should succeed")
+        .into_iter()
+        .find(|e| e.id == kept)
+        .expect("the survivor is listed");
+    assert_eq!(
+        survivor.name, "Kept Name",
+        "the survivor was renamed: {survivor:?}"
+    );
+    for wanted in ["Kept Alias", "Spare Alias", "Spare Name"] {
+        assert!(
+            survivor.aliases.iter().any(|a| a == wanted),
+            "the survivor does not answer to {wanted:?} after the fold: {:?}",
+            survivor.aliases,
+        );
+    }
+
+    let page = |id: &EntityId| {
+        let id = id.clone();
+        async move {
+            store
+                .scan_entity(&id)
+                .await
+                .expect("scan_entity should succeed")
+                .map(|doc| doc.prose)
+                .unwrap_or_default()
+        }
+    };
+    assert_eq!(
+        page(&kept).await,
+        "The survivor's own page.",
+        "the survivor's page changed",
+    );
+    assert_eq!(
+        page(&spare).await,
+        "The duplicate's own page.",
+        "the duplicate's page is no longer readable on the row that forwards",
+    );
+}
+
 /// **A fact address minted before a fold still resolves its handle, and
 /// now says where the claim went** — never a bare miss indistinguishable
 /// from an address that never existed.
@@ -12186,6 +12273,7 @@ pub async fn run_all<M: Memory>(store: &M) {
     a_claim_carries_when_it_was_taken_in(store).await;
     folding_a_duplicate_makes_the_split_answer_whole(store).await;
     a_fold_carries_the_lineage_that_points_at_what_it_moved(store).await;
+    a_fold_moves_the_duplicates_names_to_the_survivor(store).await;
     a_fold_repoints_a_pointer_wearing_a_former_handle_of_the_folded_side(store).await;
     a_walk_from_a_folded_handle_says_where_it_went(store).await;
     a_claims_lineage_is_walkable_from_its_source(store).await;

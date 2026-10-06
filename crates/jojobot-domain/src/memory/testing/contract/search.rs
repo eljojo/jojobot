@@ -593,6 +593,69 @@ pub async fn search_pins_a_named_entity_first<M: Memory, S: Search>(store: &M, s
     );
 }
 
+/// **A name the duplicate was known by finds the survivor after a fold.**
+///
+/// The fold carries the duplicate's aliases and display name to the survivor,
+/// and the index is re-read for both sides, so a word only the duplicate wore
+/// leads to the survivor. **Paired with the survivor's own alias still finding
+/// it**, so a fold that replaced the survivor's names cannot pass, and with the
+/// duplicate's word finding nothing before the fold, so the find after it is
+/// the fold's doing.
+pub async fn a_name_the_duplicate_wore_finds_the_survivor_after_a_fold<M: Memory, S: Search>(
+    store: &M,
+    search: &S,
+) {
+    let kept = EntityId("org:contract-search-fold-kept".into());
+    let spare = EntityId("org:contract-search-fold-spare".into());
+    add(
+        store,
+        NewEntity {
+            aliases: vec!["Brightharbour".into()],
+            ..NewEntity::new(kept.clone(), "Contract Fold Kept", "user-named")
+        },
+    )
+    .await;
+    add(
+        store,
+        NewEntity {
+            aliases: vec!["Duskwhisper".into()],
+            ..NewEntity::new(spare.clone(), "Contract Fold Spare", "user-named")
+        },
+    )
+    .await;
+
+    let survivor_hit = |hits: &[Hit]| {
+        hits.iter()
+            .any(|h| matches!(h, Hit::Entity { entity, .. } if entity.id == kept))
+    };
+    let before = found(search, SearchQuery::text("Duskwhisper")).await;
+    assert!(
+        !survivor_hit(&before),
+        "the duplicate's word found the survivor before any fold: {before:?}"
+    );
+
+    store
+        .merge(&spare, &kept, None, date(2026, 7, 2))
+        .await
+        .expect("the fold lands");
+
+    let by_the_duplicates_alias = found(search, SearchQuery::text("Duskwhisper")).await;
+    assert!(
+        survivor_hit(&by_the_duplicates_alias),
+        "an alias only the duplicate wore does not find the survivor: {by_the_duplicates_alias:?}"
+    );
+    let by_the_duplicates_name = found(search, SearchQuery::text("Contract Fold Spare")).await;
+    assert!(
+        survivor_hit(&by_the_duplicates_name),
+        "the duplicate's display name does not find the survivor: {by_the_duplicates_name:?}"
+    );
+    let by_its_own_alias = found(search, SearchQuery::text("Brightharbour")).await;
+    assert!(
+        survivor_hit(&by_its_own_alias),
+        "the survivor stopped answering to its own alias: {by_its_own_alias:?}"
+    );
+}
+
 /// **No bare hits.** A fact hit names the entity it is about and the entity
 /// whose page it sits on — handle, kind AND display name — so a reader knows
 /// what came back without spending a call per handle to find out.
@@ -1050,6 +1113,7 @@ pub async fn run_all_searchable<M: Memory, S: Search>(store: &M, search: &S) {
     search_pins_a_named_entity_first(store, search).await;
     search_fact_hits_name_their_subject_and_home(store, search).await;
     search_entity_hits_carry_their_edges(store, search).await;
+    a_name_the_duplicate_wore_finds_the_survivor_after_a_fold(store, search).await;
 
     search_finds_things_that_answer_a_type_structurally(store, search).await;
     search_keeps_only_what_fits_when_the_caller_asks(store, search).await;

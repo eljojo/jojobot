@@ -3328,6 +3328,51 @@ impl Memory for DoltMemory {
             .await
             .map_err(store)?;
 
+        // **The duplicate's names go to the survivor**: every alias it had and
+        // the name it was displayed under, so a name it was known by now finds
+        // the survivor. The survivor keeps its own name and aliases, and its own
+        // page; the duplicate's page stays on the row that forwards. A name the
+        // survivor already answers to is not added twice.
+        let folded_row = index
+            .iter()
+            .find(|e| &e.id == folded)
+            .expect("checked present above");
+        let survivor_row = index
+            .iter()
+            .find(|e| &e.id == survivor)
+            .expect("checked present above");
+        let carried = jojobot_domain::memory::names_to_carry(
+            &survivor_row.name,
+            &survivor_row.aliases,
+            &folded_row.name,
+            &folded_row.aliases,
+        );
+        if !carried.is_empty() {
+            let mut ordinal: i64 = sqlx::query_scalar(
+                "SELECT COALESCE(MAX(ordinal), 0) FROM entity_alias WHERE entity = ?",
+            )
+            .bind(survivor_key.as_str())
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(store)?;
+            for alias in &carried {
+                ordinal += 1;
+                sqlx::query("INSERT INTO entity_alias (entity, ordinal, alias) VALUES (?, ?, ?)")
+                    .bind(survivor_key.as_str())
+                    .bind(ordinal)
+                    .bind(alias)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(store)?;
+            }
+            sqlx::query("DELETE FROM entity_alias WHERE entity = ?")
+                .bind(folded_key.as_str())
+                .execute(&mut *tx)
+                .await
+                .map_err(store)?;
+            append_entity_write(&mut tx, survivor, &self.clock).await?;
+        }
+
         let record = Fact {
             id: Self::mint(&mut tx, &survivor_key).await?,
             home: survivor_key.clone(),

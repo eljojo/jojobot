@@ -5318,15 +5318,15 @@ async fn an_archived_loop_drops_out_of_the_owed_read_and_is_counted() {
     );
 }
 
-/// 🚨 **A merge leaves the duplicate's prose and aliases on the row that
-/// forwards.**
+/// 🚨 **A merge carries the duplicate's names to the survivor and leaves both
+/// pages where they are, and the receipt says so.**
 ///
-/// `merge_entities`' description says so, so this holds it. Paired with the
-/// positive that the survivor keeps what it had: an answer that lost both
-/// would read as "nothing moved" for a reason that has nothing to do with the
-/// claim.
+/// The survivor answers to the duplicate's alias and display name beside its own.
+/// That a search finds the survivor by those names is held by the search
+/// contract, which runs over the real index; the handler this case uses has a
+/// stand-in for search.
 #[tokio::test]
-async fn a_merge_leaves_the_duplicates_prose_and_aliases_behind() {
+async fn a_merge_carries_the_duplicates_names_and_leaves_both_pages() {
     use crate::memory::merge_entities::MergeArgs;
     let jojobot = handler();
     let sid = writing_as(&jojobot);
@@ -5353,16 +5353,24 @@ async fn a_merge_leaves_the_duplicates_prose_and_aliases_behind() {
             .await
             .expect("set_prose ok");
     }
-    jojobot
-        .merge_entities(Parameters(MergeArgs {
-            duplicate: "place:ocean-avenue".into(),
-            survivor: "place:moes-tavern".into(),
-            reason: None,
-            recorded_at: None,
-            sid: Some(sid),
-        }))
-        .await
-        .expect("merge ok");
+    let receipt = json_of(
+        &jojobot
+            .merge_entities(Parameters(MergeArgs {
+                duplicate: "place:ocean-avenue".into(),
+                survivor: "place:moes-tavern".into(),
+                reason: None,
+                recorded_at: None,
+                sid: Some(sid),
+            }))
+            .await
+            .expect("merge ok"),
+    );
+    assert!(
+        receipt["prose_stayed"]
+            .as_str()
+            .is_some_and(|said| said.contains("place:ocean-avenue")),
+        "the receipt does not say where the duplicate's page stays: {receipt}",
+    );
 
     let survivor = json_of(
         &jojobot
@@ -5375,14 +5383,16 @@ async fn a_merge_leaves_the_duplicates_prose_and_aliases_behind() {
             .expect("recall ok"),
     )["objects"][0]
         .clone();
-    let said = survivor.to_string();
-    assert!(
-        said.contains("The survivor's own page.") && said.contains("The Tavern"),
-        "the survivor lost what it had: {survivor}",
-    );
-    assert!(
-        !said.contains("The duplicate's page.") && !said.contains("The Bar"),
-        "the duplicate's prose or alias moved, so the description is wrong: {survivor}",
+    let names = survivor["alternateName"].to_string();
+    for wanted in ["The Tavern", "The Bar", "Evergreen Bar"] {
+        assert!(
+            names.contains(wanted),
+            "the survivor does not answer to {wanted}: {survivor}"
+        );
+    }
+    assert_eq!(
+        survivor["prose"], "The survivor's own page.",
+        "the survivor's page changed: {survivor}",
     );
 }
 

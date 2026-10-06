@@ -3550,6 +3550,32 @@ pub struct Merge {
     pub rehomed: usize,
 }
 
+/// **The names a fold carries from the duplicate to the survivor**, in order: the
+/// duplicate's display name, then its aliases. A name the survivor already
+/// answers to is left out, compared without regard to case, and so is a name
+/// repeated within the list. Shared by every store so a fold gives the same
+/// answer in each.
+pub fn names_to_carry(
+    survivor_name: &str,
+    survivor_aliases: &[String],
+    folded_name: &str,
+    folded_aliases: &[String],
+) -> Vec<String> {
+    let mut seen: Vec<String> = std::iter::once(survivor_name)
+        .chain(survivor_aliases.iter().map(String::as_str))
+        .map(str::to_lowercase)
+        .collect();
+    let mut carried = Vec::new();
+    for name in std::iter::once(folded_name).chain(folded_aliases.iter().map(String::as_str)) {
+        let key = name.to_lowercase();
+        if !seen.contains(&key) {
+            seen.push(key);
+            carried.push(name.to_string());
+        }
+    }
+    carried
+}
+
 /// The result of a write that names an entity: it either happened, or the write
 /// guard stopped it and is asking. Modelled as a value rather than an error so
 /// every caller has to face the question — a blocked write is a decision the AI

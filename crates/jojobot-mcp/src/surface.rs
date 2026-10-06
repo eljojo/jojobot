@@ -623,10 +623,10 @@ fn the_archive_description_names_the_duplicate_repair_and_the_owed_read() {
     assert_description_names("archive_entity", &["merge_entities", "overdue"]);
 }
 
-/// **`merge_entities` says what a merge does not move.**
+/// **`merge_entities` says its names become aliases of the survivor.**
 #[test]
-fn the_merge_description_names_what_stays_behind() {
-    assert_description_names("merge_entities", &["prose", "aliases"]);
+fn the_merge_description_names_the_aliases_it_carries() {
+    assert_description_names("merge_entities", &["aliases"]);
 }
 
 /// **`update_fact` says a claim cannot change subject, and how to move one,

@@ -1083,5 +1083,25 @@ fn the_seat_status_counts_against_the_bots_own_seats() {
     assert_eq!(
         over.dropped.expect("the oldest is displaced").to_string(),
         "bot:gamma#f1"
+||||||| parent of c4376b41 (A merge carries the duplicate's names to the survivor)
+/// **A fold carries the duplicate's display name and then its aliases, and
+/// leaves out a name the survivor already answers to, whatever its case, and a
+/// name repeated within the carried list.**
+#[test]
+fn a_fold_carries_each_new_name_once() {
+    let carried = names_to_carry(
+        "Kept",
+        &["Shared".to_string()],
+        "Spare",
+        &[
+            "SHARED".to_string(),
+            "Extra".to_string(),
+            "extra".to_string(),
+        ],
+    );
+    assert_eq!(
+        carried,
+        vec!["Spare".to_string(), "Extra".to_string()],
+        "the display name comes first, a name the survivor wears is skipped, and a repeat is kept once",
     );
 }
