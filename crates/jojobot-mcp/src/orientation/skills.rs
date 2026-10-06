@@ -273,7 +273,10 @@ and the difference between them is whether the cycle is consumed.
 `skipped` — it did not happen, and the cycle advances anyway. The record says
 that it did not happen.
 
-`snoozed` — the cycle is not consumed. The rhythm comes back at its own date.
+`snoozed` — the cycle is not consumed, and the snooze names the day the loop
+comes back. Send that day in `fields` as `snoozed_until`, a date after the
+check-in's own. A snooze with no day is refused, so ask the operator which day
+if they have not said. The loop is not due before that day, and it is due on it.
 
 A refusal is not a run. Ask the operator whether the cycle moves on, which is
 `skipped`, or comes back, which is `snoozed`. A refusal recorded as `ran` says
@@ -487,6 +490,35 @@ mod tests {
                 "the paragraph that says to write the loop does not name `{key}`: {paragraph}"
             );
         }
+    }
+
+    /// **The paragraph that teaches the snoozed outcome names the key that
+    /// carries the snooze's day.** A snooze with no day is refused, so a
+    /// session taught only that the cycle is not consumed makes a call that
+    /// comes straight back refused. The key is read off the engine, and the
+    /// paired positive is that each of the three outcomes still has its own
+    /// paragraph, so a text that named the key and dropped an outcome fails.
+    #[test]
+    fn the_snoozed_outcome_names_the_key_that_carries_its_day() {
+        let text = body("rhythms");
+        for outcome in attention::Outcome::ALL {
+            let opening = format!("`{}`", outcome.as_token());
+            assert!(
+                text.split("\n\n")
+                    .any(|paragraph| paragraph.starts_with(&opening)),
+                "no paragraph of the rhythms procedure teaches the {opening} outcome"
+            );
+        }
+        let snoozed = format!("`{}`", attention::Outcome::Snoozed.as_token());
+        let paragraph = text
+            .split("\n\n")
+            .find(|paragraph| paragraph.starts_with(&snoozed))
+            .expect("the procedure teaches the snoozed outcome");
+        assert!(
+            names(paragraph, attention::SNOOZED_UNTIL),
+            "the paragraph that teaches {snoozed} does not name `{}`: {paragraph}",
+            attention::SNOOZED_UNTIL,
+        );
     }
 
     /// **The procedure says a check-in opens a loop that holds both schedule
