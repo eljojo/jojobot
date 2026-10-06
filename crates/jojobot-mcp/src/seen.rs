@@ -108,6 +108,15 @@ impl Ledger {
         }
     }
 
+    /// **Forget a handle that was merged away, in every session.** The handle
+    /// answers as a status now and is no thing to ask about, and a merge
+    /// suggested for it would come back already done.
+    pub(crate) fn forget(&mut self, handle: &str) {
+        for session in self.sessions.values_mut() {
+            session.shown.retain(|(held, _)| held.handle != handle);
+        }
+    }
+
     /// **Ask, once, about the thing this creation sits beside.**
     ///
     /// The thing must be of the same kind, must have been shown to this session
@@ -213,6 +222,9 @@ pub(crate) fn entities_in(body: &serde_json::Value) -> Vec<Shown> {
                     && !slug.is_empty()
                     && !slug.contains('#')
                     && let Some(name) = fields.get("name").and_then(serde_json::Value::as_str)
+                    // A merged-away handle answers as a status naming its
+                    // survivor. It is no thing, so it is not shown.
+                    && fields.get("status").and_then(serde_json::Value::as_str) != Some("merged")
                 {
                     out.push(Shown {
                         handle: handle.to_string(),

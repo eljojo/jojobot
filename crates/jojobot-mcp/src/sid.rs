@@ -159,6 +159,14 @@ impl SessionRegistry {
             .record(sid, returned);
     }
 
+    /// Drop a merged-away handle from what every session was shown.
+    pub(crate) fn note_merged(&self, handle: &str) {
+        self.seen
+            .lock()
+            .expect("the seen ledger is poisoned")
+            .forget(handle);
+    }
+
     /// Ask, once, about the thing a creation sits beside. See [`crate::seen`].
     pub(crate) fn consult_creation(
         &self,

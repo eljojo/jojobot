@@ -1050,6 +1050,79 @@ mod tests {
         );
     }
 
+    /// Fold `duplicate` into `survivor`, as the session `sid`.
+    async fn merged(jojobot: &Jojobot, sid: &str, duplicate: &str, survivor: &str) {
+        let landed = json_of(
+            &jojobot
+                .merge_entities(Parameters(crate::memory::merge_entities::MergeArgs {
+                    duplicate: duplicate.into(),
+                    survivor: survivor.into(),
+                    reason: None,
+                    recorded_at: None,
+                    sid: Some(sid.into()),
+                }))
+                .await
+                .expect("merge ok"),
+        );
+        assert_eq!(landed["merged"], duplicate, "the merge landed: {landed}");
+    }
+
+    /// **A handle that was merged away is never the thing a creation is asked
+    /// about, whether the session was shown it before the merge or reads it
+    /// after.** Asking about it suggests a merge that answers `AlreadyMerged`.
+    ///
+    /// Two sessions, because the two ways the ledger can be handed a folded
+    /// handle are different: the one that merged held it as a live thing, and
+    /// the one that reads the husk afterwards is shown it as a status. Each
+    /// is paired with an unmerged thing shown the same way, which is still
+    /// asked about, so an empty ledger cannot pass for a correct one.
+    #[tokio::test]
+    async fn a_merged_away_handle_is_not_the_thing_a_creation_is_asked_about() {
+        let jojobot = handler();
+        let merger = writing_as(&jojobot);
+        let reader = jojobot
+            .registry
+            .mint_with(&EntityId("bot:otto".into()), None, || "tst2".to_string())
+            .expect("a second session")
+            .to_string();
+        created(&jojobot, &merger, "thing", "teapot", "Mill Race Weir").await;
+        created(&jojobot, &merger, "thing", "piano", "Grist Works").await;
+        created(&jojobot, &merger, "thing", "canoe", "Mill Pond").await;
+
+        // The merging session was shown all three, then folds the first.
+        browsed(&jojobot, &merger, "thing").await;
+        merged(&jojobot, &merger, "thing:teapot", "thing:piano").await;
+        let asked = created(&jojobot, &merger, "thing", "battery", "Mill Race Road").await;
+        assert!(
+            teaches(&asked, "thing:canoe"),
+            "the unmerged thing it was shown is no longer asked about: {asked}",
+        );
+        assert!(
+            !teaches(&asked, "thing:teapot"),
+            "the session that merged was asked about the handle it merged away: {asked}",
+        );
+
+        // The reading session lists the things, then reads the folded handle's
+        // husk, which makes the husk the most recently shown.
+        browsed(&jojobot, &reader, "thing").await;
+        jojobot
+            .recall(Parameters(crate::memory::recall::RecallArgs {
+                sid: Some(reader.clone()),
+                ..crate::memory::testing::recall_args("thing:teapot")
+            }))
+            .await
+            .expect("recall ok");
+        let asked = created(&jojobot, &reader, "thing", "backup-drive", "Mill Weir Pond").await;
+        assert!(
+            teaches(&asked, "thing:canoe"),
+            "the unmerged thing the reader was shown is not asked about: {asked}",
+        );
+        assert!(
+            !teaches(&asked, "thing:teapot"),
+            "the session that read the husk was asked about the merged-away handle: {asked}",
+        );
+    }
+
     /// **A read's answer is the same whether or not the session is being
     /// remembered.** The ledger changes no read: the same listing, asked with a
     /// session and without one, comes back byte for byte alike.

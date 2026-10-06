@@ -134,6 +134,7 @@ impl Jojobot {
             }) => (*done, Some(behind)),
             Err(e) => return memory_declined("merge_entities", e),
         };
+        self.registry.note_merged(done.folded.as_str());
         self.beat(
             "merge_entities",
             &duplicate.to_string(),
