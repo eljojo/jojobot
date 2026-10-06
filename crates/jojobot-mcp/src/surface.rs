@@ -506,6 +506,32 @@ fn the_claim_argument_names_how_the_lease_is_kept_and_given_up() {
     );
 }
 
+/// **The `claim` argument names the key a bot carries its role in** and says a
+/// different identity writes it. A boot that names no claim claims that role
+/// for a bot that carries one, so an argument that called naming none "the
+/// ordinary boot, unchanged" would tell a caller the opposite of what the
+/// door does.
+#[test]
+fn the_claim_argument_names_the_role_a_bot_carries() {
+    let tools = Jojobot::tool_router().list_all();
+    let start_here = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "start_here")
+        .expect("the surface offers start_here");
+    let schema = serde_json::to_value(&start_here.input_schema).expect("the schema serializes");
+    let described = schema["properties"]["claim"]["description"]
+        .as_str()
+        .expect("the claim argument carries its own description");
+    assert!(
+        described.contains("claims_role"),
+        "the claim argument does not name the key a bot carries its role in: {described}"
+    );
+    assert!(
+        described.contains("different identity"),
+        "the claim argument does not say a different identity writes that key: {described}"
+    );
+}
+
 /// **`journal`'s own description says a beat renews a held role claim** —
 /// the one capability this verb has beside recording a beat, and the one a
 /// caller relying on journalling alone to keep a lease fresh needs to read

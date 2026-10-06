@@ -101,9 +101,11 @@ pub struct OrientArgs {
     /// decide it. **A conflict is the store working correctly, not a
     /// mistake in what you sent** — retry the same call. **An unavailable
     /// claim holds nothing**, and its answer says what to do next.
-    /// Naming none is the ordinary boot: unchanged, and two sessions
-    /// working two separate slices never meet a lease neither of them
-    /// claimed.
+    /// **A boot that names no claim claims the role the bot carries in
+    /// `claims_role`, if it carries one**, and is otherwise unchanged: two
+    /// sessions working two separate slices never meet a lease neither of
+    /// them claimed. `claims_role` is written about a bot by
+    /// a different identity, never by the bot itself.
     ///
     /// **Every write you make while holding it renews the lease**, not
     /// only a journal beat — capture, add_entity, post_message and the
