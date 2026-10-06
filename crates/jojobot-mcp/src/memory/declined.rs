@@ -573,6 +573,7 @@ pub(crate) fn memory_declined(
             ref room,
             aged_out,
         } => {
+            let empty_room_without_capacity = live == 0 && capacity == 0;
             let body = serde_json::json!({
                 "status": "blocked",
                 "attempted": subject,
@@ -593,7 +594,8 @@ pub(crate) fn memory_declined(
                 // **How many thoughts an edit has to archive before it can
                 // land**, as a number a caller does not have to read out of
                 // a sentence. `null` for a verb that has other ways forward.
-                "archive_needed": (verb == "update_fact").then(|| live + 1 - capacity),
+                "archive_needed": (verb == "update_fact" && !empty_room_without_capacity)
+                    .then(|| live + 1 - capacity),
                 // **The offer names the state it is actually in.** A room
                 // already OVER its capacity is a borrow already outstanding
                 // — offering another would stack debt the ceiling exists to
@@ -601,7 +603,29 @@ pub(crate) fn memory_declined(
                 // the reserve again. Exactly at capacity is the one moment
                 // `borrow` is genuinely on the table, so it is the one
                 // moment the refusal names it.
-                "how_to_proceed": if verb == "update_fact" {
+                "how_to_proceed": if empty_room_without_capacity {
+                    // **A room with no capacity holds nothing, so there is no
+                    // thought to archive or to drop** — naming either points at
+                    // nothing. What is true is that the ceiling has to move
+                    // first, and it is not this caller's to move.
+                    if verb == "update_fact" {
+                        format!(
+                            "Nothing was written: '{subject}'s room has a capacity of 0, so it \
+                             holds no thoughts and {verb} cannot make this claim one. A \
+                             different identity has to give '{subject}' a thought_capacity above \
+                             0 first — ask another bot, or the operator — then re-call {verb}."
+                        )
+                    } else {
+                        format!(
+                            "Nothing was written: '{subject}'s room has a capacity of 0, so no \
+                             thought can be written in it and there is none to give up. A \
+                             different identity has to give '{subject}' a thought_capacity above \
+                             0 — ask another bot, or the operator — then re-call {verb}. Once \
+                             and only once, borrow: true lets this one land over the ceiling \
+                             anyway."
+                        )
+                    }
+                } else if verb == "update_fact" {
                     // **An edit has no drop and no borrow**, so naming either
                     // would send the caller round a loop (rule 68). Archiving
                     // a live thought and writing the thought through capture

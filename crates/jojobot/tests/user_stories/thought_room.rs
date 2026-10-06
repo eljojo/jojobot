@@ -296,3 +296,96 @@ async fn a_ceiling_that_is_not_a_number_is_refused_where_it_is_written() {
     s.wrap("ceilings that read, and ones that do not").await;
     story.finish().await;
 }
+
+/// **A room with no capacity says so, and never tells the caller to archive or
+/// drop a thought it does not hold.** At capacity zero the room is empty, so
+/// the refusal that names a thought to drop, or says how many to archive,
+/// points at nothing. What is true is that no thought can be written until a
+/// different identity gives the room a capacity.
+///
+/// Paired with a room that IS full: it still names a drop, which is what tells
+/// "the refusal got quieter" from "the refusal got honest".
+#[tokio::test]
+async fn a_room_with_no_capacity_does_not_offer_a_thought_to_drop() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:epsilon", "Epsilon").await;
+    s.add("thing:the-fern", "The Fern").await;
+    s.call(
+        "capture",
+        json!({
+            "subject": "bot:epsilon",
+            "content": "the room holds nothing",
+            "fields": {"thought_capacity": "0"},
+        }),
+    )
+    .await;
+
+    // A capture that would be a thought.
+    let none = s
+        .refused(
+            "capture",
+            json!({
+                "subject": "bot:epsilon",
+                "content": "the fern needs water",
+                "shape": "connection",
+                "object": "thing:the-fern",
+            }),
+        )
+        .await;
+    none.says("thought_capacity")
+        .says("\"room\":[]")
+        .never_says("naming drop");
+
+    // An edit that would make an ordinary claim into one.
+    let claim = s.fact("bot:epsilon", "the fern is on the sill").await;
+    let edit = s
+        .refused(
+            "update_fact",
+            json!({
+                "address": claim,
+                "shape": "connection",
+                "object": "thing:the-fern",
+            }),
+        )
+        .await;
+    edit.says("thought_capacity")
+        .says("\"archive_needed\":null");
+
+    // The room that is full still names a drop.
+    s.add("bot:sigma", "Sigma").await;
+    s.call(
+        "capture",
+        json!({
+            "subject": "bot:sigma",
+            "content": "the room holds one",
+            "fields": {"thought_capacity": "1"},
+        }),
+    )
+    .await;
+    s.call(
+        "capture",
+        json!({
+            "subject": "bot:sigma",
+            "content": "the fern needs water",
+            "shape": "connection",
+            "object": "thing:the-fern",
+        }),
+    )
+    .await;
+    s.refused(
+        "capture",
+        json!({
+            "subject": "bot:sigma",
+            "content": "the fern needs light",
+            "shape": "connection",
+            "object": "thing:the-fern",
+        }),
+    )
+    .await
+    .says("drop");
+
+    s.wrap("a room with nothing in it, and one that is full")
+        .await;
+    story.finish().await;
+}
