@@ -1108,3 +1108,37 @@ fn a_fold_carries_each_new_name_once() {
         "the display name comes first, a name the survivor wears is skipped, and a repeat is kept once",
     );
 }
+
+/// **A ceiling is a whole number of zero or more, and anything else is refused
+/// where it is written** — by capture and by edit alike, because both run the
+/// same validator. Each refusal is paired with a value that reads.
+#[test]
+fn a_ceiling_that_does_not_read_as_a_whole_number_is_refused() {
+    let one = |key: &str, value: &str| -> BTreeMap<String, String> {
+        [(key.to_string(), value.to_string())].into_iter().collect()
+    };
+    for key in [THOUGHT_CAPACITY, THOUGHT_BODY_CAP] {
+        for fine in ["0", "5", " 12 "] {
+            assert!(
+                validate_fields(&one(key, fine)).is_ok(),
+                "{key} = {fine:?} reads as a whole number"
+            );
+        }
+        for bad in ["unlimited", "5.0", "-1", "", "5 chars"] {
+            assert!(
+                matches!(
+                    validate_fields(&one(key, bad)),
+                    Err(MemoryError::InvalidFact(_))
+                ),
+                "{key} = {bad:?} must be refused"
+            );
+        }
+        // The key is matched as the store keeps it, trimmed.
+        assert!(
+            validate_fields(&one(&format!(" {key}"), "unlimited")).is_err(),
+            "a padded key is the same key"
+        );
+    }
+    // Another key holding the same words is none of this validator's business.
+    assert!(validate_fields(&one("note", "unlimited")).is_ok());
+}

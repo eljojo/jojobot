@@ -1615,6 +1615,22 @@ pub fn validate_fields(fields: &BTreeMap<String, String>) -> Result<(), MemoryEr
              taken back. Rename the key — anything else is yours to choose."
         )));
     }
+    // **A ceiling is a whole number, or it is not written.** A room's capacity
+    // and a thought's body cap are read as whole numbers, and a value that does
+    // not read as one leaves the container with no ceiling at all, with
+    // nothing to say so. The key is matched trimmed, as the store keeps it.
+    for (key, value) in fields {
+        let named = key.trim();
+        if (named == THOUGHT_CAPACITY || named == THOUGHT_BODY_CAP)
+            && value.trim().parse::<usize>().is_err()
+        {
+            return Err(MemoryError::InvalidFact(format!(
+                "'{named}' holds a whole number of zero or more, and '{value}' is not one. \
+                 Send it again with a number such as 5, or leave the key off to leave the \
+                 container without that ceiling"
+            )));
+        }
+    }
     if let Some(key) = fields.keys().find(|k| k.chars().count() > MAX_KEY_CHARS) {
         return Err(MemoryError::InvalidFact(format!(
             "a field key may be {MAX_KEY_CHARS} characters and '{}…' is {}. A key names one \

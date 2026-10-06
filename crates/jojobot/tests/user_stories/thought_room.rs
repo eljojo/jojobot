@@ -236,3 +236,63 @@ async fn a_full_room_borrows_once_and_a_drop_frees_a_slot() {
 
     story.finish().await;
 }
+
+/// **A ceiling that is not a number is refused where it is written.** A room's
+/// capacity and a thought's body cap are read as whole numbers, and a value
+/// that does not read as one used to leave the container with no ceiling at
+/// all, silently. The refusal names the key and what it holds, so the next
+/// call can succeed.
+///
+/// Paired with the values that do read, whitespace around one included, so the
+/// refusal is about the value and not about the key.
+#[tokio::test]
+async fn a_ceiling_that_is_not_a_number_is_refused_where_it_is_written() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:delta", "Delta").await;
+
+    for (key, value) in [
+        ("thought_capacity", "unlimited"),
+        ("thought_capacity", "5.0"),
+        ("thought_capacity", "-1"),
+        ("thought_body_cap", "short"),
+    ] {
+        s.refused(
+            "capture",
+            json!({
+                "subject": "bot:delta",
+                "content": "a ceiling nobody can read",
+                "fields": {key: value},
+            }),
+        )
+        .await
+        .says(key)
+        .says("whole number")
+        .says("\"wrote\":false");
+    }
+    // Nothing was written by any of them.
+    s.recall("bot:delta").await.never_says("unlimited");
+
+    // The values that read land, whitespace included.
+    s.call(
+        "capture",
+        json!({
+            "subject": "bot:delta",
+            "content": "the room holds five",
+            "fields": {"thought_capacity": " 5 "},
+        }),
+    )
+    .await;
+    s.call(
+        "capture",
+        json!({
+            "subject": "bot:delta",
+            "content": "a thought may be short",
+            "fields": {"thought_body_cap": "120"},
+        }),
+    )
+    .await;
+
+    s.wrap("ceilings that read, and ones that do not").await;
+    story.finish().await;
+}
