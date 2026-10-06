@@ -232,7 +232,12 @@ Shipped and live:
   FLOOR, and the floor is its REQUIRED keys:** once a thing holds every
   required key of its kind, a write that would take one away is refused,
   naming the kind and the key, and a narrowed key is checked on that write. **An optional key is welcome, never demanded, and never decides whether
-  a thing is complete.** **What a key HOLDS is checked whenever it is set,
+  a thing is complete.** **A kind may also carry a rule over its keys taken
+  together, and a rhythm does: a write that leaves a cadence without the key
+  saying when the next cycle counts from, or the reverse, is refused, so a
+  loop is whole from the moment it is made.** **Some keys on a bot are
+  ceilings or grants it cannot write about itself** — its thought room, its
+  boot seats and the role it claims — so a different identity sets them. **What a key HOLDS is checked whenever it is set,
   required and optional alike** — so a value that is not what its key declared
   does not count as holding it. **Adding keys is never refused, and a
   thing that answers no type is a first-class thing.** **The software ships two
