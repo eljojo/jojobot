@@ -4,7 +4,10 @@
 //! and an entrypoint that chains the systems below it.
 
 use super::*;
-use crate::teaching::{RHYTHM_HISTORY_DOMAIN, RHYTHM_HISTORY_TEACHING};
+use crate::teaching::{
+    DUPLICATE_REPAIR_DOMAIN, DUPLICATE_REPAIR_TEACHING, RHYTHM_HISTORY_DOMAIN,
+    RHYTHM_HISTORY_TEACHING,
+};
 
 /// Arguments to `add_entity`.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -249,6 +252,16 @@ impl Jojobot {
                         .await
                 {
                     crate::answer::note_teaching(&mut body, RHYTHM_HISTORY_TEACHING);
+                }
+                // **Checked before the gate, never after** — `first_contact`
+                // has a side effect, and an ordinary creation must not spend
+                // the one teaching a forced one is owed.
+                if args.override_token.is_some()
+                    && self
+                        .first_contact(DUPLICATE_REPAIR_DOMAIN, Some(&caller))
+                        .await
+                {
+                    crate::answer::note_teaching(&mut body, DUPLICATE_REPAIR_TEACHING);
                 }
                 json_result(&body)
             }
@@ -789,6 +802,103 @@ mod tests {
                 .expect("list_mailboxes ok")
                 .is_empty(),
             "only an identity that can be written to gets a box"
+        );
+    }
+
+    /// **The token as a caller gets it: out of the refusal's own advice.**
+    /// Sixteen hex digits is its shape, so this survives the advice being
+    /// reworded.
+    fn token_in(advice: &str) -> String {
+        let chars: Vec<char> = advice.chars().collect();
+        chars
+            .windows(16)
+            .find(|w| w.iter().all(char::is_ascii_hexdigit))
+            .map(|w| w.iter().collect())
+            .unwrap_or_else(|| panic!("the refusal must carry the token it minted: {advice}"))
+    }
+
+    /// Create `handle` named `name` past the near-miss refusal, the way a
+    /// caller does: refused first, then the same call with the token it was
+    /// handed. Returns the receipt of the creation that landed.
+    async fn forced_past_a_near_miss(
+        jojobot: &Jojobot,
+        sid: &str,
+        handle: &str,
+        name: &str,
+    ) -> serde_json::Value {
+        let refused = json_of(
+            &jojobot
+                .add_entity(Parameters(AddEntityArgs {
+                    sid: Some(sid.into()),
+                    ..add_args("place", handle, name)
+                }))
+                .await
+                .expect("add_entity ok"),
+        );
+        assert_eq!(refused["status"], "blocked", "{refused}");
+        let token = token_in(refused["how_to_proceed"].as_str().expect("advice"));
+        json_of(
+            &jojobot
+                .add_entity(Parameters(AddEntityArgs {
+                    override_token: Some(token),
+                    sid: Some(sid.into()),
+                    ..add_args("place", handle, name)
+                }))
+                .await
+                .expect("add_entity ok"),
+        )
+    }
+
+    /// Whether a receipt carries a teaching that names `needle`.
+    fn teaches(receipt: &serde_json::Value, needle: &str) -> bool {
+        receipt["teaching"].as_array().is_some_and(|all| {
+            all.iter()
+                .any(|t| t.as_str().is_some_and(|t| t.contains(needle)))
+        })
+    }
+
+    /// **A creation forced past a near-miss says what repairs a duplicate,
+    /// once per session, and only that creation says it.**
+    ///
+    /// The moment a deliberate near-duplicate is made is the one moment the
+    /// repair can be named before it is needed. Three claims in one run, so
+    /// each is the positive the others rest on: an ordinary creation says
+    /// nothing and spends nothing; the first forced creation teaches
+    /// `merge_entities` and the `archive_entity` limit; the second forced
+    /// creation in the same session teaches nothing.
+    #[tokio::test]
+    async fn a_creation_forced_past_a_near_miss_teaches_the_duplicate_repair_once() {
+        let jojobot = handler();
+        let sid = writing_as(&jojobot);
+        let plain = json_of(
+            &jojobot
+                .add_entity(Parameters(AddEntityArgs {
+                    sid: Some(sid.clone()),
+                    ..add_args("place", "leftorium", "Leftorium")
+                }))
+                .await
+                .expect("add_entity ok"),
+        );
+        assert!(
+            !teaches(&plain, "merge_entities"),
+            "an ordinary creation made a duplicate-repair teaching: {plain}",
+        );
+
+        let first = forced_past_a_near_miss(&jojobot, &sid, "wharf-road", "Leftorium").await;
+        assert_eq!(
+            first["id"], "place:wharf-road",
+            "the forced creation landed: {first}"
+        );
+        assert!(
+            teaches(&first, "merge_entities") && teaches(&first, "archive_entity"),
+            "the first forced creation names the repair and the archive limit: {first}",
+        );
+
+        let second = forced_past_a_near_miss(&jojobot, &sid, "wonder-wharf", "Leftorium").await;
+        assert_eq!(second["id"], "place:wonder-wharf", "{second}");
+        assert!(
+            !teaches(&second, "merge_entities"),
+            "the teaching fired a second time in one session: {second}",
         );
     }
 }

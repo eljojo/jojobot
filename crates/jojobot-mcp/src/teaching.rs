@@ -117,6 +117,20 @@ pub(crate) const CLAIM_DIRECTION_TEACHING: &str = "A claim hangs on the thing it
     the claim should have been about never sees it, because that read returns what it was \
     asked for and an inbound edge grants the other party nothing.";
 
+/// **The sixth domain — a creation forced past a near-miss refusal.** Named on
+/// the call that makes the deliberate near-duplicate, which is the one moment
+/// the repair can be told before it is needed. It rides a creation that was
+/// sent with an `override_token`, once per session; an ordinary creation never
+/// spends it.
+pub(crate) const DUPLICATE_REPAIR_DOMAIN: &str = "duplicate-repair";
+
+/// **Ships in the binary, exactly as the other teachings do.**
+pub(crate) const DUPLICATE_REPAIR_TEACHING: &str = "You created this past a near-miss refusal. If \
+    it later turns out to be the same thing as one of those, merge_entities folds one into the \
+    other: the claims, the edges drawn at it and the history under its keys move to the \
+    survivor, and the handle you merge away keeps answering and forwards. archive_entity is not \
+    that repair. It takes an entity out of default reads and leaves its claims where they are.";
+
 /// **The fifth domain — archiving a rhythm's claim does not stop its
 /// cadence.** Named on the call that actually raises the question: an
 /// update_fact that archives a claim on a rhythm AND the rhythm still shows
