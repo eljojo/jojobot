@@ -37,7 +37,7 @@
 
 **To learn what was ruled about a feature: read its thread whole, then everything that points at it, one hop.** ⭐ **Reading whole is affordable by construction, because the bound already capped it.** That is all of what is needed and nothing more.
 
-**Search is not the walk.** A search finds only what the reader already has words for, and a ruling is written in the operator's vocabulary, not the reader's. ⛔️ **An empty search is never evidence that nothing was ruled.**
+**Search is the last resort, never the walk.** A search finds only what the reader already has words for, and a ruling is written in the operator's vocabulary, not the reader's. It is a useful backstop when the walk comes up short, and the one way to check a claim that something is not on file. ⛔️ **An empty search is never evidence that nothing was ruled.**
 
 🚨 **The walk must be able to say it failed.** *Nothing has been ruled about this* and *nothing was found* are different answers and must read differently. A clean answer on the wrong question is worse than no answer, because it discharges the obligation to look.
 
