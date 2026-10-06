@@ -2755,3 +2755,37 @@ async fn update_fact_refuses_to_archive_a_role_record_addressed_by_a_former_hand
     );
     assert_ne!(landed["status"], "blocked", "{landed}");
 }
+
+/// **Archiving a claim resolves the one handle it is about, and never lists
+/// every entity to do it.** The role-field guard needs the record's own
+/// claims, which one targeted read answers; listing the whole store for that
+/// read made every archiving edit cost the size of the store. Paired with the
+/// archive landing, so a count of zero cannot be a call that never ran.
+#[tokio::test]
+async fn archiving_a_claim_does_not_list_every_entity_to_resolve_one_handle() {
+    let store = Arc::new(InMemoryMemory::booted());
+    let jojobot = handler_over(store.clone());
+    for handle in ["person:alpha", "person:beta", "person:delta"] {
+        ensure(&jojobot, handle).await;
+    }
+    let held = capture_ok(&jojobot, capture_args("person:alpha", "was at the party")).await;
+
+    let before = store.listings();
+    let landed = json_of(
+        &jojobot
+            .update_fact(Parameters(UpdateFactArgs {
+                status: Some("archived".into()),
+                details: Some("it did not happen".into()),
+                ..update_args(&address_of(&held))
+            }))
+            .await
+            .expect("update_fact ok"),
+    );
+    assert_ne!(landed["status"], "blocked", "{landed}");
+    assert_eq!(landed["status"], "archived", "{landed}");
+    assert_eq!(
+        store.listings(),
+        before,
+        "the archiving edit listed every entity in the store"
+    );
+}

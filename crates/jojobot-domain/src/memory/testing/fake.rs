@@ -10,6 +10,11 @@ use super::*;
 #[derive(Default)]
 pub struct InMemoryMemory {
     entities: Mutex<Vec<Entity>>,
+    /// **How many times the whole listing has been asked for**, through
+    /// [`Memory::list_entities`]. The real store builds every entity's row on
+    /// that call, so a caller that lists to resolve one handle pays for all of
+    /// them; this is how a case sees whether it did.
+    listings: std::sync::atomic::AtomicUsize,
     /// The claims. **Their fields are not here**: a claim is stored with an
     /// empty bag and its fields are projected from [`InMemoryMemory::writes`]
     /// on every read, exactly as the real store projects them from its own
@@ -97,6 +102,12 @@ impl InMemoryMemory {
             .map(|token| (token.to_string(), crate::memory::types::Origin::Shipped))
             .collect();
         fake
+    }
+
+    /// How many times the whole listing has been asked for. A caller measures a
+    /// delta across the call it is checking.
+    pub fn listings(&self) -> usize {
+        self.listings.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// **The store, told what the build supplies over it.** Only the existence
@@ -779,7 +790,26 @@ impl Memory for InMemoryMemory {
         Ok(Guarded::Written(entity))
     }
 
+    /// **The port's default walk, over the fake's own index.** The real store
+    /// answers this with one targeted read and never lists, so the default
+    /// body, which calls [`Memory::list_entities`], would count a listing no
+    /// real caller pays for.
+    async fn built_on(&self, source: &FactAddress) -> Result<Vec<Fact>, MemoryError> {
+        super::super::validate_subject(&source.home)?;
+        let mut standing_on = Vec::new();
+        for entity in self.index() {
+            for fact in self.recall(&entity.id).await? {
+                if fact.derived_from.as_ref() == Some(source) {
+                    standing_on.push(fact);
+                }
+            }
+        }
+        Ok(standing_on)
+    }
+
     async fn list_entities(&self, kind: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError> {
+        self.listings
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Ok(self
             .index()
             .into_iter()

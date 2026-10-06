@@ -446,14 +446,11 @@ impl Jojobot {
             // **A store that cannot be read refuses, it does not pass** — see
             // `retract`'s own copy of this check.
             //
-            // **Found by local id within the home it resolves to now**, for the
+            // **Found by local id within the home the store resolves**, for the
             // reason `retract`'s own copy gives: an address typed under a former
-            // handle never equals the address a read serves.
-            let home = match self.current_handle(&address.home).await {
-                Ok(home) => home,
-                Err(e) => return memory_declined("update_fact", e),
-            };
-            let carried = match self.memory.recall(&home).await {
+            // handle never equals the address a read serves, and the store
+            // resolves the typed handle itself.
+            let carried = match self.memory.recall(&address.home).await {
                 Ok(carried) => carried,
                 Err(e @ (MemoryError::Store(_) | MemoryError::Conflict)) => {
                     return memory_declined("update_fact", e);

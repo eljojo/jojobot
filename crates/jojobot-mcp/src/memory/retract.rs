@@ -82,16 +82,13 @@ impl Jojobot {
         // the record. Any other error means the home resolves to nothing, so
         // there is nothing to guard and the write below gives its own answer.
         //
-        // **The record is found by its local id within the home it resolves
-        // to now.** A read serves the current handle, so an address typed under
-        // a handle the bot wore before a rename never equals the address of the
-        // record it names. The home is resolved first, and a resolving read that
-        // fails refuses like the claim read does.
-        let home = match self.current_handle(&address.home).await {
-            Ok(home) => home,
-            Err(e) => return memory_declined("retract", e),
-        };
-        let carried = match self.memory.recall(&home).await {
+        // **The record is found by its local id within the home the store
+        // resolves.** A read serves the current handle, so an address typed
+        // under a handle the bot wore before a rename never equals the address
+        // of the record it names, and the store resolves the typed handle
+        // itself, with one targeted read. Listing every entity to do it here
+        // would cost the size of the store on every retraction.
+        let carried = match self.memory.recall(&address.home).await {
             Ok(carried) => carried,
             Err(e @ (MemoryError::Store(_) | MemoryError::Conflict)) => {
                 return memory_declined("retract", e);
@@ -911,5 +908,38 @@ mod tests {
                 .expect("retract ok"),
         );
         assert_eq!(landed["retracted"]["status"], "archived", "{landed}");
+    }
+
+    /// **A retraction resolves the one handle it is about, and never lists
+    /// every entity to do it.** The role-field guard needs the record's own
+    /// claims, which one targeted read answers; listing the whole store for
+    /// that read made every retraction cost the size of the store. Paired with
+    /// the retraction landing, so a count of zero cannot be a call that never
+    /// ran.
+    #[tokio::test]
+    async fn a_retraction_does_not_list_every_entity_to_resolve_one_handle() {
+        let store = Arc::new(InMemoryMemory::booted());
+        let jojobot = handler_over(store.clone());
+        for handle in ["person:alpha", "person:beta", "person:delta"] {
+            ensure(&jojobot, handle).await;
+        }
+        let held = capture_ok(&jojobot, capture_args("person:alpha", "was at the party")).await;
+
+        let before = store.listings();
+        let landed = json_of(
+            &jojobot
+                .retract(Parameters(retract_args(
+                    &address_of(&held),
+                    "it did not happen",
+                )))
+                .await
+                .expect("retract ok"),
+        );
+        assert_eq!(landed["retracted"]["status"], "archived", "{landed}");
+        assert_eq!(
+            store.listings(),
+            before,
+            "the retraction listed every entity in the store"
+        );
     }
 }
