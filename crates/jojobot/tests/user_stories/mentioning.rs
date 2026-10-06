@@ -394,7 +394,7 @@ async fn a_quarantine_reason_that_names_a_thing_follows_it_through_a_rename() {
         "mark_processed",
         json!({
             "message_id": &stray,
-            "quarantine": "a copy of the dispatch about @thing:handcart, and @thing:nowhere",
+            "quarantine": "a copy of the dispatch about @thing:handcart, and @thing:the-fern",
         }),
     )
     .await
@@ -412,7 +412,7 @@ async fn a_quarantine_reason_that_names_a_thing_follows_it_through_a_rename() {
         .never_says("@thing:handcart")
         // A mention nothing resolves to is left exactly as it was written, the
         // treatment every sibling field gives one: it is not refused.
-        .says("@thing:nowhere");
+        .says("@thing:the-fern");
 
     // **Every path that quotes the reason renders it**, not only the read: a
     // second attempt to retire the same message is refused with it too.
