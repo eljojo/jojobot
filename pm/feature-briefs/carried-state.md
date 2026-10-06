@@ -1,6 +1,6 @@
 # Carried state — the few things a bot holds between runs, and why it is always full
 
-> **jojobot** · kind: feature-brief · boot: on-demand · verified: 2026-09-11
+> **jojobot** · kind: feature-brief · boot: on-demand · verified: 2026-10-05
 
 **A bot carries a small, fixed number of thoughts from one run to the next. A new one arriving into a full room forces a choice, and being made to choose is the point of the feature.**
 
@@ -36,11 +36,7 @@
 
 ## Threads
 
-**A thread is an ongoing line in a life — a situation rather than a task.** ⭐ **A card ends when it is done; a thread ends when it stops being true.**
-
-**A thread is capped too.** 🚨 **A bounded room pointing into an unbounded pile is the same failure one level down, and it is harder to see because the room above still reads clean.**
-
-**When a thread is full, what shrinks it is RELOCATION and never compression.** ⛔️ **And relocation does not MOVE anything: what a record is about is part of what it says, so carrying it to another subject changes it.** ⭐ **Detail is relocated by making a new claim on the thing it is really about, and archiving the old one with a pointer at its replacement.** **Rewriting the same content denser is how a record becomes generic, and that is the failure this whole design is built against.**
+**A thought usually points at a thread — an ongoing line in a life, which holds the substance the thought only names.** 🚨 **The thread is bounded by the same mechanism as the room**, because a bounded room pointing into an unbounded pile is the same failure one level down. How a full thread shrinks, and why it is never by compression, is *Containers — a bounded thing refuses what would overfill it*.
 
 ## Leaving, and going back
 
