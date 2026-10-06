@@ -12377,6 +12377,137 @@ pub async fn merge_refuses_a_session_kind_handle_on_either_side<M: Memory>(store
     );
 }
 
+/// **A merge brings the duplicate's thoughts into the survivor's room, and
+/// the room and the body cap hold against them as they hold against a
+/// capture.** A refusal moves nothing, the room rides on it, and a thought
+/// that arrives is judged against the survivor's own cap. The positive halves
+/// sit beside each: a room with space and a thought exactly at the cap land.
+pub async fn a_merge_that_would_overfill_a_room_or_a_body_cap_is_refused<M: Memory>(store: &M) {
+    let bot = EntityId("bot:contract-merge-room".into());
+    let gutter = EntityId("thing:the-gutter".into());
+    let needle = EntityId("thing:the-air-filter".into());
+    let jukebox = EntityId("thing:contract-merge-room-dup".into());
+    let kettle = EntityId("thing:contract-merge-cap-dup".into());
+    for handle in [&bot, &gutter, &needle, &jukebox, &kettle] {
+        ensure(store, handle).await;
+    }
+    let thought = |home: &EntityId, content: &str, object: &EntityId| NewFact {
+        edge: Some(Edge::new(EdgeShape::Connection, object.clone())),
+        ..NewFact::about(home.clone(), content, date(2026, 10, 1))
+    };
+    capture(
+        store,
+        NewFact {
+            fields: [(THOUGHT_CAPACITY.to_string(), "1".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(bot.clone(), "capacity is one", date(2026, 10, 1))
+        },
+    )
+    .await;
+    let held = capture(store, thought(&bot, "the gutter wants clearing", &gutter)).await;
+    capture(
+        store,
+        thought(&jukebox, "the jukebox needs a needle", &needle),
+    )
+    .await;
+
+    let refused = store
+        .merge(&jukebox, &bot, None, date(2026, 10, 2))
+        .await
+        .expect_err("a merge that overfills the room must be refused, not landed");
+    match refused {
+        MemoryError::MergeOverfillsRoom {
+            subject,
+            live,
+            capacity,
+            incoming,
+            room,
+        } => {
+            assert_eq!(
+                (subject, live, capacity, incoming),
+                (bot.to_string(), 1, 1, 1),
+                "the refusal must say what the room holds and what arrives"
+            );
+            assert_eq!(
+                room.iter().map(Fact::address).collect::<Vec<_>>(),
+                [held.address()],
+                "the room rides on the refusal, under the handle the caller used"
+            );
+        }
+        other => panic!("expected MergeOverfillsRoom, got {other:?}"),
+    }
+    // **Nothing moved**, and the duplicate is still a thing of its own.
+    let on_bot = store.recall(&bot).await.expect("the survivor reads");
+    assert!(
+        !on_bot.iter().any(|f| f.content.contains("jukebox")),
+        "the refused merge moved a thought onto the survivor: {on_bot:?}"
+    );
+    let on_duplicate = store.recall(&jukebox).await.expect("the duplicate reads");
+    assert!(
+        on_duplicate.iter().any(|f| f.content.contains("jukebox")),
+        "the refused merge took the thought off the duplicate: {on_duplicate:?}"
+    );
+
+    // A room with space takes the same merge.
+    edit(
+        store,
+        &held.address(),
+        FactPatch {
+            status: Some(FactStatus::Archived),
+            details: Some("no longer earns its slot".into()),
+            ..FactPatch::default()
+        },
+    )
+    .await;
+    store
+        .merge(&jukebox, &bot, None, date(2026, 10, 3))
+        .await
+        .expect("with one slot free the same merge lands");
+
+    // **The body cap, at its own boundary.** The survivor's cap is five, so a
+    // thought of six is refused and names where it is now; one of five lands.
+    let narrow = EntityId("bot:contract-merge-cap".into());
+    ensure(store, &narrow).await;
+    capture(
+        store,
+        NewFact {
+            fields: [(THOUGHT_BODY_CAP.to_string(), "5".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(narrow.clone(), "cap is five", date(2026, 10, 4))
+        },
+    )
+    .await;
+    let long = capture(store, thought(&kettle, "abcdef", &needle)).await;
+    let refused = store
+        .merge(&kettle, &narrow, None, date(2026, 10, 5))
+        .await
+        .expect_err("a merge that lands a thought over the cap must be refused");
+    match refused {
+        MemoryError::MergeThoughtTooLong {
+            subject,
+            thought,
+            len,
+            cap,
+        } => {
+            assert_eq!(
+                (subject, thought, len, cap),
+                (narrow.to_string(), long.address().to_string(), 6, 5),
+                "the refusal must name the thought where it is now"
+            );
+        }
+        other => panic!("expected MergeThoughtTooLong, got {other:?}"),
+    }
+    let fits = EntityId("thing:contract-merge-cap-fits".into());
+    ensure(store, &fits).await;
+    capture(store, thought(&fits, "abcde", &needle)).await;
+    store
+        .merge(&fits, &narrow, None, date(2026, 10, 6))
+        .await
+        .expect("a thought exactly at the cap lands");
+}
+
 pub async fn run_all<M: Memory>(store: &M) {
     capture_reads_back(store).await;
     preserves_all_fields(store).await;
@@ -12560,4 +12691,5 @@ pub async fn run_all<M: Memory>(store: &M) {
 
     add_entity_refuses_a_session_kind_handle(store).await;
     merge_refuses_a_session_kind_handle_on_either_side(store).await;
+    a_merge_that_would_overfill_a_room_or_a_body_cap_is_refused(store).await;
 }

@@ -1941,6 +1941,45 @@ impl Memory for InMemoryMemory {
         let (survivor_key, survivor_handle) =
             self.resolve(survivor).expect("checked present above");
 
+        // **The duplicate's thoughts become the survivor's, so they meet the
+        // survivor's room and body cap before anything moves** — the same
+        // question `capture` asks of a thought, asked of every one that
+        // arrives. Served under the handles, as the real store serves them.
+        //
+        // **Asked of a copy, before the locks below are taken**: serving a
+        // record reads the entity rows, and those locks do not nest.
+        let held_facts = self.facts.lock().expect("fake mutex poisoned").clone();
+        let incoming: Vec<Fact> = held_facts
+            .iter()
+            .filter(|f| f.home == folded_key)
+            .map(|f| self.served(f.clone(), folded))
+            .collect();
+        let held = super::super::folded_fields(
+            &self.writes_on(&survivor_key, &held_facts),
+            &self.declarations(),
+        );
+        let room: Vec<Fact> = super::super::thought_room(
+            &held_facts
+                .iter()
+                .filter(|f| f.home == survivor_key)
+                .cloned()
+                .collect::<Vec<_>>(),
+        )
+        .into_iter()
+        .map(|f| self.served(f, survivor))
+        .collect();
+        if let Some(err) = super::super::refuses_merge_into_room(
+            survivor,
+            &incoming,
+            room,
+            held.get(super::super::THOUGHT_CAPACITY)
+                .and_then(|v| v.trim().parse::<usize>().ok()),
+            held.get(super::super::THOUGHT_BODY_CAP)
+                .and_then(|v| v.trim().parse::<usize>().ok()),
+        ) {
+            return Err(err);
+        }
+
         let mut entities = self.entities.lock().expect("fake mutex poisoned");
         let mut facts = self.facts.lock().expect("fake mutex poisoned");
 

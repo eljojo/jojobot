@@ -3235,6 +3235,29 @@ impl Memory for DoltMemory {
             .await?
             .expect("checked above");
 
+        // **The duplicate's thoughts become the survivor's, so they meet the
+        // survivor's room and body cap before anything moves** — the same
+        // question `capture` asks of a thought, asked of every one that
+        // arrives. Read inside this transaction, so no write can land between
+        // the question and the move.
+        let incoming = self.facts_of(&mut tx, &folded_key).await?;
+        if !jojobot_domain::memory::thought_room(&incoming).is_empty() {
+            let held = Self::held_by(&mut tx, &survivor_key).await?;
+            let room =
+                jojobot_domain::memory::thought_room(&self.facts_of(&mut tx, &survivor_key).await?);
+            if let Some(err) = jojobot_domain::memory::refuses_merge_into_room(
+                survivor,
+                &incoming,
+                room,
+                held.get(jojobot_domain::memory::THOUGHT_CAPACITY)
+                    .and_then(|v| v.trim().parse::<usize>().ok()),
+                held.get(jojobot_domain::memory::THOUGHT_BODY_CAP)
+                    .and_then(|v| v.trim().parse::<usize>().ok()),
+            ) {
+                return Err(err);
+            }
+        }
+
         // **Every column that holds this key, in one transaction.** A fold
         // that moved the claims and not the writes under them would leave a
         // thing whose fields disagree with its records.

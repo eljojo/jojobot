@@ -2088,6 +2088,54 @@ pub fn refuses_thought_over_cap(
     }
 }
 
+/// **Whether a merge would leave the survivor holding thoughts its room
+/// cannot take.**
+///
+/// A merge moves the duplicate's claims onto the survivor, so each active
+/// connection-edged one becomes a thought of the survivor's: the same claim
+/// `capture` would have weighed against the room and the body cap, arriving
+/// by a door that weighed nothing. `incoming` is every claim the duplicate
+/// holds and `room` is the survivor's room as it stands now. A merge that
+/// brings no thought has nothing for either check to say.
+///
+/// The body cap is read first, as `capture` reads it, and names the thought
+/// that is over by its address on the duplicate. The room is full when what
+/// it holds and what arrives together pass the capacity. A merge has no drop
+/// and no borrow, and it does not age any thought out of the count: the way
+/// forward is archiving thoughts, or shortening the one that is over.
+pub fn refuses_merge_into_room(
+    survivor: &EntityId,
+    incoming: &[Fact],
+    room: Vec<Fact>,
+    capacity: Option<usize>,
+    cap: Option<usize>,
+) -> Option<MemoryError> {
+    let arriving = thought_room(incoming);
+    for thought in &arriving {
+        if let Some(MemoryError::ThoughtTooLong { len, cap, .. }) =
+            refuses_thought_over_cap(survivor, &thought.content, cap, capacity)
+        {
+            return Some(MemoryError::MergeThoughtTooLong {
+                subject: survivor.to_string(),
+                thought: thought.address().to_string(),
+                len,
+                cap,
+            });
+        }
+    }
+    let capacity = capacity?;
+    if arriving.is_empty() || room.len() + arriving.len() <= capacity {
+        return None;
+    }
+    Some(MemoryError::MergeOverfillsRoom {
+        subject: survivor.to_string(),
+        live: room.len(),
+        capacity,
+        incoming: arriving.len(),
+        room,
+    })
+}
+
 /// **A role's holder and claim moment are the boot door's to write, never an
 /// ordinary capture or edit's.**
 ///
@@ -3922,6 +3970,43 @@ pub enum MemoryError {
     ThoughtTooLong {
         /// The container whose room this thought would sit in.
         subject: String,
+        /// How long the content is, in characters.
+        len: usize,
+        /// The cap it went over.
+        cap: usize,
+    },
+    /// **A merge would bring more thoughts than the survivor's room holds.**
+    /// See [`refuses_merge_into_room`]. The room rides on the refusal, as
+    /// [`MemoryError::RoomFull`]'s does, so choosing what to archive costs no
+    /// second read.
+    #[error(
+        "'{subject}'s room holds {live} of {capacity}, and this merge brings {incoming} more \
+         thoughts"
+    )]
+    MergeOverfillsRoom {
+        /// The survivor, as the caller named it.
+        subject: String,
+        /// How many live thoughts the survivor's room holds now.
+        live: usize,
+        /// The room's capacity.
+        capacity: usize,
+        /// How many thoughts the duplicate would bring.
+        incoming: usize,
+        /// The survivor's room as it stands.
+        room: Vec<Fact>,
+    },
+    /// **A merge would bring a thought over the survivor's body cap.** See
+    /// [`refuses_merge_into_room`].
+    #[error(
+        "'{subject}' would hold the thought {thought}, {len} characters long and over its cap \
+         of {cap}"
+    )]
+    MergeThoughtTooLong {
+        /// The survivor, as the caller named it.
+        subject: String,
+        /// Where the thought is now, on the duplicate, so it can be shortened
+        /// there before the merge is tried again.
+        thought: String,
         /// How long the content is, in characters.
         len: usize,
         /// The cap it went over.

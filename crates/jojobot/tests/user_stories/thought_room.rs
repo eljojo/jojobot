@@ -389,3 +389,89 @@ async fn a_room_with_no_capacity_does_not_offer_a_thought_to_drop() {
         .await;
     story.finish().await;
 }
+
+/// **A merge is a way to write thoughts, so a full room refuses it.** A
+/// duplicate that holds a thought brings it to the survivor, and a room at
+/// capacity has no slot for it. The refusal names the thoughts to archive and
+/// moves nothing; archiving one, as it says, lets the same merge land.
+#[tokio::test]
+async fn a_merge_that_would_overfill_a_room_is_refused_until_a_slot_is_free() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+
+    s.add("bot:milhouse", "Milhouse").await;
+    s.call(
+        "capture",
+        json!({
+            "subject": "bot:milhouse",
+            "content": "capacity is one",
+            "fields": {"thought_capacity": "1"},
+        }),
+    )
+    .await;
+    s.add("thing:the-mailbox", "The Mailbox").await;
+    let held = s
+        .call(
+            "capture",
+            json!({
+                "subject": "bot:milhouse",
+                "content": "the mailbox flag is stuck up",
+                "shape": "connection",
+                "object": "thing:the-mailbox",
+            }),
+        )
+        .await
+        .field("address");
+
+    // The duplicate is an ordinary thing that happens to hold a thought.
+    s.add("thing:the-couch", "The Couch").await;
+    s.add("thing:the-fern", "The Fern").await;
+    s.call(
+        "capture",
+        json!({
+            "subject": "thing:the-couch",
+            "content": "the couch needs a leg fixed",
+            "shape": "connection",
+            "object": "thing:the-fern",
+        }),
+    )
+    .await;
+
+    // **Refused, with the room beside it, and nothing moved.**
+    let refused = s
+        .refused(
+            "merge_entities",
+            json!({"duplicate": "thing:the-couch", "survivor": "bot:milhouse"}),
+        )
+        .await;
+    refused.says(&held).says("update_fact");
+    s.recall("bot:milhouse")
+        .await
+        .says("the mailbox flag is stuck up")
+        .never_says("the couch needs a leg fixed");
+
+    // **The way forward, taken as the refusal says**: one archive, then the
+    // same merge lands and the thought is the survivor's.
+    s.call(
+        "update_fact",
+        json!({
+            "address": &held, "status": "archived",
+            "details": "the flag got fixed on its own",
+        }),
+    )
+    .await;
+    s.call(
+        "merge_entities",
+        json!({"duplicate": "thing:the-couch", "survivor": "bot:milhouse"}),
+    )
+    .await
+    .says("thing:the-couch");
+    s.recall("bot:milhouse")
+        .await
+        .says("the couch needs a leg fixed");
+
+    s.wrap("merged a thing with a thought into a bot once the room had a slot")
+        .await;
+
+    story.finish().await;
+}

@@ -670,6 +670,59 @@ pub(crate) fn memory_declined(
                 body.to_string(),
             )]))
         }
+        // **A merge that would overfill the survivor's room.** The room rides
+        // on the refusal exactly as `RoomFull`'s does. A merge has no drop and
+        // no borrow, so the way forward is archiving, and the count says how
+        // many: the room has to end with space for everything that arrives.
+        MemoryError::MergeOverfillsRoom {
+            ref subject,
+            live,
+            capacity,
+            incoming,
+            ref room,
+        } => {
+            let archive_needed = live + incoming - capacity;
+            let body = serde_json::json!({
+                "status": "blocked",
+                "attempted": subject,
+                "wrote": false,
+                "room": room
+                    .iter()
+                    .map(|f| serde_json::json!({
+                        "address": f.address().to_string(),
+                        "content": f.content,
+                    }))
+                    .collect::<Vec<_>>(),
+                "incoming": incoming,
+                "archive_needed": archive_needed,
+                "how_to_proceed": format!(
+                    "Nothing was merged: '{subject}'s room holds {live} of {capacity}, and this \
+                     merge brings {incoming} more thoughts. Archive {archive_needed} of the \
+                     thoughts above with update_fact (status: archived, and details saying why \
+                     it no longer earns its slot), then re-call {verb}."
+                ),
+            });
+            Ok(CallToolResult::success(vec![ContentBlock::text(
+                body.to_string(),
+            )]))
+        }
+        // **A merge that would bring a thought over the survivor's body cap.**
+        // The way forward names where the thought is now, because the caller
+        // never wrote it on the survivor.
+        MemoryError::MergeThoughtTooLong {
+            ref subject,
+            ref thought,
+            len,
+            cap,
+        } => Ok(blocked_body(
+            &EntityId(subject.clone()),
+            &[],
+            format!(
+                "Nothing was merged: {e}. Shorten {thought} with update_fact to a pointer at or \
+                 under {cap} characters (it is {len}), with the substance moved onto the thing it \
+                 points at, then re-call {verb}."
+            ),
+        )),
         // **A thought earns its place by staying a pointer.** The way
         // forward names the repair the brief itself describes: the
         // substance belongs on the thing the thought points at, and the
@@ -801,6 +854,8 @@ pub(crate) fn memory_error(e: MemoryError) -> McpError {
         | MemoryError::RoomFull { .. }
         | MemoryError::SelfCeiling { .. }
         | MemoryError::ThoughtTooLong { .. }
+        | MemoryError::MergeOverfillsRoom { .. }
+        | MemoryError::MergeThoughtTooLong { .. }
         | MemoryError::RoleFieldGuarded { .. }
         | MemoryError::RoleTaken { .. }
         | MemoryError::UnstatedProvenance => McpError::invalid_params(e.to_string(), None),

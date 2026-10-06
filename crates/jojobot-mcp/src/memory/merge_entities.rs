@@ -55,7 +55,11 @@ impl Jojobot {
                        answer says how many moved. A MERGE INTO YOUR OWN BOT IS REFUSED WHEN THE DUPLICATE CARRIES \
                        thought_capacity OR thought_body_cap, because the merge would raise your \
                        own ceiling: have a different identity merge it, or take the key off the \
-                       duplicate first with update_fact and clear_fields. Naming one handle as \
+                       duplicate first with update_fact and clear_fields. THE DUPLICATE'S \
+                       THOUGHTS BECOME THE SURVIVOR'S, so a merge that would leave a room over \
+                       its capacity, or bring a thought over its body cap, is refused with \
+                       nothing moved: archive thoughts, or shorten the one named, with \
+                       update_fact, then merge again. Naming one handle as \
                        both sides comes back status: blocked. So does naming a handle that was already merged away, on \
                        either side, and that refusal names the handle to use instead."
     )]
@@ -437,6 +441,240 @@ mod tests {
             "5",
             "a merge into somebody else carries the ceiling: {carried}"
         );
+    }
+
+    /// **A merge cannot put more thoughts in a room than the room holds.**
+    /// The duplicate's thoughts become the survivor's when its claims move, so
+    /// a merge is a way to write them that `capture` would have refused.
+    /// Refused with the room beside it and the way forward, and nothing moves;
+    /// archiving one thought, as the refusal says, lets the same merge land.
+    /// Paired with a room that has space, which lands.
+    #[tokio::test]
+    async fn a_merge_that_would_overfill_a_bots_room_is_refused_and_moves_nothing() {
+        use crate::memory::testing::{address_of, capture_args, capture_ok, ensure};
+
+        let jojobot = handler();
+        let sid = writing_as(&jojobot);
+        let merge = |duplicate: &str, survivor: &str| MergeArgs {
+            duplicate: duplicate.into(),
+            survivor: survivor.into(),
+            reason: None,
+            recorded_at: None,
+            sid: Some(sid.clone()),
+        };
+        let thought = |subject: &str, content: &str, object: &str| CaptureArgs {
+            shape: Some("connection".into()),
+            object: Some(object.into()),
+            ..capture_args(subject, content)
+        };
+        let capacity = |bot: &str, held: &str| CaptureArgs {
+            fields: Some(
+                [(
+                    jojobot_domain::memory::THOUGHT_CAPACITY.to_string(),
+                    held.to_string(),
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            ..capture_args(bot, "capacity is set")
+        };
+
+        // The harness caller is bot:otto; the survivor is another bot, so the
+        // self-ceiling guard has nothing to say here.
+        ensure(&jojobot, "bot:otto").await;
+        capture_ok(&jojobot, capacity("bot:milhouse", "1")).await;
+        let held = capture_ok(
+            &jojobot,
+            thought(
+                "bot:milhouse",
+                "the gutter wants clearing",
+                "thing:the-gutter",
+            ),
+        )
+        .await;
+        capture_ok(
+            &jojobot,
+            thought(
+                "thing:jukebox",
+                "the jukebox needs a needle",
+                "thing:the-air-filter",
+            ),
+        )
+        .await;
+
+        let refused = blocked(
+            &jojobot
+                .merge_entities(Parameters(merge("thing:jukebox", "bot:milhouse")))
+                .await
+                .expect("a refusal is an answer, not a failure"),
+        );
+        assert_eq!(refused["wrote"], false, "{refused}");
+        let room: Vec<&str> = refused["room"]
+            .as_array()
+            .expect("the refusal lists the room, as capture's does")
+            .iter()
+            .map(|thought| thought["address"].as_str().expect("an address"))
+            .collect();
+        assert_eq!(room, [address_of(&held)], "{refused}");
+        let how = refused["how_to_proceed"]
+            .as_str()
+            .expect("a refusal says how to proceed");
+        for named in ["update_fact", "archived", "merge_entities"] {
+            assert!(
+                how.contains(named),
+                "the refusal does not name {named}: {how}"
+            );
+        }
+        for argument in ["drop", "drop_because", "borrow"] {
+            assert!(
+                !how.contains(argument),
+                "merge_entities has no `{argument}` argument, so the refusal must not name it: \
+                 {how}"
+            );
+        }
+        let survivor = serde_json::to_string(
+            &json_of(
+                &jojobot
+                    .recall(Parameters(crate::memory::testing::recall_args(
+                        "bot:milhouse",
+                    )))
+                    .await
+                    .expect("recall ok"),
+            )["objects"][0]["facts"],
+        )
+        .expect("facts serialize");
+        assert!(
+            !survivor.contains("jukebox"),
+            "the refused merge moved a thought onto the survivor: {survivor}"
+        );
+
+        // **The way forward, taken exactly as the refusal says.**
+        let archived = json_of(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    status: Some("archived".into()),
+                    details: Some("no longer earns its slot".into()),
+                    ..crate::memory::testing::update_args(&address_of(&held))
+                }))
+                .await
+                .expect("update_fact ok"),
+        );
+        assert_ne!(archived["status"], "blocked", "{archived}");
+        let landed = json_of(
+            &jojobot
+                .merge_entities(Parameters(merge("thing:jukebox", "bot:milhouse")))
+                .await
+                .expect("merge ok"),
+        );
+        assert_ne!(landed["status"], "blocked", "{landed}");
+        assert_eq!(landed["merged"], "thing:jukebox", "{landed}");
+
+        // **The positive half: a room with space takes the same merge.**
+        capture_ok(&jojobot, capacity("bot:sigma", "2")).await;
+        capture_ok(
+            &jojobot,
+            thought("bot:sigma", "the gutter wants clearing", "thing:the-gutter"),
+        )
+        .await;
+        capture_ok(
+            &jojobot,
+            thought(
+                "thing:kettle",
+                "the kettle needs descaling",
+                "thing:the-radiator",
+            ),
+        )
+        .await;
+        let fits = json_of(
+            &jojobot
+                .merge_entities(Parameters(merge("thing:kettle", "bot:sigma")))
+                .await
+                .expect("merge ok"),
+        );
+        assert_ne!(fits["status"], "blocked", "{fits}");
+        assert_eq!(fits["merged"], "thing:kettle", "{fits}");
+    }
+
+    /// **A merge cannot land a thought over the survivor's body cap.** The
+    /// refusal names where the thought is now, on the duplicate, because the
+    /// caller never wrote it on the survivor; shortening it there, as the
+    /// refusal says, lets the same merge land. The boundary is exact: a
+    /// thought at the cap lands.
+    #[tokio::test]
+    async fn a_merge_that_would_land_a_thought_over_the_body_cap_is_refused() {
+        use crate::memory::testing::{address_of, capture_args, capture_ok, ensure};
+
+        let jojobot = handler();
+        let sid = writing_as(&jojobot);
+        ensure(&jojobot, "bot:otto").await;
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                fields: Some(
+                    [(
+                        jojobot_domain::memory::THOUGHT_BODY_CAP.to_string(),
+                        "5".to_string(),
+                    )]
+                    .into_iter()
+                    .collect(),
+                ),
+                ..capture_args("bot:milhouse", "cap is five")
+            },
+        )
+        .await;
+        let long = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                shape: Some("connection".into()),
+                object: Some("thing:the-air-filter".into()),
+                ..capture_args("thing:jukebox", "abcdef")
+            },
+        )
+        .await;
+        let merge = || MergeArgs {
+            duplicate: "thing:jukebox".into(),
+            survivor: "bot:milhouse".into(),
+            reason: None,
+            recorded_at: None,
+            sid: Some(sid.clone()),
+        };
+
+        let refused = blocked(
+            &jojobot
+                .merge_entities(Parameters(merge()))
+                .await
+                .expect("a refusal is an answer, not a failure"),
+        );
+        assert_eq!(refused["wrote"], false, "{refused}");
+        let how = refused["how_to_proceed"]
+            .as_str()
+            .expect("a refusal says how to proceed");
+        for named in [address_of(&long).as_str(), "update_fact", "merge_entities"] {
+            assert!(
+                how.contains(named),
+                "the refusal does not name {named}: {how}"
+            );
+        }
+
+        // **The way forward, taken exactly as the refusal says.**
+        let shortened = json_of(
+            &jojobot
+                .update_fact(Parameters(UpdateFactArgs {
+                    content: Some("abcde".into()),
+                    provenance: Some("inference".into()),
+                    ..crate::memory::testing::update_args(&address_of(&long))
+                }))
+                .await
+                .expect("update_fact ok"),
+        );
+        assert_ne!(shortened["status"], "blocked", "{shortened}");
+        let landed = json_of(
+            &jojobot
+                .merge_entities(Parameters(merge()))
+                .await
+                .expect("merge ok"),
+        );
+        assert_eq!(landed["merged"], "thing:jukebox", "{landed}");
     }
 
     /// **The write says it landed, never that it failed, when only the fold
