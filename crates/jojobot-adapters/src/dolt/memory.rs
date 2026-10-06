@@ -3667,21 +3667,50 @@ impl Memory for DoltMemory {
             Some((key, _)) => key,
             None => target.clone(),
         };
-        let rows = sqlx::query("SELECT DISTINCT entity FROM field_write WHERE value IN (?, ?)")
-            .bind(target.as_str())
-            .bind(key.as_str())
-            .fetch_all(&mut *tx)
-            .await
-            .map_err(store)?;
+        // **A list holds its items joined in one value**, so under a key some
+        // type declared a list of references the row is a candidate when the
+        // value merely CONTAINS either form. The pattern only widens what is
+        // read: the decision is `fields_name_target`, over each record's
+        // composed fields, so a longer string that happens to contain the
+        // handle is read and then not counted.
+        let declared = Self::types_in(&mut tx).await?;
+        let list_keys: Vec<String> = declared
+            .iter()
+            .flat_map(|d| d.fields.iter())
+            .filter(|f| f.list && f.holds == jojobot_domain::memory::types::ValueType::Reference)
+            .map(|f| f.key.clone())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let mut sql = String::from("SELECT DISTINCT entity FROM field_write WHERE value IN (?, ?)");
+        if !list_keys.is_empty() {
+            let marks = vec!["?"; list_keys.len()].join(", ");
+            sql.push_str(&format!(
+                " OR (`key` IN ({marks}) AND (value LIKE ? OR value LIKE ?))"
+            ));
+        }
+        let contains = |form: &str| {
+            let escaped = form
+                .replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_");
+            format!("%{escaped}%")
+        };
+        let mut query = sqlx::query(&sql).bind(target.as_str()).bind(key.as_str());
+        for list_key in &list_keys {
+            query = query.bind(list_key.as_str());
+        }
+        if !list_keys.is_empty() {
+            query = query
+                .bind(contains(target.as_str()))
+                .bind(contains(key.as_str()));
+        }
+        let rows = query.fetch_all(&mut *tx).await.map_err(store)?;
         let mut pointing = Vec::new();
         for row in rows {
             let holder = EntityId(row.try_get::<String, _>("entity").map_err(store)?);
             for fact in self.facts_of(&mut tx, &holder).await? {
-                if fact
-                    .fields
-                    .values()
-                    .any(|value| value.trim() == target.as_str())
-                {
+                if jojobot_domain::memory::fields_name_target(&fact.fields, &declared, target) {
                     pointing.push(fact);
                 }
             }

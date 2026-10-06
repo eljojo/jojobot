@@ -1942,6 +1942,95 @@ pub async fn referring_to_finds_a_reference_to_a_renamed_target<M: Memory>(store
     );
 }
 
+/// **A record that lists several targets under one declared reference key is
+/// found from each of them.** A list is stored as its items joined, and a read
+/// that compared the whole joined value to one handle would find a record only
+/// when it listed that handle alone. A record listing a different target is not
+/// in the answer.
+pub async fn referring_to_finds_a_target_named_in_a_list_of_references<M: Memory>(store: &M) {
+    store
+        .declare_type(DeclaredType::new(
+            "contract-listing",
+            vec![Field::listing(
+                "contract_list_points_at",
+                ValueType::Reference,
+            )],
+        ))
+        .await
+        .expect("the declaration lands");
+    let first = EntityId("event:contract-listed-first".into());
+    let second = EntityId("event:contract-listed-second".into());
+    let third = EntityId("event:contract-listed-third".into());
+    let holder = EntityId("person:contract-listed-holder".into());
+    let bystander = EntityId("person:contract-listed-bystander".into());
+    for (id, name) in [
+        (&first, "Contract Listed First"),
+        (&second, "Contract Listed Second"),
+        (&third, "Contract Listed Third"),
+        (&holder, "Contract Listed Holder"),
+        (&bystander, "Contract Listed Bystander"),
+    ] {
+        add(store, NewEntity::new(id.clone(), name, "contract-fixture")).await;
+    }
+    let listing = |targets: &[&EntityId]| -> std::collections::BTreeMap<String, String> {
+        [(
+            "contract_list_points_at".to_string(),
+            targets
+                .iter()
+                .map(|target| target.to_string())
+                .collect::<Vec<_>>()
+                .join(", "),
+        )]
+        .into_iter()
+        .collect()
+    };
+    let held = capture(
+        store,
+        NewFact {
+            fields: listing(&[&first, &second]),
+            ..NewFact::about(holder.clone(), "lists two of them", date(2026, 8, 1))
+        },
+    )
+    .await;
+    let alone = capture(
+        store,
+        NewFact {
+            fields: listing(&[&third]),
+            ..NewFact::about(bystander.clone(), "lists the third alone", date(2026, 8, 1))
+        },
+    )
+    .await;
+
+    let found = |target: &EntityId| {
+        let target = target.clone();
+        async move {
+            store
+                .referring_to(&target)
+                .await
+                .expect("a store answers who points here")
+                .iter()
+                .map(|fact| fact.address().to_string())
+                .collect::<Vec<_>>()
+        }
+    };
+    assert_eq!(
+        found(&first).await,
+        vec![held.address().to_string()],
+        "the record listing two targets is found from the first of them",
+    );
+    assert_eq!(
+        found(&second).await,
+        vec![held.address().to_string()],
+        "…and from the second",
+    );
+    assert_eq!(
+        found(&third).await,
+        vec![alone.address().to_string()],
+        "…and a record listing only the third is found from the third, and is not the one \
+         listing the other two",
+    );
+}
+
 pub async fn a_child_names_its_parent_and_reads_back<M: Memory>(store: &M) {
     let parent = EntityId("project:contract-monorail".into());
     let child = EntityId("project:contract-monorail-funding".into());
@@ -12695,6 +12784,7 @@ pub async fn run_all<M: Memory>(store: &M) {
     referring_to_answers_from_the_far_end(store).await;
     referring_to_follows_a_declared_reference_key(store).await;
     referring_to_finds_a_reference_to_a_renamed_target(store).await;
+    referring_to_finds_a_target_named_in_a_list_of_references(store).await;
     a_child_names_its_parent_and_reads_back(store).await;
     children_are_handles_and_one_level_deep(store).await;
     a_write_that_rewrites_a_child_leaves_it_where_it_was(store).await;
