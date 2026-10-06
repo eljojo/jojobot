@@ -95,6 +95,10 @@ pub fn keys_of(token: &str) -> Vec<super::types::Field> {
             // is consumed: a snooze moves this one nowhere while the check-in
             // above still records the contact.
             Field::new("counts_from", ValueType::Date),
+            // **The day a snooze lasts until.** The loop falls due on the later
+            // of this day and its own, and the next consuming check-in spends
+            // it. Optional: most loops are never snoozed.
+            Field::new(crate::attention::SNOOZED_UNTIL, ValueType::Date),
             // **What the last check-in found**, and the set is the check-in's
             // own vocabulary rather than a copy of it. A second list of the
             // same three tokens is two vocabularies that drift, and a session
@@ -350,6 +354,23 @@ pub fn all() -> Vec<String> {
 mod tests {
     use super::*;
     use crate::attention::Outcome;
+
+    /// **The loop kind declares the day a snooze lasts until, as a date.** The
+    /// kind is what licenses an ordering on it, so *which loops are put off
+    /// past the 20th* can be asked, and the key is one the loop carrier reads.
+    /// Optional: most loops are never snoozed.
+    #[test]
+    fn the_rhythm_kind_declares_the_snooze_day_as_an_optional_date() {
+        let declared = keys_of("rhythm")
+            .into_iter()
+            .find(|f| f.key == crate::attention::SNOOZED_UNTIL)
+            .expect("the rhythm kind names the snooze day");
+        assert_eq!(declared.holds, super::super::types::ValueType::Date);
+        assert!(
+            !declared.required,
+            "a loop is whole without one: {declared:?}"
+        );
+    }
 
     /// **The key choosing which date a late cycle counts from holds the two
     /// tokens the arithmetic accepts, and there is only one list of them.**
