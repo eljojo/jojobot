@@ -996,9 +996,43 @@ pub async fn go(
 pub type Verdict<'a> =
     std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>>;
 
+/// **A verdict that can say HOW a claim held**, for a check whose claim has more
+/// than one end state and whose reader wants to know which one the run reached.
+pub type NotedVerdict<'a> = std::pin::Pin<
+    Box<dyn std::future::Future<Output = Result<Option<String>, String>> + Send + 'a>,
+>;
+
 /// A Rust check a room's document may name instead of a query.
 pub trait Checks: Send + Sync {
     fn run<'a>(&'a self, seen: &'a Observed<'a>) -> Verdict<'a>;
+
+    /// **The verdict with a note on how it held.** Every check says nothing here
+    /// unless it was built to: the note replaces the lock's authored sentence on
+    /// a held outcome, so a reader of the run sees the route that was taken.
+    fn run_noted<'a>(&'a self, seen: &'a Observed<'a>) -> NotedVerdict<'a> {
+        Box::pin(async move { self.run(seen).await.map(|()| None) })
+    }
+}
+
+/// Wrap a function that says how its claim held as a named check.
+pub fn checked_noting<F>(run: F) -> Box<dyn Checks>
+where
+    F: for<'a> Fn(&'a Observed<'a>) -> NotedVerdict<'a> + Send + Sync + 'static,
+{
+    struct Noting<F>(F);
+    impl<F> Checks for Noting<F>
+    where
+        F: for<'a> Fn(&'a Observed<'a>) -> NotedVerdict<'a> + Send + Sync,
+    {
+        fn run<'a>(&'a self, seen: &'a Observed<'a>) -> Verdict<'a> {
+            let noted = (self.0)(seen);
+            Box::pin(async move { noted.await.map(|_| ()) })
+        }
+        fn run_noted<'a>(&'a self, seen: &'a Observed<'a>) -> NotedVerdict<'a> {
+            (self.0)(seen)
+        }
+    }
+    Box::new(Noting(run))
 }
 
 /// Wrap a plain function as a named check.

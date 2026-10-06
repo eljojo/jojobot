@@ -77,6 +77,15 @@ enum Undone {
     Homer,
     Bart,
     Merge,
+    /// The place is mended by copying the claim across and archiving the other
+    /// place: another route to the same end state, with every other repair made.
+    MergeByCopy,
+    /// The claim is copied across and both places are left standing: not one
+    /// place yet.
+    CopiedOnly,
+    /// The other place is archived and the claim never moved: one place, with
+    /// half of what was known.
+    ArchivedOnly,
     Loop,
 }
 
@@ -147,14 +156,46 @@ async fn worked(room: &Surface, sid: &str, undone: Option<Undone>) {
         )
         .await;
     }
-    if undone != Some(Undone::Merge) {
-        as_the_occupant(
-            room,
-            sid,
-            "merge_entities",
-            json!({"duplicate": "place:bet", "survivor": "place:atlas"}),
-        )
-        .await;
+    match undone {
+        Some(Undone::Merge) => {}
+        Some(Undone::ArchivedOnly) => {
+            as_the_occupant(
+                room,
+                sid,
+                "archive_entity",
+                json!({"handle": "place:bet", "reason": "the same place as the Atlas Tavern"}),
+            )
+            .await;
+        }
+        Some(Undone::MergeByCopy) | Some(Undone::CopiedOnly) => {
+            as_the_occupant(
+                room,
+                sid,
+                "capture",
+                json!({"subject": "place:atlas",
+                       "content": "The Thursday quiz night is at Betty's Bar.",
+                       "provenance": "testimony"}),
+            )
+            .await;
+            if undone == Some(Undone::MergeByCopy) {
+                as_the_occupant(
+                    room,
+                    sid,
+                    "archive_entity",
+                    json!({"handle": "place:bet", "reason": "the same place as the Atlas Tavern"}),
+                )
+                .await;
+            }
+        }
+        _ => {
+            as_the_occupant(
+                room,
+                sid,
+                "merge_entities",
+                json!({"duplicate": "place:bet", "survivor": "place:atlas"}),
+            )
+            .await;
+        }
     }
     if undone != Some(Undone::Loop) {
         as_the_occupant(
@@ -170,10 +211,15 @@ async fn worked(room: &Surface, sid: &str, undone: Option<Undone>) {
 /// Which locks held, in the order the room lists them: the loan filed, the loan
 /// under its shipped key, Homer, Bart, the place, the fern.
 async fn held_after(undone: Option<Undone>) -> (Vec<bool>, String) {
+    let outcomes = outcomes_after(undone).await;
+    (outcomes.iter().map(|o| o.held).collect(), saying(&outcomes))
+}
+
+/// The outcomes themselves, for a case that reads what a lock said.
+async fn outcomes_after(undone: Option<Undone>) -> Vec<Outcome> {
     let (_room, surface, sid) = furnished().await;
     worked(&surface, &sid, undone).await;
-    let outcomes = judge_all(&surface).await;
-    (outcomes.iter().map(|o| o.held).collect(), saying(&outcomes))
+    judge_all(&surface).await
 }
 
 /// **Three cold sittings, one line each, asking for no report.**
@@ -340,6 +386,53 @@ async fn the_bart_lock_reds_when_the_allergy_is_left_on_bart() {
 #[tokio::test]
 async fn the_place_lock_reds_when_the_two_names_are_left_as_two_things() {
     let (held, said) = held_after(Some(Undone::Merge)).await;
+    assert_eq!(held, vec![true, true, true, true, false, true], "{said}");
+}
+
+/// **The place lock judges the end state and not the route, and says which
+/// route held.**
+///
+/// A merge and a copy-and-archive end in the same place: one place carries both
+/// claims and the other is out of the way. Each holds the lock, and the lock's
+/// own text names the route so the transcript reader can tell them apart. Every
+/// other repair is made in both runs, so only the place differs.
+#[tokio::test]
+async fn the_place_lock_holds_by_either_route_and_says_which() {
+    let by_merge = outcomes_after(None).await;
+    assert!(by_merge.iter().all(|o| o.held), "{}", saying(&by_merge));
+    let by_copy = outcomes_after(Some(Undone::MergeByCopy)).await;
+    assert!(by_copy.iter().all(|o| o.held), "{}", saying(&by_copy));
+    let place = |all: &[Outcome]| {
+        all.iter()
+            .find(|o| o.name.contains("two names for one place"))
+            .expect("the place lock")
+            .saying
+            .clone()
+    };
+    assert!(
+        place(&by_merge).contains("route: merge"),
+        "{}",
+        place(&by_merge)
+    );
+    assert!(
+        place(&by_copy).contains("route: copy"),
+        "{}",
+        place(&by_copy)
+    );
+}
+
+/// **A claim copied across with both places left standing is not one place.**
+#[tokio::test]
+async fn the_place_lock_reds_when_the_claim_is_copied_and_both_places_remain() {
+    let (held, said) = held_after(Some(Undone::CopiedOnly)).await;
+    assert_eq!(held, vec![true, true, true, true, false, true], "{said}");
+}
+
+/// **Archiving the other place without moving its claim is not one place with
+/// everything known.**
+#[tokio::test]
+async fn the_place_lock_reds_when_the_other_place_is_archived_and_its_claim_never_moved() {
+    let (held, said) = held_after(Some(Undone::ArchivedOnly)).await;
     assert_eq!(held, vec![true, true, true, true, false, true], "{said}");
 }
 

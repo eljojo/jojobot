@@ -372,13 +372,15 @@ impl crate::run::Expectation for Lock {
                     saying: format!("this lock names a check nobody wrote: {named}"),
                 };
             };
-            return match hatch.run(seen).await {
-                Ok(()) => crate::run::Outcome {
+            return match hatch.run_noted(seen).await {
+                Ok(note) => crate::run::Outcome {
                     name: self.name.clone(),
                     held: true,
                     applies: true,
                     refused: false,
-                    saying: self.say.clone(),
+                    // **A check that knows how it held says so**, in place of
+                    // the sentence a held lock otherwise carries.
+                    saying: note.unwrap_or_else(|| self.say.clone()),
                 },
                 Err(found) => crate::run::Outcome {
                     name: self.name.clone(),

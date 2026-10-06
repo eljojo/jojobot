@@ -42,13 +42,13 @@ measure whether the model can find and carry out the repair. They do not
 measure whether it would have noticed. **A model that mends them has
 demonstrated the repair, not the noticing.**
 
-**The locks ask where the store ended up, and four of them accept one repair
-each.** A merge is read from the merge record the verb leaves, so a model that
-copies the claims across and archives the other place has mended the record by
-another route and reads red on that lock. The transcript is where that reads.
-A claim on the wrong person that was rewritten into its own denial still
-carries the allergy key and reads red, which is the room doing what it is for:
-the record still says the wrong thing on the wrong person.
+**The locks ask where the store ended up, never which route got it there.**
+The place has two honest routes, a merge and a copy of the claim onto one place
+with the other archived, so its lock is a named check that accepts either and
+says in the run's own report which one held. A claim on the wrong person that
+was rewritten into its own denial still carries the allergy key and reads red,
+which is the room doing what it is for: the record still says the wrong thing
+on the wrong person. That is a wrong end state and not another route.
 
 **No lock asks that the repair used a link back to the old claim.** That would
 grade the move, and the room would be coaching it.
@@ -141,15 +141,12 @@ carries "id":"person:bart"
 lacks   "allergy"
 say     Bart still holds the allergy the operator said is not his, so the wrong person's record was left standing
 
-# One place, not two. A merge leaves a record on the survivor naming the handle
-# that went, so this holds whichever of the two the model kept. Both claims are
-# asked for beside it, so a merge of nothing cannot pass.
-recall {"kind": "place", "facts": true}
-carries "merged_from"
-carries "status":"active"
-carries booth
-carries quiz
-say     no place carries a merge record, so the two names for one place are still two things
+# One place, not two. The operator's words give a state and not a move, so two
+# end states hold it: a merge record on a place that carries both claims, or both
+# claims active on one place with the other archived. The lock format does not
+# branch, so a named check reads both and says which route held.
+check   one_place_after_the_correction
+say     the two names for one place are still two places
 
 # The fern has left the owed read and the other loop has not. As of the day the
 # operator was speaking in.

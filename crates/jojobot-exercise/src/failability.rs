@@ -921,7 +921,7 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
     },
     NegativeControl {
         room: expectations::REPAIR_ROOM,
-        lock: "Phase 3 — no place carries a merge record, so the two names for one place are still two things",
+        lock: "Phase 3 — the two names for one place are still two places",
         file: "tests/repair_room.rs",
         function: "the_place_lock_reds_when_the_two_names_are_left_as_two_things",
         strength: Strength::Discriminating,

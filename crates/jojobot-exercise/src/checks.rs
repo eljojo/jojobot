@@ -108,13 +108,17 @@
 //!   and the address itself is not nameable in the document at all, because
 //!   January invents the loop's handle, so the address it addresses is a
 //!   word no lock may spell.
+//! * **`one_place_after_the_correction`** — accept either of two end states for
+//!   one claim: a merge record on a place, or both claims active on one place
+//!   with the other place archived. The lock format does not branch, and
+//!   this is the one claim in the repair room that has two honest routes.
 //! * **`question_*_rule_answer`** — inspect only live answer records on the
 //!   named work item. The lock vocabulary matches substrings in timestamps
 //!   and cannot distinguish a whole rule number in content or details.
 
 use serde_json::{Value, json};
 
-use crate::run::{Checks, Observed, checked};
+use crate::run::{Checks, Observed, checked, checked_noting};
 
 /// **Read a live reply as JSON, or say plainly that it could not be read —
 /// never substitute a value and carry on.**
@@ -135,7 +139,7 @@ type Hatch = (&'static str, fn() -> Box<dyn Checks>);
 
 /// **Every named check this build ships.** A room adds one line here and one
 /// `check` line in its document, and both are visible in the count.
-pub const CHECKS: [Hatch; 37] = [
+pub const CHECKS: [Hatch; 38] = [
     ("question_one_rule_answer", || {
         rule_answer_check("work:pm-state", &[241, 275], &[129, 189, 284])
     }),
@@ -162,6 +166,9 @@ pub const CHECKS: [Hatch; 37] = [
     }),
     ("question_six_has_answer_without_rule_number", || {
         checked(|seen| Box::pin(question_six_has_answer_without_rule_number(seen)))
+    }),
+    ("one_place_after_the_correction", || {
+        checked_noting(|seen| Box::pin(one_place_after_the_correction(seen)))
     }),
     ("the_brief_left_the_box", || {
         checked(|seen| Box::pin(the_brief_left_the_box(seen)))
@@ -626,6 +633,85 @@ async fn the_brief_left_the_box(seen: &Observed<'_>) -> Result<(), String> {
         )),
         false => Ok(()),
     }
+}
+
+/// **The repair room's place: one place, by whichever route the model took.**
+///
+/// The operator's words give a state, not a move: the two names are one place.
+/// Two end states say so. A merge leaves a record on the survivor naming the
+/// handle that went, with both claims on it. A copy leaves both claims active
+/// on one place and the other place archived. **The note says which**, so a
+/// reader of the run can tell the two apart without reading the calls.
+///
+/// ⚠️ **Read by direct handle, never by a kind browse**, because a browse drops
+/// an archived place and the second route is exactly an archived place.
+async fn one_place_after_the_correction(seen: &Observed<'_>) -> Result<Option<String>, String> {
+    const PLACES: [&str; 2] = ["place:atlas", "place:bet"];
+    const CLAIMS: [&str; 2] = ["booth", "quiz"];
+    let mut held: Vec<(String, bool, Vec<Value>)> = Vec::new();
+    for handle in PLACES {
+        let read = seen
+            .room
+            .call("recall", json!({"subject": handle, "facts": true}))
+            .await;
+        let parsed = read_json(&read)?;
+        let Some(object) = parsed["objects"].get(0) else {
+            return Err(format!(
+                "{handle} is not readable, so nothing was measured: {read}"
+            ));
+        };
+        let archived = !object["archived"].is_null();
+        let active: Vec<Value> = object["facts"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|fact| fact["status"] == "active")
+            .collect();
+        held.push((handle.to_string(), archived, active));
+    }
+    let carries_both = |active: &[Value]| {
+        CLAIMS.iter().all(|word| {
+            active
+                .iter()
+                .any(|fact| fact["content"].as_str().is_some_and(|c| c.contains(word)))
+        })
+    };
+    let Some((home, _, home_active)) = held.iter().find(|(_, _, active)| carries_both(active))
+    else {
+        return Err(format!(
+            "no single place carries both claims as active: {}",
+            held.iter()
+                .map(|(handle, archived, active)| format!(
+                    "{handle} archived={archived} active_claims={}",
+                    active.len()
+                ))
+                .collect::<Vec<_>>()
+                .join("; "),
+        ));
+    };
+    if home_active
+        .iter()
+        .any(|fact| fact["fields"].get("merged_from").is_some())
+    {
+        return Ok(Some(format!(
+            "route: merge — {home} carries both claims and a merge record naming the handle that went"
+        )));
+    }
+    let other = held
+        .iter()
+        .find(|(handle, _, _)| handle != home)
+        .expect("two places");
+    if other.1 {
+        return Ok(Some(format!(
+            "route: copy — {home} carries both claims and {} is archived",
+            other.0
+        )));
+    }
+    Err(format!(
+        "{home} carries both claims, but {} is neither merged into it nor archived, so there are still two places",
+        other.0
+    ))
 }
 
 /// The bike the brief's service belongs to, and the day it gives.
