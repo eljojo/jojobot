@@ -1836,11 +1836,18 @@ pub fn rule_seats_of(fields: &BTreeMap<String, String>) -> usize {
         .unwrap_or(crate::text::CARRIED_RULES)
 }
 
+/// **The key naming the role a bot claims at every boot.** An ordinary field,
+/// folded like [`RULE_SEATS`]. A boot that names no `claim` claims this role
+/// as if it had; a bot with none boots as it always did. A bot cannot give
+/// itself a role, for the reason it cannot raise its own ceiling.
+pub const CLAIMS_ROLE: &str = "claims_role";
+
 /// **The keys a thing cannot set for itself** — its own room's capacity, its
-/// own thoughts' body cap and its own boot seats. Each binds the caller who
-/// owns the thing it is read off, so all of them face [`refuses_own_ceiling`]
-/// and [`refuses_own_ceiling_change`] the same way.
-const SELF_CEILING_KEYS: [&str; 3] = [THOUGHT_CAPACITY, THOUGHT_BODY_CAP, RULE_SEATS];
+/// own thoughts' body cap, its own boot seats and the role its boot claims.
+/// Each binds the caller who owns the thing it is read off, so all of them
+/// face [`refuses_own_ceiling`] and [`refuses_own_ceiling_change`] the same
+/// way.
+const SELF_CEILING_KEYS: [&str; 4] = [THOUGHT_CAPACITY, THOUGHT_BODY_CAP, RULE_SEATS, CLAIMS_ROLE];
 
 /// **Whether a write's own fields name a ceiling key.** The cheap question a
 /// caller asks before it spends a read on resolving who the write is about.

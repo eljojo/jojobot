@@ -26,6 +26,8 @@ mod backdated;
 mod bikes;
 #[path = "user_stories/boot.rs"]
 mod boot;
+#[path = "user_stories/carried_role.rs"]
+mod carried_role;
 #[path = "user_stories/catching_up.rs"]
 mod catching_up;
 #[path = "user_stories/challenge.rs"]

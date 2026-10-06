@@ -352,6 +352,21 @@ impl Jojobot {
             carried,
             claim,
         } = req;
+        // **A bot that carries a role claims it at the door when the caller
+        // names none.** An explicit `claim` always wins, and a bot with no key
+        // boots exactly as it did. The claim that follows is the ordinary one,
+        // so a refusal is said at the door the same way.
+        let carried_role: Option<String> = match (claim, bot) {
+            (None, Some(bot)) => self.memory.fields(bot).await.ok().and_then(|fields| {
+                fields
+                    .get(jojobot_domain::memory::CLAIMS_ROLE)
+                    .map(|role| role.trim().to_string())
+                    .filter(|role| !role.is_empty())
+            }),
+            _ => None,
+        };
+        let claimed_by_the_bot = carried_role.is_some();
+        let claim = claim.or(carried_role.as_deref());
         // The entity index is read ONCE for the whole answer. Three parts of
         // a boot need it — the counts by kind, which boxes the caller drains,
         // and the identity itself — and reading it three times would mean
@@ -486,6 +501,12 @@ impl Jojobot {
                             "a granted role claim's own sid did not resolve to a caller"
                         ),
                     }
+                }
+                let mut outcome = outcome;
+                if claimed_by_the_bot && let Some(obj) = outcome.as_object_mut() {
+                    // **Said, because a caller that named no claim did not ask
+                    // for one** and would otherwise find a lease it never made.
+                    obj.insert("claimed_because".into(), "this bot's claims_role".into());
                 }
                 if let Some(obj) = session.as_object_mut() {
                     obj.insert("claim".into(), outcome);
