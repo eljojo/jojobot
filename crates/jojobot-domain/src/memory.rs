@@ -2547,30 +2547,6 @@ pub fn reference_field_values(
         .collect()
 }
 
-/// **Whether any field of a record names `target`**, the question
-/// [`Memory::referring_to`] asks of every record.
-///
-/// A key some type declared a reference holds its value as items, so a list
-/// names the target when ANY of its items is the handle. Every other key is
-/// compared whole, which is what keeps a handle inside a longer string, or
-/// under a key nobody declared a list, from counting as more than it is.
-pub fn fields_name_target(
-    fields: &BTreeMap<String, String>,
-    declared: &[types::DeclaredType],
-    target: &EntityId,
-) -> bool {
-    let referenced = reference_field_values(fields, declared);
-    fields.iter().any(|(key, value)| {
-        match referenced
-            .iter()
-            .find(|(referenced_key, _)| referenced_key == key)
-        {
-            Some((_, items)) => items.iter().any(|item| item == target.as_str()),
-            None => value.trim() == target.as_str(),
-        }
-    })
-}
-
 /// **A write may not drop a thing below its kind's required keys, and may not
 /// put in any key that kind declared a value the key does not hold.**
 ///
@@ -4519,11 +4495,14 @@ pub trait Memory: Send + Sync {
     /// overrides it, and one that cannot is still correct.
     async fn referring_to(&self, target: &EntityId) -> Result<Vec<Fact>, MemoryError> {
         validate_subject(target)?;
-        let declared = self.declared_types().await?;
         let mut pointing = Vec::new();
         for entity in self.list_entities(None).await? {
             for fact in self.recall(&entity.id).await? {
-                if fields_name_target(&fact.fields, &declared, target) {
+                if fact
+                    .fields
+                    .values()
+                    .any(|value| value.trim() == target.as_str())
+                {
                     pointing.push(fact);
                 }
             }
