@@ -333,7 +333,9 @@ pub(crate) fn parse_zone(raw: Option<&str>) -> Result<jiff::tz::TimeZone, McpErr
     jiff::tz::TimeZone::get(name).map_err(|e| {
         McpError::invalid_params(
             format!(
-                "'{name}' is no timezone this build can resolve: {e}. Send an IANA name, like                  'America/Toronto' or 'Europe/Berlin', or send none and days are resolved in                  {FALLBACK_ZONE}."
+                "'{name}' is no timezone this build can resolve: {e}. Send an IANA name, like \
+                 'America/Toronto' or 'Europe/Berlin', or send none and days are resolved in \
+                 {FALLBACK_ZONE}."
             ),
             None,
         )
