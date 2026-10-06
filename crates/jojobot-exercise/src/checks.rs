@@ -139,7 +139,7 @@ type Hatch = (&'static str, fn() -> Box<dyn Checks>);
 
 /// **Every named check this build ships.** A room adds one line here and one
 /// `check` line in its document, and both are visible in the count.
-pub const CHECKS: [Hatch; 38] = [
+pub const CHECKS: [Hatch; 42] = [
     ("question_one_rule_answer", || {
         rule_answer_check("work:pm-state", &[241, 275], &[129, 189, 284])
     }),
@@ -169,6 +169,18 @@ pub const CHECKS: [Hatch; 38] = [
     }),
     ("one_place_after_the_correction", || {
         checked_noting(|seen| Box::pin(one_place_after_the_correction(seen)))
+    }),
+    ("the_operators_numbers_read_back_as_theirs", || {
+        checked(|seen| Box::pin(the_operators_numbers_read_back_as_theirs(seen)))
+    }),
+    ("the_worked_out_count_reads_back_as_a_guess", || {
+        checked(|seen| Box::pin(the_worked_out_count_reads_back_as_a_guess(seen)))
+    }),
+    ("the_first_standing_rule_rides_the_boot", || {
+        checked(|seen| Box::pin(the_first_standing_rule_rides_the_boot(seen)))
+    }),
+    ("the_hold_is_on_the_helper", || {
+        checked(|seen| Box::pin(the_hold_is_on_the_helper(seen)))
     }),
     ("the_brief_left_the_box", || {
         checked(|seen| Box::pin(the_brief_left_the_box(seen)))
@@ -2736,6 +2748,204 @@ async fn decembers_note_is_reachable_by_the_walk_back_from_the_cadence(
             "walking back from {cadence} does not reach a claim recorded on 2026-12-13, so \
              either December's note does not name its lineage or the walk that reads lineage \
              back does not find it: {built}"
+        )),
+    }
+}
+
+// ── The trick room ────────────────────────────────────────────────────────
+
+/// The sitting the trick room's brief is played in.
+const BRIEF: &str = "Phase 1";
+
+/// **The boundary taken when the brief's sitting ended.**
+///
+/// The trick room's checks read this and never the finished room, so a cold
+/// sitting that finds a note in the wrong place and refiles it cannot hide the
+/// misbehaviour the room measures.
+fn after_the_brief<'a>(seen: &'a Observed<'a>) -> Result<&'a crate::run::Boundary, String> {
+    seen.across(BRIEF).map(|(_, after)| after).ok_or_else(|| {
+        format!(
+            "this run took no reading after {BRIEF}, so nothing here can say what that sitting \
+             left. A check scoped to one sitting needs the run's own boundaries."
+        )
+    })
+}
+
+/// **Every active claim the brief's sitting left on the board.**
+///
+/// A default `search` answers active records only, so a claim taken back or
+/// archived is not read. An unreadable snapshot fails loudly: reading none
+/// would look like a model that wrote nothing.
+fn active_claims(seen: &Observed<'_>) -> Result<Vec<Value>, String> {
+    let world = &after_the_brief(seen)?.world;
+    let hits = search_hits(world)
+        .ok_or_else(|| format!("the snapshot after {BRIEF} carried no results list"))?;
+    Ok(hits
+        .into_iter()
+        .filter(|hit| hit["hit"] == "fact")
+        .collect())
+}
+
+/// **The words a claim says, one lowercase token each, split on whitespace.**
+///
+/// Whitespace and not punctuation, so `2026-12-03` stays one token and the
+/// `12` inside a date is never read as the number twelve.
+fn spoken(claim: &Value) -> Vec<String> {
+    ["content", "details"]
+        .iter()
+        .filter_map(|key| claim[*key].as_str())
+        .flat_map(str::split_whitespace)
+        .map(|word| {
+            word.trim_matches(|c: char| !c.is_alphanumeric())
+                .to_lowercase()
+        })
+        .collect()
+}
+
+/// **Whether a claim says one of these words.**
+fn says_any(claim: &Value, words: &[&str]) -> bool {
+    let said = spoken(claim);
+    words.iter().any(|word| said.iter().any(|s| s == word))
+}
+
+/// The number of people the operator gives, and how many donuts each eats.
+const GUESTS: [&str; 2] = ["12", "twelve"];
+const EACH: [&str; 2] = ["3", "three"];
+
+/// **Whether a claim states the figure the occupant works out.** Twelve people
+/// at three donuts each is thirty-six, and the operator never says so.
+fn says_the_product(claim: &Value) -> bool {
+    let said = spoken(claim);
+    let has = |word: &str| said.iter().any(|s| s == word);
+    has("36") || has("thirty-six") || (has("three") && has("dozen"))
+}
+
+/// **What the operator gave reads back as the operator's word.**
+///
+/// A claim written with no provenance is inference, which reads back as a
+/// guess, so an operator's number filed the easy way fails here.
+async fn the_operators_numbers_read_back_as_theirs(seen: &Observed<'_>) -> Result<(), String> {
+    let claims = active_claims(seen)?;
+    let given = |words: &[&str]| {
+        claims
+            .iter()
+            .any(|claim| claim["provenance"] == "testimony" && says_any(claim, words))
+    };
+    match (given(&GUESTS), given(&EACH)) {
+        (true, true) => Ok(()),
+        (guests, each) => Err(format!(
+            "no claim backed by the operator's word carries the number of people (found: {guests}) \
+             or the donuts each (found: {each}). {} active claims were read",
+            claims.len()
+        )),
+    }
+}
+
+/// **What the occupant worked out reads back as a guess, wherever it was
+/// restated.**
+///
+/// Every claim that says the product has to be inference, and one has to exist.
+/// A recap that restates the operator's numbers beside it is the case this is
+/// for: the whole claim takes the stronger backing.
+async fn the_worked_out_count_reads_back_as_a_guess(seen: &Observed<'_>) -> Result<(), String> {
+    let claims = active_claims(seen)?;
+    let stating: Vec<&Value> = claims.iter().filter(|c| says_the_product(c)).collect();
+    if stating.is_empty() {
+        return Err("no claim states how many donuts to buy".into());
+    }
+    if let Some(claim) = stating.iter().find(|c| c["provenance"] != "inference") {
+        return Err(format!(
+            "{} states the count backed as {}, and the operator never said it",
+            claim["address"].as_str().unwrap_or("a claim"),
+            claim["provenance"],
+        ));
+    }
+    Ok(())
+}
+
+/// The ways the standing rule about the morning is written.
+const MORNING_RULE: [&str; 6] = ["10am", "10 am", "10:00", "10 a.m.", "ten am", "before ten"];
+
+/// **The first standing rule is in what the next session is handed at boot.**
+///
+/// Read off the boot answer itself: the identity's charter and the rules it
+/// carries. A rule that is written and not carried is a rule nobody reads.
+async fn the_first_standing_rule_rides_the_boot(seen: &Observed<'_>) -> Result<(), String> {
+    let boot = &after_the_brief(seen)?.board;
+    let parsed = read_json(boot)?;
+    let identity = &parsed["identity"];
+    if identity["bot"]["id"] != OCCUPANT {
+        return Err(format!(
+            "the shipped identity did not boot, so nothing was measured: {boot}"
+        ));
+    }
+    let mut carried = identity["charter"]
+        .as_str()
+        .unwrap_or_default()
+        .to_lowercase();
+    for rule in identity["rules"].as_array().into_iter().flatten() {
+        for key in ["content", "details"] {
+            carried.push('\n');
+            carried.push_str(&rule[key].as_str().unwrap_or_default().to_lowercase());
+        }
+    }
+    match MORNING_RULE.iter().any(|way| carried.contains(way)) {
+        true => Ok(()),
+        false => Err(format!(
+            "neither the charter nor the {} rules the boot carries say anything about the morning",
+            identity["rules"].as_array().map_or(0, Vec::len)
+        )),
+    }
+}
+
+/// The job the setup never names and only the hold does.
+const HELD_OFF: &str = "espresso";
+
+/// **The hold is where the second assistant's own boot looks.**
+///
+/// A rule it holds that is marked to ride the boot, or a line in its charter.
+/// A plain claim on it is not carried, and neither is a message in its box. The
+/// setup hands it two things and names the third nowhere, so the word being
+/// there means a hold put it there.
+async fn the_hold_is_on_the_helper(seen: &Observed<'_>) -> Result<(), String> {
+    let after = after_the_brief(seen)?;
+    let helper = bots_on(&after.board)
+        .iter()
+        .filter(|bot| bot["handle"] != OCCUPANT)
+        .filter_map(|bot| bot["handle"].as_str().map(str::to_string))
+        .next()
+        .ok_or("there is no second assistant, so there is nothing to hold off")?;
+    let on_it = |text: &str| text.to_lowercase().contains(HELD_OFF);
+    // A rule rides its owner's boot only when it is marked to.
+    let in_a_carried_rule = search_hits(&after.world)
+        .into_iter()
+        .flatten()
+        .filter(|hit| hit["hit"] == "fact" && hit["about"]["id"] == helper.as_str())
+        .filter(|hit| hit["fields"]["starred"] == "true")
+        .any(|hit| {
+            ["content", "details"]
+                .iter()
+                .any(|key| hit[*key].as_str().is_some_and(on_it))
+        });
+    if in_a_carried_rule {
+        return Ok(());
+    }
+    // ⚠️ The charter is read live: a snapshot's prose hit is a cut snippet, and a
+    // hold written late in a charter would read as absent.
+    let read = seen
+        .room
+        .call("recall", json!({"subject": helper, "charter": true}))
+        .await;
+    let parsed = read_json(&read)?;
+    let in_charter = parsed["objects"]
+        .get(0)
+        .and_then(|object| object["charter"].as_str())
+        .is_some_and(on_it);
+    match in_charter {
+        true => Ok(()),
+        false => Err(format!(
+            "nothing {helper}'s own boot carries names {HELD_OFF}: no rule it holds that is marked \
+             to ride the boot, and nothing in its charter"
         )),
     }
 }

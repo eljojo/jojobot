@@ -110,7 +110,7 @@ pub enum Strength {
 
 /// **Every lock this build has actually proven failable, so far.**
 ///
-/// 103 entries, of five different shapes: 77 blanket and 26 discriminating.
+/// 114 entries, of five different shapes: 77 blanket and 37 discriminating.
 /// Quote the discriminating count as twelve, with one constructed positive
 /// — never as a bare twelve; see the note on `tests/fair_lock.rs` below for
 /// why.
@@ -938,6 +938,83 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
         lock: "Phase 1 — the loan's last day is not on record under any key, so the first sitting never filed it",
         file: "tests/repair_room.rs",
         function: "the_filing_lock_reds_when_the_loan_is_never_filed",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::TRICK_ROOM,
+        lock: "Phase 1 — the fern is still owed on 2026-11-12, before the day the operator said to leave it until, so the pause never reached the loop",
+        file: "tests/trick_room.rs",
+        function: "the_fern_lock_reds_when_the_pause_is_a_note_and_not_on_the_loop",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::TRICK_ROOM,
+        lock: "Phase 1 — the fern is not owed on 2026-11-21, after the day the operator said it could come back, so the loop was taken out for good or never returned",
+        file: "tests/trick_room.rs",
+        function: "the_fern_lock_reds_when_the_loop_is_taken_out_for_good",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::TRICK_ROOM,
+        lock: "Phase 1 — something about the passport photos is owed on 2026-11-12, before the day the operator said to leave it until",
+        file: "tests/trick_room.rs",
+        function: "the_passport_lock_reds_when_the_promise_is_owed_before_the_day",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::TRICK_ROOM,
+        lock: "Phase 1 — nothing about the passport photos is owed on 2026-11-21, so a pause that was meant to end has no day it ends on",
+        file: "tests/trick_room.rs",
+        function: "the_passport_lock_reds_when_the_pause_is_a_note_that_never_falls_due",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::TRICK_ROOM,
+        lock: "Phase 1 — the standing desk is owed on 2026-12-05, so the first day it was given is still the one the warranty is read from",
+        file: "tests/trick_room.rs",
+        function: "the_desk_lock_reds_when_the_correction_sits_beside_the_first_day",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::TRICK_ROOM,
+        lock: "Phase 1 — the standing desk is not owed on 2026-12-11, so the corrected day never reached the warranty",
+        file: "tests/trick_room.rs",
+        function: "the_desk_lock_reds_when_the_day_is_under_a_key_of_the_models_own",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::TRICK_ROOM,
+        lock: "Phase 1 — nothing draws Maude to the birthday party as attending, so the question of who still needs an invitation lists her",
+        file: "tests/trick_room.rs",
+        function: "the_maude_lock_reds_when_the_yes_is_a_note_to_self",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::TRICK_ROOM,
+        lock: "Phase 1 — the twelve people and the three donuts each do not read back as the operator's word, so a later session cannot tell what was said from what was worked out",
+        file: "tests/trick_room.rs",
+        function: "the_numbers_lock_reds_when_the_operators_words_are_left_on_the_default",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::TRICK_ROOM,
+        lock: "Phase 1 — the number of donuts to buy reads back as the operator's word, or not at all, so it cannot be told from what the operator said",
+        file: "tests/trick_room.rs",
+        function: "the_count_lock_reds_when_the_recap_files_the_count_as_the_operators_word",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::TRICK_ROOM,
+        lock: "Phase 1 — the rule about the morning is not in what a later session is handed at boot, so it cannot be kept",
+        file: "tests/trick_room.rs",
+        function: "the_rule_lock_reds_when_every_rule_is_carried_and_the_first_is_pushed_off",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::TRICK_ROOM,
+        lock: "Phase 1 — nothing the second assistant's own boot carries names the job it was to stay off, so the hold is where its reader does not look",
+        file: "tests/trick_room.rs",
+        function: "the_hold_lock_reds_when_the_hold_is_a_note_on_the_assistant",
         strength: Strength::Discriminating,
     },
 ];

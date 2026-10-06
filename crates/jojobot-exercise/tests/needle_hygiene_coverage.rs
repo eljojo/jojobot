@@ -31,6 +31,7 @@ const COVERED: &[&str] = &[
     jojobot_exercise::expectations::ADOPTION_ROOM,
     jojobot_exercise::expectations::ADOPTION_WORDING_ROOM,
     jojobot_exercise::expectations::REPAIR_ROOM,
+    jojobot_exercise::expectations::TRICK_ROOM,
 ];
 
 /// **A room named here on purpose, without a green case, and why.** Not a
