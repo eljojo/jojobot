@@ -2699,7 +2699,7 @@ async fn a_rename_reaches_the_session_index_without_a_session_write() {
     memory
         .rename_entity(
             &gamma,
-            &EntityId("bot:gamma-two".into()),
+            &EntityId("bot:delta".into()),
             None,
             date(2026, 8, 1),
             None,
@@ -2708,14 +2708,14 @@ async fn a_rename_reaches_the_session_index_without_a_session_write() {
         .expect("the rename lands");
     spy.set_sessions(vec![run(
         "s-gamma",
-        "bot:gamma-two",
+        "bot:delta",
         "the kiln slice",
         "the damper is hand-cut",
     )]);
     Refresh::refresh(sessions.as_ref()).await;
     assert_eq!(
-        owners_for("bot:gamma-two"),
-        vec!["bot:gamma-two".to_string()],
+        owners_for("bot:delta"),
+        vec!["bot:delta".to_string()],
         "the renamed bot finds its run under the handle it wears now"
     );
     assert!(
@@ -2731,7 +2731,7 @@ async fn a_rename_reaches_the_session_index_without_a_session_write() {
         .expect("the second bot is added");
     memory
         .merge(
-            &EntityId("bot:gamma-two".into()),
+            &EntityId("bot:delta".into()),
             &otto,
             Some("one bot, filed twice"),
             date(2026, 8, 2),
