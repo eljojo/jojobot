@@ -73,7 +73,7 @@ pub struct OrientArgs {
     #[serde(default)]
     pub(crate) today: Option<String>,
     /// **The timezone this session works in** — an IANA name like
-    /// `America/New_York` or `Europe/Madrid`. Send it when you boot, and send
+    /// `America/Toronto` or `Europe/Berlin`. Send it when you boot, and send
     /// it again when you resume from somewhere else.
     ///
     /// It is what *today* means for everything day-grained: the date a `capture`
@@ -83,8 +83,8 @@ pub struct OrientArgs {
     ///
     /// ⚠️ **Two sessions in different zones will disagree about what today is
     /// for the same stored claim, and that is correct.** A claim captured at
-    /// nine in the evening in New York is the 18th there and the 19th in
-    /// Madrid; both runs are reading the same claim and answering in their own
+    /// nine in the evening in Toronto is the 18th there and the 19th in
+    /// Berlin; both runs are reading the same claim and answering in their own
     /// frame. It is not a fault and there is nothing to work around.
     ///
     /// Send none and days are resolved in UTC. On a resume, sending none keeps
