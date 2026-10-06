@@ -94,6 +94,24 @@ impl Jojobot {
             ));
         }
         if let Some(reason) = quarantine_reason {
+            // **The two are mutually exclusive, and the pair is refused rather
+            // than one half dropped.** A quarantine records no processing
+            // outcome, so `notes` beside it has nowhere to go; taking the
+            // quarantine and losing the text without a word would cost the
+            // caller what it wrote and teach it nothing.
+            if args
+                .notes
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|notes| !notes.is_empty())
+            {
+                return Ok(misused(
+                    "Nothing was written: `quarantine` and `notes` were both sent, and a \
+                     quarantine records no outcome, so there is nowhere to keep the notes. Send \
+                     `quarantine` alone to set the message aside, or `notes` alone to retire it \
+                     with the outcome.",
+                ));
+            }
             let mine = match self.my_box(args.sid.as_deref()).await {
                 Ok(mine) => mine,
                 Err(refused) => return Ok(refused),

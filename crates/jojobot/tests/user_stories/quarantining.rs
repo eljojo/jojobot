@@ -68,3 +68,54 @@ async fn a_blank_quarantine_reason_is_refused_and_retires_nothing() {
         .await;
     story.finish().await;
 }
+
+/// A quarantine records no outcome, so `notes` beside it has nowhere to go.
+///
+/// The verb's own description says the two are mutually exclusive. Taking one
+/// and dropping the other without a word would cost a caller the text it wrote
+/// and teach it nothing, so the pair is refused and nothing is written.
+#[tokio::test]
+async fn a_quarantine_beside_notes_is_refused_and_nothing_is_written() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:gamma", "Gamma").await;
+    let stray = s
+        .post("gamma", "Twice", "This one went out twice by mistake.")
+        .await;
+    s.wrap("posted one message").await;
+
+    let g = story.as_bot("bot:gamma").await;
+
+    // The pair is refused, and the refusal names both halves and the way out.
+    g.refused(
+        "mark_processed",
+        json!({
+            "message_id": &stray,
+            "quarantine": "posted twice by mistake",
+            "notes": "ignored the copy",
+        }),
+    )
+    .await
+    .says("quarantine")
+    .says("notes");
+
+    // **Nothing was written**: the message is still waiting, neither
+    // quarantined nor retired.
+    g.call("read_mailbox", json!({"counts_only": true}))
+        .await
+        .says("\"new\":1")
+        .says("\"processed\":0");
+
+    // The positive each half rests on: the same reason quarantines. Blank notes
+    // beside it count as absent, the rule `notes` has always read by, so they do
+    // not make a pair to refuse.
+    g.call(
+        "mark_processed",
+        json!({"message_id": &stray, "quarantine": "posted twice by mistake", "notes": "  "}),
+    )
+    .await
+    .says("\"state\":\"quarantined\"");
+
+    g.wrap("refused the pair, then set the stray aside").await;
+    story.finish().await;
+}
