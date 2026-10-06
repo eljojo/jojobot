@@ -23,10 +23,15 @@ trap cleanup EXIT
 echo "building $REF ($RESOLVED) in a detached worktree at $WORKTREE_DIR"
 git -C "$REPO_ROOT" worktree add --detach "$WORKTREE_DIR" "$RESOLVED"
 
-(cd "$WORKTREE_DIR" && nix develop -c cargo build -p jojobot)
+# **The worktree builds into a target directory of its own.** The devShell
+# points CARGO_TARGET_DIR at one directory shared by every checkout, and a
+# build of an older ref written there is served to the next build of this
+# checkout in place of its own crates. `env` runs after the shell hook, so it
+# wins over the hook's value. The directory goes with the worktree.
+WORKTREE_TARGET="$WORKTREE_DIR/target"
+(cd "$WORKTREE_DIR" && nix develop -c env CARGO_TARGET_DIR="$WORKTREE_TARGET" cargo build -p jojobot)
 
-BINARY_DIR="$(cd "$WORKTREE_DIR" && nix develop -c bash -c 'echo "${CARGO_TARGET_DIR:-target}"')"
-BINARY="$BINARY_DIR/debug/jojobot"
+BINARY="$WORKTREE_TARGET/debug/jojobot"
 if [ ! -x "$BINARY" ]; then
     echo "REFRESH REFUSED: no binary at $BINARY after building $REF" >&2
     exit 1
