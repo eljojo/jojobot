@@ -168,6 +168,14 @@ pub struct CaptureArgs {
     /// `counts_from` — worked out from the rhythm's own `advances_from`. Do not
     /// compute those yourself and do not send them in `fields`.
     ///
+    /// **A snooze names the day it lasts until**, as `snoozed_until` in
+    /// `fields` (`YYYY-MM-DD`), a day after this record's `date`. The loop is
+    /// not owed again before that day, and on it the loop comes back and is
+    /// acted on again; it falls due on the later of that day and its own. A
+    /// snooze with no day, or a day that is not after `date`, comes back
+    /// blocked and nothing is written. The next `ran` or `skipped` check-in
+    /// spends the day, so send `snoozed_until` with `snoozed` only.
+    ///
     /// **What the check MEASURED is yours to send** in `fields`: a reading, a
     /// distance, a count. A cadence is always time, so a measurement is a field
     /// on the check-in and never a unit of the schedule.
@@ -526,6 +534,21 @@ impl Jojobot {
                      check-in, and a check-in computes '{key}' itself. Send the check-in without \
                      that key, or send the fields without check_in and keep the arithmetic."
                 ),
+            )));
+        }
+
+        // **The day a snooze lasts until is read from what this call SENT**,
+        // never from what the loop already holds: a day left by an earlier
+        // snooze must not stand in for a snooze that names none.
+        if let Err(why) = attention::snooze_day_of(
+            outcome,
+            sent.get(attention::SNOOZED_UNTIL).map(String::as_str),
+            on,
+        ) {
+            return Ok(Err(blocked_body(
+                subject,
+                &[],
+                format!("Nothing was written: {why}."),
             )));
         }
 

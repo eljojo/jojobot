@@ -384,6 +384,11 @@ async fn a_check_in_moves_the_schedule_and_a_snooze_does_not() {
         CaptureArgs {
             check_in: Some("snoozed".into()),
             recorded_at: Some("2026-08-19".into()),
+            fields: Some(
+                [("snoozed_until".to_string(), "2026-08-22".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
             ..capture_args("rhythm:descale", "not this week")
         },
     )
@@ -413,6 +418,129 @@ async fn a_check_in_moves_the_schedule_and_a_snooze_does_not() {
         held["counts_from"], "2026-08-20",
         "a skipped cycle advances as if it had run: {held}",
     );
+}
+
+/// A snooze check-in on the weekly rhythm, naming the day it lasts until.
+fn a_snooze_until(day: Option<&str>, on: &str) -> CaptureArgs {
+    CaptureArgs {
+        check_in: Some("snoozed".into()),
+        recorded_at: Some(on.into()),
+        fields: day.map(|day| {
+            [("snoozed_until".to_string(), day.to_string())]
+                .into_iter()
+                .collect()
+        }),
+        ..capture_args("rhythm:descale", "away until then")
+    }
+}
+
+/// **A snoozed loop is next due on the later of its own day and the snooze
+/// day, and the stored due moment says so.** The cycle is still not consumed,
+/// so `counts_from` stays where it was, and the next ran check-in spends the
+/// day and puts the loop back on its own cadence.
+#[tokio::test]
+async fn a_snooze_holds_the_loop_back_until_its_day_and_a_run_spends_it() {
+    let jojobot = handler();
+    a_weekly_rhythm(&jojobot, "descale", "2026-08-01", "check_in_date").await;
+
+    // Due on the 8th; away until the 20th.
+    capture_ok(&jojobot, a_snooze_until(Some("2026-08-20"), "2026-08-10")).await;
+    let held = fields_of(&jojobot, "rhythm:descale").await;
+    assert_eq!(held["snoozed_until"], "2026-08-20", "{held}");
+    assert_eq!(held["counts_from"], "2026-08-01", "{held}");
+    assert_eq!(
+        held["due_on"], "2026-08-20",
+        "the later of its own day, the 8th, and the snooze day: {held}"
+    );
+
+    // Back on the 21st, and it runs: the day is spent and the cadence is the
+    // loop's own again.
+    capture_ok(
+        &jojobot,
+        CaptureArgs {
+            check_in: Some("ran".into()),
+            recorded_at: Some("2026-08-21".into()),
+            ..capture_args("rhythm:descale", "descaled it")
+        },
+    )
+    .await;
+    let held = fields_of(&jojobot, "rhythm:descale").await;
+    assert_eq!(held["outcome"], "ran", "{held}");
+    assert_eq!(
+        held["snoozed_until"], "",
+        "a run spends the snooze day by writing it blank: {held}"
+    );
+    assert_eq!(held["due_on"], "2026-08-28", "{held}");
+}
+
+/// **A snooze that names no usable day is refused with what to send, and
+/// nothing is written.** The refusals ride beside one that lands, or a build
+/// that refused every snooze would pass.
+#[tokio::test]
+async fn a_snooze_with_no_usable_day_is_refused_and_writes_nothing() {
+    let jojobot = handler();
+    a_weekly_rhythm(&jojobot, "descale", "2026-08-01", "check_in_date").await;
+
+    for (day, on) in [
+        (None, "2026-08-10"),
+        (Some("next week"), "2026-08-10"),
+        (Some("2026-08-10"), "2026-08-10"),
+        (Some("2026-08-02"), "2026-08-10"),
+    ] {
+        let refused = json_of(
+            &jojobot
+                .capture(Parameters(a_snooze_until(day, on)))
+                .await
+                .expect("a refusal is an answer, not a failure"),
+        );
+        assert_eq!(refused["status"], "blocked", "{day:?}: {refused}");
+        assert_eq!(refused["wrote"], false, "{day:?}: {refused}");
+        assert!(
+            refused["how_to_proceed"]
+                .as_str()
+                .is_some_and(|how| how.contains("snoozed_until")),
+            "the way forward names the key to send: {refused}"
+        );
+        let held = fields_of(&jojobot, "rhythm:descale").await;
+        assert_eq!(held["outcome"], serde_json::Value::Null, "{day:?}: {held}");
+        assert_eq!(
+            held["snoozed_until"],
+            serde_json::Value::Null,
+            "{day:?}: {held}"
+        );
+    }
+
+    capture_ok(&jojobot, a_snooze_until(Some("2026-08-11"), "2026-08-10")).await;
+    let held = fields_of(&jojobot, "rhythm:descale").await;
+    assert_eq!(held["snoozed_until"], "2026-08-11", "the positive: {held}");
+}
+
+/// **A ran or skipped check-in that sends a snooze day is refused**: it
+/// consumes the cycle, and a snooze day on it would say two things about one
+/// loop.
+#[tokio::test]
+async fn a_run_that_sends_a_snooze_day_is_refused() {
+    let jojobot = handler();
+    a_weekly_rhythm(&jojobot, "descale", "2026-08-01", "check_in_date").await;
+    let refused = json_of(
+        &jojobot
+            .capture(Parameters(CaptureArgs {
+                check_in: Some("ran".into()),
+                recorded_at: Some("2026-08-10".into()),
+                fields: Some(
+                    [("snoozed_until".to_string(), "2026-08-20".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..capture_args("rhythm:descale", "did it")
+            }))
+            .await
+            .expect("a refusal is an answer, not a failure"),
+    );
+    assert_eq!(refused["status"], "blocked", "{refused}");
+    assert_eq!(refused["wrote"], false, "{refused}");
+    let held = fields_of(&jojobot, "rhythm:descale").await;
+    assert_eq!(held["outcome"], serde_json::Value::Null, "{held}");
 }
 
 /// **A measurement rides on the check-in, never on the schedule.**
@@ -888,6 +1016,11 @@ async fn a_snooze_cannot_open_a_loop_and_the_refusal_names_what_can() {
             .capture(Parameters(CaptureArgs {
                 check_in: Some("snoozed".into()),
                 recorded_at: Some("2026-06-14".into()),
+                fields: Some(
+                    [("snoozed_until".to_string(), "2026-06-20".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
                 ..capture_args("rhythm:descale", "not today")
             }))
             .await
