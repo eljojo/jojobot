@@ -1928,7 +1928,18 @@ impl FullTextIndex {
 
     pub fn search(&self, query: &SearchQuery) -> Result<Vec<Hit>, MemoryError> {
         query.validate()?;
-        let depth = candidate_depth(query.limit);
+        // **The strict type question reads every thing its clause selects.**
+        // The clause selects on the keys a thing carries and cannot see what a
+        // key holds, so a mistyped thing passes it and takes a place in the cut
+        // before the whole-match filter drops it. A depth cut over that set can
+        // be filled by things that do not fit, and the answer is empty while a
+        // well-typed thing exists. What the clause selects is bounded by the
+        // things carrying every key, so there is no cut to be had.
+        let depth = if query.fits_type.is_some() {
+            (self.reader.searcher().num_docs() as usize).max(1)
+        } else {
+            candidate_depth(query.limit)
+        };
 
         // **A type query has no fact half.** The question is which THINGS
         // carry the keys, and a row is not a thing: returning its rows beside

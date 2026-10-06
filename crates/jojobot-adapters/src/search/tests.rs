@@ -1210,6 +1210,105 @@ async fn a_strict_type_query_reaches_a_whole_thing_ranked_below_the_partial_ones
     }
 }
 
+/// 🚨 **A crowd of things that hold every key with a value of the wrong kind
+/// cannot hide a thing that holds them all well.** The strict question's
+/// clause selects on the keys a thing carries and cannot see what a key
+/// holds, so a mistyped thing passes it, takes a place in the depth cut, and
+/// is dropped afterwards by the whole-match filter. A crowd wider than the cut
+/// then leaves an empty answer while a well-typed thing exists.
+///
+/// The crowd here carries all three keys with `crates` holding words, and is
+/// wider than the depth a limit of one buys. The finished thing carries them
+/// all well, beside a great many others, which ranks it below every one of
+/// them. The positive the strict question rests on is that thing coming back;
+/// the paired negative is that none of the crowd does.
+#[tokio::test]
+async fn a_strict_type_query_reaches_a_well_typed_thing_behind_a_crowd_of_mistyped_ones() {
+    use jojobot_domain::memory::types::{Field as Key, ValueType};
+    let declared = DeclaredType::new(
+        "delivery",
+        vec![
+            Key::required("arrives", ValueType::Date),
+            Key::required("crates", ValueType::Number),
+            Key::required("driver", ValueType::Text),
+        ],
+    );
+    let carrying = |handle: &str, keys: Vec<(String, String)>| {
+        scan(
+            &format!("doc-{handle}"),
+            Some(entity(handle, "Somebody Else")),
+            "",
+            vec![Fact {
+                fields: keys.into_iter().collect(),
+                ..fact(
+                    handle,
+                    "f1",
+                    "an ordinary claim, with keys on it",
+                    date(2026, 1, 1),
+                )
+            }],
+        )
+    };
+    let key = |k: &str, v: &str| (k.to_string(), v.to_string());
+
+    let crowd = candidate_depth(1) * 3;
+    let mut scans: Vec<DocScan> = (0..crowd)
+        .map(|n| {
+            carrying(
+                &format!("person:{}", "p".repeat(n + 1)),
+                vec![
+                    key("arrives", "2026-08-11"),
+                    key("crates", "a great many"),
+                    key("driver", "beta"),
+                ],
+            )
+        })
+        .collect();
+    let mut whole = vec![
+        key("arrives", "2026-08-10"),
+        key("crates", "4"),
+        key("driver", "beta"),
+    ];
+    whole.extend((0..300).map(|n| key(&format!("other-{n}"), "x")));
+    scans.push(carrying("person:milhouse", whole));
+    let index = index_of(scans);
+
+    let ids = |query: SearchQuery| -> Vec<String> {
+        index
+            .search(&query)
+            .expect("search ok")
+            .iter()
+            .filter_map(|h| match h {
+                Hit::Entity { entity, .. } => Some(entity.id.to_string()),
+                _ => None,
+            })
+            .collect()
+    };
+
+    // The tolerant question keeps the whole crowd, so the crowd really is in
+    // the corpus and really is wider than the cut.
+    assert_eq!(
+        ids(SearchQuery {
+            answers_type: Some(declared.clone()),
+            limit: 500,
+            ..Default::default()
+        })
+        .len(),
+        crowd + 1,
+    );
+    for limit in [1, 5] {
+        assert_eq!(
+            ids(SearchQuery {
+                fits_type: Some(declared.clone()),
+                limit,
+                ..Default::default()
+            }),
+            vec!["person:milhouse".to_string()],
+            "the one thing that fits is found at limit {limit}, and none of the mistyped crowd is"
+        );
+    }
+}
+
 /// **A pinned hit is a hit, so the type filter governs it too.**
 ///
 /// An exact naming of an entity is prepended to the answer, and that path
