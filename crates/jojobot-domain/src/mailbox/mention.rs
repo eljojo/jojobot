@@ -101,6 +101,33 @@ impl Mentioning {
         }
     }
 
+    /// **The reason a deliberate quarantine gave, read under the names the
+    /// things it mentions wear today.** The stored reason carries permanent
+    /// ids like every other text field, so a refusal that quotes it renders
+    /// them, or a rename would leave the reason naming a handle nobody answers
+    /// to. A store that cannot say what exists leaves the refusal exactly as
+    /// the inner store wrote it: the refusal still reads, and is never traded
+    /// for a different error.
+    async fn rendered_error(&self, error: MailboxError) -> MailboxError {
+        let MailboxError::QuarantinedOnPurpose {
+            attempted,
+            by,
+            reason,
+        } = error
+        else {
+            return error;
+        };
+        let reason = match self.known().await {
+            Ok(known) => mention::rendered(&reason, &known),
+            Err(_) => reason,
+        };
+        MailboxError::QuarantinedOnPurpose {
+            attempted,
+            by,
+            reason,
+        }
+    }
+
     async fn render_all(&self, messages: &mut [Message]) -> Result<(), MailboxError> {
         if messages.is_empty() {
             return Ok(());
@@ -204,7 +231,10 @@ impl Mailboxes for Mentioning {
     }
 
     async fn read_message(&self, id: &MessageId) -> Result<Delivered, MailboxError> {
-        let mut delivered = self.inner.read_message(id).await?;
+        let mut delivered = match self.inner.read_message(id).await {
+            Ok(delivered) => delivered,
+            Err(e) => return Err(self.rendered_error(e).await),
+        };
         let known = self.known().await?;
         Self::render(&mut delivered.message, &known);
         Ok(delivered)
@@ -221,10 +251,14 @@ impl Mailboxes for Mentioning {
             .map(|n| mention::resolved(n, &known))
             .transpose()
             .map_err(|_| MailboxError::KindsNeverLoaded)?;
-        let mut message = self
+        let mut message = match self
             .inner
             .mark_processed(id, resolved_notes.as_deref())
-            .await?;
+            .await
+        {
+            Ok(message) => message,
+            Err(e) => return Err(self.rendered_error(e).await),
+        };
         Self::render(&mut message, &known);
         Ok(message)
     }
@@ -236,7 +270,19 @@ impl Mailboxes for Mentioning {
         reason: &str,
         at: Timestamp,
     ) -> Result<Quarantined, MailboxError> {
-        self.inner.quarantine(id, by, reason, at).await
+        // **Resolved on the way in and rendered on the way out, exactly as
+        // `mark_processed`'s notes are.** The reason is free text a caller
+        // writes, so a handle in it is a link and not a spelling. An
+        // unresolvable mention is left as written, never refused.
+        let known = self.known().await?;
+        let resolved =
+            mention::resolved(reason, &known).map_err(|_| MailboxError::KindsNeverLoaded)?;
+        let mut done = match self.inner.quarantine(id, by, &resolved, at).await {
+            Ok(done) => done,
+            Err(e) => return Err(self.rendered_error(e).await),
+        };
+        done.reason = mention::rendered(&done.reason, &known);
+        Ok(done)
     }
 }
 

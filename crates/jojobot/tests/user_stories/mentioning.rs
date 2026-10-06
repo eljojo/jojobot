@@ -373,3 +373,57 @@ async fn a_walk_with_no_shape_named_reaches_an_edge_a_mention_and_a_ref_at_once(
     s.wrap("found everyone touching the widgets project, however each one pointed at it")
         .await;
 }
+
+/// "I set that one aside because it copies @thing:handcart's dispatch."
+///
+/// **The reason a message was set aside is free text a caller writes**, exactly
+/// as the notes of a retirement are, so a handle written into it is a link and
+/// not a spelling: a thing renamed afterwards reads under its new name in the
+/// reason a refusal quotes. Every sibling text field already did this; the
+/// quarantine reason stored what it was sent.
+#[tokio::test]
+async fn a_quarantine_reason_that_names_a_thing_follows_it_through_a_rename() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    s.add("thing:handcart", "The Handcart").await;
+    let stray = s
+        .post("gamma", "Twice", "This one went out twice by mistake.")
+        .await;
+
+    s.call(
+        "mark_processed",
+        json!({
+            "message_id": &stray,
+            "quarantine": "a copy of the dispatch about @thing:handcart, and @thing:nowhere",
+        }),
+    )
+    .await
+    .says("@thing:handcart");
+
+    // The thing is renamed, and the reason reads under the new name.
+    s.call(
+        "rename_entity",
+        json!({"handle": "thing:handcart", "to": "thing:kettle"}),
+    )
+    .await;
+    s.refused("read_message", json!({"message_id": &stray}))
+        .await
+        .says("@thing:kettle")
+        .never_says("@thing:handcart")
+        // A mention nothing resolves to is left exactly as it was written, the
+        // treatment every sibling field gives one: it is not refused.
+        .says("@thing:nowhere");
+
+    // **Every path that quotes the reason renders it**, not only the read: a
+    // second attempt to retire the same message is refused with it too.
+    s.refused(
+        "mark_processed",
+        json!({"message_id": &stray, "notes": "handled"}),
+    )
+    .await
+    .says("@thing:kettle")
+    .never_says("@thing:handcart");
+
+    s.wrap("set a copy aside").await;
+    story.finish().await;
+}
