@@ -475,6 +475,57 @@ async fn a_snooze_holds_the_loop_back_until_its_day_and_a_run_ends_it() {
     assert_eq!(held["due_on"], "2026-08-19", "{held}");
 }
 
+/// **The stored due moment follows the outcome when an edit changes only the
+/// outcome.** The snooze day counts only while the last outcome is `snoozed`, so
+/// an edit that turns that outcome into `ran` moves the loop back to its own
+/// day, and one that turns it back revives the snooze. `outcome` is not a key
+/// that makes a thing a loop, so the mover has to be told to watch it, or
+/// `due_on` keeps the day the read no longer agrees with.
+///
+/// **Both directions ride in one case**, so a build that watched the key for
+/// one move only would not pass it.
+#[tokio::test]
+async fn an_edit_that_changes_only_the_outcome_moves_the_stored_due_moment() {
+    let jojobot = handler();
+    a_weekly_rhythm(&jojobot, "descale", "2026-08-01", "check_in_date").await;
+    let snoozed = capture_ok(&jojobot, a_snooze_until(Some("2026-08-20"), "2026-08-10")).await;
+    let address = address_of(&snoozed);
+    let due_on = || async { fields_of(&jojobot, "rhythm:descale").await["due_on"].clone() };
+    assert_eq!(
+        due_on().await,
+        "2026-08-20",
+        "the snooze holds the loop back"
+    );
+
+    let edit = |outcome: &str| UpdateFactArgs {
+        fields: Some(
+            [("outcome".to_string(), outcome.to_string())]
+                .into_iter()
+                .collect(),
+        ),
+        ..update_args(&address)
+    };
+    jojobot
+        .update_fact(Parameters(edit("ran")))
+        .await
+        .expect("update ok");
+    assert_eq!(
+        due_on().await,
+        "2026-08-08",
+        "the outcome is no longer a snooze, so the loop is due on its own day"
+    );
+
+    jojobot
+        .update_fact(Parameters(edit("snoozed")))
+        .await
+        .expect("update ok");
+    assert_eq!(
+        due_on().await,
+        "2026-08-20",
+        "the outcome is a snooze again, so the held day holds the loop back"
+    );
+}
+
 /// **A recall of a loop says whether its snooze day is in force.** The old day
 /// stays in the record after a run, because no write can take a key off a loop,
 /// and a reader of the bare fields could not tell it from a live snooze. So

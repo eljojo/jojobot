@@ -494,6 +494,15 @@ pub trait Carrier: Send + Sync {
     /// nothing here is asked what kind produced the fields, only what they
     /// hold. See [`types::DeclaredType::matched_by`].
     fn interface(&self) -> types::DeclaredType;
+    /// **Keys this carrier's answer reads that do not make a thing its
+    /// business.** A write naming one of them can move the due moment, so the
+    /// mover watches them beside the interface's own keys. They stay out of the
+    /// interface because that is what a thing is FOUND by: a key as common as
+    /// `outcome` there would make any thing carrying it a loop, and loudly
+    /// late. None by default.
+    fn also_reads(&self) -> &'static [&'static str] {
+        &[]
+    }
     /// When this thing falls due, read off what it holds.
     fn due(&self, fields: &BTreeMap<String, String>) -> Due;
 }
@@ -517,6 +526,12 @@ impl Carrier for Rhythms {
                 types::Field::new(SNOOZED_UNTIL, types::ValueType::Date),
             ],
         )
+    }
+
+    /// **The outcome decides whether a held snooze day counts**, so a write
+    /// that changes only the outcome can move the due moment.
+    fn also_reads(&self) -> &'static [&'static str] {
+        &[OUTCOME]
     }
 
     /// **A loop carrying none of the schedule is not late.** It is a loop

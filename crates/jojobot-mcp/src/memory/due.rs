@@ -26,18 +26,17 @@ impl Jojobot {
         cleared: &[String],
     ) -> attention::DueMove {
         let carriers = self.carriers();
-        let touches_incoming = carriers.iter().any(|c| {
-            c.interface()
-                .fields
-                .iter()
-                .any(|f| incoming.contains_key(&f.key))
-        });
-        let touches_cleared = carriers.iter().any(|c| {
-            c.interface()
-                .fields
-                .iter()
-                .any(|f| cleared.iter().any(|k| k == &f.key))
-        });
+        // **The keys a carrier's answer reads, not only the ones that make a
+        // thing its business** — see `Carrier::also_reads`.
+        let watched = |c: &dyn attention::Carrier, key: &str| {
+            c.interface().fields.iter().any(|f| f.key == key) || c.also_reads().contains(&key)
+        };
+        let touches_incoming = carriers
+            .iter()
+            .any(|c| incoming.keys().any(|key| watched(*c, key)));
+        let touches_cleared = carriers
+            .iter()
+            .any(|c| cleared.iter().any(|key| watched(*c, key)));
         if !touches_incoming && !touches_cleared {
             return attention::DueMove::Unchanged;
         }
