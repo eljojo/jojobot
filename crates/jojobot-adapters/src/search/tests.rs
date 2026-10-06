@@ -2429,6 +2429,13 @@ impl SummarizedSessions {
         })
     }
 
+    /// What `all_sessions` answers from here on — the runs the store would
+    /// render after something outside the sessions store changed what they
+    /// read as, such as their owner's rename.
+    fn set_sessions(&self, sessions: Vec<jojobot_domain::session::Session>) {
+        *self.sessions.write().expect("sessions poisoned") = sessions;
+    }
+
     /// What `write_summary` answers from here on.
     fn set_summary(&self, summary: Option<(i64, Option<jiff::Timestamp>)>) {
         *self.summary.write().expect("summary poisoned") = summary;
@@ -2634,6 +2641,114 @@ async fn a_session_read_in_flight_does_not_clear_a_failure_it_predates() {
         index.session_coverage(),
         Coverage::Partial(Behind::Stale),
         "a reading that began before the failure must not clear it on landing late"
+    );
+}
+
+/// 🚨 **A rename reaches the session index without a session write.** A run's
+/// owner is rendered from the entity tree at read, so renaming the bot changes
+/// what the runs say without changing the sessions store's own signal. A
+/// refresh that trusted that signal alone answered from what it last read, and
+/// the renamed bot found none of its runs until its next session write.
+///
+/// Both halves in one read: the bot finds its run under the handle it wears now
+/// and no longer under the one it wore, and a store that did not change — no
+/// rename in between — still costs no re-read.
+#[tokio::test]
+async fn a_rename_reaches_the_session_index_without_a_session_write() {
+    use jojobot_domain::memory::{Memory, NewEntity};
+    let memory = Arc::new(IndexedMemory::new(Arc::new(InMemoryMemory::booted())).expect("index"));
+    let gamma = EntityId("bot:gamma".into());
+    memory
+        .add_entity(NewEntity::new(gamma.clone(), "Gamma", "user-named"))
+        .await
+        .expect("the bot is added");
+    let spy = SummarizedSessions::new(vec![run(
+        "s-gamma",
+        "bot:gamma",
+        "the kiln slice",
+        "the damper is hand-cut",
+    )]);
+    spy.set_summary(Some((1, None)));
+    let sessions = Arc::new(IndexedSessions::new(spy.clone(), memory.index()));
+    sessions.rebuild().await.expect("rebuild");
+
+    let owners_for = |bot: &str| -> Vec<String> {
+        memory
+            .index()
+            .search(&SearchQuery {
+                text: Some("damper".into()),
+                asked_by: Some(EntityId(bot.into())),
+                ..SearchQuery::default()
+            })
+            .expect("search ok")
+            .iter()
+            .filter_map(|h| match h {
+                Hit::Session { bot, .. } => Some(bot.to_string()),
+                _ => None,
+            })
+            .collect()
+    };
+    assert_eq!(owners_for("bot:gamma"), vec!["bot:gamma".to_string()]);
+
+    // No rename yet: an unchanged store is still not read again.
+    Refresh::refresh(sessions.as_ref()).await;
+    assert_eq!(spy.reads_ran(), 1, "nothing changed, so nothing is re-read");
+
+    // The rename, through the memory half. The sessions store's own signal does
+    // not move, and what its runs read as does.
+    memory
+        .rename_entity(
+            &gamma,
+            &EntityId("bot:gamma-two".into()),
+            None,
+            date(2026, 8, 1),
+            None,
+        )
+        .await
+        .expect("the rename lands");
+    spy.set_sessions(vec![run(
+        "s-gamma",
+        "bot:gamma-two",
+        "the kiln slice",
+        "the damper is hand-cut",
+    )]);
+    Refresh::refresh(sessions.as_ref()).await;
+    assert_eq!(
+        owners_for("bot:gamma-two"),
+        vec!["bot:gamma-two".to_string()],
+        "the renamed bot finds its run under the handle it wears now"
+    );
+    assert!(
+        owners_for("bot:gamma").is_empty(),
+        "and not under the one it wore"
+    );
+
+    // A merge changes what a folded bot's runs read as the same way.
+    let otto = EntityId("bot:otto".into());
+    memory
+        .add_entity(NewEntity::new(otto.clone(), "Otto", "user-named"))
+        .await
+        .expect("the second bot is added");
+    memory
+        .merge(
+            &EntityId("bot:gamma-two".into()),
+            &otto,
+            Some("one bot, filed twice"),
+            date(2026, 8, 2),
+        )
+        .await
+        .expect("the merge lands");
+    spy.set_sessions(vec![run(
+        "s-gamma",
+        "bot:otto",
+        "the kiln slice",
+        "the damper is hand-cut",
+    )]);
+    Refresh::refresh(sessions.as_ref()).await;
+    assert_eq!(
+        owners_for("bot:otto"),
+        vec!["bot:otto".to_string()],
+        "the survivor finds the run the folded bot wrote"
     );
 }
 

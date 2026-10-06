@@ -217,6 +217,8 @@ impl Memory for IndexedMemory {
             .await?;
         if let Guarded::Written(entity) = &written {
             self.refresh(&entity.id).await;
+            // A run's owner reads as the handle the entity wears now.
+            self.index.names_changed();
         }
         Ok(written)
     }
@@ -347,6 +349,8 @@ impl Memory for IndexedMemory {
         date: Date,
     ) -> Result<Merge, MemoryError> {
         let done = self.inner.merge(folded, survivor, reason, date).await?;
+        // The folded bot's runs read as the survivor's now.
+        self.index.names_changed();
         self.refresh(folded).await;
         // ⚠️ **This line is not what makes the survivor findable by the names it
         // just took.** Removing it leaves the name-carry contract green: the merge
@@ -515,8 +519,12 @@ impl IndexedMailboxes {
 /// refreshing it before an answer, from its own store.
 /// The signal [`jojobot_domain::session::Sessions::write_summary`] answers,
 /// paired with the read it was taken beside.
+///
+/// **And the names epoch it was taken under**, because a rename changes what the
+/// runs read as without moving the signal.
 type CachedSessionScan = (
     (i64, Option<jiff::Timestamp>),
+    u64,
     Vec<jojobot_domain::session::Session>,
 );
 
@@ -561,10 +569,15 @@ impl IndexedSessions {
         &self,
     ) -> Result<Vec<jojobot_domain::session::Session>, jojobot_domain::session::SessionError> {
         let summary = self.inner.write_summary().await?;
+        // Taken before the read, so a rename that lands while the read is in
+        // flight leaves the next refresh to read again rather than being
+        // absorbed into this one.
+        let epoch = self.index.names_epoch();
         if let Some(summary) = &summary {
             let cached = self.last_scan.read().expect("session scan cache poisoned");
-            if let Some((last_summary, sessions)) = cached.as_ref()
+            if let Some((last_summary, last_epoch, sessions)) = cached.as_ref()
                 && last_summary == summary
+                && *last_epoch == epoch
             {
                 return Ok(sessions.clone());
             }
@@ -580,7 +593,7 @@ impl IndexedSessions {
             .map_err(|e| jojobot_domain::session::SessionError::Store(e.to_string()))?;
         if let Some(summary) = summary {
             *self.last_scan.write().expect("session scan cache poisoned") =
-                Some((summary, sessions.clone()));
+                Some((summary, epoch, sessions.clone()));
         }
         Ok(sessions)
     }

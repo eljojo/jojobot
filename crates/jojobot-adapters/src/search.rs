@@ -381,6 +381,12 @@ pub struct FullTextIndex {
     /// of the other store and for the same reason.
     memory_loaded: std::sync::atomic::AtomicBool,
     memory_touched: std::sync::atomic::AtomicBool,
+    /// **How many times something outside the sessions store changed what its
+    /// runs read as** — an owner's rename or merge. A run's owner is rendered
+    /// from the entity tree at read, so such a change moves the answer without
+    /// moving the sessions store's own write signal. The session half compares
+    /// this beside that signal, and a rename reaches it without a session write.
+    names_epoch: std::sync::atomic::AtomicU64,
     /// The entities whose documents the index knows it is holding an old version
     /// of: a refresh after a committed write that could not be run.
     ///
@@ -491,6 +497,7 @@ impl FullTextIndex {
             mail_touched: std::sync::atomic::AtomicBool::new(false),
             memory_loaded: std::sync::atomic::AtomicBool::new(false),
             memory_touched: std::sync::atomic::AtomicBool::new(false),
+            names_epoch: std::sync::atomic::AtomicU64::new(0),
             behind: RwLock::new(std::collections::BTreeMap::new()),
             mark_seq: std::sync::atomic::AtomicU64::new(0),
             memory_refresh_failed_at: std::sync::atomic::AtomicU64::new(0),
@@ -621,6 +628,18 @@ impl FullTextIndex {
     /// **Where the mark sequence stands right now.** Take this BEFORE reading the
     /// store and hand it to the ingest that follows, so the ingest clears what
     /// its own reading covered and nothing newer.
+    /// Say that what the sessions store's runs read as has changed without a
+    /// session write — see the `names_epoch` field.
+    pub fn names_changed(&self) {
+        self.names_epoch
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// The count [`names_changed`](Self::names_changed) advances.
+    pub fn names_epoch(&self) -> u64 {
+        self.names_epoch.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
     pub fn reading_begins(&self) -> ReadingPoint {
         ReadingPoint(self.mark_seq.load(std::sync::atomic::Ordering::Acquire))
     }
@@ -1022,10 +1041,17 @@ impl FullTextIndex {
                             .unwrap_or_default();
                     let new_ids: HashSet<&str> =
                         session.entries.iter().map(|e| e.id.0.as_str()).collect();
+                    // **A run that changed owner has every entry rewritten**:
+                    // each entry's document carries its owner, so an entry that
+                    // is unchanged as text still has to move with the run, or
+                    // the renamed bot finds none of what it wrote.
+                    let owner_moved = old_by_id
+                        .get(session.id.0.as_str())
+                        .is_some_and(|old| old.bot != session.bot);
                     let mut changes = Vec::new();
                     for entry in &session.entries {
                         match old_entries.get(entry.id.0.as_str()) {
-                            Some(old) if **old == *entry => {}
+                            Some(old) if **old == *entry && !owner_moved => {}
                             Some(_) => changes.push(EntryChange::Replace(entry.clone())),
                             None => changes.push(EntryChange::Add(entry.clone())),
                         }
