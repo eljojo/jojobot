@@ -57,7 +57,8 @@ impl Jojobot {
                        own ceiling: have a different identity merge it, or take the key off the \
                        duplicate first with update_fact and clear_fields. THE DUPLICATE'S \
                        THOUGHTS BECOME THE SURVIVOR'S, so a merge that would leave a room over \
-                       its capacity, or bring a thought over its body cap, is refused with \
+                       its capacity (every active thought counts, none ages out), or bring a \
+                       thought over its body cap, is refused with \
                        nothing moved: archive thoughts, or shorten the one named, with \
                        update_fact, then merge again. Naming one handle as \
                        both sides comes back status: blocked. So does naming a handle that was already merged away, on \
