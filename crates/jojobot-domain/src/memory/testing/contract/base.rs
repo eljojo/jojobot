@@ -11467,6 +11467,77 @@ pub async fn a_rhythm_holding_a_cadence_and_no_advances_from_is_refused<M: Memor
     );
 }
 
+/// **A snooze day holds a loop back only while the last check-in was the snooze
+/// that named it, and it stays in the record after — in either store.**
+///
+/// A ran or skipped check-in ends a snooze by changing the outcome. No write
+/// can take the key off a loop, and the real store refuses a blank on a key its
+/// kind declares a date, so the day is left where it was and read through the
+/// outcome. A store that dropped the key, or refused the write that follows a
+/// snooze, would break that and nothing above it could tell.
+///
+/// **The held day rides in the same case**, so a store that ignored the key
+/// would pass the second half alone.
+pub async fn a_snooze_day_holds_the_loop_back_only_while_the_snooze_is_the_last_check_in<
+    M: Memory,
+>(
+    store: &M,
+) {
+    use crate::attention::{Carrier, Due, Rhythms};
+    let swim = EntityId("rhythm:swim".into());
+    ensure(store, &swim).await;
+    let write = |fields: &[(&str, &str)], when: Date| {
+        capture(
+            store,
+            NewFact {
+                fields: fields
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .collect(),
+                ..NewFact::about(swim.clone(), "swim at the pool", when)
+            },
+        )
+    };
+    write(
+        &[
+            ("cadence_days", "7"),
+            ("advances_from", "check_in_date"),
+            ("counts_from", "2026-08-01"),
+            ("outcome", "snoozed"),
+            ("snoozed_until", "2026-08-20"),
+        ],
+        date(2026, 8, 10),
+    )
+    .await;
+    let held = store.fields(&swim).await.expect("the fold reads");
+    assert_eq!(
+        held.get("snoozed_until").map(String::as_str),
+        Some("2026-08-20"),
+        "the day is held: {held:?}"
+    );
+    assert_eq!(Rhythms.due(&held), Due::On(date(2026, 8, 20)));
+
+    // Back early, and it runs: the loop's own next day, the 18th, is before the
+    // day the snooze named, so a store that went on counting the day would
+    // answer the 20th.
+    write(
+        &[("outcome", "ran"), ("counts_from", "2026-08-11")],
+        date(2026, 8, 11),
+    )
+    .await;
+    let ended = store.fields(&swim).await.expect("the fold reads");
+    assert_eq!(
+        ended.get("snoozed_until").map(String::as_str),
+        Some("2026-08-20"),
+        "the old day stays in the fold as history: {ended:?}"
+    );
+    assert_eq!(
+        Rhythms.due(&ended),
+        Due::On(date(2026, 8, 18)),
+        "the last check-in was a run, so nothing is held back"
+    );
+}
+
 /// **A kind the software starts shipping lands on a caller's own type of that
 /// name without stopping the boot, and what the caller declared is
 /// remembered.** The seed runs on every start, and a refusal here leaves the
@@ -12666,6 +12737,7 @@ pub async fn run_all<M: Memory>(store: &M) {
     a_rhythm_holding_a_cadence_and_no_advances_from_is_refused(store).await;
     a_promise_is_refused_without_a_parent_and_keeps_its_day(store).await;
     a_kind_the_software_ships_lands_on_a_callers_type_of_that_name(store).await;
+    a_snooze_day_holds_the_loop_back_only_while_the_snooze_is_the_last_check_in(store).await;
     a_bots_own_boot_seats_are_not_its_own_to_set(store).await;
     a_thing_reads_back_as_its_fields_folded(store).await;
     the_newest_write_wins_however_old_the_record_it_landed_in(store).await;

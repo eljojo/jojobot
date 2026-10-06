@@ -65,10 +65,13 @@ pub const COUNTS_FROM: &str = "counts_from";
 /// falls due on the later of this day and its own due day, so a snooze never
 /// brings a loop forward.
 ///
-/// It is written by a snooze check-in and spent by the next `ran` or `skipped`
-/// one. It does not move [`COUNTS_FROM`]: the cycle is still not consumed, so a
-/// run after the snooze counts from where the loop was, and the snooze day
-/// affects nothing past the day it names.
+/// It is written by a snooze check-in, and **it counts only while the loop's
+/// last check-in was a snooze** ([`OUTCOME`] is `snoozed`): the next `ran` or
+/// `skipped` check-in changes the outcome, which ends the snooze with no write.
+/// The old day stays in the record as history. A capture cannot take a key off
+/// a loop, and a kind's date key refuses a blank value, so no write could
+/// clear it. It does not move [`COUNTS_FROM`]: the cycle is still not consumed,
+/// so a run after the snooze counts from where the loop was.
 pub const SNOOZED_UNTIL: &str = "snoozed_until";
 
 /// **The day of the last check-in** — what *when did I last do this* reads,
@@ -309,8 +312,8 @@ impl Schedule {
 
     /// **The schedule this rhythm has after a check-in on `on`.**
     ///
-    /// A consuming outcome moves the date the cycle counts from and spends a
-    /// snooze day; a snooze returns the schedule unchanged, which is what makes
+    /// A consuming outcome moves the date the cycle counts from and ends any
+    /// snooze; a snooze returns the schedule unchanged, which is what makes
     /// the rhythm come back at its own date rather than a cadence later.
     pub fn after(&self, outcome: Outcome, on: Date) -> Schedule {
         if !outcome.consumes_the_cycle() {
@@ -344,11 +347,17 @@ pub fn schedule_of(fields: &BTreeMap<String, String>) -> Result<Schedule, NotSch
         AdvancesFrom::of_token,
     )?;
     let counts_from = read(fields, COUNTS_FROM, &[], |held| held.parse::<Date>().ok())?;
-    // **Optional, unlike the three above**: most loops are not snoozed. A blank
-    // value is a key nobody wrote, and a value that is not a date is loud.
+    // **Optional, unlike the three above**: most loops are not snoozed. The day
+    // counts only while the last check-in was the snooze that named it, so a
+    // day left from an earlier snooze is not read at all, and one that is not
+    // a date is loud only while it would hold the loop back.
+    let snoozed = fields
+        .get(OUTCOME)
+        .is_some_and(|held| Outcome::of_token(held) == Some(Outcome::Snoozed));
     let snoozed_until = match read(fields, SNOOZED_UNTIL, &[], |held| held.parse::<Date>().ok()) {
-        Ok(day) => Some(day),
-        Err(why) if why.held.is_none() => None,
+        Ok(day) if snoozed => Some(day),
+        Ok(_) => None,
+        Err(why) if why.held.is_none() || !snoozed => None,
         Err(why) => return Err(why),
     };
     Ok(Schedule {
@@ -895,7 +904,7 @@ impl std::fmt::Display for SnoozeDayRefused {
             SnoozeDayRefused::NotASnooze => write!(
                 f,
                 "'{SNOOZED_UNTIL}' belongs to a snoozed check-in, and this check-in consumes the \
-                 cycle, which spends any snooze day the loop holds. Send this check-in without \
+                 cycle, which ends any snooze the loop is under. Send this check-in without \
                  that key, or send 'snoozed' as the outcome"
             ),
         }
@@ -964,14 +973,14 @@ pub fn check_in(
             // unchanged value would be indistinguishable in the fold from a
             // cycle that advanced onto the same day, and it would put a write
             // in the key's history that nothing did.
-            if moved.counts_from != schedule.counts_from {
+            // **A consuming check-in spends a live snooze day**, and the outcome
+            // it writes is what does it. The stored due moment is recomputed
+            // only by a write naming a key the loop carrier watches, which
+            // `outcome` is not, so the basis is written even when it did not
+            // move: a day held back by a snooze must come off the due moment.
+            let spends_a_snooze = schedule.snoozed_until.is_some() && moved.snoozed_until.is_none();
+            if moved.counts_from != schedule.counts_from || spends_a_snooze {
                 written.insert(COUNTS_FROM.to_string(), moved.counts_from.to_string());
-            }
-            // **A consuming check-in spends a snooze day by writing the key
-            // blank**, which every reader takes as a key nobody wrote. Only a
-            // loop that holds one gains the write.
-            if schedule.snoozed_until.is_some() && moved.snoozed_until.is_none() {
-                written.insert(SNOOZED_UNTIL.to_string(), String::new());
             }
         }
         Err(why) if opens_the_loop(&why, outcome) => {
@@ -1092,9 +1101,11 @@ mod tests {
         );
     }
 
-    /// A weekly rhythm counting from the 1st, snoozed until `until`.
+    /// A weekly rhythm counting from the 1st, whose last check-in was a snooze
+    /// until `until`.
     fn snoozed_until(until: &str) -> BTreeMap<String, String> {
         let mut fields = weekly(date(2026, 8, 1), AdvancesFrom::CheckInDate);
+        fields.insert(OUTCOME.to_string(), Outcome::Snoozed.as_token().to_string());
         fields.insert(SNOOZED_UNTIL.to_string(), until.to_string());
         fields
     }
@@ -1123,12 +1134,12 @@ mod tests {
         assert_eq!(Rhythms.due(&earlier), Due::On(date(2026, 8, 8)));
     }
 
-    /// **A snooze day that is blank is no snooze.** The key is spent by writing
-    /// it empty, and the reader treats a blank value as a key nobody wrote.
+    /// **A snooze day that is blank is no snooze.** The reader treats a blank
+    /// value as a key nobody wrote.
     #[test]
     fn a_blank_snooze_day_is_no_snooze() {
-        let spent = snoozed_until("  ");
-        assert_eq!(Rhythms.due(&spent), Due::On(date(2026, 8, 8)));
+        let blank = snoozed_until("  ");
+        assert_eq!(Rhythms.due(&blank), Due::On(date(2026, 8, 8)));
     }
 
     /// **A snooze day that does not read as a date is loud**, as every unread
@@ -1237,20 +1248,18 @@ mod tests {
         }
     }
 
-    /// **The next ran or skipped check-in spends the snooze day**: it writes
-    /// the key blank, and the loop is back on its own cadence. A loop that was
-    /// never snoozed gains no key, and a snooze writes no key of its own — the
-    /// day it was sent with is the record's.
+    /// **The next ran or skipped check-in ends the snooze, and no write takes
+    /// the day off.** The outcome it writes is what ends it, so the loop is back
+    /// on its own cadence while the old day stays in the record.
     #[test]
-    fn a_ran_or_skipped_check_in_spends_the_snooze_day() {
+    fn a_ran_or_skipped_check_in_ends_the_snooze() {
         let held = snoozed_until("2026-08-20");
         for outcome in [Outcome::Ran, Outcome::Skipped] {
             let written = check_in(&held, outcome, date(2026, 8, 21))
                 .expect("a whole schedule takes a check-in");
-            assert_eq!(
-                written.get(SNOOZED_UNTIL).map(String::as_str),
-                Some(""),
-                "{outcome:?} spends it"
+            assert!(
+                !written.contains_key(SNOOZED_UNTIL),
+                "{outcome:?} writes no snooze key, since no write can clear one: {written:?}"
             );
             let mut after = held.clone();
             after.extend(written);
@@ -1261,18 +1270,59 @@ mod tests {
             );
         }
 
+        // **The stored due moment is recomputed by a write naming a key the
+        // loop carrier watches**, and `outcome` is not one. A run on the day the
+        // cycle already counts from moves nothing, yet it must still reach the
+        // mover, or the due moment keeps the snooze day.
+        let same_day = check_in(&held, Outcome::Ran, date(2026, 8, 1))
+            .expect("a whole schedule takes a check-in");
+        assert_eq!(
+            same_day.get(COUNTS_FROM).map(String::as_str),
+            Some("2026-08-01"),
+            "{same_day:?}"
+        );
         let never = weekly(date(2026, 8, 1), AdvancesFrom::CheckInDate);
-        let written = check_in(&never, Outcome::Ran, date(2026, 8, 10))
+        let written = check_in(&never, Outcome::Ran, date(2026, 8, 1))
             .expect("a whole schedule takes a check-in");
         assert!(
-            !written.contains_key(SNOOZED_UNTIL),
-            "a loop never snoozed gains no key: {written:?}"
+            !written.contains_key(COUNTS_FROM),
+            "a loop that held no snooze day writes nothing it did not move: {written:?}"
         );
         let written = check_in(&held, Outcome::Snoozed, date(2026, 8, 12))
             .expect("a whole schedule takes a check-in");
         assert!(
             !written.contains_key(SNOOZED_UNTIL),
             "a snooze's own day is sent by the caller, not written here: {written:?}"
+        );
+    }
+
+    /// **A snooze day counts only while the last check-in was the snooze that
+    /// named it.** Held beside any other outcome, or none, it holds nothing
+    /// back, and a day that is not a date is ignored there rather than loud.
+    #[test]
+    fn a_snooze_day_counts_only_while_the_last_check_in_was_a_snooze() {
+        for day in ["2026-08-20", "after lunch"] {
+            for outcome in [Some(Outcome::Ran), Some(Outcome::Skipped), None] {
+                let mut fields = snoozed_until(day);
+                match outcome {
+                    Some(outcome) => {
+                        fields.insert(OUTCOME.to_string(), outcome.as_token().to_string());
+                    }
+                    None => {
+                        fields.remove(OUTCOME);
+                    }
+                }
+                assert_eq!(
+                    Rhythms.due(&fields),
+                    Due::On(date(2026, 8, 8)),
+                    "{day:?} beside {outcome:?}"
+                );
+            }
+        }
+        assert_eq!(
+            Rhythms.due(&snoozed_until("2026-08-20")),
+            Due::On(date(2026, 8, 20)),
+            "the positive: beside a snooze it holds the loop back"
         );
     }
 

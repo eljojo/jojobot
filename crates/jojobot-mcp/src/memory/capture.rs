@@ -174,7 +174,7 @@ pub struct CaptureArgs {
     /// acted on again; it falls due on the later of that day and its own. A
     /// snooze with no day, or a day that is not after `date`, comes back
     /// blocked and nothing is written. The next `ran` or `skipped` check-in
-    /// spends the day, so send `snoozed_until` with `snoozed` only.
+    /// ends the snooze, so send `snoozed_until` with `snoozed` only.
     ///
     /// **What the check MEASURED is yours to send** in `fields`: a reading, a
     /// distance, a count. A cadence is always time, so a measurement is a field

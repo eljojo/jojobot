@@ -436,10 +436,10 @@ fn a_snooze_until(day: Option<&str>, on: &str) -> CaptureArgs {
 
 /// **A snoozed loop is next due on the later of its own day and the snooze
 /// day, and the stored due moment says so.** The cycle is still not consumed,
-/// so `counts_from` stays where it was, and the next ran check-in spends the
-/// day and puts the loop back on its own cadence.
+/// so `counts_from` stays where it was, and the next ran check-in ends the
+/// snooze and puts the loop back on its own cadence.
 #[tokio::test]
-async fn a_snooze_holds_the_loop_back_until_its_day_and_a_run_spends_it() {
+async fn a_snooze_holds_the_loop_back_until_its_day_and_a_run_ends_it() {
     let jojobot = handler();
     a_weekly_rhythm(&jojobot, "descale", "2026-08-01", "check_in_date").await;
 
@@ -453,13 +453,15 @@ async fn a_snooze_holds_the_loop_back_until_its_day_and_a_run_spends_it() {
         "the later of its own day, the 8th, and the snooze day: {held}"
     );
 
-    // Back on the 21st, and it runs: the day is spent and the cadence is the
-    // loop's own again.
+    // Back early, on the 12th, and it runs: the snooze is over and the cadence
+    // is the loop's own again. Its own next day, the 19th, is before the day
+    // the snooze named, so a loop that went on counting the day would say the
+    // 20th.
     capture_ok(
         &jojobot,
         CaptureArgs {
             check_in: Some("ran".into()),
-            recorded_at: Some("2026-08-21".into()),
+            recorded_at: Some("2026-08-12".into()),
             ..capture_args("rhythm:descale", "descaled it")
         },
     )
@@ -467,10 +469,10 @@ async fn a_snooze_holds_the_loop_back_until_its_day_and_a_run_spends_it() {
     let held = fields_of(&jojobot, "rhythm:descale").await;
     assert_eq!(held["outcome"], "ran", "{held}");
     assert_eq!(
-        held["snoozed_until"], "",
-        "a run spends the snooze day by writing it blank: {held}"
+        held["snoozed_until"], "2026-08-20",
+        "no write can take the key off, so the old day stays as history: {held}"
     );
-    assert_eq!(held["due_on"], "2026-08-28", "{held}");
+    assert_eq!(held["due_on"], "2026-08-19", "{held}");
 }
 
 /// **A snooze that names no usable day is refused with what to send, and
