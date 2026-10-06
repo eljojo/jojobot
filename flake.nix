@@ -103,7 +103,9 @@
           # as a clean one. `src` here is a Nix store path: it has no `.git`,
           # the same reason JOJOBOT_BUILD below falls back to "unknown"
           # instead of reading `self.rev`. That makes the check unrunnable in
-          # this checkPhase on every build, not occasionally broken.
+          # this checkPhase on every build, not occasionally broken. The two
+          # checks that read the commit range from the roster boundary to HEAD
+          # are the same kind, for the same reason.
           #
           # Both stay enforced by `make check`, which is where dev-time
           # tooling is actually exercised.
@@ -113,6 +115,8 @@
           ];
           checkFlags = [
             "--skip=no_unpushed_commit_message_writes_a_pronoun_for_the_operator"
+            "--skip=no_commit_message_since_the_boundary_quotes_an_off_roster_handle"
+            "--skip=the_handle_check_range_reaches_head"
           ];
           # What `ping` reports as the running build. This has to come from
           # here: the build sandbox has no `.git` — src is a store path — so
