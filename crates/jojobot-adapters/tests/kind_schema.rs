@@ -886,6 +886,7 @@ async fn the_rhythm_kind_owns_its_name_and_asks_for_two_keys() {
             ("cadence_days", false),
             ("advances_from", false),
             ("counts_from", false),
+            ("snoozed_until", false),
             ("outcome", false),
         ],
         "the required set is the name and the day somebody last looked: {held:?}",
