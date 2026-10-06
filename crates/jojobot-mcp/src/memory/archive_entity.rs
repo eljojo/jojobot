@@ -37,7 +37,11 @@ impl Jojobot {
                        should not have happened, somebody not relevant at all. It does not touch \
                        the entity's claims or edges, which stand exactly as recorded: archiving \
                        says the SUBJECT is out of scope, never that anything said about it was \
-                       wrong. Archiving something already archived comes back blocked, saying the \
+                       wrong. FOR A DUPLICATE THAT HOLDS CLAIMS THIS IS THE WRONG VERB: it leaves \
+                       the claims on a thing no default read shows, and merge_entities is the \
+                       verb that carries them to the thing it duplicates. AN ARCHIVED LOOP DROPS \
+                       OUT OF overdue READS, and the read counts it in archived_excluded. \
+                       Archiving something already archived comes back blocked, saying the \
                        entity is already in the state you asked for — that answer means jojobot \
                        holds what you wanted, not that nothing happened. A handle that names \
                        nothing comes back blocked with the nearest handles."

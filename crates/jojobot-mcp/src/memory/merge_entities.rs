@@ -47,7 +47,9 @@ impl Jojobot {
                        everything. It simply stops being a thing of its own. USE IT WHEN TWO \
                        HANDLES ARE ONE THING. It does not ask whether they really are: that is your \
                        judgement, so putting two unrelated things together is allowed and is \
-                       recorded exactly as legibly. There is no way back, so if you are unsure, \
+                       recorded exactly as legibly. WHAT DOES NOT MOVE: the duplicate's prose and \
+                       its aliases stay with the handle that forwards, and the survivor does not \
+                       gain them. There is no way back, so if you are unsure, \
                        read both with recall first. ⚠️ THE CLAIMS THAT MOVE GET NEW ADDRESSES, \
                        because an address is local to the thing that holds it — any address you \
                        were holding for the duplicate's claims is stale afterwards, and the \

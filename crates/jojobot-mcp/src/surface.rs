@@ -611,6 +611,34 @@ fn the_merge_description_names_its_ceiling_refusal() {
     );
 }
 
+/// **`archive_entity` says what it is not, and what it does to an owed read.**
+///
+/// A model that finds a duplicate reaches for the verb whose description says
+/// "a mistaken write", and archiving leaves the duplicate's claims where they
+/// are. The description names the verb that carries them, and says an archived
+/// loop leaves the owed read, which `an_archived_loop_drops_out_of_the_owed_read_and_is_counted`
+/// holds.
+#[test]
+fn the_archive_description_names_the_duplicate_repair_and_the_owed_read() {
+    assert_description_names("archive_entity", &["merge_entities", "overdue"]);
+}
+
+/// **`merge_entities` says what a merge does not move.**
+#[test]
+fn the_merge_description_names_what_stays_behind() {
+    assert_description_names("merge_entities", &["prose", "aliases"]);
+}
+
+/// **`update_fact` says a claim cannot change subject, and how to move one,
+/// and that moving a value to another key is one call.**
+#[test]
+fn the_update_fact_description_names_the_moves_it_cannot_make_in_place() {
+    assert_description_names(
+        "update_fact",
+        &["`derived_from`", "`fields`", "`clear_fields`"],
+    );
+}
+
 /// **`list_runs` points at the read that returns a run's chronology.**
 #[test]
 fn the_list_runs_description_points_at_recall_for_a_chronology() {

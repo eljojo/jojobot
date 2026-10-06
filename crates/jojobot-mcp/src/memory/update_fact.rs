@@ -239,7 +239,11 @@ impl Jojobot {
                        different edits and a caller means one of them. A field you set that \
                        equals what jojobot ships as its default today is stored exactly as you \
                        sent it either way, and the receipt's echoes_defaults names which key that \
-                       was. AND IT REACHES THE \
+                       was. TO MOVE A VALUE TO ANOTHER KEY, send `fields` with the new key and \
+                       `clear_fields` with the old one in the same call. A CLAIM CANNOT CHANGE \
+                       SUBJECT: to move one filed on the wrong thing, capture it on the right \
+                       one, re-sending its dates, fields and edge, with `derived_from` naming \
+                       this claim, then archive this one. AND IT REACHES THE \
                        EDGE BOTH WAYS: shape with object draws or replaces one, and clear_edge \
                        takes it off. Reach for clear_edge when the rewrite turns a claim about \
                        what is true NOW into its current negative — was a member and is not any \

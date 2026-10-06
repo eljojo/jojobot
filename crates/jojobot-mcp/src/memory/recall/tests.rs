@@ -1,6 +1,7 @@
 use super::*;
 use crate::harness::*;
 use crate::memory::RenameEntityArgs;
+use crate::memory::archive_entity::ArchiveEntityArgs;
 use crate::memory::testing::*;
 use crate::session::testing::journal_entry;
 use jojobot_domain::mailbox::testing::InMemoryMailboxes;
@@ -5259,5 +5260,185 @@ async fn a_room_nothing_has_aged_out_of_carries_no_room_block() {
     assert!(
         object.get("room").is_none(),
         "nothing has aged out, so no room block is sent: {object}"
+    );
+}
+
+/// 🚨 **An archived loop drops out of the owed read, and the read counts it.**
+///
+/// `archive_entity`'s description says so, so this holds it. Two loops fall
+/// due on the day asked about; one is archived through the verb a caller
+/// uses. The other stays in the answer, so an answer that lost everything
+/// cannot pass, and the one that left is counted rather than silently gone.
+#[tokio::test]
+async fn an_archived_loop_drops_out_of_the_owed_read_and_is_counted() {
+    let jojobot = handler();
+    let sid = writing_as(&jojobot);
+    a_rhythm(&jojobot, "descale", "7", "2026-08-01").await;
+    a_rhythm(&jojobot, "polish", "7", "2026-08-01").await;
+    async fn owed(jojobot: &Jojobot) -> serde_json::Value {
+        json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    kind: Some("rhythm".into()),
+                    overdue: Some(OverdueArgs {
+                        as_of: Some("2026-08-20".into()),
+                    }),
+                    ..of_nothing()
+                }))
+                .await
+                .expect("recall ok"),
+        )
+    }
+
+    let before = owed(&jojobot).await;
+    assert_eq!(
+        handles(&before).len(),
+        2,
+        "both loops fell due before the day asked about: {before}",
+    );
+
+    jojobot
+        .archive_entity(Parameters(ArchiveEntityArgs {
+            handle: "rhythm:polish".into(),
+            reason: "no longer kept".into(),
+            sid: Some(sid),
+        }))
+        .await
+        .expect("archive_entity ok");
+
+    let after = owed(&jojobot).await;
+    assert_eq!(
+        handles(&after),
+        vec!["rhythm:descale".to_string()],
+        "the archived loop is still owed, or the live one went with it: {after}",
+    );
+    assert_eq!(
+        after["archived_excluded"], 1,
+        "the archived loop left the answer without being counted: {after}",
+    );
+}
+
+/// 🚨 **A merge leaves the duplicate's prose and aliases on the row that
+/// forwards.**
+///
+/// `merge_entities`' description says so, so this holds it. Paired with the
+/// positive that the survivor keeps what it had: an answer that lost both
+/// would read as "nothing moved" for a reason that has nothing to do with the
+/// claim.
+#[tokio::test]
+async fn a_merge_leaves_the_duplicates_prose_and_aliases_behind() {
+    use crate::memory::merge_entities::MergeArgs;
+    let jojobot = handler();
+    let sid = writing_as(&jojobot);
+    for (handle, name, alias) in [
+        ("moes-tavern", "Moes Tavern", "The Tavern"),
+        ("ocean-avenue", "Evergreen Bar", "The Bar"),
+    ] {
+        jojobot
+            .add_entity(Parameters(AddEntityArgs {
+                aliases: Some(vec![alias.into()]),
+                sid: Some(sid.clone()),
+                ..add_args("place", handle, name)
+            }))
+            .await
+            .expect("add ok");
+    }
+    for (handle, prose) in [
+        ("place:moes-tavern", "The survivor's own page."),
+        ("place:ocean-avenue", "The duplicate's page."),
+    ] {
+        jojobot
+            .memory
+            .set_prose(&EntityId(handle.into()), prose)
+            .await
+            .expect("set_prose ok");
+    }
+    jojobot
+        .merge_entities(Parameters(MergeArgs {
+            duplicate: "place:ocean-avenue".into(),
+            survivor: "place:moes-tavern".into(),
+            reason: None,
+            recorded_at: None,
+            sid: Some(sid),
+        }))
+        .await
+        .expect("merge ok");
+
+    let survivor = json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                subject: Some("place:moes-tavern".into()),
+                prose: Some(true),
+                ..of_nothing()
+            }))
+            .await
+            .expect("recall ok"),
+    )["objects"][0]
+        .clone();
+    let said = survivor.to_string();
+    assert!(
+        said.contains("The survivor's own page.") && said.contains("The Tavern"),
+        "the survivor lost what it had: {survivor}",
+    );
+    assert!(
+        !said.contains("The duplicate's page.") && !said.contains("The Bar"),
+        "the duplicate's prose or alias moved, so the description is wrong: {survivor}",
+    );
+}
+
+/// 🚨 **Moving a value to another key is one call.**
+///
+/// `update_fact`'s description says to send `fields` with the new key and
+/// `clear_fields` with the old one together. The key the value left is gone
+/// from what the thing holds, and the key it arrived on holds it: both halves
+/// in one read, so a call that did only one of them cannot pass.
+#[tokio::test]
+async fn one_update_moves_a_value_from_one_key_to_another() {
+    let jojobot = handler();
+    ensure(&jojobot, "thing:floor-pump").await;
+    let wrote = capture_ok(
+        &jojobot,
+        CaptureArgs {
+            fields: Some(
+                [("needed_by".to_string(), "2026-11-03".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+            ..capture_args("thing:floor-pump", "on loan")
+        },
+    )
+    .await;
+    let address = wrote["address"].as_str().expect("an address").to_string();
+
+    jojobot
+        .update_fact(Parameters(UpdateFactArgs {
+            fields: Some(
+                [("runs_out".to_string(), "2026-11-03".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+            clear_fields: Some(vec!["needed_by".into()]),
+            ..update_args(&address)
+        }))
+        .await
+        .expect("update ok");
+
+    let held = json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                subject: Some("thing:floor-pump".into()),
+                ..of_nothing()
+            }))
+            .await
+            .expect("recall ok"),
+    )["objects"][0]["fields"]
+        .clone();
+    assert_eq!(
+        held["runs_out"], "2026-11-03",
+        "the new key lacks the value: {held}"
+    );
+    assert!(
+        held.get("needed_by").is_none(),
+        "the old key still holds the value: {held}",
     );
 }
