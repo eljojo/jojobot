@@ -80,12 +80,19 @@ impl Jojobot {
             return Ok(refused);
         }
         let id = MessageId(args.message_id.trim().to_string());
-        // Blank-is-absent, the same rule `notes` reads by.
-        let quarantine_reason = args
-            .quarantine
-            .as_deref()
-            .map(str::trim)
-            .filter(|r| !r.is_empty());
+        // **A blank reason is refused, never read as absent.** `notes` may be
+        // blank-is-absent because leaving it off retires the message anyway.
+        // A quarantine is a decision that needs its reason: reading a blank one
+        // as "no quarantine" retired a message nobody had handled, with
+        // whatever `notes` rode along.
+        let quarantine_reason = args.quarantine.as_deref().map(str::trim);
+        if quarantine_reason.is_some_and(str::is_empty) {
+            return Ok(misused(
+                "Nothing was written: `quarantine` was sent blank, and a quarantine records a \
+                 decision, so it needs the reason. Send the reason in `quarantine`, or leave \
+                 `quarantine` off to retire the message with `notes` instead.",
+            ));
+        }
         if let Some(reason) = quarantine_reason {
             let mine = match self.my_box(args.sid.as_deref()).await {
                 Ok(mine) => mine,

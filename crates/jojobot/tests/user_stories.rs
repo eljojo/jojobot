@@ -84,6 +84,8 @@ mod pets;
 /// A server acting out a day, and the day it fills in when nobody types one.
 #[path = "user_stories/pretending.rs"]
 mod pretending;
+#[path = "user_stories/quarantining.rs"]
+mod quarantining;
 #[path = "user_stories/receipts.rs"]
 mod receipts;
 #[path = "user_stories/rhythms.rs"]
