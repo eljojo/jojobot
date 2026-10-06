@@ -852,6 +852,84 @@ fn opens_the_loop(why: &NotSchedulable, outcome: Outcome) -> bool {
     why.key == COUNTS_FROM && why.held.is_none() && outcome.consumes_the_cycle()
 }
 
+/// **Why a snooze check-in was refused over its day**, and each carries the way
+/// forward in its sentence. A snooze with no day is a promise to come back that
+/// nothing can keep, so the day is never defaulted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SnoozeDayRefused {
+    /// A snooze that names no day, or a blank one.
+    Missing,
+    /// A day that does not read as `YYYY-MM-DD`.
+    Unreadable(String),
+    /// A day that is not after the day of the check-in itself.
+    NotAfter {
+        /// The day sent.
+        day: Date,
+        /// The day of the check-in.
+        on: Date,
+    },
+    /// A snooze day sent with a `ran` or `skipped` check-in.
+    NotASnooze,
+}
+
+impl std::fmt::Display for SnoozeDayRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SnoozeDayRefused::Missing => write!(
+                f,
+                "a snooze names the day it lasts until, and this one names none. Send the check-in \
+                 again with '{SNOOZED_UNTIL}' in fields, as a day after this check-in's own, \
+                 YYYY-MM-DD"
+            ),
+            SnoozeDayRefused::Unreadable(held) => write!(
+                f,
+                "'{SNOOZED_UNTIL}' holds '{held}', which is not a day. Send it as YYYY-MM-DD, a \
+                 day after this check-in's own"
+            ),
+            SnoozeDayRefused::NotAfter { day, on } => write!(
+                f,
+                "'{SNOOZED_UNTIL}' is {day}, and a snooze lasts until a day after the \
+                 check-in's own, which is {on}. Send a later day, or check in with 'ran' or \
+                 'skipped' if the loop is not being put off"
+            ),
+            SnoozeDayRefused::NotASnooze => write!(
+                f,
+                "'{SNOOZED_UNTIL}' belongs to a snoozed check-in, and this check-in consumes the \
+                 cycle, which spends any snooze day the loop holds. Send this check-in without \
+                 that key, or send 'snoozed' as the outcome"
+            ),
+        }
+    }
+}
+
+/// **The day a check-in's snooze lasts until, read from what the caller
+/// sent**, or the reason it cannot be.
+///
+/// `sent` is the caller's own value and never the folded one: a day held from
+/// an earlier snooze must not satisfy a snooze that names none. `Ok(None)` is a
+/// consuming check-in that sent no day, which is the ordinary case.
+pub fn snooze_day_of(
+    outcome: Outcome,
+    sent: Option<&str>,
+    on: Date,
+) -> Result<Option<Date>, SnoozeDayRefused> {
+    let sent = sent.map(str::trim).filter(|held| !held.is_empty());
+    if outcome.consumes_the_cycle() {
+        return match sent {
+            None => Ok(None),
+            Some(_) => Err(SnoozeDayRefused::NotASnooze),
+        };
+    }
+    let held = sent.ok_or(SnoozeDayRefused::Missing)?;
+    let day: Date = held
+        .parse()
+        .map_err(|_| SnoozeDayRefused::Unreadable(held.to_string()))?;
+    if day <= on {
+        return Err(SnoozeDayRefused::NotAfter { day, on });
+    }
+    Ok(Some(day))
+}
+
 /// **What a check-in writes**, given what the rhythm holds now.
 ///
 /// The caller supplies the outcome and the day; everything else is arithmetic
@@ -888,6 +966,12 @@ pub fn check_in(
             // in the key's history that nothing did.
             if moved.counts_from != schedule.counts_from {
                 written.insert(COUNTS_FROM.to_string(), moved.counts_from.to_string());
+            }
+            // **A consuming check-in spends a snooze day by writing the key
+            // blank**, which every reader takes as a key nobody wrote. Only a
+            // loop that holds one gains the write.
+            if schedule.snoozed_until.is_some() && moved.snoozed_until.is_none() {
+                written.insert(SNOOZED_UNTIL.to_string(), String::new());
             }
         }
         Err(why) if opens_the_loop(&why, outcome) => {
@@ -1095,6 +1179,100 @@ mod tests {
                 .any(|field| field.key == SNOOZED_UNTIL),
             "a write naming only the snooze day has to reach the mover, which asks the \
              interface: {before:?}"
+        );
+    }
+
+    /// **A snooze names its day, and the day has to be after the check-in's
+    /// own.** Every way of not doing so is its own refusal, and the one good
+    /// case rides beside them, or a build that refused every snooze would pass.
+    #[test]
+    fn a_snooze_must_name_a_day_after_its_own() {
+        let on = date(2026, 8, 10);
+        assert_eq!(
+            snooze_day_of(Outcome::Snoozed, Some("2026-08-20"), on),
+            Ok(Some(date(2026, 8, 20)))
+        );
+        assert_eq!(
+            snooze_day_of(Outcome::Snoozed, None, on),
+            Err(SnoozeDayRefused::Missing)
+        );
+        assert_eq!(
+            snooze_day_of(Outcome::Snoozed, Some("  "), on),
+            Err(SnoozeDayRefused::Missing),
+            "a blank day is no day"
+        );
+        assert_eq!(
+            snooze_day_of(Outcome::Snoozed, Some("next week"), on),
+            Err(SnoozeDayRefused::Unreadable("next week".to_string()))
+        );
+        assert_eq!(
+            snooze_day_of(Outcome::Snoozed, Some("2026-08-10"), on),
+            Err(SnoozeDayRefused::NotAfter {
+                day: date(2026, 8, 10),
+                on
+            }),
+            "the day of the check-in itself is not after it"
+        );
+        assert_eq!(
+            snooze_day_of(Outcome::Snoozed, Some("2026-08-01"), on),
+            Err(SnoozeDayRefused::NotAfter {
+                day: date(2026, 8, 1),
+                on
+            })
+        );
+    }
+
+    /// **Only a snooze carries a snooze day.** A ran or skipped check-in that
+    /// sends one has said two things about one schedule.
+    #[test]
+    fn a_consuming_check_in_refuses_a_snooze_day() {
+        let on = date(2026, 8, 10);
+        for outcome in [Outcome::Ran, Outcome::Skipped] {
+            assert_eq!(
+                snooze_day_of(outcome, Some("2026-08-20"), on),
+                Err(SnoozeDayRefused::NotASnooze),
+                "{outcome:?} consumes the cycle"
+            );
+            assert_eq!(snooze_day_of(outcome, None, on), Ok(None));
+        }
+    }
+
+    /// **The next ran or skipped check-in spends the snooze day**: it writes
+    /// the key blank, and the loop is back on its own cadence. A loop that was
+    /// never snoozed gains no key, and a snooze writes no key of its own — the
+    /// day it was sent with is the record's.
+    #[test]
+    fn a_ran_or_skipped_check_in_spends_the_snooze_day() {
+        let held = snoozed_until("2026-08-20");
+        for outcome in [Outcome::Ran, Outcome::Skipped] {
+            let written = check_in(&held, outcome, date(2026, 8, 21))
+                .expect("a whole schedule takes a check-in");
+            assert_eq!(
+                written.get(SNOOZED_UNTIL).map(String::as_str),
+                Some(""),
+                "{outcome:?} spends it"
+            );
+            let mut after = held.clone();
+            after.extend(written);
+            assert_eq!(
+                Rhythms.due(&after),
+                Due::On(date(2026, 8, 28)),
+                "back on its own cadence, a week from the check-in"
+            );
+        }
+
+        let never = weekly(date(2026, 8, 1), AdvancesFrom::CheckInDate);
+        let written = check_in(&never, Outcome::Ran, date(2026, 8, 10))
+            .expect("a whole schedule takes a check-in");
+        assert!(
+            !written.contains_key(SNOOZED_UNTIL),
+            "a loop never snoozed gains no key: {written:?}"
+        );
+        let written = check_in(&held, Outcome::Snoozed, date(2026, 8, 12))
+            .expect("a whole schedule takes a check-in");
+        assert!(
+            !written.contains_key(SNOOZED_UNTIL),
+            "a snooze's own day is sent by the caller, not written here: {written:?}"
         );
     }
 
