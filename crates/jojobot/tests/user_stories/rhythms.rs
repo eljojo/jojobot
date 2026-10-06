@@ -147,19 +147,20 @@ async fn which_of_the_loops_have_gone_quiet() {
     .says("\"fields_count\":4");
 
     // The worming is not happening this week and it is not being written off:
-    // a snooze consumes nothing, so it comes back at its own date.
+    // a snooze consumes nothing, and it names the day the loop comes back.
     s.call(
         "capture",
         json!({
             "subject": "rhythm:worming", "content": "no tablets in the house",
             "provenance": "testimony", "recorded_at": "2026-07-05", "check_in": "snoozed",
+            "fields": { "snoozed_until": "2026-07-10" },
         }),
     )
     .await
-    // TWO keys, not three. A snooze records that it was looked at and moves no
-    // date, so there is no write of the schedule at all — which is the same
-    // fact the read below states as an answer.
-    .says("\"fields_count\":2");
+    // FOUR keys: the outcome, the day, the day it was sent with, and the due
+    // moment that day now moves. No date the schedule counts from is written,
+    // because a snooze consumes nothing.
+    .says("\"fields_count\":4");
 
     // ── the same question, a day later ──────────────────────────────────────
     let after = s
@@ -168,11 +169,19 @@ async fn which_of_the_loops_have_gone_quiet() {
             json!({ "kind": "rhythm", "overdue": { "as_of": "2026-07-06" } }),
         )
         .await;
-    // The review is closed and gone from the answer…
+    // The review is closed and gone from the answer, and the worming is held
+    // back until the day its snooze named: it was not closed, only put off.
     after.never_says("rhythm:weekly-review");
-    // …and the worming is still here, which is the difference between the two
-    // outcomes stated as an answer rather than as a field.
-    after.says("rhythm:worming");
+    after.never_says("rhythm:worming");
+
+    // On the day it named, the worming comes back and is owed again.
+    let back = s
+        .shape(
+            "and on the tenth",
+            json!({ "kind": "rhythm", "overdue": { "as_of": "2026-07-10" } }),
+        )
+        .await;
+    back.says("rhythm:worming");
 
     s.wrap("two loops closed, and they closed differently")
         .await;
@@ -277,6 +286,128 @@ async fn which_of_the_loops_have_gone_quiet() {
         .says("rhythm:worming");
 
     s.wrap("a skip and a run, and only the record tells them apart")
+        .await;
+    story.finish().await;
+}
+
+/// **A snoozed loop comes back on the day it was put off to, and a run puts it
+/// back on its own cadence.**
+///
+/// Two weekly loops in one store, both due on the eighth of August. One is
+/// snoozed on the tenth until the twentieth; the other is never touched. The
+/// question is asked the day before the snooze ends and on the day itself, and
+/// the loop nobody snoozed is the control: an answer that dropped everything,
+/// or kept everything, would read exactly like a wrong one.
+///
+/// A snooze names its day. One that names none is turned back with what to
+/// send, and nothing is written.
+#[tokio::test]
+async fn a_snoozed_loop_comes_back_on_its_day_and_a_run_returns_it_to_its_cadence() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+
+    s.add("thing:kettle", "The Kettle").await;
+    s.add_under("thing:kettle", "rhythm:descale", "Descale")
+        .await;
+    s.add("thing:the-air-filter", "The Air Filter").await;
+    s.add_under(
+        "thing:the-air-filter",
+        "rhythm:swap-the-air-filter",
+        "Swap the air filter",
+    )
+    .await;
+    for (handle, what) in [
+        ("rhythm:descale", "descale the kettle every week"),
+        ("rhythm:swap-the-air-filter", "swap the filter every week"),
+    ] {
+        s.event_with(
+            handle,
+            what,
+            json!({
+                "cadence_days": "7",
+                "advances_from": "check_in_date",
+                "counts_from": "2026-08-01",
+            }),
+            &[],
+        )
+        .await;
+    }
+
+    // ── a snooze with no day is turned back ─────────────────────────────────
+    s.refused(
+        "capture",
+        json!({
+            "subject": "rhythm:descale", "content": "not now",
+            "provenance": "testimony", "recorded_at": "2026-08-10", "check_in": "snoozed",
+        }),
+    )
+    .await
+    .says("snoozed_until")
+    .says("\"wrote\":false");
+
+    // ── the same snooze, with the day it lasts until ────────────────────────
+    s.call(
+        "capture",
+        json!({
+            "subject": "rhythm:descale", "content": "away until the twentieth",
+            "provenance": "testimony", "recorded_at": "2026-08-10", "check_in": "snoozed",
+            "fields": { "snoozed_until": "2026-08-20" },
+        }),
+    )
+    .await;
+
+    // The day before: the snoozed loop is not owed though its own day passed
+    // twelve days ago, and the loop nobody snoozed is.
+    let before = s
+        .shape(
+            "on the nineteenth",
+            json!({ "kind": "rhythm", "overdue": { "as_of": "2026-08-19" } }),
+        )
+        .await;
+    before.says("rhythm:swap-the-air-filter");
+    before.never_says("rhythm:descale");
+
+    // The day itself: both.
+    let on = s
+        .shape(
+            "on the twentieth",
+            json!({ "kind": "rhythm", "overdue": { "as_of": "2026-08-20" } }),
+        )
+        .await;
+    on.says("rhythm:swap-the-air-filter");
+    on.says("rhythm:descale");
+
+    // ── back early, and it was done: its own cadence again ──────────────────
+    //
+    // The twelfth is before the day the snooze named. The loop's own next day
+    // is a week on, the nineteenth, and that is before the twentieth — so a
+    // loop that went on holding the snooze day would answer the twentieth.
+    s.call(
+        "capture",
+        json!({
+            "subject": "rhythm:descale", "content": "back early, descaled it",
+            "provenance": "testimony", "recorded_at": "2026-08-12", "check_in": "ran",
+        }),
+    )
+    .await;
+    let settled = s
+        .shape(
+            "on the eighteenth",
+            json!({ "kind": "rhythm", "overdue": { "as_of": "2026-08-18" } }),
+        )
+        .await;
+    settled.says("rhythm:swap-the-air-filter");
+    settled.never_says("rhythm:descale");
+    let due_again = s
+        .shape(
+            "on the nineteenth, after the run",
+            json!({ "kind": "rhythm", "overdue": { "as_of": "2026-08-19" } }),
+        )
+        .await;
+    due_again.says("rhythm:descale");
+    due_again.says("rhythm:swap-the-air-filter");
+
+    s.wrap("one loop put off and brought back, one never touched")
         .await;
     story.finish().await;
 }
