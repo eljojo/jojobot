@@ -11,8 +11,9 @@ The paid runs have made four mistakes, and each has a repair that already
 exists on the surface:
 
 * **A fact under the wrong key.** A deadline written under a key of the
-  model's own where the shipped `runs-out` type holds it. The repair is one
-  edit that sets one key and takes the other off.
+  model's own where a shipped type holds it: the `runs-out` type on the thing,
+  or a promise, which is the kind a commitment about a thing belongs to. The
+  repair is one edit that sets one key and takes the other off.
 * **A fact on the wrong subject.** The repair is a capture on the right
   subject and an archive of the old claim.
 * **A duplicate.** One place named twice, with a claim on each. The repair is
@@ -28,10 +29,11 @@ words.
 
 **Only the first mistake is the model's own.** The loan is filed by the model in
 the first sitting, in the operator's ordinary words, which is the wording that
-has tempted a key of the model's own. A run that files it under `runs_out` the
-first time **never made the mistake, and is not evidence about repair**. The
-call log says which: `adoption_rows` over a kept stream lists the keys the run
-wrote, and a loan under `runs_out` alone with nothing cleared is such a run.
+has tempted a key of the model's own. A run that files it under a key a shipped
+type holds the first time, `runs_out` or a promise's day, **never made the
+mistake, and is not evidence about repair**. The call log says which:
+`adoption_rows` over a kept stream lists the keys the run wrote, and a loan under
+one of those keys alone with nothing cleared is such a run.
 The second sitting then asks a question the invented key breaks, so a run that
 did err has to notice and repair for the lock to hold.
 
@@ -109,13 +111,16 @@ say     the loan's last day is not on record under any key, so the first sitting
 > start jojobot as assistant — as of 4 November 2026, what is waiting on me, and what has already gone past?
 
 ```locks
-# The loan's last day is under the key the shipped type holds. A model that
-# wrote it under a key of its own and never noticed leaves nothing the owed
-# question can find; one that noticed and mended it leaves this. A model that
-# got it right the first time leaves it too, and is not repair evidence.
-recall {"fields": [{"key": "runs_out", "value": "2026-11-03"}]}
-carries "runs_out":"2026-11-03"
-say     the loan's last day is not under the key the shipped type holds, so the question about what is owed cannot find it and nothing put it right
+# The loan's last day is the day something is owed by, which is what the owed
+# question reads. Jojobot stores that day under `due_on` for every shipped type
+# that owes by a day, so a loan filed under `runs_out` and a loan filed as a
+# promise end in the same place and both hold this. A model that wrote the day
+# under a key of its own and never noticed leaves nothing the owed question can
+# find; one that noticed and mended it leaves this. A model that got it right the
+# first time leaves it too, and is not repair evidence.
+recall {"fields": [{"key": "due_on", "value": "2026-11-03"}]}
+carries "due_on":"2026-11-03"
+say     the loan's last day is not owed by the day it was given, so the question about what is owed cannot find it and nothing put it right
 ```
 
 ## Phase 3 — three things to put right

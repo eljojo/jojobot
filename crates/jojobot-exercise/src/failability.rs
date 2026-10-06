@@ -900,7 +900,7 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
     },
     NegativeControl {
         room: expectations::REPAIR_ROOM,
-        lock: "Phase 2 — the loan's last day is not under the key the shipped type holds, so the question about what is owed cannot find it and nothing put it right",
+        lock: "Phase 2 — the loan's last day is not owed by the day it was given, so the question about what is owed cannot find it and nothing put it right",
         file: "tests/repair_room.rs",
         function: "the_loan_lock_reds_when_the_loan_stays_under_an_invented_key",
         strength: Strength::Discriminating,

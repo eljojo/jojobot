@@ -87,6 +87,13 @@ enum Undone {
     /// half of what was known.
     ArchivedOnly,
     Loop,
+    /// The loan is filed as a promise carrying the day, and every other repair
+    /// is made: another route to the same end state, not an undone repair. The
+    /// day then sits under a promise's own key and not under `runs_out`.
+    LoanAsPromise,
+    /// The loan is filed as a promise whose day is under a key of the model's
+    /// own: the loan's mistake on the other route, with every other repair made.
+    PromiseUnderInventedKey,
 }
 
 /// **The room worked the way the surface allows, one repair at a time.**
@@ -106,7 +113,43 @@ async fn worked(room: &Surface, sid: &str, undone: Option<Undone>) {
     } else {
         "runs_out"
     };
-    if undone != Some(Undone::Unfiled) {
+    if matches!(
+        undone,
+        Some(Undone::LoanAsPromise) | Some(Undone::PromiseUnderInventedKey)
+    ) {
+        // A commitment about a thing is its own entity, owed by someone: it
+        // needs a parent, and the day is the key the kind requires.
+        as_the_occupant(
+            room,
+            sid,
+            "add_entity",
+            json!({"kind": "person", "handle": "ned-flanders", "name": "Ned Flanders",
+                   "source": "user-named"}),
+        )
+        .await;
+        as_the_occupant(
+            room,
+            sid,
+            "add_entity",
+            json!({"kind": "promise", "handle": "return-the-wrench", "name": "Return the wrench",
+                   "source": "user-named", "parent": "person:ned-flanders"}),
+        )
+        .await;
+        let key = if undone == Some(Undone::PromiseUnderInventedKey) {
+            "needed_by"
+        } else {
+            "promised_by"
+        };
+        as_the_occupant(
+            room,
+            sid,
+            "capture",
+            json!({"subject": "promise:return-the-wrench",
+                   "content": "On loan; it has to go back.",
+                   "provenance": "testimony", "fields": {key: "2026-11-03"}}),
+        )
+        .await;
+    } else if undone != Some(Undone::Unfiled) {
         as_the_occupant(
             room,
             sid,
@@ -288,6 +331,9 @@ async fn the_entries_name_no_verb_no_key_and_no_repair() {
             "runs_out",
             "runs-out",
             "decide_by",
+            "promise",
+            "promised_by",
+            "due_on",
             "merge",
             "archive",
             "retract",
@@ -364,6 +410,23 @@ async fn the_filing_lock_reds_when_the_loan_is_never_filed() {
 async fn the_loan_lock_reds_when_the_loan_stays_under_an_invented_key() {
     let (held, said) = held_after(Some(Undone::Loan)).await;
     assert_eq!(held, vec![true, false, true, true, true, true], "{said}");
+}
+
+/// **The loan lock judges the end state and not the route.** The loan's day
+/// sits under a shipped type's key by either route: `runs_out` on the thing, or
+/// the day a promise carries. Each holds every lock; the same loan on a promise
+/// under a key of the model's own reds the loan lock and no other, so the lock
+/// is not simply satisfied by a promise existing.
+#[tokio::test]
+async fn the_loan_lock_holds_by_either_route_and_reds_on_the_invented_key_of_either() {
+    let (held, said) = held_after(Some(Undone::LoanAsPromise)).await;
+    assert_eq!(held, vec![true; 6], "a promise route: {said}");
+    let (held, said) = held_after(Some(Undone::PromiseUnderInventedKey)).await;
+    assert_eq!(
+        held,
+        vec![true, false, true, true, true, true],
+        "a promise under an invented key: {said}"
+    );
 }
 
 /// **Homer's lock reds when the correction never reaches him, and nothing else
