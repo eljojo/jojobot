@@ -274,8 +274,12 @@ impl Memory for Folded {
         survivor: &EntityId,
         reason: Option<&str>,
         date: Date,
+        caller: &EntityId,
     ) -> Result<Merge, MemoryError> {
-        let done = self.inner.merge(folded, survivor, reason, date).await?;
+        let done = self
+            .inner
+            .merge(folded, survivor, reason, date, caller)
+            .await?;
         // **The merged-away handle's entry is dropped, never refreshed.** A
         // merge moves its writes to the survivor, so the store's version
         // marker for it falls below what this cache installed, and
@@ -575,7 +579,13 @@ mod tests {
             .expect("not blocked");
 
         folded
-            .merge(&alpha(), &beta(), Some("same thing"), date(2026, 9, 10))
+            .merge(
+                &alpha(),
+                &beta(),
+                Some("same thing"),
+                date(2026, 9, 10),
+                &EntityId::person("person:gamma"),
+            )
             .await
             .expect("merge ok");
 
@@ -771,8 +781,9 @@ mod tests {
             survivor: &EntityId,
             reason: Option<&str>,
             date: Date,
+            caller: &EntityId,
         ) -> Result<Merge, MemoryError> {
-            self.0.merge(folded, survivor, reason, date).await
+            self.0.merge(folded, survivor, reason, date, caller).await
         }
         async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
             self.0.set_prose(entity, prose).await
@@ -939,8 +950,11 @@ mod tests {
             survivor: &EntityId,
             reason: Option<&str>,
             date: Date,
+            caller: &EntityId,
         ) -> Result<Merge, MemoryError> {
-            self.inner.merge(folded, survivor, reason, date).await
+            self.inner
+                .merge(folded, survivor, reason, date, caller)
+                .await
         }
         async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
             self.inner.set_prose(entity, prose).await
@@ -1193,8 +1207,11 @@ mod tests {
             survivor: &EntityId,
             reason: Option<&str>,
             date: Date,
+            caller: &EntityId,
         ) -> Result<Merge, MemoryError> {
-            self.inner.merge(folded, survivor, reason, date).await
+            self.inner
+                .merge(folded, survivor, reason, date, caller)
+                .await
         }
         async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
             self.inner.set_prose(entity, prose).await

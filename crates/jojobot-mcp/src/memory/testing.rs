@@ -592,8 +592,9 @@ impl Memory for DownMemory {
         survivor: &EntityId,
         reason: Option<&str>,
         date: jiff::civil::Date,
+        caller: &EntityId,
     ) -> Result<jojobot_domain::memory::Merge, MemoryError> {
-        self.1.merge(folded, survivor, reason, date).await
+        self.1.merge(folded, survivor, reason, date, caller).await
     }
     async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
         self.1.set_prose(entity, prose).await
@@ -728,8 +729,9 @@ impl Memory for FoldBehindMemory {
         survivor: &EntityId,
         reason: Option<&str>,
         date: jiff::civil::Date,
+        caller: &EntityId,
     ) -> Result<jojobot_domain::memory::Merge, MemoryError> {
-        let done = self.0.merge(folded, survivor, reason, date).await?;
+        let done = self.0.merge(folded, survivor, reason, date, caller).await?;
         Err(fold_behind(Landed::Merge(Box::new(done))))
     }
     async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
@@ -745,6 +747,155 @@ fn fold_behind(landed: Landed) -> MemoryError {
         landed,
         behind: Behind::Stale,
         source: Box::new(MemoryError::Store("the fold's re-read failed".into())),
+    }
+}
+
+/// **A store whose `racer` gains a ceiling in the instant before a merge
+/// runs** — a second session of the same bot writing between whatever a caller
+/// checked and the merge the check was for. Every read answers as it did
+/// before the ceiling landed, exactly what a checking caller saw.
+pub(crate) struct RacingMemory {
+    pub(crate) inner: Arc<InMemoryMemory>,
+    pub(crate) racer: EntityId,
+    pub(crate) armed: std::sync::atomic::AtomicBool,
+}
+
+#[async_trait]
+impl Memory for RacingMemory {
+    async fn former_handles(
+        &self,
+    ) -> Result<Vec<jojobot_domain::memory::FormerHandle>, MemoryError> {
+        self.inner.former_handles().await
+    }
+    async fn list_entities(&self, kind: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError> {
+        self.inner.list_entities(kind).await
+    }
+    async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
+        self.inner.add_entity(new).await
+    }
+    async fn declare_type(
+        &self,
+        declared: jojobot_domain::memory::types::DeclaredType,
+    ) -> Result<jojobot_domain::memory::types::DeclaredType, MemoryError> {
+        self.inner.declare_type(declared).await
+    }
+    async fn declare_kind(
+        &self,
+        token: &str,
+        origin: jojobot_domain::memory::types::Origin,
+        fields: Vec<jojobot_domain::memory::types::Field>,
+    ) -> Result<(), MemoryError> {
+        self.inner.declare_kind(token, origin, fields).await
+    }
+    async fn declared_kinds(
+        &self,
+    ) -> Result<Vec<(String, jojobot_domain::memory::types::Origin)>, MemoryError> {
+        self.inner.declared_kinds().await
+    }
+    async fn reclaim_kind(&self, token: &str) -> Result<(), MemoryError> {
+        self.inner.reclaim_kind(token).await
+    }
+    async fn declared_types(
+        &self,
+    ) -> Result<Vec<jojobot_domain::memory::types::DeclaredType>, MemoryError> {
+        self.inner.declared_types().await
+    }
+    async fn update_entity(
+        &self,
+        id: &EntityId,
+        patch: EntityPatch,
+    ) -> Result<Guarded<Entity>, MemoryError> {
+        self.inner.update_entity(id, patch).await
+    }
+    async fn rename_entity(
+        &self,
+        from: &EntityId,
+        to: &EntityId,
+        parent: Option<EntityId>,
+        date: jiff::civil::Date,
+        override_token: Option<&str>,
+    ) -> Result<Guarded<Entity>, MemoryError> {
+        self.inner
+            .rename_entity(from, to, parent, date, override_token)
+            .await
+    }
+    async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
+        self.inner.archive_entity(id, reason).await
+    }
+    async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
+        self.inner.capture(fact).await
+    }
+    async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
+        self.inner.recall(subject).await
+    }
+    async fn history(
+        &self,
+        entity: &EntityId,
+        key: &str,
+    ) -> Result<Vec<jojobot_domain::memory::FieldWrite>, MemoryError> {
+        self.inner.history(entity, key).await
+    }
+    async fn claim_history(
+        &self,
+        address: &jojobot_domain::memory::FactAddress,
+    ) -> Result<Vec<jojobot_domain::memory::ClaimWrite>, MemoryError> {
+        self.inner.claim_history(address).await
+    }
+    async fn fields(
+        &self,
+        entity: &EntityId,
+    ) -> Result<std::collections::BTreeMap<String, String>, MemoryError> {
+        self.inner.fields(entity).await
+    }
+    async fn update_fact(
+        &self,
+        address: &FactAddress,
+        patch: FactPatch,
+        caller: &EntityId,
+    ) -> Result<Guarded<Fact>, MemoryError> {
+        self.inner.update_fact(address, patch, caller).await
+    }
+    async fn retract(
+        &self,
+        address: &FactAddress,
+        reason: Option<&str>,
+        date: jiff::civil::Date,
+        caller: &EntityId,
+    ) -> Result<jojobot_domain::memory::Retraction, MemoryError> {
+        self.inner.retract(address, reason, date, caller).await
+    }
+    async fn merge(
+        &self,
+        folded: &EntityId,
+        survivor: &EntityId,
+        reason: Option<&str>,
+        date: jiff::civil::Date,
+        caller: &EntityId,
+    ) -> Result<jojobot_domain::memory::Merge, MemoryError> {
+        if self.armed.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            self.inner
+                .capture(NewFact {
+                    fields: std::collections::BTreeMap::from([(
+                        jojobot_domain::memory::THOUGHT_CAPACITY.to_string(),
+                        "5".to_string(),
+                    )]),
+                    ..NewFact::about(
+                        self.racer.clone(),
+                        "a second session raises the ceiling",
+                        jiff::civil::date(2026, 10, 6),
+                    )
+                })
+                .await?;
+        }
+        self.inner
+            .merge(folded, survivor, reason, date, caller)
+            .await
+    }
+    async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
+        self.inner.set_prose(entity, prose).await
+    }
+    async fn scan(&self) -> Result<Vec<jojobot_domain::memory::search::DocScan>, MemoryError> {
+        self.inner.scan().await
     }
 }
 
@@ -864,8 +1015,9 @@ impl Memory for ConflictingMemory {
         survivor: &EntityId,
         reason: Option<&str>,
         date: jiff::civil::Date,
+        caller: &EntityId,
     ) -> Result<jojobot_domain::memory::Merge, MemoryError> {
-        self.0.merge(folded, survivor, reason, date).await
+        self.0.merge(folded, survivor, reason, date, caller).await
     }
     async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
         self.0.set_prose(entity, prose).await

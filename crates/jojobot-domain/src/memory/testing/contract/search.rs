@@ -635,7 +635,7 @@ pub async fn a_name_the_duplicate_wore_finds_the_survivor_after_a_fold<M: Memory
     );
 
     store
-        .merge(&spare, &kept, None, date(2026, 7, 2))
+        .merge(&spare, &kept, None, date(2026, 7, 2), &other_caller())
         .await
         .expect("the fold lands");
 

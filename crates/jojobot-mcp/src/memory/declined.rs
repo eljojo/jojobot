@@ -770,6 +770,26 @@ pub(crate) fn memory_declined(
                  '{subject}' — ask another bot, or the operator, to raise or lower it instead."
             ),
         )),
+        // **A merge into the caller's own bot that would carry a ceiling onto
+        // it.** The refusal says the MERGE was refused and why, not that the
+        // caller tried to set a key: it sent no fields. Both ways forward
+        // exist: a different identity performs the merge, or the key comes off
+        // the duplicate first.
+        MemoryError::MergeRaisesOwnCeiling {
+            ref duplicate,
+            ref survivor,
+            ref keys,
+        } => Ok(blocked_body(
+            &EntityId(duplicate.clone()),
+            &[],
+            format!(
+                "Nothing was written. '{duplicate}' carries {keys}, and merging it into \
+                 '{survivor}', your own bot, would raise your own ceiling, which only a \
+                 different identity may do. Ask a different identity to make this merge, or \
+                 take {keys} off '{duplicate}' first: update_fact the record that sets it with \
+                 clear_fields, then merge again."
+            ),
+        )),
         // **A role's own two fields, named on the ordinary surface.** The
         // subject named here is not an entity handle — `blocked_body` wants
         // one to check for candidates, and a role has none — so this is its
@@ -867,6 +887,7 @@ pub(crate) fn memory_error(e: MemoryError) -> McpError {
         | MemoryError::UnconfirmedSettling
         | MemoryError::RoomFull { .. }
         | MemoryError::SelfCeiling { .. }
+        | MemoryError::MergeRaisesOwnCeiling { .. }
         | MemoryError::ThoughtTooLong { .. }
         | MemoryError::MergeOverfillsRoom { .. }
         | MemoryError::MergeThoughtTooLong { .. }

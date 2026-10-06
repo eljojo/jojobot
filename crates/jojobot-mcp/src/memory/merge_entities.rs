@@ -77,53 +77,20 @@ impl Jojobot {
         let date = self.dated(args.recorded_at.as_deref(), args.sid.as_deref())?;
 
         // **A merge into the caller's own bot carries the duplicate's ceiling
-        // onto it.** Everything the duplicate held moves to the survivor and
-        // folds there, so a bot that wrote a ceiling on another thing, which is
-        // allowed, could merge that thing into itself and raise its own. The
-        // trait's merge takes no caller, so the check is here. Both handles are
-        // compared as they answer now, and a read that fails refuses the merge.
-        let survivor_now = match self.current_handle(&survivor).await {
-            Ok(current) => current,
-            Err(e) => return memory_declined("merge_entities", e),
-        };
-        if survivor_now == caller.bot {
-            let duplicate_now = match self.current_handle(&duplicate).await {
-                Ok(current) => current,
-                Err(e) => return memory_declined("merge_entities", e),
-            };
-            if duplicate_now != survivor_now {
-                let carried = match self.memory.fields(&duplicate_now).await {
-                    Ok(carried) => carried,
-                    Err(e) => return memory_declined("merge_entities", e),
-                };
-                let keys = jojobot_domain::memory::ceiling_keys_in(&carried);
-                if !keys.is_empty() {
-                    // **The refusal says the MERGE was refused and why**, not
-                    // that the caller tried to set a key: it sent no fields.
-                    // Both ways forward exist: a different identity performs
-                    // the merge, or the key comes off the duplicate first.
-                    let keys = keys.join(", ");
-                    return Ok(blocked_body(
-                        &duplicate_now,
-                        &[],
-                        format!(
-                            "Nothing was written. '{duplicate_now}' carries {keys}, and merging it \
-                             into '{survivor_now}', your own bot, would raise your own ceiling, \
-                             which only a different identity may do. Ask a different identity to \
-                             make this merge, or take {keys} off '{duplicate_now}' first: \
-                             update_fact the record that sets it with clear_fields, then merge \
-                             again."
-                        ),
-                    ));
-                }
-            }
-        }
-
+        // onto it, and the store decides that in the same act as the merge.**
+        // A check made here, before the merge, left a gap a second session of
+        // the same bot could write a ceiling into.
         // **A write that landed is never reported as failed** (rule 130): see
         // `capture`'s own note on the same shape.
         let (done, fold_behind) = match self
             .memory
-            .merge(&duplicate, &survivor, args.reason.as_deref(), date)
+            .merge(
+                &duplicate,
+                &survivor,
+                args.reason.as_deref(),
+                date,
+                &caller.bot,
+            )
             .await
         {
             Ok(done) => (done, None),
@@ -799,5 +766,77 @@ mod tests {
         // **The positive half.** The merge still landed, exactly as an
         // ordinary merge does.
         assert_eq!(body["merged"], "person:bart", "{body}");
+    }
+
+    /// **A ceiling that lands between the guard's read and the merge must not
+    /// reach the caller's own bot.** The guard reads the duplicate, finds no
+    /// ceiling, and the merge then folds everything the duplicate holds onto
+    /// the survivor. A second session of the same bot can write a ceiling in
+    /// that gap, and the merge would raise the ceiling its own bot is not
+    /// allowed to raise. Paired with the same merge landing when nothing races,
+    /// so the refusal cannot be a merge that never runs.
+    #[tokio::test]
+    async fn a_ceiling_written_between_the_guard_and_the_merge_does_not_reach_the_callers_bot() {
+        use crate::memory::testing::{InMemoryMemory, RacingMemory, SpySearch, ensure, fields_of};
+
+        let inner = Arc::new(InMemoryMemory::booted());
+        let racing = |armed: bool| {
+            Jojobot::new(
+                Arc::new(RacingMemory {
+                    inner: inner.clone(),
+                    racer: EntityId("bot:milhouse".into()),
+                    armed: std::sync::atomic::AtomicBool::new(armed),
+                }),
+                Arc::new(SpySearch::default()),
+                Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
+                Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
+                Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+                seeded_registry(),
+            )
+        };
+        let jojobot = racing(true);
+        let sid = writing_as(&jojobot);
+        // The harness caller is bot:otto.
+        for handle in ["bot:otto", "bot:milhouse"] {
+            ensure(&jojobot, handle).await;
+        }
+        async fn merge(
+            jojobot: &Jojobot,
+            sid: &str,
+            duplicate: &str,
+        ) -> Result<CallToolResult, McpError> {
+            jojobot
+                .merge_entities(Parameters(MergeArgs {
+                    duplicate: duplicate.into(),
+                    survivor: "bot:otto".into(),
+                    reason: None,
+                    recorded_at: None,
+                    sid: Some(sid.to_string()),
+                }))
+                .await
+        }
+
+        let refused = blocked(
+            &merge(&jojobot, &sid, "bot:milhouse")
+                .await
+                .expect("a refusal is an answer, not a failure"),
+        );
+        assert_eq!(refused["wrote"], false, "{refused}");
+        let own = fields_of(&jojobot, "bot:otto").await;
+        assert!(
+            own.get(jojobot_domain::memory::THOUGHT_CAPACITY).is_none(),
+            "a ceiling written after the check reached the caller's own bot: {own}"
+        );
+
+        // **The positive half**: a duplicate that gains nothing in the gap
+        // merges, so the refusal above was the ceiling and not the setup.
+        ensure(&jojobot, "bot:sigma").await;
+        let landed = json_of(
+            &merge(&racing(false), &sid, "bot:sigma")
+                .await
+                .expect("merge ok"),
+        );
+        assert_ne!(landed["status"], "blocked", "{landed}");
+        assert_eq!(landed["merged"], "bot:sigma", "{landed}");
     }
 }

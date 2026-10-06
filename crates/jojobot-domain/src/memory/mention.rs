@@ -768,6 +768,7 @@ impl super::Memory for Mentioning {
         survivor: &EntityId,
         reason: Option<&str>,
         date: jiff::civil::Date,
+        caller: &EntityId,
     ) -> Result<super::Merge, super::MemoryError> {
         let known = self.known().await?;
         if let Some(err) = Self::screen_or_unknown(&[reason.unwrap_or("")], &known) {
@@ -781,7 +782,7 @@ impl super::Memory for Mentioning {
             .map_err(unloaded)?;
         let mut done = self
             .inner
-            .merge(folded, survivor, reason.as_deref(), date)
+            .merge(folded, survivor, reason.as_deref(), date, caller)
             .await?;
         self.render_fact(&mut done.record, &known, &former, &declared);
         Ok(done)

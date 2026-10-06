@@ -267,6 +267,7 @@ mod tests {
                 _: &EntityId,
                 _: Option<&str>,
                 _: jiff::civil::Date,
+                _: &EntityId,
             ) -> Result<jojobot_domain::memory::Merge, MemoryError> {
                 unimplemented!("the owner index only reads the index")
             }

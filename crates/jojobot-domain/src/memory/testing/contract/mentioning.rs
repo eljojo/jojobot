@@ -1818,6 +1818,7 @@ pub async fn retract_and_merge_screen_their_reason_and_write_nothing_on_a_miss<
             &survivor,
             Some("named @person:contract-mention-nobody"),
             date(2026, 4, 23),
+            &other_caller(),
         )
         .await;
     assert!(
@@ -1841,6 +1842,7 @@ pub async fn retract_and_merge_screen_their_reason_and_write_nothing_on_a_miss<
             &survivor,
             Some("named @person:contract-refscreen-survivor"),
             date(2026, 4, 24),
+            &other_caller(),
         )
         .await
         .expect("a merge reason naming something real is not refused");
@@ -2180,6 +2182,7 @@ pub async fn an_account_written_from_a_reason_stores_its_mentions<
             &survivor,
             Some("both were the same member of @org:contract-mention-guild"),
             date(2026, 4, 18),
+            &other_caller(),
         )
         .await
         .expect("the fold lands");

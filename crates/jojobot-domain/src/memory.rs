@@ -2027,6 +2027,38 @@ pub fn refuses_own_ceiling_change(
         })
 }
 
+/// **A merge into the caller's own bot cannot carry a ceiling onto it.**
+///
+/// A merge folds everything the duplicate holds onto the survivor, so merging
+/// a thing that carries a ceiling into the caller's own bot raises that bot's
+/// ceiling through a door [`refuses_own_ceiling`] does not watch. `survivor`
+/// and `duplicate` are both handles as they answer now, and `carried` is what
+/// the duplicate holds, read in the same act as the merge: a read taken before
+/// it leaves a gap a second session of the same bot can write a ceiling into.
+///
+/// `None` is not "allowed" so much as "not this merge's business": a survivor
+/// that is somebody else, or a duplicate carrying no ceiling, has nothing here
+/// to refuse.
+pub fn refuses_merge_into_own_ceiling(
+    caller: &EntityId,
+    survivor: &EntityId,
+    duplicate: &EntityId,
+    carried: &BTreeMap<String, String>,
+) -> Option<MemoryError> {
+    if survivor != caller || duplicate == survivor {
+        return None;
+    }
+    let keys = ceiling_keys_in(carried);
+    if keys.is_empty() {
+        return None;
+    }
+    Some(MemoryError::MergeRaisesOwnCeiling {
+        duplicate: duplicate.to_string(),
+        survivor: survivor.to_string(),
+        keys: keys.join(", "),
+    })
+}
+
 /// **Whether an edit that makes a claim a thought has no slot to take.**
 ///
 /// `room` is the room as it stands: every OTHER active connection-edged
@@ -3959,6 +3991,23 @@ pub enum MemoryError {
         /// The key it tried to set.
         key: String,
     },
+    /// **A merge into the caller's own bot that would carry a ceiling onto
+    /// it.** Everything the duplicate holds moves to the survivor and folds
+    /// there, so a bot that wrote a ceiling on another thing, which is
+    /// allowed, could merge that thing into itself and raise its own. See
+    /// [`refuses_merge_into_own_ceiling`].
+    #[error(
+        "merging '{duplicate}' into '{survivor}', the caller's own bot, would carry {keys} onto \
+         it: only a different identity may raise or lower a ceiling"
+    )]
+    MergeRaisesOwnCeiling {
+        /// The handle that would be folded away, as it answers now.
+        duplicate: String,
+        /// The caller's own bot, which would receive the ceiling.
+        survivor: String,
+        /// The ceiling keys the duplicate carries, joined with a comma.
+        keys: String,
+    },
     /// **A thought's body is over its container's cap.** See
     /// [`refuses_thought_over_cap`] — only ever raised on a write that
     /// leaves `subject` holding an active, connection-edged claim on
@@ -4878,12 +4927,19 @@ pub trait Memory: Send + Sync {
     /// still has no row for either side of a fold to move
     /// ([`MemoryError::SuppliedHandle`]), exactly as it has none for a
     /// rename.
+    ///
+    /// **`caller` is who is merging, and the store checks it in the same act as
+    /// the merge**: a merge into the caller's own bot that would carry a
+    /// ceiling onto it is [`MemoryError::MergeRaisesOwnCeiling`], decided over
+    /// what the duplicate holds inside the transaction, so no write can land
+    /// between the question and the move.
     async fn merge(
         &self,
         folded: &EntityId,
         survivor: &EntityId,
         reason: Option<&str>,
         date: Date,
+        caller: &EntityId,
     ) -> Result<Merge, MemoryError>;
 
     /// Replace an entity's **prose** — the human half of its doc, everything

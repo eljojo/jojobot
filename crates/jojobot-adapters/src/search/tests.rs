@@ -2735,6 +2735,7 @@ async fn a_rename_reaches_the_session_index_without_a_session_write() {
             &otto,
             Some("one bot, filed twice"),
             date(2026, 8, 2),
+            &EntityId("bot:sigma".into()),
         )
         .await
         .expect("the merge lands");
@@ -3952,6 +3953,7 @@ impl Memory for Scanned {
         _: &EntityId,
         _: Option<&str>,
         _: Date,
+        _: &EntityId,
     ) -> Result<Merge, MemoryError> {
         unimplemented!("this double only scans")
     }
@@ -4115,8 +4117,11 @@ impl Memory for SummarizedScan {
         survivor: &EntityId,
         reason: Option<&str>,
         date: Date,
+        caller: &EntityId,
     ) -> Result<Merge, MemoryError> {
-        self.inner.merge(folded, survivor, reason, date).await
+        self.inner
+            .merge(folded, survivor, reason, date, caller)
+            .await
     }
 }
 
@@ -4257,6 +4262,7 @@ impl Memory for Delegated {
         _: &EntityId,
         _: Option<&str>,
         _: Date,
+        _: &EntityId,
     ) -> Result<Merge, MemoryError> {
         unimplemented!("this double answers the three reads a store owns")
     }
@@ -7111,8 +7117,9 @@ impl Memory for FixedWriteSummary {
         survivor: &EntityId,
         reason: Option<&str>,
         date: Date,
+        caller: &EntityId,
     ) -> Result<Merge, MemoryError> {
-        self.0.merge(folded, survivor, reason, date).await
+        self.0.merge(folded, survivor, reason, date, caller).await
     }
     async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
         self.0.set_prose(entity, prose).await

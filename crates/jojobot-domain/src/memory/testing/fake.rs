@@ -1900,6 +1900,7 @@ impl Memory for InMemoryMemory {
         survivor: &EntityId,
         reason: Option<&str>,
         date: Date,
+        caller: &EntityId,
     ) -> Result<Merge, MemoryError> {
         // **Wrong by kind alone, before either side's existence is even
         // asked.** A fold naming a session steps past the same three things
@@ -1967,7 +1968,7 @@ impl Memory for InMemoryMemory {
         // caller sent — because a claim's home is the badge now, not the
         // handle, and comparing against the handle would silently move
         // nothing.
-        let (folded_key, _) = self.resolve(folded).expect("checked present above");
+        let (folded_key, folded_handle) = self.resolve(folded).expect("checked present above");
         let (survivor_key, survivor_handle) =
             self.resolve(survivor).expect("checked present above");
 
@@ -1988,6 +1989,20 @@ impl Memory for InMemoryMemory {
             &self.writes_on(&survivor_key, &held_facts),
             &self.declarations(),
         );
+        // **A merge into the caller's own bot cannot carry a ceiling onto
+        // it**, decided over what the duplicate holds in this same act.
+        let carried = super::super::folded_fields(
+            &self.writes_on(&folded_key, &held_facts),
+            &self.declarations(),
+        );
+        if let Some(err) = super::super::refuses_merge_into_own_ceiling(
+            caller,
+            &survivor_handle,
+            &folded_handle,
+            &carried,
+        ) {
+            return Err(err);
+        }
         let room: Vec<Fact> = super::super::thought_room(
             &held_facts
                 .iter()

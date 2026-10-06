@@ -347,8 +347,12 @@ impl Memory for IndexedMemory {
         survivor: &EntityId,
         reason: Option<&str>,
         date: Date,
+        caller: &EntityId,
     ) -> Result<Merge, MemoryError> {
-        let done = self.inner.merge(folded, survivor, reason, date).await?;
+        let done = self
+            .inner
+            .merge(folded, survivor, reason, date, caller)
+            .await?;
         // The folded bot's runs read as the survivor's now.
         self.index.names_changed();
         self.refresh(folded).await;

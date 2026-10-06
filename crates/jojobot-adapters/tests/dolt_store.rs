@@ -4032,7 +4032,13 @@ async fn write_summary_answers_the_real_store() {
         .expect("write_summary ok")
         .expect("the signal");
     memory
-        .merge(&beta, &gamma, None, date(2026, 1, 1))
+        .merge(
+            &beta,
+            &gamma,
+            None,
+            date(2026, 1, 1),
+            &EntityId("bot:sigma".into()),
+        )
         .await
         .expect("merge ok");
     let after_merge = memory

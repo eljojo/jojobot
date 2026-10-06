@@ -342,7 +342,13 @@ async fn the_stack_the_binary_builds_answers_what_the_layer_beneath_implements()
         "the thing holds the key before the merge, which is what the negative below rests on"
     );
     indexed
-        .merge(&alpha, &beta, Some("same thing"), date(2026, 9, 7))
+        .merge(
+            &alpha,
+            &beta,
+            Some("same thing"),
+            date(2026, 9, 7),
+            &EntityId("bot:sigma".into()),
+        )
         .await
         .expect("merge ok");
     assert_eq!(

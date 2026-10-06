@@ -1942,6 +1942,86 @@ pub async fn referring_to_finds_a_reference_to_a_renamed_target<M: Memory>(store
     );
 }
 
+/// **A merge into the caller's own bot cannot carry a ceiling onto it, and the
+/// store decides that itself.** A caller-side check made before the merge
+/// leaves a gap a second session of the same bot can write a ceiling into, so
+/// the refusal has to come out of the merge. Nothing moves on a refusal. A
+/// duplicate with no ceiling merges into the same bot, and the same duplicate
+/// merges when somebody else is the caller, so the refusal cannot be a merge
+/// that never runs.
+pub async fn a_merge_into_the_callers_own_bot_cannot_carry_a_ceiling_onto_it<M: Memory>(store: &M) {
+    let keeper = EntityId("bot:contract-merge-ceiling-keeper".into());
+    let carrier = EntityId("bot:contract-merge-ceiling-carrier".into());
+    let plain = EntityId("bot:contract-merge-ceiling-plain".into());
+    for (id, name) in [
+        (&keeper, "Contract Merge Ceiling Keeper"),
+        (&carrier, "Contract Merge Ceiling Carrier"),
+        (&plain, "Contract Merge Ceiling Plain"),
+    ] {
+        add(store, NewEntity::new(id.clone(), name, "contract-fixture")).await;
+    }
+    capture(
+        store,
+        NewFact {
+            fields: [(THOUGHT_CAPACITY.to_string(), "5".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(carrier.clone(), "capacity is five", date(2026, 10, 1))
+        },
+    )
+    .await;
+
+    let refused = store
+        .merge(&carrier, &keeper, None, date(2026, 10, 2), &keeper)
+        .await
+        .expect_err("a merge into the caller's own bot must not carry a ceiling onto it");
+    assert!(
+        matches!(
+            &refused,
+            MemoryError::MergeRaisesOwnCeiling { duplicate, survivor, keys }
+                if duplicate == carrier.as_str()
+                    && survivor == keeper.as_str()
+                    && keys.contains(THOUGHT_CAPACITY)
+        ),
+        "expected MergeRaisesOwnCeiling naming both bots and the key, got {refused:?}",
+    );
+    assert!(
+        !store
+            .fields(&keeper)
+            .await
+            .expect("the store answers")
+            .contains_key(THOUGHT_CAPACITY),
+        "the refused merge carried the ceiling onto the caller's own bot",
+    );
+    assert!(
+        store
+            .fields(&carrier)
+            .await
+            .expect("the store answers")
+            .contains_key(THOUGHT_CAPACITY),
+        "the refused merge moved something off the duplicate",
+    );
+
+    store
+        .merge(&plain, &keeper, None, date(2026, 10, 3), &keeper)
+        .await
+        .expect("a duplicate carrying no ceiling merges into the caller's own bot");
+    store
+        .merge(&carrier, &keeper, None, date(2026, 10, 4), &other_caller())
+        .await
+        .expect("the same merge lands when somebody else is the caller");
+    assert_eq!(
+        store
+            .fields(&keeper)
+            .await
+            .expect("the store answers")
+            .get(THOUGHT_CAPACITY)
+            .map(String::as_str),
+        Some("5"),
+        "a merge made by somebody else carries the ceiling",
+    );
+}
+
 pub async fn a_child_names_its_parent_and_reads_back<M: Memory>(store: &M) {
     let parent = EntityId("project:contract-monorail".into());
     let child = EntityId("project:contract-monorail-funding".into());
@@ -8105,7 +8185,7 @@ pub async fn a_merge_naming_a_supplied_handle_is_refused_not_a_silent_no_op<M: M
 
     // The supplied record as the duplicate side.
     let as_folded = store
-        .merge(&shipped, &stored, None, date(2026, 6, 13))
+        .merge(&shipped, &stored, None, date(2026, 6, 13), &other_caller())
         .await
         .expect_err("folding a build-supplied record away must be refused");
     assert!(
@@ -8116,7 +8196,7 @@ pub async fn a_merge_naming_a_supplied_handle_is_refused_not_a_silent_no_op<M: M
 
     // The supplied record as the survivor side.
     let as_survivor = store
-        .merge(&stored, &shipped, None, date(2026, 6, 13))
+        .merge(&stored, &shipped, None, date(2026, 6, 13), &other_caller())
         .await
         .expect_err("folding a stored record into a build-supplied one must be refused");
     assert!(
@@ -8139,7 +8219,7 @@ pub async fn a_merge_naming_a_supplied_handle_is_refused_not_a_silent_no_op<M: M
     // every miss.
     let nobody = EntityId("thing:contract-supplied-merge-nobody".into());
     let unknown = store
-        .merge(&nobody, &stored, None, date(2026, 6, 13))
+        .merge(&nobody, &stored, None, date(2026, 6, 13), &other_caller())
         .await
         .expect_err("a handle nothing ever held must still miss");
     assert!(
@@ -11807,6 +11887,7 @@ pub async fn folding_a_duplicate_makes_the_split_answer_whole<M: Memory>(store: 
             &kept,
             Some("one person, filed twice"),
             date(2026, 5, 3),
+            &other_caller(),
         )
         .await
         .expect("the fold lands");
@@ -11863,7 +11944,7 @@ pub async fn folding_a_duplicate_makes_the_split_answer_whole<M: Memory>(store: 
     // **Neither side may be folded twice.** A chain stops answering in one
     // hop, so it is refused rather than followed.
     let again = store
-        .merge(&spare, &kept, None, date(2026, 5, 4))
+        .merge(&spare, &kept, None, date(2026, 5, 4), &other_caller())
         .await
         .expect_err("a folded row is not a side to fold");
     assert!(
@@ -11873,7 +11954,7 @@ pub async fn folding_a_duplicate_makes_the_split_answer_whole<M: Memory>(store: 
 
     // And nothing folds into itself.
     let itself = store
-        .merge(&kept, &kept, None, date(2026, 5, 4))
+        .merge(&kept, &kept, None, date(2026, 5, 4), &other_caller())
         .await
         .expect_err("a fold has two sides");
     assert!(
@@ -11915,6 +11996,7 @@ pub async fn a_walk_from_a_folded_handle_says_where_it_went<M: Memory>(store: &M
             &kept,
             Some("one person, filed twice"),
             date(2026, 5, 4),
+            &other_caller(),
         )
         .await
         .expect("the fold lands");
@@ -12009,7 +12091,7 @@ pub async fn a_fold_moves_the_duplicates_names_to_the_survivor<M: Memory>(store:
         .expect("the duplicate takes prose");
 
     store
-        .merge(&spare, &kept, None, date(2026, 5, 20))
+        .merge(&spare, &kept, None, date(2026, 5, 20), &other_caller())
         .await
         .expect("the fold lands");
 
@@ -12091,7 +12173,7 @@ pub async fn a_stale_address_after_a_fold_says_where_it_went<M: Memory>(store: &
     let stale = written.address();
 
     store
-        .merge(&spare, &kept, None, date(2026, 5, 11))
+        .merge(&spare, &kept, None, date(2026, 5, 11), &other_caller())
         .await
         .expect("the fold lands");
 
@@ -12240,6 +12322,7 @@ pub async fn a_fold_carries_the_lineage_that_points_at_what_it_moved<M: Memory>(
             &survivor,
             Some("one person, filed twice"),
             date(2026, 6, 3),
+            &other_caller(),
         )
         .await
         .expect("the fold lands");
@@ -12410,7 +12493,7 @@ pub async fn a_fold_repoints_a_pointer_wearing_a_former_handle_of_the_folded_sid
     .await;
 
     store
-        .merge(&after, &survivor, None, date(2026, 7, 4))
+        .merge(&after, &survivor, None, date(2026, 7, 4), &other_caller())
         .await
         .expect("the fold lands");
 
@@ -12511,7 +12594,13 @@ pub async fn merge_refuses_a_session_kind_handle_on_either_side<M: Memory>(store
     let session = EntityId("session:contract-merge-session-gap".into());
 
     let folded_err = store
-        .merge(&session, &ordinary.id, None, date(2026, 5, 3))
+        .merge(
+            &session,
+            &ordinary.id,
+            None,
+            date(2026, 5, 3),
+            &other_caller(),
+        )
         .await
         .expect_err("a session named as the folded side must be refused, not merged away");
     assert!(
@@ -12520,7 +12609,13 @@ pub async fn merge_refuses_a_session_kind_handle_on_either_side<M: Memory>(store
     );
 
     let survivor_err = store
-        .merge(&ordinary.id, &session, None, date(2026, 5, 3))
+        .merge(
+            &ordinary.id,
+            &session,
+            None,
+            date(2026, 5, 3),
+            &other_caller(),
+        )
         .await
         .expect_err("a session named as the survivor must be refused, not written into");
     assert!(
@@ -12565,7 +12660,7 @@ pub async fn a_merge_that_would_overfill_a_room_or_a_body_cap_is_refused<M: Memo
     .await;
 
     let refused = store
-        .merge(&jukebox, &bot, None, date(2026, 10, 2))
+        .merge(&jukebox, &bot, None, date(2026, 10, 2), &other_caller())
         .await
         .expect_err("a merge that overfills the room must be refused, not landed");
     match refused {
@@ -12613,7 +12708,7 @@ pub async fn a_merge_that_would_overfill_a_room_or_a_body_cap_is_refused<M: Memo
     )
     .await;
     store
-        .merge(&jukebox, &bot, None, date(2026, 10, 3))
+        .merge(&jukebox, &bot, None, date(2026, 10, 3), &other_caller())
         .await
         .expect("with one slot free the same merge lands");
 
@@ -12633,7 +12728,7 @@ pub async fn a_merge_that_would_overfill_a_room_or_a_body_cap_is_refused<M: Memo
     .await;
     let long = capture(store, thought(&kettle, "abcdef", &needle)).await;
     let refused = store
-        .merge(&kettle, &narrow, None, date(2026, 10, 5))
+        .merge(&kettle, &narrow, None, date(2026, 10, 5), &other_caller())
         .await
         .expect_err("a merge that lands a thought over the cap must be refused");
     match refused {
@@ -12655,7 +12750,7 @@ pub async fn a_merge_that_would_overfill_a_room_or_a_body_cap_is_refused<M: Memo
     ensure(store, &fits).await;
     capture(store, thought(&fits, "abcde", &needle)).await;
     store
-        .merge(&fits, &narrow, None, date(2026, 10, 6))
+        .merge(&fits, &narrow, None, date(2026, 10, 6), &other_caller())
         .await
         .expect("a thought exactly at the cap lands");
 }
@@ -12695,6 +12790,7 @@ pub async fn run_all<M: Memory>(store: &M) {
     referring_to_answers_from_the_far_end(store).await;
     referring_to_follows_a_declared_reference_key(store).await;
     referring_to_finds_a_reference_to_a_renamed_target(store).await;
+    a_merge_into_the_callers_own_bot_cannot_carry_a_ceiling_onto_it(store).await;
     a_child_names_its_parent_and_reads_back(store).await;
     children_are_handles_and_one_level_deep(store).await;
     a_write_that_rewrites_a_child_leaves_it_where_it_was(store).await;

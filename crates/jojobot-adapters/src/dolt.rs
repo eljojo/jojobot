@@ -1158,6 +1158,7 @@ pub(crate) mod tests {
             _: &jojobot_domain::memory::EntityId,
             _: Option<&str>,
             _: jiff::civil::Date,
+            _: &jojobot_domain::memory::EntityId,
         ) -> Result<jojobot_domain::memory::Merge, jojobot_domain::memory::MemoryError> {
             unimplemented!("migrate_permanent_ids only reads the entity world")
         }

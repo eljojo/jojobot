@@ -436,6 +436,7 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
         survivor: &EntityId,
         reason: Option<&str>,
         date: Date,
+        caller: &EntityId,
     ) -> Result<Merge, MemoryError> {
         for side in [folded, survivor] {
             if self.provisions.record_for(side).is_some() {
@@ -444,7 +445,9 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
                 });
             }
         }
-        self.inner.merge(folded, survivor, reason, date).await
+        self.inner
+            .merge(folded, survivor, reason, date, caller)
+            .await
     }
     async fn declare_type(
         &self,
@@ -752,6 +755,7 @@ mod tests {
                 &EntityId("thing:merge-kept".into()),
                 None,
                 Date::constant(2026, 6, 13),
+                &EntityId("bot:sigma".into()),
             )
             .await
             .expect_err("folding a supplied record away must be refused");
@@ -766,6 +770,7 @@ mod tests {
                 &EntityId("view:loops".into()),
                 None,
                 Date::constant(2026, 6, 13),
+                &EntityId("bot:sigma".into()),
             )
             .await
             .expect_err("folding a stored thing into a supplied record must be refused");
@@ -779,6 +784,7 @@ mod tests {
             &EntityId("thing:merge-kept".into()),
             None,
             Date::constant(2026, 6, 13),
+            &EntityId("bot:sigma".into()),
         )
         .await
         .expect("a fold of two stored things is still the decorator's to pass through");

@@ -3178,6 +3178,7 @@ impl Memory for DoltMemory {
         survivor: &EntityId,
         reason: Option<&str>,
         date: Date,
+        caller: &EntityId,
     ) -> Result<Merge, MemoryError> {
         // **Wrong by kind alone, before either side's existence is even
         // asked.** A fold naming a session steps past the same three things
@@ -3229,12 +3230,25 @@ impl Memory for DoltMemory {
         // never the raw handle — a claim's home is the badge now, not the
         // handle, and updating rows by the handle would silently move
         // nothing.
-        let (folded_key, _) = self.resolve(&mut tx, folded).await?.expect("checked above");
+        let (folded_key, folded_handle) =
+            self.resolve(&mut tx, folded).await?.expect("checked above");
         let (survivor_key, survivor_handle) = self
             .resolve(&mut tx, survivor)
             .await?
             .expect("checked above");
 
+        // **A merge into the caller's own bot cannot carry a ceiling onto
+        // it**, decided over what the duplicate holds, read inside this
+        // transaction so no write can land between the question and the move.
+        let carried = Self::held_by(&mut tx, &folded_key).await?;
+        if let Some(err) = jojobot_domain::memory::refuses_merge_into_own_ceiling(
+            caller,
+            &survivor_handle,
+            &folded_handle,
+            &carried,
+        ) {
+            return Err(err);
+        }
         // **The duplicate's thoughts become the survivor's, so they meet the
         // survivor's room and body cap before anything moves** — the same
         // question `capture` asks of a thought, asked of every one that
