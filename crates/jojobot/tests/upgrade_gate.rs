@@ -273,6 +273,21 @@ async fn assert_every_recorded_record_reads_back(
         fail("the merged handle", &read);
     }
 
+    // The declared type is still in the instance's own vocabulary.
+    let read = surface.call("start_here", json!({"brief": true})).await;
+    if !read.contains("upgrade-fixture-type") {
+        fail("the declared type", &read);
+    }
+
+    // The thought: an active, connection-edged claim on the bot's own
+    // handle, still readable as one of its own thoughts.
+    let read = surface
+        .call("recall", json!({"subject": "bot:assistant", "facts": true}))
+        .await;
+    if !read.contains("a recorded thought, live in the room") {
+        fail("the recorded thought", &read);
+    }
+
     // **An anonymous boot of the upgraded store is within the ceiling.** The
     // snapshot is what grows with a store, and a boot that sizes its essay as
     // text overshoots as soon as the snapshot leaves it no spare characters.
