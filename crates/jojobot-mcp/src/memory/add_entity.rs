@@ -263,6 +263,20 @@ impl Jojobot {
                 {
                     crate::answer::note_teaching(&mut body, DUPLICATE_REPAIR_TEACHING);
                 }
+                // **A creation that sits beside a thing this session was shown
+                // is asked about it, once.** Only a creation that landed gets
+                // here, so a guard refusal never doubles up with this.
+                if let Some(sid) = args.sid.as_deref()
+                    && let Some(noticed) = self.registry.consult_creation(
+                        sid,
+                        entity.id.as_str(),
+                        entity.id.kind().map_or("", |kind| kind.as_token()),
+                        &entity.name,
+                        &entity.aliases,
+                    )
+                {
+                    crate::answer::note_teaching(&mut body, &noticed.question(entity.id.as_str()));
+                }
                 json_result(&body)
             }
             // **A parent refusal is not a near miss, and saying it is offers a
@@ -899,6 +913,149 @@ mod tests {
         assert!(
             !teaches(&second, "merge_entities"),
             "the teaching fired a second time in one session: {second}",
+        );
+    }
+
+    /// Read a kind's things through the verb a caller uses, which is what shows
+    /// them to the session.
+    async fn browsed(jojobot: &Jojobot, sid: &str, kind: &str) {
+        jojobot
+            .list_entities(Parameters(crate::memory::list_entities::ListEntitiesArgs {
+                kind: Some(kind.into()),
+                parent: None,
+                sid: Some(sid.into()),
+            }))
+            .await
+            .expect("list_entities ok");
+    }
+
+    /// Create a place named `name` under `handle`, as the session `sid`.
+    async fn created(
+        jojobot: &Jojobot,
+        sid: &str,
+        kind: &str,
+        handle: &str,
+        name: &str,
+    ) -> serde_json::Value {
+        json_of(
+            &jojobot
+                .add_entity(Parameters(AddEntityArgs {
+                    sid: Some(sid.into()),
+                    ..add_args(kind, handle, name)
+                }))
+                .await
+                .expect("add_entity ok"),
+        )
+    }
+
+    /// **A creation beside a thing this session was just shown is asked about
+    /// it, once.**
+    ///
+    /// The guard compares a creation with the store and cannot see that the
+    /// thing sits beside one a read returned a few calls ago. The question names
+    /// the thing shown, the fold that would repair it, and what archive would
+    /// leave behind. Every other claim rides in the same run, so each is the
+    /// positive another rests on: nothing shown is asked nothing; a different
+    /// kind is asked nothing; the same thing is not asked about twice.
+    #[tokio::test]
+    async fn a_creation_beside_a_thing_the_session_was_shown_is_asked_about_it_once() {
+        let jojobot = handler();
+        let sid = writing_as(&jojobot);
+        let seeded = created(&jojobot, &sid, "place", "wonder-wharf", "Wonder Wharf").await;
+        assert!(!teaches(&seeded, "same thing"), "{seeded}");
+
+        // Nothing has been shown to this session yet, so a creation with a
+        // shared word is asked nothing.
+        let unshown = created(&jojobot, &sid, "place", "leftorium", "Wonder Leftorium").await;
+        assert!(!teaches(&unshown, "place:wonder-wharf"), "{unshown}");
+
+        browsed(&jojobot, &sid, "place").await;
+
+        // A different kind sharing the word is asked nothing.
+        let other_kind = created(&jojobot, &sid, "thing", "kettle", "Wharf Kettle").await;
+        assert!(!teaches(&other_kind, "place:wonder-wharf"), "{other_kind}");
+
+        // The same kind, a shared word, and the thing was shown: asked.
+        let asked = created(&jojobot, &sid, "place", "wharf-road", "Wharf Road").await;
+        assert!(
+            teaches(&asked, "place:wonder-wharf")
+                && teaches(&asked, "merge_entities")
+                && teaches(&asked, "archive_entity"),
+            "the creation beside a thing it was shown is not asked about it: {asked}",
+        );
+
+        // Asked about once: a second creation beside the same thing is not.
+        let again = created(&jojobot, &sid, "place", "wharf-lane", "Wharf Lane").await;
+        assert!(
+            !teaches(&again, "place:wonder-wharf"),
+            "the same thing was asked about twice: {again}",
+        );
+    }
+
+    /// **The session that was not shown the thing is not asked about it.**
+    ///
+    /// The ledger is per session. Another session reading the same places leaves
+    /// this one with nothing to be asked.
+    #[tokio::test]
+    async fn another_sessions_reading_is_not_this_sessions_question() {
+        let jojobot = handler();
+        let reader = writing_as(&jojobot);
+        let writer = jojobot
+            .registry
+            .mint_with(&EntityId("bot:otto".into()), None, || "tst2".to_string())
+            .expect("a second session")
+            .to_string();
+        created(&jojobot, &reader, "place", "wonder-wharf", "Wonder Wharf").await;
+        browsed(&jojobot, &reader, "place").await;
+
+        // The positive the negative rests on: the session that read them is asked.
+        let asked_of_the_reader =
+            created(&jojobot, &reader, "place", "wharf-road", "Wharf Road").await;
+        assert!(
+            teaches(&asked_of_the_reader, "place:wonder-wharf"),
+            "the session that read the places was not asked: {asked_of_the_reader}",
+        );
+        let asked_of_the_writer =
+            created(&jojobot, &writer, "place", "wharf-lane", "Wharf Lane").await;
+        assert!(
+            !teaches(&asked_of_the_writer, "place:wonder-wharf"),
+            "a thing this session never saw was asked about: {asked_of_the_writer}",
+        );
+    }
+
+    /// **A read's answer is the same whether or not the session is being
+    /// remembered.** The ledger changes no read: the same listing, asked with a
+    /// session and without one, comes back byte for byte alike.
+    #[tokio::test]
+    async fn remembering_what_a_read_showed_changes_nothing_the_read_says() {
+        let jojobot = handler();
+        let sid = writing_as(&jojobot);
+        created(&jojobot, &sid, "place", "wonder-wharf", "Wonder Wharf").await;
+        let ask = |sid: Option<String>| {
+            let jojobot = jojobot.clone();
+            async move {
+                json_of(
+                    &jojobot
+                        .list_entities(Parameters(crate::memory::list_entities::ListEntitiesArgs {
+                            kind: Some("place".into()),
+                            parent: None,
+                            sid,
+                        }))
+                        .await
+                        .expect("list_entities ok"),
+                )
+            }
+        };
+        let anonymous = ask(None).await;
+        let remembered = ask(Some(sid)).await;
+        assert_eq!(anonymous["count"], 1, "{anonymous}");
+        assert_eq!(
+            anonymous["entities"], remembered["entities"],
+            "remembering what was shown changed what the read said",
+        );
+        assert!(
+            remembered.get("teaching").is_none(),
+            "a read carries a note: {remembered}",
         );
     }
 }

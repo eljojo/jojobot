@@ -149,6 +149,9 @@ impl Jojobot {
         structured: bool,
     ) {
         self.add_status_bar(answered, sid).await;
+        if let Some(sid) = sid {
+            self.registry.note_call(sid);
+        }
         self.record_served(answered, sid).await;
         if structured {
             structure(answered);

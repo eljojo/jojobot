@@ -125,12 +125,53 @@ pub struct SessionRegistry {
     /// proving nobody is about to take it, and a lock whose removal races is
     /// worse than a map that keeps a few dozen mutexes.
     gates: std::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    /// **What each session was shown by the read verbs**, kept here because this
+    /// is the one thing the process already shares across connections, keyed by
+    /// the same handle. Nothing in it is stored: a restart empties it. See
+    /// [`crate::seen`].
+    seen: std::sync::Mutex<crate::seen::Ledger>,
 }
 
 impl SessionRegistry {
     /// An empty registry — one per process.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Count one call this session made, so a thing shown can say how many
+    /// calls ago it was.
+    pub(crate) fn note_call(&self, sid: &str) {
+        self.seen
+            .lock()
+            .expect("the seen ledger is poisoned")
+            .tick(sid);
+    }
+
+    /// Remember the things a read answer returned.
+    pub(crate) fn note_shown(&self, sid: &str, body: &serde_json::Value) {
+        let returned = crate::seen::entities_in(body);
+        if returned.is_empty() {
+            return;
+        }
+        self.seen
+            .lock()
+            .expect("the seen ledger is poisoned")
+            .record(sid, returned);
+    }
+
+    /// Ask, once, about the thing a creation sits beside. See [`crate::seen`].
+    pub(crate) fn consult_creation(
+        &self,
+        sid: &str,
+        handle: &str,
+        kind: &str,
+        name: &str,
+        aliases: &[String],
+    ) -> Option<crate::seen::Noticed> {
+        self.seen
+            .lock()
+            .expect("the seen ledger is poisoned")
+            .consult(sid, handle, kind, name, aliases)
     }
 
     /// **The lock a caller takes before resolving and writing a session**, keyed

@@ -2152,6 +2152,9 @@ impl Jojobot {
                  sid it returns on this call to read your own runs"
             );
         }
+        if let Some(sid) = args.sid.as_deref() {
+            self.registry.note_shown(sid, &body);
+        }
         json_result(&body)
     }
 

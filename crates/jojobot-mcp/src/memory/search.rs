@@ -758,6 +758,9 @@ impl Jojobot {
         for (wanted, displaced) in &type_displaced {
             crate::answer::note_type_displaced(&mut body, wanted, displaced.as_ref());
         }
+        if let Some(sid) = args.sid.as_deref() {
+            self.registry.note_shown(sid, &body);
+        }
         json_result(&body)
     }
 }
@@ -2579,6 +2582,87 @@ mod tests {
             session_owners(&anonymous).is_empty(),
             "a caller with no identity must find no session hits at all, not merely fewer: \
              {anonymous}"
+        );
+    }
+
+    /// **What a search returned is what the session was shown.**
+    ///
+    /// The search verb is one of the three read sites the creation question
+    /// reads from. Its hit is a place; a creation beside it that lands carries
+    /// the question naming it. Paired with the same creation by a session that
+    /// ran no search, which is asked nothing.
+    #[tokio::test]
+    async fn a_thing_a_search_returned_is_a_thing_a_later_creation_is_asked_about() {
+        let place = Entity {
+            id: EntityId("place:wonder-wharf".into()),
+            kind: EntityKind::PLACE,
+            name: "Wonder Wharf".into(),
+            aliases: Vec::new(),
+            source: "user-named".into(),
+            crm: None,
+            parent: None,
+            boot: Boot::OnDemand,
+            merged_into: None,
+            badge: None,
+            archived: None,
+        };
+        let spy = Arc::new(SpySearch::answering(vec![Hit::Entity {
+            entity: place,
+            doc_id: "doc-1".into(),
+            edges: Vec::new(),
+            answers: None,
+        }]));
+        let jojobot = handler_with(spy);
+        let sid = writing_as(&jojobot);
+        let quiet = jojobot
+            .registry
+            .mint_with(&EntityId("bot:otto".into()), None, || "tst3".to_string())
+            .expect("a second session")
+            .to_string();
+        let create = |sid: String| {
+            let jojobot = jojobot.clone();
+            async move {
+                json_of(
+                    &jojobot
+                        .add_entity(Parameters(AddEntityArgs {
+                            sid: Some(sid),
+                            ..add_args("place", "wharf-road", "Wharf Road")
+                        }))
+                        .await
+                        .expect("add ok"),
+                )
+            }
+        };
+        jojobot
+            .search(Parameters(SearchArgs {
+                query: Some("wharf".into()),
+                sid: Some(sid.clone()),
+                ..search_args()
+            }))
+            .await
+            .expect("search ok");
+
+        let unasked = create(quiet).await;
+        assert!(
+            !unasked.to_string().contains("place:wonder-wharf"),
+            "a session that ran no search was asked: {unasked}",
+        );
+        let asked = {
+            // The same handle cannot be created twice, so the asked session
+            // creates beside the same hit under another handle.
+            json_of(
+                &jojobot
+                    .add_entity(Parameters(AddEntityArgs {
+                        sid: Some(sid),
+                        ..add_args("place", "far-country", "Wharf Lane")
+                    }))
+                    .await
+                    .expect("add ok"),
+            )
+        };
+        assert!(
+            asked.to_string().contains("place:wonder-wharf"),
+            "a thing the search returned was not asked about: {asked}",
         );
     }
 }

@@ -52,6 +52,7 @@ pub fn provisions() -> jojobot_domain::memory::owned::Provisions {
     supplied
 }
 pub mod seed;
+mod seen;
 pub mod session;
 pub mod sid;
 mod status_bar;

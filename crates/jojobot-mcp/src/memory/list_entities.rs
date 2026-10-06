@@ -94,6 +94,9 @@ impl Jojobot {
             "archived_excluded": before - entities.len(),
             "entities": entities.iter().map(entity_json).collect::<Vec<_>>(),
         });
+        if let Some(sid) = args.sid.as_deref() {
+            self.registry.note_shown(sid, &body);
+        }
         json_result(&body)
     }
 }

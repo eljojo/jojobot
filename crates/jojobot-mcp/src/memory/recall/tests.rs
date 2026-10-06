@@ -5452,3 +5452,39 @@ async fn one_update_moves_a_value_from_one_key_to_another() {
         "the old key still holds the value: {held}",
     );
 }
+
+/// **What a recall returned is what the session was shown.** A creation beside
+/// a place the recall returned carries the question naming it.
+#[tokio::test]
+async fn a_thing_a_recall_returned_is_a_thing_a_later_creation_is_asked_about() {
+    let jojobot = handler();
+    let sid = writing_as(&jojobot);
+    jojobot
+        .add_entity(Parameters(AddEntityArgs {
+            sid: Some(sid.clone()),
+            ..add_args("place", "wonder-wharf", "Wonder Wharf")
+        }))
+        .await
+        .expect("add ok");
+    jojobot
+        .recall(Parameters(RecallArgs {
+            kind: Some("place".into()),
+            sid: Some(sid.clone()),
+            ..of_nothing()
+        }))
+        .await
+        .expect("recall ok");
+    let asked = json_of(
+        &jojobot
+            .add_entity(Parameters(AddEntityArgs {
+                sid: Some(sid),
+                ..add_args("place", "wharf-road", "Wharf Road")
+            }))
+            .await
+            .expect("add ok"),
+    );
+    assert!(
+        asked.to_string().contains("place:wonder-wharf"),
+        "a thing the recall returned was not asked about: {asked}",
+    );
+}
