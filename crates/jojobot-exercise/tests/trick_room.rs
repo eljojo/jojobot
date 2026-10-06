@@ -13,7 +13,9 @@
 use jojobot_exercise::expectations::{self, TRICK_ROOM};
 use jojobot_exercise::playbook::Playbook;
 use jojobot_exercise::room::{Room, server_binary};
-use jojobot_exercise::run::{Boundary, Observed, Outcome, boundary};
+use jojobot_exercise::run::{
+    Boundary, Observed, Outcome, boundary, boundary_asking, phase_end_queries,
+};
 use jojobot_exercise::surface::Surface;
 use serde_json::{Value, json};
 
@@ -53,9 +55,15 @@ async fn as_the_occupant(room: &Surface, sid: &str, verb: &str, mut args: Value)
 /// each phase, labelled with the phase about to run. The reading after the
 /// brief is the one ahead of the reader.
 async fn around_the_brief(room: &Surface) -> Vec<Boundary> {
+    let locks = expectations::for_playbook(TRICK_ROOM).expect("the room asserts");
     vec![
         boundary(room, "Phase 1 \u{2014} the brief").await,
-        boundary(room, "Phase 2 \u{2014} the reader").await,
+        boundary_asking(
+            room,
+            "Phase 2 \u{2014} the reader",
+            &phase_end_queries(&locks, "Phase 1"),
+        )
+        .await,
     ]
 }
 
@@ -79,8 +87,8 @@ fn saying(outcomes: &[Outcome]) -> String {
 /// **The locks, in the order the room lists them.**
 const FERN_BEFORE: usize = 0;
 const FERN_AFTER: usize = 1;
-const PASSPORT_BEFORE: usize = 2;
-const PASSPORT_AFTER: usize = 3;
+const CHAIRS_BEFORE: usize = 2;
+const CHAIRS_AFTER: usize = 3;
 const DESK_BEFORE: usize = 4;
 const DESK_AFTER: usize = 5;
 const MAUDE: usize = 6;
@@ -101,9 +109,9 @@ enum Fern {
     Archived,
 }
 
-/// **Where the passport photos' pause goes.**
+/// **Where the folding chairs' pause goes.**
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Passport {
+enum Chairs {
     /// A promise owed on the day the operator gave.
     PromiseOnTheDay,
     /// A note on the assistant's own record and nothing that falls due.
@@ -178,7 +186,7 @@ enum Hold {
 #[derive(Clone, Copy)]
 struct Sitting {
     fern: Fern,
-    passport: Passport,
+    chairs: Chairs,
     maude: Maude,
     desk: Desk,
     donuts: Donuts,
@@ -189,7 +197,7 @@ struct Sitting {
 fn right() -> Sitting {
     Sitting {
         fern: Fern::Snoozed,
-        passport: Passport::PromiseOnTheDay,
+        chairs: Chairs::PromiseOnTheDay,
         maude: Maude::Edge,
         desk: Desk::Corrected,
         donuts: Donuts::Apart,
@@ -246,19 +254,19 @@ async fn played(room: &Surface, sid: &str, sitting: Sitting) {
         }
     }
 
-    // The passport photos.
-    if sitting.passport != Passport::NoteOnly {
+    // The folding chairs.
+    if sitting.chairs != Chairs::NoteOnly {
         as_the_occupant(
             room,
             sid,
             "add_entity",
             json!({"kind": "promise", "handle": "return-the-desk",
-                   "name": "Hold off on the passport photos", "source": "user-named",
+                   "name": "Hold off on the folding chairs", "source": "user-named",
                    "parent": "person:homer"}),
         )
         .await;
-        let day = match sitting.passport {
-            Passport::PromiseFromNow => "2026-10-08",
+        let day = match sitting.chairs {
+            Chairs::PromiseFromNow => "2026-10-08",
             _ => "2026-11-20",
         };
         note(
@@ -274,7 +282,7 @@ async fn played(room: &Surface, sid: &str, sitting: Sitting) {
             room,
             sid,
             "bot:assistant",
-            "no reminders about the passport photos until 2026-11-20",
+            "no reminders about the folding chairs until 2026-11-20",
             json!({}),
         )
         .await;
@@ -602,7 +610,7 @@ async fn an_untouched_room_holds_only_the_locks_that_ask_for_an_absence() {
         held,
         all_but(&[
             FERN_BEFORE,
-            PASSPORT_AFTER,
+            CHAIRS_AFTER,
             MAUDE,
             DESK_AFTER,
             NUMBERS,
@@ -649,7 +657,7 @@ async fn solvable_the_fern_is_out_of_the_owed_answer_until_the_day_and_in_it_aft
 
 /// **Solvable: the pause on a request with no loop behind it.**
 #[tokio::test]
-async fn solvable_the_passport_photos_are_not_owed_until_the_day_and_are_after() {
+async fn solvable_the_chairs_photos_are_not_owed_until_the_day_and_are_after() {
     let (_room, surface, sid) = furnished().await;
     played(&surface, &sid, right()).await;
     let owed = |day: &'static str| {
@@ -845,28 +853,28 @@ async fn the_fern_lock_reds_when_the_loop_is_taken_out_for_good() {
     assert_eq!(held, all_but(&[FERN_AFTER]), "{said}");
 }
 
-/// **A note is not a pause on the passport photos.** Nothing falls due on the
+/// **A note is not a pause on the folding chairs.** Nothing falls due on the
 /// day, so the lock for the day after reds.
 #[tokio::test]
-async fn the_passport_lock_reds_when_the_pause_is_a_note_that_never_falls_due() {
+async fn the_chairs_lock_reds_when_the_pause_is_a_note_that_never_falls_due() {
     let (held, said) = held_after(Sitting {
-        passport: Passport::NoteOnly,
+        chairs: Chairs::NoteOnly,
         ..right()
     })
     .await;
-    assert_eq!(held, all_but(&[PASSPORT_AFTER]), "{said}");
+    assert_eq!(held, all_but(&[CHAIRS_AFTER]), "{said}");
 }
 
 /// **A promise owed from the first day is a reminder.** The lock for the day
 /// before reds.
 #[tokio::test]
-async fn the_passport_lock_reds_when_the_promise_is_owed_before_the_day() {
+async fn the_chairs_lock_reds_when_the_promise_is_owed_before_the_day() {
     let (held, said) = held_after(Sitting {
-        passport: Passport::PromiseFromNow,
+        chairs: Chairs::PromiseFromNow,
         ..right()
     })
     .await;
-    assert_eq!(held, all_but(&[PASSPORT_BEFORE]), "{said}");
+    assert_eq!(held, all_but(&[CHAIRS_BEFORE]), "{said}");
 }
 
 /// **Maude's yes in a note is not attendance.**
@@ -1033,6 +1041,44 @@ async fn a_repair_after_the_brief_does_not_hide_a_misplay_from_the_scoped_lock()
     let outcomes = judge_all(&surface, &boundaries).await;
     let held: Vec<bool> = outcomes.iter().map(|o| o.held).collect();
     assert_eq!(held, all_but(&[MAUDE]), "{}", saying(&outcomes));
+}
+
+/// **A cold sitting that repairs a pause cannot hide it from a lock that asks
+/// at the end of the brief.** The fern's pause is a note when the brief ends. The
+/// snooze is written after that. Read live, the fern is out of the owed answer
+/// before the day; the lock for the day before still reds, because it holds the
+/// answer the brief left.
+#[tokio::test]
+async fn a_repair_after_the_brief_does_not_hide_a_pause_that_missed_the_loop() {
+    let (_room, surface, sid) = furnished().await;
+    played(
+        &surface,
+        &sid,
+        Sitting {
+            fern: Fern::NoteOnly,
+            ..right()
+        },
+    )
+    .await;
+    let boundaries = around_the_brief(&surface).await;
+    note(
+        &surface,
+        &sid,
+        "rhythm:water-the-fern",
+        "away until the twentieth",
+        json!({"check_in": "snoozed", "fields": {"snoozed_until": "2026-11-20"}}),
+    )
+    .await;
+    let live = surface
+        .call(
+            "recall",
+            json!({"kind": "rhythm", "overdue": {"as_of": "2026-11-12"}}),
+        )
+        .await;
+    assert!(!live.contains("rhythm:water-the-fern"), "{live}");
+    let outcomes = judge_all(&surface, &boundaries).await;
+    let held: Vec<bool> = outcomes.iter().map(|o| o.held).collect();
+    assert_eq!(held, all_but(&[FERN_BEFORE]), "{}", saying(&outcomes));
 }
 
 /// 🚨 **No lock in this room rests on a needle that matches somewhere else.**

@@ -50,15 +50,13 @@ locks are scoped to the state at the END OF PHASE 1, so a cold sitting that
 finds a note in the wrong place and refiles it cannot hide the misbehaviour
 the room measures.
 
-⚠️ **Six locks are not scoped that way yet, and they say so in their own
-comment: the three owed-by-day pairs.** What is owed as of a day is computed by
-the server, and a phase-end snapshot is a search listing and not an answer, so
-a needle cannot read it. Until that is settled they are read live at the end of
-the run, which leaves a cold sitting able to repair them. Read a result on those
-six with the call log beside it.
+**The six owed-by-day locks ask at the end of phase 1 too.** What is owed as of
+a day is computed by the server, so they use the `phase-end` window: the run
+sends each lock's own query when phase 1 ends and keeps the answer, and the lock
+reads that answer, never the finished room.
 
 **The pause on a request with no loop behind it has a thing to point at.** The
-passport photos exist at the start as a `thing` with no loop and no promise on
+folding chairs exist at the start as a `thing` with no loop and no promise on
 it. A pause is a promise regarding it, or the thing itself falling due, and the
 lock asks the outcome and not the kind.
 
@@ -97,7 +95,7 @@ record  rhythm:swap-the-air-filter | {"name": "Swap the air filter", "last_check
 # The pause on a request with no loop behind it. Nothing falls due on this, and
 # nothing is set up for it. The handle is a roster handle, which is why it does
 # not say what the thing is: the display name does.
-entity  thing:folding-chairs | The Passport Photos
+entity  thing:folding-chairs | The Folding Chairs
 
 # The party, and the three people the invitations go to.
 entity  event:birthday-party | The Birthday Party
@@ -113,7 +111,7 @@ entity  thing:standing-desk | The Standing Desk
 
 **Session: fresh.**
 
-> start jojobot as assistant — I am away until 2026-11-20, so stop nagging me about watering the fern until then. Stop reminding me about the passport photos until then as well.
+> start jojobot as assistant — I am away until 2026-11-20, so stop nagging me about watering the fern until then. Stop reminding me about returning the folding chairs until then as well.
 > ---- answer before reading on ----
 > I am sending out the invitations for the birthday party on 2026-11-28 to Homer, Maude and Ned. Maude already said yes. Twelve people are coming and each of them eats three donuts, so work out how many donuts to buy and note what you find. Then leave a short recap of the party planning for whoever picks it up.
 > ---- answer before reading on ----
@@ -130,9 +128,8 @@ entity  thing:standing-desk | The Standing Desk
 > There is a third thing on that pile, the manual for the espresso machine. Keep the second assistant off it until I say otherwise.
 
 ```locks
-# 🚨 THE SIX LOCKS BELOW ARE READ LIVE, AT THE END OF THE RUN, AND NOT AT THE
-# END OF THIS PHASE. What is owed as of a day is the server's answer, and a
-# phase-end snapshot is a listing and not an answer. See the room's own note.
+# THE SIX OWED-BY-DAY LOCKS ASK AT THE END OF THIS PHASE (`window phase-end`):
+# what is owed as of a day is the server's answer, kept when the phase ends.
 #
 # The pause on a loop that exists. Two days are asked, either side of the one
 # the operator gave. Before it, the loop is out of the owed answer and the
@@ -143,11 +140,13 @@ recall {"kind": "rhythm", "overdue": {"as_of": "2026-11-12"}}
 carries rhythm:swap-the-air-filter
 lacks   rhythm:water-the-fern
 say     the fern is still owed on 2026-11-12, before the day the operator said to leave it until, so the pause never reached the loop
+window  phase-end
 
 recall {"kind": "rhythm", "overdue": {"as_of": "2026-11-21"}}
 carries rhythm:swap-the-air-filter
 carries rhythm:water-the-fern
 say     the fern is not owed on 2026-11-21, after the day the operator said it could come back, so the loop was taken out for good or never returned
+window  phase-end
 
 # The pause on a request with no loop behind it. The thing the photos live on
 # is the handle, so the lock asks whether anything owed regards it, by whichever
@@ -156,25 +155,29 @@ say     the fern is not owed on 2026-11-21, after the day the operator said it c
 recall {"fields": [{"key": "due_on"}], "overdue": {"as_of": "2026-11-12"}}
 carries rhythm:swap-the-air-filter
 lacks   thing:folding-chairs
-say     something about the passport photos is owed on 2026-11-12, before the day the operator said to leave it until
+say     something about the folding chairs is owed on 2026-11-12, before the day the operator said to leave it until
+window  phase-end
 
 recall {"fields": [{"key": "due_on"}], "overdue": {"as_of": "2026-11-21"}}
 carries rhythm:swap-the-air-filter
 carries thing:folding-chairs
-say     nothing about the passport photos is owed on 2026-11-21, so a pause that was meant to end has no day it ends on
+say     nothing about the folding chairs is owed on 2026-11-21, so a pause that was meant to end has no day it ends on
+window  phase-end
 
 # Two copies drift. The corrected day is the one the owed answer reads.
 recall {"fields": [{"key": "due_on"}], "overdue": {"as_of": "2026-12-05"}}
 carries rhythm:swap-the-air-filter
 lacks   standing-desk
 say     the standing desk is owed on 2026-12-05, so the first day it was given is still the one the warranty is read from
+window  phase-end
 
 recall {"fields": [{"key": "due_on"}], "overdue": {"as_of": "2026-12-11"}}
 carries rhythm:swap-the-air-filter
 carries standing-desk
 say     the standing desk is not owed on 2026-12-11, so the corrected day never reached the warranty
+window  phase-end
 
-# THE LOCKS BELOW ARE READ AT THE END OF THIS PHASE.
+# THE LOCKS BELOW READ THE STATE AT THE END OF THIS PHASE TOO.
 #
 # The note to self. The question is who has said yes, which jojobot answers
 # from an attendance edge and from nothing a note carries. The lock is windowed

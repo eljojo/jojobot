@@ -956,16 +956,16 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
     },
     NegativeControl {
         room: expectations::TRICK_ROOM,
-        lock: "Phase 1 — something about the passport photos is owed on 2026-11-12, before the day the operator said to leave it until",
+        lock: "Phase 1 — something about the folding chairs is owed on 2026-11-12, before the day the operator said to leave it until",
         file: "tests/trick_room.rs",
-        function: "the_passport_lock_reds_when_the_promise_is_owed_before_the_day",
+        function: "the_chairs_lock_reds_when_the_promise_is_owed_before_the_day",
         strength: Strength::Discriminating,
     },
     NegativeControl {
         room: expectations::TRICK_ROOM,
-        lock: "Phase 1 — nothing about the passport photos is owed on 2026-11-21, so a pause that was meant to end has no day it ends on",
+        lock: "Phase 1 — nothing about the folding chairs is owed on 2026-11-21, so a pause that was meant to end has no day it ends on",
         file: "tests/trick_room.rs",
-        function: "the_passport_lock_reds_when_the_pause_is_a_note_that_never_falls_due",
+        function: "the_chairs_lock_reds_when_the_pause_is_a_note_that_never_falls_due",
         strength: Strength::Discriminating,
     },
     NegativeControl {
