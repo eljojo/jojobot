@@ -24,6 +24,9 @@ use serde_json::json;
 
 const FIXTURE_DUMP: &str = "tests/fixtures/upgrade/doltdump.sql";
 const FIXTURE_REF: &str = "tests/fixtures/upgrade/ref.txt";
+/// The session id the recording's own boot was handed, which is who the
+/// recorded role claim names as its holder.
+const FIXTURE_ROLE_HOLDER: &str = "tests/fixtures/upgrade/role_holder.txt";
 
 /// A directory of this run's own, removed when it is done.
 struct Scratch(std::path::PathBuf);
@@ -117,7 +120,11 @@ async fn the_current_binary_boots_on_a_store_an_older_binary_filled() {
     let surface = Surface::connect(&format!("http://127.0.0.1:{http_port}/mcp"))
         .await
         .expect("connecting to the current binary");
-    assert_every_recorded_record_reads_back(&surface, &git_ref).await;
+    let role_holder = std::fs::read_to_string(FIXTURE_ROLE_HOLDER)
+        .unwrap_or_else(|e| panic!("reading {FIXTURE_ROLE_HOLDER}: {e}"))
+        .trim()
+        .to_string();
+    assert_every_recorded_record_reads_back(&surface, &git_ref, &role_holder).await;
     surface.finish().await;
 
     let _ = child.start_kill();
@@ -144,7 +151,11 @@ fn split_sql_statements(dump: &str) -> Vec<String> {
 /// enough on its own: a stricter parse can let the server come up and still
 /// fail the one row it was made stricter about the moment something asks
 /// for it.
-async fn assert_every_recorded_record_reads_back(surface: &Surface, git_ref: &str) {
+async fn assert_every_recorded_record_reads_back(
+    surface: &Surface,
+    git_ref: &str,
+    role_holder: &str,
+) {
     let fail = |what: &str, body: &str| -> ! {
         panic!("recorded at {git_ref}: {what} did not read back correctly: {body}")
     };
@@ -212,7 +223,12 @@ async fn assert_every_recorded_record_reads_back(surface: &Surface, git_ref: &st
         .await;
     let parsed: serde_json::Value =
         serde_json::from_str(&read).unwrap_or_else(|_| fail("the role-claim fields", &read));
-    if parsed["objects"][0]["fields"]["role/upgrade-fixture-recorder/holder"] != "bot:assistant" {
+    // **The holder is the session the recording booted as, recorded beside
+    // the dump** — a check that any non-empty value passes would pass on a
+    // field the upgrade had rewritten to garbage.
+    if role_holder.is_empty()
+        || parsed["objects"][0]["fields"]["role/upgrade-fixture-recorder/holder"] != role_holder
+    {
         fail("the role-claim fields", &read);
     }
 

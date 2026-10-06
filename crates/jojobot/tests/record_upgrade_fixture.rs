@@ -94,7 +94,7 @@ async fn record_the_upgrade_fixture() {
         .await
         .expect("connecting to the old binary");
 
-    seed_representative_records(&surface).await;
+    let role_holder = seed_representative_records(&surface).await;
 
     surface.finish().await;
     let _ = child.start_kill();
@@ -135,6 +135,13 @@ async fn record_the_upgrade_fixture() {
     .expect("the dump is copied into the fixture directory");
     std::fs::write(fixture_dir.join("ref.txt"), format!("{git_ref}\n"))
         .expect("the ref is recorded beside the dump");
+    // **The holder the recording's own boot was handed**, so the gate asserts
+    // the claim read back is that claim and not merely some claim.
+    std::fs::write(
+        fixture_dir.join("role_holder.txt"),
+        format!("{role_holder}\n"),
+    )
+    .expect("the role holder is recorded beside the dump");
 
     eprintln!(
         "recorded the upgrade fixture from {git_ref} into {}",
@@ -145,11 +152,24 @@ async fn record_the_upgrade_fixture() {
 /// **One representative record per category the gate has to prove reads
 /// back**, never exhaustive — the gate is a boot-and-read-back proof, not a
 /// second copy of every other suite's coverage.
-async fn seed_representative_records(surface: &Surface) {
+///
+/// **Returns the session id the recording's own boot was handed**, which is
+/// what the role claim below records as its holder.
+async fn seed_representative_records(surface: &Surface) -> String {
+    // **The role is claimed at the boot door, the only door it opens
+    // through.** The holder is the session that booted, so the claim is the
+    // recording run's own.
     let booted = surface
-        .must("start_here", json!({"bot": "assistant", "brief": true}))
+        .must(
+            "start_here",
+            json!({"bot": "assistant", "brief": true, "claim": "upgrade-fixture-recorder"}),
+        )
         .await
         .expect("the recording session boots");
+    assert_eq!(
+        booted["session"]["claim"]["status"], "taken",
+        "the recording run did not get its own role claim: {booted}"
+    );
     let sid = booted["session"]["sid"]
         .as_str()
         .expect("a fresh boot carries a session id")
@@ -218,26 +238,6 @@ async fn seed_representative_records(surface: &Surface) {
         .await
         .expect("the thought is captured");
 
-    // Role-claim fields, in the exact shape claim_role/role_holder_key mint
-    // them — this binary's own claim on a role, on its own handle.
-    surface
-        .must(
-            "capture",
-            json!({
-                "subject": "bot:assistant",
-                "content": "claims the upgrade-fixture-recorder role",
-                "provenance": "observation",
-                "fields": {
-                    "role/upgrade-fixture-recorder/holder": "bot:assistant",
-                    "role/upgrade-fixture-recorder/claimed_at": jiff::Timestamp::now().to_string(),
-                    "read_from": "this recording run",
-                },
-                "sid": sid,
-            }),
-        )
-        .await
-        .expect("the role claim fields are captured");
-
     // Mail in several states: one left new, one read, one processed.
     surface
         .must(
@@ -294,4 +294,5 @@ async fn seed_representative_records(surface: &Surface) {
         )
         .await
         .expect("the session wraps");
+    sid
 }
