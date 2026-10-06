@@ -1161,6 +1161,20 @@ pub async fn needle_verdicts(
     room: &crate::surface::Surface,
     locks: &[Lock],
 ) -> Vec<Vec<NeedleVerdict>> {
+    needle_verdicts_over(room, locks, &[]).await
+}
+
+/// **The same walk, reading a phase-end lock's own kept answer.**
+///
+/// A lock that asks at the end of its phase is answered from what that phase
+/// left, and asking the finished room instead reports a needle as matching
+/// nowhere when a later phase legitimately changed it. A lock with no kept
+/// answer among `boundaries` is asked live, as every other lock is.
+pub async fn needle_verdicts_over(
+    room: &crate::surface::Surface,
+    locks: &[Lock],
+    boundaries: &[crate::run::Boundary],
+) -> Vec<Vec<NeedleVerdict>> {
     let mut all = Vec::new();
     for lock in locks {
         let Asks::Query { verb, args } = &lock.asks else {
@@ -1169,7 +1183,21 @@ pub async fn needle_verdicts(
         let Ok(sent) = serde_json::from_str::<serde_json::Value>(args) else {
             continue;
         };
-        let answer = room.call(verb, sent).await;
+        let kept = match (lock.when, lock.phase_key.as_deref()) {
+            (When::PhaseEnd, Some(key)) => crate::run::boundary_pair(boundaries, key)
+                .and_then(|(_, after)| {
+                    after
+                        .answers
+                        .iter()
+                        .find(|kept| kept.phase == key && kept.verb == *verb && kept.args == *args)
+                })
+                .map(|kept| kept.answer.clone()),
+            _ => None,
+        };
+        let answer = match kept {
+            Some(kept) => kept,
+            None => room.call(verb, sent).await,
+        };
         // **Dropped, not substituted** — the same shape the two arms above
         // already take for a lock with no query to ask or arguments this
         // file cannot read. A `Value::Null` here would report every needle
@@ -1254,7 +1282,7 @@ pub async fn needle_summary(
     boundaries: &[crate::run::Boundary],
 ) -> NeedleSummary {
     let mut summary = NeedleSummary::default();
-    for one_lock in needle_verdicts(room, locks).await {
+    for one_lock in needle_verdicts_over(room, locks, boundaries).await {
         for verdict in &one_lock {
             match verdict.matched {
                 Matched::Ambiguous(_) => summary.ambiguous += 1,

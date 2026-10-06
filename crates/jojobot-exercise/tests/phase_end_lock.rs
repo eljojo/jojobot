@@ -159,3 +159,46 @@ fn the_window_is_refused_where_there_is_nothing_to_ask() {
     let no_phase = "```locks\nrecall {\"subject\": \"person:milhouse\"}\ncarries a\nsay     s\nwindow  phase-end\n```\n";
     assert!(read(no_phase).is_err());
 }
+
+/// **Needle hygiene reads a phase-end lock's own kept answer.** A needle true when
+/// the phase ended can stop being true later, and asking the finished room would
+/// call it a needle that matches nowhere. The key is written in phase 1 and
+/// written again afterwards, so only the kept answer holds the first value.
+#[tokio::test]
+async fn needle_hygiene_reads_the_answer_a_phase_end_lock_kept() {
+    let (_room, surface, sid) = room_with_a_marker().await;
+    let first = surface
+        .call(
+            "capture",
+            json!({"subject": "person:milhouse", "content": "a first value",
+                   "provenance": "testimony", "fields": {"stage": "alpha-one"}, "sid": &sid}),
+        )
+        .await;
+    assert!(!first.contains("blocked"), "{first}");
+    let doc = "## Phase 1 \u{2014} the room\n\n\
+         ```locks\n\
+         recall {\"fields\": [{\"value\": \"alpha-one\"}]}\n\
+         carries alpha-one\n\
+         say     the first value is held\n\
+         window  phase-end\n\
+         ```\n";
+    let locks = read(doc).expect("the lock reads");
+    let asked: Vec<Box<dyn Expectation>> = read(doc)
+        .expect("the lock reads")
+        .into_iter()
+        .map(|lock: Lock| Box::new(lock) as Box<dyn Expectation>)
+        .collect();
+    let boundaries = boundaries_after_phase_one(&surface, &asked).await;
+    let second = surface
+        .call(
+            "capture",
+            json!({"subject": "person:milhouse", "content": "a second value",
+                   "provenance": "testimony", "fields": {"stage": "alpha-two"}, "sid": &sid}),
+        )
+        .await;
+    assert!(!second.contains("blocked"), "{second}");
+    let kept = jojobot_exercise::lock::needle_summary(&surface, &locks, &boundaries).await;
+    assert!(kept.nowhere.is_empty(), "{:?}", kept.nowhere);
+    let live = jojobot_exercise::lock::needle_summary(&surface, &locks, &[]).await;
+    assert_eq!(live.nowhere.len(), 1, "{:?}", live.nowhere);
+}
