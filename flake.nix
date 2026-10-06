@@ -66,6 +66,9 @@
             dolt
             pkgs.tzdata
             pkgs.python3
+            # The `bar` runner's size-report tests build a scratch repository
+            # of their own, and the sandbox has no `git`.
+            pkgs.git
           ];
           TZDIR = "${pkgs.tzdata}/share/zoneinfo";
           # scripts/sabotage carries `#!/usr/bin/env python3`. The check
