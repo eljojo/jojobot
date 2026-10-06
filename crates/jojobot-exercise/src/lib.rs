@@ -26,6 +26,7 @@
 //! the workspace first; run one of those, or `cargo build --workspace`
 //! yourself, before reaching for `cargo test -p jojobot-exercise` directly.
 
+pub mod adoption;
 pub mod agent;
 pub mod calls;
 pub mod checks;

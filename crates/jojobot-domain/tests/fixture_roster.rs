@@ -1917,11 +1917,17 @@ fn the_handle_check_range_reaches_head() {
 /// the exercise is this project's own dependency rather than anything about the
 /// machine it ran on.
 const CAPTURE_KEYS: &[&str] = &[
+    "answers_type",
     "bot",
+    "clear_fields",
     "content",
+    "decide_by",
+    "fields",
     "file_path",
+    "guarantee_expires",
     "id",
     "input",
+    "is_error",
     "message",
     "model",
     "name",
@@ -1930,6 +1936,7 @@ const CAPTURE_KEYS: &[&str] = &[
     "subtype",
     "text",
     "thinking",
+    "tickets_needed_by",
     "today",
     "tool_use_id",
     "type",

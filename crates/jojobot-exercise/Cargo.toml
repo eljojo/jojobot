@@ -1,6 +1,7 @@
 [package]
 name = "jojobot-exercise"
 version.workspace = true
+default-run = "jojobot-exercise"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
