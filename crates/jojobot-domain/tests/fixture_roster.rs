@@ -189,6 +189,8 @@ const ROSTER: &[&str] = &[
     "org:costingtons",
     "org:globex",
     "org:guild",
+    "org:krusty-burger",
+    "org:moes-tavern",
     // Homer's snowplow business, the Simpsons, repurposed here as a
     // furnace-servicing company.
     "org:mr-plow",
@@ -227,6 +229,7 @@ const ROSTER: &[&str] = &[
     "person:bet",
     "person:beta",
     "person:bodoque",
+    "person:burns",
     "person:contract-chainless",
     "person:contract-no-capacity-long-thought",
     "person:contract-citation-editpath",
@@ -277,6 +280,7 @@ const ROSTER: &[&str] = &[
     "person:hugo",
     "person:kept-alpha",
     "person:kept-beta",
+    "person:krusty",
     "person:kappa",
     "person:delta",
     "person:epsilon",
@@ -286,7 +290,9 @@ const ROSTER: &[&str] = &[
     "person:iota",
     // Bob's Burgers.
     "person:linda",
+    "person:lisa",
     "person:louise",
+    "person:martin",
     "person:maude",
     "person:milhouse",
     "person:milhouse-2",
