@@ -4263,33 +4263,31 @@ async fn displace(
     clock: &Clock,
 ) -> Result<(), MemoryError> {
     let prior_rows = sqlx::query(
-        "SELECT type_name, key_name, holds, folds, origin, required, one_of FROM type_field \
+        "SELECT key_name, holds, folds, required, one_of FROM type_field \
          WHERE type_name = ? ORDER BY ordinal",
     )
     .bind(name)
     .fetch_all(&mut **tx)
     .await
     .map_err(store)?;
-    let Some(prior) = gather_types(&prior_rows)?
-        .into_iter()
-        .find(|t| t.name == name)
-    else {
-        return Ok(());
-    };
     let today = clock.today_in(&jiff::tz::TimeZone::UTC);
-    for (ordinal, field) in prior.fields.iter().enumerate() {
+    // **Every cell is carried as stored, never parsed.** Displacing runs
+    // inside the seed, while the kind set is still empty, and a parse of a
+    // `reference:<kind>` cell needs that set. The displaced rows are read back
+    // by `displaced_from_rows`, after the set is loaded.
+    for (ordinal, row) in prior_rows.iter().enumerate() {
         sqlx::query(
             "INSERT INTO displaced_type_field \
              (type_name, key_name, ordinal, holds, folds, required, one_of, replaced_on) \
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(name)
-        .bind(&field.key)
+        .bind(row.get::<String, _>("key_name"))
         .bind(ordinal as i64 + 1)
-        .bind(field.holds_token())
-        .bind(field.folds.as_token())
-        .bind(field.required)
-        .bind(field.one_of_cell())
+        .bind(row.get::<String, _>("holds"))
+        .bind(row.get::<String, _>("folds"))
+        .bind(row.get::<bool, _>("required"))
+        .bind(row.get::<Option<String>, _>("one_of"))
         .bind(today.to_string())
         .execute(&mut **tx)
         .await

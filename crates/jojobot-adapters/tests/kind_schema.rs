@@ -462,6 +462,72 @@ async fn a_boot_does_not_destroy_a_schema_named_like_a_shipped_kind() {
     server.stop().await;
 }
 
+/// **A seed over a caller's type of a shipped kind's name finishes, even when
+/// that type holds a reference to a kind.**
+///
+/// The seed runs with the process's kind set still empty: it declares every
+/// shipped kind and only then loads the set. Remembering what the caller's
+/// type held used to parse each stored key through the kind set, so a
+/// reference-typed key stopped the seed halfway. The kinds after it were never
+/// declared and the set was never loaded.
+///
+/// **The type is declared while the set is loaded, then the set is emptied**:
+/// that is the order a real restart has, where the type was written by an
+/// earlier process.
+#[tokio::test]
+async fn a_seed_over_a_callers_type_with_a_reference_key_still_finishes() {
+    let (mut server, store, _turn) = a_store("seed-displaces-reference").await;
+
+    // The store is seeded, so `promise` is shipped. Take it back to stand in
+    // for a build that did not ship it yet, and declare the caller's type.
+    store
+        .reclaim_kind("promise")
+        .await
+        .expect("the shipped kind is taken back");
+    let theirs = DeclaredType::new(
+        "promise",
+        vec![
+            Field {
+                points_at: Some(EntityKind::from_token("person").expect("a shipped kind")),
+                ..Field::new("owed_to", ValueType::Reference)
+            },
+            Field::new("due", ValueType::Date),
+        ],
+    );
+    store
+        .declare_type(theirs.clone())
+        .await
+        .expect("a caller declares a type under a name the build ships later");
+
+    // A restart: the process starts with no kinds loaded.
+    kinds::load(Vec::<String>::new());
+    let seeded = kinds::seed(&store).await;
+    assert!(
+        seeded.is_ok(),
+        "the seed finishes over the caller's type: {seeded:?}"
+    );
+    assert!(
+        kinds::known("promise"),
+        "the seed went on to load the set, so the shipped kind is known"
+    );
+    assert!(
+        kinds::known("thread"),
+        "the kinds the seed declares after the type's name are known too"
+    );
+
+    let displaced = store
+        .displaced_type("promise")
+        .await
+        .expect("the read answers")
+        .unwrap_or_else(|| panic!("what the caller's type held was not remembered"));
+    assert_eq!(
+        displaced.fields, theirs.fields,
+        "the keys the caller declared, exactly as declared"
+    );
+
+    server.stop().await;
+}
+
 /// **Neither side may take the other's keys**, and the refusal says which
 /// thing already holds the name.
 #[tokio::test]
