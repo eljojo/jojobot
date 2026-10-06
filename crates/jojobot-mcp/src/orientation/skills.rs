@@ -210,13 +210,16 @@ meant to settle.
 rhythm falls due `cadence_days` after it.
 
 Write the loop with `add_entity` as soon as the operator names one, and put in
-the keys the operator gave you. A key the operator has not chosen yet is a
-question you ask after the loop exists. It is never a reason to wait.
+the keys the operator gave you. `cadence_days` and `advances_from` go together
+or not at all. A write that holds one without the other is refused. A loop with
+neither is allowed, and you write it at once.
 
-A loop that holds part of a schedule tracks from the day it is written and
-comes back overdue with the fields it does hold, which is what puts the
-missing key in front of the operator. A loop nobody wrote tracks nothing, and
-nothing later reports that it is absent.
+If the operator gave a cadence and has not said which date it counts from, ask
+which. Write the loop without `cadence_days` while you wait. When the operator
+answers, send both keys in one call. The loop itself is never a reason to wait.
+
+A loop with neither key has no schedule, and it is not late. A loop nobody
+wrote tracks nothing, and nothing later reports that it is absent.
 
 ## How to find what is due
 
@@ -457,6 +460,29 @@ mod tests {
              rhythm holds and never says to write one, so a key the operator has yet to \
              choose reads as a reason to create nothing"
         );
+    }
+
+    /// **The paragraph that tells a session to write the loop names both
+    /// schedule keys together.**
+    ///
+    /// A write that holds `cadence_days` without `advances_from`, or the
+    /// reverse, is refused. A paragraph that says to put in whatever keys the
+    /// operator gave sends a session into that refusal on the call it exists
+    /// to describe, so the one paragraph that says to write the loop is also
+    /// the one that says the two keys go as a pair.
+    #[test]
+    fn the_paragraph_that_says_to_write_the_loop_names_both_schedule_keys() {
+        let text = body("rhythms");
+        let paragraph = text
+            .split("\n\n")
+            .find(|paragraph| names(paragraph, "add_entity"))
+            .expect("the rhythms procedure has a paragraph that names the verb that writes a loop");
+        for key in [attention::CADENCE_DAYS, attention::ADVANCES_FROM] {
+            assert!(
+                names(paragraph, key),
+                "the paragraph that says to write the loop does not name `{key}`: {paragraph}"
+            );
+        }
     }
 
     /// **The rider on a loop opened with history already behind it.** The
