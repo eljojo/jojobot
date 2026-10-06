@@ -397,22 +397,22 @@ pub const CONNECTED_CONTEXT: Capped = Capped { budget: 20_000 };
 /// and well past [`HELD_CONTEXT`]'s unasked-for aside.
 pub const BOOT_ANSWER: Capped = Capped { budget: 28_000 };
 
-/// **The backpack's other axis: how many of a bot's own records a boot ever
-/// carries, counted in things rather than characters.** The operator's
-/// ruling: a hard cap on what a boot shows, and every writer of a record
-/// knows about it. Which records fill the N seats is not this constant's
-/// question and not anybody's algorithm — a record earns a seat by being
-/// marked to carry (`fields.starred == "true"`); this only bounds how many
-/// marked seats one boot pays for in a single sitting.
+/// **How many marked rules a boot carries for a bot that has no `rule_seats`
+/// of its own** — the default of the backpack's other axis, counted in things
+/// rather than characters. A bot's own number is the key `rule_seats` on the
+/// bot, written by a different identity and read the way a room's capacity is
+/// (see [`crate::memory::rule_seats_of`]); this is what a bot with no key, or
+/// a value that is not a whole number above zero, gets.
 ///
-/// **5, not the operator's example number kept out of convenience.**
-/// Measured against the heaviest real identity's shape in the store — the
-/// largest real charter and rule set found, five of them marked — the
-/// served answer clears [`BOOT_ANSWER`] with room to spare; the count itself
-/// was explicitly ruled not load-bearing ("budget or count is fine either
-/// way"), so this is simply the smallest number that comfortably
-/// demonstrates the mechanism without inviting anyone to read it as a
-/// considered ceiling.
+/// Which records fill the seats is not this constant's question and not
+/// anybody's algorithm — a record earns a seat by being marked to carry
+/// (`fields.starred == "true"`). **5 is the smallest number that comfortably
+/// demonstrates the mechanism, not a considered ceiling**: measured against
+/// the heaviest real identity's shape in the store when it was chosen, the
+/// served answer cleared [`BOOT_ANSWER`] with room to spare, and the count was
+/// ruled not load-bearing. A bot whose floor is larger carries a larger
+/// `rule_seats`, and a write that would take a boot over [`BOOT_ANSWER`] is
+/// refused where it is written.
 pub const CARRIED_RULES: usize = 5;
 
 /// **One named case, and the goldens are its floor.** The store respells
