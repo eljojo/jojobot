@@ -22,7 +22,7 @@ use jiff::Timestamp;
 use jojobot_domain::memory::{Entity, EntityId, mention};
 use jojobot_domain::session::{
     EntryId, JournalEntry, NewEntry, NewSession, Session, SessionError, SessionId, SessionState,
-    Sessions, Sid, is_readable_sid, normalize_entry, validate_entry, validate_focus,
+    Sessions, Sid, WrapWindow, is_readable_sid, normalize_entry, validate_entry, validate_focus,
     validate_session_id,
 };
 use sqlx::{MySql, MySqlPool, Row, Transaction};
@@ -244,7 +244,7 @@ impl DoltSessions {
     ) -> Result<Session, SessionError> {
         let row = sqlx::query(
             "SELECT id, sid, bot, focus, started_at, state, timezone, started_on, served_chars,
-                    stated_day
+                    stated_day, wrap_window
              FROM session WHERE id = ?",
         )
         .bind(id.as_str())
@@ -303,7 +303,7 @@ impl DoltSessions {
         id: &SessionId,
     ) -> Result<Session, SessionError> {
         let session = self.read_in(tx, id).await?;
-        if session.state.is_terminal() {
+        if !session.takes_writes() {
             return Err(SessionError::Closed {
                 attempted: id.to_string(),
                 state: session.state,
@@ -442,6 +442,11 @@ fn session_from(
             .try_get::<Option<String>, _>("stated_day")
             .map_err(store)?)?,
         served_chars: row.try_get::<i64, _>("served_chars").map_err(store)? as u64,
+        wrap_window: row
+            .try_get::<Option<String>, _>("wrap_window")
+            .map_err(store)?
+            .as_deref()
+            .and_then(jojobot_domain::session::WrapWindow::from_stored),
         // A state token the store does not recognize is a record jojobot
         // cannot read. It is not a session in an unknown column — there are no
         // columns here — so it is a store fault a person repairs.
@@ -851,13 +856,50 @@ impl Sessions for DoltSessions {
         Ok(session)
     }
 
+    async fn set_wrap_window(
+        &self,
+        id: &SessionId,
+        window: Option<WrapWindow>,
+    ) -> Result<Session, SessionError> {
+        validate_session_id(id)?;
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        // **Not `writable`**: this is the write that is about a closed run, so
+        // it reads the run and refuses any state but `wrapped`.
+        let held = self.read_in(&mut tx, id).await?;
+        if held.state != SessionState::Wrapped {
+            return Err(SessionError::NotWrapped {
+                attempted: id.to_string(),
+                state: held.state,
+            });
+        }
+        sqlx::query("UPDATE session SET wrap_window = ? WHERE id = ?")
+            .bind(window.as_ref().map(WrapWindow::to_stored))
+            .bind(id.as_str())
+            .execute(&mut *tx)
+            .await
+            .map_err(store)?;
+        // **No `append_session_write`**, for the reason `set_timezone` carries
+        // none: the window is not indexed.
+        let session = self.read_in(&mut tx, id).await?;
+        tx.commit().await.map_err(store)?;
+        Ok(session)
+    }
+
     async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
         validate_session_id(id)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
         // Terminal both ways: a closed session is not closed again, whichever
         // end it reached.
-        self.writable(&mut tx, id).await?;
-        sqlx::query("UPDATE session SET state = ? WHERE id = ?")
+        let held = self.writable(&mut tx, id).await?;
+        // **A run that is already wrapped, with its window open, can only be
+        // wrapped again** — that close is what ends the window.
+        if held.state.is_terminal() && to != SessionState::Wrapped {
+            return Err(SessionError::Closed {
+                attempted: id.to_string(),
+                state: held.state,
+            });
+        }
+        sqlx::query("UPDATE session SET state = ?, wrap_window = NULL WHERE id = ?")
             .bind(to.as_token())
             .bind(id.as_str())
             .execute(&mut *tx)

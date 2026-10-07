@@ -12,7 +12,7 @@ use crate::memory::testing::SpySearch;
 use async_trait::async_trait;
 use jojobot_domain::mailbox::testing::InMemoryMailboxes;
 use jojobot_domain::memory::testing::InMemoryMemory;
-use jojobot_domain::session::Sid;
+use jojobot_domain::session::{Sid, WrapWindow};
 use std::sync::Mutex;
 
 /// A distinct, well-shaped handle for a fixture, from any number a call site
@@ -244,6 +244,14 @@ impl Sessions for CommitsThenFails {
     ) -> Result<Session, SessionError> {
         self.inner.set_stated_day(id, day).await
     }
+
+    async fn set_wrap_window(
+        &self,
+        id: &SessionId,
+        window: Option<WrapWindow>,
+    ) -> Result<Session, SessionError> {
+        self.inner.set_wrap_window(id, window).await
+    }
     async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
         self.inner.close(id, to).await
     }
@@ -333,6 +341,14 @@ impl Sessions for RefusingFocus {
     ) -> Result<Session, SessionError> {
         self.0.set_stated_day(id, day).await
     }
+
+    async fn set_wrap_window(
+        &self,
+        id: &SessionId,
+        window: Option<WrapWindow>,
+    ) -> Result<Session, SessionError> {
+        self.0.set_wrap_window(id, window).await
+    }
     async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
         self.0.close(id, to).await
     }
@@ -395,6 +411,14 @@ impl Sessions for RefusingAppend {
         day: Option<jiff::civil::Date>,
     ) -> Result<Session, SessionError> {
         self.0.set_stated_day(id, day).await
+    }
+
+    async fn set_wrap_window(
+        &self,
+        id: &SessionId,
+        window: Option<WrapWindow>,
+    ) -> Result<Session, SessionError> {
+        self.0.set_wrap_window(id, window).await
     }
     async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
         self.0.close(id, to).await
@@ -518,6 +542,14 @@ impl Sessions for RefusingClose {
     ) -> Result<Session, SessionError> {
         self.inner.set_stated_day(id, day).await
     }
+
+    async fn set_wrap_window(
+        &self,
+        id: &SessionId,
+        window: Option<WrapWindow>,
+    ) -> Result<Session, SessionError> {
+        self.inner.set_wrap_window(id, window).await
+    }
     async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
         if self.refuse.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(SessionError::Store("the close failed in flight".into()));
@@ -600,6 +632,14 @@ impl Sessions for Yielding {
     ) -> Result<Session, SessionError> {
         self.pause().await;
         self.0.set_stated_day(id, day).await
+    }
+
+    async fn set_wrap_window(
+        &self,
+        id: &SessionId,
+        window: Option<WrapWindow>,
+    ) -> Result<Session, SessionError> {
+        self.0.set_wrap_window(id, window).await
     }
     async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
         self.pause().await;

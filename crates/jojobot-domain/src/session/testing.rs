@@ -16,8 +16,8 @@ use jiff::civil::Date;
 
 use super::{
     EntryId, JournalEntry, NewEntry, NewSession, Session, SessionError, SessionId, SessionState,
-    Sessions, Sid, is_readable_sid, normalize_entry, validate_entry, validate_focus,
-    validate_session_id,
+    Sessions, Sid, WRAP_CODE_PREFIX, WrapWindow, is_readable_sid, normalize_entry, validate_entry,
+    validate_focus, validate_session_id,
 };
 use crate::memory::EntityId;
 
@@ -68,7 +68,7 @@ impl InMemorySessions {
                 attempted: id.to_string(),
             }
         })?;
-        if sessions[at].state.is_terminal() {
+        if !sessions[at].takes_writes() {
             return Err(SessionError::Closed {
                 attempted: id.to_string(),
                 state: sessions[at].state,
@@ -154,6 +154,7 @@ impl Sessions for InMemorySessions {
             started_on: new.started_on,
             served_chars: 0,
             stated_day: None,
+            wrap_window: None,
         };
         self.sessions
             .lock()
@@ -261,11 +262,44 @@ impl Sessions for InMemorySessions {
         Ok(sessions[at].clone())
     }
 
+    async fn set_wrap_window(
+        &self,
+        id: &SessionId,
+        window: Option<WrapWindow>,
+    ) -> Result<Session, SessionError> {
+        validate_session_id(id)?;
+        let mut sessions = self.sessions.lock().expect("session lock");
+        // **Not `writable`**: this is the write that is about a closed run.
+        let at = sessions.iter().position(|s| &s.id == id).ok_or_else(|| {
+            SessionError::UnknownSession {
+                attempted: id.to_string(),
+            }
+        })?;
+        if sessions[at].state != SessionState::Wrapped {
+            return Err(SessionError::NotWrapped {
+                attempted: id.to_string(),
+                state: sessions[at].state,
+            });
+        }
+        sessions[at].wrap_window = window;
+        Ok(sessions[at].clone())
+    }
+
     async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
         validate_session_id(id)?;
         let mut sessions = self.sessions.lock().expect("session lock");
         let at = Self::writable(&mut sessions, id)?;
+        // **A run that is already wrapped, with its window open, can only be
+        // wrapped again** — that close is what ends the window. It is never
+        // taken back to any other state.
+        if sessions[at].state.is_terminal() && to != SessionState::Wrapped {
+            return Err(SessionError::Closed {
+                attempted: id.to_string(),
+                state: sessions[at].state,
+            });
+        }
         sessions[at].state = to;
+        sessions[at].wrap_window = None;
         Ok(sessions[at].clone())
     }
 
@@ -1393,6 +1427,142 @@ pub mod contract {
         );
     }
 
+    /// A fixed wrap code for the spec. It only has to be shaped like one.
+    fn code(nth: i64) -> String {
+        format!("{WRAP_CODE_PREFIX}fixture{nth}")
+    }
+
+    /// **A wrapped run's window is stored, read back and cleared, and no other
+    /// run has one.** Paired with the refusal on a run that is not wrapped, and
+    /// with a fresh run that carries none.
+    pub async fn a_wrapped_runs_window_is_stored_read_back_and_cleared(store: &dyn Sessions) {
+        let fresh = begin(store, "gamma", "never wrapped", 0).await;
+        assert_eq!(fresh.wrap_window, None, "a fresh run carries no window");
+        assert!(
+            matches!(
+                store
+                    .set_wrap_window(&fresh.id, Some(WrapWindow::Offered(code(1))))
+                    .await,
+                Err(SessionError::NotWrapped { .. })
+            ),
+            "an active run has no window to set"
+        );
+
+        let run = begin(store, "gamma", "told its story", 10).await;
+        store
+            .close(&run.id, SessionState::Wrapped)
+            .await
+            .expect("wrap ok");
+        let offered = store
+            .set_wrap_window(&run.id, Some(WrapWindow::Offered(code(2))))
+            .await
+            .expect("a wrapped run takes a window");
+        assert_eq!(offered.wrap_window, Some(WrapWindow::Offered(code(2))));
+        assert_eq!(
+            offered.state,
+            SessionState::Wrapped,
+            "the state never moves"
+        );
+        assert_eq!(
+            store
+                .read_session(&run.id)
+                .await
+                .expect("read ok")
+                .wrap_window,
+            Some(WrapWindow::Offered(code(2))),
+            "the card says so, not only the answer to the write"
+        );
+        let cleared = store
+            .set_wrap_window(&run.id, None)
+            .await
+            .expect("a window can be cleared");
+        assert_eq!(cleared.wrap_window, None);
+        assert_eq!(
+            store
+                .read_session(&run.id)
+                .await
+                .expect("read ok")
+                .wrap_window,
+            None
+        );
+    }
+
+    /// **An open window lets a wrapped run write once more, and the second
+    /// close ends it.** An offered window does not: only the code's use opens
+    /// it. The run reads `wrapped` the whole time.
+    pub async fn an_open_window_lets_a_wrapped_run_write_and_the_second_close_ends_it(
+        store: &dyn Sessions,
+    ) {
+        let run = begin(store, "gamma", "told its story", 0).await;
+        journal(store, &run.id, "the first story", 30).await;
+        store
+            .close(&run.id, SessionState::Wrapped)
+            .await
+            .expect("wrap ok");
+        store
+            .set_wrap_window(&run.id, Some(WrapWindow::Offered(code(3))))
+            .await
+            .expect("offered");
+
+        let closed = |err: SessionError| {
+            assert!(
+                matches!(&err, SessionError::Closed { state, .. } if *state == SessionState::Wrapped),
+                "a wrapped run with no open window is closed: {err:?}"
+            );
+        };
+        closed(
+            store
+                .append(&run.id, NewEntry::manual("too early", at(60), None))
+                .await
+                .expect_err("an offered window does not take writes"),
+        );
+
+        store
+            .set_wrap_window(&run.id, Some(WrapWindow::Open(code(3))))
+            .await
+            .expect("opened");
+        store
+            .append(&run.id, NewEntry::manual("a last change", at(90), None))
+            .await
+            .expect("an open window takes an append");
+        store
+            .amend_last(&run.id, "a last change, said better")
+            .await
+            .expect("…and an amend of the newest entry");
+        store
+            .set_focus(&run.id, "the last change")
+            .await
+            .expect("…and a focus");
+        let open = store.read_session(&run.id).await.expect("read ok");
+        assert_eq!(open.state, SessionState::Wrapped, "it stays wrapped");
+        assert_eq!(
+            open.entries.len(),
+            2,
+            "the first story stands, one entry added"
+        );
+
+        // **The second wrap**: a closing entry beside the first, then the close.
+        store
+            .append(&run.id, NewEntry::manual("the second story", at(120), None))
+            .await
+            .expect("the second story appends");
+        let ended = store
+            .close(&run.id, SessionState::Wrapped)
+            .await
+            .expect("closing an open window is not refused");
+        assert_eq!(ended.state, SessionState::Wrapped);
+        assert_eq!(ended.wrap_window, None, "the second close ends the window");
+        closed(
+            store
+                .append(&run.id, NewEntry::manual("too late", at(150), None))
+                .await
+                .expect_err("an ended window takes no more"),
+        );
+        let read = store.read_session(&run.id).await.expect("read ok");
+        assert_eq!(read.entries.len(), 3, "both stories stand and nothing else");
+        assert_eq!(read.wrap_window, None);
+    }
+
     pub async fn run_all<S: Sessions, F: Fn() -> S>(fresh: F) {
         a_begun_session_is_active_and_empty(&fresh()).await;
         beginning_twice_under_one_handle_yields_one_run(&fresh()).await;
@@ -1419,5 +1589,7 @@ pub mod contract {
         a_closing_focus_survives_the_round_trip_and_an_ordinary_entry_carries_none(&fresh()).await;
         a_stated_day_survives_a_write_and_a_read(&fresh()).await;
         a_moved_day_is_stored_and_can_be_moved_again(&fresh()).await;
+        a_wrapped_runs_window_is_stored_read_back_and_cleared(&fresh()).await;
+        an_open_window_lets_a_wrapped_run_write_and_the_second_close_ends_it(&fresh()).await;
     }
 }

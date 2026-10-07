@@ -528,6 +528,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0063_field_link.sql"),
         leaves: Leaves::Table("field_link"),
     },
+    Migration {
+        version: "0064_session_wrap_window",
+        sql: include_str!("../../migrations/0064_session_wrap_window.sql"),
+        leaves: Leaves::Column("session", "wrap_window"),
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a

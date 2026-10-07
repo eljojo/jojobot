@@ -152,6 +152,7 @@ pub(crate) fn session_error(e: SessionError) -> McpError {
         | SessionError::InvalidEntry(_)
         | SessionError::UnknownSession { .. }
         | SessionError::Closed { .. }
+        | SessionError::NotWrapped { .. }
         | SessionError::NoEntries { .. }
         | SessionError::NotABeat { .. }
         | SessionError::KindsNeverLoaded => McpError::invalid_params(e.to_string(), None),

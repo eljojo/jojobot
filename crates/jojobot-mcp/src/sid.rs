@@ -548,6 +548,7 @@ mod tests {
             started_on,
             served_chars: 0,
             stated_day,
+            wrap_window: None,
         }
     }
 

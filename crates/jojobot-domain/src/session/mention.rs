@@ -313,6 +313,16 @@ impl Sessions for Mentioning {
         Ok(session)
     }
 
+    async fn set_wrap_window(
+        &self,
+        id: &SessionId,
+        window: Option<super::WrapWindow>,
+    ) -> Result<Session, SessionError> {
+        let mut session = self.inner.set_wrap_window(id, window).await?;
+        self.render(&mut session).await?;
+        Ok(session)
+    }
+
     async fn close(
         &self,
         id: &SessionId,

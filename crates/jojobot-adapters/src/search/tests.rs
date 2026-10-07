@@ -2425,6 +2425,7 @@ fn run(id: &str, bot: &str, focus: &str, beat: &str) -> jojobot_domain::session:
         timezone: None,
         served_chars: 0,
         stated_day: None,
+        wrap_window: None,
         id: SessionId(id.into()),
         sid: None,
         bot: EntityId(bot.into()),
@@ -2569,6 +2570,13 @@ impl jojobot_domain::session::Sessions for SummarizedSessions {
         &self,
         _: &jojobot_domain::session::SessionId,
         _: Option<jiff::civil::Date>,
+    ) -> Result<jojobot_domain::session::Session, jojobot_domain::session::SessionError> {
+        unimplemented!("this double only answers all_sessions and write_summary")
+    }
+    async fn set_wrap_window(
+        &self,
+        _: &jojobot_domain::session::SessionId,
+        _: Option<jojobot_domain::session::WrapWindow>,
     ) -> Result<jojobot_domain::session::Session, jojobot_domain::session::SessionError> {
         unimplemented!("this double only answers all_sessions and write_summary")
     }
@@ -3024,6 +3032,7 @@ fn run_of(id: &str, bot: &str, beats: &[(&str, &str)]) -> jojobot_domain::sessio
         timezone: None,
         served_chars: 0,
         stated_day: None,
+        wrap_window: None,
         id: SessionId(id.into()),
         sid: None,
         bot: EntityId(bot.into()),

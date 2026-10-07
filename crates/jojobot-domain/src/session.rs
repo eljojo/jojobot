@@ -203,6 +203,68 @@ impl SessionState {
     }
 }
 
+/// **The window a wrap leaves open for one last change.** A wrap hands back a
+/// code; the run it closed stays `wrapped` the whole time, and the code is what
+/// lets that run take writes once more. Stored as one text on the session's own
+/// record, and absent on every run that never wrapped or whose window ended.
+///
+/// **No clock ends it.** The window ends at the second wrap, or when a newer
+/// run of the same bot starts, and those are the only two ways.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WrapWindow {
+    /// The wrap handed the code back and nobody has used it yet. The run is
+    /// closed to writes.
+    Offered(String),
+    /// The code was used. The run takes writes, and is still `wrapped`.
+    Open(String),
+}
+
+/// **Every wrap code starts with this**, so a caller's `resume` that is a code
+/// is told from a handle without looking anything up, and a spent code is
+/// refused in its own words rather than as a handle nobody holds.
+pub const WRAP_CODE_PREFIX: &str = "wc-";
+
+/// Whether a `resume` answer is a wrap code rather than a handle.
+pub fn is_wrap_code(answer: &str) -> bool {
+    answer.starts_with(WRAP_CODE_PREFIX)
+}
+
+impl WrapWindow {
+    /// The code this window answers to.
+    pub fn code(&self) -> &str {
+        match self {
+            WrapWindow::Offered(code) | WrapWindow::Open(code) => code,
+        }
+    }
+
+    /// Whether the run takes writes.
+    pub fn is_open(&self) -> bool {
+        matches!(self, WrapWindow::Open(_))
+    }
+
+    /// The text this is stored as: the state, a space, the code.
+    pub fn to_stored(&self) -> String {
+        match self {
+            WrapWindow::Offered(code) => format!("offered {code}"),
+            WrapWindow::Open(code) => format!("open {code}"),
+        }
+    }
+
+    /// Read a stored window back. `None` for text this did not write: a value
+    /// that does not parse is no window, never a guess at one.
+    pub fn from_stored(stored: &str) -> Option<WrapWindow> {
+        let (state, code) = stored.split_once(' ')?;
+        if !is_wrap_code(code) {
+            return None;
+        }
+        match state {
+            "offered" => Some(WrapWindow::Offered(code.to_string())),
+            "open" => Some(WrapWindow::Open(code.to_string())),
+            _ => None,
+        }
+    }
+}
+
 impl std::fmt::Display for SessionState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_token())
@@ -706,6 +768,22 @@ pub struct Session {
     /// fallback, never the other way round.
     #[serde(default)]
     pub stated_day: Option<Date>,
+    /// **The window a wrap left open for one last change**, if one is open or
+    /// offered. See [`WrapWindow`]. `None` on a run that never wrapped, on a
+    /// run whose window ended, and on every card written before this existed.
+    #[serde(default)]
+    pub wrap_window: Option<WrapWindow>,
+}
+
+impl Session {
+    /// **Whether a write to this run is allowed.** An open run takes writes. A
+    /// closed one does not, except a `wrapped` run whose window is open: it
+    /// stays wrapped and takes writes until the window ends.
+    pub fn takes_writes(&self) -> bool {
+        !self.state.is_terminal()
+            || (self.state == SessionState::Wrapped
+                && self.wrap_window.as_ref().is_some_and(WrapWindow::is_open))
+    }
 }
 
 /// **A run, without its chronology** — the fields [`list_runs`](crate) and
@@ -855,6 +933,15 @@ pub enum SessionError {
         /// The id that was addressed.
         attempted: String,
         /// Which end it reached.
+        state: SessionState,
+    },
+    /// A wrap window was set on a run that is not `wrapped`. Only a wrapped run
+    /// has one.
+    #[error("session '{attempted}' is {state}, so it has no wrap window: only a wrapped run does")]
+    NotWrapped {
+        /// The id that was addressed.
+        attempted: String,
+        /// The state it is in.
         state: SessionState,
     },
     /// An amend that had nothing to amend. Refused rather than turned into an
@@ -1060,6 +1147,16 @@ pub trait Sessions: Send + Sync {
         &self,
         id: &SessionId,
         day: Option<Date>,
+    ) -> Result<Session, SessionError>;
+
+    /// **Set or clear the window a wrap left open.** Never refused on a closed
+    /// run, because it is the one write that is about a closed run: it works
+    /// on a `wrapped` session and refuses any other state, and `None` clears
+    /// whatever was there. Writes nothing to the chronology.
+    async fn set_wrap_window(
+        &self,
+        id: &SessionId,
+        window: Option<WrapWindow>,
     ) -> Result<Session, SessionError>;
 
     /// Move a session to a terminal state. Refused if it is already in one —
@@ -1430,6 +1527,7 @@ mod projection_tests {
             started_on: None,
             served_chars: 0,
             stated_day: None,
+            wrap_window: None,
             entries: vec![
                 JournalEntry {
                     id: EntryId("e1".into()),
@@ -1883,6 +1981,7 @@ mod tests {
             started_on: None,
             served_chars: 0,
             stated_day: None,
+            wrap_window: None,
             id: SessionId("1".into()),
             sid: Some(Sid("s001".into())),
             bot: EntityId("bot:gamma".into()),
@@ -2048,6 +2147,13 @@ mod tests {
             ) -> Result<Session, SessionError> {
                 self.0.set_focus(id, focus).await
             }
+            async fn set_wrap_window(
+                &self,
+                id: &SessionId,
+                window: Option<WrapWindow>,
+            ) -> Result<Session, SessionError> {
+                self.0.set_wrap_window(id, window).await
+            }
             async fn close(&self, _: &SessionId, _: SessionState) -> Result<Session, SessionError> {
                 Err(SessionError::Store("the board said no".into()))
             }
@@ -2174,6 +2280,7 @@ mod tests {
             started_on: Some(on),
             served_chars: 0,
             stated_day: None,
+            wrap_window: None,
             id: SessionId("1".into()),
             sid: Some(Sid("s001".into())),
             bot: EntityId("bot:gamma".into()),
@@ -2231,6 +2338,7 @@ mod tests {
             started_on: None,
             served_chars: 0,
             stated_day: None,
+            wrap_window: None,
             id: SessionId("1".into()),
             sid: Some(Sid("s001".into())),
             bot: EntityId("bot:gamma".into()),
@@ -2328,6 +2436,7 @@ mod tests {
             started_on: None,
             served_chars: 0,
             stated_day: None,
+            wrap_window: None,
             id: SessionId("1".into()),
             sid: Some(Sid("s001".into())),
             bot: EntityId("bot:gamma".into()),
