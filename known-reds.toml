@@ -7,10 +7,5 @@
 # a [[known_red]] header, then test, card, owner and since, each once, with
 # strings in double quotes. `test` is the name cargo test prints, `card` is a
 # whole number and `since` is the day the entry was added, as YYYY-MM-DD.
-
-
-[[known_red]]
-test = "the_jobs_run_side_by_side"
-card = 2041
-owner = "dev4"
-since = "2026-10-07"
+#
+# No test is listed now.

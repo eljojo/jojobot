@@ -42,6 +42,17 @@ case "$1" in
     mkdir -p "$running"
     touch "$running/$$"
     ls "$running" | wc -l >> "$(dirname "$0")/peak.log"
+    # FAKE_MEET=<tenths of a second>: wait until a second job is running too,
+    # for at most that long. An overlap is then something the job sees happen,
+    # not something a one-second sleep has to be long enough to catch.
+    if [ -n "$FAKE_MEET" ]; then
+      n=0
+      while [ "$(ls "$running" | wc -l)" -lt 2 ] && [ "$n" -lt "$FAKE_MEET" ]; do
+        sleep 0.1
+        n=$((n + 1))
+      done
+      ls "$running" | wc -l >> "$(dirname "$0")/peak.log"
+    fi
     sleep 1
     rm -f "$running/$$"
     case " $* " in
@@ -173,14 +184,17 @@ fn every_listed_job_runs_once_and_a_red_job_stops_none_of_the_others() {
     );
 }
 
-/// **The jobs overlap.** Five jobs sleep one second each, and the stub counts
-/// how many it sees running at once. A run that overlapped them saw more than
-/// one. A wall time cannot say this on a loaded machine, where a start can lag
-/// by seconds, so the count is what is asserted. The positive keeps it from
-/// passing over a run that did nothing: the five jobs above are all recorded.
+/// **The jobs overlap.** Each job waits until it sees a second job running, and
+/// the stub counts how many it saw at once. A run that overlapped them saw more
+/// than one. Neither a wall time nor a one-second sleep can say this on a loaded
+/// machine, where a start can lag by seconds, so the jobs wait for each other
+/// for up to ten seconds, and the count is what is asserted. A bar that ran them
+/// one at a time waits that long in every job and still sees one. The positive
+/// keeps it from passing over a run that did nothing: the five jobs above are
+/// all recorded.
 #[test]
 fn the_jobs_run_side_by_side() {
-    let ran = run_check(&[]);
+    let ran = run_check(&[("FAKE_MEET", "100")]);
     assert!(
         ran.calls.iter().filter(|c| c.starts_with("test ")).count() >= 5,
         "the jobs did not run: {:?}",
