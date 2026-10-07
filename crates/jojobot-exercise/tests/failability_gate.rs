@@ -95,7 +95,7 @@ fn the_registry_reports_blanket_and_discriminating_counts_apart() {
         "the blanket population drifted without this test noticing",
     );
     assert_eq!(
-        discriminating, 84,
+        discriminating, 86,
         "the discriminating population drifted without this test noticing",
     );
 }

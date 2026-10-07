@@ -984,6 +984,20 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
     },
     NegativeControl {
         room: expectations::TRICK_ROOM,
+        lock: "Phase 1 — nothing is owed on the day the refund window closed, so the deadline was lost or put where nothing computes that it has passed",
+        file: "tests/trick_room.rs",
+        function: "the_ticket_lock_reds_when_the_day_is_under_a_key_of_the_models_own",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::TRICK_ROOM,
+        lock: "Phase 1 — the person who bought the tickets is what is owed on 2026-12-02, so the deadline was filed on the person and not on the tickets",
+        file: "tests/trick_room.rs",
+        function: "the_ticket_lock_reds_when_the_deadline_is_on_the_person",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::TRICK_ROOM,
         lock: "Phase 1 — nothing draws Maude to the birthday party as attending, so the question of who still needs an invitation lists her",
         file: "tests/trick_room.rs",
         function: "the_maude_lock_reds_when_the_yes_is_a_note_to_self",
