@@ -2007,11 +2007,15 @@ impl Memory for InMemoryMemory {
         // **The ceiling and the room, both on the state this edit leaves
         // behind** — the same check the real store runs, atomically with the
         // write it gates.
-        let lineage = super::super::chart_wanted_by_change(
-            &self.with_manager_served(&before),
-            &self.with_manager_served(&after),
-        )
-        .map(|named| self.lineage_among(&facts, &handle, named));
+        // **Permission is judged on the same served folds the chain is asked
+        // on.** A restated manager is the same bot whatever form the store keeps
+        // it in, and only a change in who it names is a change.
+        let (before, after) = (
+            self.with_manager_served(&before),
+            self.with_manager_served(&after),
+        );
+        let lineage = super::super::chart_wanted_by_change(&before, &after)
+            .map(|named| self.lineage_among(&facts, &handle, named));
         if let Some(err) = super::super::refuses_unlicensed_change(
             &handle,
             caller,
@@ -2539,11 +2543,12 @@ impl Memory for InMemoryMemory {
             &Default::default(),
             &declared,
         );
-        let lineage = super::super::chart_wanted_by_change(
-            &self.with_manager_served(&before_fold),
-            &self.with_manager_served(&after_fold),
-        )
-        .map(|named| self.lineage_among(&facts, &handle, named));
+        let (before_fold, after_fold) = (
+            self.with_manager_served(&before_fold),
+            self.with_manager_served(&after_fold),
+        );
+        let lineage = super::super::chart_wanted_by_change(&before_fold, &after_fold)
+            .map(|named| self.lineage_among(&facts, &handle, named));
         if let Some(err) = super::super::refuses_unlicensed_change(
             &handle,
             caller,

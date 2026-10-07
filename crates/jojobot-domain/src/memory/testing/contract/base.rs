@@ -2139,6 +2139,68 @@ pub async fn undoing_the_newest_manager_cannot_close_a_loop<M: Memory>(store: &M
     }
 }
 
+/// **Saying the same manager again is not a change, and the bot above may say it.**
+/// A store keeps the id of the manager and a caller sends the handle, so the two
+/// differ as text while naming one bot. The guard has to compare what they name:
+/// read as a change, a restatement is asked who may make it, with no chart read
+/// for a change that is not there, and even the manager above is refused.
+///
+/// The positive is the whole case: the write lands, and the fold still names the
+/// same manager afterwards. A write that moves the bot to somebody else is held
+/// to the chain as before, in the case above.
+pub async fn restating_the_same_manager_is_not_a_change<M: Memory>(store: &M) {
+    let top = EntityId("bot:contract-restate-fjord".into());
+    let mid = EntityId("bot:contract-restate-mesa".into());
+    let low = EntityId("bot:contract-restate-canyon".into());
+    for (id, name) in [(&top, "Cormorant"), (&mid, "Anvil"), (&low, "Thimble")] {
+        add(store, NewEntity::new(id.clone(), name, "contract-fixture")).await;
+    }
+    let reporting = |manager: &EntityId| -> std::collections::BTreeMap<String, String> {
+        [(crate::memory::REPORTS_TO.to_string(), manager.to_string())]
+            .into_iter()
+            .collect()
+    };
+    capture(
+        store,
+        NewFact {
+            fields: reporting(&top),
+            ..NewFact::about(mid.clone(), "mid reports to top", date(2026, 10, 1))
+        },
+    )
+    .await;
+    let placed = capture(
+        store,
+        NewFact {
+            fields: reporting(&mid),
+            ..NewFact::about(low.clone(), "low reports to mid", date(2026, 10, 1))
+        },
+    )
+    .await;
+    for (who, caller) in [("its manager", &mid), ("the bot above its manager", &top)] {
+        let restated = store
+            .update_fact(
+                &placed.address(),
+                FactPatch {
+                    fields: reporting(&mid),
+                    ..Default::default()
+                },
+                caller,
+            )
+            .await;
+        assert!(
+            matches!(restated, Ok(Guarded::Written(_))),
+            "{who} restating the manager low already has changes nothing and must land: \
+             {restated:?}",
+        );
+        let fields = thing_fields(store, &low).await;
+        assert_eq!(
+            fields.get(crate::memory::REPORTS_TO),
+            Some(&mid.to_string()),
+            "low still reports to mid after {who} restated it: {fields:?}",
+        );
+    }
+}
+
 /// **The chart is judged against the chain read inside the write.** A bot
 /// changes who it reports to only through the bots above it; a bot with no
 /// manager takes the one named by that manager or a bot above it; and nobody is
@@ -13802,6 +13864,7 @@ macro_rules! all_cases {
         $m!(a_merge_into_the_callers_own_bot_cannot_carry_a_ceiling_onto_it($store));
         $m!(the_chart_is_judged_against_the_chain_read_inside_the_write($store));
         $m!(undoing_the_newest_manager_cannot_close_a_loop($store));
+        $m!(restating_the_same_manager_is_not_a_change($store));
         $m!(referring_to_finds_a_target_named_in_a_list_of_references($store));
         $m!(a_work_items_status_is_held_to_its_projects_columns($store));
         $m!(a_child_names_its_parent_and_reads_back($store));

@@ -3528,8 +3528,8 @@ impl Memory for DoltMemory {
         if let Some(err) = jojobot_domain::memory::refuses_unlicensed_change(
             &handle,
             caller,
-            &before_fold,
-            &after_fold,
+            &chart_before,
+            &chart_after,
             lineage.as_ref(),
         ) {
             return Err(err);
@@ -4069,8 +4069,8 @@ impl Memory for DoltMemory {
         if let Some(err) = jojobot_domain::memory::refuses_unlicensed_change(
             &handle,
             caller,
-            &before_fold,
-            &after_fold,
+            &chart_before,
+            &chart_after,
             lineage.as_ref(),
         ) {
             return Err(err);
