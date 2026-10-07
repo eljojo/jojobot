@@ -865,6 +865,46 @@ async fn an_interrupted_drop_is_recognized_by_the_table_being_gone() {
     store.stop().await;
 }
 
+/// **A refused migration leaves the store's own account in the log, and a
+/// test that starts a store has a sink to receive it.** The error a caller sees
+/// carries no store text (rule 53), so the log is the only place the cause of a
+/// refusal can be read — and a test binary with no subscriber installed drops
+/// the event, which left a refusal seen once on a builder with nothing to read.
+///
+/// The test never asks for the sink before the migration runs: starting the
+/// store is what installs it. Run alone it is the proof; in a full run any
+/// earlier case may already have installed the sink.
+#[tokio::test]
+async fn a_refused_migration_logs_the_stores_own_account_without_the_test_asking() {
+    let scratch = Scratch::new("migrate-refused-logged");
+    let path = scratch.0.clone();
+    std::mem::forget(scratch);
+    let mut store = crate::dolt::Dolt::start(&path, free_port())
+        .await
+        .expect("the store comes up");
+    sqlx::raw_sql("CREATE TABLE session (id VARCHAR(64) NOT NULL PRIMARY KEY)")
+        .execute(store.pool())
+        .await
+        .expect("the obstruction lands");
+
+    let refused = run(store.pool()).await;
+    assert!(
+        matches!(&refused, Err(MigrateError::Failed { version, .. }) if version == "0001_session"),
+        "{refused:?}"
+    );
+    let logged = crate::log_capture::log_sink().text();
+    assert!(
+        logged.contains("a migration failed") && logged.contains("0001_session"),
+        "the refusal names its migration in the log: {logged:?}"
+    );
+    assert!(
+        logged.contains("already exists"),
+        "the log carries the store's own words, which the error does not: {logged:?}"
+    );
+
+    store.stop().await;
+}
+
 /// **A migration that fails is not recorded as done.**
 ///
 /// The ledger row and the migration commit together, so a change that did

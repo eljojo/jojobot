@@ -163,6 +163,12 @@ impl Dolt {
     /// Loopback with a configured port is the reachable version of the same
     /// intent.
     pub async fn start(data_dir: &Path, port: u16) -> Result<Self, StartError> {
+        // **A test that starts a store has a log sink installed**, so a refusal
+        // the store makes later has somewhere to be written. The error a
+        // caller sees keeps the store's words out (rule 53) and the log is the
+        // only place they are; with no subscriber the event is dropped.
+        #[cfg(test)]
+        let _ = crate::log_capture::log_sink();
         let database = data_dir.join(DATABASE);
         std::fs::create_dir_all(&database).map_err(|e| StartError::DataDir {
             path: database.clone(),
