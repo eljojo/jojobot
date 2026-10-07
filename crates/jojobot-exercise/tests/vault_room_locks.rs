@@ -94,6 +94,145 @@ async fn held(room: &Surface, lock: &Lock) -> Outcome {
     lock.check(&seen).await
 }
 
+/// **The three status locks, each named by a fragment of its own sentence.**
+/// A status lock accepts the shipped column or the operator's own word on a
+/// project whose columns hold it, so none of these names either word.
+const SHED_JANUARY: &str = "the shed holds no status under";
+const FLOOR_JANUARY: &str = "the kitchen floor's status history carries no first status";
+const FLOOR_APRIL: &str = "carries no move to the working status";
+
+/// **One status write the way a sitting makes it**, handed back so a case can
+/// read whether the store took it.
+async fn write_status(surface: &Surface, sid: &str, subject: &str, status: &str) -> String {
+    as_the_occupant(
+        surface,
+        sid,
+        "capture",
+        json!({
+            "subject": subject,
+            "content": format!("{subject} is {status}"),
+            "provenance": "testimony",
+            "fields": {"status": status},
+        }),
+    )
+    .await
+}
+
+/// **The year's status writes**: both projects start at `first`, the floor
+/// moves to `working` in April and to `done` in July.
+async fn the_year_of_the_statuses(surface: &Surface, sid: &str, first: &str, working: &str) {
+    for (subject, status) in [
+        ("project:the-shed", first),
+        ("project:kitchen-floor", first),
+        ("project:kitchen-floor", working),
+        ("project:kitchen-floor", "done"),
+    ] {
+        let said = write_status(surface, sid, subject, status).await;
+        assert!(
+            !said.contains("\"status\":\"blocked\""),
+            "the sitting's own write was refused: {said}"
+        );
+    }
+}
+
+/// **File both projects under one project that lists the operator's words as
+/// columns.** A project's status is held to the columns of the project it is
+/// filed under, so the operator's words are reachable only this way.
+async fn file_the_projects_under_columns_that_hold_the_operators_words(
+    surface: &Surface,
+    sid: &str,
+) {
+    let added = as_the_occupant(
+        surface,
+        sid,
+        "add_entity",
+        json!({"kind": "project", "handle": "atlas", "name": "Atlas", "source": "the operator"}),
+    )
+    .await;
+    assert!(!added.contains("\"status\":\"blocked\""), "{added}");
+    let listed = as_the_occupant(
+        surface,
+        sid,
+        "capture",
+        json!({
+            "subject": "project:atlas",
+            "content": "the columns this board uses",
+            "provenance": "testimony",
+            "fields": {"columns": "someday, considering, next, doing, now, waiting, done"},
+        }),
+    )
+    .await;
+    assert!(!listed.contains("\"status\":\"blocked\""), "{listed}");
+    for handle in ["project:the-shed", "project:kitchen-floor"] {
+        let filed = as_the_occupant(
+            surface,
+            sid,
+            "rename_entity",
+            json!({"handle": handle, "to": handle, "parent": "project:atlas"}),
+        )
+        .await;
+        assert!(!filed.contains("\"status\":\"blocked\""), "{filed}");
+    }
+}
+
+/// **Whether each of the three status locks holds**, in the order above.
+async fn the_three_status_locks(surface: &Surface) -> Vec<bool> {
+    let mut held_by = Vec::new();
+    for fragment in [SHED_JANUARY, FLOOR_JANUARY, FLOOR_APRIL] {
+        held_by.push(held(surface, &lock_named(fragment)).await.held);
+    }
+    held_by
+}
+
+/// **Route one: the operator's words are mapped onto the shipped columns.**
+/// "Considering" becomes `next` and "doing" becomes `now`; every status lock
+/// holds.
+#[tokio::test]
+async fn the_status_locks_hold_when_the_operators_words_are_mapped_onto_the_shipped_columns() {
+    let (_room, surface, sid) = furnished().await;
+    the_year_of_the_statuses(&surface, &sid, "next", "now").await;
+    assert_eq!(the_three_status_locks(&surface).await, [true; 3]);
+}
+
+/// **Route two: the operator's own words are kept as columns.** Both projects
+/// are filed under a project whose columns list `considering` and `doing`,
+/// and they hold those words; every status lock holds.
+#[tokio::test]
+async fn the_status_locks_hold_when_the_operators_words_are_kept_as_columns() {
+    let (_room, surface, sid) = furnished().await;
+    file_the_projects_under_columns_that_hold_the_operators_words(&surface, &sid).await;
+    the_year_of_the_statuses(&surface, &sid, "considering", "doing").await;
+    assert_eq!(the_three_status_locks(&surface).await, [true; 3]);
+}
+
+/// **The operator's word as free text on a project that refuses it.** The
+/// store refuses the write, so nothing holds the status afterwards. The refusal
+/// is asserted first, so the red below is about a status that never landed and
+/// not about a write that was never made.
+#[tokio::test]
+async fn the_status_locks_redden_when_the_operators_word_is_refused_and_never_lands() {
+    let (_room, surface, sid) = furnished().await;
+    for (subject, word) in [
+        ("project:the-shed", "considering"),
+        ("project:kitchen-floor", "considering"),
+        ("project:kitchen-floor", "doing"),
+    ] {
+        let said = write_status(&surface, &sid, subject, word).await;
+        assert!(
+            said.contains("\"status\":\"blocked\""),
+            "the shipped columns were expected to refuse {word:?}: {said}"
+        );
+    }
+    assert_eq!(the_three_status_locks(&surface).await, [false; 3]);
+}
+
+/// **A status left unset.** Nothing is written, so every status lock reddens.
+#[tokio::test]
+async fn the_status_locks_redden_when_no_status_is_written() {
+    let (_room, surface, _sid) = furnished().await;
+    assert_eq!(the_three_status_locks(&surface).await, [false; 3]);
+}
+
 async fn write_kitchen_floor_status(surface: &Surface, sid: &str, status: &str) {
     as_the_occupant(
         surface,
@@ -120,7 +259,7 @@ async fn the_kitchen_floor_status_locks_hold_once_the_project_finishes_moving() 
         write_kitchen_floor_status(&surface, &sid, status).await;
     }
 
-    for fragment in ["does not carry a next write", "does not carry a now write"] {
+    for fragment in [FLOOR_JANUARY, FLOOR_APRIL] {
         let outcome = held(&surface, &lock_named(fragment)).await;
         assert!(outcome.held, "{fragment}: {}", outcome.saying);
     }
@@ -137,8 +276,8 @@ async fn the_kitchen_floor_doing_lock_reddens_when_doing_was_never_written() {
         write_kitchen_floor_status(&surface, &sid, status).await;
     }
 
-    let next = held(&surface, &lock_named("does not carry a next write")).await;
-    let now = held(&surface, &lock_named("does not carry a now write")).await;
+    let next = held(&surface, &lock_named(FLOOR_JANUARY)).await;
+    let now = held(&surface, &lock_named(FLOOR_APRIL)).await;
     assert!(
         next.held,
         "the independent control reddened too, so this proves nothing about the now lock \

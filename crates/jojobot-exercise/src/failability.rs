@@ -1434,11 +1434,11 @@ pub const PENDING: &[Pending<'static>] = &[
     },
     Pending {
         room: VAULT_ROOM,
-        lock: "Phase 1 — January: the shed does not hold next under the operator's own key, so December cannot see how long it has been going round",
+        lock: "Phase 1 — January: the shed holds no status under the operator's own key, so December cannot see how long it has been going round",
     },
     Pending {
         room: VAULT_ROOM,
-        lock: "Phase 1 — January: the kitchen floor's status history does not carry a next write, so it cannot be told apart from the shed when December asks which one moved",
+        lock: "Phase 1 — January: the kitchen floor's status history carries no first status, so it cannot be told apart from the shed when December asks which one moved",
     },
     Pending {
         room: VAULT_ROOM,
@@ -1490,7 +1490,7 @@ pub const PENDING: &[Pending<'static>] = &[
     },
     Pending {
         room: VAULT_ROOM,
-        lock: "Phase 4 — April: the kitchen floor's status history does not carry a now write, so the one project that moves this year does not read as having moved",
+        lock: "Phase 4 — April: the kitchen floor's status history carries no move to the working status, so the one project that moves this year does not read as having moved",
     },
     Pending {
         room: VAULT_ROOM,
@@ -1614,7 +1614,7 @@ pub const PENDING: &[Pending<'static>] = &[
     },
     Pending {
         room: VAULT_ROOM,
-        lock: "Phase 13 — later December: the kitchen floor was given a decide_by, so a project that went next, now, done was treated like one that never left next",
+        lock: "Phase 13 — later December: the kitchen floor was given a decide_by, so a project that moved on through its statuses to done was treated like one that never left its first",
     },
     Pending {
         room: VAULT_ROOM,

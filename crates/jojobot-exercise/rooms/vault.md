@@ -141,13 +141,13 @@ record  rhythm:sit-at-the-piano | {"name": "Sit at the piano", "cadence_days": "
 # beyond its entry line. An indented line continues the one above it.
 message assistant | moving my notes in | I am moving my notes in here from the folder of text files I have kept for years, so take this down properly rather than as a note to yourself. The three things I do on a schedule are already on here and they work the way I want.
 
-    Five words I put at the top of a note, and I want them kept, because I ask my questions by them. `runs_out` is a date: the last day I can still do something about a thing, whether that is sending it back, claiming on it, or using a service I have already paid for. `spare` goes on anything I would be stranded without, and says where the spare is. `status` goes on a project and is one of next, now or done — those three, no others. `for` goes on anything that only works with one particular machine, and names the machine. `minutes` is how long the way to work took, on the road I took.
+    Five words I put at the top of a note, and I want them kept, because I ask my questions by them. `runs_out` is a date: the last day I can still do something about a thing, whether that is sending it back, claiming on it, or using a service I have already paid for. `spare` goes on anything I would be stranded without, and says where the spare is. `status` goes on a project and is one of considering, doing or done — those three, no others. `for` goes on anything that only works with one particular machine, and names the machine. `minutes` is how long the way to work took, on the road I took.
 
     The new laptop is Theta — bought 2026-01-10 from Globex, with two years of cover from that day. Omicron is the old home server.
 
     My glasses: there is a spare pair in the hall drawer.
 
-    The shed for the garden has been at `next` since November — the flat-pack kit, or build one. The kitchen floor is also at `next`.
+    The shed for the garden has been considering since November — the flat-pack kit, or build one. The kitchen floor is also considering.
 
     Ocean Avenue is my way to work: 38 minutes on 2026-01-08.
 
@@ -191,17 +191,17 @@ say     January: the glasses carry no spare, so the one thing the operator said 
 # times this key was written on this project and what it said each time; a
 # status in prose is not a status that can be counted.
 recall {"subject": "project:the-shed"}
-carries "status":"next"
-say     January: the shed does not hold next under the operator's own key, so December cannot see how long it has been going round
+carries-either "status":"next" | "status":"considering"
+say     January: the shed holds no status under the operator's own key, so December cannot see how long it has been going round
 
 # 🚨 **Asked of the key's OWN HISTORY, not the folded value.** The floor is
-# the one project the room moves on: April sends it to now and July to
+# the one project the room moves on: April sends it to its working status and July to
 # done, so a lock on the folded value can never hold once the year finishes
 # moving it — a fact true in January and superseded on purpose is not a
 # fact this lock may forget. `history` reads every write, not the newest.
 recall {"subject": "project:kitchen-floor", "history": "status"}
-carries "value":"next"
-say     January: the kitchen floor's status history does not carry a next write, so it cannot be told apart from the shed when December asks which one moved
+carries-either "value":"next" | "value":"considering"
+say     January: the kitchen floor's status history carries no first status, so it cannot be told apart from the shed when December asks which one moved
 
 # The first timing on the usual road. October needs to count these — four on
 # this road against one on the other — and a number in prose is not a write of
@@ -388,8 +388,8 @@ say     April: no thing is on record as being for Omicron, so what gets packed o
 # sends the floor on to done, and a lock on the folded value cannot survive
 # a project finishing what this lock is checking it started.
 recall {"subject": "project:kitchen-floor", "history": "status"}
-carries "value":"now"
-say     April: the kitchen floor's status history does not carry a now write, so the one project that moves this year does not read as having moved
+carries-either "value":"now" | "value":"doing"
+say     April: the kitchen floor's status history carries no move to the working status, so the one project that moves this year does not read as having moved
 
 recall {"subject": "place:ocean-avenue", "history": "minutes"}
 carries "value":"41"
@@ -879,8 +879,10 @@ three different responses**, and the reasons are on three other subjects:
 * the operator played for an hour at Tina's party on 5 December — on whatever
   the previous sitting filed the party under (December).
 
-**And the projects:** the shed has held `next` in January, February,
-May and August; the floor went next, now, done.
+**And the projects:** the shed has held `considering` in January, February,
+May and August; the floor went considering, doing, done. **Either route
+is right:** the operator's words mapped onto the shipped `next` and `now`, or
+kept as columns of the project the two are filed under.
 
 > This is a role-play: play the day below as if it is really today.
 >
@@ -927,7 +929,7 @@ carries "2027-04-01"
 say     later December: no loop carries the day the pool reopens, so the silence that could not be helped was either not explained from the record or explained in words rather than a date
 
 # 🚨 **THE WANT THAT LOOPS, NAMED BY THE OPERATOR'S NEW KEY.** Four writes of
-# `next` on the shed against next-now-done on the floor. The
+# `considering` on the shed against considering-doing-done on the floor. The
 # key is the operator's word, invented this sitting; the date is the
 # occupant's. What is locked is that the key landed on the one project that
 # never moved.
@@ -940,7 +942,7 @@ say     later December: the shed carries no decide_by, so a year of going round 
 recall {"subject": "project:kitchen-floor"}
 carries "status":"done"
 lacks   "decide_by"
-say     later December: the kitchen floor was given a decide_by, so a project that went next, now, done was treated like one that never left next
+say     later December: the kitchen floor was given a decide_by, so a project that moved on through its statuses to done was treated like one that never left its first
 
 # 🚨 **THE FOURTH CASE, AND IT IS NOT QUIET.** The three loops above are
 # resumed, corroborated, or left alone on purpose — every one of them still
