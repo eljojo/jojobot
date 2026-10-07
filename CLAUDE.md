@@ -139,7 +139,9 @@ Shipped and live:
   claim launders it into one. A walk says when the claim behind a link was
   taken back — marked rather than filtered, the way a fact read shows a
   retracted claim instead of hiding it; a link two records draw stays
-  unmarked while either of them stands.
+  unmarked while either of them stands. **A field whose value is another
+  thing's handle is a link too, whatever its key**, and so is a comma-joined
+  list when every item in it is a handle; the key is the relation's name.
 - **The graph query** — `recall` is the precise lookup and `search` is the
   breadth. `recall` selects objects (a handle · a kind · a declared type · a key
   and its value, or **a value with no key, which asks whether ANY key holds it**
@@ -270,7 +272,11 @@ Shipped and live:
   KIND and it declares every key its loop uses** — a name
   and the day of the last check-in are required; the cadence in days, the day
   the next cycle counts from, which of the two dates a late check-in advances
-  from, the outcome, a note and the day a snooze lasts until are optional. **A loop is a thing in its own
+  from, the outcome, a note and the day a snooze lasts until are optional.
+  **`work` and `project` ship their keys the same way**: a status out of
+  someday, next, now, waiting and done (a project may list its own `columns`,
+  which must include those five), an owner, what a piece of work waits on and
+  depends on, the commit that landed it and what verified it. **A loop is a thing in its own
   right, so it carries its own events**, which keys folded onto another thing
   cannot. A walk carries its own filters, and a key's declared value type
   licenses comparison on it —
@@ -332,13 +338,15 @@ Shipped and live:
 > demonstrably already has is not shipped back to them. **A write verb answers with a
 > receipt, and the prose its author just sent is the one thing it leaves
 > out** — `capture`, `update_fact`, `journal`, `amend_journal`,
-> `wrap_session`, `set_charter`, `post_message` and `mark_processed` all
+> `wrap_session`, `set_charter` and `post_message` all
 > answer with the id, the state and what jojobot changed on the way in
 > (a qualified subject, a defaulted provenance, a trimmed value), plus the
 > byte count of what was STORED and enough of the opening to tell one write
 > from another. Eliding is never silent: each answer names the call that
-> returns the whole thing. **`post_message` also takes
-> delivery of the caller's own box in the same call**, and the answer says how
+> returns the whole thing. `mark_processed` answers with the message's id and
+> its new state, and nothing of its subject or its opening. **`post_message` also takes
+> delivery of the caller's own box in the same call**, lists only the mail
+> nobody had been handed yet and counts the rest, and the answer says how
 > that delivery was taken: writing is a moment a bot is demonstrably present, so
 > reading and posting are one round trip rather than two, and a bot that posts at
 > the end of a piece of work does not meet its own mail afterwards flagged as
@@ -352,14 +360,20 @@ Shipped and live:
 > serialized boot answer rather than any single block inside it.** What must
 > ship is measured first, and everything else is ranked against what is left,
 > so an identity too heavy to serve whole gets its core and is told what did
-> not fit. A session's chronology comes back as its newest entries under the
+> not fit. **A named boot whose floor is over the ceiling says so**
+> (`over_the_ceiling`), with the sizes and the ways down, and **a charter is
+> held to the ceiling as the boot composes it**, the build's layer included. A session's chronology comes back as its newest entries under the
 > same discipline, sized on what an entry renders as rather than on its text
 > alone; **both the boot and the wrap answer through a budget**, and the
 > response states the full length and what it left out. **A bot's own
 > records are capped by COUNT rather than by length**: a writer marks which ones
 > it wants carried, a boot serves at most a fixed number of those, and it names
 > what it left behind rather than shortening any of them — a cut record reads
-> like a whole one, so truncating is the one thing the cap must not do. And
+> like a whole one, so truncating is the one thing the cap must not do.
+> **Each rule in force that did not get a seat is listed as one line, up to a
+> cap, and the rest are counted by purpose**, so a session knows what it holds
+> without loading it; `recall` takes a `status` that narrows the records it
+> lists and counts the rest. And
 > **mailbox counts are scoped to the caller** — the boxes a bot drains come back
 > with their per-state counts, every other box by name only, so existence stays
 > visible (a writer needs it) while somebody else's queue stops posing "is that
@@ -513,6 +527,9 @@ is whatever the tool schemas and `start_here` name.
   name through the same door, because `start_here` is skill zero. Every boot
   lists the skills by name and when-to-use and **never their bodies**, so a
   session learns what exists without paying for what it does not need.
+  Five ship: `recommend`, `rhythms`, `asking`, `projects` and `evidence`. The
+  `projects` skill is named once, on a session's first write about a project
+  or a piece of work.
   jojobot decides nothing about when one applies — the caller asks.
 
 - **Attention** — what is owed and late, answered by one read. A thing carries
@@ -552,7 +569,11 @@ roles and never an operator.
   classifier fails its self-check** — a third reason, so read which one you
   got before hunting for an ambiguity that is not there, and a refusal is
   said on stdout as well as stderr, so filtering one stream never makes a
-  refusal look like silence. **A green verdict is cross-checked against the
+  refusal look like silence. **It refuses a run in which no test executed**,
+  before any verdict, because a filter that selects nothing stays green under
+  every break. **Each run keeps its own in-flight record**, naming its
+  checkout and process, so two lines that sabotage at once never lose each
+  other's. **A green verdict is cross-checked against the
   run's own output**, and a disagreement between the two is printed rather
   than enforced — the exit code is still the verdict. ⚠️ **A hard kill
   cannot be caught, so it names the copy on stdout when it starts: that name
@@ -735,7 +756,14 @@ roles and never an operator.
   `nix build` and `nix flake check`, reporting every step. **A slice that
   touches a room's document, a room's test file or the exercise harness runs
   the matching `make room`, or `make rooms`, before it reports** — the bar
-  alone cannot see it.
+  alone cannot see it. **`make check` and `make rooms` run their test binaries
+  side by side**, eight at a time unless `BAR_JOBS` sets another number, and
+  the verdict names the number; `make test` is the plain serial run.
+- **An upgrade is proven by a test, never by a rehearsal on a copy of
+  production.** The upgrade gate restores a store the deployed build filled,
+  boots the current binary on it, reads it back through the served surface,
+  and fails on any error line at boot. `make refresh-upgrade-fixture` records
+  the fixture again from the deployed ref whenever the deployed build moves.
 - **`make paid` is a third tier and `make check` never runs it.** It reaches the
   network, drives a real model through a playbook against an instance it spawns
   and throws away, and it costs money. **It must never run by accident**, which

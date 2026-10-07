@@ -60,6 +60,7 @@ design page in [`pm/feature-briefs/`](./pm/feature-briefs).
 
 ◐ partly ·
 [Finding your way](./pm/feature-briefs/finding-your-way.md) ·
+[Role claims](./pm/feature-briefs/role-claims.md) ·
 [What you have already been shown](./pm/feature-briefs/what-you-have-already-been-shown.md) ·
 [Synthesis](./pm/feature-briefs/synthesis.md)
 
