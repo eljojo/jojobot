@@ -335,7 +335,7 @@ pub(crate) fn parse_zone(raw: Option<&str>) -> Result<jiff::tz::TimeZone, McpErr
             format!(
                 "'{name}' is no timezone this build can resolve: {e}. Send an IANA name, like \
                  'America/New_York' or 'Europe/Madrid', or send none and days are resolved in \
-                 {FALLBACK_ZONE}."
+                 the instance's zone, or {FALLBACK_ZONE} when it has none."
             ),
             None,
         )
@@ -413,6 +413,23 @@ mod tests {
             refused.to_string().contains("Nowhere/Atall"),
             "the refusal quotes what was sent: {refused}",
         );
+    }
+
+    /// **The refusal for a name that is no zone says where a run that sends none
+    /// is answered**: in the instance's zone, and in the fallback only when the
+    /// instance holds none. Pinned on the word `instance` and on the fallback's
+    /// own name, which the refusal reads from [`FALLBACK_ZONE`].
+    #[test]
+    fn the_refusal_for_no_zone_says_none_is_answered_in_the_instances_zone() {
+        let refused = parse_zone(Some("Nowhere/Atall"))
+            .expect_err("that is no zone")
+            .to_string();
+        for word in ["instance", FALLBACK_ZONE] {
+            assert!(
+                refused.contains(word),
+                "the refusal does not say `{word}`: {refused}"
+            );
+        }
     }
 
     /// **The refusal for a name that is no zone offers the standing example
