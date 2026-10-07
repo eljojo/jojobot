@@ -293,7 +293,7 @@ impl Jojobot {
         };
         let address = FactAddress::parse(&args.address).map_err(memory_error)?;
         let declared = Declared::of(&args);
-        let mut cleared = args.clear_fields.clone().unwrap_or_default();
+        let cleared = args.clear_fields.clone().unwrap_or_default();
         let mut fields = args.fields.unwrap_or_default();
         // **Captured before anything computed joins `fields`**, for the same
         // reason `capture`'s own copy is: this is about what the CALLER
@@ -323,18 +323,18 @@ impl Jojobot {
             .moved_due_moment(&address.home, &fields, &cleared)
             .await;
         let due_on_set = matches!(due_on_computed, attention::DueMove::Set(_)) && due_on_derived;
+        let mut clears_due_on = false;
         match due_on_computed {
             attention::DueMove::Set(due_on) => {
                 fields.insert(attention::DUE_ON.to_string(), due_on.to_string());
             }
             // **The clearing path calls the mover too, and acts on what it
-            // says.** This is the case `capture` cannot reach: a clear is
-            // the one write shape that can actually take a key off a
-            // record, so it is the one that can take the stale due moment
-            // off with it — onto the same `clear_fields` list this patch
-            // already carries, so it is removed in the same write that
-            // made it stale rather than in a write of its own.
-            attention::DueMove::Cleared => cleared.push(attention::DUE_ON.to_string()),
+            // says.** The stored moment sits on the record that carried the key
+            // it came from, which is not always the claim being edited, and a
+            // clear is scoped to the record it addresses. So it is taken off
+            // once this edit has landed, on the active record that carries it:
+            // see `clear_stored_due_moment`.
+            attention::DueMove::Cleared => clears_due_on = true,
             attention::DueMove::Unchanged => {}
         }
         let patch = FactPatch {
@@ -527,6 +527,10 @@ impl Jojobot {
             };
         match written {
             Guarded::Written(fact) => {
+                if clears_due_on {
+                    self.clear_stored_due_moment(&fact.subject, &caller.bot)
+                        .await;
+                }
                 self.beat(
                     "update_fact",
                     &fact.address().to_string(),

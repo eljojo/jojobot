@@ -2957,6 +2957,88 @@ async fn a_status_write_that_is_not_finishing_leaves_a_leftover_due_moment() {
     );
 }
 
+/// **A clear of the stored due moment reaches the record that carries it.**
+/// The moment is written on the claim that carried the key it came from, and a
+/// clear is scoped to the record it addresses. A status edit on a SECOND claim
+/// of the same piece of work finishes the work, and the clear it sent went to
+/// that second claim, which never held the moment: the work read finished and
+/// still stored a date. Paired with the edit on the claim that does carry it,
+/// which always worked, so the case cannot pass on a store that clears nothing.
+#[tokio::test]
+async fn finishing_work_through_a_second_claim_takes_the_stored_due_moment_off() {
+    let jojobot = handler();
+    ensure(&jojobot, "project:atlas").await;
+    jojobot
+        .add_entity(Parameters(AddEntityArgs {
+            parent: Some("project:atlas".into()),
+            ..add_args("work", "phi", "phi")
+        }))
+        .await
+        .expect("add ok");
+    let first = capture_ok(
+        &jojobot,
+        CaptureArgs {
+            provenance: Some("testimony".into()),
+            fields: Some(
+                [
+                    ("decide_by".to_string(), "2026-01-01".to_string()),
+                    ("status".to_string(), "now".to_string()),
+                ]
+                .into_iter()
+                .collect(),
+            ),
+            ..capture_args("work:phi", "wire the shed")
+        },
+    )
+    .await;
+    let second = capture_ok(
+        &jojobot,
+        CaptureArgs {
+            provenance: Some("testimony".into()),
+            fields: Some(
+                [("owner".to_string(), "gamma".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+            ..capture_args("work:phi", "gamma has the ladder")
+        },
+    )
+    .await;
+    assert_ne!(
+        address_of(&first),
+        address_of(&second),
+        "the case needs two claims"
+    );
+    assert_eq!(
+        fields_of(&jojobot, "work:phi").await["due_on"],
+        "2026-01-01",
+        "the moment this case takes off has to be stored first"
+    );
+
+    update_ok(
+        &jojobot,
+        UpdateFactArgs {
+            fields: Some(
+                [("status".to_string(), "done".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+            ..update_args(&address_of(&second))
+        },
+    )
+    .await;
+    let finished = fields_of(&jojobot, "work:phi").await;
+    assert_eq!(finished["status"], "done", "the edit landed: {finished}");
+    assert!(
+        finished.get("due_on").is_none(),
+        "the clear went to a claim that never held the moment: {finished}"
+    );
+    assert_eq!(
+        finished["decide_by"], "2026-01-01",
+        "the date stays: it says why the item was due"
+    );
+}
+
 /// **A stored due moment no carrier key derives can be cleared.** The refusal
 /// tells a caller to clear the key the moment came from; a thing holding a
 /// `due_on` and no such key has nothing to clear, so refusing the clear would
