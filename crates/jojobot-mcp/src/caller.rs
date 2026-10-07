@@ -32,8 +32,9 @@ pub(crate) struct Caller {
     /// real write materializes it.
     pub(crate) card: Option<SessionId>,
     /// **The zone this run resolves days against**, as the IANA name it
-    /// supplied at the door. `None` is a run that supplied none, and those are
-    /// answered in [`crate::memory::parse::FALLBACK_ZONE`].
+    /// held at the door. `None` is a run that holds none, and those are
+    /// answered in the instance's zone, or in
+    /// [`crate::memory::parse::FALLBACK_ZONE`] when the instance has none.
     pub(crate) zone: Option<String>,
     /// **The day this run says it is in**, from the card the boot wrote. It is
     /// what a beat is stamped with and what the sweep reads.
@@ -48,11 +49,13 @@ impl Caller {
     /// that is no zone is told so while it can still fix the call; a run whose
     /// stored name stopped resolving — a tzdb that lost it — is a call that
     /// should still answer, in the frame everything with no zone gets.
-    pub(crate) fn zone(&self) -> jiff::tz::TimeZone {
+    ///
+    /// `None` is a run that holds no zone it can resolve, and the caller then
+    /// answers it in the instance's zone, or in UTC when the instance has none.
+    pub(crate) fn zone(&self) -> Option<jiff::tz::TimeZone> {
         self.zone
             .as_deref()
             .and_then(|name| jiff::tz::TimeZone::get(name).ok())
-            .unwrap_or(jiff::tz::TimeZone::UTC)
     }
 }
 
@@ -183,7 +186,7 @@ impl Jojobot {
     /// A handle this process is not holding contributes no frame, and gets the
     /// fallback zone: whether such a call is allowed is decided before this, by
     /// [`Jojobot::identified`] and [`Jojobot::attributable`], never here.
-    pub(crate) fn dated(
+    pub(crate) async fn dated(
         &self,
         named: Option<&str>,
         sid: Option<&str>,
@@ -193,9 +196,15 @@ impl Jojobot {
         // caller already in hand rather than looked up again — this is the only
         // thing left that needs one, now that naming no day is answered by a
         // frame rather than by a clock reading.
-        let zone = caller
-            .as_ref()
-            .map_or(jiff::tz::TimeZone::UTC, Caller::zone);
+        let zone = match caller.as_ref().and_then(Caller::zone) {
+            Some(zone) => zone,
+            None => self
+                .instance_zone()
+                .await
+                .name()
+                .and_then(|name| jiff::tz::TimeZone::get(name).ok())
+                .unwrap_or(jiff::tz::TimeZone::UTC),
+        };
         // **Emptiness is settled by the parser, not here** — see
         // [`crate::memory::parse::parse_date`]. A second filter at this call
         // site is how the arguments beside this one ended up answering the

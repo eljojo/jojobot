@@ -68,7 +68,9 @@ impl Jojobot {
             Err(refused) => return Ok(refused),
         };
         let address = FactAddress::parse(&args.address).map_err(memory_error)?;
-        let date = self.dated(args.recorded_at.as_deref(), args.sid.as_deref())?;
+        let date = self
+            .dated(args.recorded_at.as_deref(), args.sid.as_deref())
+            .await?;
 
         // **A retraction is archiving by another name.** Only writes carried
         // by an active record fold, so taking this record back removes a

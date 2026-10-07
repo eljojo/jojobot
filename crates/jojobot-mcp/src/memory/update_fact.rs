@@ -533,7 +533,8 @@ impl Jojobot {
                     args.sid.as_deref(),
                 )
                 .await;
-                let mut body = fact_receipt_json(&fact, self.dated(None, args.sid.as_deref())?);
+                let mut body =
+                    fact_receipt_json(&fact, self.dated(None, args.sid.as_deref()).await?);
                 if let Some(behind) = fold_behind {
                     crate::answer::note_fold_behind(&mut body, behind);
                 }

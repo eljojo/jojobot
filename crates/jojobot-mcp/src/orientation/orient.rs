@@ -4,6 +4,7 @@
 //! text and the same snapshot; it does not open a second way in. The one call
 //! site is the point, and `there_is_exactly_one_orientation_verb` counts it.
 
+use super::instance_zone::{InstanceZone, ZoneFrom, zone_answer};
 use super::*;
 
 /// **A bot's own box, in the boot's snapshot** — [`mailbox_json`] with its
@@ -320,6 +321,7 @@ pub(super) fn floor_len(
     session: &serde_json::Value,
     carried: &serde_json::Value,
     clock: Option<serde_json::Value>,
+    timezone: &serde_json::Value,
 ) -> usize {
     let core = (!brief).then_some(essay::ORIENTATION_CORE);
     serde_json::json!({
@@ -331,6 +333,7 @@ pub(super) fn floor_len(
         "session": session,
         "carried_session": carried,
         "clock": clock,
+        "timezone": timezone,
     })
     .to_string()
     .chars()
@@ -346,6 +349,9 @@ pub(crate) struct OrientRequest<'a> {
     pub(crate) resume: Option<&'a str>,
     /// The IANA zone this run resolves days in, validated at the door.
     pub(crate) timezone: Option<&'a str>,
+    /// What the instance's record holds for its zone: what a run that sends
+    /// none is answered in.
+    pub(crate) instance_zone: InstanceZone,
     pub(crate) today: Option<jiff::civil::Date>,
     /// What the handle this caller arrived with is worth — from
     /// [`Jojobot::standing`], and `Null` when they arrived with none.
@@ -367,10 +373,21 @@ impl Jojobot {
             brief,
             resume,
             timezone,
+            instance_zone,
             today,
             carried,
             claim,
         } = req;
+        // **The zone this call resolves days in:** the one the session sent,
+        // else the instance's, else UTC. A run that holds no zone of its own is
+        // answered in the instance's on every later call too (see
+        // [`Jojobot::dated`]); a resume that sends none keeps the zone it holds.
+        let frame = timezone.or(instance_zone.name());
+        let frame_zone = || {
+            frame
+                .and_then(|name| jiff::tz::TimeZone::get(name).ok())
+                .unwrap_or(jiff::tz::TimeZone::UTC)
+        };
         // **A bot that carries a role claims it at the door when the caller
         // names none.** An explicit `claim` always wins, and a bot with no key
         // boots exactly as it did. The claim that follows is the ordinary one,
@@ -414,11 +431,7 @@ impl Jojobot {
                     // that accepted the day (rule 222).
                     match today {
                         Some(stated) => stated,
-                        None => self.clock().today_in(
-                            &timezone
-                                .and_then(|name| jiff::tz::TimeZone::get(name).ok())
-                                .unwrap_or(jiff::tz::TimeZone::UTC),
-                        ),
+                        None => self.clock().today_in(&frame_zone()),
                     },
                 )
                 .await?
@@ -478,13 +491,7 @@ impl Jojobot {
                 .map(str::to_string);
             if let Some(sid) = sid {
                 let now = self.clock().now();
-                let today_or_clock = today.unwrap_or_else(|| {
-                    self.clock().today_in(
-                        &timezone
-                            .and_then(|name| jiff::tz::TimeZone::get(name).ok())
-                            .unwrap_or(jiff::tz::TimeZone::UTC),
-                    )
-                });
+                let today_or_clock = today.unwrap_or_else(|| self.clock().today_in(&frame_zone()));
                 // **Its own gate, taken fresh.** `attach`'s gate is already
                 // released by the time control reaches here, and
                 // materializing a session record below needs the same proof
@@ -532,6 +539,27 @@ impl Jojobot {
                 }
             }
         }
+        // **Which zone this boot used, and where it came from**, read from the
+        // run once it is bound: a resume that sent none keeps its own.
+        let timezone_answer = {
+            let resumed = session
+                .get("resumed")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let run_zone = session
+                .get("sid")
+                .and_then(|v| v.as_str())
+                .and_then(|sid| self.registry.lookup(sid))
+                .and_then(|handle| handle.zone);
+            match (timezone, resumed, run_zone.as_deref()) {
+                (Some(sent), _, _) => zone_answer(Some(sent), ZoneFrom::Session, &instance_zone),
+                (None, true, Some(own)) => zone_answer(Some(own), ZoneFrom::Run, &instance_zone),
+                (None, _, _) => match instance_zone.name() {
+                    Some(name) => zone_answer(Some(name), ZoneFrom::Instance, &instance_zone),
+                    None => zone_answer(None, ZoneFrom::Default, &instance_zone),
+                },
+            }
+        };
         // **ONE declared ceiling for the WHOLE answer** — [`text::BOOT_ANSWER`]
         // — not for its prose alone (rule 138's own bar: a payload the client
         // cannot read, not a field inside it). Measure the FLOOR first:
@@ -564,6 +592,7 @@ impl Jojobot {
             &session,
             &carried,
             self.stated_clock(),
+            &timezone_answer,
         );
         let remaining_for_prose = text::BOOT_ANSWER.budget.saturating_sub(floor_len);
         // **A floor over the ceiling is said, not refused.** The boot never
@@ -618,6 +647,9 @@ impl Jojobot {
             // ordinary answer and means the real clock; present is the
             // exception, and a session reads it before it writes anything.
             "clock": self.stated_clock(),
+            // **The zone this boot answered days in, and who named it** — the
+            // session, the instance, the run it resumed, or neither.
+            "timezone": timezone_answer,
         });
         // **`brief` needs no note — the caller set that flag and already
         // knows why.** Every other reason an answer carries less than the

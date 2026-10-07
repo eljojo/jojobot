@@ -18,6 +18,7 @@ pub mod charter;
 pub mod essay;
 pub mod floor;
 pub mod identity;
+pub mod instance_zone;
 pub mod orient;
 pub mod ping;
 pub mod skills;

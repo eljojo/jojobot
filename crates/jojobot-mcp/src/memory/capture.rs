@@ -716,7 +716,9 @@ impl Jojobot {
         let checked_in = args.check_in.is_some();
         let subject = EntityId::person(&args.subject);
         let provenance = parse_provenance(args.provenance.as_deref())?;
-        let recorded_at = self.dated(args.recorded_at.as_deref(), args.sid.as_deref())?;
+        let recorded_at = self
+            .dated(args.recorded_at.as_deref(), args.sid.as_deref())
+            .await?;
         let edge = match parse_edge(args.shape.as_deref(), args.object.as_deref())? {
             Ok(edge) => edge,
             Err(refused) => return Ok(refused),
@@ -942,7 +944,8 @@ impl Jojobot {
                 // reading still stands today — and the read that follows this
                 // write answers as of today, so a receipt answering as of the
                 // claim's day contradicts it inside one session.
-                let mut body = fact_receipt_json(&fact, self.dated(None, args.sid.as_deref())?);
+                let mut body =
+                    fact_receipt_json(&fact, self.dated(None, args.sid.as_deref()).await?);
                 if let Some(behind) = fold_behind {
                     crate::answer::note_fold_behind(&mut body, behind);
                 }

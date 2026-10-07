@@ -74,7 +74,9 @@ impl Jojobot {
         };
         let duplicate = EntityId(args.duplicate.trim().to_string());
         let survivor = EntityId(args.survivor.trim().to_string());
-        let date = self.dated(args.recorded_at.as_deref(), args.sid.as_deref())?;
+        let date = self
+            .dated(args.recorded_at.as_deref(), args.sid.as_deref())
+            .await?;
 
         // **A merge into the caller's own bot carries the duplicate's ceiling
         // onto it, and the store decides that in the same act as the merge.**

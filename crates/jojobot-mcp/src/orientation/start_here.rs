@@ -78,8 +78,7 @@ pub struct OrientArgs {
     ///
     /// It is what *today* means for everything day-grained: the date a `capture`
     /// gets when you name none, and whether a recurring loop has fallen due.
-    /// **It is a property of YOUR RUN and not a setting on the server** — the
-    /// frame belongs to the caller, so jojobot never assumes one.
+    /// A zone you send wins over the instance's.
     ///
     /// ⚠️ **Two sessions in different zones will disagree about what today is
     /// for the same stored claim, and that is correct.** A claim captured at
@@ -87,8 +86,9 @@ pub struct OrientArgs {
     /// Madrid; both runs are reading the same claim and answering in their own
     /// frame. It is not a fault and there is nothing to work around.
     ///
-    /// Send none and days are resolved in UTC. On a resume, sending none keeps
-    /// the zone the run already had rather than moving it.
+    /// Send none and the instance's zone answers, or UTC when its operator set
+    /// none; the boot says which. On a resume, sending none keeps the zone the
+    /// run already had rather than moving it.
     #[serde(default)]
     pub(crate) timezone: Option<String>,
     /// **A role to claim, by a name you choose.** Boot names this when you
@@ -334,11 +334,13 @@ impl Jojobot {
             .as_deref()
             .map(str::trim)
             .filter(|c| !c.is_empty());
+        let instance_zone = self.instance_zone().await;
         self.orient(orient::OrientRequest {
             bot: bot.as_ref(),
             brief: args.brief.unwrap_or(false),
             resume,
             timezone: timezone.as_deref(),
+            instance_zone,
             today,
             carried,
             claim,

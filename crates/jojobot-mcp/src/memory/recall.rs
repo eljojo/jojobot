@@ -1466,13 +1466,16 @@ impl Jojobot {
         // the same code path as *what is overdue now*.
         let as_of = match &args.overdue {
             None => None,
-            Some(overdue) => Some(self.dated(overdue.as_of.as_deref(), args.sid.as_deref())?),
+            Some(overdue) => Some(
+                self.dated(overdue.as_of.as_deref(), args.sid.as_deref())
+                    .await?,
+            ),
         };
         // **The one clock read, taken here whether or not a question named a
         // day.** What is held is asked as of a day like everything else, so a
         // call that named one for `overdue` asks about the same day here, and
         // the answer says which day it used either way.
-        let today = self.dated(None, args.sid.as_deref())?;
+        let today = self.dated(None, args.sid.as_deref()).await?;
         // Every key some declaration made a reference — what makes a value a
         // link. Read once, here, so the ranking stays a function of what it is
         // handed.
@@ -1522,7 +1525,9 @@ impl Jojobot {
         let near = match &args.near {
             None => None,
             Some(asked) => Some(graph::Nearness {
-                day: self.dated(asked.day.as_deref(), args.sid.as_deref())?,
+                day: self
+                    .dated(asked.day.as_deref(), args.sid.as_deref())
+                    .await?,
                 within_days: asked.within_days.unwrap_or(NEAR_WINDOW),
                 clock: parse_clock(asked.clock.as_deref())?,
             }),

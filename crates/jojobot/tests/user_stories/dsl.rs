@@ -658,6 +658,24 @@ impl Story {
         Session { client, sid }
     }
 
+    /// **A new session that sends no zone**, with its boot answer, on its own
+    /// connection. `resume` answers the choice a second boot of one bot is
+    /// handed. The answer is returned because what it says about the zone is the
+    /// point of a story that boots this way.
+    pub async fn boot_sending_no_zone(&self, resume: Option<&str>) -> (Value, Session) {
+        let client = self.connect().await;
+        let mut args = json!({"bot": self.bot, "brief": true});
+        if let Some(answer) = resume {
+            args["resume"] = json!(answer);
+        }
+        let booted = call(&client, "start_here", args).await;
+        let sid = booted["session"]["sid"]
+            .as_str()
+            .unwrap_or_else(|| panic!("boot with no zone handed back no handle: {booted}"))
+            .to_string();
+        (booted, Session { client, sid })
+    }
+
     /// **A new session that says which DAY it is working in**, on its own
     /// connection — the run that is not happening now.
     ///

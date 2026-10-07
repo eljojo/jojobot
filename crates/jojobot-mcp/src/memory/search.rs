@@ -703,7 +703,7 @@ impl Jojobot {
         // asked: whether a claim has passed the day it stays good is a question
         // about a day, and two runs in two zones answer it differently for one
         // stored claim.
-        let as_of = self.dated(None, args.sid.as_deref())?;
+        let as_of = self.dated(None, args.sid.as_deref()).await?;
         // **How many of the ranked facts had no `happened_at` to rank by,
         // and fell back to `recorded_at` instead.** `None` when ranking by
         // `recorded_at`, since the question was not asked — an incomplete

@@ -188,7 +188,9 @@ impl Jojobot {
             return Ok(refused);
         }
         let parent = args.parent.as_deref().map(EntityId::person);
-        let date = self.dated(args.recorded_at.as_deref(), args.sid.as_deref())?;
+        let date = self
+            .dated(args.recorded_at.as_deref(), args.sid.as_deref())
+            .await?;
         let renamed = match self
             .memory
             .rename_entity(&from, &to, parent, date, args.override_token.as_deref())

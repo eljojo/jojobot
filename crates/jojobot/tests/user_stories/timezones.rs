@@ -7,9 +7,10 @@
 //! shape of fault an agent works around rather than reports.
 //!
 //! **The session supplies the frame.** A run says which zone it works in when
-//! it boots, and jojobot never assumes one. That is the rule the overdue read
-//! already follows one level down — it takes the day it is asked about rather
-//! than reading a clock — applied to the run itself.
+//! it boots. An instance whose operator wrote a zone answers a run that sends
+//! none in it, and with no zone written jojobot assumes none of its own. That is
+//! the rule the overdue read already follows one level down — it takes the day
+//! it is asked about rather than reading a clock — applied to the run itself.
 //!
 //! ⚠️ **The consequence is the point of this story: two runs in two zones
 //! legitimately disagree about what today is for one stored claim.** It is not
@@ -140,5 +141,70 @@ async fn two_runs_in_two_zones_read_one_claim_in_their_own_day() {
     ahead
         .wrap("read the fern's loop from the far side of the date line")
         .await;
+    story.finish().await;
+}
+
+/// **"I live in this zone. I should not have to say so at every boot."**
+///
+/// The operator writes their zone once, on the instance's own record. A run that
+/// sends none is then answered in it, the boot says so, and a run that sends a
+/// zone of its own still gets that one.
+#[tokio::test]
+async fn an_instance_that_holds_its_operators_zone_answers_a_run_that_sends_none() {
+    // One of the two widest zones is always on another day than UTC, so the day
+    // a claim is stamped with says which zone answered.
+    let (operators, other) = ["Etc/GMT+12", "Pacific/Kiritimati"]
+        .into_iter()
+        .find(|zone| day_in(zone) != day_in("UTC"))
+        .map(|zone| {
+            (
+                zone,
+                if zone == "Etc/GMT+12" {
+                    "Pacific/Kiritimati"
+                } else {
+                    "Etc/GMT+12"
+                },
+            )
+        })
+        .expect("one of the widest zones is on another day than UTC");
+
+    let story = Story::begin("bot:otto").await;
+    let (first_boot, first) = story.boot_sending_no_zone(Some("new")).await;
+    assert_eq!(first_boot["timezone"]["from"], "default", "{first_boot}");
+    assert_eq!(first_boot["timezone"]["zone"], "UTC", "{first_boot}");
+    first.add("person:milhouse", "Milhouse").await;
+    assert_eq!(
+        first.undated_fact("person:milhouse", "said hello").await,
+        day_in("UTC").to_string(),
+        "with no zone written, a run that sends none is answered in UTC",
+    );
+
+    // The operator writes their zone, once.
+    first.add("topic:instance", "This instance").await;
+    first
+        .event_with(
+            "topic:instance",
+            "where the operator lives",
+            json!({ "timezone": operators }),
+            &[],
+        )
+        .await;
+
+    let (boot, later) = story.boot_sending_no_zone(Some("new")).await;
+    assert_eq!(boot["timezone"]["from"], "instance", "{boot}");
+    assert_eq!(boot["timezone"]["zone"], operators, "{boot}");
+    assert_eq!(
+        later.undated_fact("person:milhouse", "said goodbye").await,
+        day_in(operators).to_string(),
+        "a run that sends none is answered in the instance's zone",
+    );
+
+    // A run that sends a zone of its own still gets that one.
+    let own = story.session_in(other, Some("new")).await;
+    assert_eq!(
+        own.undated_fact("person:milhouse", "waved").await,
+        day_in(other).to_string(),
+        "a zone the session sends wins over the instance's",
+    );
     story.finish().await;
 }
