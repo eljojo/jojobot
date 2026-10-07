@@ -79,6 +79,75 @@ async fn a_rules_marks_belong_to_the_rule_and_not_to_the_bot() {
     story.finish().await;
 }
 
+/// **Asking for a mark by `keys` is told where the mark lives.** The six marks
+/// stay on their claim, so narrowing a thing's fields to one of them returns an
+/// object with nothing under it, which reads as "the bot holds no such mark" and
+/// is true and useless. The answer says that the mark is on the claim and which
+/// read returns it, and it says so only when a mark was asked for.
+#[tokio::test]
+async fn asking_for_a_mark_by_keys_is_told_the_mark_is_on_the_claim() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:omega", "Omega").await;
+    s.call(
+        "capture",
+        json!({
+            "subject": "bot:omega", "content": "keep the kettle descaled",
+            "provenance": "testimony",
+            "fields": {"starred": "true", "one_liner": "keeps the kettle descaled"},
+        }),
+    )
+    .await;
+
+    let asked = s
+        .call(
+            "recall",
+            json!({"subject": "bot:omega", "keys": ["starred", "one_liner"]}),
+        )
+        .await
+        .json();
+    // The ordinary key comes back and the mark does not: the positive that
+    // the narrowing worked, beside the absence the note explains.
+    let fields = asked["objects"][0]["fields"].as_object().expect("fields");
+    assert_eq!(
+        fields.get("one_liner"),
+        Some(&json!("keeps the kettle descaled")),
+        "{asked}"
+    );
+    assert!(!fields.contains_key("starred"), "{asked}");
+    let note = asked["keys_note"].as_str().expect("the answer says why");
+    for word in ["starred", "facts", "claim"] {
+        assert!(note.contains(word), "the note names {word}: {note}");
+    }
+    // A note is a sentence somebody reads: one line, one space between words.
+    assert!(
+        !note.contains("  ") && !note.contains('\n'),
+        "the note reads as one line: {note:?}"
+    );
+    assert!(
+        !note.contains("one_liner"),
+        "the note is about the mark and not the ordinary key: {note}"
+    );
+
+    // Nothing to explain when only ordinary keys were asked for.
+    let plain = s
+        .call(
+            "recall",
+            json!({"subject": "bot:omega", "keys": ["one_liner"]}),
+        )
+        .await
+        .json();
+    assert!(plain.get("keys_note").is_none(), "{plain}");
+
+    // The read the note names returns the mark, on the claim.
+    s.call("recall", json!({"subject": "bot:omega", "facts": true}))
+        .await
+        .says("\"starred\":\"true\"");
+
+    s.wrap("asked for a mark by keys").await;
+    story.finish().await;
+}
+
 /// **A check-in's source is the check-in's, and the loop still advances.**
 #[tokio::test]
 async fn a_check_ins_source_does_not_fold_onto_its_loop_and_the_loop_still_advances() {

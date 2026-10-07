@@ -56,6 +56,17 @@ pub(crate) fn default_bot() -> EntityId {
     EntityId(DEFAULT_BOT.to_string())
 }
 
+/// **The keys the build declares as describing their own record**, read from the
+/// shipped `record-labels` type so a seventh is named wherever this is used with
+/// no edit. These never fold onto the thing a claim is about.
+pub fn describing_keys() -> Vec<String> {
+    shipped_types()
+        .into_iter()
+        .find(|declared| declared.name == "record-labels")
+        .map(|declared| declared.fields.into_iter().map(|field| field.key).collect())
+        .unwrap_or_default()
+}
+
 /// **The types this build ships**, complete with their keys.
 ///
 /// Two things make the list safe to write on every boot. A caller cannot

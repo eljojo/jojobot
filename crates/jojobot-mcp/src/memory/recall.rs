@@ -2096,6 +2096,20 @@ impl Jojobot {
             }
         }
         let claims_reached = found.iter().any(|object| !object.facts.is_empty());
+        // **A mark asked for by `keys` is not on the thing, and the answer says
+        // where it is.** The six describing keys stay on their claim, so
+        // narrowing a thing's fields to one of them hands back an object with
+        // nothing under it, which reads as "it holds no such key" and sends the
+        // caller away from the one read that has it.
+        let marks_asked: Vec<String> = {
+            let describing = crate::seed::describing_keys();
+            only_keys
+                .iter()
+                .flatten()
+                .filter(|key| describing.contains(key))
+                .cloned()
+                .collect()
+        };
         let mut body = serde_json::json!({
             "count": found.len(),
             "built_on": standing_on,
@@ -2334,6 +2348,18 @@ impl Jojobot {
                  exist and shows none of them. Boot with start_here as your bot and pass the \
                  sid it returns on this call to read your own runs"
             );
+        }
+        if !marks_asked.is_empty() {
+            body["keys_note"] = serde_json::json!(format!(
+                "{} describe their own claim and never fold onto the thing, so no object carries \
+                 them under fields. Their values live on the claim: recall again with facts: \
+                 true to read them there, or filter with a fields entry whose scope is record.",
+                marks_asked
+                    .iter()
+                    .map(|key| format!("`{key}`"))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            ));
         }
         if let Some(sid) = args.sid.as_deref() {
             self.registry.note_shown(sid, &body);

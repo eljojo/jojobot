@@ -205,11 +205,7 @@ impl Jojobot {
         let carriers = jojobot_domain::attention::shipped();
         let carriers: Vec<&dyn jojobot_domain::attention::Carrier> =
             carriers.iter().map(std::convert::AsRef::as_ref).collect();
-        let labels: Vec<String> = seed::shipped_types()
-            .into_iter()
-            .find(|declared| declared.name == "record-labels")
-            .map(|declared| declared.fields.into_iter().map(|field| field.key).collect())
-            .unwrap_or_default();
+        let labels = seed::describing_keys();
         let falls_due = [
             memory::due::what_makes_a_thing_fall_due(&carriers),
             memory::due::what_describes_its_claim(&labels),
