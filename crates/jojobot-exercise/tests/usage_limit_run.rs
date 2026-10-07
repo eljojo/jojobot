@@ -80,13 +80,24 @@ struct Scratch(PathBuf);
 
 impl Scratch {
     fn new() -> Scratch {
-        let path = std::env::temp_dir().join(format!(
-            "jojobot-exercise-usage-limit-{}-{}",
-            std::process::id(),
+        Scratch::at(
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("a clock after 1970")
-                .as_nanos()
+                .as_nanos(),
+        )
+    }
+
+    /// The directory for a case that starts at this instant. The counter is
+    /// what makes the name unique: the process and the clock repeat when two
+    /// cases of this process start together.
+    fn at(nanos: u128) -> Scratch {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "jojobot-exercise-usage-limit-{}-{}-{}",
+            std::process::id(),
+            nanos,
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         ));
         std::fs::create_dir_all(&path).expect("a scratch directory");
         Scratch(path)
@@ -97,6 +108,19 @@ impl Drop for Scratch {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
     }
+}
+
+/// **Two cases that start at the same instant get two directories.** The cases
+/// run side by side in one process, so a name built from the process and the
+/// clock alone can repeat. Both then share one launch count and one script,
+/// and whichever finishes first removes the directory under the other: a
+/// missing script in a later sitting, or the other case's stderr read as this
+/// case's own.
+#[test]
+fn two_scratch_directories_made_at_one_instant_are_distinct() {
+    let first = Scratch::at(7);
+    let second = Scratch::at(7);
+    assert_ne!(first.0, second.0, "two cases were given one directory");
 }
 
 /// The CLI's own words when the usage limit stops it.
