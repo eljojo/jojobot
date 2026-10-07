@@ -884,6 +884,56 @@ fn every_key_a_shipped_carrier_reads_is_named_where_a_write_is_described() {
     }
 }
 
+/// **A work item or project at its finishing status is not owed, and every place
+/// a write is described says so.** The closing sentence of the description says
+/// no other key acts on what is owed, and `status` on those two kinds does.
+///
+/// The kinds and the word are read off the shipped kinds here, not out of the
+/// text, so a kind added to the rule is named with no edit.
+///
+/// ⚠️ **It fails when the corpus comes back empty**: the kinds are counted
+/// before they are looked for.
+#[test]
+fn every_place_a_write_is_described_says_a_finished_piece_of_work_is_not_owed() {
+    use jojobot_domain::memory::kinds;
+    let finishing: Vec<&str> = kinds::SHIPPED
+        .iter()
+        .copied()
+        .filter(|kind| kinds::holds_columns(kind))
+        .collect();
+    assert!(
+        finishing.len() >= 2,
+        "the shipped kinds that finish are {finishing:?}, too few to be work and project"
+    );
+
+    let tools = Jojobot::tool_router().list_all();
+    let mut places: Vec<(String, String)> =
+        vec![("the served instructions".into(), crate::instructions())];
+    for verb in ["capture", "update_fact"] {
+        let tool = tools
+            .iter()
+            .find(|t| t.name.as_ref() == verb)
+            .unwrap_or_else(|| panic!("the surface offers {verb}"));
+        let schema = serde_json::to_value(&tool.input_schema).expect("the schema serializes");
+        let described = schema["properties"]["fields"]["description"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{verb}'s fields argument carries a description"));
+        places.push((format!("{verb}'s fields argument"), described.to_string()));
+    }
+    for (place, text) in &places {
+        for named in finishing
+            .iter()
+            .copied()
+            .chain([kinds::STATUS, kinds::FINISHED])
+        {
+            assert!(
+                text.contains(&format!("`{named}`")),
+                "{place} does not name `{named}` where it says what is owed: {text}",
+            );
+        }
+    }
+}
+
 /// **Every served place that teaches the provenance vocabulary teaches all
 /// three values.**
 ///

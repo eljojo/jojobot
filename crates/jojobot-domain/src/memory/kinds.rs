@@ -42,15 +42,32 @@ pub const SHIPPED: [&str; 16] = [
 /// and the refusal for an unlisted status says so.
 pub const WORK_STATUSES: [&str; 5] = ["someday", "next", "now", "waiting", "done"];
 
+/// **The status that finishes a piece of work**: the last of the five. A work
+/// item or a project holding it is not owed.
+pub const FINISHED: &str = WORK_STATUSES[4];
+
 /// The key a work thing or a project holds its status under.
 pub const STATUS: &str = "status";
+
+/// **The shipped kinds that hold a status and finish at [`FINISHED`]**, in the
+/// order the kinds are shipped.
+pub fn finishing_kinds() -> Vec<&'static str> {
+    SHIPPED
+        .iter()
+        .copied()
+        .filter(|kind| holds_columns(kind))
+        .collect()
+}
 
 /// **Whether a thing of this kind is finished**: a work item or a project whose
 /// status is `done`. A finished thing is not owed, and its date stays on the
 /// record. Every other kind owes by its dates alone, whatever a `status` key
 /// on it says.
 pub fn is_finished(kind: &str, fields: &std::collections::BTreeMap<String, String>) -> bool {
-    holds_columns(kind) && fields.get(STATUS).is_some_and(|held| held.trim() == "done")
+    holds_columns(kind)
+        && fields
+            .get(STATUS)
+            .is_some_and(|held| held.trim() == FINISHED)
 }
 
 /// The key a project holds its own ordered list of statuses under.

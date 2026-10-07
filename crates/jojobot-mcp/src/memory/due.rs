@@ -60,6 +60,21 @@ pub(crate) fn what_makes_a_thing_fall_due(carriers: &[&dyn attention::Carrier]) 
             named(&reads, "and"),
         ));
     }
+    // **A finished piece of work is not owed**, so `status` on those kinds acts
+    // on what is owed. The kinds and the word come from the shipped kinds, the
+    // same source the owed read asks.
+    let finishing: Vec<String> = jojobot_domain::memory::kinds::finishing_kinds()
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+    if !finishing.is_empty() {
+        sentences.push(format!(
+            "A {} whose `{}` is `{}` is not owed, and its dates stay on it.",
+            named(&finishing, "or"),
+            jojobot_domain::memory::kinds::STATUS,
+            jojobot_domain::memory::kinds::FINISHED,
+        ));
+    }
     sentences.push(
         "Every other key is kept as you wrote it and nothing acts on it: it never makes a \
          thing fall due or appear in what is owed."
