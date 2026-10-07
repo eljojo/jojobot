@@ -37,15 +37,27 @@ impl Drop for Scratch {
     }
 }
 
-#[tokio::test]
-async fn the_current_binary_boots_on_a_store_an_older_binary_filled() {
+/// **The fixture, restored into a store of this case's own.** Two cases run
+/// side by side in this binary, so each takes a directory named for itself: a
+/// name from the process alone would be one directory for both.
+struct Restored {
+    /// Removes the directory when the case is done.
+    scratch: Scratch,
+    state_dir: std::path::PathBuf,
+    store_port: u16,
+    git_ref: String,
+}
+
+async fn restore_the_fixture(label: &str) -> Restored {
     let git_ref = std::fs::read_to_string(FIXTURE_REF)
         .unwrap_or_else(|e| panic!("reading {FIXTURE_REF}: {e}"))
         .trim()
         .to_string();
 
-    let state_dir =
-        std::env::temp_dir().join(format!("jojobot-upgrade-gate-{}", std::process::id()));
+    let state_dir = std::env::temp_dir().join(format!(
+        "jojobot-upgrade-gate-{}-{label}",
+        std::process::id()
+    ));
     std::fs::create_dir_all(&state_dir).expect("a scratch directory");
     let scratch = Scratch(state_dir.clone());
     let db_dir = state_dir.join("db");
@@ -70,6 +82,22 @@ async fn the_current_binary_boots_on_a_store_an_older_binary_filled() {
             });
     }
     restoring.stop().await;
+    Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+    }
+}
+
+#[tokio::test]
+async fn the_current_binary_boots_on_a_store_an_older_binary_filled() {
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+    } = restore_the_fixture("boots").await;
 
     // **The current binary boots over the restored store TWICE, and the second
     // boot changes nothing.** The first boot runs every migration and every
@@ -684,4 +712,148 @@ async fn assert_the_newer_shapes_read_back(surface: &Surface, git_ref: &str) {
     if parsed["objects"][0]["fields"]["status"] != "done" {
         fail("the finished work's status", &read);
     }
+}
+
+/// **After the upgrade, `field_link` holds the links the writes imply, and
+/// nothing else.**
+///
+/// The expected set comes from the served surface and not from the start pass
+/// that fills the table: every record's fields are read as the surface serves
+/// them, and a value that is one handle, or a list in which every item is a
+/// handle, is a link from the thing to the thing it names. The table is read
+/// from the store directly, with the binary stopped, and each end is turned
+/// back into a handle through the entity table. The two sets must be equal and
+/// must not be empty. A pass that leaves a link out, or leaves one behind that
+/// no write implies, fails here, and so does a gate whose expected set came out
+/// of the same code as the table.
+#[tokio::test]
+async fn field_link_holds_the_links_the_writes_imply_and_nothing_else() {
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+    } = restore_the_fixture("links").await;
+    let booted = boot_current(&state_dir, store_port, &git_ref).await;
+    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
+        .await
+        .expect("connecting to the current binary");
+    let expected = links_the_served_fields_imply(&surface, &git_ref).await;
+    surface.finish().await;
+    booted.stop().await;
+
+    let reading = Dolt::start(&state_dir.join("db"), free_port())
+        .await
+        .expect("the stopped store comes up to be read");
+    let held = links_field_link_holds(reading.pool()).await;
+    let mut reading = reading;
+    reading.stop().await;
+    drop(scratch);
+
+    assert!(
+        !expected.is_empty(),
+        "the recording at {git_ref} implies no link at all, so this case proves nothing"
+    );
+    let missing: Vec<_> = expected.difference(&held).collect();
+    let extra: Vec<_> = held.difference(&expected).collect();
+    assert!(
+        missing.is_empty() && extra.is_empty(),
+        "field_link disagrees with the writes recorded at {git_ref}. Implied by the served \
+         fields and absent from the table: {missing:?}. In the table and implied by no \
+         write: {extra:?}"
+    );
+}
+
+/// A link as the surface names it: the thing, the key, the thing it points at.
+type Link = (String, String, String);
+
+/// **Every link the served fields imply.** Each kind in the snapshot is browsed
+/// with its records, and a field value that is one handle of a thing in the
+/// store, or a comma-separated list of them, is a link.
+async fn links_the_served_fields_imply(
+    surface: &Surface,
+    git_ref: &str,
+) -> std::collections::BTreeSet<Link> {
+    let fail = |what: &str, body: &str| -> ! {
+        panic!("recorded at {git_ref}: {what} did not read back correctly: {body}")
+    };
+    let snapshot = surface.call("start_here", json!({})).await;
+    let parsed: serde_json::Value =
+        serde_json::from_str(&snapshot).unwrap_or_else(|_| fail("the snapshot", &snapshot));
+    let kinds: Vec<String> = parsed["snapshot"]["entities"]["by_kind"]
+        .as_object()
+        .unwrap_or_else(|| fail("the snapshot's kinds", &snapshot))
+        .keys()
+        .cloned()
+        .collect();
+    assert!(!kinds.is_empty(), "the snapshot lists no kind: {snapshot}");
+
+    let mut things = Vec::new();
+    for kind in &kinds {
+        let read = surface
+            .call("recall", json!({"kind": kind, "facts": true}))
+            .await;
+        let parsed: serde_json::Value = serde_json::from_str(&read)
+            .unwrap_or_else(|_| fail(&format!("the {kind} records"), &read));
+        for object in parsed["objects"].as_array().into_iter().flatten() {
+            things.push(object.clone());
+        }
+    }
+    let known: std::collections::BTreeSet<String> = things
+        .iter()
+        .filter_map(|object| object["id"].as_str().map(str::to_string))
+        .collect();
+
+    let mut links = std::collections::BTreeSet::new();
+    for object in &things {
+        let Some(subject) = object["id"].as_str() else {
+            continue;
+        };
+        for fact in object["facts"].as_array().into_iter().flatten() {
+            for (key, value) in fact["fields"].as_object().into_iter().flatten() {
+                let Some(value) = value.as_str() else {
+                    continue;
+                };
+                let items: Vec<&str> = value.split(',').map(str::trim).collect();
+                if !items.iter().all(|item| known.contains(*item)) {
+                    continue;
+                }
+                for item in items {
+                    links.insert((subject.to_string(), key.clone(), item.to_string()));
+                }
+            }
+        }
+    }
+    links
+}
+
+/// **Every link the table holds**, with both ends turned back into handles
+/// through the entity table, and the write's ordinal dropped: the same link
+/// written twice is one link.
+async fn links_field_link_holds(pool: &sqlx::MySqlPool) -> std::collections::BTreeSet<Link> {
+    let handles: std::collections::BTreeMap<String, String> =
+        sqlx::query_as::<_, (String, Option<String>)>("SELECT id, badge FROM entity")
+            .fetch_all(pool)
+            .await
+            .expect("the entity table reads")
+            .into_iter()
+            .map(|(id, badge)| {
+                (
+                    badge
+                        .filter(|b| !b.is_empty())
+                        .unwrap_or_else(|| id.clone()),
+                    id,
+                )
+            })
+            .collect();
+    let named = |stored: String| handles.get(&stored).cloned().unwrap_or(stored);
+    sqlx::query_as::<_, (String, String, String)>(
+        "SELECT entity, `key`, target FROM field_link ORDER BY 1, 2, 3",
+    )
+    .fetch_all(pool)
+    .await
+    .expect("field_link reads")
+    .into_iter()
+    .map(|(entity, key, target)| (named(entity), key, named(target)))
+    .collect()
 }
