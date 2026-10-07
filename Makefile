@@ -11,7 +11,7 @@
 CARGO ?= cargo
 
 .DEFAULT_GOAL := help
-.PHONY: help check narrow test lint fmt fmt-check build integration argument-coverage paid refresh-upgrade-fixture
+.PHONY: help check narrow test lint fmt fmt-check build integration rooms room prepush argument-coverage paid refresh-upgrade-fixture
 
 help: ## List the targets
 	@grep -hE '^[a-z-]+:.*##' $(MAKEFILE_LIST) \
@@ -143,6 +143,65 @@ build: ## Build the workspace
 # thing rather than pretending there is a second gate.
 integration: ## Run the suites against the real store
 	$(CARGO) test -p jojobot-adapters --test dolt_store --test dolt_without_a_home
+
+# **The room suites, which `make check` does not run.** Each stands up a room:
+# the shipped server and a store of its own. Which test files are room suites
+# is declared once, in `crates/jojobot-exercise/Cargo.toml`, as the targets
+# that need the `rooms` feature. Nothing here names one.
+#
+# `rooms` runs every room suite except the year room. Run it before a report
+# when a slice touches a room's own files — `rooms/<name>.md`, its test file —
+# or the harness in `crates/jojobot-exercise/src`.
+#
+# 🚨 **Builds the workspace first.** A room spawns the built `jojobot` binary,
+# and `cargo test -p jojobot-exercise` does not rebuild it. Without the build
+# an edit to served code is checked against the old binary.
+#
+# Every target reports and none stops at the first failure, as `test` does.
+# **Each room target is named with `--test`, read out of the manifest.** The
+# feature alone would also run the harness's unit tests and every test file
+# that is not a room suite, which `make check` already runs.
+ROOM_TESTS := $(shell awk '/^name = /{n=$$3; gsub(/"/,"",n)} /^required-features = \["rooms"\]/{print n}' crates/jojobot-exercise/Cargo.toml)
+rooms: ## Every room suite except the year room
+	$(CARGO) build --workspace --locked
+	$(CARGO) test -p jojobot-exercise --features rooms $(addprefix --test ,$(ROOM_TESTS)) --no-fail-fast --locked
+
+# **One room's suite**, by the name of its test file without the `_room`
+# ending: `make room ROOM=year`, `make room ROOM=vault`. A file without that
+# ending is named whole, `make room ROOM=piano_lock`. It turns every feature
+# on, so it also reaches the year room.
+ROOM ?=
+ROOM_TEST = $(if $(wildcard crates/jojobot-exercise/tests/$(ROOM)_room.rs),$(ROOM)_room,$(ROOM))
+room: ## One room's suite: make room ROOM=<name>
+	@test -n "$(ROOM)" || { echo "make room needs a room: make room ROOM=<name>"; exit 2; }
+	@test -f crates/jojobot-exercise/tests/$(ROOM_TEST).rs || { echo "no test file named $(ROOM)_room or $(ROOM) under crates/jojobot-exercise/tests"; exit 2; }
+	$(CARGO) build --workspace --locked
+	$(CARGO) test -p jojobot-exercise --all-features --test $(ROOM_TEST) --no-fail-fast --locked
+
+# **The year room, alone.** It is the slowest suite and no other target runs
+# it: `rooms` leaves it out and `check` runs no room. `prepush` calls it.
+year: ## The year room's suite
+	$(MAKE) room ROOM=year
+
+nix-build: ## The package build, as release QA runs it
+	nix build
+
+flake-check: ## The flake's checks, as release QA runs them
+	nix flake check
+
+# **Release QA, run before a push.** The whole bar and the real store, every
+# room suite, the year room (which no other target runs), the package build
+# and the flake check.
+#
+# **Every step runs and each one reports**, because a red first step must not
+# hide whether the rest are green. `-k` is what keeps going past a red step,
+# and the exit code is non-zero if any step failed. The steps are targets of
+# their own so a dry run (`make -n prepush`) lists them and runs none of them.
+prepush: ## Before a push: check, integration, rooms, year room, nix build, flake check
+	$(MAKE) -k prepush-steps
+
+.PHONY: prepush-steps year nix-build flake-check
+prepush-steps: check integration rooms year nix-build flake-check
 
 # **The report `cargo test` swallows.** A passing test's stdout is captured
 # and thrown away, so served_arguments_with_no_story_site_are_reported

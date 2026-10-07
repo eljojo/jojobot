@@ -165,3 +165,124 @@ fn an_unset_playbook_reaches_the_binary_with_no_flag_and_a_set_one_still_passes_
         "a named PLAYBOOK must still reach the binary: {named}",
     );
 }
+
+/// `make -n <args>`, dry run: what the targets would run, never run.
+///
+/// **A dry run reads the recipe lines, so a line that calls `$(MAKE)` still
+/// runs — and passes `-n` down to the sub-make.** The pre-push steps are
+/// targets of their own for that reason; a step written beside a `$(MAKE)`
+/// call on one line would execute under `-n`.
+fn dry_run(args: &[&str]) -> String {
+    let done = std::process::Command::new("make")
+        .current_dir(root())
+        .arg("-n")
+        .args(args)
+        .output()
+        .expect("make runs");
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&done.stdout),
+        String::from_utf8_lossy(&done.stderr),
+    )
+}
+
+/// **The year room runs in the pre-push target and nowhere else by default.**
+/// `rooms` turns on the `rooms` feature alone, so it leaves the year room out;
+/// `room ROOM=year` names its test file and turns every feature on; and the
+/// pre-push target runs the bar, the real store, `rooms`, the year room, the
+/// package build and the flake check. Losing any one of those steps loses
+/// coverage nobody else runs.
+#[test]
+fn the_pre_push_target_runs_the_rooms_the_year_room_and_release_qa() {
+    let rooms = dry_run(&["rooms"]);
+    assert!(
+        rooms.contains("--features rooms") && !rooms.contains("year"),
+        "`rooms` must run the room suites and leave the year room out: {rooms}",
+    );
+
+    let year = dry_run(&["room", "ROOM=year"]);
+    assert!(
+        year.contains("--test year_room") && year.contains("--all-features"),
+        "`room ROOM=year` must run the year room's own test file with every feature on: {year}",
+    );
+
+    let prepush = dry_run(&["prepush"]);
+    for step in [
+        "jojobot-bar -- check",
+        "--test dolt_store",
+        "--features rooms",
+        "make room ROOM=year",
+        "nix build",
+        "nix flake check",
+    ] {
+        assert!(
+            prepush.contains(step),
+            "the pre-push target no longer runs `{step}`: {prepush}",
+        );
+    }
+}
+
+/// **`make rooms` runs exactly the room suites the manifest declares, and
+/// nothing else.** `cargo test -p jojobot-exercise --features rooms` alone also
+/// runs the crate's unit tests and every test file that is not a room suite,
+/// all of which `make check` already runs. The target therefore names each room
+/// target with `--test`, and the names come from the manifest so the two
+/// cannot drift apart. The year room is not among them.
+#[test]
+fn make_rooms_names_the_manifests_room_targets_and_no_others() {
+    let manifest = std::fs::read_to_string(root().join("crates/jojobot-exercise/Cargo.toml"))
+        .expect("the exercise manifest is on disk");
+    let mut declared: Vec<String> = manifest
+        .split("[[test]]")
+        .skip(1)
+        .filter(|block| block.contains("required-features = [\"rooms\"]"))
+        .map(|block| {
+            block
+                .lines()
+                .find_map(|l| l.strip_prefix("name = \""))
+                .and_then(|l| l.strip_suffix('"'))
+                .expect("a test target names itself")
+                .to_string()
+        })
+        .collect();
+    declared.sort();
+    assert!(
+        declared.len() > 20 && !declared.contains(&"year_room".to_string()),
+        "the manifest no longer declares the room suites it did: {declared:?}",
+    );
+
+    let rooms = dry_run(&["rooms"]);
+    let mut named: Vec<String> = rooms
+        .split_whitespace()
+        .zip(rooms.split_whitespace().skip(1))
+        .filter(|(flag, _)| *flag == "--test")
+        .map(|(_, name)| name.to_string())
+        .collect();
+    named.sort();
+    assert_eq!(
+        named, declared,
+        "`make rooms` must run each declared room target and no other: {rooms}",
+    );
+}
+
+/// **The year room is reachable only through a feature the pre-push target
+/// turns on, and `rooms` does not imply it.** A manifest edit that made
+/// `rooms` pull in `year`, or dropped the year room's gate, would put the
+/// slowest suite back in `make rooms` or in `make check`.
+#[test]
+fn the_year_room_is_gated_apart_from_the_other_rooms() {
+    let manifest = std::fs::read_to_string(root().join("crates/jojobot-exercise/Cargo.toml"))
+        .expect("the exercise manifest is on disk");
+    let block = manifest
+        .split("[[test]]")
+        .find(|b| b.contains("name = \"year_room\""))
+        .expect("the year room is declared as a test target");
+    assert!(
+        block.contains("required-features = [\"year\"]"),
+        "the year room must need the `year` feature and no other: {block}",
+    );
+    assert!(
+        manifest.contains("rooms = []") && manifest.contains("year = []"),
+        "`rooms` and `year` must be independent features: {manifest}",
+    );
+}

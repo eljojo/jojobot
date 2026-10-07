@@ -37,3 +37,145 @@ rmcp = { workspace = true, features = [
 # The room tests spawn the shipped server, so they need an async runtime
 # with process control — the same features the server itself takes.
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "process", "time"] }
+
+# **The room suites are opt-in.** Each test file named below stands up a room:
+# it spawns the shipped server and a store of its own, so it costs seconds to
+# minutes and is the slow part of the bar. `make check` runs none of them. A
+# target with a feature it needs is skipped by `cargo test` when the feature
+# is off, so the list below is the whole mechanism — nothing in the bar names
+# a room.
+#
+# `make rooms` turns `rooms` on. `make room ROOM=year` and the pre-push target
+# turn `year` on as well: the year room is the slowest and runs only before a
+# push. A test file NOT named here still runs in `make check`, so a new room
+# suite that nobody lists is slow rather than unrun.
+#
+# Lint reads every target with `--all-features`, so a room suite is compiled
+# and linted by `make check` even though it does not run there.
+[features]
+rooms = []
+year = []
+
+[[test]]
+name = "adoption_room"
+required-features = ["rooms"]
+
+[[test]]
+name = "agency_room"
+required-features = ["rooms"]
+
+[[test]]
+name = "bike_room"
+required-features = ["rooms"]
+
+[[test]]
+name = "checks"
+required-features = ["rooms"]
+
+[[test]]
+name = "course_lock"
+required-features = ["rooms"]
+
+[[test]]
+name = "day_claimed"
+required-features = ["rooms"]
+
+[[test]]
+name = "decisions_room"
+required-features = ["rooms"]
+
+[[test]]
+name = "desk_lock"
+required-features = ["rooms"]
+
+[[test]]
+name = "discriminating_case"
+required-features = ["rooms"]
+
+[[test]]
+name = "fair_lock"
+required-features = ["rooms"]
+
+[[test]]
+name = "furnace_lock"
+required-features = ["rooms"]
+
+[[test]]
+name = "globex_lock"
+required-features = ["rooms"]
+
+[[test]]
+name = "handover_room"
+required-features = ["rooms"]
+
+[[test]]
+name = "isolate"
+required-features = ["rooms"]
+
+[[test]]
+name = "killed_run"
+required-features = ["rooms"]
+
+[[test]]
+name = "loop_room"
+required-features = ["rooms"]
+
+[[test]]
+name = "phase_end_lock"
+required-features = ["rooms"]
+
+[[test]]
+name = "piano_lock"
+required-features = ["rooms"]
+
+[[test]]
+name = "reads_the_rooms"
+required-features = ["rooms"]
+
+[[test]]
+name = "repair_room"
+required-features = ["rooms"]
+
+[[test]]
+name = "room"
+required-features = ["rooms"]
+
+[[test]]
+name = "seen_question"
+required-features = ["rooms"]
+
+[[test]]
+name = "spares_lock"
+required-features = ["rooms"]
+
+[[test]]
+name = "trick_room"
+required-features = ["rooms"]
+
+[[test]]
+name = "trip_lock"
+required-features = ["rooms"]
+
+[[test]]
+name = "usage_limit_run"
+required-features = ["rooms"]
+
+[[test]]
+name = "vault_room_locks"
+required-features = ["rooms"]
+
+[[test]]
+name = "vault_room"
+required-features = ["rooms"]
+
+[[test]]
+name = "wharf_lock"
+required-features = ["rooms"]
+
+[[test]]
+name = "windowed_lock"
+required-features = ["rooms"]
+
+[[test]]
+name = "year_room"
+required-features = ["year"]

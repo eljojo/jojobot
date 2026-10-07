@@ -54,6 +54,12 @@ fn scratch_dir(tag: &str) -> std::path::PathBuf {
 
 /// Runs the bar with the recording cargo and returns the `build` calls it made.
 fn build_calls(tag: &str, args: &[&str]) -> Vec<String> {
+    calls_of(tag, args, "build")
+}
+
+/// Runs the bar with the recording cargo and returns the calls it made to one
+/// cargo verb.
+fn calls_of(tag: &str, args: &[&str], verb: &str) -> Vec<String> {
     let dir = scratch_dir(tag);
     let fake_cargo = write_recording_cargo(&dir);
 
@@ -69,12 +75,12 @@ fn build_calls(tag: &str, args: &[&str]) -> Vec<String> {
     let _ = fs::remove_dir_all(&dir);
     let builds: Vec<String> = recorded
         .lines()
-        .filter(|line| line.split_whitespace().next() == Some("build"))
+        .filter(|line| line.split_whitespace().next() == Some(verb))
         .map(str::to_string)
         .collect();
     assert!(
         !builds.is_empty(),
-        "the bar never reached its build phase, so nothing here is measured: {recorded}\n{stdout}"
+        "the bar never reached its {verb} phase, so nothing here is measured: {recorded}\n{stdout}"
     );
     builds
 }
@@ -95,6 +101,41 @@ fn the_narrow_build_phase_is_locked() {
         assert!(
             call.split_whitespace().any(|a| a == "--locked"),
             "an unlocked build can rewrite Cargo.lock: {call}"
+        );
+    }
+}
+
+/// **Lint reads the targets the test phase skips.** A room suite sits behind
+/// a cargo feature, so `cargo test` neither builds nor runs it unless asked.
+/// Clippy has to be asked for every feature, or a room suite is neither run
+/// nor linted by the bar. Both the full bar and the narrow loop are held to it.
+#[test]
+fn the_lint_phase_reads_feature_gated_targets() {
+    let check = calls_of("lint-check", &["check"], "clippy");
+    let narrow = calls_of(
+        "lint-narrow",
+        &["narrow", "--crate", "jojobot-bar"],
+        "clippy",
+    );
+    for call in check.iter().chain(&narrow) {
+        assert!(
+            call.split_whitespace().any(|a| a == "--all-features"),
+            "a feature-gated suite would be neither run nor linted: {call}"
+        );
+    }
+}
+
+/// **A narrow run can reach a feature-gated suite**, and the zero-selection
+/// guard counts it. Without the flag a filter naming a room suite lists
+/// nothing and the run is refused as a mistyped filter.
+#[test]
+fn the_narrow_test_phase_can_reach_a_feature_gated_suite() {
+    let tests = calls_of("test-narrow", &["narrow", "--crate", "jojobot-bar"], "test");
+    assert!(!tests.is_empty());
+    for call in &tests {
+        assert!(
+            call.split_whitespace().any(|a| a == "--all-features"),
+            "a filter naming a room suite would select nothing: {call}"
         );
     }
 }

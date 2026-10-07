@@ -240,12 +240,16 @@ fn run_check_phases() -> std::io::Result<ExitCode> {
 
     let (ok, _) = run_phase(
         &log_path,
-        "cargo clippy --workspace --all-targets --locked -- -D warnings",
+        "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings",
         &cargo,
         &[
             "clippy",
             "--workspace",
             "--all-targets",
+            // **Lint reads the targets `cargo test` skips.** A room suite
+            // sits behind a feature, so the test phase above does not build
+            // or run it; this flag is what keeps it compiled and linted.
+            "--all-features",
             "--locked",
             "--",
             "-D",
@@ -344,7 +348,10 @@ fn run_narrow(args: &[String]) -> std::io::Result<ExitCode> {
     // test's full path, and a mistyped one selects nothing rather than
     // failing outright — `cargo test` reports a pass over an empty
     // selection, so the count is read before the run and decides.
-    let mut list_args: Vec<&str> = vec!["test", "-p", &krate];
+    // **`--all-features`, so a feature-gated suite can be narrowed to.** A
+    // room suite is skipped by a plain `cargo test -p`, and a filter naming
+    // one would read as "selected no tests".
+    let mut list_args: Vec<&str> = vec!["test", "-p", &krate, "--all-features"];
     if let Some(f) = &filter {
         list_args.push(f);
     }
@@ -391,7 +398,7 @@ fn run_narrow(args: &[String]) -> std::io::Result<ExitCode> {
         return Ok(ExitCode::from(2));
     }
 
-    let mut test_args: Vec<&str> = vec!["test", "-p", &krate];
+    let mut test_args: Vec<&str> = vec!["test", "-p", &krate, "--all-features"];
     if let Some(f) = &filter {
         test_args.push(f);
     }
@@ -411,13 +418,14 @@ fn run_narrow(args: &[String]) -> std::io::Result<ExitCode> {
 
     let (ok, _) = run_phase(
         &log_path,
-        "cargo clippy -p <crate> --all-targets -- -D warnings",
+        "cargo clippy -p <crate> --all-targets --all-features -- -D warnings",
         &cargo,
         &[
             "clippy",
             "-p",
             &krate,
             "--all-targets",
+            "--all-features",
             "--",
             "-D",
             "warnings",
