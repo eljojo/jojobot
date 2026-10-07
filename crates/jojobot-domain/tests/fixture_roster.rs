@@ -827,6 +827,7 @@ const ROSTER: &[&str] = &[
     "work:upgrade-fixture-prior",
     "work:upgrade-fixture-task",
     "work:contract-blocks-real",
+    "work:sigmo",
     "work:contract-blocks-nobody",
     "thing:contract-blocks-ledger",
 ];

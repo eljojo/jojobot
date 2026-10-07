@@ -4786,6 +4786,68 @@ async fn an_unscoped_follow_reaches_a_handle_held_under_an_undeclared_key() {
     );
 }
 
+/// **A handle under an undeclared key must name something that exists**, and
+/// the refusal is the guard's own answer: the handle that missed and the
+/// candidates, with nothing written. The same key naming a thing that exists
+/// lands, and the walk reaches it from the other end. Each half alone passes on
+/// a build nobody wants: a refusal with no landing is a wall, and a landing with
+/// no refusal is the hole.
+#[tokio::test]
+async fn a_handle_naming_nothing_under_an_undeclared_key_is_blocked_with_candidates() {
+    let jojobot = handler_mentioning();
+    ensure(&jojobot, "work:sigma").await;
+    ensure(&jojobot, "person:milhouse").await;
+
+    let result = jojobot
+        .capture(Parameters(CaptureArgs {
+            fields: Some([("blocks".to_string(), "work:sigmo".to_string())].into()),
+            ..capture_args("person:milhouse", "waits on work nobody has recorded")
+        }))
+        .await
+        .expect("the call succeeds; the guard answers in the body");
+    let body = blocked(&result);
+    assert_eq!(body["attempted"], "work:sigmo", "{body}");
+    assert_eq!(body["candidates"][0]["handle"], "work:sigma", "{body}");
+    let held = json_of(
+        &jojobot
+            .recall(Parameters(recall_args("person:milhouse")))
+            .await
+            .expect("recall ok"),
+    );
+    assert!(
+        held["objects"][0]["facts"]
+            .as_array()
+            .is_none_or(|facts| facts.is_empty()),
+        "a blocked write leaves no claim behind: {held}"
+    );
+
+    capture_ok(
+        &jojobot,
+        CaptureArgs {
+            fields: Some([("blocks".to_string(), "work:sigma".to_string())].into()),
+            ..capture_args("person:milhouse", "waits on sigma")
+        },
+    )
+    .await;
+    let walked = json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                subject: Some("work:sigma".into()),
+                follow: Some(FollowArgs {
+                    direction: Some("in".into()),
+                    ..no_follow()
+                }),
+                ..of_nothing()
+            }))
+            .await
+            .expect("recall ok"),
+    );
+    assert_eq!(
+        walked["objects"][0]["connected"][0]["id"], "person:milhouse",
+        "the thing that now waits on it is reached from the other end: {walked}"
+    );
+}
+
 /// **A rename of the target is still followed through a mention** — the
 /// reversal is rebuilt fresh from already-rendered facts on every walk,
 /// so it never holds a stale handle to begin with.

@@ -2493,8 +2493,34 @@ pub fn stood_after_capture(
     folded_fields(&next, declared)
 }
 
-/// **The entities a write names through a declared reference key**, which must
-/// already exist exactly as an edge's object must.
+/// **The handles one field value names**, whatever its key: the value itself
+/// when it is, whole, a handle, or every item of a comma-joined list of which
+/// EVERY item is a handle (decision log 374). A handle inside a longer string is
+/// prose, and so is a list with one item that is not a handle, because a reader
+/// cannot tell which of its items were meant as links.
+///
+/// **One rule for the read and the write.** The unscoped walk and the search
+/// index read links through this, and the write guard asks of every value it is
+/// handed whether what it names exists. Two copies would drift, and a link the
+/// walk draws would be one the guard never asked about.
+pub fn handles_in_value(value: &str) -> Vec<EntityId> {
+    let whole = EntityId(value.trim().to_string());
+    if validate_subject(&whole).is_ok() {
+        return vec![whole];
+    }
+    let items: Vec<EntityId> = value
+        .split(',')
+        .map(|item| EntityId(item.trim().to_string()))
+        .collect();
+    match items.len() > 1 && items.iter().all(|id| validate_subject(id).is_ok()) {
+        true => items,
+        false => Vec::new(),
+    }
+}
+
+/// **The entities a write names through its field values**, which must already
+/// exist exactly as an edge's object must: the items of a declared reference
+/// key, and the handles any other key's value names (see [`handles_in_value`]).
 ///
 /// A reference is a walkable link, so a value naming nothing leaves the same
 /// hole an edge into a missing entity leaves. This is rule 3 — everything a
@@ -2518,19 +2544,28 @@ pub fn referenced_by(
 ) -> Vec<EntityId> {
     fields
         .iter()
-        .filter_map(|(key, value)| {
-            let field = declared
+        .flat_map(|(key, value)| {
+            let declared_reference = declared
                 .iter()
                 .filter_map(|d| d.field(key))
-                .find(|f| f.holds == types::ValueType::Reference)?;
-            // **Every item, because a list of references is a list of links.** A
-            // key holding several handles that was read as one string would name
-            // a handle nobody wrote and let each real one past unchecked.
-            Some(field.items(value))
+                .find(|f| f.holds == types::ValueType::Reference);
+            match declared_reference {
+                // **Every item, because a list of references is a list of links.** A
+                // key holding several handles that was read as one string would name
+                // a handle nobody wrote and let each real one past unchecked.
+                Some(field) => field
+                    .items(value)
+                    .into_iter()
+                    .map(|item| EntityId(item.trim().to_string()))
+                    .filter(|id| id.kind().is_some())
+                    .collect(),
+                // **Any other key names what it names too.** A field whose value
+                // is a handle is a link whether or not a type declared the key
+                // (decision log 355, 374), so a value naming nothing leaves the
+                // same hole.
+                None => handles_in_value(value),
+            }
         })
-        .flatten()
-        .map(|item| EntityId(item.trim().to_string()))
-        .filter(|id| id.kind().is_some())
         .collect()
 }
 
@@ -3163,20 +3198,7 @@ impl Fact {
     pub fn field_handles(&self) -> Vec<EntityId> {
         self.fields
             .values()
-            .flat_map(|value| {
-                let whole = EntityId(value.trim().to_string());
-                if validate_subject(&whole).is_ok() {
-                    return vec![whole];
-                }
-                let items: Vec<EntityId> = value
-                    .split(',')
-                    .map(|item| EntityId(item.trim().to_string()))
-                    .collect();
-                match items.len() > 1 && items.iter().all(|id| validate_subject(id).is_ok()) {
-                    true => items,
-                    false => Vec::new(),
-                }
-            })
+            .flat_map(|v| handles_in_value(v))
             .collect()
     }
 
