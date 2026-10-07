@@ -3755,6 +3755,156 @@ async fn an_update_fact_hit_answers_with_no_full_listing_and_a_miss_still_gets_c
     store.stop().await;
 }
 
+/// **A lineage pointer and a mark on `update_fact` defer the listing too.**
+/// A source or a claim a mark names is checked by resolving its entity and
+/// reading its row; the full listing is built only when the entity answers to
+/// nothing, to say what it resembles. The misses keep their candidates, and
+/// the hits are what keep those misses from passing over an edit that never
+/// ran.
+#[tokio::test]
+async fn an_update_fact_naming_a_source_or_a_mark_builds_no_listing_until_a_name_misses() {
+    let scratch = Scratch::new("resolve_update_fact_lineage");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("memory")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+
+    let memory = DoltMemory::open(pool);
+    let gamma = EntityId::person("person:gamma");
+    let delta = EntityId::person("person:delta");
+    for (who, called) in [(&gamma, "Gamma"), (&delta, "Delta")] {
+        memory
+            .add_entity(NewEntity::new(who.clone(), called, "user-named"))
+            .await
+            .expect("add ok")
+            .written()
+            .expect("not blocked");
+    }
+    let mut claims = Vec::new();
+    for (about, words) in [
+        (&gamma, "edited"),
+        (&delta, "cited"),
+        (&delta, "also cited"),
+    ] {
+        claims.push(
+            memory
+                .capture(NewFact::about(about.clone(), words, date(2026, 9, 1)))
+                .await
+                .expect("capture ok")
+                .written()
+                .expect("not blocked"),
+        );
+    }
+    let (edited, source, second_source) = (&claims[0], &claims[1], &claims[2]);
+    let caller = EntityId("bot:sigma".into());
+
+    // A source that exists.
+    let before = memory.index_listings();
+    let sourced = memory
+        .update_fact(
+            &edited.address(),
+            FactPatch {
+                derived_from: Some(source.address()),
+                ..Default::default()
+            },
+            &caller,
+        )
+        .await
+        .expect("update_fact ok")
+        .written()
+        .expect("a source that exists is not blocked");
+    assert_eq!(sourced.derived_from, Some(source.address()));
+    assert_eq!(
+        memory.index_listings(),
+        before,
+        "a source whose entity resolves must not build the full listing"
+    );
+
+    // A mark naming claims that exist.
+    let before = memory.index_listings();
+    let marked = memory
+        .update_fact(
+            &edited.address(),
+            FactPatch {
+                stands_for: Some(vec![source.address(), second_source.address()]),
+                ..Default::default()
+            },
+            &caller,
+        )
+        .await
+        .expect("update_fact ok")
+        .written()
+        .expect("a mark at claims that exist is not blocked");
+    assert_eq!(
+        marked.stands_for,
+        vec![source.address(), second_source.address()]
+    );
+    assert_eq!(
+        memory.index_listings(),
+        before,
+        "a mark whose every entity resolves must not build the full listing"
+    );
+
+    // A source on an entity nobody holds is still refused with candidates,
+    // and that is what builds the listing.
+    let nowhere = FactAddress::new(EntityId::person("person:gama"), source.id.clone());
+    let before = memory.index_listings();
+    let err = memory
+        .update_fact(
+            &edited.address(),
+            FactPatch {
+                derived_from: Some(nowhere.clone()),
+                ..Default::default()
+            },
+            &caller,
+        )
+        .await
+        .expect_err("a source on an unwritten entity must not resolve");
+    match err {
+        MemoryError::UnknownEntity { nearest, .. } => assert!(
+            !nearest.is_empty(),
+            "a near-miss source entity must still come back with candidates"
+        ),
+        other => panic!("expected UnknownEntity, got {other:?}"),
+    }
+    assert!(
+        memory.index_listings() > before,
+        "a miss must still build the listing, which is what the candidates come from"
+    );
+
+    // The same for a mark.
+    let before = memory.index_listings();
+    let err = memory
+        .update_fact(
+            &edited.address(),
+            FactPatch {
+                stands_for: Some(vec![nowhere]),
+                ..Default::default()
+            },
+            &caller,
+        )
+        .await
+        .expect_err("a mark at an unwritten entity must not resolve");
+    match err {
+        MemoryError::UnknownEntity { nearest, .. } => assert!(
+            !nearest.is_empty(),
+            "a near-miss marked entity must still come back with candidates"
+        ),
+        other => panic!("expected UnknownEntity, got {other:?}"),
+    }
+    assert!(
+        memory.index_listings() > before,
+        "a miss must still build the listing"
+    );
+
+    store.stop().await;
+}
+
 /// **`claim_histories` deferred the same way.**
 #[tokio::test]
 async fn a_claim_histories_hit_answers_with_no_full_listing_and_a_miss_still_gets_candidates() {

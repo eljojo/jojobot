@@ -3020,9 +3020,11 @@ impl Memory for DoltMemory {
         // is exactly the failure `derived_from` is screened against below,
         // just plural.
         if let Some(stands_for) = &patch.stands_for {
-            let index = self.index(&mut tx).await?;
             for named in stands_for {
                 let Some((named_key, _)) = self.resolve(&mut tx, &named.home).await? else {
+                    // **The listing is built for a name that answered to
+                    // nothing**: the candidates come from the whole roster.
+                    let index = self.index(&mut tx).await?;
                     return Err(MemoryError::UnknownEntity {
                         attempted: named.home.to_string(),
                         nearest: guard::screen(&named.home, &[], &index),
@@ -3068,8 +3070,10 @@ impl Memory for DoltMemory {
         // [`Self::lower_pointers`], below, lowers whatever `apply_fact_patch`
         // leaves in `fact.derived_from`, touched by this patch or not.
         if let Some(source) = &patch.derived_from {
-            let index = self.index(&mut tx).await?;
             let Some((source_key, _)) = self.resolve(&mut tx, &source.home).await? else {
+                // **The listing is built for a name that answered to nothing**:
+                // the candidates come from the whole roster.
+                let index = self.index(&mut tx).await?;
                 return Err(MemoryError::UnknownEntity {
                     attempted: source.home.to_string(),
                     nearest: guard::screen(&source.home, &[], &index),
