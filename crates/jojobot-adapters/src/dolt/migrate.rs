@@ -523,6 +523,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0062_message_by_sender.sql"),
         leaves: Leaves::Index("message", "by_sender"),
     },
+    Migration {
+        version: "0063_field_link",
+        sql: include_str!("../../migrations/0063_field_link.sql"),
+        leaves: Leaves::Table("field_link"),
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a

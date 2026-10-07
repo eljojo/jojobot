@@ -50,6 +50,20 @@ use sqlx::{MySql, MySqlPool, Row, Transaction};
 
 use super::ids::{self, Draw};
 
+/// **What the field-link migration did, and what it left alone.**
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct FieldLinkReport {
+    /// Writes whose value was plain handle text and is now the permanent id.
+    pub lowered: usize,
+    /// Link rows the pass added.
+    pub linked: usize,
+    /// Link rows the pass removed because no write holds them.
+    pub unlinked: usize,
+    /// Values that stay plain text because the handle they hold does not name
+    /// one thing: one line each, naming the thing, the key and the value.
+    pub left_as_text: Vec<String>,
+}
+
 /// Memory kept in the SQL store jojobot runs.
 ///
 /// Cloning shares the one pool rather than opening a second: a pool is the
@@ -437,6 +451,166 @@ impl DoltMemory {
                 unresolved.join("; "),
             )))
         }
+    }
+
+    /// **Lower the plain handle text left under undeclared keys, and bring the
+    /// link table into agreement with the field writes — in one pass.**
+    ///
+    /// A value stored as plain handle text before ids were kept names whatever
+    /// answers to that handle now unless a rename has moved it, so it cannot be
+    /// told from a value a caller meant for somebody else. This reads every
+    /// handle in such a value through the entity list, the rename history and
+    /// the records the build supplies. **A handle that names exactly one thing is
+    /// stored as that thing's id behind the mark. A handle that names none, or
+    /// more than one, leaves the whole value as written** and is listed in the
+    /// report, one line each: the pass does not guess. A key some type declares a
+    /// reference whose value is already an id holds no handle, so it is left as it
+    /// is; one still holding handle text is lowered here as any other key is.
+    ///
+    /// **Then the link table is made to equal what the writes imply**: a row the
+    /// writes imply and the table lacks is added, and a row the table holds that
+    /// no write implies is removed. The table is derived, so this is also the
+    /// repair for one that was lost or filled by a build that did not keep it.
+    ///
+    /// **Idempotent.** A second run lowers nothing and changes no row; the values
+    /// left as text are listed again, because they are still there.
+    pub async fn migrate_field_links(&self) -> Result<FieldLinkReport, MemoryError> {
+        use std::collections::{BTreeMap, BTreeSet};
+
+        let mut report = FieldLinkReport::default();
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        let declared = Self::types_in(&mut tx).await?;
+
+        let entities: Vec<(String, Option<String>)> =
+            sqlx::query_as("SELECT id, badge FROM entity")
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(store)?;
+        let mut names: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        let mut handle_of: BTreeMap<String, String> = BTreeMap::new();
+        for (handle, badge) in &entities {
+            if let Some(badge) = badge.as_deref().filter(|badge| !badge.is_empty()) {
+                names
+                    .entry(handle.clone())
+                    .or_default()
+                    .insert(badge.to_string());
+                handle_of.insert(badge.to_string(), handle.clone());
+            }
+        }
+        let former: Vec<(String, String)> =
+            sqlx::query_as("SELECT former_handle, badge FROM entity_former_handle")
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(store)?;
+        for (handle, badge) in former {
+            names.entry(handle).or_default().insert(badge);
+        }
+        // A record the build supplies wears no badge, and a write stores its
+        // handle as its id.
+        for (entity, _) in self.supplied.records() {
+            let id = entity
+                .badge
+                .clone()
+                .filter(|badge| !badge.is_empty())
+                .unwrap_or_else(|| entity.id.to_string());
+            names.entry(entity.id.to_string()).or_default().insert(id);
+        }
+
+        let mut writes: Vec<(String, String, i64, String)> = sqlx::query_as(
+            "SELECT entity, `key`, ordinal, value FROM field_write WHERE value IS NOT NULL
+             ORDER BY entity, `key`, ordinal",
+        )
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(store)?;
+
+        for (entity, key, ordinal, value) in &mut writes {
+            let handles = jojobot_domain::memory::handles_in_value(value);
+            if handles.is_empty() {
+                continue;
+            }
+            let mut ids = Vec::with_capacity(handles.len());
+            let mut why = None;
+            for handle in &handles {
+                match names.get(handle.as_str()).map(|named| named.len()) {
+                    Some(1) => {
+                        let named = &names[handle.as_str()];
+                        ids.extend(named.iter().cloned());
+                    }
+                    Some(_) => why = Some("the handle has named more than one thing"),
+                    None => why = Some("the handle names nothing this store has held"),
+                }
+            }
+            if let Some(why) = why {
+                let holder = handle_of.get(entity.as_str()).unwrap_or(entity);
+                report
+                    .left_as_text
+                    .push(format!("{holder} key '{key}' value '{value}': {why}"));
+                continue;
+            }
+            let lowered = ids
+                .iter()
+                .map(|id| jojobot_domain::memory::marked_stored_handle(id))
+                .collect::<Vec<_>>()
+                .join(", ");
+            sqlx::query(
+                "UPDATE field_write SET value = ? WHERE entity = ? AND `key` = ? AND ordinal = ?",
+            )
+            .bind(&lowered)
+            .bind(&*entity)
+            .bind(&*key)
+            .bind(*ordinal)
+            .execute(&mut *tx)
+            .await
+            .map_err(store)?;
+            *value = lowered;
+            report.lowered += 1;
+        }
+
+        let mut expected: BTreeSet<(String, String, i64, String)> = BTreeSet::new();
+        for (entity, key, ordinal, value) in &writes {
+            for target in jojobot_domain::memory::field_link_targets(key, value, &declared) {
+                expected.insert((entity.clone(), key.clone(), *ordinal, target));
+            }
+        }
+        let held: BTreeSet<(String, String, i64, String)> =
+            sqlx::query_as::<_, (String, String, i64, String)>(
+                "SELECT entity, `key`, ordinal, target FROM field_link",
+            )
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(store)?
+            .into_iter()
+            .collect();
+        for (entity, key, ordinal, target) in held.difference(&expected) {
+            sqlx::query(
+                "DELETE FROM field_link
+                 WHERE entity = ? AND `key` = ? AND ordinal = ? AND target = ?",
+            )
+            .bind(entity)
+            .bind(key)
+            .bind(ordinal)
+            .bind(target)
+            .execute(&mut *tx)
+            .await
+            .map_err(store)?;
+            report.unlinked += 1;
+        }
+        for (entity, key, ordinal, target) in expected.difference(&held) {
+            sqlx::query(
+                "INSERT INTO field_link (entity, `key`, ordinal, target) VALUES (?, ?, ?, ?)",
+            )
+            .bind(entity)
+            .bind(key)
+            .bind(ordinal)
+            .bind(target)
+            .execute(&mut *tx)
+            .await
+            .map_err(store)?;
+            report.linked += 1;
+        }
+        tx.commit().await.map_err(store)?;
+        Ok(report)
     }
 
     /// **Rewrite every reference-typed field value stored as plain handle
@@ -1373,6 +1547,12 @@ impl DoltMemory {
         fact: &FactId,
         wrote: Vec<(String, Option<String>)>,
     ) -> Result<(), MemoryError> {
+        // **The link rows ride the write that made them**, in its transaction, so
+        // a write and the question of who points at its targets never disagree.
+        let declared = match wrote.iter().any(|(_, value)| value.is_some()) {
+            true => Self::types_in(tx).await?,
+            false => Vec::new(),
+        };
         for (key, value) in wrote {
             let highest: Option<i64> = sqlx::query_scalar(
                 "SELECT MAX(ordinal) FROM field_write WHERE entity = ? AND `key` = ?",
@@ -1382,18 +1562,34 @@ impl DoltMemory {
             .fetch_one(&mut **tx)
             .await
             .map_err(store)?;
+            let ordinal = highest.unwrap_or(0) + 1;
             sqlx::query(
                 "INSERT INTO field_write (entity, `key`, ordinal, value, fact_id)
                  VALUES (?, ?, ?, ?, ?)",
             )
             .bind(entity.as_str())
             .bind(&key)
-            .bind(highest.unwrap_or(0) + 1)
+            .bind(ordinal)
             .bind(value.as_deref())
             .bind(fact.as_str())
             .execute(&mut **tx)
             .await
             .map_err(store)?;
+            if let Some(value) = &value {
+                for target in jojobot_domain::memory::field_link_targets(&key, value, &declared) {
+                    sqlx::query(
+                        "INSERT INTO field_link (entity, `key`, ordinal, target)
+                         VALUES (?, ?, ?, ?)",
+                    )
+                    .bind(entity.as_str())
+                    .bind(&key)
+                    .bind(ordinal)
+                    .bind(&target)
+                    .execute(&mut **tx)
+                    .await
+                    .map_err(store)?;
+                }
+            }
         }
         Ok(())
     }
@@ -3530,6 +3726,15 @@ impl Memory for DoltMemory {
                     .map_err(store)?;
             }
         }
+        // **The link rows follow the writes they were made from**, which moved
+        // above: they are keyed by the same thing and key and the write's ordinal.
+        sqlx::query("UPDATE field_link SET entity = ? WHERE entity = ?")
+            .bind(survivor_key.as_str())
+            .bind(folded_key.as_str())
+            .execute(&mut *tx)
+            .await
+            .map_err(store)?;
+
         // **An edge's object and a ref's entity are stored as the badge the
         // folded side wears** (rule 268), so these compare against that
         // badge alone and rewrite to the survivor's — never a handle, and
@@ -3856,10 +4061,10 @@ impl Memory for DoltMemory {
         Ok(standing_on)
     }
 
-    /// **Targeted, because the default reads every entity.** A field write
-    /// keeps its value in a row of its own, so the holders are one query away:
-    /// the entities with a write whose value is this handle. Only those are
-    /// read back, rather than the whole index.
+    /// **An index seek, because the link table holds who points at what.** Each
+    /// field write leaves a row per thing its value names, so the holders are the
+    /// entities with a row whose target is this thing's id. Only those are read
+    /// back, rather than the whole index, and no value is scanned.
     ///
     /// The rows say which entities to read and nothing more. Which of their
     /// records still carry the handle is decided from the records themselves,
@@ -3869,67 +4074,18 @@ impl Memory for DoltMemory {
         validate_subject(target)?;
         self.counted_targeted_read();
         let mut tx = self.pool.begin().await.map_err(store)?;
-        // **A reference-typed value is stored as the target's storage key, an
-        // undeclared one as the handle a caller wrote**, so the write rows are
-        // asked for both. The records are still decided from their composed
-        // fields below, where either form reads as the handle.
+        // **The rows hold the permanent id**, and a caller's handle may be a
+        // former one, so it is resolved first.
         let key = match self.resolve(&mut tx, target).await? {
             Some((key, _)) => key,
             None => target.clone(),
         };
-        // **A list holds its items joined in one value**, so under a key some
-        // type declared a list of references the row is a candidate when the
-        // value merely CONTAINS either form. The pattern only widens what is
-        // read: the decision is `fields_name_target`, over each record's
-        // composed fields, so a longer string that happens to contain the
-        // handle is read and then not counted.
         let declared = Self::types_in(&mut tx).await?;
-        let list_keys: Vec<String> = declared
-            .iter()
-            .flat_map(|d| d.fields.iter())
-            .filter(|f| f.list && f.holds == jojobot_domain::memory::types::ValueType::Reference)
-            .map(|f| f.key.clone())
-            .collect::<std::collections::BTreeSet<_>>()
-            .into_iter()
-            .collect();
-        // **A handle under a key nobody declared is stored behind the mark**, and
-        // a list of them is several marked items in one value, so the rows are
-        // also asked for a value that merely CONTAINS the target in either
-        // form. Rows stored as plain handle text before ids were kept match on
-        // the handle itself, which is why that form is asked for as well.
-        let marked = jojobot_domain::memory::marked_stored_handle(key.as_str());
-        let mut sql = String::from(
-            "SELECT DISTINCT entity FROM field_write \
-             WHERE value IN (?, ?, ?) OR value LIKE ? OR value LIKE ?",
-        );
-        if !list_keys.is_empty() {
-            let marks = vec!["?"; list_keys.len()].join(", ");
-            sql.push_str(&format!(
-                " OR (`key` IN ({marks}) AND (value LIKE ? OR value LIKE ?))"
-            ));
-        }
-        let contains = |form: &str| {
-            let escaped = form
-                .replace('\\', "\\\\")
-                .replace('%', "\\%")
-                .replace('_', "\\_");
-            format!("%{escaped}%")
-        };
-        let mut query = sqlx::query(&sql)
-            .bind(target.as_str())
+        let rows = sqlx::query("SELECT DISTINCT entity FROM field_link WHERE target = ?")
             .bind(key.as_str())
-            .bind(marked.as_str())
-            .bind(contains(target.as_str()))
-            .bind(contains(marked.as_str()));
-        for list_key in &list_keys {
-            query = query.bind(list_key.as_str());
-        }
-        if !list_keys.is_empty() {
-            query = query
-                .bind(contains(target.as_str()))
-                .bind(contains(key.as_str()));
-        }
-        let rows = query.fetch_all(&mut *tx).await.map_err(store)?;
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(store)?;
         let mut pointing = Vec::new();
         for row in rows {
             let holder = EntityId(row.try_get::<String, _>("entity").map_err(store)?);

@@ -2664,6 +2664,48 @@ pub fn stored_handle_id(item: &str) -> Option<&str> {
     item.trim().strip_prefix(mention::MARK)
 }
 
+/// **The things one stored field write points at**, by the permanent id each
+/// is stored as — the rows the link table holds for it.
+///
+/// A declared reference key points at every item of its value; any other key
+/// points at the ids behind the mark when EVERY item of the value wears it,
+/// which is the rule a read serves them by. A value that is neither points at
+/// nothing. An item of a reference key that is no id and no handle — loose prose
+/// under a reference key — names no thing and is left out. Ordered and
+/// deduplicated, so the same write always gives the same rows.
+pub fn field_link_targets(key: &str, value: &str, declared: &[types::DeclaredType]) -> Vec<String> {
+    let one = BTreeMap::from([(key.to_string(), value.to_string())]);
+    let mut targets: Vec<String> = match reference_field_values(&one, declared).pop() {
+        Some((_, items)) => items
+            .iter()
+            .map(|item| stored_handle_id(item).unwrap_or(item))
+            .filter(|id| {
+                !id.is_empty()
+                    && (EntityId((*id).to_string()).kind().is_some()
+                        || id.bytes().all(|b| crate::handle::ALPHABET.contains(&b)))
+            })
+            .map(str::to_string)
+            .collect(),
+        None => {
+            let items: Vec<&str> = value.split(',').collect();
+            match items
+                .iter()
+                .all(|item| stored_handle_id(item).is_some_and(|id| !id.is_empty()))
+            {
+                true => items
+                    .iter()
+                    .filter_map(|item| stored_handle_id(item))
+                    .map(str::to_string)
+                    .collect(),
+                false => Vec::new(),
+            }
+        }
+    };
+    targets.sort();
+    targets.dedup();
+    targets
+}
+
 /// **Whether any field of a record names `target`**, the question
 /// [`Memory::referring_to`] asks of every record.
 ///

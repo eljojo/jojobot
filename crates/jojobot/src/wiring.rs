@@ -417,6 +417,40 @@ pub async fn boot_store(dir: &Path, port: u16, clock: Clock) -> anyhow::Result<B
         ),
     }
 
+    // **Plain handle text under a key nobody declared, lowered onto the permanent
+    // id it names, and the link table brought into agreement with the field
+    // writes.** Runs after the reference-field pass above, which owns the declared
+    // keys, and after the kinds are loaded, for the reason that pass does. **A
+    // value whose handle names no one thing stays as written and is named here**,
+    // one line each, because the pass does not guess; a restart repeats the list
+    // for as long as the value stays.
+    match badging.migrate_field_links().await {
+        Ok(report) => {
+            if report.lowered > 0 || report.linked > 0 || report.unlinked > 0 {
+                tracing::info!(
+                    lowered = report.lowered,
+                    linked = report.linked,
+                    unlinked = report.unlinked,
+                    "store: lowered plain handle text onto the ids it names and updated the link \
+                     table"
+                );
+            }
+            for line in &report.left_as_text {
+                tracing::warn!(
+                    value = %line,
+                    "FIELD VALUE LEFT AS TEXT — the handle in it does not name exactly one thing, \
+                     so it was not lowered and links nothing. A person has to say which thing it \
+                     meant."
+                );
+            }
+        }
+        Err(e) => tracing::error!(
+            error = %e,
+            "FIELD LINKS NOT BUILT — who points at a thing is answered from the link table, so \
+             some links may not be found. Nothing was lost; a restart repeats the pass."
+        ),
+    }
+
     // **Wrapped in the decorators the story harness shares too** — see this
     // module's own doc for why this is two stages rather than one. The search
     // projection sits in FRONT of the store, so every write through the port

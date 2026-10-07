@@ -5128,3 +5128,456 @@ async fn a_write_that_conflicts_with_another_is_told_apart_from_a_failed_store()
 
     store.stop().await;
 }
+
+/// **Every link row the store holds, as (entity, key, ordinal, target)**, in a
+/// fixed order — what a case compares against the field writes.
+async fn link_rows(pool: &sqlx::MySqlPool) -> Vec<(String, String, i64, String)> {
+    sqlx::query_as("SELECT entity, `key`, ordinal, target FROM field_link ORDER BY 1, 2, 3, 4")
+        .fetch_all(pool)
+        .await
+        .expect("the link table reads")
+}
+
+/// **The links the field writes imply, read from the writes themselves**: every
+/// item of a stored value that wears the mark is a link to the id after it, and
+/// every item of a value under a declared reference key is one too. Derived here
+/// from the raw rows and nothing else, so it can disagree with the table.
+async fn links_the_writes_imply(
+    pool: &sqlx::MySqlPool,
+    reference_keys: &[&str],
+) -> Vec<(String, String, i64, String)> {
+    let writes: Vec<(String, String, i64, Option<String>)> =
+        sqlx::query_as("SELECT entity, `key`, ordinal, value FROM field_write")
+            .fetch_all(pool)
+            .await
+            .expect("the writes read");
+    let mut implied = Vec::new();
+    for (entity, key, ordinal, value) in writes {
+        let Some(value) = value else { continue };
+        for item in value.split(',').map(str::trim) {
+            let target = match item.strip_prefix("@#") {
+                Some(id) => id,
+                None if reference_keys.contains(&key.as_str()) => item,
+                None => continue,
+            };
+            implied.push((entity.clone(), key.clone(), ordinal, target.to_string()));
+        }
+    }
+    implied.sort();
+    implied.dedup();
+    implied
+}
+
+/// **A write puts its links in the table beside it, and "who points here" reads
+/// the table.**
+///
+/// A handle under a key nobody declared, a list of them and a declared reference
+/// each leave a row per target. The question is answered from those rows: taking
+/// the holder's row away makes it stop being found, which a scan of the values
+/// could not do, and the holder is found again once the rows are rebuilt.
+#[tokio::test]
+async fn a_field_write_leaves_a_link_row_per_target_and_referring_to_reads_them() {
+    let scratch = Scratch::new("field-link-write");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("field_link_write")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool.clone());
+    memory
+        .declare_type(DeclaredType::new(
+            "contract-links-pointer",
+            vec![Field::listing("friends", ValueType::Reference)],
+        ))
+        .await
+        .expect("declare_type ok");
+
+    let [holder, alpha, beta, gamma] = [
+        "thing:contract-links-holder",
+        "work:contract-links-alpha",
+        "work:contract-links-beta",
+        "work:contract-links-gamma",
+    ]
+    .map(|handle| EntityId(handle.into()));
+    for (id, name) in [
+        (&holder, "Holder"),
+        (&alpha, "Alpha"),
+        (&beta, "Beta"),
+        (&gamma, "Gamma"),
+    ] {
+        memory
+            .add_entity(NewEntity::new(id.clone(), name, "contract-fixture"))
+            .await
+            .expect("add_entity ok")
+            .written()
+            .expect("nothing collides with it");
+    }
+    let held = memory
+        .capture(NewFact {
+            fields: [
+                ("blocks".to_string(), alpha.to_string()),
+                ("waits_on".to_string(), format!("{alpha}, {beta}")),
+                ("friends".to_string(), beta.to_string()),
+                ("note".to_string(), "only words".to_string()),
+            ]
+            .into_iter()
+            .collect(),
+            ..NewFact::about(holder.clone(), "waits on two things", date(2026, 8, 1))
+        })
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("the claim lands");
+
+    let holder_badge = badge_of(&pool, holder.as_str()).await;
+    let alpha_badge = badge_of(&pool, alpha.as_str()).await;
+    let beta_badge = badge_of(&pool, beta.as_str()).await;
+    let held_rows = link_rows(&pool).await;
+    assert_eq!(
+        held_rows.len(),
+        4,
+        "one row per target: blocks, two of waits_on, friends: {held_rows:?}",
+    );
+    for (key, target) in [
+        ("blocks", &alpha_badge),
+        ("waits_on", &alpha_badge),
+        ("waits_on", &beta_badge),
+        ("friends", &beta_badge),
+    ] {
+        assert!(
+            held_rows
+                .iter()
+                .any(|(entity, k, _, t)| entity == &holder_badge && k == key && t == target),
+            "{key} -> {target} is a link row: {held_rows:?}",
+        );
+    }
+    assert_eq!(
+        held_rows,
+        links_the_writes_imply(&pool, &["friends"]).await,
+        "the table is what the writes imply",
+    );
+
+    let found = |facts: Vec<jojobot_domain::memory::Fact>| -> Vec<String> {
+        facts.iter().map(|f| f.address().to_string()).collect()
+    };
+    assert!(
+        found(memory.referring_to(&alpha).await.expect("answers"))
+            .contains(&held.address().to_string()),
+        "the holder is found from alpha",
+    );
+
+    assert!(
+        found(memory.referring_to(&gamma).await.expect("answers")).is_empty(),
+        "nothing points at gamma, though the holder points at others",
+    );
+
+    // **The answer comes from the rows.** Take the holder's rows away and it is
+    // no longer found, though every write still holds the value.
+    sqlx::query("DELETE FROM field_link")
+        .execute(&pool)
+        .await
+        .expect("the rows go");
+    assert!(
+        !found(memory.referring_to(&alpha).await.expect("answers"))
+            .contains(&held.address().to_string()),
+        "without link rows nothing is found: the question reads no value",
+    );
+
+    let report = memory
+        .migrate_field_links()
+        .await
+        .expect("the rebuild runs");
+    assert_eq!(
+        report.linked, 4,
+        "the rebuild puts back every row: {report:?}"
+    );
+    assert!(
+        found(memory.referring_to(&alpha).await.expect("answers"))
+            .contains(&held.address().to_string()),
+        "and the holder is found again",
+    );
+
+    store.stop().await;
+}
+
+/// **A fold carries the link rows of the claims it moves.**
+///
+/// Merging a duplicate into a survivor moves the duplicate's field writes to the
+/// survivor, so the rows saying what those writes point at move with them: the
+/// question of who points at the target is then answered by the survivor's claim.
+#[tokio::test]
+async fn a_merge_moves_the_link_rows_with_the_writes() {
+    let scratch = Scratch::new("field-link-merge");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("field_link_merge")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool.clone());
+
+    let duplicate = EntityId("thing:contract-links-duplicate".into());
+    let survivor = EntityId("thing:contract-links-survivor".into());
+    let alpha = EntityId("work:contract-links-alpha".into());
+    for (id, name) in [
+        (&duplicate, "Duplicate"),
+        (&survivor, "Survivor"),
+        (&alpha, "Alpha"),
+    ] {
+        memory
+            .add_entity(NewEntity::new(id.clone(), name, "contract-fixture"))
+            .await
+            .expect("add_entity ok")
+            .written()
+            .expect("nothing collides with it");
+    }
+    memory
+        .capture(NewFact {
+            fields: [("blocks".to_string(), alpha.to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(duplicate.clone(), "waits on alpha", date(2026, 8, 1))
+        })
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("the claim lands");
+
+    memory
+        .merge(&duplicate, &survivor, None, date(2026, 8, 2), &survivor)
+        .await
+        .expect("the fold lands");
+
+    let pointing = memory.referring_to(&alpha).await.expect("answers");
+    assert!(
+        pointing.iter().any(|fact| fact.home == survivor),
+        "the claim now on the survivor is found from alpha: {:?}",
+        pointing
+            .iter()
+            .map(|f| f.address().to_string())
+            .collect::<Vec<_>>(),
+    );
+    assert_eq!(
+        link_rows(&pool).await,
+        links_the_writes_imply(&pool, &[]).await,
+        "no row is left under the folded thing and none is missing",
+    );
+
+    store.stop().await;
+}
+
+/// 🚨 **The field-link migration lowers old plain text and builds the table in one
+/// pass, and a value it cannot name unambiguously stays as it was and is listed.**
+///
+/// The store holds what a build from before ids were kept left behind: plain
+/// handle text under keys nobody declared, a plain list, and a handle that two
+/// things have answered to (renamed away, then taken by a newcomer), which names
+/// no one thing. The first two become the permanent id behind the mark and gain
+/// link rows; the third is untouched, is in the report, and has no link row. A
+/// value that is only words is none of its business. A second run changes
+/// nothing.
+#[tokio::test]
+async fn the_field_link_migration_lowers_old_plain_text_and_lists_what_it_cannot() {
+    let scratch = Scratch::new("field-link-migration");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("field_link_migration")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool.clone());
+
+    let holder = EntityId("thing:contract-links-holder".into());
+    let alpha = EntityId("work:contract-links-alpha".into());
+    let beta = EntityId("work:contract-links-beta".into());
+    let was = EntityId("work:contract-links-was".into());
+    let now = EntityId("work:contract-links-now".into());
+    for (id, name) in [
+        (&holder, "Holder"),
+        (&alpha, "Alpha"),
+        (&beta, "Beta"),
+        (&was, "Was"),
+    ] {
+        memory
+            .add_entity(NewEntity::new(id.clone(), name, "contract-fixture"))
+            .await
+            .expect("add_entity ok")
+            .written()
+            .expect("nothing collides with it");
+    }
+    let held = memory
+        .capture(NewFact {
+            fields: [
+                ("blocks".to_string(), alpha.to_string()),
+                ("waits_on".to_string(), format!("{alpha}, {beta}")),
+                ("held_by".to_string(), was.to_string()),
+                ("note".to_string(), "only words".to_string()),
+            ]
+            .into_iter()
+            .collect(),
+            ..NewFact::about(holder.clone(), "waits on things", date(2026, 8, 1))
+        })
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("the claim lands");
+
+    // **The handle two things have answered to.** `was` is renamed to `now`, then
+    // a newcomer takes the freed name.
+    memory
+        .rename_entity(&was, &now, None, date(2026, 8, 2), None)
+        .await
+        .expect("the rename lands")
+        .written()
+        .expect("nothing collides with the new handle");
+    memory
+        .add_entity(NewEntity::new(was.clone(), "Newcomer", "contract-fixture"))
+        .await
+        .expect("add_entity ok")
+        .written()
+        .expect("the freed name is free");
+
+    // **Reverted to what a build from before ids were kept stored**: the plain
+    // handle text, and no link rows.
+    let holder_badge = badge_of(&pool, holder.as_str()).await;
+    for (key, plain) in [
+        ("blocks", alpha.to_string()),
+        ("waits_on", format!("{alpha},{beta}")),
+        ("held_by", was.to_string()),
+    ] {
+        sqlx::query(
+            "UPDATE field_write SET value = ? WHERE entity = ? AND `key` = ? AND fact_id = ?",
+        )
+        .bind(&plain)
+        .bind(&holder_badge)
+        .bind(key)
+        .bind(held.id.as_str())
+        .execute(&pool)
+        .await
+        .expect("the pre-ids shape is written");
+    }
+    sqlx::query("DELETE FROM field_link")
+        .execute(&pool)
+        .await
+        .expect("the table starts empty, as on a store the build never filled");
+
+    let report = memory.migrate_field_links().await.expect("the pass runs");
+    assert_eq!(
+        report.lowered, 2,
+        "blocks and waits_on are lowered: {report:?}"
+    );
+    assert_eq!(
+        report.linked, 3,
+        "alpha once, then alpha and beta: {report:?}"
+    );
+    assert_eq!(report.unlinked, 0, "{report:?}");
+    assert_eq!(
+        report.left_as_text.len(),
+        1,
+        "the one ambiguous value is listed: {report:?}",
+    );
+    assert!(
+        report.left_as_text[0].contains("held_by") && report.left_as_text[0].contains(was.as_str()),
+        "the line names the key and the value: {report:?}",
+    );
+
+    let value = |key: &'static str| {
+        let pool = pool.clone();
+        let badge = holder_badge.clone();
+        let fact = held.id.to_string();
+        async move {
+            sqlx::query_scalar::<_, String>(
+                "SELECT value FROM field_write WHERE entity = ? AND `key` = ? AND fact_id = ?",
+            )
+            .bind(badge)
+            .bind(key)
+            .bind(fact)
+            .fetch_one(&pool)
+            .await
+            .expect("the write reads")
+        }
+    };
+    let alpha_badge = badge_of(&pool, alpha.as_str()).await;
+    let beta_badge = badge_of(&pool, beta.as_str()).await;
+    assert_eq!(value("blocks").await, format!("@#{alpha_badge}"));
+    assert_eq!(
+        value("waits_on").await,
+        format!("@#{alpha_badge}, @#{beta_badge}"),
+    );
+    assert_eq!(
+        value("held_by").await,
+        was.to_string(),
+        "the ambiguous value stays exactly as it was",
+    );
+    assert_eq!(value("note").await, "only words");
+
+    assert_eq!(
+        link_rows(&pool).await,
+        links_the_writes_imply(&pool, &[]).await,
+        "the table is what the writes imply",
+    );
+    assert!(
+        link_rows(&pool)
+            .await
+            .iter()
+            .all(|(_, key, _, _)| key != "held_by"),
+        "the ambiguous value names no one thing, so it links nothing",
+    );
+    let pointing: Vec<String> = memory
+        .referring_to(&beta)
+        .await
+        .expect("answers")
+        .iter()
+        .map(|f| f.address().to_string())
+        .collect();
+    assert!(
+        pointing.contains(&held.address().to_string()),
+        "the migrated list is found from beta: {pointing:?}",
+    );
+
+    let again = memory
+        .migrate_field_links()
+        .await
+        .expect("a second pass runs");
+    assert_eq!(
+        (again.lowered, again.linked, again.unlinked),
+        (0, 0, 0),
+        "a second pass changes nothing: {again:?}",
+    );
+    assert_eq!(
+        again.left_as_text, report.left_as_text,
+        "and the value it cannot name is still listed",
+    );
+
+    // **A derived index is rebuilt from the writes**: a stray row goes, a lost one returns.
+    sqlx::query("DELETE FROM field_link WHERE `key` = 'blocks'")
+        .execute(&pool)
+        .await
+        .expect("a row is lost");
+    sqlx::query(
+        "INSERT INTO field_link (entity, `key`, ordinal, target) VALUES (?, 'stray', 1, ?)",
+    )
+    .bind(&holder_badge)
+    .bind(&beta_badge)
+    .execute(&pool)
+    .await
+    .expect("a stray row is added");
+    let repaired = memory.migrate_field_links().await.expect("the repair runs");
+    assert_eq!((repaired.linked, repaired.unlinked), (1, 1), "{repaired:?}");
+    assert_eq!(
+        link_rows(&pool).await,
+        links_the_writes_imply(&pool, &[]).await,
+    );
+
+    store.stop().await;
+}

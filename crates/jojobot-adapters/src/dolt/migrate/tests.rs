@@ -90,6 +90,7 @@ const ALL_VERSIONS: &[&str] = &[
     "0060_journal_entry_closing_focus",
     "0061_displaced_type_field",
     "0062_message_by_sender",
+    "0063_field_link",
 ];
 
 /// **A migration set of this test's own, carrying the shape no shipped
