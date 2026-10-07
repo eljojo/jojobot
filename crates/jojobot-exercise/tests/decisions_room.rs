@@ -1,7 +1,9 @@
 use jojobot_exercise::expectations;
 use jojobot_exercise::playbook::Playbook;
 use jojobot_exercise::room::{Room, server_binary};
-use jojobot_exercise::run::{Observed, Outcome};
+use jojobot_exercise::run::{
+    Boundary, Observed, Outcome, boundary, boundary_asking, boundary_names, phase_end_queries,
+};
 use jojobot_exercise::surface::Surface;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
@@ -549,11 +551,10 @@ async fn record_answers(surface: &Surface, playbook: &Playbook) {
     }
 }
 
-async fn judge(surface: &Surface) -> Vec<Outcome> {
-    let boundaries = Vec::new();
+async fn judge(surface: &Surface, boundaries: &[Boundary]) -> Vec<Outcome> {
     let observed = Observed {
         room: surface,
-        boundaries: &boundaries,
+        boundaries,
     };
     let locks = expectations::for_playbook("rooms/decisions.md").expect("room locks");
     let mut outcomes = Vec::new();
@@ -573,7 +574,7 @@ async fn every_check_fails_on_a_room_nobody_worked_in() {
         .furnish(&surface)
         .await
         .expect("the starting world applies");
-    let outcomes = judge(&surface).await;
+    let outcomes = judge(&surface, &[]).await;
     assert!(
         !outcomes.is_empty(),
         "the room registered no checks, so a run would report a pass over an empty list",
@@ -599,9 +600,16 @@ async fn the_decision_room_is_solvable_through_the_served_surface() {
         .furnish(&surface)
         .await
         .expect("the starting world applies");
+    // **The filing locks are read as the filing sittings left the room**, so
+    // the boundary is taken after the ninth filing and before any question
+    // sitting answers.
+    let names = boundary_names(&playbook);
+    let locks = expectations::for_playbook("rooms/decisions.md").expect("room locks");
+    let before = boundary(&surface, &names[8]).await;
     file_register(&surface, &playbook).await;
+    let filed = boundary_asking(&surface, &names[9], &phase_end_queries(&locks, "Phase 9")).await;
     record_answers(&surface, &playbook).await;
-    let outcomes = judge(&surface).await;
+    let outcomes = judge(&surface, &[before, filed]).await;
     let failed: Vec<String> = outcomes
         .iter()
         .filter(|outcome| !outcome.held)
@@ -651,6 +659,84 @@ fn the_solvable_test_still_files_live_rather_than_borrowing_the_cached_seed() {
     );
 }
 
+/// **A filing lock reads the room as the filing sittings left it.** The locks
+/// that ask whether a rule was filed are searches, and a search of the
+/// finished room also reaches the answers the question sittings wrote — so a
+/// sitting that quotes a rule in an answer opens the lock for a rule nobody
+/// filed.
+///
+/// Nothing is filed here. A later sitting quotes the rules in its answer, which
+/// is the only thing that can hold these locks open. Paired with the solvable
+/// case, where the same locks hold on a room that WAS filed.
+#[tokio::test]
+async fn a_filing_lock_is_not_opened_by_a_later_answer_that_quotes_the_rule() {
+    let playbook =
+        Playbook::read(&expectations::room_document("rooms/decisions.md")).expect("the room reads");
+    let (_room, surface) = Room::open_with_client(&server_binary().expect("a jojobot binary"))
+        .await
+        .expect("a room");
+    expectations::seed_for("rooms/decisions.md")
+        .expect("the starting world builds")
+        .furnish(&surface)
+        .await
+        .expect("the starting world applies");
+    let names = boundary_names(&playbook);
+    let locks = expectations::for_playbook("rooms/decisions.md").expect("room locks");
+    let before = boundary(&surface, &names[8]).await;
+    let ended = boundary_asking(&surface, &names[9], &phase_end_queries(&locks, "Phase 9")).await;
+
+    // A question sitting answers by quoting the rules whose filing the locks
+    // ask about.
+    let sid = fresh_sitting(&surface, "2026-11-01").await;
+    surface
+        .must(
+            "capture",
+            json!({"subject":"work:pm-state","provenance":"testimony","sid":sid,
+                "content":"Real data waits on the paid tests, paid tests; hard capacity it cannot \
+                           raise, capacity; Capacity may be borrowed once, repaying; check-in ran, \
+                           cycle is consumed; cadence is always time, measurement; the label still \
+                           layered on top; claim written wrong in this session, visible correction"}),
+        )
+        .await
+        .expect("the answer quotes the rules");
+    // …and a retired answer quotes the one whose filing is asked of as
+    // archived, which a search for an active claim never reaches.
+    let retired = surface
+        .must(
+            "capture",
+            json!({"subject":"work:pm-state","provenance":"testimony","sid":sid,
+                "content":"Killed at the operator's word, 288 replaces it"}),
+        )
+        .await
+        .expect("the retired answer quotes the rule");
+    surface
+        .must(
+            "update_fact",
+            json!({"address":retired["address"],"status":"archived","sid":sid}),
+        )
+        .await
+        .expect("the answer is retired");
+
+    let outcomes = judge(&surface, &[before, ended]).await;
+    let filing: Vec<&Outcome> = outcomes
+        .iter()
+        .filter(|outcome| outcome.name.contains("was not filed as"))
+        .collect();
+    assert_eq!(
+        filing.len(),
+        8,
+        "the eight filing locks: {:?}",
+        outcomes.iter().map(|o| &o.name).collect::<Vec<_>>()
+    );
+    for outcome in filing {
+        assert!(
+            !outcome.held,
+            "a rule nobody filed read as filed because a later answer quotes it: {} — {}",
+            outcome.name, outcome.saying,
+        );
+    }
+}
+
 #[tokio::test]
 async fn one_subject_of_prose_does_not_answer_the_working_state_or_capacity_questions() {
     let playbook =
@@ -671,7 +757,7 @@ async fn one_subject_of_prose_does_not_answer_the_working_state_or_capacity_ques
         "the failed play must still have filed rule 241 on the single subject: {stored}"
     );
     record_answers(&surface, &playbook).await;
-    let outcomes = judge(&surface).await;
+    let outcomes = judge(&surface, &[]).await;
     for question in ["question 1", "question 4"] {
         let answer = outcomes
             .iter()

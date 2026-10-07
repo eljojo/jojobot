@@ -327,6 +327,10 @@ entity  work:shipped-kind-fields | Extend a shipped kind
 > Rule 337: Moving the build's own rules into jojobot is how code red 2's exit is tested; it happens after the operator has seen the paid run. The operator's life data is a separate gate. Thread: code reds. This also bears on the build; carried state; how jojobot is proven.
 
 ```locks
+# **Each lock asks at the end of the ninth filing**, before any question
+# sitting has answered. A search of the finished room also reaches the answers
+# the question sittings write, so a sitting that quotes a rule in its answer
+# would open the lock for a rule nobody filed.
 # These eight rows are the retrieval key and the replacement pair. A rule
 # with a "bears on" edge is filed once, in full, on its own home thread; a
 # citation on the topic it bears on is a short pointer naming the rule, not
@@ -337,34 +341,42 @@ entity  work:shipped-kind-fields | Extend a shipped kind
 search {"query": "Real data waits on the paid tests", "status": "active", "limit": 1}
 carries paid tests
 say     rule 241 was not filed as active where the later question can find it
+window  phase-end
 
 search {"query": "hard capacity it cannot raise", "status": "active", "limit": 1}
 carries capacity
 say     rule 275 was not filed as active where the later question can find it
+window  phase-end
 
 search {"query": "check-in ran", "status": "active", "limit": 20}
 carries cycle is consumed
 say     rule 189 was not filed as active where the later question can find it
+window  phase-end
 
 search {"query": "cadence is always time", "status": "active", "limit": 20}
 carries measurement
 say     rule 190 was not filed as active where the later question can find it
+window  phase-end
 
 search {"query": "Capacity may be borrowed once", "status": "active", "limit": 1}
 carries repaying
 say     rule 304 was not filed as active where the later question can find it
+window  phase-end
 
 search {"query": "the label still layered on top", "status": "active", "limit": 1}
 carries layered on top
 say     rule 284 was not filed as active where the later question can find it
+window  phase-end
 
 search {"query": "claim written wrong in this session", "status": "active", "limit": 1}
 carries visible correction
 say     rule 288 was not filed as active where the later question can find it
+window  phase-end
 
 search {"query": "Killed at the operator's word", "status": "archived", "limit": 20}
 carries 288 replaces it
 say     rule 58 was not filed as archived where the later question can find it
+window  phase-end
 
 ```
 ## Phase 10 — Find the rules for question 1
