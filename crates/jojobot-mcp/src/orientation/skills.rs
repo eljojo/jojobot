@@ -208,9 +208,14 @@ is never a unit of the schedule.
 
 `advances_from` says which date the next cycle counts from when a check-in is
 late. It takes `due_date`, the day the cycle fell due, or `check_in_date`, the
-day the check-in happened. It has no default. The operator picks it for each
-rhythm. A wrong pick is silent: every late check-in re-arms the loop it was
-meant to settle.
+day the check-in happened. It has no default. Whose loop it is says who picks
+it, and the rhythm's `parent` says whose loop it is. On a loop in the
+operator's own life, the operator picks, for each rhythm. A loop under the bot
+that carries it is that bot's own work, and that bot picks. When the operator
+hands the pick over, you pick: write both keys with `capture` on the rhythm,
+with `provenance: "inference"`, and say in `details` that the operator handed
+the pick over. A wrong pick is silent: every late check-in re-arms the loop it
+was meant to settle.
 
 `counts_from` is the date this cycle counts from. jojobot writes it. The
 rhythm falls due `cadence_days` after it.
@@ -220,8 +225,8 @@ the keys the operator gave you. `cadence_days` and `advances_from` go together
 or not at all. A write that holds one without the other is refused. A loop with
 neither is allowed, and you write it at once.
 
-If the operator gave a cadence and has not said which date it counts from, ask
-which. Write the loop without `cadence_days` while you wait. When the operator
+If the loop is in the operator's own life and the operator gave a cadence
+without saying which date it counts from, ask which. Write the loop without `cadence_days` while you wait. When the operator
 answers, send both keys in one call. The loop itself is never a reason to wait.
 
 A loop with neither key has no schedule, and it is not late. A loop nobody
@@ -239,7 +244,8 @@ have gone quiet as of today. Put a date in `as_of` to ask about another day.
 The answer says which day it used. Read it.
 
 A rhythm that holds only part of a schedule comes back overdue, with the
-fields it does hold. Ask the operator for the key it lacks. Do not guess one.
+fields it does hold. Get the key it lacks from whoever picks it, as above. Do
+not guess one.
 
 ## Something that has to be done by a day
 
@@ -300,9 +306,9 @@ compute them and do not send them. Put what the check measured in `fields`.
 A loop whose last run already happened, before this session opened it, is
 opened the same way: capture a check-in on it, dated the day it last ran, and
 jojobot works the rest of the schedule out from there. Give the loop its
-cadence first — `cadence_days` and `advances_from` are the operator's word and
-no check-in can state them, so a loop that holds neither is refused until it
-does. A snooze does not open a loop, because it moves nothing and there is
+cadence first — `cadence_days` and `advances_from` are set by whoever picks
+them, as above, and no check-in can state them, so a loop that holds neither is
+refused until it does. A snooze does not open a loop, because it moves nothing and there is
 nothing yet to leave where it was.
 
 ## How to run a rhythm
@@ -649,6 +655,43 @@ mod tests {
             names(paragraph, "check-in"),
             "the paragraph that says a loop is opened does not name the check-in: {paragraph}"
         );
+    }
+
+    /// **The section that says what a rhythm holds also says who picks the date
+    /// a late check-in advances from, by whose loop it is.** The loop's own
+    /// `parent` says whose it is. When the operator hands the pick over, the
+    /// agent picks and writes it as an inference, with the handover in the
+    /// details of that write. Pinned on the identifiers a session must spell, and
+    /// the two argument names are checked against what the surface publishes so
+    /// a renamed argument fails here rather than in a session's call.
+    #[test]
+    fn the_rhythms_procedure_says_who_picks_the_date_by_whose_loop_it_is() {
+        let published = crate::arguments::published_argument_names();
+        let text = body("rhythms");
+        let section = text
+            .split("\n## ")
+            .find(|section| names(section, attention::ADVANCES_FROM))
+            .expect("the rhythms procedure introduces the schedule keys under some heading");
+        for word in ["parent", "bot", "inference"] {
+            assert!(
+                names(section, word),
+                "the section that introduces `{}` does not name `{word}`, so it never says who \
+                 picks it by whose loop it is",
+                attention::ADVANCES_FROM
+            );
+        }
+        for argument in ["provenance", "details"] {
+            assert!(
+                published.contains(argument),
+                "the surface publishes no `{argument}`, so this case is pinning the wrong argument"
+            );
+            assert!(
+                names(section, argument),
+                "the section that introduces `{}` does not name `{argument}`, so a handed-over \
+                 pick has nowhere to be recorded",
+                attention::ADVANCES_FROM
+            );
+        }
     }
 
     /// **The rider on a loop opened with history already behind it.** The
