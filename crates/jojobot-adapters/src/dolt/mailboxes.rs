@@ -1222,8 +1222,8 @@ mod tests {
     /// gives**, on a board holding every shape of row the readability rule
     /// tells apart: healthy rows, a leap day, a fraction of a second, a state
     /// in the wrong case, a stamp in the wrong case, dates that do not exist, a
-    /// second the clock never had, text that is no stamp, and a row quarantined
-    /// on purpose. Asked of the real store, because the rule is the real
+    /// second the clock never had, text that is no stamp, a stamp with a
+    /// leading space, and a row quarantined on purpose. Asked of the real store, because the rule is the real
     /// store's comparison and pattern semantics.
     #[tokio::test]
     async fn the_counts_the_store_computes_match_a_read_of_every_row() {
@@ -1246,6 +1246,7 @@ mod tests {
             ("nostate", "pending", "2026-03-01T00:00:00Z"),
             ("longfraction", "new", "2026-03-01T00:00:00.1234567890Z"),
             ("anychar", "new", "2026-03-01T00:00:00X5Z"),
+            ("leadspace", "new", " 2026-03-01T00:00:00Z"),
         ] {
             unreadable(&store, id, state, sent_at).await;
         }
@@ -1273,6 +1274,30 @@ mod tests {
             .expect("the inbox is there");
         assert!(inbox.counts.total() >= 3, "{inbox:?}");
         assert!(inbox.quarantined.len() >= 6, "{inbox:?}");
+
+        store.stop().await;
+    }
+
+    /// **A stamp with a trailing newline is not counted as readable**, which is
+    /// what a read of every row says of it. The store's end anchor matches before
+    /// a final newline, so the pattern accepts the row, the count says "new" and
+    /// the row reader cannot read it.
+    ///
+    /// Ignored because it fails today and the change to the pattern is not this
+    /// case's to make. Run it with `--ignored` to watch it fail.
+    #[tokio::test]
+    #[ignore = "known defect: card 2053 item 14, the store's REGEXP end anchor accepts a trailing newline; the fix is the em's to dispatch"]
+    async fn a_stamp_with_a_trailing_newline_is_counted_as_a_read_of_every_row_counts_it() {
+        let (mut store, mail, _first) = board("counts-trailing-newline").await;
+        unreadable(&store, "trailnl", "new", "2026-03-01T00:00:00Z\n").await;
+
+        let counted = mail.list_mailboxes().await.expect("list ok");
+        let oracle = mail.boxes_by_reading_every_row().await;
+        assert_eq!(
+            serde_json::to_value(&counted).expect("boxes serialize"),
+            serde_json::to_value(&oracle).expect("boxes serialize"),
+            "the store's counts disagree with a read of every row"
+        );
 
         store.stop().await;
     }
