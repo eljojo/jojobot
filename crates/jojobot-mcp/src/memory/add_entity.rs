@@ -337,6 +337,7 @@ impl Jojobot {
                         entity.id.kind().map_or("", |kind| kind.as_token()),
                         &entity.name,
                         &entity.aliases,
+                        entity.parent.as_ref().map(|parent| parent.as_str()),
                     )
                 {
                     crate::answer::note_teaching(&mut body, &noticed.question(entity.id.as_str()));
@@ -1103,6 +1104,94 @@ mod tests {
         assert!(
             !teaches(&again, "place:wonder-wharf"),
             "the same thing was asked about twice: {again}",
+        );
+    }
+
+    /// Create a thing under `parent`, as the session `sid`.
+    async fn created_under(
+        jojobot: &Jojobot,
+        sid: &str,
+        (kind, handle, name): (&str, &str, &str),
+        parent: Option<&str>,
+    ) -> serde_json::Value {
+        json_of(
+            &jojobot
+                .add_entity(Parameters(AddEntityArgs {
+                    sid: Some(sid.into()),
+                    parent: parent.map(str::to_string),
+                    ..add_args(kind, handle, name)
+                }))
+                .await
+                .expect("add_entity ok"),
+        )
+    }
+
+    /// A session that created a project and one thing under it, then read the
+    /// things back, which is what shows the child to the session.
+    async fn shown_a_child_of_atlas() -> (Jojobot, String) {
+        let jojobot = handler();
+        let sid = writing_as(&jojobot);
+        created(&jojobot, &sid, "project", "atlas", "Atlas").await;
+        created_under(
+            &jojobot,
+            &sid,
+            ("work", "atlas-x-donut-stand", "X Donut Stand"),
+            Some("project:atlas"),
+        )
+        .await;
+        browsed(&jojobot, &sid, "work").await;
+        (jojobot, sid)
+    }
+
+    /// **A creation beside a sibling is not asked about the parent's own
+    /// word, and is still asked about any other word they share.** Each branch
+    /// runs on a session of its own, because a thing is asked about once and the
+    /// branches would spend it for one another. The case travels the verb a
+    /// caller uses, so a parent that is read and never handed to the question
+    /// leaves the first branch asked and fails it.
+    #[tokio::test]
+    async fn a_creation_beside_a_sibling_is_not_asked_about_the_parents_own_word() {
+        // The only word they share is the project's: not asked.
+        let (jojobot, sid) = shown_a_child_of_atlas().await;
+        let quiet = created_under(
+            &jojobot,
+            &sid,
+            ("work", "atlas-kwik-e-mart", "Kwik E Mart"),
+            Some("project:atlas"),
+        )
+        .await;
+        assert_eq!(quiet["id"], "work:atlas-kwik-e-mart", "it landed: {quiet}");
+        assert!(
+            !teaches(&quiet, "work:atlas-x-donut-stand"),
+            "the parent's own word was asked about: {quiet}",
+        );
+
+        // A sibling sharing a word the project does not give: asked.
+        let (jojobot, sid) = shown_a_child_of_atlas().await;
+        let asked = created_under(
+            &jojobot,
+            &sid,
+            ("work", "atlas-donut-stand-two", "Donut Stand Two"),
+            Some("project:atlas"),
+        )
+        .await;
+        assert!(
+            teaches(&asked, "work:atlas-x-donut-stand"),
+            "a sibling sharing a word the parent does not give was not asked: {asked}",
+        );
+
+        // The same project word with no parent to share it: asked.
+        let (jojobot, sid) = shown_a_child_of_atlas().await;
+        let rootless = created_under(
+            &jojobot,
+            &sid,
+            ("work", "atlas-kwik-e-mart", "Kwik E Mart"),
+            None,
+        )
+        .await;
+        assert!(
+            teaches(&rootless, "work:atlas-x-donut-stand"),
+            "a creation under no parent sharing the word was not asked: {rootless}",
         );
     }
 

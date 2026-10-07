@@ -40,6 +40,9 @@ pub(crate) struct Shown {
     pub(crate) kind: String,
     pub(crate) name: String,
     pub(crate) aliases: Vec<String>,
+    /// The handle this thing sits under, as the read served it. `None` for a
+    /// root, and for a read that carried no `parent` key.
+    pub(crate) parent: Option<String>,
 }
 
 /// What a creation is asked about: the thing shown, how long ago, and the word
@@ -124,6 +127,13 @@ impl Ledger {
     /// qualify, the one sharing the most words is asked about, the most recently
     /// shown breaking a tie. A thing this session was already asked about is
     /// passed over, so the question is never repeated.
+    ///
+    /// **A word the parent itself gives is not shared between two things under
+    /// that parent.** Every handle under a project begins with the project's
+    /// slug, so two things side by side would share it by construction. For a
+    /// shown thing with the same parent as the creation, the words of that
+    /// parent's slug come out of both word sets before they are compared.
+    /// A thing under another parent, or none, is compared whole.
     pub(crate) fn consult(
         &mut self,
         sid: &str,
@@ -131,12 +141,14 @@ impl Ledger {
         kind: &str,
         name: &str,
         aliases: &[String],
+        parent: Option<&str>,
     ) -> Option<Noticed> {
         let session = self.sessions.get_mut(sid)?;
         let slug = handle.split_once(':').map_or(handle, |(_, slug)| slug);
         let mut incoming = words(name);
         incoming.extend(words(slug));
         incoming.extend(aliases.iter().flat_map(|alias| words(alias)));
+        let parents_words = parent.map(|p| words(p.split_once(':').map_or(p, |(_, slug)| slug)));
 
         let mut best: Option<(usize, usize, &Shown, String)> = None;
         for (at, (shown, _)) in session.shown.iter().enumerate() {
@@ -146,7 +158,15 @@ impl Ledger {
             let mut theirs = words(&shown.name);
             theirs.extend(words(shown.handle.split_once(':').map_or("", |(_, s)| s)));
             theirs.extend(shown.aliases.iter().flat_map(|alias| words(alias)));
-            let shared: Vec<&String> = incoming.intersection(&theirs).collect();
+            // Equal parents, both present: the parent's words are the parent's.
+            let own_parent_words = match (&parents_words, &shown.parent) {
+                (Some(words), Some(held)) if Some(held.as_str()) == parent => Some(words),
+                _ => None,
+            };
+            let shared: Vec<&String> = incoming
+                .intersection(&theirs)
+                .filter(|word| own_parent_words.is_none_or(|parents| !parents.contains(*word)))
+                .collect();
             let Some(word) = shared.first() else {
                 continue;
             };
@@ -192,11 +212,18 @@ impl Noticed {
 /// **The words a name is made of that two things could share.** Lowercased, at
 /// least [`MIN_WORD`] letters, and never a bare number.
 ///
-/// There is deliberately no filter beyond that, no stoplist and no rarity
-/// test. Over 188 real creations neither removed a single pair, so a threshold
-/// would be invented. A run showing a common word that fires a false question
-/// is what would justify adding rarity (how many other things of the kind carry
-/// the word), and it should be added then, with the run as its sample.
+/// There is deliberately no stoplist and no rarity test. Over 188 real
+/// creations neither removed a single pair, so a threshold would be invented. A
+/// run showing a common word that fires a false question is what would justify
+/// adding rarity (how many other things of the kind carry the word), and it
+/// should be added then, with the run as its sample.
+///
+/// **The one word removed is not a rarity rule.** A run did show a false
+/// question: two things under one project shared the project's own slug. That
+/// word is not common and it is not rare; it is given by the parent, so it says
+/// nothing about whether the two are the same thing. [`Ledger::consult`] removes
+/// the parent's slug words for a shown thing under the same parent and for
+/// nothing else, so no word is dropped for how often it occurs.
 fn words(text: &str) -> BTreeSet<String> {
     text.to_lowercase()
         .split(|c: char| !c.is_alphanumeric())
@@ -240,6 +267,10 @@ pub(crate) fn entities_in(body: &serde_json::Value) -> Vec<Shown> {
                                     .collect()
                             })
                             .unwrap_or_default(),
+                        parent: fields
+                            .get("parent")
+                            .and_then(serde_json::Value::as_str)
+                            .map(str::to_string),
                     });
                 }
                 for held in fields.values() {
@@ -265,6 +296,17 @@ mod tests {
             kind: "place".into(),
             name: name.into(),
             aliases: Vec::new(),
+            parent: None,
+        }
+    }
+
+    fn work(handle: &str, name: &str, parent: Option<&str>) -> Shown {
+        Shown {
+            handle: handle.into(),
+            kind: "work".into(),
+            name: name.into(),
+            aliases: Vec::new(),
+            parent: parent.map(str::to_string),
         }
     }
 
@@ -298,6 +340,7 @@ mod tests {
                 "place",
                 "Mill Road Bridge",
                 &[],
+                None,
             )
             .expect("a thing shared words with the creation");
         assert_eq!(noticed.handle, "place:atlas", "{noticed:?}");
@@ -307,7 +350,7 @@ mod tests {
         ledger.record("s2", vec![place("place:atlas", "Aaa Wharf")]);
         ledger.record("s2", vec![place("place:bet", "Bbb Wharf")]);
         let noticed = ledger
-            .consult("s2", "place:wharf-road", "place", "Wharf Road", &[])
+            .consult("s2", "place:wharf-road", "place", "Wharf Road", &[], None)
             .expect("a thing shared a word");
         assert_eq!(noticed.handle, "place:bet", "{noticed:?}");
     }
@@ -390,7 +433,158 @@ mod tests {
                 kind: "place".into(),
                 name: "Wonder Wharf".into(),
                 aliases: vec!["The Wharf".into()],
+                parent: None,
             }],
         );
+    }
+
+    /// **A word only the parent gives is not a word two siblings share.** Under a
+    /// project every handle begins with the project's own slug, so two things
+    /// beside each other would be asked about on that word alone. The question
+    /// stays for a word the parent does not give, in the case that follows.
+    #[test]
+    fn a_word_only_the_parent_gives_is_not_a_word_two_siblings_share() {
+        let mut ledger = Ledger::default();
+        ledger.record(
+            "s1",
+            vec![work(
+                "work:atlas-x-donut-stand",
+                "X Donut Stand",
+                Some("project:atlas"),
+            )],
+        );
+        let asked = ledger.consult(
+            "s1",
+            "work:atlas-kwik-e-mart",
+            "work",
+            "Kwik E Mart",
+            &[],
+            Some("project:atlas"),
+        );
+        assert_eq!(
+            asked, None,
+            "the parent's own word was read as a shared one"
+        );
+
+        // The same thing is still there to be asked about: a sibling that shares
+        // a word the parent does not give is asked, so the case above did not
+        // pass by the ledger being empty or the thing having been spent.
+        let asked = ledger
+            .consult(
+                "s1",
+                "work:atlas-donut-stand-two",
+                "work",
+                "Donut Stand Two",
+                &[],
+                Some("project:atlas"),
+            )
+            .expect("a sibling that shares a word the parent does not give is asked about");
+        assert_eq!(asked.handle, "work:atlas-x-donut-stand");
+        assert_eq!(asked.word, "donut", "the word shared is not the parent's");
+    }
+
+    /// **Two siblings that share a word the parent does not give are asked
+    /// about, and the question names that word.** Paired with the case above:
+    /// a rule that dropped every word under a parent would pass that one and
+    /// fail this one.
+    #[test]
+    fn siblings_sharing_a_word_the_parent_does_not_give_are_asked_about_it() {
+        let mut ledger = Ledger::default();
+        ledger.record(
+            "s1",
+            vec![work(
+                "work:atlas-x-donut-stand",
+                "X Donut Stand",
+                Some("project:atlas"),
+            )],
+        );
+        let asked = ledger
+            .consult(
+                "s1",
+                "work:atlas-donut-stand-two",
+                "work",
+                "Donut Stand Two",
+                &[],
+                Some("project:atlas"),
+            )
+            .expect("two siblings sharing leaf and preview are asked about");
+        assert_eq!(asked.handle, "work:atlas-x-donut-stand");
+        assert_ne!(asked.word, "atlas", "{asked:?}");
+    }
+
+    /// **A thing under another parent, or under none, shares the word with the
+    /// creation, and is asked about it.** The same word in two places that have
+    /// nothing in common is evidence; under one parent it is the parent's.
+    #[test]
+    fn a_thing_under_another_parent_or_none_still_shares_the_word() {
+        let shown = |parent: Option<&str>| {
+            let mut ledger = Ledger::default();
+            ledger.record(
+                "s1",
+                vec![work("work:atlas-x-donut-stand", "X Donut Stand", parent)],
+            );
+            ledger
+        };
+        let created = |ledger: &mut Ledger, parent: Option<&str>| {
+            ledger.consult(
+                "s1",
+                "work:atlas-kwik-e-mart",
+                "work",
+                "Kwik E Mart",
+                &[],
+                parent,
+            )
+        };
+        // The shown thing is under another parent.
+        let asked = created(&mut shown(Some("project:the-shed")), Some("project:atlas"))
+            .expect("another parent: asked");
+        assert_eq!(asked.word, "atlas");
+        // The creation is under none.
+        let asked = created(&mut shown(Some("project:atlas")), None).expect("no parent: asked");
+        assert_eq!(asked.word, "atlas");
+        // The shown thing is under none.
+        let asked =
+            created(&mut shown(None), Some("project:atlas")).expect("shown under none: asked");
+        assert_eq!(asked.word, "atlas");
+    }
+
+    /// **The parent is read off the shape a read answer actually carries.** The
+    /// body is what `entity_json` emits, which every read verb serves its
+    /// entities through, not a shape written here to fit the reader.
+    #[test]
+    fn the_parent_is_read_from_what_a_read_serves() {
+        let entity = |id: &str, parent: Option<&str>| jojobot_domain::memory::Entity {
+            id: jojobot_domain::memory::EntityId(id.into()),
+            kind: EntityKind::WORK,
+            name: "Atlas Thing".into(),
+            aliases: Vec::new(),
+            source: "the roster".into(),
+            crm: None,
+            parent: parent.map(|p| jojobot_domain::memory::EntityId(p.into())),
+            boot: Default::default(),
+            merged_into: None,
+            badge: None,
+            archived: None,
+        };
+        let body = serde_json::json!({
+            "entities": [
+                crate::memory::wire::entity_json(&entity("work:atlas-child", Some("project:atlas"))),
+                crate::memory::wire::entity_json(&entity("work:atlas-root", None)),
+            ]
+        });
+        let found = entities_in(&body);
+        let parent_of = |handle: &str| {
+            found
+                .iter()
+                .find(|shown| shown.handle == handle)
+                .unwrap_or_else(|| panic!("{handle} was not read: {found:?}"))
+                .parent
+                .clone()
+        };
+        assert_eq!(
+            parent_of("work:atlas-child").as_deref(),
+            Some("project:atlas")
+        );
+        assert_eq!(parent_of("work:atlas-root"), None);
     }
 }

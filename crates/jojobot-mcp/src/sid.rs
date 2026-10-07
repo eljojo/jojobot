@@ -175,11 +175,12 @@ impl SessionRegistry {
         kind: &str,
         name: &str,
         aliases: &[String],
+        parent: Option<&str>,
     ) -> Option<crate::seen::Noticed> {
         self.seen
             .lock()
             .expect("the seen ledger is poisoned")
-            .consult(sid, handle, kind, name, aliases)
+            .consult(sid, handle, kind, name, aliases, parent)
     }
 
     /// **The lock a caller takes before resolving and writing a session**, keyed
