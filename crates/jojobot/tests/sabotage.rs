@@ -528,6 +528,118 @@ fn a_run_where_no_test_ran_is_refused_and_a_run_where_one_ran_gets_its_verdict()
     );
 }
 
+/// What `cargo test` wrote to STDERR when the break did not compile, kept as it
+/// arrived (the break put an integer where a `&str` constant stood). Cargo's
+/// progress and its errors go to stderr; nothing of it reaches stdout.
+const BREAK_DID_NOT_COMPILE: &str = "   Compiling jojobot-bar v0.1.0 (/x/crates/jojobot-bar)\n\
+error[E0308]: mismatched types\n\
+  --> crates/jojobot-bar/src/lib.rs:92:38\n\
+   |\n\
+92 | pub const TEST_JOBS_VARIABLE: &str = 7;\n\
+   |                                      ^ expected `&str`, found integer\n\
+\n\
+For more information about this error, try `rustc --explain E0308`.\n\
+error: could not compile `jojobot-bar` (lib test) due to 1 previous error\n";
+
+/// What a test run that executed a case and failed it wrote to stdout.
+const ONE_CASE_FAILED: &str = "\nrunning 1 test\ntest a_case ... FAILED\n\n\
+failures:\n\n---- a_case stdout ----\nassertion failed\n\n\
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n";
+
+/// Run the tool over a file with a command that prints `out` on stdout and
+/// `err` on stderr and exits with `code`, as `cargo test` splits them.
+fn sabotage_emitting(
+    named: &str,
+    out: &str,
+    err: &str,
+    code: i32,
+) -> (PathBuf, String, Option<i32>) {
+    let held = "the answer is 41\nand a second line\n";
+    let path = a_file(named, held);
+    let out = a_file(&format!("{named}-stdout"), out);
+    let err = a_file(&format!("{named}-stderr"), err);
+    let (said, ended) = sabotage(
+        &path,
+        "41",
+        "42",
+        &[
+            "sh",
+            "-c",
+            "cat \"$1\"; cat \"$2\" >&2; exit \"$3\"",
+            "emit",
+            &out.to_string_lossy(),
+            &err.to_string_lossy(),
+            &code.to_string(),
+        ],
+    );
+    (path, said, ended)
+}
+
+/// 🚨 **A break that does not compile is not a red case.**
+///
+/// The tool keeps stdout and leaves stderr on the terminal, and cargo writes its
+/// errors to stderr, so a break that did not compile ended non-zero with nothing
+/// on the stream the tool reads, and was reported as RED: the same word as a case
+/// that caught the break. Nothing was measured, so the verdict is its own, it is
+/// not a probe's to follow, and the exit code is its own too.
+///
+/// **Paired with three runs that must still read as they did**: a case that
+/// failed is RED, a failing case whose output QUOTES the compiler's line is
+/// still RED, and a run that compiled with a warning is still GREEN. Without
+/// them a tool that called every non-zero run "did not compile" would pass.
+#[test]
+fn a_break_that_does_not_compile_has_a_verdict_of_its_own() {
+    let held = "the answer is 41\nand a second line\n";
+
+    let (path, said, code) = sabotage_emitting("no-compile", "", BREAK_DID_NOT_COMPILE, 101);
+    assert!(
+        said.contains("VERDICT DID NOT COMPILE"),
+        "a break that did not compile has its own verdict: {said}",
+    );
+    assert!(
+        !said.contains("VERDICT RED") && !said.contains("VERDICT GREEN"),
+        "a break that did not compile was given a colour: {said}",
+    );
+    assert_eq!(code, Some(3), "the exit code is its own: {said}");
+    assert!(
+        !said.contains("PROBE"),
+        "a run that measured nothing is not probed: {said}",
+    );
+    assert_eq!(
+        fs::read_to_string(&path).expect("the file is there"),
+        held,
+        "the file did not come back after a break that did not compile",
+    );
+
+    let (_, said, code) = sabotage_emitting("failed-case", ONE_CASE_FAILED, "", 101);
+    assert!(
+        said.contains("VERDICT RED") && !said.contains("DID NOT COMPILE"),
+        "a case that failed is RED: {said}",
+    );
+    assert_eq!(code, Some(101), "{said}");
+
+    // The test's own output quotes the compiler's line; cargo did not write it.
+    let quoting = format!("{ONE_CASE_FAILED}error: could not compile `x` (lib test)\n");
+    let (_, said, code) = sabotage_emitting("quoted-line", &quoting, "", 101);
+    assert!(
+        said.contains("VERDICT RED") && !said.contains("DID NOT COMPILE"),
+        "a failing case that quotes the compiler's line is RED: {said}",
+    );
+    assert_eq!(code, Some(101), "{said}");
+
+    let (_, said, code) = sabotage_emitting(
+        "warned",
+        ONE_TEST_MATCHED,
+        "warning: `jojobot-domain` (lib) generated 2 warnings\n",
+        0,
+    );
+    assert!(
+        said.contains("VERDICT GREEN") && !said.contains("DID NOT COMPILE"),
+        "a run that compiled with a warning is GREEN: {said}",
+    );
+    assert_eq!(code, Some(0), "{said}");
+}
+
 /// 🚨 **The probe run is held to the same count.**
 ///
 /// A probe over a command that ran nothing stays green under its panic, so it

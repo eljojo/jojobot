@@ -34,6 +34,13 @@ case depends on the site.
 failure read as *blind* would tell somebody their case is worthless when
 nothing was measured.
 
+**A break that does not compile is neither colour either**, and it has an exit
+code of its own, 3. Cargo writes its errors to stderr and stops before any test,
+so the run ended non-zero with nothing on the stream the tool once read, and
+was reported as RED: the word for a case that caught the break. Nothing had been
+measured. The tool now reads both streams, says `VERDICT DID NOT COMPILE`, runs
+no probe, and the compiler's error is above it.
+
 ⚠️ **A probe roughly doubles a sabotage**, and the tool says so before it runs
 one.
 
@@ -72,6 +79,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 
 
 USAGE = "usage: scripts/sabotage <file> <from> <to> -- <command...>"
@@ -252,22 +260,58 @@ TESTS_RUN = re.compile(r"^test result: \w+\. (\d+) passed; (\d+) failed;", re.MU
 
 
 def run_and_keep(command):
-    """Run it, show every line as it arrives, and keep stdout.
+    """Run it, show every line as it arrives, and keep both streams.
 
     ⛔️ **Teed rather than captured.** `capture_output` shows the caller nothing
     until the run ends, and the run this tool is pointed at takes minutes — a
     tool that goes silent for that long is worse than the defect it is fixing.
 
-    **Only stdout is redirected.** Stderr stays attached, so the runner's own
-    progress is untouched and a person watching sees what they saw before.
+    **Both streams are teed to where they were going**, and kept apart. Stdout
+    carries the runner's results. Stderr carries cargo's own progress and its
+    errors, and it was left attached to the terminal, which hid the one thing
+    only it says: that a break did not compile. A person watching sees the same
+    lines as before.
     """
-    running = subprocess.Popen(command, stdout=subprocess.PIPE, text=True)
+    running = subprocess.Popen(
+        command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+    )
+    errored = []
+
+    def tee_stderr():
+        for line in running.stderr:
+            print(line, end="", file=sys.stderr, flush=True)
+            errored.append(line)
+
+    watcher = threading.Thread(target=tee_stderr, daemon=True)
+    watcher.start()
     kept = []
     for line in running.stdout:
         print(line, end="", flush=True)
         kept.append(line)
     running.wait()
-    return running.returncode, "".join(kept)
+    watcher.join()
+    return running.returncode, "".join(kept), "".join(errored)
+
+
+COULD_NOT_COMPILE = "error: could not compile"
+# Its own exit code: not the refusal's 2, and not a runner's 1 or 101.
+DID_NOT_COMPILE_EXIT = 3
+
+
+def did_not_compile(code, said, errored):
+    """**Whether the break stopped the build, so no test could have run.**
+
+    Cargo says so on its own stderr, as a line of its own, and runs nothing
+    after it. **Stderr alone is read for the line**: a test that fails with the
+    compiler's words in its own output is a failed case, and its output arrives
+    on stdout. **A run that exited zero is never a failed build**, whatever it
+    printed: a case that expects another crate not to compile passes and shows
+    the compiler's error on its way. A pure function over the exit code and the
+    two streams, self-checked like the classifier beside it.
+    """
+    if code == 0:
+        return False
+    return any(line.startswith(COULD_NOT_COMPILE) for line in errored.splitlines())
 
 
 def ran_nothing(said):
@@ -331,8 +375,8 @@ def main(argv):
         return refuse(broken)
     if argv == ["--self-check"]:
         print(
-            f"SABOTAGE SELF-CHECK: {len(CHECKS)} classifier and {len(DISAGREEMENTS)} "
-            "disagreement cases hold"
+            f"SABOTAGE SELF-CHECK: {len(CHECKS)} classifier, {len(DISAGREEMENTS)} "
+            f"disagreement and {len(COMPILES)} compile cases hold"
         )
         return 0
     if "--" not in argv:
@@ -390,7 +434,18 @@ def main(argv):
             return refuse(f"{path} did not take the sabotage, so no verdict here means anything")
         print(f"SABOTAGE APPLIED to the one site in {path}", flush=True)
 
-        code, said = run_and_keep(command)
+        code, said, errored = run_and_keep(command)
+        # **Before any verdict, and before the empty-run check**: a break that did
+        # not compile measured nothing, and calling it RED reads as a case that
+        # caught the break. It has no colour, no probe, and an exit code of its own.
+        if did_not_compile(code, said, errored):
+            print(
+                f"SABOTAGE VERDICT DID NOT COMPILE: {' '.join(command)} exited {code}. "
+                "The break does not build, so no case ran and none was measured: this is "
+                "neither RED nor GREEN. Read the compiler's error above and fix the break.",
+                flush=True,
+            )
+            return DID_NOT_COMPILE_EXIT
         # **Before any verdict**: a run that tested nothing has none to give.
         if ran_nothing(said):
             return refuse(
@@ -564,6 +619,60 @@ DISAGREEMENTS = (
 )
 
 
+# **What a break that did not build looks like, as cargo wrote it** — the first
+# is the stderr of a sabotage that put an integer where a `&str` constant stood.
+# The others are the runs that must not be mistaken for it.
+COMPILES = (
+    (
+        "a break that does not build stops the run at cargo's own line",
+        101,
+        "",
+        "   Compiling jojobot-bar v0.1.0 (/x/crates/jojobot-bar)\n"
+        "error[E0308]: mismatched types\n"
+        "92 | pub const TEST_JOBS_VARIABLE: &str = 7;\n"
+        "error: could not compile `jojobot-bar` (lib test) due to 1 previous error\n",
+        True,
+    ),
+    (
+        "a case that failed is a failed case",
+        101,
+        "running 1 test\ntest a ... FAILED\n"
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out\n",
+        "    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.00s\n",
+        False,
+    ),
+    (
+        "a failed case that quotes the compiler's line is still a failed case",
+        101,
+        "test a ... FAILED\nerror: could not compile `x` (lib test)\n"
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out\n",
+        "",
+        False,
+    ),
+    (
+        "a quoted line on stdout alone, with no result line, is not cargo's own",
+        101,
+        "error: could not compile `x` (lib test)\n",
+        "",
+        False,
+    ),
+    (
+        "a run that exited zero is not a failed build, whatever stderr shows",
+        0,
+        "",
+        "error: could not compile `fixture` (lib) due to 1 previous error\n",
+        False,
+    ),
+    (
+        "a run that compiled with a warning is not a failed build",
+        0,
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
+        "warning: `jojobot-domain` (lib) generated 2 warnings\n",
+        False,
+    ),
+)
+
+
 def self_check():
     """**The classifier answers for itself before it answers about anything.**
 
@@ -586,6 +695,10 @@ def self_check():
             return (
                 f"the disagreement check is wrong — {why}: said {got}, and it has to say {wanted}"
             )
+    for why, code, said, errored, wanted in COMPILES:
+        got = did_not_compile(code, said, errored)
+        if got != wanted:
+            return f"the compile check is wrong — {why}: said {got}, and it has to say {wanted}"
     return None
 
 
