@@ -1277,4 +1277,46 @@ mod tests {
             "{delivered}"
         );
     }
+
+    /// **A retype that does not cross the person line still lands.** The refusal
+    /// is about a box changing hands across the private line, and nothing wider:
+    /// a person who owns no box can be retyped, and a bot with a box can be
+    /// renamed within the bot kind, its box following it. This is the positive
+    /// the two refusals above depend on, so a refusal of every retype would not
+    /// pass.
+    #[tokio::test]
+    async fn a_retype_that_does_not_cross_the_person_line_still_lands() {
+        use crate::mailboxes::testing::*;
+        let jojobot = mailbox_handler();
+        let writer = owning(&jojobot, "gamma").await;
+        // A person who owns no box: nothing to hand across the line.
+        crate::memory::testing::ensure(&jojobot, "person:ned-flanders").await;
+        assert!(
+            boxes_owned_by(&jojobot, "person:ned-flanders")
+                .await
+                .is_empty()
+        );
+        let retyped = json_of(
+            &jojobot
+                .rename_entity(Parameters(args(
+                    "person:ned-flanders",
+                    "thing:handcart",
+                    &writer,
+                )))
+                .await
+                .expect("rename ok"),
+        );
+        assert_ne!(retyped["status"], "blocked", "{retyped}");
+        assert_eq!(retyped["id"], "thing:handcart", "{retyped}");
+
+        // A bot with a box, renamed within the bot kind: the box follows.
+        let renamed = json_of(
+            &jojobot
+                .rename_entity(Parameters(args("bot:gamma", "bot:delta", &writer)))
+                .await
+                .expect("rename ok"),
+        );
+        assert_ne!(renamed["status"], "blocked", "{renamed}");
+        assert_eq!(boxes_owned_by(&jojobot, "bot:delta").await.len(), 1);
+    }
 }
