@@ -283,6 +283,91 @@ async fn an_open_question_carries_its_state_and_what_it_blocks() {
     story.finish().await;
 }
 
+/// **Where a piece of work stands is kept on the keys the skill names**, so
+/// what is next, what waits on whom and what stands on what are each a read of
+/// one key, and a status outside the project's list is refused with the list.
+#[tokio::test]
+async fn where_a_piece_of_work_stands_is_kept_on_the_keys_the_skill_names() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    s.add("project:atlas", "The Campaign").await;
+    s.add_under("project:atlas", "work:phi", "Phi").await;
+    s.add_under("project:atlas", "work:first-mix", "First mix")
+        .await;
+    s.add_under("project:atlas", "work:sigma", "Sigma").await;
+    s.add("person:lisa", "Lisa").await;
+    s.event_with(
+        "project:atlas",
+        "the board's columns",
+        json!({"columns": "inbox, someday, next, now, waiting, done"}),
+        &[],
+    )
+    .await;
+    s.event_with(
+        "work:phi",
+        "ready to start",
+        json!({"status": "next", "owner": "person:lisa"}),
+        &[],
+    )
+    .await;
+    s.event_with("work:first-mix", "under way", json!({"status": "now"}), &[])
+        .await;
+    s.event_with(
+        "work:sigma",
+        "cannot start yet",
+        json!({
+            "status": "waiting", "waiting_on": "person:lisa",
+            "depends_on": "work:phi, work:first-mix",
+        }),
+        &[],
+    )
+    .await;
+
+    let next = s
+        .call(
+            "recall",
+            json!({"kind": "work", "fields": [{"key": "status", "value": "next"}]}),
+        )
+        .await;
+    next.says("work:phi");
+    next.never_says("work:sigma");
+    next.never_says("work:first-mix");
+
+    let waiting = s
+        .call(
+            "recall",
+            json!({"kind": "work", "fields": [{"key": "waiting_on"}]}),
+        )
+        .await;
+    waiting.says("work:sigma").says("person:lisa");
+    // Only sigma holds the key. Its dependency list names the first mix, so the
+    // handle is in the answer, but the first mix is not an object in it.
+    assert_eq!(waiting.json()["count"], 1, "{}", waiting.json());
+
+    let stands_on_phi = s
+        .call(
+            "recall",
+            json!({
+                "subject": "work:phi",
+                "follow": {"relation": "depends_on", "direction": "in"},
+            }),
+        )
+        .await;
+    stands_on_phi.says("work:sigma");
+
+    let refused = s
+        .refused(
+            "capture",
+            json!({
+                "subject": "work:phi", "content": "where it stands",
+                "provenance": "testimony", "fields": {"status": "backlog"},
+            }),
+        )
+        .await;
+    refused.says("inbox");
+    story.finish().await;
+}
+
 /// **A long history read is elided, and raising the limit reaches the far
 /// end** — so a retrospective is read to the end before it is concluded from.
 #[tokio::test]

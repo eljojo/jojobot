@@ -134,7 +134,8 @@ pub(crate) fn is_project_work(kind: Option<EntityKind>) -> bool {
 /// names the skill and what it holds; the procedure is fetched, never sent.
 pub(crate) const PROJECTS_SKILL_TEACHING: &str = "You are writing about a project's work: \
     start_here with skill: \"projects\" has the routes for a date that moves, a decision, an \
-    open question and what you worked out from what was said.";
+    open question and what you worked out from what was said. It also holds the keys that say \
+    where a piece of work stands (`status`) and whose it is (`owner`).";
 
 /// **The sixth domain — a creation forced past a near-miss refusal.** Named on
 /// the call that makes the deliberate near-duplicate, which is the one moment
@@ -1334,6 +1335,30 @@ mod tests {
             "the teaching must say a contradiction is allowed to stand, not only that a write \
              is non-destructive: {CLAIMS_TEACHING}"
         );
+    }
+
+    /// **The projects teaching says the skill holds the keys that say where a
+    /// piece of work stands and whose it is.** Pinned on the key names a caller
+    /// must spell, read off what the engine declares on a work thing, so a
+    /// renamed key reddens it rather than leaving a teaching that names a key
+    /// nobody reads.
+    #[test]
+    fn the_projects_teaching_names_the_status_and_ownership_keys() {
+        let declared: Vec<String> = jojobot_domain::memory::kinds::keys_of("work")
+            .into_iter()
+            .map(|f| f.key)
+            .collect();
+        for key in ["status", "owner"] {
+            assert!(
+                declared.iter().any(|d| d == key),
+                "the engine no longer declares `{key}` on a piece of work"
+            );
+            assert!(
+                PROJECTS_SKILL_TEACHING.contains(&format!("`{key}`")),
+                "the projects teaching does not name the work key `{key}`: \
+                 {PROJECTS_SKILL_TEACHING}"
+            );
+        }
     }
 
     /// **Both halves in one case, for the second domain.** The first capture

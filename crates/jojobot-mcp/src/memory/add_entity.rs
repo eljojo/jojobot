@@ -33,6 +33,12 @@ pub struct AddEntityArgs {
     /// keeps its own events, and two can exist about one thing. Its `parent`
     /// says whose job it is to keep.
     ///
+    /// **A `work` is a piece of a `project`'s work, filed under it**, and it
+    /// carries the keys that say where it stands: `status`, `owner`,
+    /// `waiting_on` and `depends_on`. A `project` may list its own statuses under
+    /// `columns`. The projects skill, fetched through `start_here`, says how
+    /// to write and read them.
+    ///
     /// **`bot` is an ordinary kind here**, and creating one is what this verb
     /// is for: nothing about an identity is compiled in, so every bot beyond
     /// the one a fresh instance ships with is made through this call — and the
@@ -392,6 +398,35 @@ impl Jojobot {
 mod tests {
     use super::*;
     use crate::harness::*;
+
+    /// **The `kind` description names the keys a `work` or `project` carries**,
+    /// beside what it says of `promise` and `rhythm`, so a session choosing a
+    /// kind learns the keys before it writes. Read off the published schema and
+    /// the engine's declaration, never a second copy of either.
+    #[test]
+    fn the_kind_description_names_the_keys_a_work_or_project_carries() {
+        use jojobot_domain::memory::kinds;
+        let schema = serde_json::to_value(schemars::schema_for!(AddEntityArgs))
+            .expect("the schema serialises");
+        let kind = schema["properties"]["kind"]["description"]
+            .as_str()
+            .expect("kind carries a description");
+        let declared: Vec<String> = kinds::keys_of("work").into_iter().map(|f| f.key).collect();
+        for key in ["status", "owner", "depends_on", "waiting_on"] {
+            assert!(
+                declared.iter().any(|d| d == key),
+                "the engine no longer declares `{key}` on a piece of work"
+            );
+            assert!(
+                kind.contains(&format!("`{key}`")),
+                "the kind description does not name the work key `{key}`"
+            );
+        }
+        assert!(
+            kind.contains(&format!("`{}`", kinds::COLUMNS)),
+            "the kind description does not name the key a project lists its columns under"
+        );
+    }
 
     /// **A `boot` token jojobot does not know is a client error, never a silent
     /// default.**

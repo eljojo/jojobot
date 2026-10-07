@@ -327,10 +327,6 @@ These are the operator's decisions and the operator's data. This procedure
 is only how you offer a rhythm and how you close it.
 "#;
 
-// PLACEHOLDER — the work-keys tip. Card 1984 ships the keys for a piece of work
-// (status columns, owner, depends_on, waiting_on). The tip naming them goes in
-// this body, as a section after "An open question", once that commit is on
-// main. Until then the skill names no key the engine does not yet declare.
 const PROJECTS: &str = r#"# projects
 
 **A project's work is dates that move, decisions made in a room, questions
@@ -387,10 +383,39 @@ read of that key:
 
     recall  fields: [{"key": "state", "value": "drafted"}]  facts: true
 
+## Where a piece of work stands
+
+A piece of work is a `work` thing filed under its project. Four keys say where
+it stands. Write them on the work as keys. A sentence cannot answer "what is
+next".
+
+`status` is where the work stands. It takes one of five words: `someday`,
+`next`, `now`, `waiting` or `done`. A word outside the five is refused, and the
+refusal names them. `owner` is the handle of the person who does the work.
+`waiting_on` is the handle of the person whose move it is. `depends_on` lists
+the handles of the work that must come first, separated by commas.
+
+    capture  subject: "work:sigma"  fields: {"status": "waiting", "waiting_on": "person:lisa", "depends_on": "work:phi, work:first-mix"}
+
+A project may add statuses of its own. Write the whole list on the project, in
+the order you want it, under `columns`. The work filed under that project may
+then take any word on the list. A word outside the list is refused, and the
+refusal names the list.
+
+    capture  subject: "project:atlas"  fields: {"columns": "inbox, someday, next, now, waiting, done"}
+
+Each question is then a read of one key. The first read lists what is next. The
+second lists what waits on someone, and on whom. The third lists what stands on
+the work named in `subject`.
+
+    recall  kind: "work"  fields: [{"key": "status", "value": "next"}]
+    recall  kind: "work"  fields: [{"key": "waiting_on"}]
+    recall  subject: "work:phi"  follow: {"relation": "depends_on", "direction": "in"}
+
 ## A retrospective
 
 A retrospective is a history read. A long read is cut: a key's history comes
-back with its newest twenty writes and says how many it left out. Raise
+back cut to its newest writes, and says how many it left out. Raise
 `history_most` before you conclude anything from it.
 
     recall  subject: "project:atlas"  history: "health"  history_most: 100
@@ -697,12 +722,22 @@ mod tests {
         "answered",
         "asked",
         "blocks",
+        "columns",
+        "depends_on",
+        "done",
         "drafted",
+        "next",
+        "now",
+        "owner",
         "promise",
         "promised_by",
         "regarding",
         "rhythms",
+        "someday",
         "state",
+        "waiting",
+        "waiting_on",
+        "work",
     ];
 
     /// **Every argument the procedure names is one the surface publishes.**
@@ -765,6 +800,38 @@ mod tests {
                  is not on NOT_ARGUMENTS as a key or a value"
             );
         }
+    }
+
+    /// **The projects procedure names the keys the engine declares on a piece of
+    /// work, the five words its status takes and the key a project lists its own
+    /// columns under.** All of it is read off the declaration, so a key renamed
+    /// there reddens this case instead of leaving a tip that sends a session to
+    /// a key nobody reads. A key counts as named only in backticks.
+    #[test]
+    fn the_projects_procedure_names_the_work_keys_and_statuses_the_engine_declares() {
+        use jojobot_domain::memory::kinds;
+        let text = body("projects");
+        let declared: Vec<String> = kinds::keys_of("work").into_iter().map(|f| f.key).collect();
+        for key in ["status", "owner", "waiting_on", "depends_on"] {
+            assert!(
+                declared.iter().any(|d| d == key),
+                "the engine no longer declares `{key}` on a piece of work"
+            );
+            assert!(
+                text.contains(&format!("`{key}`")),
+                "the projects procedure does not name the work key `{key}`"
+            );
+        }
+        for status in kinds::WORK_STATUSES {
+            assert!(
+                text.contains(&format!("`{status}`")),
+                "the projects procedure does not name the status `{status}`"
+            );
+        }
+        assert!(
+            text.contains(&format!("`{}`", kinds::COLUMNS)),
+            "the projects procedure does not name the key a project lists its columns under"
+        );
     }
 
     /// **The index says what the skill is for in words a session can compare
