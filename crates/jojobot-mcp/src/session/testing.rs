@@ -360,6 +360,80 @@ impl Sessions for RefusingFocus {
     }
 }
 
+/// **A session store that cannot clear a wrap window** while everything else
+/// works — the failure that leaves a window standing after a newer run began.
+pub(crate) struct RefusingWindowClear(pub(crate) InMemorySessions);
+
+#[async_trait]
+impl Sessions for RefusingWindowClear {
+    async fn sessions_of(&self, bot: &EntityId) -> Result<Vec<Session>, SessionError> {
+        self.0.sessions_of(bot).await
+    }
+    async fn all_sessions(&self) -> Result<Vec<Session>, SessionError> {
+        self.0.all_sessions().await
+    }
+    async fn read_session(&self, id: &SessionId) -> Result<Session, SessionError> {
+        self.0.read_session(id).await
+    }
+    async fn begin(&self, new: NewSession) -> Result<Session, SessionError> {
+        self.0.begin(new).await
+    }
+    async fn append(&self, id: &SessionId, entry: NewEntry) -> Result<JournalEntry, SessionError> {
+        self.0.append(id, entry).await
+    }
+    async fn amend_last(&self, id: &SessionId, text: &str) -> Result<JournalEntry, SessionError> {
+        self.0.amend_last(id, text).await
+    }
+    async fn amend_beat(
+        &self,
+        id: &SessionId,
+        entry: &EntryId,
+        text: &str,
+        touched: jiff::Timestamp,
+    ) -> Result<JournalEntry, SessionError> {
+        self.0.amend_beat(id, entry, text, touched).await
+    }
+    async fn set_focus(&self, id: &SessionId, focus: &str) -> Result<Session, SessionError> {
+        self.0.set_focus(id, focus).await
+    }
+    async fn set_timezone(
+        &self,
+        id: &SessionId,
+        timezone: Option<&str>,
+    ) -> Result<Session, SessionError> {
+        self.0.set_timezone(id, timezone).await
+    }
+    async fn set_stated_day(
+        &self,
+        id: &SessionId,
+        day: Option<jiff::civil::Date>,
+    ) -> Result<Session, SessionError> {
+        self.0.set_stated_day(id, day).await
+    }
+
+    async fn set_wrap_window(
+        &self,
+        id: &SessionId,
+        window: Option<WrapWindow>,
+    ) -> Result<Session, SessionError> {
+        if window.is_none() {
+            return Err(SessionError::Store(
+                "the window cell on the page could not be cleared".into(),
+            ));
+        }
+        self.0.set_wrap_window(id, window).await
+    }
+    async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
+        self.0.close(id, to).await
+    }
+    async fn add_served(&self, id: &SessionId, chars: u64) -> Result<(), SessionError> {
+        self.0.add_served(id, chars).await
+    }
+    async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
+        self.0.reopen(id).await
+    }
+}
+
 /// **A session store whose `append` fails** — the earlier half of a journal
 /// call, and the one whose failure cannot say whether the write landed.
 pub(crate) struct RefusingAppend(pub(crate) InMemorySessions);

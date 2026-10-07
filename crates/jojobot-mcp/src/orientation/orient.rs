@@ -398,13 +398,20 @@ impl Jojobot {
         // names none.** An explicit `claim` always wins, and a bot with no key
         // boots exactly as it did. The claim that follows is the ordinary one,
         // so a refusal is said at the door the same way.
+        //
+        // **A wrap code takes no role.** It reopens a wrapped run for one last
+        // change, so neither the named claim nor the bot's own is decided.
+        let by_wrap_code = resume.is_some_and(jojobot_domain::session::is_wrap_code);
+        let claim = claim.filter(|_| !by_wrap_code);
         let carried_role: Option<String> = match (claim, bot) {
-            (None, Some(bot)) => self.memory.fields(bot).await.ok().and_then(|fields| {
-                fields
-                    .get(jojobot_domain::memory::CLAIMS_ROLE)
-                    .map(|role| role.trim().to_string())
-                    .filter(|role| !role.is_empty())
-            }),
+            (None, Some(bot)) if !by_wrap_code => {
+                self.memory.fields(bot).await.ok().and_then(|fields| {
+                    fields
+                        .get(jojobot_domain::memory::CLAIMS_ROLE)
+                        .map(|role| role.trim().to_string())
+                        .filter(|role| !role.is_empty())
+                })
+            }
             _ => None,
         };
         let claimed_by_the_bot = carried_role.is_some();

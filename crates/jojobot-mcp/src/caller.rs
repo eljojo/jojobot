@@ -444,6 +444,9 @@ impl Jojobot {
             .map_err(session_error)?;
         // The registry learns the card here — this is the moment one exists.
         self.registry.attach_card(&caller.sid, begun.id.clone());
+        // **A newer run of the bot has started**, which ends the wrap window of
+        // every run of it that wrapped before.
+        self.end_wrap_windows(&caller.bot).await;
         Ok(begun.id)
     }
 }

@@ -25,6 +25,7 @@
 * **Wrapping happens from inside, by the bot, on the operator's instruction.** Starting a session never wraps another — **but it does ABANDON that bot's other live runs.** One worker runs one line at a time, and a run nobody is in should not go on looking live at the next boot. **Abandoning is the safe half of that: it walks back, and wrapping does not.**
 * **A wrap folds the session's unfinished focus into its closing story, as ONE entry** — both things said, in one place, rather than a closing note and a dangling focus line that read as two events.
 * **Terminal is asymmetric: a wrapped session never reopens.** Only an abandoned one walks back to active.
+* **A wrap hands back a one-time code for a last change.** Resuming with it lets the wrapped run write again while it stays wrapped, until it wraps a second time or a newer run of the bot starts. Its first story stands, and the second wrap adds a closing entry beside it.
 * **Abandoned means it was not wrapped up** — it is not a failure state, and resuming the most recent one always works unless it is stale.
 * **A run that has gone quiet is swept to abandoned, and the sweep decides in the CALLER'S day rather than on a clock.** A run acting out a stretch of time says which day it is in, and without that every one of its own sittings would still look like it is working — so each later boot would meet a resume offer for a run that is long over.
 

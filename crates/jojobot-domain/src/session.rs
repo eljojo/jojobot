@@ -224,6 +224,15 @@ pub enum WrapWindow {
 /// refused in its own words rather than as a handle nobody holds.
 pub const WRAP_CODE_PREFIX: &str = "wc-";
 
+/// How many characters follow the prefix on a drawn wrap code.
+const WRAP_CODE_DRAWN: usize = 12;
+
+/// **Draw a wrap code**: the prefix and twelve characters of OS entropy. It is
+/// server-minted, opaque, and never the sid of the run it reopens.
+pub fn mint_wrap_code() -> String {
+    format!("{WRAP_CODE_PREFIX}{}", crate::handle::draw(WRAP_CODE_DRAWN))
+}
+
 /// Whether a `resume` answer is a wrap code rather than a handle.
 pub fn is_wrap_code(answer: &str) -> bool {
     answer.starts_with(WRAP_CODE_PREFIX)

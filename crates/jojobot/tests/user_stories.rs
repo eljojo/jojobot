@@ -147,3 +147,6 @@ mod views;
 mod vocabulary;
 #[path = "user_stories/whats_next.rs"]
 mod whats_next;
+/// A wrap hands back a code that reopens the run for one last change.
+#[path = "user_stories/wrap_code.rs"]
+mod wrap_code;

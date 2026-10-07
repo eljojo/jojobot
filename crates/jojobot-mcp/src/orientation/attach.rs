@@ -67,6 +67,15 @@ impl Jojobot {
         // the mutex is not reentrant.
         let gate = self.registry.gate(bot.as_str());
         let _serialized = gate.lock().await;
+        // **A wrap code is its own route and runs BEFORE the sweep.** It
+        // reopens one wrapped run for one last change, so it abandons no other
+        // run of the bot and mints no handle: the sweep is for a boot that
+        // starts or resumes a live run.
+        if let Some(answer) = resume
+            && jojobot_domain::session::is_wrap_code(answer)
+        {
+            return self.resume_by_wrap_code(bot, answer).await;
+        }
         // The clock is read HERE and handed down: the sweep is domain policy
         // and the domain is clock-free, so the instant it decides against is
         // stamped at the edge exactly as a capture's date is.
@@ -113,6 +122,7 @@ impl Jojobot {
             // ── the caller answered the offer ───────────────────────────────
             Some(answer) if answer.eq_ignore_ascii_case(sid::NEW) => {
                 let handle = self.mint_or_say_why(bot, None)?;
+                self.end_wrap_windows(bot).await;
                 self.registry
                     .set_zone(&handle, timezone.map(str::to_string));
                 self.registry.set_day(&handle, today);
@@ -196,6 +206,7 @@ impl Jojobot {
             // ── a first boot: the two branches ──────────────────────────────
             None if live.is_empty() && offerable.is_none() => {
                 let handle = self.mint_or_say_why(bot, None)?;
+                self.end_wrap_windows(bot).await;
                 self.registry
                     .set_zone(&handle, timezone.map(str::to_string));
                 self.registry.set_day(&handle, today);
@@ -363,6 +374,110 @@ impl Jojobot {
                          the decision is made in that frame instead.",
             }),
         }
+    }
+
+    /// **End every wrap window this bot has open, because a newer run of it is
+    /// starting.** A window is for one last change to the run that wrapped, and
+    /// a run that starts after it is the work that came next. Best-effort: a
+    /// store that cannot clear one leaves it for the use of its code, which
+    /// checks for a newer run itself.
+    pub(crate) async fn end_wrap_windows(&self, bot: &EntityId) {
+        let runs = match self.sessions.sessions_of(bot).await {
+            Ok(runs) => runs,
+            Err(e) => {
+                tracing::warn!(error = %e, %bot, "could not read the runs to end their windows");
+                return;
+            }
+        };
+        for run in runs.iter().filter(|run| run.wrap_window.is_some()) {
+            if let Err(e) = self.sessions.set_wrap_window(&run.id, None).await {
+                tracing::warn!(error = %e, run = %run.id, "a wrap window could not be ended");
+            }
+        }
+    }
+
+    /// **Answer a `resume` that is a wrap code.**
+    ///
+    /// The code names one wrapped run of this bot whose window is still there.
+    /// Using it opens the window and hands back that run's own sid, with the
+    /// run still `wrapped`. It starts no run, abandons no run, takes no role
+    /// and renews no lease. A code with no window behind it, or one whose run
+    /// a newer run has since followed, is refused with the way to a fresh run.
+    async fn resume_by_wrap_code(
+        &self,
+        bot: &EntityId,
+        code: &str,
+    ) -> Result<serde_json::Value, CallToolResult> {
+        let spent = |why: &str| {
+            handle_declined(
+                code,
+                format!(
+                    "{why} Nothing was reopened and nothing was written. To start a fresh run, \
+                     call start_here with bot set to {} and no resume.",
+                    bot.as_str()
+                ),
+            )
+        };
+        let runs = match self.sessions.sessions_of(bot).await {
+            Ok(runs) => runs,
+            Err(e) => {
+                tracing::warn!(error = %e, %bot, "the session world is not reachable");
+                return Ok(serde_json::json!({
+                    "available": false,
+                    "note": "the session world is not reachable right now, so jojobot cannot \
+                             say whether this code still reopens a run. Nothing was written.",
+                }));
+            }
+        };
+        let Some(wrapped) = runs.iter().find(|run| {
+            run.state == SessionState::Wrapped
+                && run.wrap_window.as_ref().is_some_and(|w| w.code() == code)
+        }) else {
+            return Err(spent(
+                "That code is spent or unknown: its run was wrapped a second time, or a newer \
+                 run of this bot started, or it was never handed out.",
+            ));
+        };
+        // **A newer run ends the window even when nothing cleared it.** The
+        // clear is best-effort, so the use of the code decides for itself.
+        if runs
+            .iter()
+            .any(|run| run.id != wrapped.id && run.started_at > wrapped.started_at)
+        {
+            self.end_wrap_windows(bot).await;
+            return Err(spent(
+                "A newer run of this bot has started, which ends the window for the run that \
+                 wrapped.",
+            ));
+        }
+        let opened = match &wrapped.wrap_window {
+            Some(jojobot_domain::session::WrapWindow::Open(_)) => wrapped.clone(),
+            _ => match self
+                .sessions
+                .set_wrap_window(
+                    &wrapped.id,
+                    Some(jojobot_domain::session::WrapWindow::Open(code.to_string())),
+                )
+                .await
+            {
+                Ok(opened) => opened,
+                Err(e) => {
+                    tracing::warn!(error = %e, run = %wrapped.id, "a wrap window could not be opened");
+                    return Err(spent("The window could not be opened just now."));
+                }
+            },
+        };
+        let handle = self.handle_for(bot, &opened.id)?;
+        Ok(serde_json::json!({
+            "available": true,
+            "sid": handle.as_str(),
+            "resumed": true,
+            "session": session_json(&opened),
+            "note": "this run is wrapped and takes writes once more, for one last change. It \
+                     stays wrapped. The window ends when you wrap it a second time, which adds \
+                     a second closing entry beside the first, or when a newer run of this bot \
+                     starts. No role was taken and no lease was renewed.",
+        }))
     }
 
     /// The block for a session with no card behind it yet — a first boot, or
@@ -1858,6 +1973,155 @@ mod tests {
         assert!(
             note.to_lowercase().contains("no stated day") && note.to_lowercase().contains("clock"),
             "{note}"
+        );
+    }
+
+    /// **A wrapped run for the cases below, with its window offered**, built
+    /// below the surface: the run, its code, and the sid the registry addresses
+    /// it by.
+    async fn wrapped_with_a_code(
+        store: &InMemorySessions,
+        hours_ago: i64,
+        sid: &str,
+    ) -> (jojobot_domain::session::Session, String) {
+        let run = store
+            .begin(NewSession {
+                timezone: None,
+                bot: EntityId("bot:gamma".into()),
+                sid: Sid(sid.into()),
+                focus: "the run that wrapped".into(),
+                started_at: jiff::Timestamp::now() - jiff::SignedDuration::from_hours(hours_ago),
+                started_on: None,
+            })
+            .await
+            .expect("begin ok");
+        store
+            .close(&run.id, jojobot_domain::session::SessionState::Wrapped)
+            .await
+            .expect("wrap ok");
+        let code = jojobot_domain::session::mint_wrap_code();
+        let offered = store
+            .set_wrap_window(
+                &run.id,
+                Some(jojobot_domain::session::WrapWindow::Offered(code.clone())),
+            )
+            .await
+            .expect("offered");
+        (offered, code)
+    }
+
+    /// **Using a wrap code abandons no other run, takes no role and sweeps
+    /// nothing.** A live run of the bot that is stale enough for the sweep is
+    /// still active afterwards, which it would not be if the code went through
+    /// the ordinary boot. A claim sent beside the code is not decided: the
+    /// answer carries none, and no holder is written. Paired with the same
+    /// boot WITHOUT the code, which sweeps the stale run: the sweep is real, so
+    /// its absence above is the code's doing.
+    #[tokio::test]
+    async fn a_wrap_code_sweeps_nothing_and_takes_no_role() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma").await;
+        let stale = store
+            .begin(NewSession {
+                timezone: None,
+                bot: EntityId("bot:gamma".into()),
+                sid: Sid("t001".into()),
+                focus: "left open two days ago".into(),
+                started_at: jiff::Timestamp::now() - jiff::SignedDuration::from_hours(48),
+                started_on: None,
+            })
+            .await
+            .expect("begin ok");
+        let (wrapped, code) = wrapped_with_a_code(&store, 1, "t002").await;
+
+        let opened = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    claim: Some("dev-dispatch".into()),
+                    timezone: None,
+                    today: None,
+                    bot: Some("gamma".into()),
+                    brief: None,
+                    skill: None,
+                    section: None,
+                    resume: Some(code.clone()),
+                    sid: None,
+                }))
+                .await
+                .expect("start_here ok"),
+        );
+        assert_eq!(opened["session"]["resumed"], true, "{opened}");
+        assert_eq!(opened["session"]["session"]["state"], "wrapped", "{opened}");
+        assert!(
+            opened["session"].get("claim").is_none(),
+            "a claim sent beside a wrap code is not decided: {opened}"
+        );
+        assert!(
+            opened["session"].get("swept").is_none(),
+            "a wrap code sweeps nothing: {opened}"
+        );
+        let fields = jojobot
+            .memory
+            .fields(&EntityId("bot:gamma".into()))
+            .await
+            .expect("fields ok");
+        assert!(
+            !fields.contains_key("role/dev-dispatch/holder"),
+            "no role was taken: {fields:?}"
+        );
+        assert_eq!(
+            store.read_session(&stale.id).await.expect("read ok").state,
+            jojobot_domain::session::SessionState::Active,
+            "the stale live run was left alone"
+        );
+        let after = store.read_session(&wrapped.id).await.expect("read ok");
+        assert_eq!(after.state, jojobot_domain::session::SessionState::Wrapped);
+        assert!(
+            after.wrap_window.as_ref().is_some_and(|w| w.is_open()),
+            "the window is open: {after:?}"
+        );
+
+        // The paired boot, with no code: the sweep takes the stale run.
+        let ordinary = boot(&jojobot, "gamma").await;
+        assert_eq!(
+            ordinary["session"]["swept"],
+            serde_json::json!([stale.id.as_str()]),
+            "without the code the same boot sweeps the stale run: {ordinary}"
+        );
+    }
+
+    /// **A newer run ends the window even when the store could not clear it.**
+    /// The clear is best-effort, so using the code checks for a newer run
+    /// itself. The store here refuses to clear a window; the newer run exists;
+    /// the code is refused anyway, with the route to a fresh run.
+    #[tokio::test]
+    async fn a_code_is_refused_when_a_newer_run_exists_even_if_its_window_could_not_be_cleared() {
+        let store = Arc::new(RefusingWindowClear(InMemorySessions::new()));
+        let (jojobot, _memory) = with_sessions_port_and_memory(store.clone());
+        make_bot(&jojobot, "gamma").await;
+        let (_, code) = wrapped_with_a_code(&store.0, 5, "t003").await;
+        store
+            .0
+            .begin(NewSession {
+                timezone: None,
+                bot: EntityId("bot:gamma".into()),
+                sid: Sid("t004".into()),
+                focus: "the newer run".into(),
+                started_at: jiff::Timestamp::now(),
+                started_on: None,
+            })
+            .await
+            .expect("begin ok");
+
+        let refused = boot_answering(&jojobot, "gamma", &code).await;
+        assert_eq!(refused["status"], "blocked", "{refused}");
+        assert!(
+            refused["how_to_proceed"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("start_here"),
+            "the refusal names the way to a fresh run: {refused}"
         );
     }
 

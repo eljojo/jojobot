@@ -48,7 +48,13 @@ impl Jojobot {
                        `entries_omitted` says how much is not here. Nothing was dropped from the \
                        record — what was written is stored whole. THE FOCUS AS IT STOOD AT THE \
                        CLOSE rides on the closing entry as `closing_focus`, beside the story \
-                       rather than inside its text; every other entry carries it as null."
+                       rather than inside its text; every other entry carries it as null. \
+                       THE FIRST WRAP ALSO HANDS BACK A `wrap_code`: calling start_here with \
+                       that code as its resume answer hands this run's own sid back for one \
+                       last change, while the run stays wrapped. The window ends when you wrap \
+                       a second time, which adds a second closing entry beside the first and \
+                       mints no code, or when a newer run of the bot starts. Until then a later \
+                       journal/amend_journal/wrap_session on that id is blocked, as above."
     )]
     pub(crate) async fn wrap_session(
         &self,
@@ -87,13 +93,20 @@ impl Jojobot {
         //
         // Read before the guard below, so the retry looks for the story alone
         // — which is now the whole of what a retry could have written twice.
-        let focus = match self.sessions.read_session(&session).await {
-            Ok(read) => jojobot_domain::session::normalize_entry(&read.focus),
+        let before = self.sessions.read_session(&session).await.ok();
+        let focus = match &before {
+            Some(read) => jojobot_domain::session::normalize_entry(&read.focus),
             // Unreadable is not "no focus", but the append below fails in that
             // verb's own words; guessing an empty one here only risks losing a
             // line, never duplicating the story.
-            Err(_) => String::new(),
+            None => String::new(),
         };
+        // **A wrap on a run whose window is open is the SECOND wrap**: it adds
+        // its closing entry beside the first and ends the window. It mints no
+        // code, because the one the first wrap handed back is spent by it.
+        let second_wrap = before
+            .as_ref()
+            .is_some_and(|read| read.state == SessionState::Wrapped && read.takes_writes());
         // **A focus DERIVED from this same story carries nothing new.** A
         // wrap that is the session's first write creates the card with a
         // focus made out of the story itself (`display_line`), so keeping it
@@ -156,10 +169,44 @@ impl Jojobot {
         //
         // A bot that wraps and keeps working boots again for a fresh handle,
         // which is the rotation the description names.
-        json_result(&serde_json::json!({
+        let mut receipt = serde_json::json!({
             "session": session_json(&wrapped),
             "entry": entry_receipt_json(&entry),
-        }))
+        });
+        // **The first wrap hands back the code that reopens this run for one
+        // last change.** Best-effort: the wrap has landed, and a store that
+        // cannot keep the window costs the caller the code, not the wrap.
+        if !second_wrap {
+            let code = jojobot_domain::session::mint_wrap_code();
+            match self
+                .sessions
+                .set_wrap_window(
+                    &session,
+                    Some(jojobot_domain::session::WrapWindow::Offered(code.clone())),
+                )
+                .await
+            {
+                Ok(_) => {
+                    if let Some(obj) = receipt.as_object_mut() {
+                        obj.insert("wrap_code".into(), code.into());
+                        obj.insert(
+                            "reopen".into(),
+                            "To make one last change to this run, call start_here with bot set \
+                             to this bot and resume set to the wrap_code. The run stays wrapped. \
+                             The code works until this run is wrapped a second time or a newer \
+                             run of this bot starts."
+                                .into(),
+                        );
+                    }
+                }
+                Err(e) => tracing::warn!(
+                    error = %e, %session,
+                    "a wrapped run's window could not be stored — the wrap landed and the \
+                     caller was handed no code"
+                ),
+            }
+        }
+        json_result(&receipt)
     }
 }
 

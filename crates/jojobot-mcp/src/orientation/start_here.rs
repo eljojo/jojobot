@@ -22,6 +22,10 @@ pub struct OrientArgs {
     /// has a session worth picking up: the `sid` of the one you are resuming,
     /// exactly as the offer spelled it, or `new` for a fresh session. Leave it
     /// off on a first boot — there is nothing to answer yet.
+    ///
+    /// **Or the `wrap_code` a wrap handed back**, with `bot`: it hands the
+    /// wrapped run's own sid back so that run can take one last change. The run
+    /// stays wrapped. No role is taken, nothing is swept and no lease renews.
     #[serde(default)]
     pub(crate) resume: Option<String>,
     /// **A skill to read, by the name the index gave it.** The boot lists every
