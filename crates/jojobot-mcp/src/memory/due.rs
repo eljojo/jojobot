@@ -154,6 +154,7 @@ impl Jojobot {
             Ok(fields) => fields,
             Err(_) => return (attention::DueMove::Unchanged, false),
         };
+        let held = projected.clone();
         let existing_due_on = projected
             .get(attention::DUE_ON)
             .and_then(|v| v.trim().parse().ok());
@@ -162,9 +163,47 @@ impl Jojobot {
         }
         projected.extend(incoming.iter().map(|(k, v)| (k.clone(), v.clone())));
         (
-            attention::moved_due_moment_as(&kind, &carriers, existing_due_on, &projected),
+            attention::moved_due_moment_as(&kind, &carriers, existing_due_on, &held, &projected),
             attention::due_is_derived(&carriers, &projected),
         )
+    }
+
+    /// **Take the stored due moment off a thing, through the edit path's own
+    /// `clear_fields`**, on the active record that carries it.
+    ///
+    /// A clear is scoped to the record it addresses, and a capture's own record
+    /// does not carry the key, so the clear goes to the record that does. A fold
+    /// keeps the newest write of a key and a clear is a write, so the moment is
+    /// off the thing from this one on while every earlier write of it stays
+    /// readable. **It never fails the capture that asked for it**: the capture
+    /// has landed, and this is jojobot's own bookkeeping riding along on
+    /// somebody else's write, as `moved_due_moment` is. A failure is logged.
+    pub(crate) async fn clear_stored_due_moment(&self, subject: &EntityId, bot: &EntityId) {
+        let carrier = match self.memory.recall(subject).await {
+            Ok(facts) => facts.into_iter().find(|fact| {
+                fact.status == FactStatus::Active && fact.fields.contains_key(attention::DUE_ON)
+            }),
+            Err(e) => {
+                tracing::warn!(error = %e, %subject, "the stored due moment could not be found");
+                return;
+            }
+        };
+        let Some(carrier) = carrier else { return };
+        let patch = FactPatch {
+            clear_fields: vec![attention::DUE_ON.to_string()],
+            ..Default::default()
+        };
+        if let Err(e) = self
+            .memory
+            .update_fact(&carrier.address(), patch, bot)
+            .await
+        {
+            tracing::warn!(
+                error = %e,
+                address = %carrier.address(),
+                "the stored due moment could not be taken off a finished thing",
+            );
+        }
     }
 
     /// **The refusal for a caller that writes or clears the stored due moment.**

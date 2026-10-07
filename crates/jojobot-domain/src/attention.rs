@@ -867,11 +867,14 @@ pub fn moved_due_moment(
 
 /// **[`moved_due_moment`], for a thing of this kind.** A finished work item or
 /// project owes nothing, so its stored moment is taken off when it holds one
-/// and put back by the write that moves it out of `done`.
+/// and put back by the write that moves it out of `done`. A write that finishes
+/// nothing takes a stored moment off only when a carrier answered for the thing
+/// before the write (`held`).
 pub fn moved_due_moment_as(
     kind: &str,
     carriers: &[&dyn Carrier],
     existing: Option<Date>,
+    held: &BTreeMap<String, String>,
     projected: &BTreeMap<String, String>,
 ) -> DueMove {
     if crate::memory::kinds::is_finished(kind, projected) {
@@ -880,7 +883,21 @@ pub fn moved_due_moment_as(
             None => DueMove::Unchanged,
         };
     }
-    moved_due_moment(carriers, existing, projected)
+    match moved_due_moment(carriers, existing, projected) {
+        // **A stored moment is cleared here only when a carrier used to answer
+        // for it.** `held` is the thing as it stood before the write. With no
+        // carrier answering then, the date is a leftover of a write the old code
+        // allowed, nothing derived it, and a write that finishes nothing has no
+        // reason to erase it.
+        DueMove::Cleared
+            if !carriers
+                .iter()
+                .any(|c| c.interface().matched_by(held).is_some()) =>
+        {
+            DueMove::Unchanged
+        }
+        moved => moved,
+    }
 }
 
 /// **What a write leaves behind when it clears part of a rhythm's
@@ -1787,16 +1804,81 @@ mod tests {
         );
 
         assert_eq!(
-            moved_due_moment_as("work", &asked, Some(date(2026, 1, 1)), &held("done")),
+            moved_due_moment_as(
+                "work",
+                &asked,
+                Some(date(2026, 1, 1)),
+                &held("now"),
+                &held("done"),
+            ),
             DueMove::Cleared,
         );
         assert_eq!(
-            moved_due_moment_as("work", &asked, None, &held("now")),
+            moved_due_moment_as("work", &asked, None, &held("now"), &held("now")),
             DueMove::Set(date(2026, 1, 1)),
         );
         assert_eq!(
-            moved_due_moment_as("thing", &asked, Some(date(2026, 1, 1)), &held("done")),
+            moved_due_moment_as(
+                "thing",
+                &asked,
+                Some(date(2026, 1, 1)),
+                &held("now"),
+                &held("done"),
+            ),
             DueMove::Unchanged,
+        );
+    }
+
+    /// **A leftover stored moment is cleared only when finishing or when a
+    /// carrier used to answer.** A work item holding a `due_on` that no key
+    /// derives, from a write the old code allowed, keeps it through a status
+    /// write that does not finish it. The same write clears it when it finishes
+    /// the work, and clears it when the key it came from is taken off in the
+    /// same write.
+    #[test]
+    fn a_leftover_due_moment_is_cleared_only_when_finishing_or_a_carrier_used_to_answer() {
+        let carriers: Vec<Box<dyn Carrier>> = shipped();
+        let asked: Vec<&dyn Carrier> = carriers.iter().map(AsRef::as_ref).collect();
+        let fields = |pairs: &[(&str, &str)]| -> BTreeMap<String, String> {
+            pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect()
+        };
+        let leftover = Some(date(2026, 6, 1));
+
+        assert_eq!(
+            moved_due_moment_as(
+                "work",
+                &asked,
+                leftover,
+                &fields(&[("status", "now")]),
+                &fields(&[("status", "next")]),
+            ),
+            DueMove::Unchanged,
+            "no carrier answered before or after, so the date was never jojobot's to clear",
+        );
+        assert_eq!(
+            moved_due_moment_as(
+                "work",
+                &asked,
+                leftover,
+                &fields(&[("status", "now")]),
+                &fields(&[("status", "done")]),
+            ),
+            DueMove::Cleared,
+            "finishing clears it whether or not a carrier answered",
+        );
+        assert_eq!(
+            moved_due_moment_as(
+                "work",
+                &asked,
+                leftover,
+                &fields(&[(DECIDE_BY, "2026-06-01"), ("status", "now")]),
+                &fields(&[("status", "now")]),
+            ),
+            DueMove::Cleared,
+            "a carrier answered before and no longer does, so the stored date is stale",
         );
     }
 

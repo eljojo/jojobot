@@ -335,6 +335,10 @@ async fn a_piece_of_work_that_is_done_is_no_longer_owed() {
         )
     };
     owed().await.says("work:phi");
+    // The moment the read above works from is stored on the work itself.
+    s.call("recall", json!({"subject": "work:phi"}))
+        .await
+        .says("\"due_on\":\"2026-01-01\"");
 
     s.event_with(
         "work:phi",
@@ -344,6 +348,12 @@ async fn a_piece_of_work_that_is_done_is_no_longer_owed() {
     )
     .await;
     owed().await.never_says("work:phi");
+    // And finishing the work takes the stored moment off it, whichever verb
+    // wrote the status.
+    s.call("recall", json!({"subject": "work:phi"}))
+        .await
+        .says("\"decide_by\":\"2026-01-01\"")
+        .never_says("\"due_on\"");
     // The day it was due is still on the record, so why it was due is not lost.
     s.call("recall", json!({"subject": "work:phi"}))
         .await

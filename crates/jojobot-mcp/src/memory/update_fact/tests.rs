@@ -2851,6 +2851,48 @@ async fn archiving_a_claim_does_not_list_every_entity_to_resolve_one_handle() {
     );
 }
 
+/// **A status write that does not finish a piece of work leaves a stored due
+/// moment no key derives.** The date is a leftover of a write the deployed code
+/// once allowed, and clearing it on a status move erased it without anybody
+/// asking. Finishing the work still clears it. The two writes are made on the
+/// same thing in turn, so the first cannot pass by the thing never holding the
+/// date.
+#[tokio::test]
+async fn a_status_write_that_is_not_finishing_leaves_a_leftover_due_moment() {
+    let memory = std::sync::Arc::new(InMemoryMemory::booted());
+    let jojobot = handler_over(memory.clone());
+    ensure(&jojobot, "work:phi").await;
+    memory.fields_past_the_guard(
+        &EntityId("work:phi".into()),
+        &[("due_on", "2026-06-01"), ("status", "now")],
+    );
+    let held = "work:phi#f1".to_string();
+    let status = |value: &str| UpdateFactArgs {
+        fields: Some(
+            [("status".to_string(), value.to_string())]
+                .into_iter()
+                .collect(),
+        ),
+        ..update_args(&held)
+    };
+
+    update_ok(&jojobot, status("next")).await;
+    let after_next = fields_of(&jojobot, "work:phi").await;
+    assert_eq!(after_next["status"], "next", "the status write landed");
+    assert_eq!(
+        after_next["due_on"], "2026-06-01",
+        "a status write that finishes nothing left the stored date alone",
+    );
+
+    update_ok(&jojobot, status("done")).await;
+    let after_done = fields_of(&jojobot, "work:phi").await;
+    assert_eq!(after_done["status"], "done");
+    assert!(
+        after_done.get("due_on").is_none(),
+        "finishing the work took the stored date off: {after_done:?}",
+    );
+}
+
 /// **A stored due moment no carrier key derives can be cleared.** The refusal
 /// tells a caller to clear the key the moment came from; a thing holding a
 /// `due_on` and no such key has nothing to clear, so refusing the clear would

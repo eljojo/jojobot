@@ -830,14 +830,11 @@ impl Jojobot {
         if let attention::DueMove::Set(due_on) = due_on_computed {
             fields.insert(attention::DUE_ON.to_string(), due_on.to_string());
         }
-        // A capture could in principle turn `Due::On` into something else —
-        // e.g. overwriting `cadence_days` with a value the schedule cannot
-        // read — while a `due_on` from before is still stored. But a
-        // capture can only ADD fields to a record: `NewFact` has no
-        // clear_fields of its own, so there is nothing this path can do
-        // with `DueMove::Cleared` yet. `update_fact`'s own clear path is
-        // where this slice wires `Cleared` up; this narrower gap is not
-        // what it was asked to close.
+        // **A capture can only ADD fields to a record**: `NewFact` has no
+        // clear_fields of its own. So when the write moves the thing out of owing
+        // anything, the stored moment is taken off by the same `clear_fields` an
+        // edit uses, on the record that carries it. See `clear_stored_due_moment`.
+        let clears_due_on = matches!(due_on_computed, attention::DueMove::Cleared);
         //
         // **jojobot's own arithmetic is jojobot's, whatever the caller said
         // about their claim.** A check-in computes the schedule keys, and
@@ -947,6 +944,10 @@ impl Jojobot {
         };
         match captured {
             Guarded::Written(fact) => {
+                if clears_due_on {
+                    self.clear_stored_due_moment(&fact.subject, &caller.bot)
+                        .await;
+                }
                 self.beat("capture", fact.subject.as_str(), args.sid.as_deref())
                     .await;
                 // **As of the day the RUN is asking about, never the day the
