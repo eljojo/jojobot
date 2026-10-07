@@ -201,6 +201,15 @@ impl Jojobot {
             &mut body,
             self.what_a_beat_left_standing(&session).await,
         );
+        if self
+            .first_contact(crate::teaching::SESSION_ID_DOMAIN, Some(&caller))
+            .await
+        {
+            crate::answer::note_teaching(
+                &mut body,
+                &crate::teaching::session_id_teaching(caller.sid.as_str(), session.as_str()),
+            );
+        }
         json_result(&body)
     }
 }

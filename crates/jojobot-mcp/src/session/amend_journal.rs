@@ -53,16 +53,31 @@ impl Jojobot {
         // to add nothing. A handle with no card behind it is told exactly that,
         // rather than "no such session" — the handle is real, the run simply has
         // not started writing.
-        let Some(session) = caller.card else {
+        let Some(session) = caller.card.clone() else {
             return Ok(session_nothing_to_amend());
         };
         // The guard exists to be held across the amend, not merely taken.
         let _ = &_serialized;
         match self.sessions.amend_last(&session, &args.entry).await {
-            Ok(entry) => json_result(&serde_json::json!({
-                "session": session.as_str(),
-                "entry": entry_receipt_json(&entry),
-            })),
+            Ok(entry) => {
+                let mut body = serde_json::json!({
+                    "session": session.as_str(),
+                    "entry": entry_receipt_json(&entry),
+                });
+                if self
+                    .first_contact(crate::teaching::SESSION_ID_DOMAIN, Some(&caller))
+                    .await
+                {
+                    crate::answer::note_teaching(
+                        &mut body,
+                        &crate::teaching::session_id_teaching(
+                            caller.sid.as_str(),
+                            session.as_str(),
+                        ),
+                    );
+                }
+                json_result(&body)
+            }
             Err(e) => session_declined(e, caller.sid.as_str()),
         }
     }

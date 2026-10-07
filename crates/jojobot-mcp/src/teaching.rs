@@ -191,6 +191,24 @@ pub(crate) const CHECK_IN_DATE_TEACHING: &str = "A check-in's schedule is dated 
     named both, for different days: to record a turn that happened on an earlier day, send that \
     day as recorded_at.";
 
+/// **The domain of the sentence that says a session's two ids are one run.**
+/// Spent by the first journal or amend receipt a session gets, whichever
+/// comes first. A receipt names the stored run as `session` while every call
+/// carries the `sid`, and a caller who reads two ids cannot tell which one a
+/// handover should quote.
+pub(crate) const SESSION_ID_DOMAIN: &str = "session-id";
+
+/// **The sentence for [`SESSION_ID_DOMAIN`]**, naming the two real values so a
+/// caller sees its own ids reflected back and has nothing to work out. The
+/// `sid` is the one a resume offer lists and the one every call takes.
+pub(crate) fn session_id_teaching(sid: &str, session: &str) -> String {
+    format!(
+        "Your `sid` {sid} and the `session` {session} in this answer are one run. `session` is \
+         the stored record of the run that `sid` addresses. Quote the `sid`: it is what every \
+         call takes and what a later boot offers when it asks you to resume."
+    )
+}
+
 /// **A field key that shadows one of the same verb's own arguments** — a
 /// caller who meant `update_fact` with `status: archived` and instead sent
 /// `fields: {status: "archived"}` has written data, not the write they meant.
@@ -1798,6 +1816,94 @@ mod tests {
                     .is_some_and(|s| s.contains("is stored as ordinary data"))))
                 .unwrap_or(false),
             "a field naming nothing either verb takes as an argument teaches nothing: {plain}"
+        );
+    }
+
+    /// **The two ids a session meets are one run, and the first beat says so.**
+    /// A boot hands back a `sid` and a journal receipt names a `session`, and
+    /// nothing said they are the same run or which one to quote. The first
+    /// receipt of a session names BOTH real values and says which to quote;
+    /// the second beat of that session, and an amendment after it, carry
+    /// nothing; a fresh session is told again. Sent through the verbs a caller
+    /// uses, and read against the values the boot and the receipt actually
+    /// returned.
+    #[tokio::test]
+    async fn the_first_beat_says_the_sid_and_the_session_are_one_run() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+
+        let first =
+            crate::session::testing::journal_entry(&jojobot, &sid, "set out to build").await;
+        let session = first["session"]
+            .as_str()
+            .unwrap_or_else(|| panic!("a receipt naming its session: {first}"))
+            .to_string();
+        assert_ne!(
+            session, sid,
+            "the case rests on the two ids being different strings"
+        );
+        let told = |body: &serde_json::Value| -> bool {
+            body["teaching"]
+                .as_array()
+                .map(|teaching| {
+                    teaching.iter().any(|t| {
+                        t.as_str()
+                            .is_some_and(|t| t.contains(&sid) && t.contains(&session))
+                    })
+                })
+                .unwrap_or(false)
+        };
+        assert!(
+            told(&first),
+            "the first receipt names the sid and the session and says they are one run: {first}"
+        );
+
+        for line in first["teaching"].as_array().into_iter().flatten() {
+            let line = line.as_str().expect("a teaching is a string");
+            assert!(
+                !line.contains("  ") && !line.contains('\n'),
+                "a teaching is one line with no run of spaces: {line:?}"
+            );
+        }
+
+        let second = crate::session::testing::journal_entry(&jojobot, &sid, "found a thing").await;
+        assert_eq!(
+            second["session"], first["session"],
+            "the second beat lands in the same run, so the silence below is not a different run"
+        );
+        assert!(
+            !told(&second),
+            "the same session is not told twice: {second}"
+        );
+
+        let amended = json_of(
+            &jojobot
+                .amend_journal(Parameters(crate::session::AmendJournalArgs {
+                    entry: "found two things".into(),
+                    sid: sid.clone(),
+                }))
+                .await
+                .expect("amend ok"),
+        );
+        assert!(
+            !told(&amended),
+            "an amendment after the first beat is not told it either: {amended}"
+        );
+
+        make_bot(&jojobot, "delta").await;
+        let other_sid = booted(&jojobot, "delta").await;
+        let other =
+            crate::session::testing::journal_entry(&jojobot, &other_sid, "set out to test").await;
+        assert!(
+            other["teaching"]
+                .as_array()
+                .map(|teaching| teaching
+                    .iter()
+                    .any(|t| t.as_str().is_some_and(|t| t.contains(&other_sid)
+                        && other["session"].as_str().is_some_and(|s| t.contains(s)))))
+                .unwrap_or(false),
+            "a fresh session is told again, with its own two values: {other}"
         );
     }
 
