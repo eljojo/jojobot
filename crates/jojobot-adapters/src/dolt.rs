@@ -176,6 +176,19 @@ impl Dolt {
     /// Loopback with a configured port is the reachable version of the same
     /// intent.
     pub async fn start(data_dir: &Path, port: u16) -> Result<Self, StartError> {
+        Self::start_acquiring_within(data_dir, port, POLL_EVERY * 4).await
+    }
+
+    /// **The same start, with the window a connection may wait for the pool
+    /// named by the caller.** [`start`](Self::start) passes the window it always
+    /// had. A case that is about something other than how fast a pool hands out
+    /// a connection passes a longer one, so a loaded machine cannot fail it for
+    /// a reason it does not assert on.
+    pub(crate) async fn start_acquiring_within(
+        data_dir: &Path,
+        port: u16,
+        acquire_within: Duration,
+    ) -> Result<Self, StartError> {
         // **A test that starts a store has a log sink installed**, so a refusal
         // the store makes later has somewhere to be written. The error a
         // caller sees keeps the store's words out (rule 53) and the log is the
@@ -220,8 +233,13 @@ impl Dolt {
         // password to leak — and inventing a second account would be
         // ceremony over a socket only this process reaches.
         let server = format!("mysql://root@127.0.0.1:{port}");
-        let pool =
-            Self::once_answering(&format!("{server}/{DATABASE}"), &mut child, &stderr).await?;
+        let pool = Self::once_answering(
+            &format!("{server}/{DATABASE}"),
+            &mut child,
+            &stderr,
+            acquire_within,
+        )
+        .await?;
         Self::prove_it_is_ours(&pool, data_dir, port).await?;
         Ok(Dolt {
             child,
@@ -248,6 +266,7 @@ impl Dolt {
         url: &str,
         child: &mut tokio::process::Child,
         stderr: &StderrTail,
+        acquire_within: Duration,
     ) -> Result<MySqlPool, StartError> {
         let deadline = std::time::Instant::now() + READY_WITHIN;
         let mut last = String::new();
@@ -257,7 +276,7 @@ impl Dolt {
                 .map_err(|e| StartError::Spawn(e.to_string()))?;
             match MySqlPoolOptions::new()
                 .max_connections(4)
-                .acquire_timeout(POLL_EVERY * 4)
+                .acquire_timeout(acquire_within)
                 .connect(url)
                 .await
             {
@@ -1019,6 +1038,7 @@ pub(crate) mod tests {
             &format!("mysql://root@127.0.0.1:{port}/jojobot"),
             &mut child,
             &stderr,
+            POLL_EVERY * 4,
         )
         .await
         .expect_err("a nonexistent subcommand cannot come up, and nothing else answers for it");

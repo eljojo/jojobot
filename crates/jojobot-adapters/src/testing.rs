@@ -65,22 +65,36 @@ mod tests {
         );
     }
 
-    /// **Two stores start at the same moment and both come up.**
+    /// **Two stores start at the same moment, each on a port of its own, and
+    /// both come up.**
     ///
     /// The real thing rather than a model of it: two servers, started
     /// concurrently on two claimed ports, each binding its own for real. This
     /// is the failure as it arrives in a run — `PortTaken`, on a suite that
     /// changed nothing — and it is the one a helper that only narrows the
     /// window still produces.
+    ///
+    /// **How fast a pool hands out a connection is not what this asserts**, so
+    /// the case gives each start a window as long as the one a store has to
+    /// answer in. The window `start` itself passes is a probe's, a fifth of a
+    /// second, and a machine running several bars at once can take longer than
+    /// that to open a connection without anything being wrong with the ports.
     #[tokio::test]
     async fn two_stores_started_together_both_take_a_port() {
         let scratch = Scratch::new("port-block-together");
+        let here_port = free_port();
+        let there_port = free_port();
+        assert_ne!(
+            here_port, there_port,
+            "the arbiter handed one port to two claimers"
+        );
 
+        let window = std::time::Duration::from_secs(30);
         let here = scratch.0.join("one");
         let there = scratch.0.join("other");
         let (first, second) = tokio::join!(
-            Dolt::start(&here, free_port()),
-            Dolt::start(&there, free_port()),
+            Dolt::start_acquiring_within(&here, here_port, window),
+            Dolt::start_acquiring_within(&there, there_port, window),
         );
 
         let mut first = first.expect("the first store comes up");

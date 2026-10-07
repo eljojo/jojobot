@@ -9,12 +9,6 @@
 # whole number and `since` is the day the entry was added, as YYYY-MM-DD.
 
 [[known_red]]
-test = "testing::tests::two_stores_started_together_both_take_a_port"
-card = 2036
-owner = "dev4"
-since = "2026-10-07"
-
-[[known_red]]
 test = "room::tests::the_server_announces_its_address_only_once_that_address_answers"
 card = 2041
 owner = "dev4"
