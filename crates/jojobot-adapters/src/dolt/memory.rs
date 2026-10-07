@@ -3623,6 +3623,13 @@ impl Memory for DoltMemory {
                 named.local.clone(),
             ));
         }
+        // **Refs are stored as permanent ids, exactly as the edge is**, so
+        // they are served the same way: answering with the stored form hands
+        // the caller opaque ids for the handles it wrote.
+        let mut served_refs = Vec::with_capacity(fact.refs.len());
+        for object in &fact.refs {
+            served_refs.push(self.current_handle(&mut tx, object).await?);
+        }
         tx.commit().await.map_err(store)?;
         Ok(Guarded::Written(Fact {
             fields,
@@ -3630,6 +3637,7 @@ impl Memory for DoltMemory {
             subject: handle,
             derived_from: served_derived_from,
             edge: served_edge,
+            refs: served_refs,
             stands_for: served_stands_for,
             ..fact
         }))

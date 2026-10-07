@@ -9679,6 +9679,56 @@ pub async fn a_value_is_found_without_naming_the_key_it_is_under<M: Memory>(stor
     );
 }
 
+/// **An edit's answer serves a claim's refs under the handles they answer
+/// to**, the way a read does. The store keeps a ref as the permanent id of the
+/// thing it points at, and an edit answered with that stored form: a caller
+/// who wrote handles read back opaque ids.
+///
+/// Both halves: the edit's own answer, and a read after it, name the same
+/// handles, so the answer is read against what the store serves rather than
+/// against itself.
+pub async fn an_edit_serves_refs_under_the_handles_they_answer_to<M: Memory>(store: &M) {
+    let first = EntityId("thing:contract-edit-refs-first".into());
+    let second = EntityId("thing:contract-edit-refs-second".into());
+    let subject = EntityId::person("person:contract-edit-refs-subject");
+    ensure(store, &first).await;
+    ensure(store, &second).await;
+    let written = capture(
+        store,
+        NewFact {
+            refs: vec![first.clone(), second.clone()],
+            ..NewFact::about(subject.clone(), "touches two things", date(2026, 8, 12))
+        },
+    )
+    .await;
+    assert_eq!(
+        written.refs,
+        vec![first.clone(), second.clone()],
+        "the capture's own answer does not name the handles it was given: {written:?}",
+    );
+
+    let edited = edit(
+        store,
+        &written.address(),
+        FactPatch {
+            content: Some("touches the same two things".into()),
+            provenance: Some(Provenance::Inference),
+            ..Default::default()
+        },
+    )
+    .await;
+    assert_eq!(
+        edited.refs,
+        vec![first.clone(), second.clone()],
+        "an edit answered with the stored form of a ref, not the handle: {edited:?}",
+    );
+    assert_eq!(
+        read_back(store, &subject, &edited.id).await.refs,
+        edited.refs,
+        "the edit's answer and the read after it disagree about the refs",
+    );
+}
+
 /// 🚨 **A rewrite can take the edge off, and one that does not mention
 /// edges leaves it where it is.**
 ///
@@ -13747,6 +13797,7 @@ macro_rules! all_cases {
         $m!(a_documents_id_is_not_the_handle_and_survives_a_rewrite($store));
         $m!(a_value_is_found_without_naming_the_key_it_is_under($store));
         $m!(a_rewrite_can_take_the_edge_off_and_leaves_it_alone_otherwise($store));
+        $m!(an_edit_serves_refs_under_the_handles_they_answer_to($store));
         $m!(a_declared_reference_key_is_walkable_against_the_store($store));
         $m!(a_trip_records_who_came_and_answers_from_either_end($store));
         $m!(the_kinds_are_rows_and_a_shipped_one_is_closed($store));
