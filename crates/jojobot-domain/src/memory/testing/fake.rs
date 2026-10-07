@@ -806,9 +806,22 @@ impl InMemoryMemory {
                 Some(key) => super::super::folded_fields(&self.writes_on(&key, facts), &declared),
                 None => Default::default(),
             };
+            let held = self.with_manager_served(&held);
             walk.step(held.get(super::super::REPORTS_TO).map(String::as_str));
         }
         walk.above()
+    }
+
+    /// **A fold served with its `reports_to` as the handle it answers to
+    /// today**, through the one domain step every store's chart question goes
+    /// through. This store keeps the permanent id under any key that names an
+    /// entity, so the walk and the manager a write names are judged in handles
+    /// only after this.
+    fn with_manager_served(
+        &self,
+        fold: &std::collections::BTreeMap<String, String>,
+    ) -> std::collections::BTreeMap<String, String> {
+        super::super::with_manager_served(fold, |stored| self.current_handle(stored))
     }
 
     /// What has been declared — which is what says how each key folds.
@@ -1994,8 +2007,11 @@ impl Memory for InMemoryMemory {
         // **The ceiling and the room, both on the state this edit leaves
         // behind** — the same check the real store runs, atomically with the
         // write it gates.
-        let lineage = super::super::chart_wanted_by_change(&before, &after)
-            .map(|named| self.lineage_among(&facts, &handle, named));
+        let lineage = super::super::chart_wanted_by_change(
+            &self.with_manager_served(&before),
+            &self.with_manager_served(&after),
+        )
+        .map(|named| self.lineage_among(&facts, &handle, named));
         if let Some(err) = super::super::refuses_unlicensed_change(
             &handle,
             caller,
@@ -2190,7 +2206,7 @@ impl Memory for InMemoryMemory {
             &self.writes_on(&folded_key, &held_facts),
             &self.declarations(),
         );
-        let lineage = super::super::needs_the_chart(&carried)
+        let lineage = super::super::needs_the_chart(&self.with_manager_served(&carried))
             .map(|named| self.lineage_among(&held_facts, &survivor_handle, named));
         if let Some(err) = super::super::refuses_merge_carrying(
             caller,
@@ -2523,8 +2539,11 @@ impl Memory for InMemoryMemory {
             &Default::default(),
             &declared,
         );
-        let lineage = super::super::chart_wanted_by_change(&before_fold, &after_fold)
-            .map(|named| self.lineage_among(&facts, &handle, named));
+        let lineage = super::super::chart_wanted_by_change(
+            &self.with_manager_served(&before_fold),
+            &self.with_manager_served(&after_fold),
+        )
+        .map(|named| self.lineage_among(&facts, &handle, named));
         if let Some(err) = super::super::refuses_unlicensed_change(
             &handle,
             caller,

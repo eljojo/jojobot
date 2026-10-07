@@ -44,6 +44,67 @@ fn refuses_role_fields_catches_both_of_a_roles_fields_and_nothing_else() {
     assert!(refuses_role_fields(std::iter::empty::<&String>()).is_none());
 }
 
+/// **A fold is served with its manager as the handle that manager answers to,
+/// and a fold with no manager is served untouched.** Both stores keep the
+/// permanent id under `reports_to`, and the chart is judged in handles, so every
+/// chart question goes through this one step. The lookup is the store's own;
+/// the step is that the stored value is replaced by what the lookup answers, and
+/// that nothing is looked up when there is nothing to look up.
+#[test]
+fn a_fold_is_served_with_its_manager_as_the_handle_it_answers_to() {
+    let fold: BTreeMap<String, String> = [
+        (REPORTS_TO.to_string(), "kqde3z".to_string()),
+        ("one_liner".to_string(), "keeps the books".to_string()),
+    ]
+    .into_iter()
+    .collect();
+    let served = with_manager_served(&fold, |stored| {
+        assert_eq!(
+            stored.as_str(),
+            "kqde3z",
+            "the lookup is asked for the stored id"
+        );
+        EntityId("bot:delta".into())
+    });
+    assert_eq!(
+        served.get(REPORTS_TO).map(String::as_str),
+        Some("bot:delta")
+    );
+    assert_eq!(
+        served.get("one_liner"),
+        fold.get("one_liner"),
+        "every other key is served as it was",
+    );
+
+    // **A store that keeps the id behind the mention mark is asked the same
+    // question**, so the lookup is never handed a mark it would not find.
+    let marked: BTreeMap<String, String> = [(
+        REPORTS_TO.to_string(),
+        format!("{}kqde3z", crate::memory::mention::MARK),
+    )]
+    .into_iter()
+    .collect();
+    let served = with_manager_served(&marked, |stored| {
+        assert_eq!(
+            stored.as_str(),
+            "kqde3z",
+            "the mark is taken off before the lookup"
+        );
+        EntityId("bot:delta".into())
+    });
+    assert_eq!(
+        served.get(REPORTS_TO).map(String::as_str),
+        Some("bot:delta")
+    );
+
+    let unmanaged: BTreeMap<String, String> =
+        [("one_liner".to_string(), "keeps the books".to_string())]
+            .into_iter()
+            .collect();
+    let served = with_manager_served(&unmanaged, |_| panic!("looked up a manager nobody holds"));
+    assert_eq!(served, unmanaged);
+}
+
 /// A built-in key for each relation a key can declare, so the one predicate is
 /// held to all three at once. No MCP call can declare one of these: the table
 /// is the build's own.

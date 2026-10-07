@@ -2111,6 +2111,41 @@ pub fn chart_wanted_by_change(
     chart_wanted(&touched, after)
 }
 
+/// **The id a fold stores its manager under**, with the mention mark taken off.
+/// A store keeps the permanent id of the entity a field names, bare under a key
+/// declared a reference and behind [`mention::MARK`] under any other, and the
+/// lookup that turns it into a handle is asked about the id alone. `None` when
+/// the fold names no manager.
+pub fn stored_manager(fold: &BTreeMap<String, String>) -> Option<EntityId> {
+    fold.get(REPORTS_TO).map(|stored| {
+        let stored = stored.trim();
+        EntityId(
+            stored
+                .strip_prefix(mention::MARK)
+                .unwrap_or(stored)
+                .to_string(),
+        )
+    })
+}
+
+/// **A fold served with its manager as the handle that manager answers to
+/// today.** A store keeps the permanent id of the entity a field names, and the
+/// chart is judged in handles, so every fold handed to a chart question passes
+/// through here first, in every store. The lookup is the store's own, since only
+/// it holds the table of ids; `handle_of` is asked once, with [`stored_manager`],
+/// and only when the fold names a manager. A fold that names none comes back as
+/// it was. An id that nothing wears is the lookup's to keep as written.
+pub fn with_manager_served(
+    fold: &BTreeMap<String, String>,
+    handle_of: impl FnOnce(&EntityId) -> EntityId,
+) -> BTreeMap<String, String> {
+    let mut served = fold.clone();
+    if let Some(stored) = stored_manager(fold) {
+        served.insert(REPORTS_TO.to_string(), handle_of(&stored).to_string());
+    }
+    served
+}
+
 /// **Why a chart write is refused.**
 enum Why {
     /// The caller is not licensed.

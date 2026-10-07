@@ -2017,6 +2017,128 @@ pub async fn referring_to_finds_a_reference_to_a_renamed_target<M: Memory>(store
     );
 }
 
+/// **Undoing the newest manager cannot close a loop, whichever way it is undone.**
+/// A thing that reports to somebody holds that in its newest claim, and taking
+/// the claim back, by retracting it or by archiving it, leaves the fold on the
+/// manager an older claim named. That manager is read from the fold after the
+/// undo, and a store keeps it as an id. So the undo is judged on the handle that
+/// id answers to, or a loop gets through the one door that names no manager.
+///
+/// Both ways, on a chain of their own each. One bot is moved under another that
+/// reports to the first, which lands because the first has since moved up; then
+/// taking back that move would put it under the bot that is now under it. The
+/// refusal is the cycle, and the fold stays where it was. The edit that makes the
+/// second step possible lands first, so a store that refused everything would not
+/// pass.
+pub async fn undoing_the_newest_manager_cannot_close_a_loop<M: Memory>(store: &M) {
+    for (chain, archive) in [
+        (
+            [
+                ("bot:contract-loop-tundra", "Lighthouse"),
+                ("bot:contract-loop-savanna", "Quarry"),
+                ("bot:contract-loop-glacier", "Windmill"),
+            ],
+            false,
+        ),
+        (
+            [
+                ("bot:contract-loop-orchard", "Harbour"),
+                ("bot:contract-loop-quagmire", "Bakery"),
+                ("bot:contract-loop-lagoon", "Observatory"),
+            ],
+            true,
+        ),
+    ] {
+        let [top, mid, low] = chain.map(|(handle, _)| EntityId(handle.into()));
+        for (id, (_, name)) in [&top, &mid, &low].into_iter().zip(chain) {
+            add(store, NewEntity::new(id.clone(), name, "contract-fixture")).await;
+        }
+        let reporting = |manager: &EntityId| -> std::collections::BTreeMap<String, String> {
+            [(crate::memory::REPORTS_TO.to_string(), manager.to_string())]
+                .into_iter()
+                .collect()
+        };
+        // mid reports to top, and low to mid. A fresh capture guards nothing.
+        let mid_claim = capture(
+            store,
+            NewFact {
+                fields: reporting(&top),
+                ..NewFact::about(mid.clone(), "mid reports to top", date(2026, 10, 1))
+            },
+        )
+        .await;
+        capture(
+            store,
+            NewFact {
+                fields: reporting(&mid),
+                ..NewFact::about(low.clone(), "low reports to mid", date(2026, 10, 1))
+            },
+        )
+        .await;
+        // low's newest claim moves it up to top.
+        let newest = capture(
+            store,
+            NewFact {
+                fields: reporting(&top),
+                ..NewFact::about(low.clone(), "low moves up to top", date(2026, 10, 2))
+            },
+        )
+        .await;
+        // Now mid can be placed under low: low is under top, so nothing loops.
+        store
+            .update_fact(
+                &mid_claim.address(),
+                FactPatch {
+                    fields: reporting(&low),
+                    ..Default::default()
+                },
+                &top,
+            )
+            .await
+            .expect("top is above mid and may place it under low")
+            .written()
+            .expect("the guard must not block a superior");
+
+        // Taking back low's move would put low under mid again, and mid is
+        // under low.
+        let undone = if archive {
+            store
+                .update_fact(
+                    &newest.address(),
+                    FactPatch {
+                        status: Some(FactStatus::Archived),
+                        ..Default::default()
+                    },
+                    &top,
+                )
+                .await
+                .map(|_| ())
+        } else {
+            store
+                .retract(
+                    &newest.address(),
+                    Some("a mistake"),
+                    date(2026, 10, 3),
+                    &top,
+                )
+                .await
+                .map(|_| ())
+        };
+        let way = if archive { "archiving" } else { "retracting" };
+        assert!(
+            matches!(undone, Err(MemoryError::ChartCycle { .. })),
+            "{way} low's move up would put it under mid, which is under low, and must be \
+             refused as a cycle: {undone:?}",
+        );
+        let fields = thing_fields(store, &low).await;
+        assert_eq!(
+            fields.get(crate::memory::REPORTS_TO),
+            Some(&top.to_string()),
+            "{way} was refused, so low still reports to top: {fields:?}",
+        );
+    }
+}
+
 /// **The chart is judged against the chain read inside the write.** A bot
 /// changes who it reports to only through the bots above it; a bot with no
 /// manager takes the one named by that manager or a bot above it; and nobody is
@@ -13679,6 +13801,7 @@ macro_rules! all_cases {
         $m!(referring_to_finds_a_reference_to_a_renamed_target($store));
         $m!(a_merge_into_the_callers_own_bot_cannot_carry_a_ceiling_onto_it($store));
         $m!(the_chart_is_judged_against_the_chain_read_inside_the_write($store));
+        $m!(undoing_the_newest_manager_cannot_close_a_loop($store));
         $m!(referring_to_finds_a_target_named_in_a_list_of_references($store));
         $m!(a_work_items_status_is_held_to_its_projects_columns($store));
         $m!(a_child_names_its_parent_and_reads_back($store));

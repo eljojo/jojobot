@@ -1501,23 +1501,22 @@ impl DoltMemory {
     }
 
     /// **A fold with its `reports_to` served as the handle it answers to
-    /// today.** The store keeps the permanent id, and the chart is judged in
-    /// handles, so every fold handed to a chart question goes through here
-    /// first. A value that is already a handle is kept as written.
+    /// today**, by the one domain step every store's chart question goes
+    /// through. The lookup is this store's own, read inside the write's
+    /// transaction; the step is
+    /// [`jojobot_domain::memory::with_manager_served`].
     async fn with_manager_rendered(
         &self,
         tx: &mut Transaction<'_, MySql>,
         fold: &std::collections::BTreeMap<String, String>,
     ) -> Result<std::collections::BTreeMap<String, String>, MemoryError> {
-        let mut rendered = fold.clone();
-        if let Some(stored) = fold.get(jojobot_domain::memory::REPORTS_TO) {
-            let handle = self.current_handle(tx, &EntityId(stored.clone())).await?;
-            rendered.insert(
-                jojobot_domain::memory::REPORTS_TO.to_string(),
-                handle.to_string(),
-            );
-        }
-        Ok(rendered)
+        let looked_up = match jojobot_domain::memory::stored_manager(fold) {
+            Some(stored) => Some(self.current_handle(tx, &stored).await?),
+            None => None,
+        };
+        Ok(jojobot_domain::memory::with_manager_served(fold, |_| {
+            looked_up.expect("a manager was stored, so it was looked up")
+        }))
     }
 
     /// **The chart around a write, read inside the write's own transaction**:
@@ -3496,10 +3495,21 @@ impl Memory for DoltMemory {
         } else {
             None
         };
+        // **The type check reads the folds as handles, as a caller does.** A
+        // reference key holds the permanent id of what it names, and an edit that
+        // takes a claim back leaves the fold on an older claim's stored id, which
+        // is no handle and breaks the key's type. Served first, the check asks
+        // whether the value is an entity of the kind the key names.
+        let mut served_before = before_fold.clone();
+        self.compose_reference_fields(&mut tx, &mut served_before)
+            .await?;
+        let mut served_after = after_fold.clone();
+        self.compose_reference_fields(&mut tx, &mut served_after)
+            .await?;
         guard_fit_in(
             kind.as_token(),
-            &before_fold,
-            &after_fold,
+            &served_before,
+            &served_after,
             &governs,
             columns.as_deref(),
         )?;
