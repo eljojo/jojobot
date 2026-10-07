@@ -89,6 +89,21 @@ pub struct AddEntityArgs {
     /// what says on what.
     #[serde(default)]
     pub(crate) parent: Option<String>,
+    /// **The new thing's first fields**, written as its first claim in the same
+    /// act, so a piece of work is made and says where it stands in one call.
+    /// The claim says the thing's name and carries these keys, exactly as a
+    /// `capture` of them would, and it faces every guard a capture does: a key
+    /// the kind declares is held to what it declares, and a key that holds a
+    /// handle must name a thing that exists.
+    ///
+    /// **Whole or not at all.** A field that is refused refuses the whole call
+    /// and nothing is created, so there is never a half-made thing. Leave it off
+    /// and the call creates the thing alone, as before.
+    ///
+    /// The claim is `inference`, as a capture's is when it says nothing. To put
+    /// the operator's own word behind a field, write it with `capture`.
+    #[serde(default)]
+    pub(crate) fields: Option<std::collections::BTreeMap<String, String>>,
     /// The token a previous call's refusal handed you, sent back after you read
     /// its candidates and judged them a different entity. It lifts only the
     /// refusal that minted it — a token you made up, or one from another
@@ -180,8 +195,11 @@ impl Jojobot {
         description = "Bring a new entity into existence — the required first step before any \
                        other write may name it. The kinds are the `kind` argument's, which is \
                        the one place they are listed; creating a bot is creating an identity, \
-                       and it opens the mailbox that bot owns in the same act. Returns the \
-                       stored entity. If its handle or any of its names \
+                       and it opens the mailbox that bot owns in the same act. Send `fields` \
+                       to give the new thing its first fields in the same call: they are \
+                       written as its first claim, under every guard a capture faces, and a \
+                       field that is refused refuses the whole call and creates nothing. \
+                       Returns the stored entity. If its handle or any of its names \
                        resembles something jojobot already knows, NOTHING is written: the \
                        result says status: blocked with candidates and how_to_proceed. Use the \
                        candidate you meant, or re-call with the override_token that refusal \
@@ -214,6 +232,10 @@ impl Jojobot {
         // Taken before `args`' fields are moved into `new` below — this
         // owns its own copy, so it survives the moves that follow.
         let token_slot = TokenSlot::from(&args);
+        // **What the first claim says**, when there is one: the thing's own
+        // name, as it will be stored. A claim needs words and the caller sent
+        // fields, so the name is what a fields-only claim about a new thing says.
+        let claim_words = args.name.trim().to_string();
         let new = NewEntity {
             id,
             name: args.name,
@@ -231,15 +253,104 @@ impl Jojobot {
         // Routed through the declined path rather than straight to the mapper,
         // for the reason capture is: an entity the validators refuse is a
         // caller mistake and comes back as an answer (rule 68).
-        let added = match self.memory.add_entity(new).await {
-            Ok(added) => added,
-            Err(e) => return memory_declined("add_entity", e),
+        // **The first fields, when the caller sent any, are written as the thing's
+        // first claim in the same act**, through the store's own combined write:
+        // the store runs the guards of a capture inside the transaction that
+        // creates the thing, and a refusal takes the creation back with it.
+        let first_fields = args.fields.clone().filter(|fields| !fields.is_empty());
+        let mut fold_behind = None;
+        let (added, first_claim) = match first_fields {
+            None => match self.memory.add_entity(new).await {
+                Ok(added) => (added, None),
+                Err(e) => return memory_declined("add_entity", e),
+            },
+            Some(mut fields) => {
+                // **The checks a capture makes before it writes**, on what the
+                // caller sent: a role's own two fields are the boot door's, and
+                // the stored due moment is jojobot's own.
+                if let Some(refused) = jojobot_domain::memory::refuses_role_fields(fields.keys()) {
+                    return memory_declined("add_entity", refused);
+                }
+                if let Some(refused) = self
+                    .refuses_a_hand_written_due_moment(&creating, &fields, &[])
+                    .await
+                {
+                    return Ok(refused);
+                }
+                // **Worked out here too**: a loop made with its cadence is whole
+                // from the moment it is made, with the day it falls due beside
+                // the keys that set it.
+                let (due_on, _) = self.moved_due_moment(&creating, &fields, &[]).await;
+                if let jojobot_domain::attention::DueMove::Set(due_on) = due_on {
+                    fields.insert(
+                        jojobot_domain::attention::DUE_ON.to_string(),
+                        due_on.to_string(),
+                    );
+                }
+                let recorded_at = self.dated(None, args.sid.as_deref()).await?;
+                let first = jojobot_domain::memory::NewFact {
+                    fields,
+                    // **The session that made it, as a capture records it**: a
+                    // claim's first write names the run that wrote it, and a
+                    // later rewrite of the claim is judged against that run.
+                    session: Some(caller.sid.as_str().to_string()),
+                    ..jojobot_domain::memory::NewFact::about(
+                        creating.clone(),
+                        claim_words,
+                        recorded_at,
+                    )
+                };
+                // **A star or a seat count that would take a bot's boot over its
+                // ceiling is refused before anything lands**, as on a capture.
+                if let Some(refused) = self
+                    .refuses_a_boot_floor_for_capture(&first, &caller.bot)
+                    .await
+                {
+                    return memory_declined("add_entity", refused);
+                }
+                match self.memory.add_entity_with_first_claim(new, first).await {
+                    Ok(Guarded::Written((entity, fact))) => (Guarded::Written(entity), Some(fact)),
+                    Ok(Guarded::Blocked {
+                        attempted,
+                        candidates,
+                    }) => (
+                        Guarded::Blocked {
+                            attempted,
+                            candidates,
+                        },
+                        None,
+                    ),
+                    // **A write that landed is never reported as failed**
+                    // (rule 130), the same as on a capture.
+                    Err(MemoryError::FoldBehind {
+                        landed: Landed::Creation(created),
+                        behind,
+                        ..
+                    }) => {
+                        let (entity, fact) = *created;
+                        fold_behind = Some(behind);
+                        (Guarded::Written(entity), Some(fact))
+                    }
+                    Err(e) => return memory_declined("add_entity", e),
+                }
+            }
         };
         match added {
             Guarded::Written(entity) => {
                 self.beat("add_entity", entity.id.as_str(), args.sid.as_deref())
                     .await;
                 let mut body = entity_json(&entity);
+                // **The first claim's receipt**, so the claim has an address a
+                // later edit goes through, and the answer says the claim exists.
+                if let (Some(fact), Some(obj)) = (&first_claim, body.as_object_mut()) {
+                    obj.insert(
+                        "first_claim".into(),
+                        fact_receipt_json(fact, self.dated(None, args.sid.as_deref()).await?),
+                    );
+                }
+                if let Some(behind) = fold_behind {
+                    crate::answer::note_fold_behind(&mut body, behind);
+                }
                 if let Some(obj) = body.as_object_mut() {
                     for (key, value) in self.open_box_with(&entity).await {
                         obj.insert(key.into(), value);
@@ -366,6 +477,24 @@ impl Jojobot {
                          nothing is its own parent. No override_token lifts this. Name the \
                          entity this one sits under, or leave parent off and create it as a \
                          root."
+                    ),
+                ))
+            }
+            // **A handle a field of the first claim named** is not the parent, and
+            // saying it is sends a caller to drop a parent they never sent.
+            Guarded::Blocked {
+                attempted,
+                candidates,
+            } if attempted != creating && args.parent.as_deref() != Some(attempted.as_str()) => {
+                Ok(blocked_body(
+                    &attempted,
+                    &candidates,
+                    format!(
+                        "Nothing was written. A field of the first claim names '{attempted}', \
+                         and it is not an entity jojobot knows. No override_token lifts this: \
+                         nothing is created as a side effect of creating something else. Create \
+                         '{attempted}' with its own add_entity call first, then re-call this \
+                         one — or leave that field off. '{creating}' was not created."
                     ),
                 ))
             }

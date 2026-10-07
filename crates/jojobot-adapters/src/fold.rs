@@ -140,6 +140,26 @@ impl Memory for Folded {
         self.inner.add_entity(new).await
     }
 
+    /// **A creation that writes its first claim refreshes the fold for the new
+    /// thing, as a capture does.** Forwarded and not left to the port's default,
+    /// which refuses.
+    async fn add_entity_with_first_claim(
+        &self,
+        new: NewEntity,
+        first: NewFact,
+    ) -> Result<Guarded<(Entity, Fact)>, MemoryError> {
+        match self.inner.add_entity_with_first_claim(new, first).await? {
+            Guarded::Written((entity, fact)) => match self.refresh(&fact.home).await {
+                Ok(()) => Ok(Guarded::Written((entity, fact))),
+                Err(source) => Err(fold_behind(
+                    Landed::Creation(Box::new((entity, fact))),
+                    source,
+                )),
+            },
+            blocked => Ok(blocked),
+        }
+    }
+
     async fn list_entities(&self, kind: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError> {
         self.inner.list_entities(kind).await
     }

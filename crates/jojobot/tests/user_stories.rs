@@ -48,6 +48,8 @@ mod coordinating;
 mod corrected;
 #[path = "user_stories/counting.rs"]
 mod counting;
+#[path = "user_stories/creating_with_fields.rs"]
+mod creating_with_fields;
 #[path = "user_stories/curveball.rs"]
 mod curveball;
 #[path = "user_stories/degraded.rs"]

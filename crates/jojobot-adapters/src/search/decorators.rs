@@ -179,6 +179,21 @@ impl Memory for IndexedMemory {
         Ok(written)
     }
 
+    /// **The thing and its first claim enter the index together**, as an entity
+    /// and a capture each would. Forwarded and not left to the port's default,
+    /// which refuses.
+    async fn add_entity_with_first_claim(
+        &self,
+        new: NewEntity,
+        first: NewFact,
+    ) -> Result<Guarded<(Entity, Fact)>, MemoryError> {
+        let written = self.inner.add_entity_with_first_claim(new, first).await?;
+        if let Guarded::Written((entity, _)) = &written {
+            self.refresh(&entity.id).await;
+        }
+        Ok(written)
+    }
+
     async fn list_entities(&self, kind: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError> {
         self.inner.list_entities(kind).await
     }

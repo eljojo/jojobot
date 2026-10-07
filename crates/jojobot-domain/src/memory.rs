@@ -4421,6 +4421,9 @@ impl<T> Guarded<T> {
 pub enum Landed {
     /// What [`Memory::capture`] or [`Memory::update_fact`] wrote.
     Fact(Box<Fact>),
+    /// What [`Memory::add_entity_with_first_claim`] wrote: the thing and its
+    /// first claim.
+    Creation(Box<(Entity, Fact)>),
     /// What [`Memory::retract`] wrote.
     Retraction(Box<Retraction>),
     /// What [`Memory::merge`] did.
@@ -5145,6 +5148,27 @@ pub trait Memory: Send + Sync {
     /// Create an entity. Kind-general: the handle carries the kind. Screened by
     /// the write guard, so this can come back [`Guarded::Blocked`].
     async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError>;
+
+    /// **Create an entity and write its first claim in one act.** The claim is
+    /// about the entity being made and runs every guard a [`capture`](Memory::capture)
+    /// runs. If the entity's own screen or any guard of the claim refuses, **nothing
+    /// is made**: creation is intentional, and a thing with no claim behind a refused
+    /// first write is a half-made thing.
+    ///
+    /// **A store that cannot do this refuses loudly rather than creating and then
+    /// capturing.** A default that did the two writes in turn would leave an empty
+    /// thing behind whenever the second refused, and a wrapper that forgot to
+    /// forward this would serve that default in production without anyone seeing it.
+    async fn add_entity_with_first_claim(
+        &self,
+        new: NewEntity,
+        first: NewFact,
+    ) -> Result<Guarded<(Entity, Fact)>, MemoryError> {
+        let _ = (new, first);
+        Err(MemoryError::InvalidFact(
+            "this store cannot create a thing and write its first claim in one act".into(),
+        ))
+    }
 
     /// Every entity jojobot knows, optionally filtered to one kind.
     async fn list_entities(&self, kind: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError>;

@@ -973,6 +973,61 @@ impl Memory for InMemoryMemory {
         Ok(Guarded::Written(entity))
     }
 
+    /// **The entity and its first claim, as one act.** A creation writes two
+    /// things here, the entity and the badge it wears, so a refusal of the claim
+    /// takes back exactly those two and the refusal is returned as it came. The
+    /// real store does this in one transaction; a fake that left the entity behind
+    /// would pass a case the real store fails.
+    async fn add_entity_with_first_claim(
+        &self,
+        new: NewEntity,
+        first: NewFact,
+    ) -> Result<Guarded<(Entity, Fact)>, MemoryError> {
+        if first.subject != new.id {
+            return Err(MemoryError::InvalidFact(format!(
+                "the first claim is about {}, and the thing being made is {}",
+                first.subject, new.id
+            )));
+        }
+        let id = new.id.clone();
+        let entity = match self.add_entity(new).await? {
+            Guarded::Written(entity) => entity,
+            Guarded::Blocked {
+                attempted,
+                candidates,
+            } => {
+                return Ok(Guarded::Blocked {
+                    attempted,
+                    candidates,
+                });
+            }
+        };
+        let take_back = || {
+            self.entities
+                .lock()
+                .expect("fake mutex poisoned")
+                .retain(|held| held.id != id);
+            self.badges.lock().expect("fake mutex poisoned").remove(&id);
+        };
+        match self.capture(first).await {
+            Ok(Guarded::Written(fact)) => Ok(Guarded::Written((entity, fact))),
+            Ok(Guarded::Blocked {
+                attempted,
+                candidates,
+            }) => {
+                take_back();
+                Ok(Guarded::Blocked {
+                    attempted,
+                    candidates,
+                })
+            }
+            Err(e) => {
+                take_back();
+                Err(e)
+            }
+        }
+    }
+
     /// **The port's default walk, over the fake's own index.** The real store
     /// answers this with one targeted read and never lists, so the default
     /// body, which calls [`Memory::list_entities`], would count a listing no

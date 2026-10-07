@@ -1294,6 +1294,440 @@ impl DoltMemory {
         Ok(self.assemble(tx, &rows).await?.pop())
     }
 
+    /// **A creation, in a transaction its caller owns.** The caller commits it only
+    /// when this answers `Written`. [`add_entity`](Memory::add_entity) is that, and so
+    /// is the creation that writes its own first claim before it commits.
+    async fn create_in(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        new: NewEntity,
+    ) -> Result<Guarded<Entity>, MemoryError> {
+        let index = self.known(tx).await?;
+        if let guard::Decision::Block(candidates) = guard::decide(
+            &new.id,
+            &new.labels(),
+            &index,
+            new.override_token.as_deref(),
+        ) {
+            return Ok(Guarded::Blocked {
+                attempted: new.id,
+                candidates,
+            });
+        }
+        let entity = Entity {
+            kind: new.id.kind().expect("a validated id has a kind"),
+            id: new.id,
+            name: new.name.trim().to_string(),
+            aliases: new.aliases.iter().map(|a| a.trim().to_string()).collect(),
+            source: new.source.trim().to_string(),
+            crm: new.crm.map(|c| c.trim().to_string()),
+            parent: new.parent,
+            boot: new.boot,
+            merged_into: None,
+            badge: None,
+            archived: None,
+        };
+        // The entity this one sits under must already exist, and must not be
+        // this one. Screened after the record is assembled because a
+        // self-parenting block reports the write itself.
+        if let Some(parent) = &entity.parent
+            && let guard::Decision::Block(candidates) =
+                guard::decide_parent(&entity, parent, &index)
+        {
+            return Ok(Guarded::Blocked {
+                attempted: parent.clone(),
+                candidates,
+            });
+        }
+        // **Stored as the badge the parent wears, never the handle it was
+        // named with** (rule 268). The check above already found it, so
+        // `resolve` cannot miss here. Kept apart from `entity`, which still
+        // carries the handle the caller sent and is served back exactly as
+        // written.
+        let stored = if let Some(parent) = &entity.parent {
+            let stored_parent = self
+                .resolve(tx, parent)
+                .await?
+                .map(|(key, _)| key)
+                .unwrap_or_else(|| parent.clone());
+            Entity {
+                parent: Some(stored_parent),
+                ..entity.clone()
+            }
+        } else {
+            entity.clone()
+        };
+        let badge = write_entity(tx, &self.draw, &stored, &self.clock).await?;
+        Ok(Guarded::Written(Entity {
+            badge: Some(badge),
+            ..entity
+        }))
+    }
+
+    /// **A capture, in a transaction its caller owns.** The caller begins the
+    /// transaction and commits it only when this answers `Written`, so a refusal
+    /// or a block leaves nothing behind. [`capture`](Memory::capture) is that, and so
+    /// is the creation that writes its own first claim.
+    async fn capture_in(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        fact: NewFact,
+    ) -> Result<Guarded<Fact>, MemoryError> {
+        let standing = standing_of(&fact);
+
+        // **What EXISTS**, which is the rows plus what the build supplies —
+        // the same set the creation screen reads (rule 234).
+        let index = self.known(tx).await?;
+        // **A stale-but-renamed subject exists too.** The direct check is
+        // what the guard already asks; a miss on it is checked again through
+        // the thing's own rename history before it is called unknown. Kept,
+        // rather than re-resolved, for its storage key below.
+        let subject_resolved = self.resolve(tx, &fact.subject).await?;
+        if subject_resolved.is_none()
+            && let guard::Decision::Block(candidates) =
+                guard::decide_existing(&fact.subject, &index)
+        {
+            return Ok(Guarded::Blocked {
+                attempted: fact.subject,
+                candidates,
+            });
+        }
+        if let Some(edge) = &fact.edge
+            && let guard::Decision::Block(candidates) = guard::decide_existing(&edge.object, &index)
+        {
+            return Ok(Guarded::Blocked {
+                attempted: edge.object.clone(),
+                candidates,
+            });
+        }
+        for object in &fact.refs {
+            validate_write_subject(object)?;
+            if let guard::Decision::Block(candidates) = guard::decide_existing(object, &index) {
+                return Ok(Guarded::Blocked {
+                    attempted: object.clone(),
+                    candidates,
+                });
+            }
+        }
+        // **A reference key names an entity, so it faces the same rule the
+        // edge's object faces.** A walkable link into a node nobody recorded is
+        // the hole rule 3 exists to close, and arriving through a key rather
+        // than through an edge does not make it a different hole.
+        for object in referenced_by(&fact.fields, &Self::types_in(tx).await?) {
+            if let guard::Decision::Block(candidates) = guard::decide_existing(&object, &index) {
+                return Ok(Guarded::Blocked {
+                    attempted: object,
+                    candidates,
+                });
+            }
+        }
+        // A claim this one is derived from is named, so it must already exist —
+        // an unknown home is an entity miss and a home holding no such row is a
+        // fact miss, which are the two shapes this rail already has.
+        let derived_from = if let Some(source) = &fact.derived_from {
+            let Some((source_key, _)) = self.resolve(tx, &source.home).await? else {
+                return Err(MemoryError::UnknownEntity {
+                    attempted: source.home.to_string(),
+                    nearest: guard::screen(&source.home, &[], &index),
+                });
+            };
+            let resolved_source = FactAddress::new(source_key, source.local.clone());
+            // **Archive is a visibility switch, not a validity gate** — a
+            // source that is archived may still be cited. The claim must
+            // exist; whether it still stands is the reader's judgment, and
+            // the MCP layer names an archived source in the write's own
+            // receipt so the judgment has something to work from.
+            if self.read_fact(tx, &resolved_source).await?.is_none() {
+                return Err(MemoryError::UnknownFact {
+                    attempted: source.to_string(),
+                    nearest: self.addresses_in(tx, &resolved_source.home).await?,
+                });
+            }
+            Some(resolved_source)
+        } else {
+            None
+        };
+
+        // **What the subject is stored as** — the badge it wears, or its own
+        // handle when it wears none. Already resolved above, direct or
+        // through its rename history.
+        let (home, subject_handle) = subject_resolved.expect("checked to exist just above");
+        // **An edge's object and a ref are stored as the badge they wear,
+        // never the handle they were named with** (rule 268). The existence
+        // check above already found each one in `index`, so `resolve` cannot
+        // miss here. Storing the badge is what makes a later handle
+        // collision harmless: there is nothing left in the row for a
+        // newcomer to inherit.
+        let edge = match &fact.edge {
+            Some(edge) => Some(Edge {
+                shape: edge.shape,
+                object: self
+                    .resolve(tx, &edge.object)
+                    .await?
+                    .map(|(key, _)| key)
+                    .unwrap_or_else(|| edge.object.clone()),
+            }),
+            None => None,
+        };
+        let mut refs = Vec::with_capacity(fact.refs.len());
+        for object in &fact.refs {
+            refs.push(
+                self.resolve(tx, object)
+                    .await?
+                    .map(|(key, _)| key)
+                    .unwrap_or_else(|| object.clone()),
+            );
+        }
+        // **Off the subject's own kind, never off `home`** — that is a badge
+        // now, and a badge carries no kind token to parse. Computed once,
+        // ahead of the cap check that needs it and the fit guard further
+        // down that already did.
+        let subject_kind = index
+            .iter()
+            .find(|e| e.id == subject_handle)
+            .expect("resolved above")
+            .kind;
+        // **A role's own claim is decided atomically with the write it
+        // gates, against the folded state this same transaction already
+        // reads** — the same reason the capacity check just below reads
+        // under it rather than in a call of its own. `role_write_in` reads
+        // `None` for any write that names neither of a role's two fields,
+        // so this costs nothing on the ordinary path.
+        if let Some((role, claimant, now)) = jojobot_domain::session::role_write_in(&fact.fields) {
+            let folded = Self::held_by(tx, &home).await?;
+            let current_holder = folded.get(&jojobot_domain::session::role_holder_key(&role));
+            let current_claimed_at = folded
+                .get(&jojobot_domain::session::role_claimed_at_key(&role))
+                .and_then(|s| s.parse().ok());
+            if let jojobot_domain::session::LeaseClaim::Refused { holder, until } =
+                jojobot_domain::session::claim_role(
+                    &claimant,
+                    current_holder.map(String::as_str),
+                    current_claimed_at,
+                    now,
+                    jojobot_domain::session::LEASE_FRESHNESS,
+                )
+            {
+                return Err(MemoryError::RoleTaken {
+                    role,
+                    holder,
+                    until,
+                });
+            }
+        }
+        // **A ceiling's cardinality is enforced here, atomically with the
+        // write it gates** — never as a separate call, because a drop with
+        // nothing yet written in its place is a state the room must never
+        // reach. **Structural, never a kind question**: a room's member is
+        // an ordinary claim on the bound thing's own handle drawing a
+        // `connection` edge, and capacity is an ordinary field on that
+        // thing, folded like any other. A thing carrying none is uncapped —
+        // this reaches every kind identically, the same rule the interface
+        // above it already runs on.
+        if edge
+            .as_ref()
+            .is_some_and(|e| e.shape == EdgeShape::Connection)
+        {
+            let held = Self::held_by(tx, &home).await?;
+            // **The body cap, checked before the room has anything to say.**
+            // A thought over its container's cap is refused whether or not
+            // the room has space — see `refuses_thought_over_cap`.
+            let cap = held
+                .get(jojobot_domain::memory::THOUGHT_BODY_CAP)
+                .and_then(|v| v.trim().parse::<usize>().ok());
+            let capacity = held
+                .get(jojobot_domain::memory::THOUGHT_CAPACITY)
+                .and_then(|v| v.trim().parse::<usize>().ok());
+            if let Some(err) = jojobot_domain::memory::refuses_thought_over_cap(
+                &subject_handle,
+                &jojobot_domain::memory::normalize_content(&fact.content),
+                cap,
+                capacity,
+            ) {
+                return Err(err);
+            }
+            if let Some(capacity) = capacity {
+                let existing = self.facts_of(tx, &home).await?;
+                let nominal_room = jojobot_domain::memory::thought_room(&existing);
+                // **Ageing's own cost is paid only when the room might
+                // actually be full** — a bot nowhere near capacity never
+                // pays for a touch-moment lookup on every write.
+                if nominal_room.len() >= capacity {
+                    let ids: Vec<FactId> = nominal_room.iter().map(|f| f.id.clone()).collect();
+                    let touched = Self::touched_moments(tx, &home, &ids).await?;
+                    let split = jojobot_domain::memory::split_by_age(
+                        nominal_room,
+                        &touched,
+                        fact.aged_before,
+                    );
+                    if split.live.len() >= capacity {
+                        let aged_out = split.aged_out.len();
+                        let refuse = |room: Vec<Fact>| MemoryError::RoomFull {
+                            // **The handle the caller reached this thing
+                            // by, never `home`** — `home` is the badge every
+                            // entity wears from creation, and a refusal
+                            // naming it hands back a token the caller
+                            // cannot address anything by.
+                            subject: subject_handle.to_string(),
+                            live: room.len(),
+                            capacity,
+                            room,
+                            aged_out,
+                        };
+                        let room = split.live;
+                        match (&fact.drop, &fact.drop_because) {
+                            (Some(victim), Some(reason)) => {
+                                // **The victim must resolve to a live thought IN
+                                // THIS ROOM** — not merely to a fact that exists,
+                                // and not to one aged out of the count. Anything
+                                // else is answered exactly as an empty drop is:
+                                // refused, with the room shown, because a caller
+                                // that named the wrong thing still needs to see
+                                // what it could have named.
+                                let in_room = self
+                                    .resolve(tx, &victim.home)
+                                    .await?
+                                    .filter(|(key, _)| *key == home)
+                                    .and_then(|_| {
+                                        room.iter().find(|f| f.id == victim.local).cloned()
+                                    });
+                                let Some(mut victim_fact) = in_room else {
+                                    return Err(refuse(room));
+                                };
+                                // **A thought that carries a key only its own
+                                // relation may change is not droppable.** A
+                                // capture carries no caller to ask who may change
+                                // that key, and archiving the thought takes the
+                                // key off the fold. Retracting it asks.
+                                if !jojobot_domain::memory::guarded_keys_in(&victim_fact.fields)
+                                    .is_empty()
+                                {
+                                    return Err(refuse(room));
+                                }
+                                // **`facts_of` serves under the current handle,
+                                // never the storage key** (see `assemble`'s own
+                                // comment) — exactly right for a reader, and
+                                // exactly wrong for a row about to be written
+                                // again. `lower_pointers` is the one seam
+                                // `update_fact` and `retract` both already call
+                                // for this: every pointer-bearing field at
+                                // once — `.home`, `.subject`, `.edge`,
+                                // `.derived_from`, `.refs` — never two of them
+                                // by hand while the rest stay served.
+                                self.lower_pointers(tx, &mut victim_fact, &home).await?;
+                                // **Archived, through the one writer every
+                                // archive goes through** — `write_fact` is what
+                                // appends the claim's own write history; a
+                                // status flip that skipped it would read back
+                                // changed with nothing behind it saying when.
+                                victim_fact.status = FactStatus::Archived;
+                                victim_fact.details = Some(reason.clone());
+                                Self::write_fact(tx, &victim_fact, &self.clock, None).await?;
+                            }
+                            // **The emergency reserve, spent — never twice
+                            // in a row.** Only honoured at the exact
+                            // threshold: a room already OVER capacity means
+                            // a borrow already landed and was not repaid,
+                            // and the ceiling's answer to that is steering
+                            // back, not borrowing again.
+                            _ if fact.borrow && room.len() == capacity => {}
+                            _ => return Err(refuse(room)),
+                        }
+                    }
+                }
+            }
+        }
+        let id = Self::mint(tx, &home).await?;
+        let stored = Fact {
+            id,
+            home: home.clone(),
+            // One column, stored into both fields — read back into both the
+            // same way on every fact this store serves.
+            subject: home,
+            content: normalize_content(&fact.content),
+            details: normalize_details(fact.details.as_deref()),
+            provenance: fact.provenance,
+            standing,
+            status: fact.status,
+            recorded_at: fact.recorded_at,
+            happened_at: fact.happened_at,
+            happened_through: fact.happened_through,
+            edge,
+            fields: fact.fields,
+            refs,
+            derived_from,
+            // A capture never carries a mark — see [`NewFact`]; the mark is
+            // an edit's to make, once the record it names already exists.
+            stands_for: Vec::new(),
+            // **The store stamps it, so nothing above can.** The moment a
+            // record is taken in is this one, and a caller that could name it
+            // could claim jojobot knew something before it did.
+            inserted_at: Some(self.clock.now()),
+            stale_after: fact.stale_after,
+        };
+        // **A new record's keys land on the thing too**, so the same guard the
+        // edit path runs applies here: a write may not drop a thing below a
+        // type it already fits, by taking a key away or by putting a value in
+        // one that the key does not hold. One function, called from both verbs
+        // in both stores.
+        let held = Self::writes_on(tx, &stored.home).await?;
+        let declared = Self::types_in(tx).await?;
+        // **The fold reads both halves and the guard reads one.** How a key
+        // folds is declared by whoever declared it; what governs a thing is
+        // its own kind, and nothing else — `subject_kind`, computed once
+        // above, ahead of the cap check that also needs it.
+        let governs = Self::kind_keys_in(tx, subject_kind.as_token()).await?;
+        let columns = self.project_columns_of(tx, &index, &subject_handle).await?;
+        guard_fit_in(
+            subject_kind.as_token(),
+            &folded_fields(&held, &declared),
+            &stood_after_capture(&held, &stored, &declared),
+            &governs,
+            columns.as_deref(),
+        )?;
+        Self::write_fact(tx, &stored, &self.clock, fact.session.as_deref()).await?;
+        // Every key this record carries is a write of its own, appended to the
+        // history of that key on this thing. **A reference-typed value is
+        // lowered to the permanent id it names first** (rule 268), guarded
+        // above against the handle-form value the caller actually sent —
+        // the guard has already run, so what lands here is free to be the
+        // storage shape rather than the served one.
+        let lowered_writes = self.lower_writes(tx, written_keys(&stored)).await?;
+        Self::append_writes(tx, &stored.home, &stored.id, lowered_writes).await?;
+        // **Served under the handle, stored under the key** — resolved
+        // before the commit closes the transaction this needs to do it in.
+        let served_derived_from = match &stored.derived_from {
+            Some(source) => Some(FactAddress::new(
+                self.current_handle(tx, &source.home).await?,
+                source.local.clone(),
+            )),
+            None => None,
+        };
+        let served_edge = match &stored.edge {
+            Some(edge) => Some(Edge {
+                shape: edge.shape,
+                object: self.current_handle(tx, &edge.object).await?,
+            }),
+            None => None,
+        };
+        let mut served_refs = Vec::with_capacity(stored.refs.len());
+        for object in &stored.refs {
+            served_refs.push(self.current_handle(tx, object).await?);
+        }
+        let mut served_fields = stored.fields.clone();
+        self.compose_reference_fields(tx, &mut served_fields)
+            .await?;
+        Ok(Guarded::Written(Fact {
+            home: subject_handle.clone(),
+            subject: subject_handle,
+            derived_from: served_derived_from,
+            edge: served_edge,
+            refs: served_refs,
+            fields: served_fields,
+            ..stored
+        }))
+    }
+
     /// One addressed fact, or nothing. **`address.home` must already be a
     /// storage key.**
     async fn read_fact(
@@ -2208,79 +2642,85 @@ fn fact_from(
     })
 }
 
+/// **The checks a new claim faces before any store is asked.** Shared by the
+/// capture and by the creation that writes its own first claim.
+fn validate_new_fact(fact: &NewFact) -> Result<(), MemoryError> {
+    validate_write_subject(&fact.subject)?;
+    validate_content(&fact.content)?;
+    if let Some(edge) = &fact.edge {
+        validate_edge(edge)?;
+    }
+    validate_happened_span(fact.happened_at, fact.happened_through)?;
+    validate_fields(&fact.fields)?;
+    validate_provenance_source(fact.provenance, &fact.fields)?;
+    Ok(())
+}
+
+/// **The checks a new entity faces before any store is asked.**
+fn validate_new_entity(new: &NewEntity) -> Result<(), MemoryError> {
+    validate_entity(
+        &new.id,
+        &new.name,
+        &new.aliases,
+        &new.source,
+        new.crm.as_deref(),
+        new.parent.as_ref(),
+    )
+}
+
 #[async_trait]
 impl Memory for DoltMemory {
     async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
-        validate_entity(
-            &new.id,
-            &new.name,
-            &new.aliases,
-            &new.source,
-            new.crm.as_deref(),
-            new.parent.as_ref(),
-        )?;
+        validate_new_entity(&new)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
-        let index = self.known(&mut tx).await?;
-        if let guard::Decision::Block(candidates) = guard::decide(
-            &new.id,
-            &new.labels(),
-            &index,
-            new.override_token.as_deref(),
-        ) {
-            return Ok(Guarded::Blocked {
-                attempted: new.id,
-                candidates,
-            });
+        let created = self.create_in(&mut tx, new).await?;
+        if matches!(created, Guarded::Written(_)) {
+            tx.commit().await.map_err(store)?;
         }
-        let entity = Entity {
-            kind: new.id.kind().expect("a validated id has a kind"),
-            id: new.id,
-            name: new.name.trim().to_string(),
-            aliases: new.aliases.iter().map(|a| a.trim().to_string()).collect(),
-            source: new.source.trim().to_string(),
-            crm: new.crm.map(|c| c.trim().to_string()),
-            parent: new.parent,
-            boot: new.boot,
-            merged_into: None,
-            badge: None,
-            archived: None,
-        };
-        // The entity this one sits under must already exist, and must not be
-        // this one. Screened after the record is assembled because a
-        // self-parenting block reports the write itself.
-        if let Some(parent) = &entity.parent
-            && let guard::Decision::Block(candidates) =
-                guard::decide_parent(&entity, parent, &index)
-        {
-            return Ok(Guarded::Blocked {
-                attempted: parent.clone(),
-                candidates,
-            });
+        Ok(created)
+    }
+
+    async fn add_entity_with_first_claim(
+        &self,
+        new: NewEntity,
+        first: NewFact,
+    ) -> Result<Guarded<(Entity, Fact)>, MemoryError> {
+        if first.subject != new.id {
+            return Err(MemoryError::InvalidFact(format!(
+                "the first claim is about {}, and the thing being made is {}",
+                first.subject, new.id
+            )));
         }
-        // **Stored as the badge the parent wears, never the handle it was
-        // named with** (rule 268). The check above already found it, so
-        // `resolve` cannot miss here. Kept apart from `entity`, which still
-        // carries the handle the caller sent and is served back exactly as
-        // written.
-        let stored = if let Some(parent) = &entity.parent {
-            let stored_parent = self
-                .resolve(&mut tx, parent)
-                .await?
-                .map(|(key, _)| key)
-                .unwrap_or_else(|| parent.clone());
-            Entity {
-                parent: Some(stored_parent),
-                ..entity.clone()
+        validate_new_entity(&new)?;
+        validate_new_fact(&first)?;
+        // **One transaction for both writes.** A refusal or a block of the claim
+        // returns before the commit, so the entity is never stored without it.
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        let entity = match self.create_in(&mut tx, new).await? {
+            Guarded::Written(entity) => entity,
+            Guarded::Blocked {
+                attempted,
+                candidates,
+            } => {
+                return Ok(Guarded::Blocked {
+                    attempted,
+                    candidates,
+                });
             }
-        } else {
-            entity.clone()
         };
-        let badge = write_entity(&mut tx, &self.draw, &stored, &self.clock).await?;
-        tx.commit().await.map_err(store)?;
-        Ok(Guarded::Written(Entity {
-            badge: Some(badge),
-            ..entity
-        }))
+        match self.capture_in(&mut tx, first).await? {
+            Guarded::Written(fact) => {
+                tx.commit().await.map_err(store)?;
+                Ok(Guarded::Written((entity, fact)))
+            }
+            Guarded::Blocked {
+                attempted,
+                candidates,
+            } => Ok(Guarded::Blocked {
+                attempted,
+                candidates,
+            }),
+        }
     }
 
     async fn list_entities(&self, kind: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError> {
@@ -2660,372 +3100,13 @@ impl Memory for DoltMemory {
     }
 
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
-        validate_write_subject(&fact.subject)?;
-        validate_content(&fact.content)?;
-        if let Some(edge) = &fact.edge {
-            validate_edge(edge)?;
-        }
-        validate_happened_span(fact.happened_at, fact.happened_through)?;
-        validate_fields(&fact.fields)?;
-        validate_provenance_source(fact.provenance, &fact.fields)?;
-        let standing = standing_of(&fact);
-
+        validate_new_fact(&fact)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
-        // **What EXISTS**, which is the rows plus what the build supplies —
-        // the same set the creation screen reads (rule 234).
-        let index = self.known(&mut tx).await?;
-        // **A stale-but-renamed subject exists too.** The direct check is
-        // what the guard already asks; a miss on it is checked again through
-        // the thing's own rename history before it is called unknown. Kept,
-        // rather than re-resolved, for its storage key below.
-        let subject_resolved = self.resolve(&mut tx, &fact.subject).await?;
-        if subject_resolved.is_none()
-            && let guard::Decision::Block(candidates) =
-                guard::decide_existing(&fact.subject, &index)
-        {
-            return Ok(Guarded::Blocked {
-                attempted: fact.subject,
-                candidates,
-            });
+        let written = self.capture_in(&mut tx, fact).await?;
+        if matches!(written, Guarded::Written(_)) {
+            tx.commit().await.map_err(store)?;
         }
-        if let Some(edge) = &fact.edge
-            && let guard::Decision::Block(candidates) = guard::decide_existing(&edge.object, &index)
-        {
-            return Ok(Guarded::Blocked {
-                attempted: edge.object.clone(),
-                candidates,
-            });
-        }
-        for object in &fact.refs {
-            validate_write_subject(object)?;
-            if let guard::Decision::Block(candidates) = guard::decide_existing(object, &index) {
-                return Ok(Guarded::Blocked {
-                    attempted: object.clone(),
-                    candidates,
-                });
-            }
-        }
-        // **A reference key names an entity, so it faces the same rule the
-        // edge's object faces.** A walkable link into a node nobody recorded is
-        // the hole rule 3 exists to close, and arriving through a key rather
-        // than through an edge does not make it a different hole.
-        for object in referenced_by(&fact.fields, &Self::types_in(&mut tx).await?) {
-            if let guard::Decision::Block(candidates) = guard::decide_existing(&object, &index) {
-                return Ok(Guarded::Blocked {
-                    attempted: object,
-                    candidates,
-                });
-            }
-        }
-        // A claim this one is derived from is named, so it must already exist —
-        // an unknown home is an entity miss and a home holding no such row is a
-        // fact miss, which are the two shapes this rail already has.
-        let derived_from = if let Some(source) = &fact.derived_from {
-            let Some((source_key, _)) = self.resolve(&mut tx, &source.home).await? else {
-                return Err(MemoryError::UnknownEntity {
-                    attempted: source.home.to_string(),
-                    nearest: guard::screen(&source.home, &[], &index),
-                });
-            };
-            let resolved_source = FactAddress::new(source_key, source.local.clone());
-            // **Archive is a visibility switch, not a validity gate** — a
-            // source that is archived may still be cited. The claim must
-            // exist; whether it still stands is the reader's judgment, and
-            // the MCP layer names an archived source in the write's own
-            // receipt so the judgment has something to work from.
-            if self.read_fact(&mut tx, &resolved_source).await?.is_none() {
-                return Err(MemoryError::UnknownFact {
-                    attempted: source.to_string(),
-                    nearest: self.addresses_in(&mut tx, &resolved_source.home).await?,
-                });
-            }
-            Some(resolved_source)
-        } else {
-            None
-        };
-
-        // **What the subject is stored as** — the badge it wears, or its own
-        // handle when it wears none. Already resolved above, direct or
-        // through its rename history.
-        let (home, subject_handle) = subject_resolved.expect("checked to exist just above");
-        // **An edge's object and a ref are stored as the badge they wear,
-        // never the handle they were named with** (rule 268). The existence
-        // check above already found each one in `index`, so `resolve` cannot
-        // miss here. Storing the badge is what makes a later handle
-        // collision harmless: there is nothing left in the row for a
-        // newcomer to inherit.
-        let edge = match &fact.edge {
-            Some(edge) => Some(Edge {
-                shape: edge.shape,
-                object: self
-                    .resolve(&mut tx, &edge.object)
-                    .await?
-                    .map(|(key, _)| key)
-                    .unwrap_or_else(|| edge.object.clone()),
-            }),
-            None => None,
-        };
-        let mut refs = Vec::with_capacity(fact.refs.len());
-        for object in &fact.refs {
-            refs.push(
-                self.resolve(&mut tx, object)
-                    .await?
-                    .map(|(key, _)| key)
-                    .unwrap_or_else(|| object.clone()),
-            );
-        }
-        // **Off the subject's own kind, never off `home`** — that is a badge
-        // now, and a badge carries no kind token to parse. Computed once,
-        // ahead of the cap check that needs it and the fit guard further
-        // down that already did.
-        let subject_kind = index
-            .iter()
-            .find(|e| e.id == subject_handle)
-            .expect("resolved above")
-            .kind;
-        // **A role's own claim is decided atomically with the write it
-        // gates, against the folded state this same transaction already
-        // reads** — the same reason the capacity check just below reads
-        // under it rather than in a call of its own. `role_write_in` reads
-        // `None` for any write that names neither of a role's two fields,
-        // so this costs nothing on the ordinary path.
-        if let Some((role, claimant, now)) = jojobot_domain::session::role_write_in(&fact.fields) {
-            let folded = Self::held_by(&mut tx, &home).await?;
-            let current_holder = folded.get(&jojobot_domain::session::role_holder_key(&role));
-            let current_claimed_at = folded
-                .get(&jojobot_domain::session::role_claimed_at_key(&role))
-                .and_then(|s| s.parse().ok());
-            if let jojobot_domain::session::LeaseClaim::Refused { holder, until } =
-                jojobot_domain::session::claim_role(
-                    &claimant,
-                    current_holder.map(String::as_str),
-                    current_claimed_at,
-                    now,
-                    jojobot_domain::session::LEASE_FRESHNESS,
-                )
-            {
-                return Err(MemoryError::RoleTaken {
-                    role,
-                    holder,
-                    until,
-                });
-            }
-        }
-        // **A ceiling's cardinality is enforced here, atomically with the
-        // write it gates** — never as a separate call, because a drop with
-        // nothing yet written in its place is a state the room must never
-        // reach. **Structural, never a kind question**: a room's member is
-        // an ordinary claim on the bound thing's own handle drawing a
-        // `connection` edge, and capacity is an ordinary field on that
-        // thing, folded like any other. A thing carrying none is uncapped —
-        // this reaches every kind identically, the same rule the interface
-        // above it already runs on.
-        if edge
-            .as_ref()
-            .is_some_and(|e| e.shape == EdgeShape::Connection)
-        {
-            let held = Self::held_by(&mut tx, &home).await?;
-            // **The body cap, checked before the room has anything to say.**
-            // A thought over its container's cap is refused whether or not
-            // the room has space — see `refuses_thought_over_cap`.
-            let cap = held
-                .get(jojobot_domain::memory::THOUGHT_BODY_CAP)
-                .and_then(|v| v.trim().parse::<usize>().ok());
-            let capacity = held
-                .get(jojobot_domain::memory::THOUGHT_CAPACITY)
-                .and_then(|v| v.trim().parse::<usize>().ok());
-            if let Some(err) = jojobot_domain::memory::refuses_thought_over_cap(
-                &subject_handle,
-                &jojobot_domain::memory::normalize_content(&fact.content),
-                cap,
-                capacity,
-            ) {
-                return Err(err);
-            }
-            if let Some(capacity) = capacity {
-                let existing = self.facts_of(&mut tx, &home).await?;
-                let nominal_room = jojobot_domain::memory::thought_room(&existing);
-                // **Ageing's own cost is paid only when the room might
-                // actually be full** — a bot nowhere near capacity never
-                // pays for a touch-moment lookup on every write.
-                if nominal_room.len() >= capacity {
-                    let ids: Vec<FactId> = nominal_room.iter().map(|f| f.id.clone()).collect();
-                    let touched = Self::touched_moments(&mut tx, &home, &ids).await?;
-                    let split = jojobot_domain::memory::split_by_age(
-                        nominal_room,
-                        &touched,
-                        fact.aged_before,
-                    );
-                    if split.live.len() >= capacity {
-                        let aged_out = split.aged_out.len();
-                        let refuse = |room: Vec<Fact>| MemoryError::RoomFull {
-                            // **The handle the caller reached this thing
-                            // by, never `home`** — `home` is the badge every
-                            // entity wears from creation, and a refusal
-                            // naming it hands back a token the caller
-                            // cannot address anything by.
-                            subject: subject_handle.to_string(),
-                            live: room.len(),
-                            capacity,
-                            room,
-                            aged_out,
-                        };
-                        let room = split.live;
-                        match (&fact.drop, &fact.drop_because) {
-                            (Some(victim), Some(reason)) => {
-                                // **The victim must resolve to a live thought IN
-                                // THIS ROOM** — not merely to a fact that exists,
-                                // and not to one aged out of the count. Anything
-                                // else is answered exactly as an empty drop is:
-                                // refused, with the room shown, because a caller
-                                // that named the wrong thing still needs to see
-                                // what it could have named.
-                                let in_room = self
-                                    .resolve(&mut tx, &victim.home)
-                                    .await?
-                                    .filter(|(key, _)| *key == home)
-                                    .and_then(|_| {
-                                        room.iter().find(|f| f.id == victim.local).cloned()
-                                    });
-                                let Some(mut victim_fact) = in_room else {
-                                    return Err(refuse(room));
-                                };
-                                // **A thought that carries a key only its own
-                                // relation may change is not droppable.** A
-                                // capture carries no caller to ask who may change
-                                // that key, and archiving the thought takes the
-                                // key off the fold. Retracting it asks.
-                                if !jojobot_domain::memory::guarded_keys_in(&victim_fact.fields)
-                                    .is_empty()
-                                {
-                                    return Err(refuse(room));
-                                }
-                                // **`facts_of` serves under the current handle,
-                                // never the storage key** (see `assemble`'s own
-                                // comment) — exactly right for a reader, and
-                                // exactly wrong for a row about to be written
-                                // again. `lower_pointers` is the one seam
-                                // `update_fact` and `retract` both already call
-                                // for this: every pointer-bearing field at
-                                // once — `.home`, `.subject`, `.edge`,
-                                // `.derived_from`, `.refs` — never two of them
-                                // by hand while the rest stay served.
-                                self.lower_pointers(&mut tx, &mut victim_fact, &home)
-                                    .await?;
-                                // **Archived, through the one writer every
-                                // archive goes through** — `write_fact` is what
-                                // appends the claim's own write history; a
-                                // status flip that skipped it would read back
-                                // changed with nothing behind it saying when.
-                                victim_fact.status = FactStatus::Archived;
-                                victim_fact.details = Some(reason.clone());
-                                Self::write_fact(&mut tx, &victim_fact, &self.clock, None).await?;
-                            }
-                            // **The emergency reserve, spent — never twice
-                            // in a row.** Only honoured at the exact
-                            // threshold: a room already OVER capacity means
-                            // a borrow already landed and was not repaid,
-                            // and the ceiling's answer to that is steering
-                            // back, not borrowing again.
-                            _ if fact.borrow && room.len() == capacity => {}
-                            _ => return Err(refuse(room)),
-                        }
-                    }
-                }
-            }
-        }
-        let id = Self::mint(&mut tx, &home).await?;
-        let stored = Fact {
-            id,
-            home: home.clone(),
-            // One column, stored into both fields — read back into both the
-            // same way on every fact this store serves.
-            subject: home,
-            content: normalize_content(&fact.content),
-            details: normalize_details(fact.details.as_deref()),
-            provenance: fact.provenance,
-            standing,
-            status: fact.status,
-            recorded_at: fact.recorded_at,
-            happened_at: fact.happened_at,
-            happened_through: fact.happened_through,
-            edge,
-            fields: fact.fields,
-            refs,
-            derived_from,
-            // A capture never carries a mark — see [`NewFact`]; the mark is
-            // an edit's to make, once the record it names already exists.
-            stands_for: Vec::new(),
-            // **The store stamps it, so nothing above can.** The moment a
-            // record is taken in is this one, and a caller that could name it
-            // could claim jojobot knew something before it did.
-            inserted_at: Some(self.clock.now()),
-            stale_after: fact.stale_after,
-        };
-        // **A new record's keys land on the thing too**, so the same guard the
-        // edit path runs applies here: a write may not drop a thing below a
-        // type it already fits, by taking a key away or by putting a value in
-        // one that the key does not hold. One function, called from both verbs
-        // in both stores.
-        let held = Self::writes_on(&mut tx, &stored.home).await?;
-        let declared = Self::types_in(&mut tx).await?;
-        // **The fold reads both halves and the guard reads one.** How a key
-        // folds is declared by whoever declared it; what governs a thing is
-        // its own kind, and nothing else — `subject_kind`, computed once
-        // above, ahead of the cap check that also needs it.
-        let governs = Self::kind_keys_in(&mut tx, subject_kind.as_token()).await?;
-        let columns = self
-            .project_columns_of(&mut tx, &index, &subject_handle)
-            .await?;
-        guard_fit_in(
-            subject_kind.as_token(),
-            &folded_fields(&held, &declared),
-            &stood_after_capture(&held, &stored, &declared),
-            &governs,
-            columns.as_deref(),
-        )?;
-        Self::write_fact(&mut tx, &stored, &self.clock, fact.session.as_deref()).await?;
-        // Every key this record carries is a write of its own, appended to the
-        // history of that key on this thing. **A reference-typed value is
-        // lowered to the permanent id it names first** (rule 268), guarded
-        // above against the handle-form value the caller actually sent —
-        // the guard has already run, so what lands here is free to be the
-        // storage shape rather than the served one.
-        let lowered_writes = self.lower_writes(&mut tx, written_keys(&stored)).await?;
-        Self::append_writes(&mut tx, &stored.home, &stored.id, lowered_writes).await?;
-        // **Served under the handle, stored under the key** — resolved
-        // before the commit closes the transaction this needs to do it in.
-        let served_derived_from = match &stored.derived_from {
-            Some(source) => Some(FactAddress::new(
-                self.current_handle(&mut tx, &source.home).await?,
-                source.local.clone(),
-            )),
-            None => None,
-        };
-        let served_edge = match &stored.edge {
-            Some(edge) => Some(Edge {
-                shape: edge.shape,
-                object: self.current_handle(&mut tx, &edge.object).await?,
-            }),
-            None => None,
-        };
-        let mut served_refs = Vec::with_capacity(stored.refs.len());
-        for object in &stored.refs {
-            served_refs.push(self.current_handle(&mut tx, object).await?);
-        }
-        let mut served_fields = stored.fields.clone();
-        self.compose_reference_fields(&mut tx, &mut served_fields)
-            .await?;
-        tx.commit().await.map_err(store)?;
-        Ok(Guarded::Written(Fact {
-            home: subject_handle.clone(),
-            subject: subject_handle,
-            derived_from: served_derived_from,
-            edge: served_edge,
-            refs: served_refs,
-            fields: served_fields,
-            ..stored
-        }))
+        Ok(written)
     }
 
     async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {

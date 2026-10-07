@@ -209,6 +209,29 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
         self.inner.add_entity(new).await
     }
 
+    /// **A handle the build supplies is taken here too**, for the reason
+    /// `add_entity` refuses it: the creation that writes its first claim must not
+    /// be a way past the screen.
+    async fn add_entity_with_first_claim(
+        &self,
+        new: NewEntity,
+        first: NewFact,
+    ) -> Result<Guarded<(Entity, Fact)>, MemoryError> {
+        if let Some((supplied, _)) = self.provisions.record_for(&new.id) {
+            return Ok(Guarded::Blocked {
+                attempted: new.id.clone(),
+                candidates: vec![guard::EntityMatch {
+                    handle: supplied.id.clone(),
+                    kind: supplied.kind,
+                    name: supplied.name.clone(),
+                    source: supplied.source.clone(),
+                    reason: guard::MatchReason::ExactHandle,
+                }],
+            });
+        }
+        self.inner.add_entity_with_first_claim(new, first).await
+    }
+
     // ── the reads a WHOLE supplied record has to answer ─────────────────────
     //
     // A record the build supplies is in no table, so every read that would

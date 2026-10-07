@@ -14188,6 +14188,99 @@ pub async fn a_rewrite_of_testimony_belongs_to_the_session_that_wrote_it<M: Memo
     );
 }
 
+/// **A thing created with its first claim is made whole or not at all.**
+///
+/// Three halves, each against the others. The call that is allowed makes the
+/// thing and writes the claim with its fields. A first claim whose field breaks
+/// the kind's own rule refuses the whole call and leaves no thing behind. A
+/// first claim whose field links to a handle nobody holds is blocked and leaves
+/// no thing behind either. Without the last two this case passes on a store
+/// that creates first and captures after, and leaves an empty thing whenever
+/// the second step refuses.
+pub async fn an_entity_created_with_a_first_claim_is_made_whole_or_not_at_all<M: Memory>(
+    store: &M,
+) {
+    // The kinds' keys, or a status outside the five is a key nobody declared.
+    crate::memory::kinds::seed(store)
+        .await
+        .expect("the kinds are seeded");
+    let id = |handle: &str| EntityId(handle.to_string());
+    let first_claim = |subject: &EntityId, fields: &[(&str, &str)]| {
+        let mut fact = NewFact::about(subject.clone(), "the first claim", date(2026, 10, 7));
+        fact.fields = fields
+            .iter()
+            .map(|(key, value)| (key.to_string(), value.to_string()))
+            .collect();
+        fact
+    };
+    let listed = |handle: EntityId| async move {
+        store
+            .list_entities(None)
+            .await
+            .expect("the roster reads")
+            .iter()
+            .any(|entity| entity.id == handle)
+    };
+
+    // The call that is allowed makes the thing and its claim together.
+    let whole = id("work:phi");
+    let Guarded::Written((entity, fact)) = store
+        .add_entity_with_first_claim(
+            NewEntity::new(whole.clone(), "Phi", "contract-fixture"),
+            first_claim(&whole, &[("status", "next")]),
+        )
+        .await
+        .expect("creating a thing with its first claim is allowed")
+    else {
+        panic!("{whole} was expected to be written");
+    };
+    assert_eq!(entity.id, whole);
+    assert_eq!(fact.subject, whole);
+    assert_eq!(
+        store.fields(&whole).await.expect("the fields read")["status"],
+        "next",
+        "the first claim's field is what the new thing holds",
+    );
+    assert_eq!(
+        read_back(store, &whole, &fact.id).await.fields["status"],
+        "next",
+        "the first claim reads back with its field",
+    );
+    assert!(listed(whole).await, "the thing was made");
+
+    // A field the kind refuses: the whole call is refused, nothing is made.
+    let refused = id("work:sigma");
+    store
+        .add_entity_with_first_claim(
+            NewEntity::new(refused.clone(), "Sigma", "contract-fixture"),
+            first_claim(&refused, &[("status", "not-a-status")]),
+        )
+        .await
+        .expect_err("a status outside the five refuses the whole call");
+    assert!(
+        !listed(refused).await,
+        "a refused first claim left a thing behind",
+    );
+
+    // A link to a handle nobody holds: blocked, nothing is made.
+    let linked = id("work:first-mix");
+    let outcome = store
+        .add_entity_with_first_claim(
+            NewEntity::new(linked.clone(), "First mix", "contract-fixture"),
+            first_claim(&linked, &[("owner", "person:contract-nobody")]),
+        )
+        .await
+        .expect("a link to nothing is an answer, not an error");
+    assert!(
+        matches!(outcome, Guarded::Blocked { .. }),
+        "a link to a handle nobody holds is blocked: {outcome:?}",
+    );
+    assert!(
+        !listed(linked).await,
+        "a blocked first claim left a thing behind",
+    );
+}
+
 /// **Every case of the memory contract, listed once.** The list is a macro so
 /// that counting the cases and running a slice of them read the same list: a
 /// case added here is counted and run, and no second list can drift from it.
@@ -14386,6 +14479,7 @@ macro_rules! all_cases {
         $m!(a_declared_type_governs_no_write($store));
         $m!(a_long_history_is_cut_to_its_newest_and_says_how_many($store));
         $m!(a_read_of_facts_says_how_many_times_each_was_written($store));
+        $m!(an_entity_created_with_a_first_claim_is_made_whole_or_not_at_all($store));
         $m!(a_walk_with_no_facts_carries_no_revision_counts($store));
         $m!(claim_histories_agrees_with_claim_history_per_fact($store));
 

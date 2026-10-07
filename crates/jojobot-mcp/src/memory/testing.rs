@@ -223,6 +223,7 @@ pub(crate) async fn ensure(jojobot: &Jojobot, handle: &str) {
             crm: None,
             boot: None,
             parent: None,
+            fields: None,
             override_token: None,
             // The handler's own registry, for the same reason `make_bot` uses
             // it: a bare-registry test must be able to provision a subject.
@@ -305,6 +306,7 @@ pub(crate) fn add_args(kind: &str, handle: &str, name: &str) -> AddEntityArgs {
         crm: None,
         boot: None,
         parent: None,
+        fields: None,
         override_token: None,
         sid: Some(crate::harness::TEST_SID.into()),
     }

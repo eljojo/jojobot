@@ -532,6 +532,52 @@ impl super::Memory for Mentioning {
     ) -> Result<super::Guarded<Entity>, super::MemoryError> {
         self.inner.add_entity(new).await
     }
+    /// **The first claim resolves what it says, exactly as a capture does.** A
+    /// mention that names nothing blocks the creation, and a mention that
+    /// resolves is stored as the badge its row wears. Forwarded and not left to
+    /// the port's default, which refuses.
+    async fn add_entity_with_first_claim(
+        &self,
+        new: super::NewEntity,
+        first: super::NewFact,
+    ) -> Result<super::Guarded<(Entity, super::Fact)>, super::MemoryError> {
+        let known = self.known().await?;
+        if let Some(blocked) = Self::screen(
+            &[
+                first.content.as_str(),
+                first.details.as_deref().unwrap_or(""),
+            ],
+            &known,
+        ) {
+            return Ok(blocked);
+        }
+        let written = self
+            .inner
+            .add_entity_with_first_claim(
+                new,
+                super::NewFact {
+                    content: resolved(&first.content, &known).map_err(unloaded)?,
+                    details: first
+                        .details
+                        .as_deref()
+                        .map(|d| resolved(d, &known))
+                        .transpose()
+                        .map_err(unloaded)?,
+                    ..first
+                },
+            )
+            .await?;
+        Ok(match written {
+            super::Guarded::Written((entity, mut stored)) => {
+                let known = self.known().await?;
+                let former = self.former().await?;
+                let declared = self.declared().await?;
+                self.render_fact(&mut stored, &known, &former, &declared);
+                super::Guarded::Written((entity, stored))
+            }
+            blocked => blocked,
+        })
+    }
     async fn list_entities(
         &self,
         kind: Option<super::EntityKind>,

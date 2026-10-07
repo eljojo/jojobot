@@ -152,6 +152,13 @@ impl Jojobot {
         }
         let mut projected = match self.memory.fields(subject).await {
             Ok(fields) => fields,
+            // **A thing that does not exist yet holds nothing**, so the first claim
+            // of a creation is worked out over what it sends alone. A capture on a
+            // handle nobody holds is refused by the store, so this changes no
+            // answer there.
+            Err(jojobot_domain::memory::MemoryError::UnknownEntity { .. }) => {
+                std::collections::BTreeMap::new()
+            }
             Err(_) => return (attention::DueMove::Unchanged, false),
         };
         let held = projected.clone();

@@ -1359,6 +1359,34 @@ fn the_capture_description_says_a_handle_in_a_field_is_a_link() {
     }
 }
 
+/// **`add_entity`'s own description names the argument that gives a new thing
+/// its first fields.** A new argument the verb's description does not mention is
+/// the commonest way a capability goes unfound. The argument is read out of the
+/// published schema, so a rename fails here, and the description is pinned on the
+/// argument's name and on the verb it follows the guards of.
+#[test]
+fn add_entity_names_the_argument_that_gives_a_new_thing_its_first_fields() {
+    let tools = Jojobot::tool_router().list_all();
+    let add_entity = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "add_entity")
+        .expect("the surface offers add_entity");
+    let schema = serde_json::to_value(&add_entity.input_schema).expect("the schema serializes");
+    assert!(
+        schema["properties"]["fields"].is_object(),
+        "add_entity publishes no `fields`: {schema}"
+    );
+    let description = add_entity.description.as_deref().unwrap_or_default();
+    // The argument counts only in backticks, as the identifier it is: the word
+    // `fields` is also in the sentence that explains it.
+    for word in ["`fields`", "capture"] {
+        assert!(
+            description.contains(word),
+            "add_entity's description does not name {word}: {description}"
+        );
+    }
+}
+
 /// **The second call for who reports to a bot is named where `reports_to` is
 /// taught.** The colleagues view says only whom each bot reports to, so the
 /// surface that tells a bot to write the key also says how to read the other
