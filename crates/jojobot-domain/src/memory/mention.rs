@@ -580,7 +580,13 @@ impl super::Memory for Mentioning {
         &self,
         fact: super::NewFact,
     ) -> Result<super::Guarded<super::Fact>, super::MemoryError> {
-        refuse_forged(&[fact.content.as_str(), fact.details.as_deref().unwrap_or("")])?;
+        refuse_forged(&[
+            fact.content.as_str(),
+            fact.details.as_deref().unwrap_or(""),
+            // A store keeps the reason a thought is dropped as the details of the
+            // claim it archives.
+            fact.drop_because.as_deref().unwrap_or(""),
+        ])?;
         let known = self.known().await?;
         if let Some(blocked) = Self::screen(
             &[fact.content.as_str(), fact.details.as_deref().unwrap_or("")],
@@ -1117,6 +1123,23 @@ mod tests {
         refused(
             "prose",
             store.set_prose(&holder, "see @#k7h2mn").await.map(|_| ()),
+        );
+        // **The reason a thought is dropped is text a caller writes**, and a store
+        // keeps it as the details of the claim it archives, so it is held to the
+        // same rule as the details of any claim.
+        refused(
+            "a drop reason",
+            store
+                .capture(NewFact {
+                    drop: Some(crate::memory::FactAddress::new(
+                        holder.clone(),
+                        crate::memory::FactId("f1".to_string()),
+                    )),
+                    drop_because: Some("replaced by @#k7h2mn".to_string()),
+                    ..NewFact::about(holder.clone(), "a new thought", day)
+                })
+                .await
+                .map(|_| ()),
         );
         // The positives the refusals are measured against.
         store
