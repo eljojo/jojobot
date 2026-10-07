@@ -381,12 +381,17 @@ the thing. See the `rhythms` skill for what is owed and how to read it.
 
 ## An open question
 
-A question nobody has asked yet is a claim that carries its state and the thing
-it blocks. Write `state` as `drafted`, `asked` or `answered`, and `blocks` as
-the handle of what waits on it. Write the same key again when the state
-changes. A later read for the questions that are drafted and never asked is a
-read of that key:
+A question nobody has asked yet is a piece of work of its own. Make it with
+`add_entity`, kind `work`, and file it under its project with `parent`. Write
+`state` on the question as `drafted`, `asked` or `answered`, and `blocks` as
+the handle of what waits on it. Write the same key again on the question when
+the state changes. A question carries no `status`: one that is drafted and
+deliberately not asked is not next work, so it stays out of the status read.
+Each question folds its own `state`, so a later read for the questions that are
+drafted and never asked is a read of that key, and it finds every one:
 
+    add_entity  kind: "work"  handle: "phi"  name: "Payment provider"  parent: "project:visa"  source: "drafted in conversation"
+    capture  subject: "work:phi"  content: "which payment provider do we use?"  fields: {"state": "drafted", "blocks": "work:handcart"}
     recall  fields: [{"key": "state", "value": "drafted"}]  facts: true
 
 ## Where a piece of work stands
@@ -762,6 +767,7 @@ mod tests {
     /// word a tip adds that is neither published nor on this list fails the
     /// case below, so adding a tip means saying here what its words are.
     const NOT_ARGUMENTS: &[&str] = &[
+        "add_entity",
         "answered",
         "asked",
         "blocks",
@@ -874,6 +880,36 @@ mod tests {
         assert!(
             text.contains(&format!("`{}`", kinds::COLUMNS)),
             "the projects procedure does not name the key a project lists its columns under"
+        );
+    }
+
+    /// **The open-question section files a question as a piece of work of its
+    /// own under its project, and says it carries no status.** A question kept
+    /// as a claim on the project folds into the project's one `state`, so a read
+    /// for the drafted ones misses an older question once a newer one has
+    /// another state. Pinned on the identifiers a session must spell: the verb
+    /// that makes the entity, its kind, the argument that files it under the
+    /// project, the two keys it carries and the one it does not.
+    #[test]
+    fn the_projects_procedure_files_an_open_question_as_work_under_its_project() {
+        let published = crate::arguments::published_argument_names();
+        let text = body("projects");
+        let section = text
+            .split("\n## ")
+            .find(|section| section.starts_with("An open question"))
+            .expect("the projects procedure has an open-question section");
+        // A word counts only in backticks, as the identifier it is: `status` is
+        // also an everyday word in the sentence that says a question carries
+        // none.
+        for word in ["add_entity", "work", "parent", "state", "blocks", "status"] {
+            assert!(
+                section.contains(&format!("`{word}`")),
+                "the open-question section does not name `{word}`"
+            );
+        }
+        assert!(
+            published.contains("parent"),
+            "the surface publishes no `parent`, so this case is pinning the wrong argument"
         );
     }
 

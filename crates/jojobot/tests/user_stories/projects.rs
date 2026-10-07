@@ -311,32 +311,55 @@ async fn a_pause_on_a_thing_with_no_loop_is_a_promise_regarding_it() {
     story.finish().await;
 }
 
-/// **An open question carries its state and the thing it blocks**, so a later
-/// read finds the questions drafted and never asked.
+/// Where an open question is filed: a `work` thing of its own, so that it folds
+/// its own `state` and a key filter on `state` finds every question whatever
+/// the others say.
+fn home_of(question: &str) -> String {
+    format!("work:{question}")
+}
+
+/// **An open question is a piece of work of its own, under its project, and it
+/// carries its state and the thing it blocks**, so a later read finds every
+/// question drafted and never asked, beside one asked after it on the same
+/// project.
 #[tokio::test]
 async fn an_open_question_carries_its_state_and_what_it_blocks() {
     let story = Story::begin("bot:gamma").await;
     let s = story.session().await;
     s.add("project:visa", "The App").await;
     s.add("work:handcart", "The Film").await;
+    // The film is next work, the one status read a question stays out of.
     s.event_with(
-        "project:visa",
-        "which payment provider do we use? drafted, not yet asked",
-        json!({"state": "drafted", "blocks": "work:handcart"}),
+        "work:handcart",
+        "the film is next",
+        json!({"status": "next"}),
         &[],
     )
     .await;
-    // A question already asked, on another project: not drafted, so a read of
-    // the drafted ones must leave it out. It sits on its own project because a
-    // key filter reads the thing's newest write of `state`.
-    s.add("project:atlas", "The Campaign").await;
-    s.event_with(
-        "project:atlas",
-        "which refund rule do we apply? asked, answer pending",
-        json!({"state": "asked", "blocks": "work:handcart"}),
-        &[],
-    )
-    .await;
+    // Two questions on the SAME project: the older drafted, the newer asked.
+    for (question, name, words, state) in [
+        (
+            "phi",
+            "Payment provider",
+            "which payment provider do we use? drafted, not yet asked",
+            "drafted",
+        ),
+        (
+            "sigma",
+            "Refund rule",
+            "which refund rule do we apply? asked, answer pending",
+            "asked",
+        ),
+    ] {
+        s.add_under("project:visa", &home_of(question), name).await;
+        s.event_with(
+            &home_of(question),
+            words,
+            json!({"state": state, "blocks": "work:handcart"}),
+            &[],
+        )
+        .await;
+    }
 
     let drafted = s
         .call(
@@ -357,6 +380,17 @@ async fn an_open_question_carries_its_state_and_what_it_blocks() {
         )
         .await;
     asked.says("refund").never_says("payment provider");
+    // A question is not next work: it carries no `status`, so the read for what
+    // is next finds the film and neither question.
+    let next = s
+        .call(
+            "recall",
+            json!({"kind": "work", "fields": [{"key": "status", "value": "next"}]}),
+        )
+        .await;
+    next.says("work:handcart")
+        .never_says("work:phi")
+        .never_says("work:sigma");
     story.finish().await;
 }
 
