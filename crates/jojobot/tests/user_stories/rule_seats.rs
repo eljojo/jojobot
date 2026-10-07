@@ -215,9 +215,9 @@ async fn a_floor_the_boot_cannot_carry_is_refused_when_it_is_written() {
 
     // ── a bot already over stays repairable ─────────────────────────────────
     //
-    // Sigma's charter alone is over the ceiling, so its boot ships oversized
-    // whatever is written. A write that lowers the floor still lands, and one
-    // that grows it does not.
+    // Sigma's charter fills the ceiling exactly, and a new colleague then
+    // grows its snapshot, which is the one write that never refuses. A write
+    // that lowers the floor still lands, and one that grows it does not.
     s.add("bot:sigma", "Sigma").await;
     for n in 0..7 {
         s.call(
@@ -230,9 +230,20 @@ async fn a_floor_the_boot_cannot_carry_is_refused_when_it_is_written() {
         )
         .await;
     }
+    let fits = fill_the_ceiling_with_a_charter(&s, "bot:sigma").await;
+    s.add("bot:psi", "Psi").await;
+    // Over the ceiling by what the new colleague added, which is more than
+    // one character. A charter one longer grows the floor and is refused; one
+    // a character shorter lowers it and lands although the boot is still over.
+    s.refused(
+        "set_charter",
+        json!({"bot": "sigma", "prose": charter_of(fits + 1)}),
+    )
+    .await
+    .says("characters");
     s.call(
         "set_charter",
-        json!({"bot": "sigma", "prose": "heavycharter ".repeat(3000)}),
+        json!({"bot": "sigma", "prose": charter_of(fits - 1)}),
     )
     .await;
     s.event_with(
@@ -254,5 +265,177 @@ async fn a_floor_the_boot_cannot_carry_is_refused_when_it_is_written() {
     .says("characters");
 
     s.wrap("kept the floor under the ceiling").await;
+    story.finish().await;
+}
+
+/// **The ceiling a boot may not cross**, as the refusal itself states it.
+const BOOT_CEILING: u64 = 28_000;
+
+/// A charter of `n` characters that costs exactly `n` in the boot: one letter
+/// has no escape and does not collapse, so the floor moves one for one.
+fn charter_of(n: u64) -> String {
+    "x".repeat(n as usize)
+}
+
+/// **Write `bot` a charter that takes its boot to the ceiling and not past
+/// it**, reading the size off the refusal of one too big rather than guessing
+/// the weight of everything else a boot carries. Returns the charter's length.
+async fn fill_the_ceiling_with_a_charter(s: &super::dsl::Session, bot: &str) -> u64 {
+    let probe = 40_000;
+    let refused = s
+        .refused(
+            "set_charter",
+            json!({"bot": bot, "prose": charter_of(probe)}),
+        )
+        .await
+        .json();
+    let fits = probe
+        - refused["over"]
+            .as_u64()
+            .expect("the refusal says by how much");
+    s.call(
+        "set_charter",
+        json!({"bot": bot, "prose": charter_of(fits)}),
+    )
+    .await;
+    fits
+}
+
+/// **A charter is part of what a boot cannot cut, so it is held to the ceiling
+/// where it is written** — as a star is.
+#[tokio::test]
+async fn a_charter_that_would_take_the_boot_over_the_ceiling_is_refused_naming_the_overage() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:omega", "Omega").await;
+    s.call(
+        "set_charter",
+        json!({"bot": "omega", "prose": "Holds the plan."}),
+    )
+    .await;
+
+    // ── a charter far past the ceiling is refused, with the sizes ───────────
+    let refused = s
+        .refused(
+            "set_charter",
+            json!({"bot": "omega", "prose": charter_of(40_000)}),
+        )
+        .await;
+    refused.says("\"wrote\":false");
+    let body = refused.json();
+    let floor = body["floor"].as_u64().expect("the refusal names the floor");
+    assert_eq!(body["budget"].as_u64(), Some(BOOT_CEILING), "{body}");
+    assert_eq!(
+        body["over"].as_u64(),
+        Some(floor - BOOT_CEILING),
+        "the overage is the floor less the ceiling: {body}"
+    );
+    // **The parts are named, largest first, and they add up to the floor** —
+    // so a writer cuts where it helps rather than where it is easy.
+    let parts = body["floor_parts"].as_array().expect("the parts are named");
+    assert_eq!(parts[0]["part"], "charter", "{body}");
+    let sizes: Vec<u64> = parts
+        .iter()
+        .map(|p| p["characters"].as_u64().expect("a size"))
+        .collect();
+    assert!(
+        sizes.windows(2).all(|w| w[0] >= w[1]),
+        "largest first: {body}"
+    );
+    assert_eq!(sizes.iter().sum::<u64>(), floor, "{body}");
+    for named in ["snapshot", "carried rules"] {
+        assert!(
+            parts.iter().any(|p| p["part"] == named),
+            "the floor's parts include {named}: {body}"
+        );
+    }
+    // Nothing was written.
+    s.call("recall", json!({"subject": "bot:omega", "prose": true}))
+        .await
+        .says("Holds the plan.")
+        .never_says("xxxxxxxx");
+
+    // ── the boundary: exactly at the ceiling lands, one past does not ───────
+    let fits = 40_000 - body["over"].as_u64().unwrap();
+    s.call(
+        "set_charter",
+        json!({"bot": "omega", "prose": charter_of(fits)}),
+    )
+    .await;
+    let one_past = s
+        .refused(
+            "set_charter",
+            json!({"bot": "omega", "prose": charter_of(fits + 1)}),
+        )
+        .await
+        .json();
+    assert_eq!(one_past["over"].as_u64(), Some(1), "{one_past}");
+
+    // ── a charter that shrinks the boot lands, whatever it is called ────────
+    s.call(
+        "set_charter",
+        json!({"bot": "omega", "prose": "Holds the plan, briefly."}),
+    )
+    .await;
+
+    s.wrap("held a charter to the ceiling").await;
+    story.finish().await;
+}
+
+/// **Creating a bot grows every other bot's snapshot, and never refuses.** A
+/// new colleague is not a mistake, so the answer says which bots it took over
+/// the ceiling and the write stands.
+#[tokio::test]
+async fn creating_a_bot_says_which_bots_it_pushes_over_the_ceiling() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:omega", "Omega").await;
+
+    // ── nobody is near the ceiling, so nobody is named ──────────────────────
+    let roomy = s
+        .call(
+            "add_entity",
+            json!({"kind": "bot", "handle": "upsilon", "name": "Upsilon", "source": "user-named"}),
+        )
+        .await;
+    assert_eq!(roomy.json()["id"], "bot:upsilon");
+    roomy.never_says("pushes_over");
+
+    // ── omega sits at the ceiling, and the next colleague takes it over ─────
+    fill_the_ceiling_with_a_charter(&s, "bot:omega").await;
+    let crowded = s
+        .call(
+            "add_entity",
+            json!({"kind": "bot", "handle": "psi", "name": "Psi", "source": "user-named"}),
+        )
+        .await;
+    let body = crowded.json();
+    assert_eq!(body["id"], "bot:psi", "the creation stands: {body}");
+    let pushed = body["pushes_over"]
+        .as_array()
+        .expect("the bots it pushed over are named");
+    assert_eq!(pushed.len(), 1, "{body}");
+    assert_eq!(pushed[0]["bot"], "bot:omega", "{body}");
+    assert!(pushed[0]["over"].as_u64().unwrap() > 0, "{body}");
+    assert!(
+        pushed[0]["floor"].as_u64().unwrap() > BOOT_CEILING,
+        "{body}"
+    );
+
+    // ── a bot already over is not pushed again ──────────────────────────────
+    //
+    // Omega is over the ceiling since the creation above. Another colleague
+    // grows its snapshot further, but it was not that creation that took it
+    // over, so the answer does not name it.
+    let again = s
+        .call(
+            "add_entity",
+            json!({"kind": "bot", "handle": "rho", "name": "Rho", "source": "user-named"}),
+        )
+        .await;
+    assert_eq!(again.json()["id"], "bot:rho");
+    again.never_says("pushes_over");
+
+    s.wrap("added colleagues beside a full boot").await;
     story.finish().await;
 }

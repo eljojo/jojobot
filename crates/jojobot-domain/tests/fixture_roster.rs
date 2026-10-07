@@ -146,6 +146,10 @@ const ROSTER: &[&str] = &[
     "bot:delta",
     "bot:epsilo",
     "bot:epsilon",
+    "bot:omega",
+    "bot:psi",
+    "bot:rho",
+    "bot:upsilon",
     "bot:gamm",
     "bot:gamma",
     // The software's own name, and the one name this repository owns. A

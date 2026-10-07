@@ -4,18 +4,35 @@
 //! rule's own words whatever the ranking decides. The boot never declines, so
 //! a bot whose floor is over the ceiling would ship an oversized answer
 //! forever. A star or a seat count that would take a bot over is refused where
-//! it is written, naming the size and the overage.
+//! it is written, naming the size and the overage. A charter is held to the
+//! same ceiling. Creating a bot grows every other bot's snapshot and is never
+//! refused, so it is measured instead, and the answer names the bots it took
+//! over the ceiling.
 
 use super::*;
 use crate::orientation::identity::carried_rules;
 use crate::orientation::orient::{elide_rule_details, entity_summary, floor_len};
 use jojobot_domain::memory::{FactStatus, RULE_SEATS, rule_seats_of, rules_in_force};
 
+/// **What a boot cannot cut, measured, and what it is made of.**
+pub(crate) struct Floor {
+    /// The size in characters, the sum `orient` measures.
+    pub(crate) total: usize,
+    /// Each part of the total with its own size, largest first. They add up to
+    /// `total`: the last is whatever the three named parts leave.
+    pub(crate) parts: Vec<(String, usize)>,
+}
+
+fn json_len(value: &serde_json::Value) -> usize {
+    value.to_string().chars().count()
+}
+
 impl Jojobot {
     /// **The boot's floor for `bot` if it held `in_force` rules and `seats`
     /// seats**, in characters — the same sum `orient` measures, with every
-    /// carried rule's `details` already elided. `None` when a store cannot
-    /// say, which is never a reason to refuse a write.
+    /// carried rule's `details` already elided. `charter` is the charter the
+    /// boot would carry; `None` reads the one the bot holds now. `None` back
+    /// when a store cannot say, which is never a reason to refuse a write.
     ///
     /// Not counted: the session blocks, which a write has none of, and the
     /// bot's own box counts, which a read must not repair.
@@ -24,16 +41,20 @@ impl Jojobot {
         bot: &EntityId,
         in_force: &[Fact],
         seats: usize,
-    ) -> Option<usize> {
+        charter: Option<&str>,
+    ) -> Option<Floor> {
         let index = self.memory.list_entities(None).await;
         let entity = index.as_ref().ok()?.iter().find(|e| &e.id == bot)?.clone();
-        let charter = self
-            .memory
-            .scan_entity(bot)
-            .await
-            .ok()?
-            .map(|doc| doc.prose)
-            .filter(|prose| !prose.trim().is_empty());
+        let charter = match charter {
+            Some(proposed) => Some(proposed.to_string()),
+            None => self
+                .memory
+                .scan_entity(bot)
+                .await
+                .ok()?
+                .map(|doc| doc.prose),
+        }
+        .filter(|prose| !prose.trim().is_empty());
         let as_of = self.clock().today_in(&jiff::tz::TimeZone::UTC);
         let rules: Vec<serde_json::Value> = carried_rules(in_force, seats)
             .into_iter()
@@ -50,14 +71,40 @@ impl Jojobot {
             "rules": rules,
         });
         let snapshot = self.snapshot_block(Some(bot), entity_summary(&index)).await;
-        Some(floor_len(
+        let total = floor_len(
             false,
             &snapshot,
             &identity,
             &serde_json::Value::Null,
             &serde_json::Value::Null,
             self.stated_clock(),
-        ))
+        );
+        let named = [
+            ("charter", json_len(&identity["charter"])),
+            ("snapshot", json_len(&snapshot)),
+            ("carried rules", json_len(&identity["rules"])),
+        ];
+        let rest = total.saturating_sub(named.iter().map(|(_, n)| n).sum::<usize>());
+        let mut parts: Vec<(String, usize)> = named
+            .into_iter()
+            .chain([("orientation, skills and bot record", rest)])
+            .map(|(name, n)| (name.to_string(), n))
+            .collect();
+        parts.sort_by_key(|part| std::cmp::Reverse(part.1));
+        Some(Floor { total, parts })
+    }
+
+    /// **The refusal for a floor of `after`**, when it is over the ceiling and
+    /// larger than `before`, or `None`. A bot already over before the write
+    /// must stay repairable by every write that does not grow it.
+    fn over_the_ceiling(bot: &EntityId, after: Floor, before: &Floor) -> Option<MemoryError> {
+        let budget = jojobot_domain::text::BOOT_ANSWER.budget;
+        (after.total > budget && after.total > before.total).then(|| MemoryError::BootTooHeavy {
+            subject: bot.to_string(),
+            floor: after.total,
+            budget,
+            parts: after.parts,
+        })
     }
 
     /// **The refusal for a write that would leave `bot`'s boot floor over the
@@ -89,20 +136,62 @@ impl Jojobot {
         };
         let in_force_after = rules_in_force(would_be);
         let after = self
-            .boot_floor_if(bot, &in_force_after, seats_after)
+            .boot_floor_if(bot, &in_force_after, seats_after, None)
             .await?;
-        let budget = jojobot_domain::text::BOOT_ANSWER.budget;
-        if after <= budget {
+        if after.total <= jojobot_domain::text::BOOT_ANSWER.budget {
             return None;
         }
         let before = self
-            .boot_floor_if(bot, &rules_in_force(&current), seats_now)
+            .boot_floor_if(bot, &rules_in_force(&current), seats_now, None)
             .await?;
-        (after > before).then(|| MemoryError::BootTooHeavy {
-            subject: bot.to_string(),
-            floor: after,
-            budget,
-        })
+        Self::over_the_ceiling(bot, after, &before)
+    }
+
+    /// **The floor check for a charter**, run before it is written. A charter
+    /// replaces the one the bot has, so it is measured as the charter the boot
+    /// would carry, against the one it carries now.
+    pub(crate) async fn refuses_a_boot_floor_for_charter(
+        &self,
+        bot: &EntityId,
+        prose: &str,
+    ) -> Option<MemoryError> {
+        let held = self.memory.recall(bot).await.ok()?;
+        let seats = rule_seats_of(&self.memory.fields(bot).await.unwrap_or_default());
+        let in_force = rules_in_force(&held);
+        let after = self
+            .boot_floor_if(bot, &in_force, seats, Some(prose.trim()))
+            .await?;
+        if after.total <= jojobot_domain::text::BOOT_ANSWER.budget {
+            return None;
+        }
+        let before = self.boot_floor_if(bot, &in_force, seats, None).await?;
+        Self::over_the_ceiling(bot, after, &before)
+    }
+
+    /// **Every bot's floor as things stand**, for a write that grows them all
+    /// and cannot be refused. A bot whose floor a store cannot measure is left
+    /// out: an unmeasured bot is not a bot known to be over.
+    pub(crate) async fn boot_floors_of_bots(&self) -> Vec<(EntityId, usize)> {
+        let Ok(index) = self.memory.list_entities(None).await else {
+            return Vec::new();
+        };
+        let mut floors = Vec::new();
+        for bot in index
+            .iter()
+            .filter(|e| e.kind == EntityKind::BOT && e.browsable())
+        {
+            let Ok(held) = self.memory.recall(&bot.id).await else {
+                continue;
+            };
+            let seats = rule_seats_of(&self.memory.fields(&bot.id).await.unwrap_or_default());
+            if let Some(floor) = self
+                .boot_floor_if(&bot.id, &rules_in_force(&held), seats, None)
+                .await
+            {
+                floors.push((bot.id.clone(), floor.total));
+            }
+        }
+        floors
     }
 
     /// **The floor check for a capture**, run before it lands. Asked only of a

@@ -63,6 +63,15 @@ impl Jojobot {
             return Ok(refused);
         }
         let bot = bot_id(&args.bot)?;
+        // **A charter is part of what a boot cannot cut**, so it is held to
+        // the ceiling where it is written, as a star is — see
+        // [`Jojobot::refuses_a_boot_floor_for_charter`].
+        if let Some(refused) = self
+            .refuses_a_boot_floor_for_charter(&bot, &args.prose)
+            .await
+        {
+            return memory_declined("set_charter", refused);
+        }
         let stored = match self.memory.set_prose(&bot, &args.prose).await {
             Ok(stored) => stored,
             Err(e) => return memory_declined("set_charter", e),

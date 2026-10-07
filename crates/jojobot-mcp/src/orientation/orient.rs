@@ -1478,14 +1478,14 @@ mod tests {
         // the fixed cost of everything else already exceeds the ceiling with
         // no rule and no reasoning competing for room at all — the floor
         // alone is what overflows here, not a ranking outcome.
+        // **Written to the store, not through `set_charter`**, which refuses a
+        // charter that takes the boot over the ceiling: this is the state a
+        // boot meets when a write the gate never saw has already left it there.
         jojobot
-            .set_charter(Parameters(SetCharterArgs {
-                bot: "gamma".into(),
-                prose: "x".repeat(20_000),
-                sid: Some(crate::harness::TEST_SID.into()),
-            }))
+            .memory
+            .set_prose(&EntityId("bot:gamma".into()), &"x".repeat(20_000))
             .await
-            .expect("set_charter ok");
+            .expect("the store keeps the prose");
 
         let result = jojobot
             .start_here(Parameters(OrientArgs {

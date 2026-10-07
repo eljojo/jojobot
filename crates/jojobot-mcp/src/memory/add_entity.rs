@@ -197,6 +197,14 @@ impl Jojobot {
         // Kept for the refusal below: which handle the guard turned back is
         // what says whether it was this entity or the one it named as parent.
         let creating = id.clone();
+        // **A new bot grows every other bot's snapshot**, which is a write that
+        // is never refused: a colleague is not a mistake. What it can do is
+        // take a bot's boot over the ceiling, so each bot's floor is read now
+        // and again once the bot is there.
+        let floors_before = match creating.kind() == Some(EntityKind::BOT) {
+            true => Some(self.boot_floors_of_bots().await),
+            false => None,
+        };
         // Taken before `args`' fields are moved into `new` below — this
         // owns its own copy, so it survives the moves that follow.
         let token_slot = TokenSlot::from(&args);
@@ -229,6 +237,40 @@ impl Jojobot {
                 if let Some(obj) = body.as_object_mut() {
                     for (key, value) in self.open_box_with(&entity).await {
                         obj.insert(key.into(), value);
+                    }
+                }
+                if let Some(before) = floors_before {
+                    let budget = jojobot_domain::text::BOOT_ANSWER.budget;
+                    let pushed: Vec<serde_json::Value> = self
+                        .boot_floors_of_bots()
+                        .await
+                        .into_iter()
+                        .filter(|(bot, now)| {
+                            *now > budget
+                                && before
+                                    .iter()
+                                    .any(|(then, was)| then == bot && *was <= budget)
+                        })
+                        .map(|(bot, now)| {
+                            serde_json::json!({
+                                "bot": bot.as_str(),
+                                "floor": now,
+                                "over": now - budget,
+                            })
+                        })
+                        .collect();
+                    if !pushed.is_empty()
+                        && let Some(obj) = body.as_object_mut()
+                    {
+                        obj.insert("pushes_over".into(), pushed.into());
+                        obj.insert(
+                            "pushes_over_note".into(),
+                            "this bot is created and stays. Each bot named carries more than a \
+                             boot may now, so its next write that grows its charter, a starred \
+                             rule or its seats is refused until its text is cut. Nothing was \
+                             trimmed."
+                                .into(),
+                        );
                     }
                 }
                 // **The parent, not the handle.** This verb composes the

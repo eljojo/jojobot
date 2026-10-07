@@ -405,19 +405,53 @@ pub(crate) fn memory_declined(
                 keys.join(", ")
             ),
         )),
-        // **Three ways down, and the caller picks the one that costs least.**
-        // Which rules are starred and how many seats a bot has are data, so
-        // none of them is chosen for the caller.
-        MemoryError::BootTooHeavy { ref subject, .. } => Ok(blocked_body(
-            &EntityId(String::new()),
-            &[],
-            format!(
-                "Nothing was written: {e}. Unstar a rule on {subject} with update_fact, shorten \
-                 the rules that are starred, or have a different identity lower rule_seats on \
-                 {subject} — a bot cannot write rule_seats about itself — and a rule that binds \
-                 at one moment is better carried by a skill than by a seat."
-            ),
-        )),
+        MemoryError::BootTooHeavy {
+            ref subject,
+            floor,
+            budget,
+            ref parts,
+        } => {
+            let largest = parts
+                .first()
+                .map(|(part, n)| format!("{part} ({n} characters)"))
+                .unwrap_or_default();
+            let body = serde_json::json!({
+                "status": "blocked",
+                "attempted": subject,
+                "wrote": false,
+                "floor": floor,
+                "budget": budget,
+                "over": floor - budget,
+                // **What the floor is made of, largest first**, so the cut is
+                // made where it helps rather than where it is easy.
+                "floor_parts": parts
+                    .iter()
+                    .map(|(part, n)| serde_json::json!({"part": part, "characters": n}))
+                    .collect::<Vec<_>>(),
+                "how_to_proceed": match verb {
+                    "set_charter" => format!(
+                        "Nothing was written: {e}. Send a shorter charter. The largest part of \
+                         the floor is {largest}; floor_parts lists every part. A rule that \
+                         binds at one moment is better carried by a skill than by the charter."
+                    ),
+                    // **Three ways down, and the caller picks the one that
+                    // costs least.** Which rules are starred and how many seats
+                    // a bot has are data, so none of them is chosen for the
+                    // caller.
+                    _ => format!(
+                        "Nothing was written: {e}. The largest part of the floor is {largest}; \
+                         floor_parts lists every part. Unstar a rule on {subject} with \
+                         update_fact, shorten the rules that are starred or its charter, or \
+                         have a different identity lower rule_seats on {subject} — a bot cannot \
+                         write rule_seats about itself — and a rule that binds at one moment is \
+                         better carried by a skill than by a seat."
+                    ),
+                },
+            });
+            Ok(CallToolResult::success(vec![ContentBlock::text(
+                body.to_string(),
+            )]))
+        }
         // **The way forward is one more key in the SAME call, or both keys
         // gone.** What is missing is the other half of the schedule, and a
         // caller who sends it now makes the loop whole in one write instead of

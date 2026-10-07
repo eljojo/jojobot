@@ -3974,6 +3974,9 @@ pub enum MemoryError {
         floor: usize,
         /// What one boot may carry.
         budget: usize,
+        /// What the floor is made of, each part with its size in characters,
+        /// largest first, so a writer cuts where it helps.
+        parts: Vec<(String, usize)>,
     },
     /// **The write would put a value in a key that the key does not hold, on a
     /// thing that already fits the type.**
