@@ -52,6 +52,15 @@ const READY_WITHIN: Duration = Duration::from_secs(30);
 /// one.
 const POLL_EVERY: Duration = Duration::from_millis(50);
 
+/// How long a request on the pool a start returns waits for one of its four
+/// connections before it fails with "pool timed out". **Sized for serving, not
+/// for the readiness poll**: a boot migration, the boundary snapshot or a slow
+/// statement can hold all four for seconds, and a request behind them should
+/// wait its turn rather than fail. 30 seconds is sqlx's own default and matches
+/// [`READY_WITHIN`]; a server that has stopped answering fails the caller at
+/// that point instead of after 200 ms.
+const SERVE_ACQUIRE_WITHIN: Duration = Duration::from_secs(30);
+
 /// Why the store could not be brought up. Startup only: once running, a
 /// failure is the rails' own `Store` class rather than one of these.
 #[derive(Debug, thiserror::Error)]
@@ -262,7 +271,18 @@ impl Dolt {
                         // question, and reserving `PortTaken` for its
                         // corroborated answer is why this call does not mint
                         // it too.
-                        return Ok(pool);
+                        //
+                        // **The pool that polled is not the pool that serves.**
+                        // Its short window suits a poll that asks again in 50 ms,
+                        // and a request queued behind four busy connections
+                        // would fail after the same 200 ms. The server is known
+                        // to answer, so the serving pool opens lazily.
+                        pool.close().await;
+                        return MySqlPoolOptions::new()
+                            .max_connections(4)
+                            .acquire_timeout(SERVE_ACQUIRE_WITHIN)
+                            .connect_lazy(url)
+                            .map_err(|e| StartError::Spawn(e.to_string()));
                     }
                     Err(e) => last = e.to_string(),
                 },
@@ -931,6 +951,47 @@ pub(crate) mod tests {
 
         ours.stop().await;
         first.stop().await;
+    }
+
+    /// 🚨 **A request waits for one of the four connections instead of failing
+    /// after the readiness poll's window.**
+    ///
+    /// The pool a start hands back serves the boot migrations, the boundary
+    /// snapshot and every request, and each of those queues behind the four
+    /// connections when they are busy. All four are held for longer than the
+    /// poll's window here, and a fifth request made meanwhile must still
+    /// complete once one is released. **Both halves**: the held connections
+    /// really are all four, so the fifth cannot have used a free one.
+    #[tokio::test]
+    async fn a_request_waits_for_a_connection_longer_than_the_readiness_poll_does() {
+        let scratch = Scratch::new("serving-window");
+        let mut store = Dolt::start(&scratch.0, free_port())
+            .await
+            .expect("the store comes up");
+
+        let mut held = Vec::new();
+        for _ in 0..4 {
+            held.push(store.pool().acquire().await.expect("a connection is free"));
+        }
+        assert_eq!(
+            store.pool().num_idle(),
+            0,
+            "all four connections are held, so the fifth request has to wait",
+        );
+        let pool = store.pool().clone();
+        let fifth = tokio::spawn(async move { sqlx::query("SELECT 1").execute(&pool).await });
+        tokio::time::sleep(POLL_EVERY * 12).await;
+        assert!(
+            !fifth.is_finished(),
+            "the fifth request is still waiting after the poll's window has passed",
+        );
+        drop(held);
+        fifth
+            .await
+            .expect("the request task ran")
+            .expect("the fifth request completes once a connection is released");
+
+        store.stop().await;
     }
 
     /// 🚨 **An early exit that is NOT a port collision names its own
