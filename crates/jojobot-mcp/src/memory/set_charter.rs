@@ -56,7 +56,9 @@ impl Jojobot {
                        nobody has written one for shows up there with nothing to say. Who \
                        the bot reports to goes the same way: capture fields.reports_to on \
                        this bot, holding its manager's handle, and the colleagues view \
-                       shows it from both ends."
+                       shows whom each bot reports to. Who reports to a bot is the other \
+                       direction, a second call: recall that bot with follow, relation \
+                       reports_to, direction in."
     )]
     pub(crate) async fn set_charter(
         &self,

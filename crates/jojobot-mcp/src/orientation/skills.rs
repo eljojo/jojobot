@@ -96,8 +96,13 @@ const ASKING: &str = r#"# asking
 A **view** is a question somebody already worked out, asked for by name. Ask
 `recall` with `view` and the name:
 
-    recall  view: "colleagues"     the identities here, and what each is for
+    recall  view: "colleagues"     the identities here, what each is for, and whom each reports to
     recall  view: "loops"          the recurring things, and what each last recorded
+
+The colleagues view says whom each bot reports to and nothing inward. Who
+reports to a bot is a second call, a walk along `reports_to` the other way:
+
+    recall  subject: "bot:omega"  follow: {"relation": "reports_to", "direction": "in"}
 
 **Some ship with the software and you can declare your own.** A name that is no
 view comes back blocked and names the ones that are — so **guessing a name is
@@ -664,6 +669,34 @@ mod tests {
             names(paragraph, "check-in"),
             "the paragraph that says a loop is opened does not name the check-in: {paragraph}"
         );
+    }
+
+    /// **The asking procedure names the second call beside the colleagues
+    /// example.** The colleagues view says whom each bot reports to and nothing
+    /// inward, so the example that shows the view also shows the call that lists
+    /// who reports to a bot. Pinned on the identifiers a session must spell, in
+    /// the section that introduces views.
+    #[test]
+    fn the_asking_procedure_names_the_call_that_lists_who_reports_to_a_bot() {
+        let published = crate::arguments::published_argument_names();
+        let text = body("asking");
+        let section = text
+            .split("\n## ")
+            .find(|section| section.starts_with("1. Look for a view"))
+            .expect("the asking procedure introduces views in its first section");
+        for word in ["reports_to", "follow", "direction"] {
+            assert!(
+                names(section, word),
+                "the views section does not name `{word}`, so the colleagues example shows no \
+                 way to list who reports to a bot"
+            );
+        }
+        for argument in ["follow", "direction"] {
+            assert!(
+                published.contains(argument),
+                "the surface publishes no `{argument}`, so this case is pinning the wrong argument"
+            );
+        }
     }
 
     /// **The section that says what a rhythm holds also says who picks the date

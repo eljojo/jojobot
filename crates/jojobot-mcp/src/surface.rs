@@ -1147,6 +1147,40 @@ fn the_colleagues_reports_to_key_is_named_where_the_one_liner_is() {
     );
 }
 
+/// **The second call for who reports to a bot is named where `reports_to` is
+/// taught.** The colleagues view says only whom each bot reports to, so the
+/// surface that tells a bot to write the key also says how to read the other
+/// direction: `recall` of the manager with `reports_to` followed inward. The
+/// argument names are pinned against the published schema, so a rename fails
+/// here and not in a session's call.
+#[test]
+fn the_call_that_lists_who_reports_to_a_bot_is_named_where_reports_to_is_taught() {
+    let tools = Jojobot::tool_router().list_all();
+    let described = |name: &str| -> (String, serde_json::Value) {
+        let tool = tools
+            .iter()
+            .find(|t| t.name == name)
+            .unwrap_or_else(|| panic!("{name} is a tool"));
+        (
+            tool.description.as_deref().unwrap_or_default().to_string(),
+            serde_json::Value::Object((*tool.input_schema).clone()),
+        )
+    };
+    let (recall_description, recall_schema) = described("recall");
+    assert!(
+        recall_schema["properties"].get("follow").is_some(),
+        "recall publishes no `follow`: {recall_description}"
+    );
+    let (description, _) = described("set_charter");
+    for word in ["recall", "follow", "relation", "direction"] {
+        assert!(
+            description.contains(word),
+            "the description of set_charter does not name `{word}`, so the call that lists \
+             who reports to a bot is not where reports_to is taught: {description}"
+        );
+    }
+}
+
 /// **`recall`'s own description names the argument that narrows each object's
 /// keys, what an answer says when it left some out, and the view key that
 /// carries it.** A new argument the verb's description does not mention is the
