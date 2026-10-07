@@ -235,6 +235,7 @@ const ROSTER: &[&str] = &[
     "person:bodoque",
     "person:burns",
     "person:contract-chainless",
+    "person:contract-occasion-deadline",
     "person:contract-no-capacity-long-thought",
     "person:contract-citation-editpath",
     "person:contract-claim-histories",

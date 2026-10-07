@@ -381,6 +381,18 @@ async fn fake_satisfies_the_role_claim_contract() {
     contract::run_all_role_claims(&InMemoryMemory::booted()).await;
 }
 
+/// **A known defect, run on purpose** (`cargo test -- --ignored`): a deadline
+/// on a claim about a person makes the person owed. The case states the right
+/// answer, so it is red until the fix lands; the real store runs the same case.
+#[tokio::test]
+#[ignore = "known defect: card 1903, decision log 340, the fix's shape is the operator's"]
+async fn fake_does_not_owe_a_person_for_a_deadline_on_one_claim() {
+    contract::a_deadline_on_a_claim_about_a_person_does_not_make_the_person_owed(
+        &InMemoryMemory::booted(),
+    )
+    .await;
+}
+
 /// The mark's own contract against the fake — the same suite the gated
 /// integration test runs against real Dolt.
 #[tokio::test]
