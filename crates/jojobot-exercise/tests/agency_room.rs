@@ -1194,6 +1194,85 @@ async fn december_landed_with_the_suite_in_lower_case_holds_the_landed_slot() {
     );
 }
 
+/// **May's offline requirement may be the operator's word.** The entry has the
+/// operator say they worked it out, which is their word, backed as testimony.
+/// The lock's question is whether the requirement points at the quote it was
+/// worked out from, whatever the backing.
+#[tokio::test]
+async fn may_the_requirement_filed_as_the_operators_word_still_points_at_the_quote() {
+    let mut lab = played(0, None).await;
+    let sid = lab.sitting("2026-05-20").await;
+    let quote = lab
+        .say(
+            &sid,
+            APP,
+            "Krusty said \"the basement location has terrible reception\".",
+            json!({}),
+        )
+        .await;
+    lab.say(
+        &sid,
+        APP,
+        "Orders must work offline, because of the basement reception.",
+        json!({"derived_from": quote}),
+    )
+    .await;
+    lab.ends("Phase 2", 2).await;
+    let outcomes = lab.judge().await;
+    assert!(
+        of_sitting(&outcomes, "Phase 2")[8].0,
+        "{}",
+        saying(&outcomes)
+    );
+}
+
+/// **December's third format is "third" or "3rd".** A needle that needed the
+/// word failed a model that wrote the numeral.
+#[tokio::test]
+async fn december_the_third_format_as_a_numeral_holds_the_undelivered_slot() {
+    let mut lab = played(2, None).await;
+    let sid = lab.sitting("2026-12-10").await;
+    lab.say(
+        &sid,
+        CAMPAIGN,
+        "The answer to undelivered.",
+        json!({"fields": {"undelivered": "the Beta disclaimer, the 3rd station format and the print ads"}}),
+    )
+    .await;
+    lab.ends("Phase 4", 4).await;
+    let outcomes = lab.judge().await;
+    assert!(
+        of_sitting(&outcomes, "Phase 4")[9].0,
+        "{}",
+        saying(&outcomes)
+    );
+}
+
+/// **A failing lock names every needle it missed**, so a reader fixing one
+/// does not meet the next on the following run.
+#[tokio::test]
+async fn december_an_undelivered_slot_missing_two_things_says_both() {
+    let mut lab = played(2, None).await;
+    let sid = lab.sitting("2026-12-10").await;
+    lab.say(
+        &sid,
+        CAMPAIGN,
+        "The answer to undelivered.",
+        json!({"fields": {"undelivered": "the Beta disclaimer"}}),
+    )
+    .await;
+    lab.ends("Phase 4", 4).await;
+    let outcomes = lab.judge().await;
+    let slot = &of_sitting(&outcomes, "Phase 4")[9];
+    assert!(!slot.0, "{}", saying(&outcomes));
+    assert_eq!(
+        slot.1.matches("is not in what came back").count(),
+        2,
+        "the failure names one missing needle and not both: {}",
+        slot.1
+    );
+}
+
 // ── December: an answer given in the reply and written nowhere ───────────────
 
 /// **A December that answers in the reply alone fails every slot.** The earlier

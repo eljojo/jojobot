@@ -53,7 +53,7 @@ says which is possible before anyone has run it:
 | `undelivered` | the key the entry names | OCCUPANT if the commitments are stored. PRODUCT if a dropped-but-never-withdrawn item has no way to be stored as still owed. |
 | `app_next` | the key the entry names | PRODUCT if neither dependency nor waiting could be expressed. |
 | `menu_first` | the key the entry names | OCCUPANT. The words and the rejected option are both prose that can be kept. |
-| `rests_on_misread` | the key the entry names | PRODUCT if lineage could not be stored. OCCUPANT if the derivation was stored as the operator's word. May's lock reads the pointer to the quote; September's reads the requirement as taken back. |
+| `rests_on_misread` | the key the entry names | PRODUCT if lineage could not be stored. OCCUPANT if the requirement points at no quote. May's lock reads the pointer to the quote under any backing, so a requirement filed as the operator's word still holds it; September's reads the requirement as taken back. |
 | `never_asked` | the key the entry names | OCCUPANT. The drafted question and the asked one are both stored. The lock reads that the provider question is there; whether the slot also names the offline question is a transcript read. |
 | `app_landed` | the key the entry names | OCCUPANT. A commit and a suite are plain values. |
 | Radio | nobody | **Never mentioned, so there was none.** A transcript read and unlockable: no lock can ask about what nobody said. |
@@ -272,11 +272,13 @@ carries "status":"active"
 say     May: Krusty's quote is not on record in his own words
 window  phase-end
 
-# The requirement the employee worked out. It is the employee's inference, and
-# it rests on a quote, so it is asked as an inference whose own record points at
-# the claim it was worked out from. A needle of `"derived_from":"` can only be
-# present when the pointer is there: an absent one prints `"derived_from":null`.
-search  {"query": "orders must work offline basement reception", "provenance": "inference"}
+# The requirement the employee worked out, which rests on a quote. The question
+# is whether its own record points at the claim it was worked out from, and not
+# how the sitting backed it: the operator says in May that the requirement was
+# worked out, which is their word, so the lock reads the pointer under any
+# backing. A needle of `"derived_from":"` can only be present when the pointer
+# is there: an absent one prints `"derived_from":null`.
+search  {"query": "orders must work offline basement reception"}
 carries "derived_from":"
 carries "status":"active"
 say     May: the offline requirement is not on record as the employee's own inference pointing at the quote it was worked out from
@@ -460,7 +462,7 @@ window  phase-end
 
 recall {"fields": [{"key": "undelivered"}]}
 carries eta disclaimer
-carries hird
+carries rd station format
 carries rint ads
 say     December: undelivered does not name the Beta disclaimer, the third station format and the print ads
 window  phase-end

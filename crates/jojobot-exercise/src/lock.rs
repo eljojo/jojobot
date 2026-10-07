@@ -216,6 +216,15 @@ impl Lock {
     }
 }
 
+/// **Everything a lock's assertions found missing in `answer`**, in the order
+/// the lock states them.
+pub(crate) fn misses(expects: &[Expect], answer: &str) -> Vec<String> {
+    expects
+        .iter()
+        .filter_map(|expect| expect.missed_in(answer))
+        .collect()
+}
+
 const OPENS: &str = "```locks";
 const FENCE: &str = "```";
 
@@ -555,20 +564,22 @@ impl crate::run::Expectation for Lock {
                 false => head,
             }
         };
-        for expect in &self.expects {
-            if let Some(missed) = expect.missed_in(&answer) {
-                return crate::run::Outcome {
-                    name: self.name.clone(),
-                    held: false,
-                    applies: true,
-                    refused: false,
-                    saying: format!(
-                        "{}: {missed}. What the finished room shows, after every phase: {}",
-                        self.say,
-                        short(&answer)
-                    ),
-                };
-            }
+        // **Every assertion that failed is named**, so a reader who fixes the
+        // first does not meet the second on the next run.
+        let missed = misses(&self.expects, &answer);
+        if !missed.is_empty() {
+            return crate::run::Outcome {
+                name: self.name.clone(),
+                held: false,
+                applies: true,
+                refused: false,
+                saying: format!(
+                    "{}: {}. What the finished room shows, after every phase: {}",
+                    self.say,
+                    missed.join("; "),
+                    short(&answer)
+                ),
+            };
         }
         crate::run::Outcome {
             name: self.name.clone(),
@@ -686,6 +697,27 @@ mod tests {
         assert!(
             plain.missed_in("{\"spot_done\":\"No\"}").is_some(),
             "the plain word must stay case-sensitive"
+        );
+    }
+
+    /// **A lock with two missing needles names both.** A reader who fixed the
+    /// first and ran again would otherwise meet the second one run later.
+    #[test]
+    fn a_lock_names_every_needle_it_misses_and_only_those() {
+        let expects = vec![
+            Expect::Carries("alpha".into()),
+            Expect::Carries("beta".into()),
+            Expect::Lacks("gamma".into()),
+        ];
+        let said = super::misses(&expects, "{\"x\":\"gamma\"}");
+        assert_eq!(said.len(), 3, "{said:?}");
+        let held = super::misses(&expects, "alpha beta");
+        assert!(held.is_empty(), "{held:?}");
+        let one = super::misses(&expects, "alpha gamma");
+        assert_eq!(
+            one.len(),
+            2,
+            "beta is missing and gamma is present: {one:?}"
         );
     }
 
