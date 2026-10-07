@@ -23,9 +23,14 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 
 use jojobot_bar::{
-    FileGrowth, FileSize, Summary, TEST_JOBS_VARIABLE, grown_files, jobs_limit, oversized_files,
-    render_size_report, summarize_test_output, test_healthy, test_jobs,
+    FileGrowth, FileSize, KnownReds, Summary, TEST_JOBS_VARIABLE, grown_files, jobs_limit,
+    load_known_reds, oversized_files, render_size_report, summarize_test_output, test_healthy,
+    test_jobs,
 };
+
+/// **The tests that are red and already have a card**, read from the directory
+/// the bar runs in, which is the repository root.
+const KNOWN_REDS_FILE: &str = "known-reds.toml";
 
 /// **The cargo binary the outer `make` recipe was told to use.** The
 /// Makefile's own `CARGO ?= cargo` is an override hook, and this reads the
@@ -37,10 +42,19 @@ fn cargo_bin() -> String {
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // **Refused before any phase runs**, like a limit that is not a number: a
+    // list that cannot be read must not cost a build and then be ignored.
+    let known = match load_known_reds(Path::new(KNOWN_REDS_FILE)) {
+        Ok(known) => known,
+        Err(refusal) => {
+            eprintln!("bar: {refusal}");
+            return ExitCode::from(2);
+        }
+    };
     let result = match args.first().map(String::as_str) {
-        Some("check") => run_check(),
-        Some("narrow") => run_narrow(&args[1..]),
-        Some("rooms") => run_rooms(&args[1..]),
+        Some("check") => run_check(&known),
+        Some("narrow") => run_narrow(&args[1..], &known),
+        Some("rooms") => run_rooms(&args[1..], &known),
         _ => {
             eprintln!(
                 "usage: bar check | bar narrow --crate <name> [--filter <substring>] \
@@ -164,7 +178,7 @@ fn run_test_jobs(
 /// `cargo test -p jojobot-exercise --features rooms --test <name>`. The
 /// workspace is built first, because a room spawns the built server and a test
 /// run does not rebuild it. The limit is the same `BAR_JOBS` as the test phase.
-fn run_rooms(args: &[String]) -> std::io::Result<ExitCode> {
+fn run_rooms(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
     let mut jobs: Vec<Vec<String>> = Vec::new();
     let mut rest = args.iter();
     while let Some(flag) = rest.next() {
@@ -223,7 +237,7 @@ fn run_rooms(args: &[String]) -> std::io::Result<ExitCode> {
         "jobs",
         &format!("{limit} test binaries at a time ({TEST_JOBS_VARIABLE})"),
     );
-    summary.test_phase(ok, &verdict);
+    summary.test_phase(ok, &verdict, known);
     finish(&mut summary, &log_path);
     Ok(if test_healthy(ok, &verdict) {
         ExitCode::SUCCESS
@@ -311,8 +325,8 @@ fn size_report() -> String {
     render_size_report(&over, &grown, &base)
 }
 
-fn run_check() -> std::io::Result<ExitCode> {
-    let code = run_check_phases()?;
+fn run_check(known: &KnownReds) -> std::io::Result<ExitCode> {
+    let code = run_check_phases(known)?;
     // **Printed after the verdict, and unconditionally.** A standing duty
     // gets a mechanism rather than diligence (rule 235) — this runs whichever
     // phase fails or passes, and never touches `summary.green`. It comes
@@ -322,7 +336,7 @@ fn run_check() -> std::io::Result<ExitCode> {
     Ok(code)
 }
 
-fn run_check_phases() -> std::io::Result<ExitCode> {
+fn run_check_phases(known: &KnownReds) -> std::io::Result<ExitCode> {
     // **Refused before any phase runs**, so a limit that is not a number never
     // costs a build and never reads as a green run at some other number.
     let limit = match jobs_limit(std::env::var(TEST_JOBS_VARIABLE).ok().as_deref()) {
@@ -413,7 +427,7 @@ fn run_check_phases() -> std::io::Result<ExitCode> {
         "jobs",
         &format!("{limit} test binaries at a time ({TEST_JOBS_VARIABLE})"),
     );
-    summary.test_phase(ok, &verdict);
+    summary.test_phase(ok, &verdict, known);
     if !test_healthy(ok, &verdict) {
         summary.phase_skipped("lint");
         finish(&mut summary, &log_path);
@@ -460,7 +474,7 @@ fn count_listed_tests(listing: &str) -> usize {
         .count()
 }
 
-fn run_narrow(args: &[String]) -> std::io::Result<ExitCode> {
+fn run_narrow(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
     let cargo = cargo_bin();
     let mut krate: Option<String> = None;
     let mut filter: Option<String> = None;
@@ -602,7 +616,7 @@ fn run_narrow(args: &[String]) -> std::io::Result<ExitCode> {
         &test_args,
     )?;
     let verdict = summarize_test_output(&text);
-    summary.test_phase(ok, &verdict);
+    summary.test_phase(ok, &verdict, known);
     if !test_healthy(ok, &verdict) {
         summary.phase_skipped("lint");
         finish(&mut summary, &log_path);

@@ -10,6 +10,9 @@
 //! anywhere in it is a summary of a workspace that did not compile, not one
 //! that compiled and passed everything.
 
+mod known_reds;
+pub use known_reds::{KnownRed, KnownReds, load as load_known_reds};
+
 /// **What a `cargo test` run said about itself**, summed across every suite
 /// it printed a `test result:` line for.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -272,7 +275,12 @@ impl Summary {
     /// whole mechanism exists for: a compile failure, a crashed suite and a
     /// clean pass can all show `failed == 0` in the text, and only one of
     /// them is fine — see [`test_healthy`].
-    pub fn test_phase(&mut self, exit_ok: bool, verdict: &TestVerdict) {
+    ///
+    /// **`known` only annotates.** A failing test on the list is printed with
+    /// the card that owns its red, and every failure that is not on the list
+    /// is printed ahead of those, so a list of known reds cannot push a new
+    /// red below the cap. Neither the verdict nor `green` reads the list.
+    pub fn test_phase(&mut self, exit_ok: bool, verdict: &TestVerdict, known: &KnownReds) {
         self.green = self.green && test_healthy(exit_ok, verdict);
         if !verdict.compiled {
             self.lines
@@ -299,8 +307,18 @@ impl Summary {
             verdict.suites, verdict.passed, verdict.failed
         ));
         const SHOWN: usize = 5;
-        for name in verdict.failed_names.iter().take(SHOWN) {
-            self.lines.push(format!("  FAILED: {name}"));
+        let (listed, unlisted): (Vec<&String>, Vec<&String>) = verdict
+            .failed_names
+            .iter()
+            .partition(|name| known.find(name).is_some());
+        for name in unlisted.into_iter().chain(listed).take(SHOWN) {
+            match known.find(name) {
+                Some(red) => self.lines.push(format!(
+                    "  FAILED: {name} (known red: card {}, {}, since {})",
+                    red.card, red.owner, red.since
+                )),
+                None => self.lines.push(format!("  FAILED: {name}")),
+            }
         }
         if verdict.failed_names.len() > SHOWN {
             self.lines.push(format!(
@@ -597,7 +615,7 @@ mod tests {
              finished in 0.01s\n",
         );
         let mut summary = Summary::new();
-        summary.test_phase(false, &verdict);
+        summary.test_phase(false, &verdict, &KnownReds::default());
         let rendered = summary.render();
         assert!(rendered.contains("verdict: RED"), "{rendered}");
         assert!(!rendered.contains("test: ok"), "{rendered}");
@@ -612,11 +630,15 @@ mod tests {
     #[test]
     fn the_rendered_summary_names_did_not_compile_distinctly_from_a_clean_pass() {
         let mut clean = Summary::new();
-        clean.test_phase(true, &summarize_test_output(GREEN));
+        clean.test_phase(true, &summarize_test_output(GREEN), &KnownReds::default());
         assert!(clean.render().contains("test: ok"));
 
         let mut broken = Summary::new();
-        broken.test_phase(false, &summarize_test_output(COMPILE_ERROR));
+        broken.test_phase(
+            false,
+            &summarize_test_output(COMPILE_ERROR),
+            &KnownReds::default(),
+        );
         let rendered = broken.render();
         assert!(
             rendered.contains("DID NOT COMPILE"),
@@ -631,7 +653,11 @@ mod tests {
     #[test]
     fn a_failed_tests_name_is_readable_from_the_summary_alone() {
         let mut summary = Summary::new();
-        summary.test_phase(false, &summarize_test_output(ONE_FAILING));
+        summary.test_phase(
+            false,
+            &summarize_test_output(ONE_FAILING),
+            &KnownReds::default(),
+        );
         let rendered = summary.render();
         assert!(
             rendered.contains("attention::tests::a_rhythm_is_overdue_from_the_day_it_falls_due"),
@@ -646,7 +672,7 @@ mod tests {
     fn the_summary_stays_under_ten_lines_even_over_a_real_multi_suite_run() {
         let mut summary = Summary::new();
         summary.phase_ok("fmt-check", "formatted");
-        summary.test_phase(true, &summarize_test_output(GREEN));
+        summary.test_phase(true, &summarize_test_output(GREEN), &KnownReds::default());
         summary.phase_ok("lint", "clean");
         summary.log("target/bar/check.log", GREEN.lines().count());
         let rendered = summary.render();
@@ -654,5 +680,109 @@ mod tests {
             rendered.lines().count() <= 10,
             "the whole point is a verdict nobody has to scroll: {rendered}",
         );
+    }
+
+    const KNOWN_FAILING: &str = "attention::tests::a_rhythm_is_overdue_from_the_day_it_falls_due";
+
+    fn listing(test: &str) -> KnownReds {
+        KnownReds::parse(&format!(
+            "[[known_red]]\ntest = \"{test}\"\ncard = 2036\nowner = \"dev3\"\n\
+             since = \"2026-10-07\"\n"
+        ))
+        .expect("a well-formed list")
+    }
+
+    /// **A failing test on the list is annotated with its card, owner and
+    /// date, and the verdict stays red.** The run is the real one-failure
+    /// capture, so the name on the list is a name cargo printed.
+    #[test]
+    fn a_failing_test_on_the_list_is_annotated_and_the_verdict_stays_red() {
+        let verdict = summarize_test_output(ONE_FAILING);
+        let mut summary = Summary::new();
+        summary.test_phase(false, &verdict, &listing(KNOWN_FAILING));
+        let rendered = summary.render();
+        assert!(
+            rendered.contains(&format!(
+                "  FAILED: {KNOWN_FAILING} (known red: card 2036, dev3, since 2026-10-07)"
+            )),
+            "{rendered}"
+        );
+        assert!(rendered.contains("verdict: RED"), "{rendered}");
+        assert!(rendered.contains("test: FAILED"), "{rendered}");
+        assert!(!summary.green, "a known red is information, never a pass");
+        // The exit decision is the one it always was.
+        assert!(!test_healthy(false, &verdict));
+    }
+
+    /// **A failing test that is not on the list prints exactly as it always
+    /// did.** The paired negative: a list naming some other test annotates
+    /// nothing here.
+    #[test]
+    fn a_failing_test_not_on_the_list_prints_without_an_annotation() {
+        let verdict = summarize_test_output(ONE_FAILING);
+        let mut summary = Summary::new();
+        summary.test_phase(
+            false,
+            &verdict,
+            &listing("elsewhere::tests::some_other_test"),
+        );
+        let rendered = summary.render();
+        assert!(
+            rendered
+                .lines()
+                .any(|l| l == format!("  FAILED: {KNOWN_FAILING}")),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("known red"), "{rendered}");
+        assert!(rendered.contains("verdict: RED"), "{rendered}");
+    }
+
+    /// **A run whose only failures are all known is still red.** Annotating
+    /// every failure must not read as an excuse.
+    #[test]
+    fn a_run_of_only_known_reds_is_still_red() {
+        let verdict = summarize_test_output(ONE_FAILING);
+        let mut summary = Summary::new();
+        summary.test_phase(false, &verdict, &listing(KNOWN_FAILING));
+        assert!(!summary.green);
+        assert!(summary.render().contains("verdict: RED"));
+    }
+
+    /// **A failure that is not known is listed before the known ones**, so
+    /// a list of known reds can never push a new red below the cap.
+    #[test]
+    fn an_unknown_failure_is_listed_ahead_of_known_ones() {
+        let known: Vec<String> = (0..6).map(|n| format!("m::tests::known_{n}")).collect();
+        let text: String = known
+            .iter()
+            .map(|name| {
+                format!(
+                    "[[known_red]]\ntest = \"{name}\"\ncard = 1\nowner = \"dev\"\n\
+                     since = \"2026-10-07\"\n"
+                )
+            })
+            .collect();
+        let verdict = TestVerdict {
+            compiled: true,
+            suites: 1,
+            passed: 0,
+            failed: 7,
+            failed_names: known
+                .iter()
+                .cloned()
+                .chain(["m::tests::brand_new".to_string()])
+                .collect(),
+        };
+        let mut summary = Summary::new();
+        summary.test_phase(
+            false,
+            &verdict,
+            &KnownReds::parse(&text).expect("a well-formed list"),
+        );
+        let rendered = summary.render();
+        let new = rendered.find("m::tests::brand_new").expect(&rendered);
+        let first_known = rendered.find("m::tests::known_0").expect(&rendered);
+        assert!(new < first_known, "{rendered}");
+        assert!(rendered.contains("...and 2 more"), "{rendered}");
     }
 }

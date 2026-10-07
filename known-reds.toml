@@ -1,0 +1,39 @@
+# Tests that fail on a loaded machine, each already owned by a card. The bar
+# reads this file and prints the card beside a failing test that is listed here.
+# It changes nothing else: the verdict stays red and the exit code is unchanged.
+# A test leaves this list when its card closes.
+#
+# Only this shape is read, and anything else is refused with its line number:
+# a [[known_red]] header, then test, card, owner and since, each once, with
+# strings in double quotes. `test` is the name cargo test prints, `card` is a
+# whole number and `since` is the day the entry was added, as YYYY-MM-DD.
+
+[[known_red]]
+test = "testing::tests::two_stores_started_together_both_take_a_port"
+card = 2036
+owner = "dev3"
+since = "2026-10-07"
+
+[[known_red]]
+test = "room::tests::the_server_announces_its_address_only_once_that_address_answers"
+card = 2041
+owner = "unassigned"
+since = "2026-10-07"
+
+[[known_red]]
+test = "an_ordering_on_the_schedule_date_is_licensed_by_the_kind"
+card = 2041
+owner = "unassigned"
+since = "2026-10-07"
+
+[[known_red]]
+test = "the_jobs_run_side_by_side"
+card = 2041
+owner = "unassigned"
+since = "2026-10-07"
+
+[[known_red]]
+test = "a_teaching_write_that_conflicts_with_another_is_told_apart_from_a_failed_store"
+card = 2041
+owner = "unassigned"
+since = "2026-10-07"
