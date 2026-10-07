@@ -401,11 +401,16 @@ drafted and never asked is a read of that key, and it finds every one:
     capture  subject: "work:phi"  content: "which payment provider do we use?"  fields: {"state": "drafted", "blocks": "work:handcart"}
     recall  fields: [{"key": "state", "value": "drafted"}]  facts: true
 
+A question is a `work` thing because no kind for questions is built in: a
+question is a piece of work, and it blocks other work.
+
 ## Where a piece of work stands
 
 A piece of work is a `work` thing filed under its project. Four keys say where
 it stands. Write them on the work as keys. A sentence cannot answer "what is
-next".
+next". A claim that says "now" or "next" is chronology, and the next write of
+`status` outdates it, so read where the work stands from the key, never from a
+sentence.
 
 `status` is where the work stands. It takes one of five words: `someday`,
 `next`, `now`, `waiting` or `done`. A word outside the five is refused, and the
@@ -431,6 +436,15 @@ the work named in `subject`.
     recall  kind: "work"  fields: [{"key": "status", "value": "next"}]
     recall  kind: "work"  fields: [{"key": "waiting_on"}]
     recall  subject: "work:phi"  follow: {"relation": "depends_on", "direction": "in"}
+
+## A label on one claim
+
+A key you write on a claim becomes a field of the claim's subject. A label that
+belongs to one claim, such as a decision number or a cross-reference, is not a
+key: put it in the claim's words or in its `details`. Six keys describe their own
+record and do not fold onto the subject: `read_from`, `read_ref`, `starred`,
+`subject`, `purpose` and `recorded_by`. Any other key folds onto the subject, as
+every field does.
 
 ## A retrospective
 
@@ -873,9 +887,14 @@ mod tests {
         "owner",
         "promise",
         "promised_by",
+        "purpose",
+        "read_from",
+        "read_ref",
+        "recorded_by",
         "regarding",
         "rhythms",
         "someday",
+        "starred",
         "state",
         "waiting",
         "waiting_on",
@@ -1004,6 +1023,77 @@ mod tests {
             published.contains("parent"),
             "the surface publishes no `parent`, so this case is pinning the wrong argument"
         );
+    }
+
+    /// A section of the projects procedure, found by the start of its heading.
+    fn projects_section(heading: &str) -> String {
+        body("projects")
+            .split("\n## ")
+            .find(|section| section.starts_with(heading))
+            .unwrap_or_else(|| panic!("the projects procedure has no section {heading:?}"))
+            .to_string()
+    }
+
+    /// **The open-question section says why a question is work.** No kind for
+    /// questions is built in, and a session that does not know that goes looking
+    /// for one or invents a kind of its own. Pinned on the one phrase that is new
+    /// there.
+    #[test]
+    fn the_projects_procedure_says_no_kind_for_questions_is_built_in() {
+        let section = projects_section("An open question");
+        assert!(
+            names(&section, "built") && names(&section, "blocks"),
+            "the open-question section does not say a question is work because no kind for \
+             questions is built in: {section}"
+        );
+    }
+
+    /// **The status section says a claim saying `now` or `next` is chronology.**
+    /// A sentence about where the work stands is outdated by the next write of
+    /// the key, so where it stands is read from the key. Pinned on the two words
+    /// the sentence adds.
+    #[test]
+    fn the_projects_procedure_says_a_sentence_about_where_work_stands_is_outdated() {
+        let section = projects_section("Where a piece of work stands");
+        assert!(
+            names(&section, "chronology") && names(&section, "outdates"),
+            "the status section does not say a claim that says now or next is chronology that \
+             the status key outdates: {section}"
+        );
+    }
+
+    /// **A label on one claim is not a key, and the six keys that describe
+    /// their record are named from the declaration, not typed here.** A key
+    /// written on a claim becomes a field of the claim's subject, so a decision
+    /// number or a cross-reference written as a key folds onto the thing the
+    /// claim is about. The six exceptions are read off the shipped
+    /// `record-labels` type, so a key added to it must be named in the section.
+    #[test]
+    fn the_projects_procedure_says_a_label_on_one_claim_is_not_a_key() {
+        let section = projects_section("A label on one claim");
+        for word in ["field", "subject", "details", "folds", "cross-reference"] {
+            assert!(
+                names(&section, word),
+                "the label section does not say {word:?}: {section}"
+            );
+        }
+        let declared = crate::seed::shipped_types()
+            .into_iter()
+            .find(|declared| declared.name == "record-labels")
+            .expect("the build ships the record-labels type");
+        assert!(
+            declared.fields.len() >= 6,
+            "the shipped record-labels type names {} keys, too few to be the six",
+            declared.fields.len()
+        );
+        for field in &declared.fields {
+            assert!(
+                section.contains(&format!("`{}`", field.key)),
+                "the label section does not name `{}`, a key the build declares as describing \
+                 its record: {section}",
+                field.key
+            );
+        }
     }
 
     /// **The status section says a finished piece of work is not owed.** A
