@@ -288,7 +288,7 @@ impl Mailboxes for InMemoryMailboxes {
                 });
             }
         };
-        let new_name = MailboxName(to.slug().to_string());
+        let new_name = MailboxName::named_for(to);
         // **Screened before anything moves**, on the box's own key rather
         // than the entity handle the rename already screened: a different
         // owner already wearing the destination name is a real collision,
@@ -996,6 +996,57 @@ pub mod contract {
         assert_eq!(held("person-milhouse").owner, person);
         assert!(held("person-milhouse").is_private());
         assert!(!held("inbox").is_private());
+    }
+
+    /// **A person's box keeps a person's name when it follows its owner.** The
+    /// box is renamed with the rename of its owner, and the name is the one a
+    /// person's box is opened with: a reslug of the person must not leave the
+    /// box wearing a bare slug, which is a bot's name and could one day be a
+    /// bot's. The mail follows the box to the new name.
+    pub async fn a_persons_box_keeps_a_persons_name_when_it_follows_its_owner(
+        store: &dyn Mailboxes,
+    ) {
+        crate::memory::kinds::load_shipped();
+        let was = EntityId(OWNERS[2].to_string());
+        let now = EntityId("person:ned-flanders".to_string());
+        let box_name = MailboxName::named_for(&was);
+        assert_eq!(box_name.as_str(), "person-milhouse");
+        store
+            .create_mailbox(&box_name, &was, None)
+            .await
+            .expect("create ok")
+            .written()
+            .expect("not blocked");
+        post(
+            store,
+            box_name.as_str(),
+            "someone",
+            "mail before the move",
+            0,
+        )
+        .await;
+
+        let repointed = store
+            .repoint_owner(&was, &now)
+            .await
+            .expect("repoint_owner should succeed")
+            .expect("the box existed and was found");
+        assert_eq!(repointed.owner, now, "{repointed:?}");
+        assert_eq!(
+            repointed.name.as_str(),
+            "person-ned-flanders",
+            "{repointed:?}"
+        );
+        assert!(repointed.is_private());
+        let boxes = store.list_mailboxes().await.expect("list ok");
+        assert_eq!(boxes.len(), 1, "the old box does not survive: {boxes:?}");
+        let delivery = store
+            .read_mailbox(&repointed.name, TakenBy::Reading)
+            .await
+            .expect("read ok")
+            .written()
+            .expect("not blocked");
+        assert_eq!(delivery.messages.len(), 1, "the mail followed the box");
     }
 
     /// **A box is created FOR somebody, so an owner nobody knows is refused.**
@@ -2405,6 +2456,7 @@ pub mod contract {
         a_repoint_refuses_a_destination_name_a_different_owner_already_holds(&fresh().await).await;
         a_box_carries_its_owner_onto_the_board(&fresh().await).await;
         a_box_owned_by_a_person_is_private_on_the_board(&fresh().await).await;
+        a_persons_box_keeps_a_persons_name_when_it_follows_its_owner(&fresh().await).await;
         a_box_for_an_owner_nobody_knows_is_refused(&fresh().await).await;
         creating_a_near_miss_is_blocked_and_writes_nothing(&fresh().await).await;
         a_confirmed_near_miss_creates_the_sibling_box(&fresh().await).await;

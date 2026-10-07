@@ -50,6 +50,20 @@ impl MailboxName {
     }
 }
 
+impl MailboxName {
+    /// **The name the box of this owner wears**: a bot's box is named for its
+    /// bare slug, and a person's for the kind's word and the slug, so the two
+    /// can never be the same name. Derived from the owner and never chosen,
+    /// which is why a box that follows its owner through a rename can be named
+    /// again without asking anybody.
+    pub fn named_for(owner: &EntityId) -> Self {
+        match owner.kind() == Some(crate::memory::EntityKind::PERSON) {
+            true => MailboxName(format!("person-{}", owner.slug())),
+            false => MailboxName(owner.slug().to_string()),
+        }
+    }
+}
+
 impl std::fmt::Display for MailboxName {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.0)
@@ -993,6 +1007,18 @@ pub struct Quarantined {
 mod tests {
     use super::testing::{InMemoryMailboxes, contract};
     use super::*;
+
+    /// **A box is named for its owner, and the two kinds can never share a
+    /// name.** A bot's box wears the bare slug and a person's wears the kind's
+    /// word first, so the person `milhouse` and the bot `milhouse` own two different
+    /// boxes.
+    #[test]
+    fn a_persons_box_and_a_bots_wear_different_names_for_the_same_slug() {
+        crate::memory::kinds::load_shipped();
+        let named = |owner: &str| MailboxName::named_for(&EntityId(owner.into()));
+        assert_eq!(named("bot:milhouse").as_str(), "milhouse");
+        assert_eq!(named("person:milhouse").as_str(), "person-milhouse");
+    }
 
     /// **A box owned by a person is private; a box owned by a bot is not.** The
     /// rule is the owner's kind and nothing else, so it needs no column and no

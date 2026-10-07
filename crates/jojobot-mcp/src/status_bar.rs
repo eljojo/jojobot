@@ -121,9 +121,10 @@ impl Jojobot {
         let OwnBox::The(own) = owned_box(&boxes, &asking.bot) else {
             return None;
         };
+        // A person's box is counted for nobody: it is not a bot's own.
         let waiting = boxes
             .iter()
-            .find(|held| held.name == own)
+            .find(|held| held.name == own && !held.is_private())
             .map(|held| held.counts.new)?;
         (waiting > 0).then_some(waiting)
     }
@@ -147,7 +148,7 @@ impl Jojobot {
         };
         boxes
             .iter()
-            .find(|held| held.name == own)
+            .find(|held| held.name == own && !held.is_private())
             .map(|held| held.counts.new)
     }
 }
@@ -213,6 +214,43 @@ mod tests {
             board.listings() - before,
             1,
             "the block asks the board for the whole table once and derives both facts from it"
+        );
+    }
+
+    /// **A person's box is counted for nobody.** The block says how much mail
+    /// waits in the caller's own box. A handle bound to a person owns a person's
+    /// box, which is not a bot's own, and the count of mail waiting for the
+    /// operator is not the business of whoever holds such a handle. The bot
+    /// beside it, with mail waiting, is the positive: the block does count a
+    /// bot's own box.
+    #[tokio::test]
+    async fn a_persons_box_is_counted_for_nobody() {
+        use crate::mailboxes::testing::{a_persons_box, store_counts};
+        let jojobot = crate::mailboxes::testing::mailbox_handler();
+        let held = a_persons_box(&jojobot, "milhouse").await;
+        let bot = owning(&jojobot, "gamma").await;
+        owning(&jojobot, "epsilon").await;
+        send(&jojobot, "person:milhouse", "epsilon", "for the operator").await;
+        send(&jojobot, "gamma", "epsilon", "for gamma").await;
+        assert_eq!(store_counts(&jojobot, &held).await, (1, 0, 0));
+        let person = jojobot
+            .registry
+            .mint(&EntityId("person:milhouse".into()), None)
+            .expect("a free handle")
+            .as_str()
+            .to_string();
+
+        assert_eq!(jojobot.mail_waiting(Some(&bot)).await, Some(1));
+        assert_eq!(jojobot.mail_waiting(Some(&person)).await, None);
+        assert_eq!(
+            jojobot
+                .own_new_count(&EntityId("person:milhouse".into()))
+                .await,
+            None
+        );
+        assert_eq!(
+            jojobot.own_new_count(&EntityId("bot:gamma".into())).await,
+            Some(1)
         );
     }
 }

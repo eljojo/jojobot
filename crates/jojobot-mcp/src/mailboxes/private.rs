@@ -53,14 +53,6 @@ pub(crate) fn private_box(id: &MessageId) -> CallToolResult {
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])
 }
 
-/// **The name a person's box wears**: the kind's word and the slug, derived from
-/// the owner and never chosen by a caller. A bot's box is named for its bare
-/// slug, so this cannot be a bot's name unless a bot's slug begins `person-`,
-/// and the create guard refuses an exact collision.
-fn persons_box_name(owner: &EntityId) -> mailbox::MailboxName {
-    mailbox::MailboxName(format!("person-{}", owner.slug()))
-}
-
 impl Jojobot {
     /// **The box a post to `addressee` goes into**, opening it when this is the
     /// first post to the operator. A refusal as the answer when the addressee is
@@ -119,7 +111,7 @@ impl Jojobot {
             OwnBox::None => {}
         }
         // The first post to the operator: open their box now.
-        let name = persons_box_name(addressee);
+        let name = mailbox::MailboxName::named_for(addressee);
         let mut token: Option<String> = None;
         for _ in 0..2 {
             match self

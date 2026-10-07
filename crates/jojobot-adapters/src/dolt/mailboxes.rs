@@ -682,7 +682,7 @@ impl Mailboxes for DoltMailboxes {
                 });
             }
         };
-        let new_name = to.slug().to_string();
+        let new_name = MailboxName::named_for(to).as_str().to_string();
         // **Screened before the write, inside the same transaction the write
         // is in.** The mailbox `name` is its own primary key and the box key
         // is the slug alone — a different key from the entity handle the

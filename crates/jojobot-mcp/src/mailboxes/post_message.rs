@@ -201,6 +201,12 @@ impl Jojobot {
         let OwnBox::The(own) = self.own_box(bot).await else {
             return None;
         };
+        // **A person's box is handed to nobody by a post.** A handle bound to a
+        // person is not a bot's, and the box it owns is read by that person
+        // alone. A board that cannot say whose the box is hands nothing over.
+        if self.box_is_private(&own).await.unwrap_or(true) {
+            return None;
+        }
         // **A note you left yourself is not mail you have received.** Posting
         // into your own box and taking delivery in the same call would hand
         // you back the message you had just written, marked as delivered — the

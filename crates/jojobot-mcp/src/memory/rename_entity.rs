@@ -92,6 +92,46 @@ impl Jojobot {
         }
     }
 
+    /// **Refuse a retype that would change whether a box's owner is a person,
+    /// before anything moves.** A box is private because a person owns it, and a
+    /// retype repoints the box with its owner. The operator renamed to a bot
+    /// would hand their box to a bot, readable by booting as it; a booted bot
+    /// renamed to a person would rebind its handles to the person, and the
+    /// person's mail would reach the old session. Either way, a rename that keeps
+    /// the owner a person, or keeps it something else, is untouched.
+    ///
+    /// `Ok(None)` when `from` owns no box, or when the move keeps its
+    /// person-ness. The box is found by owner on the board, so the question is
+    /// asked of the mail world and not of a guess about the kind.
+    async fn mailbox_rename_would_change_who_may_read(
+        &self,
+        from: &EntityId,
+        to: &EntityId,
+    ) -> Result<Option<CallToolResult>, McpError> {
+        let person = Some(EntityKind::PERSON);
+        if (from.kind() == person) == (to.kind() == person) {
+            return Ok(None);
+        }
+        let boxes = self
+            .mailboxes
+            .list_mailboxes()
+            .await
+            .map_err(crate::mailboxes::mailbox_error)?;
+        if !boxes.iter().any(|b| &b.owner == from) {
+            return Ok(None);
+        }
+        Ok(Some(blocked_body(
+            to,
+            &[],
+            format!(
+                "Nothing was renamed. '{from}' owns a mailbox, and a mailbox is private exactly \
+                 when a person owns it, so moving it into or out of the person kind would change \
+                 who may read that mail. Keep the kind: rename it within its kind, or leave it \
+                 as it is."
+            ),
+        )))
+    }
+
     /// **Refuse a rename before anything moves, when its destination mailbox
     /// name is already worn by a different box.**
     ///
@@ -117,7 +157,8 @@ impl Jojobot {
         if !boxes.iter().any(|b| &b.owner == from) {
             return Ok(None);
         }
-        let new_name = to.slug();
+        let new_name = mailbox::MailboxName::named_for(to);
+        let new_name = new_name.as_str();
         let Some(existing) = boxes
             .iter()
             .find(|b| b.name.as_str() == new_name && &b.owner != from)
@@ -184,6 +225,12 @@ impl Jojobot {
         // guessing a kind would be guessing the caller's intent about the
         // one thing this call exists to let them state.
         let to = EntityId(args.to.trim().to_string());
+        if let Some(refused) = self
+            .mailbox_rename_would_change_who_may_read(&from, &to)
+            .await?
+        {
+            return Ok(refused);
+        }
         if let Some(refused) = self.mailbox_rename_would_collide(&from, &to).await? {
             return Ok(refused);
         }
@@ -681,19 +728,18 @@ mod tests {
             .expect("add ok");
         let sid = writing_as(&jojobot);
 
-        // `person:milhouse` also happens to be a same-slug-other-kind near
-        // miss against the existing `bot:milhouse` — but the mailbox check
-        // runs BEFORE that guard is even reached, because it runs before
+        // `bot:milhouse` is also an exact entity collision — but the mailbox
+        // check runs BEFORE that guard is even reached, because it runs before
         // any entity write is attempted at all. So this is the mailbox
         // world's own refusal, not the entity guard's: proven below by its
         // empty `candidates` and its own wording, neither of which the
-        // entity near-miss guard would produce.
+        // entity guard would produce.
         let result = jojobot
-            .rename_entity(Parameters(args("bot:epsilon", "person:milhouse", &sid)))
+            .rename_entity(Parameters(args("bot:epsilon", "bot:milhouse", &sid)))
             .await
             .expect("the call succeeds; the guard answers in the body");
         let body = blocked(&result);
-        assert_eq!(body["attempted"], "person:milhouse", "{body}");
+        assert_eq!(body["attempted"], "bot:milhouse", "{body}");
         assert_eq!(body["wrote"], false, "{body}");
         assert!(
             body["candidates"].as_array().unwrap().is_empty(),
@@ -1100,6 +1146,135 @@ mod tests {
         assert_eq!(
             empty["count"], 0,
             "a bot that never sent anything still reads zero: {empty}"
+        );
+    }
+
+    /// **A rename that would turn the operator into a bot is refused before
+    /// anything moves.** A box is private because a person owns it, and a retype
+    /// repoints the box with its owner: the operator renamed to a bot would
+    /// leave their box a bot's, read by booting as that bot. The refusal says
+    /// why, the entity keeps its kind, the box keeps its owner, and the mail
+    /// stays unreadable by every bot. A rename that keeps the kind still works
+    /// and the box follows it, still private.
+    #[tokio::test]
+    async fn a_rename_that_would_turn_a_persons_box_into_a_bots_is_refused() {
+        use crate::mailboxes::testing::*;
+        let jojobot = mailbox_handler();
+        let held = a_persons_box(&jojobot, "milhouse").await;
+        let writer = owning(&jojobot, "epsilon").await;
+        let posted = send(
+            &jojobot,
+            "person:milhouse",
+            "epsilon",
+            "the secret figure is 4242",
+        )
+        .await;
+        let id = posted["id"].as_str().expect("an id").to_string();
+        assert_eq!(store_counts(&jojobot, &held).await, (1, 0, 0));
+
+        // ── the retype away from person is refused, and nothing moved ───────
+        for to in ["bot:milhouse", "thing:handcart"] {
+            let refused = json_of(
+                &jojobot
+                    .rename_entity(Parameters(args("person:milhouse", to, &writer)))
+                    .await
+                    .expect("a refusal is an answer"),
+            );
+            assert_eq!(refused["status"], "blocked", "{to}: {refused}");
+            assert_eq!(refused["wrote"], false, "{to}: {refused}");
+        }
+        assert_eq!(
+            boxes_owned_by(&jojobot, "person:milhouse").await,
+            vec![held.clone()],
+            "the box still belongs to the person"
+        );
+        assert!(
+            boxes_owned_by(&jojobot, "bot:milhouse").await.is_empty(),
+            "no bot owns it"
+        );
+        let after = json_of(
+            &jojobot
+                .read_message(Parameters(ReadMessageArgs {
+                    message_id: id.clone(),
+                    sid: Some(writer.clone()),
+                }))
+                .await
+                .expect("an answer"),
+        );
+        assert_eq!(after["status"], "blocked", "{after}");
+        assert!(!after.to_string().contains("4242"), "{after}");
+
+        // ── the positive: a rename that keeps the kind goes through ─────────
+        let renamed = json_of(
+            &jojobot
+                .rename_entity(Parameters(args(
+                    "person:milhouse",
+                    "person:ned-flanders",
+                    &writer,
+                )))
+                .await
+                .expect("rename ok"),
+        );
+        assert_ne!(renamed["status"], "blocked", "{renamed}");
+        // The box follows its owner and keeps wearing the person's name, so it
+        // can never be a bot's box name.
+        assert_eq!(
+            boxes_owned_by(&jojobot, "person:ned-flanders").await,
+            vec![mailbox::MailboxName("person-ned-flanders".into())],
+            "the box followed its owner"
+        );
+        assert!(
+            boxes_owned_by(&jojobot, "person:milhouse").await.is_empty(),
+            "…and left the old name {held:?}"
+        );
+        let still = json_of(
+            &jojobot
+                .read_message(Parameters(ReadMessageArgs {
+                    message_id: id,
+                    sid: Some(writer),
+                }))
+                .await
+                .expect("an answer"),
+        );
+        assert_eq!(still["status"], "blocked", "still private: {still}");
+    }
+
+    /// **A rename that would turn a booted bot into a person is refused too.**
+    /// The bot's handles are rebound to the new handle, and a session bound to a
+    /// person owns the person's box: later mail written to that person would be
+    /// handed to the old session. Refused before anything moves, with the bot
+    /// still a bot, still reading its own box.
+    #[tokio::test]
+    async fn a_rename_that_would_turn_a_bot_into_a_person_is_refused() {
+        use crate::mailboxes::testing::*;
+        let jojobot = mailbox_handler();
+        let gamma = owning(&jojobot, "gamma").await;
+        owning(&jojobot, "epsilon").await;
+        send(&jojobot, "gamma", "epsilon", "a note for gamma").await;
+
+        let refused = json_of(
+            &jojobot
+                .rename_entity(Parameters(args("bot:gamma", "person:gamma", &gamma)))
+                .await
+                .expect("a refusal is an answer"),
+        );
+        assert_eq!(refused["status"], "blocked", "{refused}");
+        assert_eq!(boxes_owned_by(&jojobot, "bot:gamma").await.len(), 1);
+        assert!(boxes_owned_by(&jojobot, "person:gamma").await.is_empty());
+        // The positive: the bot still reads its own box through the same handle.
+        let delivered = json_of(
+            &jojobot
+                .read_mailbox(Parameters(ReadMailboxArgs {
+                    counts_only: None,
+                    new_only: None,
+                    sid: Some(gamma),
+                }))
+                .await
+                .expect("read ok"),
+        );
+        assert!(
+            delivered.to_string().contains("a note for gamma"),
+            "{delivered}"
         );
     }
 }

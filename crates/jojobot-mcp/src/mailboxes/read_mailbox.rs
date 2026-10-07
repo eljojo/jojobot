@@ -52,6 +52,11 @@ enum NoBox {
     /// damage too — and the opposite repair from [`NoBox::Broken`]: no boot
     /// heals it, because jojobot cannot know which of them is the real one.
     Several(Vec<mailbox::MailboxName>),
+    /// **The box this handle owns is a person's.** A bot reads the box it
+    /// owns, and a person's box is read by nobody who speaks through this
+    /// surface, so a handle bound to a person has no box here. Nothing on the
+    /// surface binds one, and the refusal holds if something does.
+    Private,
 }
 
 /// The refusal a read gets when there is no box behind its handle.
@@ -82,6 +87,12 @@ fn no_box_for(attempted: &str, why: NoBox) -> CallToolResult {
              the operator afterwards: mail sent to you before the repair was refused as an \
              unknown box and was never stored. Posting into other boxes still works and needs \
              none of this: post_message leaves mail in a box without reading that box."
+        ),
+        NoBox::Private => format!(
+            "Nothing was delivered, and nothing moved. '{attempted}' owns a person's mailbox, and \
+             no bot reads one: a bot reads the box it owns, and this handle is not a bot's. \
+             Mail written to a person is read by that person alone, on a surface that is not \
+             this one."
         ),
         NoBox::Several(boxes) => format!(
             "Nothing was delivered, and nothing moved out of new. '{attempted}' owns more than \
@@ -166,6 +177,9 @@ impl Jojobot {
             .filter(|b| b.owner == caller.bot)
             .collect();
         match owned.len() {
+            // **A person's box is never a caller's own.** The rule that a bot
+            // reads the box it owns assumes a bot owns it.
+            1 if owned[0].is_private() => Err(no_box_for(caller.bot.as_str(), NoBox::Private)),
             1 => Ok(owned.remove(0)),
             0 => Err(no_box_for(caller.bot.as_str(), NoBox::Broken)),
             _ => Err(no_box_for(
@@ -1196,6 +1210,78 @@ mod tests {
             store_counts(&jojobot, &held).await,
             (1, 0, 0),
             "neither read moved the person's message"
+        );
+    }
+
+    /// **A handle bound to a person never opens a person's box, by a read or by
+    /// a post.** No verb produces such a handle once a retype is refused, and a
+    /// guard that only holds while nothing else is wrong is not a guard: a
+    /// handle minted for the person who owns a private box meets a refusal when
+    /// it reads, the post it makes hands it none of that box's mail. (The status
+    /// bar rides the served router and not these direct calls, so its own case
+    /// is beside it, in the status bar's module.) The message stays where it was, counted
+    /// from the store.
+    #[tokio::test]
+    async fn a_handle_bound_to_a_person_never_opens_a_persons_box() {
+        let jojobot = mailbox_handler();
+        let held = a_persons_box(&jojobot, "milhouse").await;
+        owning(&jojobot, "epsilon").await;
+        owning(&jojobot, "sigma").await;
+        send(
+            &jojobot,
+            "person:milhouse",
+            "epsilon",
+            "the secret figure is 4242",
+        )
+        .await;
+        assert_eq!(store_counts(&jojobot, &held).await, (1, 0, 0));
+        // Written straight to the registry: nothing on the surface binds a
+        // handle to a person, and the guard has to hold if something does.
+        let person = jojobot
+            .registry
+            .mint(&EntityId("person:milhouse".into()), None)
+            .expect("a free handle")
+            .as_str()
+            .to_string();
+
+        // ── a read, by delivery and by count ────────────────────────────────
+        for counts_only in [None, Some(true)] {
+            let refused = json_of(
+                &jojobot
+                    .read_mailbox(Parameters(ReadMailboxArgs {
+                        counts_only,
+                        new_only: None,
+                        sid: Some(person.clone()),
+                    }))
+                    .await
+                    .expect("a refusal is an answer"),
+            );
+            assert_eq!(refused["status"], "blocked", "{refused}");
+            assert!(!refused.to_string().contains("4242"), "{refused}");
+        }
+
+        // ── a post that would hand over the sender's own box ────────────────
+        let posted = json_of(
+            &jojobot
+                .post_message(Parameters(PostMessageArgs {
+                    to: "sigma".into(),
+                    sid: person,
+                    subject: None,
+                    body: "from the person's handle".into(),
+                    in_reply_to: None,
+                }))
+                .await
+                .expect("an answer"),
+        );
+        assert!(!posted.to_string().contains("4242"), "{posted}");
+        assert!(
+            posted.get("your_mail").is_none(),
+            "a person's box is handed to nobody by a post: {posted}"
+        );
+        assert_eq!(
+            store_counts(&jojobot, &held).await,
+            (1, 0, 0),
+            "neither the read nor the post moved the message"
         );
     }
 }
