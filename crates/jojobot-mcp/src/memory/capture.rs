@@ -683,8 +683,9 @@ impl Jojobot {
                        ALREADY EXIST: one jojobot doesn't know comes back status: blocked with \
                        candidates and nothing is written. A genuinely new entity is two \
                        deliberate steps — add_entity, then capture. GIVE IT FIELDS: fields is \
-                       a flat bag of key/value pairs jojobot stores and never interprets, and \
-                       refs names the entities the record touches — those are links whose \
+                       a flat bag of key/value pairs jojobot stores as written; a handle or a \
+                       comma list of handles is a link and must exist, and six keys stay on \
+                       their claim. refs names the entities the record touches — those are links whose \
                        meaning is deliberately unrecorded, so they are searchable but assert \
                        nothing, which is what makes them not `about` edges. NOTHING HAS TO BE \
                        DECLARED FIRST and no name for the class of thing is asked for: a key you \

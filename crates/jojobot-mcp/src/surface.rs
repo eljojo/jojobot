@@ -1331,6 +1331,34 @@ fn the_recall_description_says_the_view_the_status_filter_and_the_handle_list() 
     near(&schema, "a field link (an entity", 200, "comma");
 }
 
+/// **capture's tool description says what becomes of a handle in a field.** It
+/// is the text a model reads on every capture, and it said fields are stored
+/// and never interpreted. A handle or a comma list of handles is a link and must
+/// exist, and six keys stay on their claim.
+///
+/// Pinned on the words only that sentence carries, within a short window after
+/// the sentence it corrects: `link` alone also sits in the next clause, which is
+/// about `refs`.
+#[test]
+fn the_capture_description_says_a_handle_in_a_field_is_a_link() {
+    let tools = Jojobot::tool_router().list_all();
+    let capture = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "capture")
+        .expect("the surface offers capture");
+    let description = capture.description.as_deref().unwrap_or_default();
+    let at = description
+        .find("GIVE IT FIELDS")
+        .expect("capture's description gives fields their own sentence");
+    let window: String = description[at..].chars().take(300).collect();
+    for word in ["comma", "exist", "claim"] {
+        assert!(
+            window.contains(word),
+            "`{word}` is not within 300 characters after `GIVE IT FIELDS`: {window}"
+        );
+    }
+}
+
 /// **The second call for who reports to a bot is named where `reports_to` is
 /// taught.** The colleagues view says only whom each bot reports to, so the
 /// surface that tells a bot to write the key also says how to read the other
