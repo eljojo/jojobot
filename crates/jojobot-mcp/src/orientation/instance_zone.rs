@@ -42,25 +42,44 @@ impl InstanceZone {
     }
 }
 
+/// **What the instance's record holds for its zone**, asked of a Memory
+/// directly so a reader that is not a [`Jojobot`] can ask too. A store that
+/// cannot be read answers [`InstanceZone::Unset`]: a day-grained call must
+/// still be answered, in the frame an instance with no zone gets.
+pub(crate) async fn instance_zone_of(memory: &dyn Memory) -> InstanceZone {
+    let Ok(fields) = memory.fields(&EntityId(INSTANCE_RECORD.to_string())).await else {
+        return InstanceZone::Unset;
+    };
+    match fields.get(INSTANCE_ZONE_KEY).map(|raw| raw.trim()) {
+        None | Some("") => InstanceZone::Unset,
+        Some(raw) => match jiff::tz::TimeZone::get(raw) {
+            Ok(zone) => InstanceZone::Set(zone.iana_name().unwrap_or(raw).to_string()),
+            Err(_) => InstanceZone::Unresolvable(raw.to_string()),
+        },
+    }
+}
+
+/// **The zone a read that states none is answered in**: the instance's, and UTC
+/// when the instance holds none or holds one this build cannot resolve. One
+/// answer for every unzoned read, public so the operator's window reads the day
+/// the same way the verbs do.
+pub async fn unzoned_frame(memory: &dyn Memory) -> jiff::tz::TimeZone {
+    instance_zone_of(memory)
+        .await
+        .name()
+        .and_then(|name| jiff::tz::TimeZone::get(name).ok())
+        .unwrap_or(jiff::tz::TimeZone::UTC)
+}
+
 impl Jojobot {
-    /// **What the instance's record holds for its zone.** A store that cannot be
-    /// read answers [`InstanceZone::Unset`]: a day-grained call must still be
-    /// answered, in the frame an instance with no zone gets.
+    /// **What the instance's record holds for its zone.**
     pub(crate) async fn instance_zone(&self) -> InstanceZone {
-        let Ok(fields) = self
-            .memory
-            .fields(&EntityId(INSTANCE_RECORD.to_string()))
-            .await
-        else {
-            return InstanceZone::Unset;
-        };
-        match fields.get(INSTANCE_ZONE_KEY).map(|raw| raw.trim()) {
-            None | Some("") => InstanceZone::Unset,
-            Some(raw) => match jiff::tz::TimeZone::get(raw) {
-                Ok(zone) => InstanceZone::Set(zone.iana_name().unwrap_or(raw).to_string()),
-                Err(_) => InstanceZone::Unresolvable(raw.to_string()),
-            },
-        }
+        instance_zone_of(&*self.memory).await
+    }
+
+    /// The frame an unzoned read is answered in; see [`unzoned_frame`].
+    pub(crate) async fn unzoned_frame(&self) -> jiff::tz::TimeZone {
+        unzoned_frame(&*self.memory).await
     }
 }
 

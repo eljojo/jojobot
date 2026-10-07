@@ -355,6 +355,11 @@ pub(crate) enum Down {
     /// Every write of a claim: a capture and an edit both fail with a store
     /// error, while every read answers.
     Writes,
+    /// **The instance's own record is not to be read.** A read of its fields
+    /// panics, and every other read answers: the stand-in for a call that must
+    /// not spend a read on the zone it has no use for. A failure would not do,
+    /// because the zone read swallows one and answers as if no zone were set.
+    InstanceRecord,
 }
 
 /// **Two handlers over ONE store, the second unable to read a claim.** They
@@ -470,6 +475,7 @@ impl Memory for DownMemory {
             | Down::Vocabulary
             | Down::Recall
             | Down::RecallNeverLoaded
+            | Down::InstanceRecord
             | Down::Writes => self.1.list_entities(kind).await,
         }
     }
@@ -502,6 +508,7 @@ impl Memory for DownMemory {
             | Down::TypeRoster
             | Down::Recall
             | Down::RecallNeverLoaded
+            | Down::InstanceRecord
             | Down::Writes => self.1.declared_kinds().await,
         }
     }
@@ -519,6 +526,7 @@ impl Memory for DownMemory {
             | Down::EntityIndex
             | Down::Recall
             | Down::RecallNeverLoaded
+            | Down::InstanceRecord
             | Down::Writes => self.1.declared_types().await,
         }
     }
@@ -557,7 +565,8 @@ impl Memory for DownMemory {
             | Down::TypeRoster
             | Down::Vocabulary
             | Down::Recall
-            | Down::RecallNeverLoaded => self.1.capture(fact).await,
+            | Down::RecallNeverLoaded
+            | Down::InstanceRecord => self.1.capture(fact).await,
         }
     }
     async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
@@ -566,9 +575,11 @@ impl Memory for DownMemory {
             Down::RecallNeverLoaded => Err(MemoryError::KindsNeverLoaded {
                 attempted: Some(subject.to_string()),
             }),
-            Down::EntityIndex | Down::TypeRoster | Down::Vocabulary | Down::Writes => {
-                self.1.recall(subject).await
-            }
+            Down::EntityIndex
+            | Down::TypeRoster
+            | Down::Vocabulary
+            | Down::Writes
+            | Down::InstanceRecord => self.1.recall(subject).await,
         }
     }
     async fn history(
@@ -588,6 +599,9 @@ impl Memory for DownMemory {
         &self,
         entity: &EntityId,
     ) -> Result<std::collections::BTreeMap<String, String>, MemoryError> {
+        if matches!(self.0, Down::InstanceRecord) && entity.as_str() == "topic:instance" {
+            panic!("the instance's record was read by a call that needed no zone");
+        }
         self.1.fields(entity).await
     }
     async fn update_fact(
@@ -602,7 +616,8 @@ impl Memory for DownMemory {
             | Down::TypeRoster
             | Down::Vocabulary
             | Down::Recall
-            | Down::RecallNeverLoaded => self.1.update_fact(address, patch, caller).await,
+            | Down::RecallNeverLoaded
+            | Down::InstanceRecord => self.1.update_fact(address, patch, caller).await,
         }
     }
     async fn retract(

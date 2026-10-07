@@ -192,30 +192,28 @@ impl Jojobot {
         sid: Option<&str>,
     ) -> Result<jiff::civil::Date, McpError> {
         let caller = self.caller(sid).ok().flatten();
-        // **The zone the caller's own run resolves days in**, read off the
-        // caller already in hand rather than looked up again — this is the only
-        // thing left that needs one, now that naming no day is answered by a
-        // frame rather than by a clock reading.
-        let zone = match caller.as_ref().and_then(Caller::zone) {
-            Some(zone) => zone,
-            None => self
-                .instance_zone()
-                .await
-                .name()
-                .and_then(|name| jiff::tz::TimeZone::get(name).ok())
-                .unwrap_or(jiff::tz::TimeZone::UTC),
-        };
         // **Emptiness is settled by the parser, not here** — see
         // [`crate::memory::parse::parse_date`]. A second filter at this call
         // site is how the arguments beside this one ended up answering the
         // same empty string differently.
         match (
             crate::memory::parse::parse_date(named)?,
-            caller.and_then(|caller| caller.day),
+            caller.as_ref().and_then(|caller| caller.day),
         ) {
             (Some(named), _) => Ok(named),
             (None, Some(stated)) => Ok(stated),
-            (None, None) => Ok(self.clock().today_in(&zone)),
+            // **The zone is read only for a day nobody gave.** It is the frame
+            // for today on the clock, so a call that named its date, or whose
+            // run stated its day, has no use for it and must not pay a read of
+            // the instance's record to find out. The caller's own run zone
+            // wins; the instance's is the fallback, then UTC.
+            (None, None) => {
+                let zone = match caller.as_ref().and_then(Caller::zone) {
+                    Some(zone) => zone,
+                    None => self.unzoned_frame().await,
+                };
+                Ok(self.clock().today_in(&zone))
+            }
         }
     }
 
@@ -1482,6 +1480,67 @@ mod begin_retry {
             1,
             "one sid must address one run — found {}: {live:?}",
             live.len()
+        );
+    }
+
+    /// **A call that already has its day never reads the instance's zone.** A
+    /// date the caller named, or a day the run stated at the door, settles the
+    /// day on its own, and the zone is only the frame for a day nobody gave.
+    /// The watching handler panics if the instance's record is read, so the
+    /// named and the stated day each have to be answered without it. The zone
+    /// is still honoured when no day was given: the healthy handler, sharing
+    /// the store, is asked for it with a zone written.
+    #[tokio::test]
+    async fn a_call_that_has_its_day_never_reads_the_instances_zone() {
+        use crate::memory::testing::{Down, capture_args, capture_ok, healthy_and_down};
+        let (healthy, watching) = healthy_and_down(Down::InstanceRecord);
+        make_bot(&healthy, "gamma").await;
+        let plain = as_bot(&healthy, "gamma");
+
+        let named = watching
+            .dated(Some("2026-03-01"), Some(&plain))
+            .await
+            .expect("a named day is a day");
+        assert_eq!(named.to_string(), "2026-03-01");
+
+        // A run that states its day at the door carries it on every call.
+        let booted = boot_answering_dated(&healthy, "gamma", "new", Some("2026-02-02"), None).await;
+        let stating = sid_of(&booted).expect("the run has a handle");
+        let stated = watching
+            .dated(None, Some(&stating))
+            .await
+            .expect("a stated day is a day");
+        assert_eq!(stated.to_string(), "2026-02-02");
+
+        // The positive: with no day given, the instance's zone still decides
+        // today. One of the widest zones is on another day than UTC.
+        let zone = ["Etc/GMT+12", "Pacific/Kiritimati"]
+            .into_iter()
+            .find(|zone| {
+                let in_zone = healthy
+                    .clock()
+                    .today_in(&jiff::tz::TimeZone::get(zone).expect("a zone"));
+                in_zone != healthy.clock().today_in(&jiff::tz::TimeZone::UTC)
+            })
+            .expect("one of the widest zones is on another day than UTC");
+        capture_ok(
+            &healthy,
+            CaptureArgs {
+                fields: Some([("timezone".to_string(), zone.to_string())].into()),
+                ..capture_args("topic:instance", "where the operator lives")
+            },
+        )
+        .await;
+        let given_none = healthy
+            .dated(None, Some(&plain))
+            .await
+            .expect("today in the instance's zone");
+        assert_eq!(
+            given_none,
+            healthy
+                .clock()
+                .today_in(&jiff::tz::TimeZone::get(zone).expect("a zone")),
+            "a day nobody gave is answered in the instance's zone"
         );
     }
 }
