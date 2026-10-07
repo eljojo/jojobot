@@ -191,7 +191,7 @@ say     January: the glasses carry no spare, so the one thing the operator said 
 # times this key was written on this project and what it said each time; a
 # status in prose is not a status that can be counted.
 recall {"subject": "project:the-shed"}
-carries-either "status":"next" | "status":"considering"
+carries-either "status":"someday" | "status":"next" | "status":"considering"
 say     January: the shed holds no status under the operator's own key, so December cannot see how long it has been going round
 
 # 🚨 **Asked of the key's OWN HISTORY, not the folded value.** The floor is
@@ -200,7 +200,7 @@ say     January: the shed holds no status under the operator's own key, so Decem
 # moving it — a fact true in January and superseded on purpose is not a
 # fact this lock may forget. `history` reads every write, not the newest.
 recall {"subject": "project:kitchen-floor", "history": "status"}
-carries-either "value":"next" | "value":"considering"
+carries-either "value":"someday" | "value":"next" | "value":"considering"
 say     January: the kitchen floor's status history carries no first status, so it cannot be told apart from the shed when December asks which one moved
 
 # The first timing on the usual road. October needs to count these — four on
@@ -881,7 +881,8 @@ three different responses**, and the reasons are on three other subjects:
 
 **And the projects:** the shed has held `considering` in January, February,
 May and August; the floor went considering, doing, done. **Either route
-is right:** the operator's words mapped onto the shipped `next` and `now`, or
+is right:** the operator's words mapped onto the shipped `someday`, `next`
+and `now` (a want held for months reads as `someday` as readily as `next`), or
 kept as columns of the project the two are filed under.
 
 > This is a role-play: play the day below as if it is really today.

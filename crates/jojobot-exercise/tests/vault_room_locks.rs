@@ -194,6 +194,33 @@ async fn the_status_locks_hold_when_the_operators_words_are_mapped_onto_the_ship
     assert_eq!(the_three_status_locks(&surface).await, [true; 3]);
 }
 
+/// **Route one, with "considering since November" filed as `someday`.** The
+/// shipped funnel runs someday, next, now, waiting, done, and a model that
+/// reads a want held for months as `someday` has mapped it onto the funnel
+/// reasonably. The January locks hold on it; the April lock still wants the
+/// working status.
+#[tokio::test]
+async fn the_status_locks_hold_when_the_first_status_is_someday() {
+    let (_room, surface, sid) = furnished().await;
+    the_year_of_the_statuses(&surface, &sid, "someday", "now").await;
+    assert_eq!(the_three_status_locks(&surface).await, [true; 3]);
+}
+
+/// **A first status the funnel does not map is still no first status.**
+/// `waiting` is a column, so the write lands, and it is neither of the words
+/// the January locks accept: they redden. Paired with the case above, so the
+/// widened lock is not simply a lock that holds on anything.
+#[tokio::test]
+async fn the_january_locks_redden_when_the_first_status_is_waiting() {
+    let (_room, surface, sid) = furnished().await;
+    the_year_of_the_statuses(&surface, &sid, "waiting", "now").await;
+    assert_eq!(
+        the_three_status_locks(&surface).await,
+        [false, false, true],
+        "the January locks read the first status; the April lock reads the move to now"
+    );
+}
+
 /// **Route two: the operator's own words are kept as columns.** Both projects
 /// are filed under a project whose columns list `considering` and `doing`,
 /// and they hold those words; every status lock holds.
