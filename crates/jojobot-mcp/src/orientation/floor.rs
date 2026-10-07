@@ -6,8 +6,10 @@
 //! forever. A star or a seat count that would take a bot over is refused where
 //! it is written, naming the size and the overage. A charter is held to the
 //! same ceiling. Creating a bot grows every other bot's snapshot and is never
-//! refused, so it is measured instead, and the answer names the bots it took
-//! over the ceiling.
+//! refused for that, so it is measured instead, and the answer names the bots
+//! it took over the ceiling. A bot created with fields that star a rule is
+//! held to the same check as a capture of those fields, measured as the bot
+//! will exist once the creation commits.
 
 use super::*;
 use crate::orientation::identity::carried_rules;
@@ -110,8 +112,16 @@ impl Jojobot {
         in_force: &[Fact],
         seats: usize,
         charter: Option<&str>,
+        creating: Option<&Entity>,
     ) -> Option<Floor> {
-        let index = self.memory.list_entities(None).await;
+        let mut index = self.memory.list_entities(None).await;
+        // **A bot that does not exist yet is measured as it will exist once its
+        // creation commits**: it is the entity the boot would name, and it joins
+        // the snapshot's counts, because the boot that follows the creation
+        // counts it.
+        if let (Some(creating), Ok(listed)) = (creating, index.as_mut()) {
+            listed.push(creating.clone());
+        }
         let entity = index.as_ref().ok()?.iter().find(|e| &e.id == bot)?.clone();
         let charter = match charter {
             // **The charter as the boot composes it**: the build's layer joined
@@ -120,6 +130,7 @@ impl Jojobot {
             // boot serves, and counting it alone leaves a bot with a shipped
             // layer thousands of characters over a ceiling the check passed.
             Some(proposed) => Some(self.memory.composed_prose(bot, proposed).await.ok()?),
+            None if creating.is_some() => None,
             None => self
                 .memory
                 .scan_entity(bot)
@@ -200,9 +211,19 @@ impl Jojobot {
         bot: &EntityId,
         would_be: &[Fact],
         seats_written: Option<&str>,
+        creating: Option<&Entity>,
     ) -> Option<MemoryError> {
-        let current = self.memory.recall(bot).await.ok()?;
-        let fields = self.memory.fields(bot).await.unwrap_or_default();
+        // **A bot being created holds nothing yet**: no claims, no fields, and a
+        // floor of nothing before the write, so any floor over the ceiling is
+        // growth.
+        let current = match creating {
+            Some(_) => Vec::new(),
+            None => self.memory.recall(bot).await.ok()?,
+        };
+        let fields = match creating {
+            Some(_) => Default::default(),
+            None => self.memory.fields(bot).await.unwrap_or_default(),
+        };
         let seats_now = rule_seats_of(&fields);
         let seats_after = match seats_written {
             None => seats_now,
@@ -217,14 +238,21 @@ impl Jojobot {
         };
         let in_force_after = rules_in_force(would_be);
         let after = self
-            .boot_floor_if(bot, &in_force_after, seats_after, None)
+            .boot_floor_if(bot, &in_force_after, seats_after, None, creating)
             .await?;
         if after.total <= jojobot_domain::text::BOOT_ANSWER.budget {
             return None;
         }
-        let before = self
-            .boot_floor_if(bot, &rules_in_force(&current), seats_now, None)
-            .await?;
+        let before = match creating {
+            Some(_) => Floor {
+                total: 0,
+                parts: Vec::new(),
+            },
+            None => {
+                self.boot_floor_if(bot, &rules_in_force(&current), seats_now, None, None)
+                    .await?
+            }
+        };
         Self::over_the_ceiling(bot, after, &before)
     }
 
@@ -240,12 +268,14 @@ impl Jojobot {
         let seats = rule_seats_of(&self.memory.fields(bot).await.unwrap_or_default());
         let in_force = rules_in_force(&held);
         let after = self
-            .boot_floor_if(bot, &in_force, seats, Some(prose.trim()))
+            .boot_floor_if(bot, &in_force, seats, Some(prose.trim()), None)
             .await?;
         if after.total <= jojobot_domain::text::BOOT_ANSWER.budget {
             return None;
         }
-        let before = self.boot_floor_if(bot, &in_force, seats, None).await?;
+        let before = self
+            .boot_floor_if(bot, &in_force, seats, None, None)
+            .await?;
         Self::over_the_ceiling(bot, after, &before)
     }
 
@@ -266,7 +296,7 @@ impl Jojobot {
             };
             let seats = rule_seats_of(&self.memory.fields(&bot.id).await.unwrap_or_default());
             if let Some(floor) = self
-                .boot_floor_if(&bot.id, &rules_in_force(&held), seats, None)
+                .boot_floor_if(&bot.id, &rules_in_force(&held), seats, None, None)
                 .await
             {
                 floors.push((bot.id.clone(), floor.total));
@@ -286,6 +316,29 @@ impl Jojobot {
         new: &NewFact,
         caller: &EntityId,
     ) -> Option<MemoryError> {
+        self.refuses_a_boot_floor_for_first_or_later(new, caller, None)
+            .await
+    }
+
+    /// **The same check for the first claim of a bot being created**, run
+    /// before the creation lands. `creating` is the bot as it will exist; there
+    /// is one check and a capture and a creation both reach it.
+    pub(crate) async fn refuses_a_boot_floor_for_creation(
+        &self,
+        first: &NewFact,
+        creating: &Entity,
+        caller: &EntityId,
+    ) -> Option<MemoryError> {
+        self.refuses_a_boot_floor_for_first_or_later(first, caller, Some(creating))
+            .await
+    }
+
+    async fn refuses_a_boot_floor_for_first_or_later(
+        &self,
+        new: &NewFact,
+        caller: &EntityId,
+        creating: Option<&Entity>,
+    ) -> Option<MemoryError> {
         if new.subject.kind() != Some(EntityKind::BOT) {
             return None;
         }
@@ -297,7 +350,10 @@ impl Jojobot {
         if seats.is_some() && &new.subject == caller {
             return None;
         }
-        let mut held = self.memory.recall(&new.subject).await.ok()?;
+        let mut held = match creating {
+            Some(_) => Vec::new(),
+            None => self.memory.recall(&new.subject).await.ok()?,
+        };
         held.push(Fact {
             id: jojobot_domain::memory::FactId(format!("f{}", held.len() + 1)),
             home: new.subject.clone(),
@@ -321,7 +377,7 @@ impl Jojobot {
             inserted_at: None,
             stale_after: new.stale_after,
         });
-        self.refuses_a_boot_floor_over(&new.subject, &held, seats.map(String::as_str))
+        self.refuses_a_boot_floor_over(&new.subject, &held, seats.map(String::as_str), creating)
             .await
     }
 
@@ -351,7 +407,7 @@ impl Jojobot {
             return None;
         }
         held[at] = edited;
-        self.refuses_a_boot_floor_over(&address.home, &held, seats.map(String::as_str))
+        self.refuses_a_boot_floor_over(&address.home, &held, seats.map(String::as_str), None)
             .await
     }
 }

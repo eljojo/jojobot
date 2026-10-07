@@ -905,3 +905,78 @@ async fn the_floor_a_write_measures_counts_the_unseated_listing() {
         .await;
     story.finish().await;
 }
+
+/// **Creating a bot with fields is held to the ceiling a capture of the same
+/// fields is held to.** The first claim of a new bot is a rule when its fields
+/// star it, and the boot carries that rule whole. The check reads the bot as it
+/// will exist once the creation commits, so a creation that would leave the
+/// boot over the ceiling is refused and creates nothing, with the same answer a
+/// capture of the same fields on an existing bot gets. The creation that fits
+/// lands, so a build that refused every starred creation would not pass.
+#[tokio::test]
+async fn a_bot_created_with_fields_is_held_to_the_ceiling_a_capture_is() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    let creation = |handle: &str, fields: serde_json::Value| {
+        json!({
+            "kind": "bot", "handle": handle, "name": handle, "source": "user-named",
+            "fields": fields,
+        })
+    };
+    let heavy = "heavyrule ".repeat(4000);
+
+    // ── the creation that fits lands ────────────────────────────────────────
+    let made = s
+        .call(
+            "add_entity",
+            creation(
+                "sigma",
+                json!({"starred": "true", "subject": "a short rule"}),
+            ),
+        )
+        .await
+        .json();
+    assert_eq!(made["id"], "bot:sigma", "{made}");
+
+    // ── the creation that would leave the boot over is refused ──────────────
+    let refused = s
+        .refused(
+            "add_entity",
+            creation("omega", json!({"starred": "true", "subject": heavy})),
+        )
+        .await;
+    refused
+        .says("rule_seats")
+        .says("set_charter")
+        .says("\"wrote\":false");
+    // Nothing was created: the handle is free and the bot is not listed.
+    s.list("bot").await.never_says("bot:omega");
+
+    // ── a capture of the same fields on an existing bot refuses the same way ─
+    s.add("bot:psi", "Psi").await;
+    let captured = s
+        .refused(
+            "capture",
+            json!({
+                "subject": "bot:psi",
+                "content": "psi rule",
+                "fields": {"starred": "true", "subject": heavy},
+            }),
+        )
+        .await;
+    let keys = |answer: &super::dsl::Answer| -> Vec<String> {
+        answer
+            .json()
+            .as_object()
+            .expect("a refusal is an object")
+            .keys()
+            .cloned()
+            .collect()
+    };
+    assert_eq!(
+        keys(&refused),
+        keys(&captured),
+        "creation and capture refuse with one body"
+    );
+    story.finish().await;
+}

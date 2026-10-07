@@ -304,8 +304,25 @@ impl Jojobot {
                 };
                 // **A star or a seat count that would take a bot's boot over its
                 // ceiling is refused before anything lands**, as on a capture.
+                //
+                // **The bot does not exist yet, so it is measured as it will
+                // exist** once the creation commits: the same check a capture
+                // makes, with the entity the boot would name.
+                let creating = Entity {
+                    id: new.id.clone(),
+                    merged_into: None,
+                    kind: new.id.kind().unwrap_or(EntityKind::THING),
+                    name: new.name.clone(),
+                    aliases: new.aliases.clone(),
+                    source: new.source.clone(),
+                    crm: new.crm.clone(),
+                    parent: new.parent.clone(),
+                    boot: new.boot,
+                    badge: None,
+                    archived: None,
+                };
                 if let Some(refused) = self
-                    .refuses_a_boot_floor_for_capture(&first, &caller.bot)
+                    .refuses_a_boot_floor_for_creation(&first, &creating, &caller.bot)
                     .await
                 {
                     return memory_declined("add_entity", refused);
