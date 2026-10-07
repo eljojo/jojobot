@@ -157,8 +157,20 @@ mod tests {
                 .await
                 .expect("mark_processed ok"),
         );
+        // The receipt does not restate the title the caller just read; the
+        // archive still holds it, and any read of the message returns it.
+        assert!(processed.get("subject").is_none(), "{processed}");
+        let archived = json_of(
+            &jojobot
+                .read_message(Parameters(ReadMessageArgs {
+                    message_id: processed["id"].as_str().expect("an id").to_string(),
+                    sid: None,
+                }))
+                .await
+                .expect("read_message ok"),
+        );
         assert_eq!(
-            processed["subject"], "the shipment",
+            archived["subject"], "the shipment",
             "the archive keeps the title"
         );
     }

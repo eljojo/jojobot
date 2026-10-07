@@ -151,6 +151,14 @@ impl Jojobot {
                          is terminal",
                     ),
                 );
+                // **The caller read this message a moment ago**, so its
+                // subject and its opening line are not restated: the answer
+                // confirms the id, the state and the notes. `read_message`
+                // still returns both.
+                if let Some(object) = body.as_object_mut() {
+                    object.remove("subject");
+                    object.remove("body_head");
+                }
                 // **The cut is a substitution, announced the way every
                 // other one is.** It had a flag of its own, so a caller who
                 // had learnt to read `delta` for what jojobot changed had
@@ -263,6 +271,62 @@ mod tests {
                 .expect("a pointer")
                 .contains("read_message")
         );
+    }
+
+    /// **Retiring a message confirms the move and does not restate the
+    /// message.** The caller read it a moment ago, so its subject and its
+    /// opening line are what it already holds. The id, the state and the
+    /// notes are what the call changed.
+    ///
+    /// Paired with the same message read back through `read_message`, which
+    /// still carries both: the receipt left them out and the record did not
+    /// lose them.
+    #[tokio::test]
+    async fn retiring_a_message_does_not_restate_its_subject_or_its_opening_line() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "inbox").await;
+        let posted = send_titled(
+            &jojobot,
+            "inbox",
+            "epsilon",
+            Some("the shipment"),
+            "it landed at dawn",
+        )
+        .await;
+        let id = posted["id"].as_str().expect("an id").to_string();
+
+        let body = json_of(
+            &jojobot
+                .mark_processed(Parameters(MarkProcessedArgs {
+                    message_id: id.clone(),
+                    notes: Some("filed".into()),
+                    sid: None,
+                    quarantine: None,
+                }))
+                .await
+                .expect("mark_processed ok"),
+        );
+        assert_eq!(body["id"], id.as_str(), "{body}");
+        assert_eq!(body["state"], "processed", "{body}");
+        assert_eq!(body["notes"], "filed", "{body}");
+        for restated in ["subject", "body_head"] {
+            assert!(
+                body.get(restated).is_none(),
+                "the receipt restates {restated}: {body}"
+            );
+        }
+
+        let kept = json_of(
+            &jojobot
+                .read_message(Parameters(ReadMessageArgs {
+                    message_id: id,
+                    sid: None,
+                }))
+                .await
+                .expect("read_message ok"),
+        );
+        assert_eq!(kept["subject"], "the shipment", "{kept}");
+        assert_eq!(kept["body"], "it landed at dawn", "{kept}");
     }
 
     /// **Retiring a message says it is archived and still there.**

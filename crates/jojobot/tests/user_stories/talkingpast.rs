@@ -86,3 +86,69 @@ async fn posting_hands_back_the_reply_that_was_already_waiting() {
         .await;
     story.finish().await;
 }
+
+/// "I was working through two messages and every post I sent shipped me the
+/// same two envelopes again."
+///
+/// A bot still acting on its mail posts as it goes. The delivery that rides on
+/// a post hands back mail nobody had taken; what an earlier read already gave
+/// the bot is counted, with the call that returns it, and stays owed.
+#[tokio::test]
+async fn a_post_does_not_ship_again_the_mail_the_bot_is_already_working() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:gamma", "Gamma").await;
+    let gamma = story.as_bot("bot:gamma").await;
+
+    // ── two messages arrive, and otto reads them and starts on the work ─────
+    let first = gamma.post("otto", "the damper", "hand-cut is fine").await;
+    let second = gamma.post("otto", "the flue", "the flue is clear").await;
+    let box_now = s.drain().await;
+    box_now.says("hand-cut is fine").says("the flue is clear");
+    let envelope = |id: &str| format!("\"id\":\"{id}\"");
+
+    // ── otto posts twice while still on them ────────────────────────────────
+    for note in ["halfway through the damper", "the damper is done"] {
+        let posted = s
+            .call(
+                "post_message",
+                json!({"to": "gamma", "subject": "progress", "body": note}),
+            )
+            .await;
+        posted
+            .says("\"leftovers\"")
+            .says("\"count\":2")
+            // The call that returns them is named, so a bot that wants them
+            // back knows where.
+            .says("read_mailbox")
+            .never_says(&envelope(&first))
+            .never_says(&envelope(&second))
+            .never_says("hand-cut is fine");
+    }
+
+    // ── a third message arrives, and it rides back whole ────────────────────
+    let third = gamma.post("otto", "the grate", "the grate is bent").await;
+    let posted = s
+        .call(
+            "post_message",
+            json!({"to": "gamma", "subject": "progress", "body": "on the grate now"}),
+        )
+        .await;
+    posted
+        .says(&envelope(&third))
+        .says("the grate is bent")
+        .says("\"count\":2")
+        .never_says(&envelope(&first));
+
+    // ── nothing was lost: the crash contract still hands back all three ─────
+    let again = s.drain().await;
+    again
+        .says(&envelope(&first))
+        .says(&envelope(&second))
+        .says(&envelope(&third))
+        .says("\"seen_before\":true");
+
+    s.wrap("posted while working two messages, and was not handed them again")
+        .await;
+    story.finish().await;
+}

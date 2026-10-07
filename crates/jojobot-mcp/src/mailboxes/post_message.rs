@@ -209,11 +209,38 @@ impl Jojobot {
         if delivery.messages.is_empty() {
             return None;
         }
+        // **Only what nobody has taken is listed.** A bot still acting on its
+        // mail posts again and again, and a leftover is mail it was handed by
+        // an earlier read: an envelope for each, on every post, is the same
+        // thing shipped over and over. They stay owed, and `read_mailbox`
+        // still returns them flagged — that is crash recovery. Here they are
+        // counted, and the count names the call that returns them.
+        let (leftovers, fresh): (Vec<_>, Vec<_>) = delivery
+            .messages
+            .into_iter()
+            .partition(|delivered| delivered.seen_before);
+        let delivery = mailbox::Delivery {
+            mailbox: delivery.mailbox,
+            messages: fresh,
+        };
         // The same rendering `read_mailbox` uses, so mail taken this way reads
-        // identically to mail somebody went and got. `new_only` is the same
-        // default too: a leftover is still owed, and its body was shipped once.
+        // identically to mail somebody went and got.
         let mut rendered = delivery_json(&delivery, true);
         self.mark_other_runs(&mut rendered, &delivery, viewer).await;
+        if !leftovers.is_empty()
+            && let Some(object) = rendered.as_object_mut()
+        {
+            object.insert(
+                "leftovers".into(),
+                serde_json::json!({
+                    "count": leftovers.len(),
+                    "listed": false,
+                    "how_to_read": "mail an earlier read already handed you, still owed until \
+                                    you mark it processed. read_mailbox returns it, flagged \
+                                    seen_before",
+                }),
+            );
+        }
         Some(rendered)
     }
 }
@@ -236,10 +263,12 @@ impl Jojobot {
                        than on the body's first line. The `state` you get back is the state as it \
                        stands — it can already say `read` if a person picked the message up in \
                        between, and that is success, not a problem: the message exists and someone \
-                       has it. POSTING ALSO DELIVERS: anything waiting in YOUR OWN box rides back \
-                       with this answer under your_mail — out of `new` and yours to finish, \
-                       exactly as read_mailbox would have handed it over — so read it rather than \
-                       treating this as a write. Posting into your own box delivers nothing, and a \
+                       has it. POSTING ALSO DELIVERS: anything in YOUR OWN box that no read has \
+                       handed you yet rides back with this answer under your_mail — out of `new` \
+                       and yours to finish, exactly as read_mailbox would have handed it over — \
+                       so read it rather than treating this as a write. Mail an earlier read \
+                       already handed you is not listed again: it is counted under \
+                       your_mail.leftovers, still owed, and read_mailbox returns it. Posting into your own box delivers nothing, and a \
                        post that had nothing to hand over still succeeded. THE MESSAGE ALSO CARRIES \
                        `sender_mail_waiting_at_send`: what was genuinely waiting in YOUR OWN box at \
                        the moment you sent it, the same count your_mail's delivery would have shown, \
@@ -502,6 +531,124 @@ mod tests {
             line.contains('1'),
             "the line has to say how much became the caller's to finish: {collected}",
         );
+    }
+
+    /// **The description names the key the leftovers are counted under**, so
+    /// a caller that meets it has read where it comes from before it does.
+    #[test]
+    fn the_description_names_where_the_leftovers_are_counted() {
+        let tools = Jojobot::tool_router().list_all();
+        let tool = tools
+            .iter()
+            .find(|t| t.name.as_ref() == "post_message")
+            .expect("post_message is a tool");
+        let description = tool.description.as_deref().unwrap_or_default();
+        assert!(description.contains("leftovers"), "{description}");
+    }
+
+    /// **A post hands back mail nobody has taken, and only counts the rest.**
+    ///
+    /// A bot still acting on its mail posts again and again, and every post
+    /// used to re-ship an envelope for each message it had already read and
+    /// not yet finished. The delivery that rides on a post lists only what no
+    /// read has handed over; the leftovers are counted under `leftovers`, with
+    /// the call that returns them.
+    ///
+    /// **Both halves in one case.** The two read messages are absent from the
+    /// second post and a third, new one rides back whole, so a build that
+    /// listed nothing at all fails the second half and a build that listed
+    /// everything fails the first. `leftovers` is a key nothing outside this
+    /// process declares, so the literal is pinned here.
+    #[tokio::test]
+    async fn a_post_lists_only_mail_nobody_has_taken_and_counts_the_leftovers() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "otto").await;
+        make_box(&jojobot, "epsilon").await;
+
+        let first = send(&jojobot, "otto", "epsilon", "first thing waiting").await;
+        let second = send(&jojobot, "otto", "epsilon", "second thing waiting").await;
+        let (first, second) = (
+            first["id"].as_str().expect("an id").to_string(),
+            second["id"].as_str().expect("an id").to_string(),
+        );
+        // otto reads both and has not finished either.
+        let read = json_of(
+            &jojobot
+                .read_mailbox(Parameters(ReadMailboxArgs {
+                    counts_only: None,
+                    new_only: None,
+                    sid: Some(as_bot(&jojobot, "otto")),
+                }))
+                .await
+                .expect("read ok"),
+        );
+        assert_eq!(read["count"], 2, "the two were delivered by a real read");
+
+        let once = send(&jojobot, "epsilon", "otto", "first post").await;
+        let again = send(&jojobot, "epsilon", "otto", "second post").await;
+        for (which, post) in [("first", &once), ("second", &again)] {
+            let mail = &post["your_mail"];
+            assert_eq!(
+                mail["leftovers"]["count"], 2,
+                "the {which} post counts what it did not list: {post}"
+            );
+            assert_eq!(
+                mail["count"], 0,
+                "the {which} post listed nothing nobody had taken: {post}"
+            );
+            assert_eq!(
+                mail["messages"].as_array().map(Vec::len),
+                Some(0),
+                "the {which} post listed an envelope: {post}"
+            );
+            // Ids are plain counters, so the needle is the id as an envelope
+            // spells it and not the digit, which `count` would also carry.
+            let shipped = mail.to_string();
+            for id in [&first, &second] {
+                assert!(
+                    !shipped.contains(&format!("\"id\":\"{id}\"")),
+                    "the {which} post shipped an envelope for {id}: {shipped}"
+                );
+            }
+            assert!(
+                mail["leftovers"]["how_to_read"]
+                    .as_str()
+                    .is_some_and(|how| how.contains("read_mailbox")),
+                "the count names the call that returns them: {post}"
+            );
+        }
+
+        // A third message arrives, and rides back in full.
+        let third = send(&jojobot, "otto", "epsilon", "third thing waiting").await;
+        let third = third["id"].as_str().expect("an id").to_string();
+        let last = send(&jojobot, "epsilon", "otto", "third post").await;
+        let mail = &last["your_mail"];
+        assert_eq!(mail["count"], 1, "{last}");
+        assert_eq!(mail["messages"][0]["id"], third.as_str(), "{last}");
+        assert_eq!(
+            mail["messages"][0]["body"], "third thing waiting",
+            "a message nobody had taken comes back whole: {last}"
+        );
+        assert_eq!(mail["messages"][0]["seen_before"], false, "{last}");
+        assert_eq!(
+            mail["leftovers"]["count"], 2,
+            "the two already read are still counted, not listed: {last}"
+        );
+
+        // The crash contract is untouched: the leftovers are still owed and a
+        // read still returns them, flagged.
+        let drained = json_of(
+            &jojobot
+                .read_mailbox(Parameters(ReadMailboxArgs {
+                    counts_only: None,
+                    new_only: None,
+                    sid: Some(as_bot(&jojobot, "otto")),
+                }))
+                .await
+                .expect("read ok"),
+        );
+        assert_eq!(drained["count"], 3, "{drained}");
+        assert_eq!(drained["messages"][0]["seen_before"], true, "{drained}");
     }
 
     /// **What was genuinely waiting in the sender's own box at send time
