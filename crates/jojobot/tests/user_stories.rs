@@ -123,6 +123,9 @@ mod statusbar;
 mod synthesis;
 #[path = "user_stories/talkingpast.rs"]
 mod talkingpast;
+/// Words the operator said are not rewritten in place by a later run.
+#[path = "user_stories/testimony.rs"]
+mod testimony;
 #[path = "user_stories/thought_room.rs"]
 mod thought_room;
 /// One claim, two runs, two zones — and both answers are right.

@@ -1694,6 +1694,7 @@ impl DoltMemory {
         tx: &mut Transaction<'_, MySql>,
         fact: &Fact,
         clock: &Clock,
+        session: Option<&str>,
     ) -> Result<(), MemoryError> {
         sqlx::query(
             "REPLACE INTO fact (entity, id, content, details, provenance, standing, status,
@@ -1770,7 +1771,7 @@ impl DoltMemory {
             .await
             .map_err(store)?;
         }
-        Self::append_fact_write(tx, fact, clock).await?;
+        Self::append_fact_write(tx, fact, clock, session).await?;
         Ok(())
     }
 
@@ -1796,6 +1797,7 @@ impl DoltMemory {
         tx: &mut Transaction<'_, MySql>,
         fact: &Fact,
         clock: &Clock,
+        session: Option<&str>,
     ) -> Result<(), MemoryError> {
         let highest: Option<i64> = sqlx::query_scalar(
             "SELECT MAX(ordinal) FROM fact_write WHERE entity = ? AND fact_id = ?",
@@ -1811,8 +1813,8 @@ impl DoltMemory {
                                      happened_through, edge_shape,
                                      edge_object,
                                      derived_from, derived_from_id, inserted_at, stale_after,
-                                     written_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                     written_at, session)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(fact.home.as_str())
         .bind(fact.id.as_str())
@@ -1836,6 +1838,7 @@ impl DoltMemory {
         // on the server's own clock, which is not the wall clock on an
         // instance acting out a day.
         .bind(clock.now().to_string())
+        .bind(session)
         .execute(&mut **tx)
         .await
         .map_err(store)?;
@@ -2916,7 +2919,7 @@ impl Memory for DoltMemory {
                                 // changed with nothing behind it saying when.
                                 victim_fact.status = FactStatus::Archived;
                                 victim_fact.details = Some(reason.clone());
-                                Self::write_fact(&mut tx, &victim_fact, &self.clock).await?;
+                                Self::write_fact(&mut tx, &victim_fact, &self.clock, None).await?;
                             }
                             // **The emergency reserve, spent — never twice
                             // in a row.** Only honoured at the exact
@@ -2981,7 +2984,7 @@ impl Memory for DoltMemory {
             &governs,
             columns.as_deref(),
         )?;
-        Self::write_fact(&mut tx, &stored, &self.clock).await?;
+        Self::write_fact(&mut tx, &stored, &self.clock, fact.session.as_deref()).await?;
         // Every key this record carries is a write of its own, appended to the
         // history of that key on this thing. **A reference-typed value is
         // lowered to the permanent id it names first** (rule 268), guarded
@@ -3498,6 +3501,24 @@ impl Memory for DoltMemory {
                 });
             }
         }
+        // **Whose words these are, asked of the claim's FIRST write.** A later
+        // write by another session does not make it the owner.
+        let first_session: Option<String> = sqlx::query_scalar(
+            "SELECT session FROM fact_write WHERE entity = ? AND fact_id = ?
+             ORDER BY ordinal ASC LIMIT 1",
+        )
+        .bind(key.as_str())
+        .bind(address.local.as_str())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(store)?
+        .flatten();
+        let patch = jojobot_domain::memory::settle_rewrite(
+            address,
+            &fact,
+            patch,
+            first_session.as_deref(),
+        )?;
         apply_fact_patch(&mut fact, &patch)?;
         // **Every pointer-bearing field, lowered in one pass, unconditionally**
         // (rule 268) — `apply_fact_patch` carries whatever the patch named, or
@@ -3624,7 +3645,7 @@ impl Memory for DoltMemory {
                 return Err(err);
             }
         }
-        Self::write_fact(&mut tx, &fact, &self.clock).await?;
+        Self::write_fact(&mut tx, &fact, &self.clock, patch.session.as_deref()).await?;
         // **The edit appends.** The record reads back changed — that is the
         // surface — and the value it replaced stays where it was written.
         // **A reference-typed value is lowered to the permanent id it
@@ -3954,7 +3975,7 @@ impl Memory for DoltMemory {
             inserted_at: Some(self.clock.now()),
             stale_after: None,
         };
-        Self::write_fact(&mut tx, &record, &self.clock).await?;
+        Self::write_fact(&mut tx, &record, &self.clock, None).await?;
         Self::append_writes(&mut tx, &record.home, &record.id, written_keys(&record)).await?;
 
         // **The folded row stays and starts forwarding.** Written last, so a
@@ -4103,8 +4124,8 @@ impl Memory for DoltMemory {
         ) {
             return Err(err);
         }
-        Self::write_fact(&mut tx, &retracted, &self.clock).await?;
-        Self::write_fact(&mut tx, &record, &self.clock).await?;
+        Self::write_fact(&mut tx, &retracted, &self.clock, None).await?;
+        Self::write_fact(&mut tx, &record, &self.clock, None).await?;
         // The account is a record like any other, and the key naming what it
         // takes back is a write of its own. The record being taken back writes
         // no key: what changed there is its status.

@@ -4444,6 +4444,7 @@ fn ferret() -> NewFact {
         drop_because: None,
         borrow: false,
         aged_before: None,
+        session: None,
     }
 }
 

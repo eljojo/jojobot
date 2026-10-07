@@ -323,8 +323,11 @@ async fn throwing_a_birthday_party() {
         .says("history_record");
 
     // An ordinary correction, on the same store, carries neither line: a
-    // receipt that always says it is one nobody reads.
-    s.correct_reading_the_receipt(&patana_eats, "eats fish as well")
+    // receipt that always says it is one nobody reads. **Of a claim this run
+    // wrote**, because the operator's words from an earlier run are corrected by
+    // archiving them, which is not a rewrite.
+    let fish = s.fact("person:patana", "eats chicken").await;
+    s.correct_reading_the_receipt(&fish, "eats fish as well")
         .await
         .never_says("retract");
 

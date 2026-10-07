@@ -1,0 +1,12 @@
+-- The session that made each write of a claim.
+--
+-- **A claim's words belong to the session that brought them in.** Testimony is
+-- the operator's, and a later run restating the word `testimony` could rewrite
+-- it in place, so the store has to be able to say which session wrote a claim.
+-- The first write of a claim carries the session that brought it in, and a
+-- later write carries the session that made it.
+--
+-- **Nothing is backfilled.** A row an older build appended has no session, and
+-- nothing says which one it was. It stays NULL, and a claim whose first write
+-- has none is read as written by no session the caller is in.
+ALTER TABLE fact_write ADD COLUMN session VARCHAR(64) NULL;

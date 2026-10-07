@@ -16,6 +16,8 @@
 //! about it, so no assertion can hold it and none pretends to — and it
 //! proposes no call either, because there is no verb that would fix it.
 
+use serde_json::json;
+
 use super::dsl::Story;
 
 #[tokio::test]
@@ -86,10 +88,12 @@ async fn a_curveball_collides_with_the_week() {
     // ── session 4 · the replan ──────────────────────────────────────────────
     let s = story.session().await;
 
-    // What moves: postponed in place, not appended beside the old claim.
-    s.correct(
+    // What moves: the earlier session's claim is archived and the postponement
+    // stands beside it, derived from it.
+    s.replace(
         &winter_fest,
         "postponed a week to make room for Ned's party",
+        json!({}),
     )
     .await;
 

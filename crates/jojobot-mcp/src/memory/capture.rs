@@ -920,6 +920,7 @@ impl Jojobot {
             drop_because: args.drop_because,
             borrow: args.borrow.unwrap_or(false),
             aged_before,
+            session: Some(caller.sid.as_str().to_string()),
         };
         // **A star or a seat count that would take the bot's boot over its
         // ceiling is refused here**, before anything lands — see

@@ -5604,3 +5604,48 @@ async fn the_field_link_migration_lowers_old_plain_text_and_lists_what_it_cannot
 
     store.stop().await;
 }
+
+/// **A rewrite of testimony belongs to the session that wrote it, over the real
+/// store, and the session is kept in the write's own column.**
+///
+/// The contract case holds the rule; this holds the two things only the real
+/// store can say. The session of a claim's first write is in `fact_write`, so
+/// it survives a restart, and a claim written with no session reads as none.
+#[tokio::test]
+async fn dolt_keeps_the_session_that_wrote_a_claim_and_holds_a_rewrite_to_it() {
+    let scratch = Scratch::new("session-rewrite");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("session_rewrite")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+
+    memory::a_rewrite_of_testimony_belongs_to_the_session_that_wrote_it(&DoltMemory::open(
+        pool.clone(),
+    ))
+    .await;
+
+    let badge = badge_of(&pool, "person:contract-session-rewrite").await;
+    let kept: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT fact_id, session FROM fact_write WHERE entity = ? AND ordinal = 1 ORDER BY fact_id",
+    )
+    .bind(&badge)
+    .fetch_all(&pool)
+    .await
+    .expect("the writes read");
+    assert_eq!(
+        kept,
+        vec![
+            ("f1".to_string(), Some("session-a".to_string())),
+            ("f2".to_string(), Some("session-a".to_string())),
+            ("f3".to_string(), None),
+        ],
+        "each claim's first write carries the session that wrote it, and none where none did",
+    );
+
+    store.stop().await;
+}

@@ -370,7 +370,7 @@ impl InMemoryMemory {
             inserted_at: Some(self.clock.now()),
             stale_after: None,
         };
-        self.append_claim_write(&stored);
+        self.append_claim_write(&stored, None);
         self.append_writes(
             &stored.home,
             &stored.id,
@@ -697,7 +697,7 @@ impl InMemoryMemory {
     /// **Keep this write of the claim**, beside the row it just rewrote — the
     /// same act the real store takes in `write_fact`, so every verb that
     /// produces a claim leaves a write behind here too.
-    fn append_claim_write(&self, fact: &Fact) {
+    fn append_claim_write(&self, fact: &Fact, session: Option<String>) {
         let mut writes = self.claim_writes.lock().expect("fake mutex poisoned");
         let ordinal = writes
             .iter()
@@ -710,8 +710,22 @@ impl InMemoryMemory {
             // **The moment this write happened**, which the real store stamps
             // too. A fake that left it empty would let every case about a
             // chain of corrections pass on a build that records none.
-            ClaimWrite::of(fact, ordinal, Some(self.clock.now())),
+            ClaimWrite {
+                session,
+                ..ClaimWrite::of(fact, ordinal, Some(self.clock.now()))
+            },
         ));
+    }
+
+    /// **The session of the claim's FIRST write**, which is the session that
+    /// brought the claim in — `None` when that write had none.
+    fn first_write_session(&self, home: &EntityId, id: &FactId) -> Option<String> {
+        self.claim_writes
+            .lock()
+            .expect("fake mutex poisoned")
+            .iter()
+            .find(|(held, held_id, write)| held == home && held_id == id && write.ordinal == 1)
+            .and_then(|(_, _, write)| write.session.clone())
     }
 
     /// **Append what a write said about a record's keys**, each taking the next
@@ -1542,7 +1556,7 @@ impl Memory for InMemoryMemory {
                                 facts[victim_index].status = FactStatus::Archived;
                                 facts[victim_index].details = Some(reason.clone());
                                 let archived = facts[victim_index].clone();
-                                self.append_claim_write(&archived);
+                                self.append_claim_write(&archived, None);
                             }
                             // **The emergency reserve, spent — never twice
                             // in a row**, the same rule the real store's
@@ -1616,7 +1630,7 @@ impl Memory for InMemoryMemory {
         });
         // **A capture is the claim's first write.** Kept here as the real store
         // keeps it, so a claim nobody has corrected answers with one write.
-        self.append_claim_write(&stored);
+        self.append_claim_write(&stored, fact.session.clone());
         self.append_writes(&stored.home, &stored.id, wrote);
         // **Stored under the storage key; served under the handle.** The row
         // just pushed keeps the badge, exactly as every other row does; the
@@ -1963,6 +1977,9 @@ impl Memory for InMemoryMemory {
                 }
             }
         }
+        let first_session = self.first_write_session(&key, &address.local);
+        let patch =
+            super::super::settle_rewrite(address, &edited, patch, first_session.as_deref())?;
         apply_fact_patch(&mut edited, &patch)?;
         // **Stored under its source's storage key, exactly as a capture's
         // does.** `apply_fact_patch` only carries the patch's address
@@ -2111,7 +2128,7 @@ impl Memory for InMemoryMemory {
         }
         // **An edit rewrites the row and appends a write**, which is what makes
         // what the claim used to say readable after it stops being true.
-        self.append_claim_write(&edited);
+        self.append_claim_write(&edited, patch.session.clone());
         drop(facts);
         // **Guarded and stored are different questions.** The guard just
         // above validated the patch's own handle-form values, exactly as a
@@ -2441,7 +2458,7 @@ impl Memory for InMemoryMemory {
             fields: Default::default(),
             ..record.clone()
         });
-        self.append_claim_write(&record);
+        self.append_claim_write(&record, None);
 
         // **The folded row stays and starts forwarding.** It is not deleted and
         // it is not left looking like a thing.
@@ -2596,8 +2613,8 @@ impl Memory for InMemoryMemory {
         // **A retraction is two writes**: the one that marked the claim, and
         // the account's first. Taking a claim back is a write of it, so the
         // chain says when it stopped standing rather than only that it did.
-        self.append_claim_write(&retracted);
-        self.append_claim_write(&record);
+        self.append_claim_write(&retracted, None);
+        self.append_claim_write(&record, None);
         drop(facts);
         self.append_writes(
             &record.home,

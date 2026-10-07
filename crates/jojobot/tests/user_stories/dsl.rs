@@ -1275,6 +1275,34 @@ impl Session {
         .await;
     }
 
+    /// **Correct a claim an EARLIER session wrote**, by the route that leaves
+    /// the original readable: archive it with the reason, then write the
+    /// corrected claim as testimony, derived from it. Returns the new claim's
+    /// address.
+    ///
+    /// `extra` is merged into the capture, for a correction that also moves the
+    /// claim's edge (`shape` and `object`).
+    pub async fn replace(&self, address: &str, content: &str, extra: Value) -> String {
+        let subject = address
+            .split('#')
+            .next()
+            .unwrap_or_else(|| panic!("an address names its subject: {address}"));
+        self.call(
+            "update_fact",
+            json!({"address": address, "status": "archived", "details": "corrected"}),
+        )
+        .await;
+        let mut args = json!({
+            "subject": subject, "content": content,
+            "provenance": "testimony", "derived_from": address,
+        });
+        if let (Some(into), Some(more)) = (args.as_object_mut(), extra.as_object()) {
+            into.extend(more.clone());
+        }
+        let body = self.call("capture", args).await.json();
+        address_of(&body)
+    }
+
     /// **The receipt a correction answers with**, for a story that reads what
     /// the write said rather than only what the store now holds.
     pub async fn correct_reading_the_receipt(&self, address: &str, content: &str) -> Answer {
@@ -1324,9 +1352,6 @@ impl Session {
         address_of(&body)
     }
 
-    /// Rewrite a claim in place AND re-point its edge — for the case where
-    /// what changed is not just the wording but which thing the claim traces
-    /// to, so the edge does not go on naming a thing the claim has left.
     /// Rewrite the record's own fields: set the keys named, take away the keys
     /// listed. Every other key on the record is left where it is.
     pub async fn correct_fields(&self, address: &str, set: Value, clear: &[&str]) {
@@ -1336,19 +1361,6 @@ impl Session {
             json!({
                 "address": address,
                 "fields": set, "clear_fields": clear,
-            }),
-        )
-        .await;
-    }
-
-    pub async fn correct_with_source(&self, address: &str, content: &str, object: &str) {
-        self.write(
-            &format!("correcting {address} and its source"),
-            "update_fact",
-            json!({
-                "address": address, "content": content,
-                "shape": "about", "object": object,
-                "provenance": "testimony",
             }),
         )
         .await;

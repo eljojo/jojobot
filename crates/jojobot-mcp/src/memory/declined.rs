@@ -317,6 +317,18 @@ pub(crate) fn memory_declined(
                  does re-reads them. This one needs the operator."
             ),
         )),
+        // **The way forward is a different call, not this one again.** The words
+        // are not rewritten in place, so "send it again" would loop; the sentence
+        // names the two calls that do it and says the original stays readable, so
+        // a caller can tell the operator so.
+        MemoryError::TestimonyRewritten { ref address } => Ok(blocked_body(
+            &EntityId(address.clone()),
+            &[],
+            format!(
+                "Nothing was written: {e}. Nothing is missing from the store and nothing here \
+                 needs the operator."
+            ),
+        )),
         MemoryError::InvalidFact(_)
         | MemoryError::InvalidSubject(_)
         | MemoryError::InvalidAddress(_)
@@ -990,6 +1002,7 @@ pub(crate) fn memory_error(e: MemoryError) -> McpError {
         | MemoryError::MergeThoughtTooLong { .. }
         | MemoryError::RoleFieldGuarded { .. }
         | MemoryError::RoleTaken { .. }
+        | MemoryError::TestimonyRewritten { .. }
         | MemoryError::UnstatedProvenance => McpError::invalid_params(e.to_string(), None),
         MemoryError::Store(msg) => {
             McpError::internal_error(crate::boundary::store_failed("this call", &msg), None)

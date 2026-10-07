@@ -1132,6 +1132,7 @@ async fn may_the_answer_filed_against_krusty_reds_only_the_attribution_lock() {
 }
 
 #[tokio::test]
+#[ignore = "card 2038: testimony from an earlier sitting is refused an in-place rewrite, so the wrong way this case plays cannot be played; the lock it discriminates stays"]
 async fn may_the_question_written_over_by_its_answer_reds_only_the_readable_lock() {
     discriminates(1, 10).await;
 }
@@ -1142,6 +1143,7 @@ async fn september_the_closing_word_filed_against_martin_reds_only_the_attributi
 }
 
 #[tokio::test]
+#[ignore = "card 2038: testimony from an earlier sitting is refused an in-place rewrite, so the wrong way this case plays cannot be played; the lock it discriminates stays"]
 async fn september_the_answer_written_over_by_the_closing_word_reds_only_the_readable_lock() {
     discriminates(2, 12).await;
 }

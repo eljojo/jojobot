@@ -179,6 +179,7 @@ async fn a_key_added_to_a_kind_refuses_no_write_that_worked_before() {
             FactPatch {
                 content: Some("the kiosk by the side door".to_string()),
                 provenance: Some(Provenance::Inference),
+                session: Some("kind-schema-session".to_string()),
                 ..FactPatch::default()
             },
             &EntityId("bot:sigma".into()),
@@ -510,6 +511,9 @@ async fn captured(
     let fact = store
         .capture(NewFact {
             provenance: Provenance::Testimony,
+            // The session a later edit in the same case is made by: testimony is
+            // rewritten in place only by the session that wrote it.
+            session: Some("kind-schema-session".to_string()),
             fields: [(key.to_string(), value.to_string())].into_iter().collect(),
             ..NewFact::about(id.clone(), "a record", jiff::civil::date(2026, 5, 2))
         })

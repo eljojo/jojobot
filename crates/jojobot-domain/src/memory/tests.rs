@@ -895,6 +895,13 @@ async fn capture_reads_back_against_the_fake() {
     contract::capture_reads_back(&InMemoryMemory::booted()).await;
 }
 
+/// The session rule for rewriting testimony, in milliseconds against the fake.
+#[tokio::test]
+async fn a_rewrite_of_testimony_belongs_to_its_session_against_the_fake() {
+    contract::a_rewrite_of_testimony_belongs_to_the_session_that_wrote_it(&InMemoryMemory::booted())
+        .await;
+}
+
 /// The full behavioural contract holds for the fake — the same suite the
 /// real-store test runs against the real adapter.
 #[tokio::test]

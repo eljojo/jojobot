@@ -54,20 +54,23 @@ async fn a_reader_can_tell_a_corrected_record_from_one_that_was_always_right() {
     // ── September · the operator says we had it wrong ───────────────────────
     //
     // Not a change in the world: the club never met on Tuesdays and the record
-    // was wrong from the day it was written. That is the rewrite case — the
-    // record states what is true now, and there is one claim rather than two.
+    // was wrong from the day it was written. The operator's words from April
+    // belong to the April run, so the September run archives them and writes
+    // what is true now beside them, derived from them: the old claim stays
+    // readable and the new one is the record.
     let autumn = story.session_on("2026-09-15", Some("new")).await;
 
-    autumn
-        .correct(
+    let corrected = autumn
+        .replace(
             &meets,
             "does not meet on Tuesdays — it never did, we had that wrong",
+            json!({}),
         )
         .await;
     autumn
         .recall("org:north-trail-club")
         .await
-        .claim(&meets)
+        .claim(&corrected)
         .says("does not meet on Tuesdays");
 
     autumn.wrap("corrected the meeting day").await;
@@ -79,7 +82,7 @@ async fn a_reader_can_tell_a_corrected_record_from_one_that_was_always_right() {
     // ⛔️ A read that carried the trace unasked would cost every session that
     // never wanted it.
     let now = winter.recall("org:north-trail-club").await;
-    now.claim(&meets).says("does not meet on Tuesdays");
+    now.claim(&corrected).says("does not meet on Tuesdays");
     assert!(
         now.json()["objects"][0].get("record_history").is_none(),
         "the trace arrived without being asked for: {}",
@@ -98,8 +101,9 @@ async fn a_reader_can_tell_a_corrected_record_from_one_that_was_always_right() {
         )
         .await;
 
-    // ⭐ **The answer: it has not.** Two writes, oldest first, and the first one
-    // says the opposite of what the record says now.
+    // ⭐ **The answer: it has not.** Two writes of the old claim, oldest first:
+    // what it said, and the write that archived it. The words it said are the
+    // opposite of what the record says now.
     asked
         .number("/objects/0/record_history/count", 2)
         .number("/objects/0/record_history/writes/0/nth", 1)
@@ -111,9 +115,17 @@ async fn a_reader_can_tell_a_corrected_record_from_one_that_was_always_right() {
         asked.raw(),
     );
     assert_eq!(
-        asked.json()["objects"][0]["record_history"]["writes"][1]["content"],
-        "does not meet on Tuesdays — it never did, we had that wrong",
+        asked.json()["objects"][0]["record_history"]["writes"][1]["status"],
+        "archived",
+        "the second write is the one that took the old claim out: {}",
+        asked.raw(),
     );
+    // **And the corrected claim is derived from it**, so the record says what
+    // replaced what.
+    winter
+        .shape("what replaced it?", json!({"built_on": meets}))
+        .await
+        .says(&corrected);
 
     // ⭐ **And each write says WHEN it happened**, which is what lets the
     // assistant add the sentence somebody actually wants: *the record said the

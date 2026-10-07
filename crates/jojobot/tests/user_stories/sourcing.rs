@@ -13,6 +13,8 @@
 //! about it, so no assertion can hold it and none pretends to — and it
 //! proposes no call either, because there is no verb that would fix it.
 
+use serde_json::json;
+
 use super::dsl::Story;
 
 #[tokio::test]
@@ -139,21 +141,28 @@ async fn a_claim_names_where_it_came_from() {
         .await;
 
     // Not a refutation — the survey was not wrong, conditions changed. Both
-    // events stand; the claim is rewritten to current truth and its edge
-    // re-pointed in the same call, so it does not go on tracing to a survey
-    // that no longer matches what it says.
-    s.correct_with_source(
-        &cleared,
-        "closed pending repair, per the erosion review",
-        "event:erosion-review",
-    )
-    .await;
+    // events stand; the earlier session's claim is archived and the current
+    // truth stands beside it, drawn at the erosion review, so the record does
+    // not go on tracing to a survey that no longer matches what it says.
+    let closed = s
+        .replace(
+            &cleared,
+            "closed pending repair, per the erosion review",
+            json!({"shape": "about", "object": "event:erosion-review"}),
+        )
+        .await;
 
-    s.recall("place:north-trail")
-        .await
+    // The claim that stands traces to the erosion review and not to the survey.
+    // The archived original is still on the page, saying archived, with the
+    // survey it was drawn from.
+    let now = s.recall("place:north-trail").await;
+    now.claim(&closed)
         .says("closed pending repair")
         .says("event:erosion-review")
         .never_says("event:trail-survey");
+    now.claim(&cleared)
+        .says("\"status\":\"archived\"")
+        .says("event:trail-survey");
 
     // Neither event is retracted — both happened, and both stay findable.
     s.find("trail-survey").await.says("event:trail-survey");

@@ -274,6 +274,12 @@ impl Jojobot {
                        get every version of it, oldest first. So a claim you disagree with is \
                        safe to correct: you are not deciding whether the old wording survives, \
                        only what the claim says now. \
+                       TESTIMONY IS REWRITTEN IN PLACE ONLY BY THE SESSION THAT WROTE IT: a \
+                       content rewrite of testimony from an earlier session is refused, and so is \
+                       one of testimony that records no session. Archive it (status: archived, \
+                       with a reason in details), then capture the corrected claim with \
+                       derived_from naming the archived one. The original stays readable. A \
+                       session that wrote a claim keeps its provenance when it sends none. \
                        NAMING NOTHING TO CHANGE IS REFUSED, NOT SILENTLY HONOURED: a call that \
                        sets none of the arguments above still reaches this verb, and a claim is \
                        never re-asserted by accident. keep IS THE DESIGNED WAY TO DO IT ON \
@@ -388,6 +394,9 @@ impl Jojobot {
             },
             aged_before: None,
             role_move: None,
+            // Filled in below, after the check that a call names a change: a
+            // patch carrying the session would never equal the empty one.
+            session: None,
         };
         // **`keep` is the one designed way to re-assert a claim on purpose,
         // and the one thing this call refuses rather than silently
@@ -497,6 +506,7 @@ impl Jojobot {
         // brings the record back to active. Set after the empty-patch check
         // above, because it names no change.
         let mut patch = patch;
+        patch.session = Some(caller.sid.as_str().to_string());
         if address.home.kind() == Some(EntityKind::BOT)
             && (patch
                 .edge

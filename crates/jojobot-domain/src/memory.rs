@@ -773,6 +773,11 @@ pub struct FactPatch {
     /// [`crate::session::RoleMove`]. A patch with none is an ordinary edit or
     /// a claim, which the store decides as it always did.
     pub role_move: Option<crate::session::RoleMove>,
+    /// **The session making this edit** — the `sid` of the run that sent it, when
+    /// a run did. Never a caller's claim about itself: the verb fills it from the
+    /// session the call came in on. A store records it beside the write, and
+    /// [`settle_rewrite`] compares it with the session of the claim's first write.
+    pub session: Option<String>,
 }
 
 /// **The role a patch writes to, if it writes to one** — named by a renewal's
@@ -1759,6 +1764,47 @@ pub fn validate_happened_span(
         ));
     }
     Ok(())
+}
+
+/// **What a content rewrite is allowed to be, decided before the patch applies.**
+///
+/// A claim is its own session's to rewrite and nobody else's testimony. A
+/// rewrite of **testimony** is refused unless the caller's session is the one
+/// that wrote the claim, and a claim with no recorded session is refused the
+/// same way, because nothing says the caller wrote it. The refusal names the
+/// route: archive it, then capture the corrected claim derived from it. **Only
+/// testimony is protected**: an inference or an observation is rewritten as it
+/// always was, whoever wrote it.
+///
+/// A rewrite by the session that wrote the claim, which sends no provenance,
+/// keeps the provenance the claim has. Anyone else still has to say how the new
+/// words are known, which [`apply_fact_patch`] asks.
+///
+/// `written_in` is the session of the claim's FIRST write: the session that
+/// brought the claim in. A patch that names no content is none of this
+/// function's business.
+pub fn settle_rewrite(
+    address: &FactAddress,
+    fact: &Fact,
+    mut patch: FactPatch,
+    written_in: Option<&str>,
+) -> Result<FactPatch, MemoryError> {
+    if patch.content.is_none() {
+        return Ok(patch);
+    }
+    let own = matches!(
+        (patch.session.as_deref(), written_in),
+        (Some(caller), Some(writer)) if caller == writer
+    );
+    if fact.provenance == Provenance::Testimony && !own {
+        return Err(MemoryError::TestimonyRewritten {
+            address: address.to_string(),
+        });
+    }
+    if own && patch.provenance.is_none() {
+        patch.provenance = Some(fact.provenance);
+    }
+    Ok(patch)
 }
 
 /// Apply an in-place edit to a fact — **the** definition of what an update
@@ -3490,6 +3536,11 @@ pub struct NewFact {
     /// question, or when this write is not a thought at all: ageing never
     /// applies to anything else this record could be.
     pub aged_before: Option<jiff::Timestamp>,
+    /// **The session writing this claim** — see [`FactPatch::session`]. A store
+    /// records it beside the claim's first write, and that is the session
+    /// [`settle_rewrite`] later asks about. A claim written before the column
+    /// existed has none.
+    pub session: Option<String>,
 }
 
 impl NewFact {
@@ -3515,6 +3566,7 @@ impl NewFact {
             drop_because: None,
             borrow: false,
             aged_before: None,
+            session: None,
         }
     }
 }
@@ -4198,6 +4250,11 @@ pub struct ClaimWrite {
     /// year of corrections as one instant, and a wrong field is worse than an
     /// absent one.
     pub written_at: Option<jiff::Timestamp>,
+    /// **The session that made this write**, when one did and the store kept
+    /// it. `None` for a write kept before the column existed, and for a write
+    /// no session made. The first write's session is the one
+    /// [`settle_rewrite`] compares with.
+    pub session: Option<String>,
     /// What the claim said, at this write.
     pub content: String,
     /// What it said underneath, at this write.
@@ -4242,6 +4299,7 @@ impl ClaimWrite {
         ClaimWrite {
             ordinal,
             written_at,
+            session: None,
             content: fact.content.clone(),
             details: fact.details.clone(),
             provenance: fact.provenance,
@@ -4905,6 +4963,21 @@ pub enum MemoryError {
          way as before"
     )]
     UnstatedProvenance,
+    /// **Testimony is not rewritten in place by a session that did not write it.**
+    ///
+    /// The words belong to whoever said them, and a run that restated the word
+    /// `testimony` would go on naming the operator as the source of words they
+    /// never said. The way to correct them leaves the original readable.
+    #[error(
+        "{address} is testimony from an earlier session, so its words are not rewritten in \
+         place: archive it with a reason (update_fact, status: archived, details), then capture \
+         the corrected claim with derived_from naming it. The original stays readable: recall \
+         the subject with history_record: {address}"
+    )]
+    TestimonyRewritten {
+        /// The claim a content rewrite was refused on.
+        address: String,
+    },
     /// An open claim was asked to be settled without the user saying so.
     #[error(
         "settling an open claim requires the user's explicit confirmation \

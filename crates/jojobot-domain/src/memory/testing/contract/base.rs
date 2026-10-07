@@ -617,6 +617,7 @@ pub async fn preserves_all_fields<M: Memory>(store: &M) {
         drop_because: None,
         borrow: false,
         aged_before: None,
+        session: None,
     };
     let captured = capture(store, new).await;
     assert_eq!(captured.subject, subject);
@@ -3877,15 +3878,18 @@ pub async fn promotion_to_testimony_needs_confirmation<M: Memory>(store: &M) {
 /// same way as before.
 pub async fn a_content_replacement_without_provenance_is_refused<M: Memory>(store: &M) {
     let subject = EntityId::person("person:contract-wordswap");
+    // **An inference**, because a rewrite of another session's testimony is
+    // refused for its own reason before provenance is asked about (see
+    // `a_rewrite_of_testimony_belongs_to_the_session_that_wrote_it`).
     let captured = capture(
         store,
         NewFact {
-            provenance: Provenance::Testimony,
+            provenance: Provenance::Inference,
             ..NewFact::about(subject.clone(), "prefers tea", date(2026, 7, 1))
         },
     )
     .await;
-    assert_eq!(captured.provenance, Provenance::Testimony);
+    assert_eq!(captured.provenance, Provenance::Inference);
 
     let err = store
         .update_fact(
@@ -3914,13 +3918,13 @@ pub async fn a_content_replacement_without_provenance_is_refused<M: Memory>(stor
         &captured.address(),
         FactPatch {
             content: Some("prefers coffee".to_string()),
-            provenance: Some(Provenance::Testimony),
+            provenance: Some(Provenance::Inference),
             ..Default::default()
         },
     )
     .await;
     assert_eq!(edited.content, "prefers coffee");
-    assert_eq!(edited.provenance, Provenance::Testimony);
+    assert_eq!(edited.provenance, Provenance::Inference);
 }
 
 /// **A hedge round-trips as itself.** The claim the second field exists
@@ -5401,10 +5405,14 @@ pub async fn an_edit_that_leaves_an_over_cap_thoughts_content_untouched_still_la
 
     // Captured while the container names no cap of its own — the default is
     // 200, and this content is well under it.
+    //
+    // **Written by a session, and rewritten by it**: the thought is promoted to
+    // testimony below, and only the session that wrote testimony may rewrite it.
     let thought = capture(
         store,
         NewFact {
             edge: Some(Edge::new(EdgeShape::Connection, a.clone())),
+            session: Some("contract-cap-session".to_string()),
             ..NewFact::about(
                 bot.clone(),
                 "the jukebox needs a needle today",
@@ -5450,6 +5458,7 @@ pub async fn an_edit_that_leaves_an_over_cap_thoughts_content_untouched_still_la
             FactPatch {
                 content: Some("a different needle, also too long for ten".to_string()),
                 provenance: Some(Provenance::Inference),
+                session: Some("contract-cap-session".to_string()),
                 ..Default::default()
             },
             &other_caller(),
@@ -13967,6 +13976,218 @@ pub async fn a_merge_that_would_overfill_a_room_or_a_body_cap_is_refused<M: Memo
         .expect("a thought exactly at the cap lands");
 }
 
+/// **Testimony is rewritten in place only by the session that wrote it.**
+///
+/// A rewrite of testimony by any other session, or of testimony with no
+/// recorded session, is refused with the route: the words are the operator's and
+/// a run that restated the word `testimony` must not rewrite them. The
+/// session that brought the claim in is the one of its FIRST write, so another
+/// session's field edit does not make it the owner. Only testimony is
+/// protected: an inference is rewritten by any session, and still has to say how
+/// the new words are known, while the session that wrote a claim keeps its
+/// provenance without saying it. Promotion to testimony stays gated.
+pub async fn a_rewrite_of_testimony_belongs_to_the_session_that_wrote_it<M: Memory>(store: &M) {
+    let subject = EntityId::person("person:contract-session-rewrite");
+    add(
+        store,
+        NewEntity::new(subject.clone(), "Session Rewrite", "contract-fixture"),
+    )
+    .await;
+    let written_in = |session: &str, provenance: Provenance, words: &str| NewFact {
+        provenance,
+        session: Some(session.to_string()),
+        ..NewFact::about(subject.clone(), words, date(2026, 7, 1))
+    };
+    let said = capture(
+        store,
+        written_in("session-a", Provenance::Testimony, "prefers tea"),
+    )
+    .await;
+    let guessed = capture(
+        store,
+        written_in("session-a", Provenance::Inference, "rides a bicycle"),
+    )
+    .await;
+    let unrecorded = capture(
+        store,
+        NewFact {
+            provenance: Provenance::Testimony,
+            ..NewFact::about(subject.clone(), "owns a ferret", date(2026, 7, 1))
+        },
+    )
+    .await;
+    let rewrite = |session: Option<&str>, words: &str, provenance: Option<Provenance>| FactPatch {
+        content: Some(words.to_string()),
+        provenance,
+        session: session.map(str::to_string),
+        ..Default::default()
+    };
+    let refused = |outcome: Result<Guarded<Fact>, MemoryError>| {
+        assert!(
+            matches!(outcome, Err(MemoryError::TestimonyRewritten { .. })),
+            "the rewrite is refused with the route: {:?}",
+            outcome.map(|_| ()),
+        );
+    };
+
+    // Another session's rewrite is refused, whatever provenance it restates.
+    refused(
+        store
+            .update_fact(
+                &said.address(),
+                rewrite(
+                    Some("session-b"),
+                    "prefers coffee",
+                    Some(Provenance::Testimony),
+                ),
+                &other_caller(),
+            )
+            .await,
+    );
+    refused(
+        store
+            .update_fact(
+                &said.address(),
+                rewrite(
+                    Some("session-b"),
+                    "prefers coffee",
+                    Some(Provenance::Inference),
+                ),
+                &other_caller(),
+            )
+            .await,
+    );
+    // A session no run is in, and a claim no session wrote, are refused too.
+    refused(
+        store
+            .update_fact(
+                &said.address(),
+                rewrite(None, "prefers coffee", Some(Provenance::Testimony)),
+                &other_caller(),
+            )
+            .await,
+    );
+    refused(
+        store
+            .update_fact(
+                &unrecorded.address(),
+                rewrite(Some("session-a"), "owns a cat", Some(Provenance::Testimony)),
+                &other_caller(),
+            )
+            .await,
+    );
+    assert_eq!(
+        read_back(store, &subject, &said.id).await.content,
+        "prefers tea",
+        "a refused rewrite leaves the words as they were",
+    );
+
+    // **Another session's field edit does not make it the owner.**
+    store
+        .update_fact(
+            &said.address(),
+            FactPatch {
+                fields: [("mug".to_string(), "blue".to_string())]
+                    .into_iter()
+                    .collect(),
+                session: Some("session-b".to_string()),
+                ..Default::default()
+            },
+            &other_caller(),
+        )
+        .await
+        .expect("a field edit is not a content rewrite");
+    refused(
+        store
+            .update_fact(
+                &said.address(),
+                rewrite(
+                    Some("session-b"),
+                    "prefers coffee",
+                    Some(Provenance::Testimony),
+                ),
+                &other_caller(),
+            )
+            .await,
+    );
+
+    // The session that wrote it rewrites it, and keeps what it is without
+    // saying so.
+    let kept = store
+        .update_fact(
+            &said.address(),
+            rewrite(Some("session-a"), "prefers green tea", None),
+            &other_caller(),
+        )
+        .await
+        .expect("the writing session may rewrite its own claim")
+        .written()
+        .expect("nothing blocks it");
+    assert_eq!(kept.provenance, Provenance::Testimony, "kept, not demoted");
+    assert_eq!(
+        read_back(store, &subject, &said.id).await.content,
+        "prefers green tea",
+    );
+
+    // **An inference is not protected**: any session rewrites it, and a session
+    // that did not write it still has to say how the new words are known.
+    let unsaid = store
+        .update_fact(
+            &guessed.address(),
+            rewrite(Some("session-b"), "rides a tricycle", None),
+            &other_caller(),
+        )
+        .await
+        .expect_err("a session that did not write it has to name a provenance");
+    assert!(
+        matches!(unsaid, MemoryError::UnstatedProvenance),
+        "{unsaid:?}"
+    );
+    store
+        .update_fact(
+            &guessed.address(),
+            rewrite(
+                Some("session-b"),
+                "rides a tricycle",
+                Some(Provenance::Inference),
+            ),
+            &other_caller(),
+        )
+        .await
+        .expect("another session rewrites an inference")
+        .written()
+        .expect("nothing blocks it");
+    let own_inference = store
+        .update_fact(
+            &guessed.address(),
+            rewrite(Some("session-a"), "rides a unicycle", None),
+            &other_caller(),
+        )
+        .await
+        .expect("the writing session keeps an inference's provenance too")
+        .written()
+        .expect("nothing blocks it");
+    assert_eq!(own_inference.provenance, Provenance::Inference);
+
+    // **Promotion to testimony is still gated**, for the session that wrote it.
+    let promote = store
+        .update_fact(
+            &guessed.address(),
+            rewrite(
+                Some("session-a"),
+                "rides a bicycle",
+                Some(Provenance::Testimony),
+            ),
+            &other_caller(),
+        )
+        .await
+        .expect_err("a promotion needs the operator's word");
+    assert!(
+        matches!(promote, MemoryError::UnconfirmedPromotion),
+        "{promote:?}",
+    );
+}
+
 /// **Every case of the memory contract, listed once.** The list is a macro so
 /// that counting the cases and running a slice of them read the same list: a
 /// case added here is counted and run, and no second list can drift from it.
@@ -13988,6 +14209,7 @@ macro_rules! all_cases {
         $m!(details_hold_paragraph_breaks_and_round_trip($store));
         $m!(both_provenances_survive($store));
         $m!(a_content_replacement_without_provenance_is_refused($store));
+        $m!(a_rewrite_of_testimony_belongs_to_the_session_that_wrote_it($store));
         $m!(edge_whitespace_is_normalized($store));
         $m!(multiple_facts_all_recallable($store));
         $m!(subjects_are_isolated($store));

@@ -163,17 +163,20 @@ async fn a_hedged_claim_and_a_guess_no_longer_read_the_same() {
     // ── session 6 · "no, scratch that, I was wrong" ─────────────────────────
     let s = story.session().await;
 
-    // A week on, the operator went on a Sunday and it was open. A claim they
-    // settled is rewritten to the negative truth, which stays settled and
-    // stays theirs: what is true now is that it does not close early.
-    s.correct(
-        &hedged,
-        "does NOT close early on Sundays — the operator went and it was open",
-    )
-    .await;
+    // A week on, the operator went on a Sunday and it was open. The claim they
+    // settled is theirs and an earlier session wrote it, so it is archived and
+    // the negative truth stands beside it, settled and theirs: what is true now
+    // is that it does not close early.
+    let reversed = s
+        .replace(
+            &hedged,
+            "does NOT close early on Sundays — the operator went and it was open",
+            json!({}),
+        )
+        .await;
     let walked_back = s.recall("place:moes").await;
     walked_back
-        .claim(&hedged)
+        .claim(&reversed)
         .says("does NOT close early")
         .says("\"standing\":\"settled\"")
         .never_says("closes early on Sundays");
