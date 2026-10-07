@@ -28,7 +28,7 @@ A key declares one of: text, a number, a date, **a span between two dates, held 
 
 ⚠️ **A schema shaped by what the type system can carry, rather than by what a life keeps, is the failure these close.**
 
-**A reference names the kind. It does not say "an entity".** A bike's brand is a company, and that company exists in the graph. This turns a field into a relation you can walk. Without it, the value is a string that looks like a handle.
+**A reference names the kind. It does not say "an entity".** A bike's brand is a company, and that company exists in the graph. This turns a field into a relation you can walk by the key's name. **A value that names a handle is a link whether or not any key was declared.** The declaration adds the kind the value must point at, and the walk by name. It never decides whether the link exists.
 
 **A reference points at the thing, not at its name.** A person and an agent read a handle. Underneath, the link holds an opaque id. So somebody can rename or move the target, and the reference still resolves.
 
@@ -112,7 +112,7 @@ Choosing among things asks which are *described like* a pet. Narrowing a walk as
 
 **jojobot finds a thing by the keys it carries, declared or not.** Discovery never waits for a declaration. That is how you find the schema, and it is why declaring later is an improvement rather than a migration.
 
-**Declaring buys a reader reach.** An undeclared key answers to equality only. A declared key answers to ordering and to traversal, because only a declaration says which keys hold dates and which hold other things.
+**Declaring buys a reader reach.** An undeclared key answers to equality only. A declared key answers to ordering, and to a walk by the key's name, because only a declaration says which keys hold dates and which hold other things. A value that names a handle is a link under either.
 
 **Declaring buys the operator a promise that holds.** When strictness is on for a thing, its kind governs every write to it. A value must hold what its key declared. A write that would remove a key the kind names fails. A refusal names the key and what it wanted.
 
@@ -136,4 +136,4 @@ Choosing among things asks which are *described like* a pet. Narrowing a walk as
 
 **Not a catalogue of every kind anybody might want.** The shipped set covers what a life has. The rest is one instance's data.
 
-**Not a relation nobody declared.** jojobot infers nothing. Two records that look related are not related until a key says so.
+**Not a gate on whether a link exists.** A value that names a handle is a link whatever its key, and an unscoped walk reaches it. jojobot infers nothing: the caller wrote the handle. A declaration adds the kind it must point at and a walk by the key's name.

@@ -65,9 +65,10 @@ pub enum ValueType {
     DateRange,
     /// Yes or no.
     Boolean,
-    /// **Another entity, and a walkable edge rather than a string that looks
-    /// like one.** This is what makes a cross-entity question answerable from a
-    /// type's own fields.
+    /// **Another entity, of a named kind.** The declaration makes the key
+    /// walkable by its own name and checks the kind on the write; the value is
+    /// a link whether or not the key was declared. This is what makes a
+    /// cross-entity question answerable from a type's own fields.
     Reference,
 }
 

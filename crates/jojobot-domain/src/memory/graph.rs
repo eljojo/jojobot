@@ -497,9 +497,10 @@ impl Direction {
 ///
 /// Two vocabularies, and they are not the same thing. An **edge shape** is one
 /// of the five names for a link nobody typed. A **relation** is a link a
-/// declaration made: a key some type declared to hold a reference, which is a
-/// link because the declaration says the value is another entity rather than a
-/// string that looks like one.
+/// declaration made: a key some type declared to hold a reference, which a walk
+/// can follow by the key's own name. A value that is a handle is a link under
+/// any key, declared or not; the declaration adds the kind the value must point
+/// at and that walk by name, and never decides whether the link exists.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Along {
     /// Any edge at all — "whatever it is connected to".
@@ -527,6 +528,11 @@ pub enum Link {
     Mention,
     /// **A claim's `refs`** — the entities it touches with no claim about how.
     Ref,
+    /// **A field whose value is another thing's handle**, under any key. The
+    /// value being a handle is what makes it a link; declaring the key a
+    /// reference adds the kind it must point at and a walk by the key's name,
+    /// never whether the link exists.
+    Field,
 }
 
 impl Link {
@@ -538,6 +544,7 @@ impl Link {
             Link::Relation(name) => name.as_str(),
             Link::Mention => "mention",
             Link::Ref => "ref",
+            Link::Field => "field",
         }
     }
 }
@@ -868,8 +875,9 @@ pub fn asked_by_view(held: &BTreeMap<String, String>, facts: &[Fact]) -> Asked {
 /// it and answered on the stricter question of whether the thing holds EVERY
 /// key.
 ///
-/// **Nothing is inferred.** A value that looks like a handle under a key nobody
-/// declared is a string that looks like a handle.
+/// **A name is followed only when a declaration backs it.** A value that is a
+/// handle under a key nobody declared is still a link, reached by an unscoped
+/// walk as a field link; what it cannot be is walked by the key's name.
 ///
 /// **The search asks each declaration the WHOLE question**, because two types
 /// may name one key and mean their own thing by it. Stopping at the first
@@ -1393,6 +1401,10 @@ struct Ctx<'a> {
     /// as `inbound`. Needs no rendering — `refs` is already handle form by
     /// the time a scan reaches here.
     ref_by: BTreeMap<EntityId, Vec<(EntityId, bool)>>,
+    /// For each entity, who holds its handle as a whole field value, under
+    /// any key. The reverse of [`Fact::linked`]'s field half, built in the
+    /// same pass as `inbound`.
+    field_by: BTreeMap<EntityId, Vec<(EntityId, bool)>>,
     /// Every fact once, whatever page it sits on — what a reverse relation
     /// reads, because it asks who points here and the answer is on their pages
     /// rather than on this one.
@@ -1411,6 +1423,7 @@ impl<'a> Ctx<'a> {
         let mut inbound: BTreeMap<EntityId, Vec<(EdgeShape, EntityId, bool)>> = BTreeMap::new();
         let mut mentioned_by: BTreeMap<EntityId, Vec<(EntityId, bool)>> = BTreeMap::new();
         let mut ref_by: BTreeMap<EntityId, Vec<(EntityId, bool)>> = BTreeMap::new();
+        let mut field_by: BTreeMap<EntityId, Vec<(EntityId, bool)>> = BTreeMap::new();
 
         for doc in scanned {
             if let Some(entity) = doc.entity.as_ref() {
@@ -1453,6 +1466,12 @@ impl<'a> Ctx<'a> {
                         .or_default()
                         .push((fact.subject.clone(), retracted));
                 }
+                for target in fact.field_handles() {
+                    field_by
+                        .entry(target)
+                        .or_default()
+                        .push((fact.subject.clone(), retracted));
+                }
             }
         }
 
@@ -1480,6 +1499,10 @@ impl<'a> Ctx<'a> {
             let mut seen = HashSet::new();
             bucket.retain(|link| seen.insert(link.clone()));
         }
+        for bucket in field_by.values_mut() {
+            let mut seen = HashSet::new();
+            bucket.retain(|link| seen.insert(link.clone()));
+        }
 
         let mut all: Vec<&Fact> = scanned.iter().flat_map(|doc| &doc.facts).collect();
         let mut seen = HashSet::new();
@@ -1497,6 +1520,7 @@ impl<'a> Ctx<'a> {
             inbound,
             mentioned_by,
             ref_by,
+            field_by,
             all,
             declarations,
         }
@@ -1861,15 +1885,17 @@ impl<'a> Ctx<'a> {
         let mut found: Vec<(Via, EntityId)> = match &follow.along {
             Along::Relation(name) => self.along_relation(id, from, name, direction),
             Along::Edge(shape) => self.along_edge(id, from, Some(*shape), direction),
-            // **A mention and a ref have no shape, so they answer only an
-            // unscoped walk** — the same walk that already meant "whatever
-            // it is connected to" before either existed. A walk scoped to
-            // one edge shape or a relation is unchanged: naming a shape asks
-            // for that shape, never for the two weaker admissions beside it.
+            // **A mention, a ref and a field value have no shape, so they
+            // answer only an unscoped walk** — the same walk that already
+            // meant "whatever it is connected to" before any of them
+            // existed. A walk scoped to one edge shape or a relation is
+            // unchanged: naming a shape asks for that shape, never for the
+            // weaker admissions beside it.
             Along::AnyEdge => {
                 let mut found = self.along_edge(id, from, None, direction);
                 found.extend(self.along_mention(id, from, direction));
                 found.extend(self.along_ref(id, from, direction));
+                found.extend(self.along_field(id, from, direction));
                 found
             }
         };
@@ -2028,6 +2054,53 @@ impl<'a> Ctx<'a> {
                             retracted: *retracted,
                         },
                         referrer.clone(),
+                    )
+                })
+                .collect(),
+        }
+    }
+
+    /// The entities a field value reaches from `id`, in the direction asked
+    /// for — the mirror of [`Ctx::along_ref`], over a record's fields rather
+    /// than its `refs`. **A value that is a handle is a link whatever its key**,
+    /// declared or not; the existence retain in [`Ctx::neighbours`] drops one
+    /// naming nothing.
+    fn along_field(
+        &self,
+        id: &EntityId,
+        from: &[&Fact],
+        direction: Direction,
+    ) -> Vec<(Via, EntityId)> {
+        match direction {
+            Direction::Out => from
+                .iter()
+                .flat_map(|f| {
+                    let retracted = f.status == FactStatus::Archived;
+                    f.field_handles().into_iter().map(move |target| {
+                        (
+                            Via {
+                                link: Link::Field,
+                                direction,
+                                retracted,
+                            },
+                            target,
+                        )
+                    })
+                })
+                .collect(),
+            Direction::In => self
+                .field_by
+                .get(id)
+                .into_iter()
+                .flatten()
+                .map(|(holder, retracted)| {
+                    (
+                        Via {
+                            link: Link::Field,
+                            direction,
+                            retracted: *retracted,
+                        },
+                        holder.clone(),
                     )
                 })
                 .collect(),

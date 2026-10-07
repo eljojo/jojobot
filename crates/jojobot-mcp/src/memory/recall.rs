@@ -64,22 +64,24 @@ pub struct KeyFilterArgs {
 
 /// The `follow` argument of a `recall` — which edges to walk, and how far.
 /// Leave both `shape` and `relation` unset and a walk also reaches a
-/// mention (an entity named in a claim's own words) and a ref (an entity a
-/// claim touches with no claim about how) — each labelled mention or ref,
-/// never as an edge. Naming a shape or a relation narrows to that alone:
-/// neither has one.
+/// mention (an entity named in a claim's own words), a ref (an entity a
+/// claim touches with no claim about how) and a field link (an entity whose
+/// handle a record holds as a whole field value, under any key) — each
+/// labelled mention, ref or field, never as an edge. Naming a shape or a
+/// relation narrows to that alone: none has one.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct FollowArgs {
     /// Narrow to one shape (`location` · `membership` · `attendance` · `about`
     /// · `connection`). Omit for **any** edge — "whatever it is connected to"
-    /// — which is also what reaches a mention or a ref; naming a shape here
+    /// — which is also what reaches a mention, a ref or a field link; naming a shape here
     /// reaches edges of that shape alone.
     #[serde(default)]
     pub(crate) shape: Option<String>,
     /// **A declared relation to walk instead of an edge.** A relation is a KEY
     /// that some type declared to hold a `reference`: the declaration says the
-    /// value is another entity rather than a string that looks like one, and
-    /// that is what makes it walkable.
+    /// value must be an entity of a named kind, and that is what makes the key
+    /// walkable by its name. A value that is a handle is a link under any key;
+    /// an unscoped walk reaches it either way.
     ///
     /// **Name the key, and use `direction` to say which way.** `out` follows
     /// the key off this object's own records — from a pet, `owner` reaches the
@@ -1086,6 +1088,7 @@ fn object_json(
             // deliberate link somebody drew on purpose.
             graph::Link::Mention => serde_json::json!({ "mention": true }),
             graph::Link::Ref => serde_json::json!({ "ref": true }),
+            graph::Link::Field => serde_json::json!({ "field": true }),
         };
         let mut link = link;
         if let Some(fields) = link.as_object_mut() {
@@ -1290,9 +1293,11 @@ impl Jojobot {
                        makes one: a KEY some type declared to hold a `reference` points at \
                        another entity, so it is walkable. LEAVE shape AND relation BOTH UNSET \
                        and a walk also reaches a MENTION (an entity named in a claim's own \
-                       words) and a REF (an entity a claim touches with no claim about how), \
-                       each labelled mention or ref rather than as an edge — name a shape or a \
-                       relation and neither answers, because neither has one. Name the key and \
+                       words), a REF (an entity a claim touches with no claim about how) and a \
+                       FIELD LINK (an entity whose handle a record holds as a whole field value, \
+                       under any key, declared or not), each labelled mention, ref or field \
+                       rather than as an edge — name a shape or a relation and none answers, \
+                       because none has one. Name the key and \
                        use `direction` — \
                        `out` reaches what a record points at ('owner' from a pet reaches the \
                        person), `in` reaches every record pointing here through that key ('owner' \

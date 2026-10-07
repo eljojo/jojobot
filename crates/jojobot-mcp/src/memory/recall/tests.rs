@@ -4594,6 +4594,102 @@ async fn an_unscoped_follow_out_reaches_the_target_of_its_own_mention() {
     );
 }
 
+/// **`follow`'s served descriptions name the field link** — the verb's own
+/// text and the `follow` argument's schema, which a caller reads at different
+/// moments.
+#[test]
+fn an_unscoped_follow_names_the_field_link_on_the_verbs_own_description() {
+    let tools = Jojobot::tool_router().list_all();
+    let recall = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "recall")
+        .expect("recall is a tool");
+    let tool_description = recall.description.as_deref().unwrap_or_default();
+    assert!(
+        tool_description.contains("FIELD LINK"),
+        "the tool-level description does not name field: {tool_description}"
+    );
+    let schema = serde_json::to_string(&*recall.input_schema).expect("a schema serialises");
+    assert!(
+        schema.contains("field link"),
+        "the follow argument's schema does not name the field link: {schema}"
+    );
+}
+
+/// **An unscoped `follow` reaches a handle held in a field under a key nobody
+/// declared, both ways, labelled as a field link** — travelled through the
+/// verb a caller uses. The negatives sit beside the positive so an empty
+/// answer cannot pass them: a handle naming nothing, one inside a longer
+/// string, and a shape-scoped walk.
+#[tokio::test]
+async fn an_unscoped_follow_reaches_a_handle_held_under_an_undeclared_key() {
+    let jojobot = handler_mentioning();
+    ensure(&jojobot, "topic:all-rules").await;
+    capture_ok(
+        &jojobot,
+        CaptureArgs {
+            fields: Some([("favourite".to_string(), "topic:all-rules".to_string())].into()),
+            ..capture_args("person:homer", "holds a handle under a key nobody declared")
+        },
+    )
+    .await;
+    capture_ok(
+        &jojobot,
+        CaptureArgs {
+            fields: Some([("note".to_string(), "read topic:all-rules first".to_string())].into()),
+            ..capture_args("person:hugo", "holds the handle inside a longer string")
+        },
+    )
+    .await;
+
+    let walk = |subject: &'static str, direction: &'static str, shape: Option<&'static str>| {
+        let jojobot = &jojobot;
+        async move {
+            json_of(
+                &jojobot
+                    .recall(Parameters(RecallArgs {
+                        subject: Some(subject.into()),
+                        follow: Some(FollowArgs {
+                            shape: shape.map(Into::into),
+                            direction: Some(direction.into()),
+                            ..no_follow()
+                        }),
+                        ..of_nothing()
+                    }))
+                    .await
+                    .expect("recall ok"),
+            )
+        }
+    };
+    let inbound = walk("topic:all-rules", "in", None).await;
+    let reached = inbound["objects"][0]["connected"]
+        .as_array()
+        .expect("connected objects");
+    assert_eq!(
+        reached.iter().map(|o| o["id"].clone()).collect::<Vec<_>>(),
+        vec!["person:homer"],
+        "only the whole-handle value is a link: {inbound}"
+    );
+    assert_eq!(
+        reached[0]["via"]["field"], true,
+        "labelled as a field link: {inbound}"
+    );
+
+    let outbound = walk("person:homer", "out", None).await;
+    assert_eq!(
+        outbound["objects"][0]["connected"][0]["id"], "topic:all-rules",
+        "and going out from the holder: {outbound}"
+    );
+
+    let shaped = walk("topic:all-rules", "in", Some("connection")).await;
+    assert!(
+        shaped["objects"][0]["connected"]
+            .as_array()
+            .is_none_or(|c| c.is_empty()),
+        "a walk scoped to a shape never returns a field link: {shaped}"
+    );
+}
+
 /// **A rename of the target is still followed through a mention** — the
 /// reversal is rebuilt fresh from already-rendered facts on every walk,
 /// so it never holds a stale handle to begin with.

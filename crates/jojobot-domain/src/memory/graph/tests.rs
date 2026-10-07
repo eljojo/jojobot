@@ -1978,6 +1978,161 @@ fn an_unscoped_walk_out_reaches_the_target_of_its_own_mention() {
     );
 }
 
+/// A corpus where a handle sits in a field value under a key nobody
+/// declared, beside three values that are not links: a handle nothing
+/// answers to, a handle inside a longer string, and a comma-joined list.
+fn field_holders() -> Vec<DocScan> {
+    let holding = |home: &str, key: &str, value: &str| Fact {
+        fields: [(key.to_string(), value.to_string())].into(),
+        ..fact(home, "f1", "holds a value")
+    };
+    vec![
+        doc(entity("topic:all-rules", "All Rules"), "", Vec::new()),
+        doc(entity("topic:widgets", "Widgets"), "", Vec::new()),
+        doc(
+            entity("person:homer", "Homer"),
+            "",
+            vec![holding("person:homer", "favourite", "topic:all-rules")],
+        ),
+        doc(
+            entity("person:gayle", "Gayle"),
+            "",
+            vec![holding("person:gayle", "favourite", "topic:the-five-words")],
+        ),
+        doc(
+            entity("person:hugo", "Hugo"),
+            "",
+            vec![holding(
+                "person:hugo",
+                "note",
+                "read topic:all-rules before friday",
+            )],
+        ),
+        doc(
+            entity("person:patana", "Patana"),
+            "",
+            vec![holding(
+                "person:patana",
+                "favourites",
+                "topic:all-rules,topic:widgets",
+            )],
+        ),
+    ]
+}
+
+/// **A field holding a handle is a link whatever its key.** An unscoped walk
+/// in reaches the one record whose value IS the handle, under a key no type
+/// declared, labelled as a field link. The three values beside it that only
+/// look like links are not reached — the positive keeps the three negatives
+/// from passing over an empty answer.
+#[test]
+fn an_unscoped_walk_in_reaches_a_handle_held_under_an_undeclared_key() {
+    let scanned = field_holders();
+    let found = resolved(
+        &scanned,
+        &[],
+        &GraphQuery {
+            select: Selection {
+                subject: Some(EntityId("topic:all-rules".into())),
+                ..Selection::default()
+            },
+            follow: Some(Follow {
+                along: Along::AnyEdge,
+                direction: Some(Direction::In),
+                ..Follow::hop()
+            }),
+            ..GraphQuery::default()
+        },
+    )
+    .expect("a subject with a walk");
+    let reached = &found[0].connected;
+
+    assert_eq!(
+        handles(reached),
+        vec!["person:homer"],
+        "only the value that is the whole handle is a link: {reached:?}",
+    );
+    assert_eq!(
+        reached[0]
+            .via
+            .as_ref()
+            .expect("a reached object says how the walk got to it")
+            .link,
+        Link::Field,
+        "labelled as a field link, never as an edge: {reached:?}",
+    );
+}
+
+/// **The outbound mirror**: from the record holding the handle, an unscoped
+/// walk out reaches the thing it names, and a handle nothing answers to is
+/// dropped by the existence retain like every other branch.
+#[test]
+fn an_unscoped_walk_out_reaches_a_handle_held_under_an_undeclared_key() {
+    let scanned = field_holders();
+    let out_of = |who: &str| {
+        resolved(
+            &scanned,
+            &[],
+            &GraphQuery {
+                select: Selection {
+                    subject: Some(EntityId(who.into())),
+                    ..Selection::default()
+                },
+                follow: Some(Follow {
+                    along: Along::AnyEdge,
+                    direction: Some(Direction::Out),
+                    ..Follow::hop()
+                }),
+                ..GraphQuery::default()
+            },
+        )
+        .expect("a subject with a walk")[0]
+            .connected
+            .clone()
+    };
+    let homer = out_of("person:homer");
+    assert_eq!(handles(&homer), vec!["topic:all-rules"], "{homer:?}");
+    assert_eq!(
+        homer[0].via.as_ref().expect("a via").link,
+        Link::Field,
+        "{homer:?}",
+    );
+    let gayle = out_of("person:gayle");
+    assert!(
+        gayle.is_empty(),
+        "a handle that resolves to nothing is not a link: {gayle:?}"
+    );
+}
+
+/// **A walk scoped to an edge shape or a relation never returns a field
+/// link** — naming a shape asks for that shape, as it does for a mention.
+#[test]
+fn a_walk_scoped_to_one_edge_shape_never_returns_a_field_link() {
+    let scanned = field_holders();
+    let found = resolved(
+        &scanned,
+        &[],
+        &GraphQuery {
+            select: Selection {
+                subject: Some(EntityId("topic:all-rules".into())),
+                ..Selection::default()
+            },
+            follow: Some(Follow {
+                along: Along::Edge(EdgeShape::Connection),
+                direction: Some(Direction::In),
+                ..Follow::hop()
+            }),
+            ..GraphQuery::default()
+        },
+    )
+    .expect("a subject with a walk");
+    assert!(
+        found[0].connected.is_empty(),
+        "a shaped walk reaches only its shape: {:?}",
+        found[0].connected,
+    );
+}
+
 /// **Two claims can draw one link, and a claim that stands keeps it.**
 ///
 /// The marker says *nothing stands behind this*, so it must not fire
@@ -2757,12 +2912,12 @@ fn a_declared_reference_key_is_a_walkable_link_both_ways() {
     );
 }
 
-/// **A relation is a relation because a declaration says so.** The same
+/// **A relation name is walkable because a declaration says so.** The same
 /// store, the same records, the same key — and with nothing declared, the
 /// name reaches nothing and says so rather than answering empty.
 ///
-/// This is the case that stops the walk inferring a link from a value that
-/// looks like a handle.
+/// This is the case that keeps a key's name from being walked unless a
+/// declaration backs it. The value is still a link to an unscoped walk.
 #[test]
 fn nothing_is_a_relation_until_a_declaration_says_it_is() {
     let query = GraphQuery {
@@ -2781,9 +2936,8 @@ fn nothing_is_a_relation_until_a_declaration_says_it_is() {
         }),
         history: None,
     };
-    resolved(&kennel(), &[], &query).expect_err(
-        "with nothing declared, a key holding a handle is a string that looks like one",
-    );
+    resolved(&kennel(), &[], &query)
+        .expect_err("with nothing declared, the key's name is no relation to walk by");
 
     // The same name, declared as ordinary text rather than a reference: the
     // value is identical and it is still not a link.

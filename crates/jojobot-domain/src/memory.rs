@@ -3075,15 +3075,23 @@ impl Fact {
     /// come back as two answers.
     pub fn linked(&self) -> Vec<EntityId> {
         let mut found: Vec<EntityId> = self.refs.clone();
-        found.extend(
-            self.fields
-                .values()
-                .map(|v| EntityId(v.trim().to_string()))
-                .filter(|id| validate_subject(id).is_ok()),
-        );
+        found.extend(self.field_handles());
         found.sort_by(|a, b| a.as_str().cmp(b.as_str()));
         found.dedup();
         found
+    }
+
+    /// **The field values that are, whole, a handle** — the half of
+    /// [`Fact::linked`] that sits under a key. A handle inside a longer string
+    /// is prose and is not here, and neither is one entry of a comma-joined
+    /// list. Search and recall both read links through this, so the two cannot
+    /// disagree about which values are one.
+    pub fn field_handles(&self) -> Vec<EntityId> {
+        self.fields
+            .values()
+            .map(|v| EntityId(v.trim().to_string()))
+            .filter(|id| validate_subject(id).is_ok())
+            .collect()
     }
 
     /// **Whether this claim's own span covers a day** — the read a window

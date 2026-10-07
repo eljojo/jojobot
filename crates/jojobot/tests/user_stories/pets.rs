@@ -4,11 +4,12 @@
 //! declaration made a key into a link.
 //!
 //! **The link is the point.** Every pet record already carried the owner's
-//! handle, and it was a string that looked like a handle: nothing walked it,
-//! because nothing had said it was anything. Declaring `owner` to hold a
-//! reference is what turns it into a relation — one relation, `owner`, walked
-//! outbound to what a record points at and inbound to the records pointing
-//! back. It is not a sixth edge shape and nobody declared an inverse.
+//! handle, and a value that is a handle is a link under any key: an unscoped
+//! walk reaches it before anything is declared, labelled as a field link.
+//! Declaring `owner` to hold a reference adds the kind it must point at and a
+//! walk by the key's own name — one relation, `owner`, walked outbound to what
+//! a record points at and inbound to the records pointing back. It is not a
+//! sixth edge shape and nobody declared an inverse.
 //!
 //! **What the inbound walk computes is key-scoped.** It reaches everything
 //! naming Bart through `owner`, the bicycle included — and that is the right
@@ -76,6 +77,28 @@ async fn a_declared_reference_key_answers_the_questions_about_the_pets() {
         &[],
     )
     .await;
+
+    // ── before any declaration · a handle held in a field is already a link ─
+    //
+    // Nothing has declared `owner`, and an unscoped walk in from Bart still
+    // reaches every record holding his handle, labelled as a field link. The
+    // pump's record holds no handle of his, so it is the negative the hits
+    // rest on.
+    let undeclared = s
+        .shape(
+            "everything holding Bart's handle, before anything is declared",
+            json!({
+                "subject": "person:bart",
+                "facts": false,
+                "follow": { "direction": "in" },
+            }),
+        )
+        .await;
+    undeclared
+        .says("pet:santas-little-helper")
+        .says("pet:snowball")
+        .says("\"field\":true")
+        .never_says("thing:floor-pump");
 
     // ── the declaration, which is the whole of what changes ─────────────────
     s.call(
