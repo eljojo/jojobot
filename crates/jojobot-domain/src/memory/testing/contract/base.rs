@@ -2139,6 +2139,83 @@ pub async fn undoing_the_newest_manager_cannot_close_a_loop<M: Memory>(store: &M
     }
 }
 
+/// **A manager folded into another is still a manager, and the chain goes on
+/// through the one it became.** A report keeps the id of the manager it named, and
+/// a fold leaves that bot's row in place, forwarding, with its claims moved to the
+/// survivor. A chain that stopped at the forwarding row would end there, and the
+/// bot above the survivor would lose the permission it had before the fold.
+///
+/// The positive is the whole case: after the fold, the bot above the survivor
+/// moves the report, which lands. Without the fold the same move lands too, so
+/// the case is about the fold and nothing else.
+pub async fn a_manager_folded_into_another_keeps_its_reports_in_the_chain<M: Memory>(store: &M) {
+    let top = EntityId("bot:contract-fold-summit".into());
+    let survivor = EntityId("bot:contract-fold-ridge".into());
+    let duplicate = EntityId("bot:contract-fold-spur".into());
+    let low = EntityId("bot:contract-fold-gully".into());
+    for (id, name) in [
+        (&top, "Compass"),
+        (&survivor, "Kettle"),
+        (&duplicate, "Lantern"),
+        (&low, "Ledger"),
+    ] {
+        add(store, NewEntity::new(id.clone(), name, "contract-fixture")).await;
+    }
+    let reporting = |manager: &EntityId| -> std::collections::BTreeMap<String, String> {
+        [(crate::memory::REPORTS_TO.to_string(), manager.to_string())]
+            .into_iter()
+            .collect()
+    };
+    capture(
+        store,
+        NewFact {
+            fields: reporting(&top),
+            ..NewFact::about(
+                survivor.clone(),
+                "ridge reports to summit",
+                date(2026, 10, 1),
+            )
+        },
+    )
+    .await;
+    let placed = capture(
+        store,
+        NewFact {
+            fields: reporting(&duplicate),
+            ..NewFact::about(low.clone(), "gully reports to spur", date(2026, 10, 1))
+        },
+    )
+    .await;
+
+    // The duplicate is folded into the survivor. Gully still names the duplicate.
+    store
+        .merge(&duplicate, &survivor, None, date(2026, 10, 2), &top)
+        .await
+        .expect("a duplicate with nothing guarded folds into its survivor");
+
+    let moved = store
+        .update_fact(
+            &placed.address(),
+            FactPatch {
+                fields: reporting(&top),
+                ..Default::default()
+            },
+            &top,
+        )
+        .await;
+    assert!(
+        matches!(moved, Ok(Guarded::Written(_))),
+        "summit is above ridge, which spur became, so it is above gully and may move it: \
+         {moved:?}",
+    );
+    let fields = thing_fields(store, &low).await;
+    assert_eq!(
+        fields.get(crate::memory::REPORTS_TO),
+        Some(&top.to_string()),
+        "gully now reports to summit: {fields:?}",
+    );
+}
+
 /// **Saying the same manager again is not a change, and the bot above may say it.**
 /// A store keeps the id of the manager and a caller sends the handle, so the two
 /// differ as text while naming one bot. The guard has to compare what they name:
@@ -13865,6 +13942,7 @@ macro_rules! all_cases {
         $m!(the_chart_is_judged_against_the_chain_read_inside_the_write($store));
         $m!(undoing_the_newest_manager_cannot_close_a_loop($store));
         $m!(restating_the_same_manager_is_not_a_change($store));
+        $m!(a_manager_folded_into_another_keeps_its_reports_in_the_chain($store));
         $m!(referring_to_finds_a_target_named_in_a_list_of_references($store));
         $m!(a_work_items_status_is_held_to_its_projects_columns($store));
         $m!(a_child_names_its_parent_and_reads_back($store));

@@ -821,7 +821,16 @@ impl InMemoryMemory {
         &self,
         fold: &std::collections::BTreeMap<String, String>,
     ) -> std::collections::BTreeMap<String, String> {
-        super::super::with_manager_served(fold, |stored| self.current_handle(stored))
+        let known = self.known();
+        super::super::with_manager_served(fold, |stored| {
+            // A manager folded into another is the one it became.
+            super::super::survivor_of(self.current_handle(stored), |at| {
+                known
+                    .iter()
+                    .find(|e| &e.id == at)
+                    .and_then(|e| e.merged_into.clone())
+            })
+        })
     }
 
     /// What has been declared — which is what says how each key folds.

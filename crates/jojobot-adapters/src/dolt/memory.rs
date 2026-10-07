@@ -1511,7 +1511,25 @@ impl DoltMemory {
         fold: &std::collections::BTreeMap<String, String>,
     ) -> Result<std::collections::BTreeMap<String, String>, MemoryError> {
         let looked_up = match jojobot_domain::memory::stored_manager(fold) {
-            Some(stored) => Some(self.current_handle(tx, &stored).await?),
+            Some(stored) => {
+                // A manager folded into another is the one it became: the folded
+                // row stays, forwarding, with its claims moved to the survivor.
+                let mut at = self.current_handle(tx, &stored).await?;
+                for _ in 0..jojobot_domain::memory::MAX_CHAIN {
+                    let into: Option<String> =
+                        sqlx::query_scalar("SELECT merged_into FROM entity WHERE id = ?")
+                            .bind(at.as_str())
+                            .fetch_optional(&mut **tx)
+                            .await
+                            .map_err(store)?
+                            .flatten();
+                    match into {
+                        Some(next) if next != at.as_str() => at = EntityId(next),
+                        _ => break,
+                    }
+                }
+                Some(at)
+            }
             None => None,
         };
         Ok(jojobot_domain::memory::with_manager_served(fold, |_| {

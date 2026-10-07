@@ -2111,6 +2111,26 @@ pub fn chart_wanted_by_change(
     chart_wanted(&touched, after)
 }
 
+/// **The bot a folded bot became.** A fold leaves the folded bot's row in place,
+/// forwarding to the survivor, and a report keeps the id of the manager it named.
+/// So the handle that id answers to may be a forwarding row whose claims have all
+/// moved, and a chain read from it would end there. `forwards_to` answers for one
+/// row; this follows it to the end, at most [`MAX_CHAIN`] rows, so a forwarding
+/// that loops cannot hang a write.
+pub fn survivor_of(
+    start: EntityId,
+    forwards_to: impl Fn(&EntityId) -> Option<EntityId>,
+) -> EntityId {
+    let mut at = start;
+    for _ in 0..MAX_CHAIN {
+        match forwards_to(&at) {
+            Some(next) if next != at => at = next,
+            _ => break,
+        }
+    }
+    at
+}
+
 /// **The id a fold stores its manager under**, with the mention mark taken off.
 /// A store keeps the permanent id of the entity a field names, bare under a key
 /// declared a reference and behind [`mention::MARK`] under any other, and the

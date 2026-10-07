@@ -105,6 +105,52 @@ fn a_fold_is_served_with_its_manager_as_the_handle_it_answers_to() {
     assert_eq!(served, unmanaged);
 }
 
+/// **A folded bot is followed to the one it became, and a forwarding that loops
+/// ends.** A row that forwards nowhere is its own survivor; one that forwards on
+/// is followed to the end; and two rows forwarding to each other end the walk at
+/// the bound instead of hanging the write that asked.
+#[test]
+fn a_folded_bot_is_followed_to_the_one_it_became_and_a_loop_ends() {
+    let id = |s: &str| EntityId(format!("bot:{s}"));
+    let forwards = |from: &str, to: &str| {
+        let (from, to) = (id(from), id(to));
+        move |at: &EntityId| (at == &from).then(|| to.clone())
+    };
+    assert_eq!(
+        survivor_of(id("ridge"), |_| None),
+        id("ridge"),
+        "a row that forwards nowhere is its own survivor",
+    );
+    assert_eq!(
+        survivor_of(id("spur"), forwards("spur", "ridge")),
+        id("ridge")
+    );
+
+    let chain = |at: &EntityId| match at.as_str() {
+        "bot:a" => Some(id("b")),
+        "bot:b" => Some(id("c")),
+        _ => None,
+    };
+    assert_eq!(
+        survivor_of(id("a"), chain),
+        id("c"),
+        "followed past one hop"
+    );
+
+    let loops = |at: &EntityId| {
+        Some(if at.as_str() == "bot:a" {
+            id("b")
+        } else {
+            id("a")
+        })
+    };
+    let ended = survivor_of(id("a"), loops);
+    assert!(
+        ended == id("a") || ended == id("b"),
+        "a forwarding that loops ends on one of its rows: {ended}",
+    );
+}
+
 /// A built-in key for each relation a key can declare, so the one predicate is
 /// held to all three at once. No MCP call can declare one of these: the table
 /// is the build's own.
