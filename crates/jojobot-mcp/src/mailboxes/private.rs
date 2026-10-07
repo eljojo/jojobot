@@ -33,6 +33,36 @@ impl Jojobot {
     }
 }
 
+impl Jojobot {
+    /// **Whether this id is a card jojobot cannot read, sitting in a person's
+    /// box.** A card that cannot be read answers no lookup by id, so the check
+    /// that locates a message by its id never learns which box it is in. The
+    /// board names the unreadable ids of each box, which is where to ask.
+    pub(crate) async fn is_unreadable_in_a_private_box(
+        &self,
+        id: &MessageId,
+    ) -> Result<bool, mailbox::MailboxError> {
+        Ok(self
+            .mailboxes
+            .list_mailboxes()
+            .await?
+            .iter()
+            .any(|held| held.is_private() && held.quarantined.contains(id)))
+    }
+
+    /// **Whether the message this id names is in a person's box**, whether it is
+    /// readable or not. The one question every verb that takes an id asks first.
+    pub(crate) async fn is_in_a_private_box(
+        &self,
+        id: &MessageId,
+    ) -> Result<bool, mailbox::MailboxError> {
+        match self.mailboxes.message_by_id(id).await? {
+            Some(message) => self.box_is_private(&message.mailbox).await,
+            None => self.is_unreadable_in_a_private_box(id).await,
+        }
+    }
+}
+
 /// **The refusal for a message in a person's box.** It names the message the
 /// caller gave and nothing about it: not the box, not the sender, not the
 /// subject, not whether it exists as mail.

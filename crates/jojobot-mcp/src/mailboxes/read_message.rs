@@ -72,12 +72,19 @@ impl Jojobot {
         // archive exception below, because that exception is about a bot's
         // box: `processed` stays readable from any BOT's box, and a person's
         // box is not one. A board that cannot say refuses too.
-        if let Some(message) = &located
-            && self
+        let in_a_private_box = match &located {
+            Some(message) => self
                 .box_is_private(&message.mailbox)
                 .await
-                .map_err(mailbox_error)?
-        {
+                .map_err(mailbox_error)?,
+            // A card jojobot cannot read answers no lookup by id, and the
+            // refusal that follows would describe what is wrong with it.
+            None => self
+                .is_unreadable_in_a_private_box(&id)
+                .await
+                .map_err(mailbox_error)?,
+        };
+        if in_a_private_box {
             return Ok(private_box(&id));
         }
         if let Some(message) = located
@@ -502,5 +509,97 @@ mod tests {
             (0, 0, 1),
             "no refusal moved anything: the message is where the retirement left it"
         );
+    }
+
+    /// **A message in a person's box that jojobot cannot read is still the
+    /// person's.** A damaged or set-aside card answers no `message_by_id`, so the
+    /// guards that locate the message by it never see which box it sits in, and
+    /// the refusals that follow describe the damage: a set-aside message even
+    /// names who set it aside and why. Neither says anything of a person's box.
+    /// The unreadable report in `list_sent` names every box that holds one, so
+    /// the person's box, and its ids, are left out of it. A damaged card in a
+    /// bot's box beside it is still refused as damage and still reported, so the
+    /// silence is the person's box's and not a blanket one.
+    #[tokio::test]
+    async fn an_unreadable_message_in_a_persons_box_is_the_persons_and_not_reported() {
+        use crate::mailboxes::testing::*;
+        let store = Arc::new(InMemoryMailboxes::knowing_any_owner());
+        let jojobot = with_mailboxes(store.clone());
+        let held = a_persons_box(&jojobot, "milhouse").await;
+        let writer = owning(&jojobot, "epsilon").await;
+        let other = owning(&jojobot, "sigma").await;
+        let private = send(
+            &jojobot,
+            "person:milhouse",
+            "epsilon",
+            "the secret figure is 4242",
+        )
+        .await;
+        let ordinary = send(&jojobot, "sigma", "epsilon", "an ordinary note").await;
+        let private_id = private["id"].as_str().expect("an id").to_string();
+        let ordinary_id = ordinary["id"].as_str().expect("an id").to_string();
+        store.quarantine_by_damage(
+            &held,
+            &mailbox::MessageId(private_id.clone()),
+            "torn by hand",
+        );
+        store.quarantine_by_damage(
+            &mailbox::MailboxName("sigma".into()),
+            &mailbox::MessageId(ordinary_id.clone()),
+            "torn by hand",
+        );
+
+        // ── the person's: the same refusal as any message in that box ───────
+        for reader in [&writer, &other] {
+            let read = json_of(
+                &jojobot
+                    .read_message(Parameters(ReadMessageArgs {
+                        message_id: private_id.clone(),
+                        sid: Some(reader.clone()),
+                    }))
+                    .await
+                    .expect("a refusal is an answer"),
+            );
+            let retire = json_of(
+                &jojobot
+                    .mark_processed(Parameters(MarkProcessedArgs {
+                        message_id: private_id.clone(),
+                        notes: Some("handled".into()),
+                        sid: Some(reader.clone()),
+                        quarantine: None,
+                    }))
+                    .await
+                    .expect("a refusal is an answer"),
+            );
+            for refused in [&read, &retire] {
+                assert_eq!(refused["status"], "blocked", "{refused}");
+                assert!(
+                    refused.get("reason").is_none(),
+                    "no word of what is wrong with a card in a person's box: {refused}"
+                );
+            }
+        }
+        // ── the listing does not name the person's box or its ids ───────────
+        let listed = json_of(
+            &jojobot
+                .list_sent(Parameters(ListSentArgs {
+                    limit: None,
+                    sender: None,
+                    to: None,
+                    include_bodies: None,
+                    sid: Some(other),
+                }))
+                .await
+                .expect("list_sent ok"),
+        );
+        assert!(
+            !listed.to_string().contains("person-milhouse"),
+            "the person's box is not named: {listed}"
+        );
+        // ── the positive: the bot's own damaged card is still reported ──────
+        let unreadable = listed["unreadable"].as_array().expect("a report");
+        assert_eq!(unreadable.len(), 1, "{listed}");
+        assert_eq!(unreadable[0]["mailbox"], "sigma", "{listed}");
+        assert_eq!(unreadable[0]["ids"][0], ordinary_id.as_str(), "{listed}");
     }
 }

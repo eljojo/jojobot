@@ -85,16 +85,7 @@ impl Jojobot {
         // the message: retiring one would tell its writer, and anyone else who
         // asked after it, that the person had dealt with it. Asked before
         // either branch so no path reaches the store first.
-        if let Some(message) = self
-            .mailboxes
-            .message_by_id(&id)
-            .await
-            .map_err(mailbox_error)?
-            && self
-                .box_is_private(&message.mailbox)
-                .await
-                .map_err(mailbox_error)?
-        {
+        if self.is_in_a_private_box(&id).await.map_err(mailbox_error)? {
             return Ok(private_box(&id));
         }
         // **A blank reason is refused, never read as absent.** `notes` may be

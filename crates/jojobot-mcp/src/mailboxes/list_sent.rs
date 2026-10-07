@@ -166,6 +166,9 @@ impl Jojobot {
         let unreadable: Vec<serde_json::Value> = board
             .iter()
             .filter(|b| only.is_none_or(|name| b.name.as_str() == name))
+            // A person's box is not reported: naming it names whose it is, and
+            // what is wrong with a card in it is that person's to be told.
+            .filter(|b| !b.is_private())
             .filter(|b| !b.quarantined.is_empty())
             .map(|b| {
                 serde_json::json!({
