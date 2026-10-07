@@ -69,17 +69,18 @@ pub fn provisions() -> Vec<Provision> {
         // most expensive answer this server has. A caller who wants one asks
         // `recall` for it directly, with `charter: true`.
         //
-        // **It reads as an org chart from either end.** A bot's own fields say
-        // who it reports to, and the walk inward along `reports_to` lists who
-        // reports to it, so one read answers both. Display only: nothing acts
-        // on the key.
+        // **It says who each bot reports to, from the bot's own fields, and
+        // walks nothing.** A walk inward along `reports_to` would list who
+        // reports to a bot, and it repeats every report in full under its
+        // manager: measured, it made this answer larger, which is the one thing
+        // the view is for avoiding. Who reports to a bot is a second call,
+        // `recall` of it with `reports_to` followed inward. Display only:
+        // nothing acts on the key.
         view(
             "view:colleagues",
             "The Colleagues",
             &[
                 ("selects", "bot"),
-                ("follow_relation", "reports_to"),
-                ("follow_direction", "in"),
                 // **Only what the directory is for.** A bot holds keys that
                 // run it, and an answer carrying every one of them for every
                 // colleague buries the two a reader came for. The answer names

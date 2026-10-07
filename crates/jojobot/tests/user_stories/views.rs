@@ -112,11 +112,15 @@ async fn a_session_asks_a_shipped_view_and_its_own_by_name_through_one_read() {
     story.finish().await;
 }
 
-/// **The colleagues view reads as an org chart from either end.** A bot
-/// carries `reports_to` holding its manager's handle, and one read of the view
-/// answers who a bot reports to and who reports to it, with no second call.
+/// **The colleagues view says who each bot reports to, and who reports to a bot
+/// is a second call.** A bot carries `reports_to` holding its manager's handle.
+/// The view reads that out of each bot's own fields and does not walk inward,
+/// because a walk repeats every report in full under its manager and makes the
+/// directory larger; the inbound side is `recall` of the manager with that
+/// relation followed inward.
 #[tokio::test]
-async fn the_colleagues_view_shows_who_each_bot_reports_to_and_who_reports_to_it() {
+async fn the_colleagues_view_says_who_each_bot_reports_to_and_a_second_call_says_who_reports_to_it()
+{
     let story = Story::begin("bot:gamma").await;
     let s = story.session().await;
     s.add("bot:omega", "Omega").await;
@@ -157,16 +161,43 @@ async fn the_colleagues_view_shows_who_each_bot_reports_to_and_who_reports_to_it
     // Out: a report names its manager, in its own fields.
     assert_eq!(bot("bot:sigma")["fields"]["reports_to"], "bot:omega");
     assert_eq!(bot("bot:psi")["fields"]["reports_to"], "bot:omega");
-    // In: the manager lists who reports to it, in the same answer.
-    assert_eq!(
-        ids(&bot("bot:omega")["connected"]),
-        ["bot:psi", "bot:sigma"],
-        "{colleagues}"
-    );
-    // The pairing: a bot nobody reports to lists nobody.
+    // In: the view does not list who reports to a manager. It reaches nobody.
     assert!(
-        ids(&bot("bot:gamma")["connected"]).is_empty(),
-        "nobody reports to gamma: {colleagues}"
+        ids(&bot("bot:omega")["connected"]).is_empty(),
+        "the view walks nothing inward: {colleagues}"
+    );
+    // The second call answers it: the manager, with `reports_to` followed
+    // inward, lists the bots that report to it. Paired with the line above, so
+    // the view's silence is the view's and not an answer nobody can give.
+    let reports = s
+        .call(
+            "recall",
+            json!({
+                "subject": "bot:omega",
+                "follow": {"relation": "reports_to", "direction": "in"},
+            }),
+        )
+        .await
+        .json();
+    assert_eq!(
+        ids(&reports["objects"][0]["connected"]),
+        ["bot:psi", "bot:sigma"],
+        "{reports}"
+    );
+    // The pairing: a bot nobody reports to has nobody under it.
+    let none = s
+        .call(
+            "recall",
+            json!({
+                "subject": "bot:gamma",
+                "follow": {"relation": "reports_to", "direction": "in"},
+            }),
+        )
+        .await
+        .json();
+    assert!(
+        ids(&none["objects"][0]["connected"]).is_empty(),
+        "nobody reports to gamma: {none}"
     );
     story.finish().await;
 }
@@ -223,12 +254,33 @@ async fn the_colleagues_view_leaves_operational_keys_out_and_names_what_it_left_
         left_out.contains("probe/last") && left_out.contains("nudge/quiet"),
         "{left_out}"
     );
-    // The walk narrows the objects it reaches the same way: omega lists sigma,
-    // and sigma arrives without its operational keys.
-    let reached = &bot("bot:omega")["connected"][0];
-    assert_eq!(reached["id"], "bot:sigma", "{colleagues}");
-    assert!(reached["fields"].get("nudge/quiet").is_none(), "{reached}");
-    assert_eq!(reached["fields"]["reports_to"], "bot:omega", "{reached}");
+    // A walk narrows the objects it reaches the same way: the second call that
+    // lists who reports to omega, given the same `keys`, returns sigma without
+    // its operational keys and says which it left out.
+    let walked = s
+        .call(
+            "recall",
+            json!({
+                "subject": "bot:omega",
+                "follow": {"relation": "reports_to", "direction": "in"},
+                "keys": ["one_liner", "reports_to"],
+            }),
+        )
+        .await
+        .json();
+    let reached = &walked["objects"][0]["connected"][0];
+    assert_eq!(reached["id"], "bot:sigma", "{walked}");
+    assert_eq!(
+        reached["fields"],
+        json!({"one_liner": "keeps the books", "reports_to": "bot:omega"}),
+        "{walked}"
+    );
+    assert!(
+        reached["fields_left_out"]
+            .as_str()
+            .is_some_and(|note| note.contains("nudge/quiet")),
+        "{walked}"
+    );
     // The pairing: a bot that holds no operational key has nothing to name.
     assert!(
         bot("bot:gamma").get("fields_left_out").is_none(),
