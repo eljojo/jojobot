@@ -581,15 +581,44 @@ async fn a_boot_lists_each_unseated_rule_and_a_session_fetches_one_by_its_addres
     s.add("bot:omega", "Omega").await;
 
     // Eight starred rules and the default five seats: the three oldest are not
-    // seated. Two more in force, with no star, and one retired.
+    // seated. Two more in force, with no star, and one retired. They read like
+    // rules a bot would hold, each with an area for its line.
+    let starred_rules = [
+        (
+            "Check the oven timer before leaving the kitchen",
+            "the oven",
+        ),
+        (
+            "Sleep on any message that sounds angry before replying",
+            "angry mail",
+        ),
+        (
+            "Confirm a booking by the next morning or it does not count",
+            "bookings",
+        ),
+        ("Keep a spare charger in the bag on any trip", "chargers"),
+        ("Put the bins out on the evening before collection", "bins"),
+        (
+            "Back up the photos on the first of the month",
+            "photo backups",
+        ),
+        (
+            "Ask before moving anything on the shared shelf",
+            "the shared shelf",
+        ),
+        (
+            "Re-read a contract's dates before signing it",
+            "contract dates",
+        ),
+    ];
     let mut starred = Vec::new();
-    for n in 0..8 {
+    for (words, area) in starred_rules {
         starred.push(
             rule(
                 &s,
                 "bot:omega",
-                &format!("seated or not, starred rule {n}"),
-                json!({"starred": "true", "subject": format!("starred area {n}")}),
+                words,
+                json!({"starred": "true", "subject": area}),
             )
             .await,
         );
@@ -597,22 +626,22 @@ async fn a_boot_lists_each_unseated_rule_and_a_session_fetches_one_by_its_addres
     let plain = rule(
         &s,
         "bot:omega",
-        "plain rule with a subject, kept apart from the stars",
-        json!({"subject": "plain area"}),
+        "Keep the recycling out by Thursday night",
+        json!({"subject": "recycling"}),
     )
     .await;
     let bare = rule(
         &s,
         "bot:omega",
-        "plain rule with no subject so its own words are the line",
+        "Lock the shed after using the mower",
         json!({}),
     )
     .await;
     let retired = rule(
         &s,
         "bot:omega",
-        "a retired instruction nobody follows",
-        json!({"subject": "retired area"}),
+        "Feed the cat at six, before the post arrives",
+        json!({"subject": "the cat"}),
     )
     .await;
     s.call(
@@ -637,11 +666,11 @@ async fn a_boot_lists_each_unseated_rule_and_a_session_fetches_one_by_its_addres
     for old in &starred[..3] {
         assert!(line_of(old).is_some(), "{old} has no line: {body}");
     }
-    assert_eq!(line_of(&plain).as_deref(), Some("plain area"), "{body}");
+    assert_eq!(line_of(&plain).as_deref(), Some("recycling"), "{body}");
     assert!(
         line_of(&bare)
             .expect("a rule with no subject is listed too")
-            .starts_with("plain rule with no subject"),
+            .starts_with("Lock the shed"),
         "the head of its words is the line: {body}"
     );
     // A seated rule is carried whole and not listed again; a retired one is
@@ -649,8 +678,8 @@ async fn a_boot_lists_each_unseated_rule_and_a_session_fetches_one_by_its_addres
     for seated in &starred[3..] {
         assert!(line_of(seated).is_none(), "{seated} is seated: {body}");
     }
-    booted.never_says("a retired instruction nobody follows");
-    booted.never_says("retired area");
+    booted.never_says("Feed the cat");
+    booted.never_says("the cat");
     // The note names the call that loads one rule by its address.
     let how = body["identity"]["unseated_rules"]["how_to_load"]
         .as_str()
@@ -664,9 +693,9 @@ async fn a_boot_lists_each_unseated_rule_and_a_session_fetches_one_by_its_addres
     let one = s
         .call("recall", json!({"history_record": starred[0]}))
         .await;
-    one.says("starred rule 0");
-    one.never_says("starred rule 1");
-    one.never_says("plain rule with a subject");
+    one.says("Check the oven timer");
+    one.never_says("Sleep on any message");
+    one.never_says("Keep the recycling");
 
     s.wrap("saw the unseated rules and fetched one").await;
     story.finish().await;

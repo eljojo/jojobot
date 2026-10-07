@@ -25,7 +25,8 @@ async fn a_rules_marks_belong_to_the_rule_and_not_to_the_bot() {
                 "provenance": "testimony",
                 "fields": {
                     "starred": "true", "subject": "the kettle", "purpose": "hard-line",
-                    "recorded_by": "somebody at the bench", "colour": "teal",
+                    "recorded_by": "somebody at the bench",
+                    "one_liner": "keeps the kettle descaled",
                 },
             }),
         )
@@ -43,7 +44,11 @@ async fn a_rules_marks_belong_to_the_rule_and_not_to_the_bot() {
     let fields = bot["objects"][0]["fields"]
         .as_object()
         .expect("a thing's fields");
-    assert_eq!(fields.get("colour"), Some(&json!("teal")), "{bot}");
+    assert_eq!(
+        fields.get("one_liner"),
+        Some(&json!("keeps the kettle descaled")),
+        "{bot}"
+    );
     for label in ["starred", "subject", "purpose", "recorded_by"] {
         assert!(!fields.contains_key(label), "the bot holds {label}: {bot}");
     }
