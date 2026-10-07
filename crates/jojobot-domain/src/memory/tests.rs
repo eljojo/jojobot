@@ -127,26 +127,26 @@ fn a_folded_bot_is_followed_to_the_one_it_became_and_a_loop_ends() {
     );
 
     let chain = |at: &EntityId| match at.as_str() {
-        "bot:a" => Some(id("b")),
-        "bot:b" => Some(id("c")),
+        "bot:delta" => Some(id("gamma")),
+        "bot:gamma" => Some(id("omega")),
         _ => None,
     };
     assert_eq!(
-        survivor_of(id("a"), chain),
-        id("c"),
+        survivor_of(id("delta"), chain),
+        id("omega"),
         "followed past one hop"
     );
 
     let loops = |at: &EntityId| {
-        Some(if at.as_str() == "bot:a" {
-            id("b")
+        Some(if at.as_str() == "bot:delta" {
+            id("gamma")
         } else {
-            id("a")
+            id("delta")
         })
     };
-    let ended = survivor_of(id("a"), loops);
+    let ended = survivor_of(id("delta"), loops);
     assert!(
-        ended == id("a") || ended == id("b"),
+        ended == id("delta") || ended == id("gamma"),
         "a forwarding that loops ends on one of its rows: {ended}",
     );
 }

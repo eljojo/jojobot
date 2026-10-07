@@ -4534,6 +4534,77 @@ pub async fn a_room_fulls_subject_is_never_a_bare_badge<M: Memory>(store: &M) {
     }
 }
 
+/// **A thought that carries a key only its relation may change cannot be dropped
+/// to make room.** A full room's new thought names the one it replaces, and the
+/// replaced thought is archived in the same act. A write that carries no caller
+/// cannot ask who may change a manager, so when the thought named holds the bot's
+/// `reports_to` the drop would take the manager off the fold with nobody asked.
+/// The room refuses it, shows the room, and the thought stays.
+///
+/// The positive is the room's own working: a thought that carries no such key is
+/// dropped as before, in the case above. The negative here also reads the fold
+/// afterwards, so a refusal that still took the manager would not pass.
+pub async fn a_thought_carrying_a_guarded_key_cannot_be_dropped_to_make_room<M: Memory>(store: &M) {
+    let bot = EntityId("bot:contract-room-guarded".into());
+    let warden = EntityId("bot:contract-room-warden".into());
+    let a = EntityId("thing:jukebox".into());
+    let b = EntityId("thing:battery".into());
+    for id in [&warden, &bot, &a, &b] {
+        ensure(store, id).await;
+    }
+    capture(
+        store,
+        NewFact {
+            fields: [(THOUGHT_CAPACITY.to_string(), "1".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(bot.clone(), "capacity is one", date(2026, 7, 1))
+        },
+    )
+    .await;
+    // The only thought in the room names the bot's manager.
+    let holding = capture(
+        store,
+        NewFact {
+            edge: Some(Edge::new(EdgeShape::Connection, a.clone())),
+            fields: [(crate::memory::REPORTS_TO.to_string(), warden.to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(bot.clone(), "the warden has the jukebox", date(2026, 7, 2))
+        },
+    )
+    .await;
+
+    let refused = store
+        .capture(NewFact {
+            edge: Some(Edge::new(EdgeShape::Connection, b.clone())),
+            drop: Some(holding.address()),
+            drop_because: Some("making room".into()),
+            ..NewFact::about(bot.clone(), "the battery is flat", date(2026, 7, 3))
+        })
+        .await;
+    assert!(
+        matches!(refused, Err(MemoryError::RoomFull { .. })),
+        "a thought that carries reports_to must not be droppable to make room: {refused:?}",
+    );
+    let after = store.recall(&bot).await.expect("recall ok");
+    let kept = after
+        .iter()
+        .find(|f| f.id == holding.id)
+        .expect("the thought is still there");
+    assert_eq!(
+        kept.status,
+        FactStatus::Active,
+        "it was not archived: {kept:?}"
+    );
+    let fields = thing_fields(store, &bot).await;
+    assert_eq!(
+        fields.get(crate::memory::REPORTS_TO),
+        Some(&warden.to_string()),
+        "the manager is still on the fold: {fields:?}",
+    );
+}
+
 /// **A room at capacity, with a live thought and a way to name what leaves
 /// would exceed it.** A write into a full room with no drop named is
 /// refused, and the refusal carries the room so a caller can choose without
@@ -13942,6 +14013,7 @@ macro_rules! all_cases {
         $m!(the_chart_is_judged_against_the_chain_read_inside_the_write($store));
         $m!(undoing_the_newest_manager_cannot_close_a_loop($store));
         $m!(restating_the_same_manager_is_not_a_change($store));
+        $m!(a_thought_carrying_a_guarded_key_cannot_be_dropped_to_make_room($store));
         $m!(a_manager_folded_into_another_keeps_its_reports_in_the_chain($store));
         $m!(referring_to_finds_a_target_named_in_a_list_of_references($store));
         $m!(a_work_items_status_is_held_to_its_projects_columns($store));

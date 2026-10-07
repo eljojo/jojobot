@@ -120,6 +120,8 @@ const ROSTER: &[&str] = &[
     "bot:contract-restate-canyon",
     "bot:contract-restate-fjord",
     "bot:contract-restate-mesa",
+    "bot:contract-room-guarded",
+    "bot:contract-room-warden",
     "bot:contract-fold-gully",
     "bot:contract-fold-ridge",
     "bot:contract-fold-spur",

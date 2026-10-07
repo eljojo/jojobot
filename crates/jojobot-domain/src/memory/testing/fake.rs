@@ -1522,6 +1522,18 @@ impl Memory for InMemoryMemory {
                                 else {
                                     return Err(refuse(split.live));
                                 };
+                                // **A thought that carries a key only its own
+                                // relation may change is not droppable.** A
+                                // capture carries no caller to ask who may change
+                                // that key, and archiving the thought takes the
+                                // key off the fold. Retracting it asks.
+                                if !super::super::guarded_keys_in(
+                                    &self.projected(&facts[victim_index]).fields,
+                                )
+                                .is_empty()
+                                {
+                                    return Err(refuse(split.live));
+                                }
                                 // **Archived, through the one writer every
                                 // archive goes through** — `append_claim_write`
                                 // is what leaves a write behind; a status flip

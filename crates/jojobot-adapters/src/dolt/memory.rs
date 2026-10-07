@@ -2887,6 +2887,16 @@ impl Memory for DoltMemory {
                                 let Some(mut victim_fact) = in_room else {
                                     return Err(refuse(room));
                                 };
+                                // **A thought that carries a key only its own
+                                // relation may change is not droppable.** A
+                                // capture carries no caller to ask who may change
+                                // that key, and archiving the thought takes the
+                                // key off the fold. Retracting it asks.
+                                if !jojobot_domain::memory::guarded_keys_in(&victim_fact.fields)
+                                    .is_empty()
+                                {
+                                    return Err(refuse(room));
+                                }
                                 // **`facts_of` serves under the current handle,
                                 // never the storage key** (see `assemble`'s own
                                 // comment) — exactly right for a reader, and
