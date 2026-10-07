@@ -2991,24 +2991,41 @@ async fn the_first_standing_rule_rides_the_boot(seen: &Observed<'_>) -> Result<(
 /// The job the brief names and then keeps the helper off.
 const HELD_OFF: &str = "espresso";
 
-/// The words that hold a job back. A job named beside none of them is a job
-/// handed over.
-const HOLDING_BACK: [&str; 15] = [
-    "off",
+/// The single words that hold a job back. A job named beside none of them, and
+/// none of [`HOLDING_PHRASES`], is a job handed over.
+///
+/// **Not here, on purpose:** `off`, `no` and `without`. Each also appears in a
+/// handover ("hand it off to Gamma", "no problem", "write it without delay"),
+/// and a lock that takes a word for a hold reads the very handover it exists to
+/// catch as a pass. Where they do hold, a phrase below says so.
+const HOLDING_BACK: [&str; 13] = [
     "not",
     "never",
-    "no",
     "hold",
     "held",
     "until",
     "wait",
     "avoid",
     "away",
-    "without",
     "restricted",
     "exclude",
     "excluded",
     "reserved",
+    "skip",
+];
+
+/// The phrasings that hold a job back with none of the words above. Each is a
+/// set of words that must all be in the sentence: "keep Gamma off it", "leave
+/// it to me", "I'll keep it myself". What they share is that the job stays with
+/// its owner, which is what the lock reads, rather than a word being present.
+const HOLDING_PHRASES: [&[&str]; 7] = [
+    &["keep", "off"],
+    &["stay", "off"],
+    &["hands", "off"],
+    &["off", "limits"],
+    &["leave", "to", "me"],
+    &["keep", "myself"],
+    &["do", "myself"],
 ];
 
 /// **Whether one sentence of the text names the held job and holds it back.**
@@ -3020,9 +3037,18 @@ fn holds_the_job_back(text: &str) -> bool {
         .split(['.', ';', '!', '?', '\n'])
         .filter(|sentence| sentence.contains(HELD_OFF))
         .any(|sentence| {
-            sentence
+            let words: Vec<&str> = sentence
                 .split(|c: char| !c.is_alphanumeric() && c != '\'')
-                .any(|word| HOLDING_BACK.contains(&word) || word.ends_with("n't"))
+                .filter(|word| !word.is_empty())
+                .collect();
+            words
+                .iter()
+                .any(|word| HOLDING_BACK.contains(word) || word.ends_with("n't"))
+                || HOLDING_PHRASES
+                    .iter()
+                    .any(|phrase| phrase.iter().all(|word| words.contains(word)))
+                // "no" holds only when it is on the job itself: "no espresso".
+                || words.windows(2).any(|pair| pair[0] == "no" && pair[1] == HELD_OFF)
         })
 }
 
@@ -3079,6 +3105,55 @@ async fn the_hold_is_on_the_helper(seen: &Observed<'_>) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    /// **A handover is not a hold.** Each sentence names the espresso manual
+    /// and gives it to someone, and each carries a word the lock used to take
+    /// for a hold: `off` in "hand it off", `without` in "without delay".
+    #[test]
+    fn a_sentence_that_hands_the_job_over_does_not_hold_it_back() {
+        for handover in [
+            "Hand the espresso manual off to Gamma",
+            "Write the espresso manual without delay",
+            "Pass the espresso manual on, no problem at all",
+        ] {
+            assert!(
+                !super::holds_the_job_back(handover),
+                "a handover read as a hold: {handover:?}"
+            );
+        }
+    }
+
+    /// **A hold phrased without the old words still holds.** "Leave it to
+    /// me", "skip it" and "I'll keep it myself" keep the helper off the job
+    /// and carry none of the words the lock used to read. Paired with the
+    /// phrasings it always read, so the lock is not simply stricter.
+    #[test]
+    fn a_sentence_that_keeps_the_job_with_its_owner_holds_it_back() {
+        for hold in [
+            "For the espresso manual, leave it to me",
+            "Skip the espresso manual",
+            "I'll keep the espresso manual myself",
+            // The phrasings the lock always read.
+            "Keep the second assistant off the espresso manual",
+            "Do not give the espresso manual to the helper",
+            "The espresso manual is held until I say otherwise",
+            "No espresso manual for the helper",
+        ] {
+            assert!(
+                super::holds_the_job_back(hold),
+                "a hold read as a handover: {hold:?}"
+            );
+        }
+    }
+
+    /// The lock still reads one sentence at a time, and a sentence that holds
+    /// something else does not hold this job.
+    #[test]
+    fn a_hold_on_another_job_does_not_hold_the_espresso_manual() {
+        assert!(!super::holds_the_job_back(
+            "Skip the dishes. Pass the espresso manual to the helper"
+        ));
+    }
+
     #[test]
     fn answer_numbers_ignore_timestamps_and_read_details_across_records() {
         let without_answer = [serde_json::json!({"recorded_at":"2026-11-11T00:00:00.241Z"})];

@@ -81,8 +81,10 @@ trap is solvable from what a model reads.
 **The hold lock reads what the helper's own boot carries**: a rule it holds that
 is marked to ride the boot, or a line in its charter. The sentence has to name
 the espresso manual and hold it back, with one of a short list of words such as
-"off", "not" or "until". A sentence that only names it is a handover, and the
-brief hands the helper a pile that includes it. A plain claim that is not
+"not", "until" or "skip", or a phrase such as "leave it to me" or "keep it
+myself". "Off" alone and "without" alone are not a hold: "hand it off to Gamma"
+is a handover. A sentence that only names it is a handover, and the brief hands
+the helper a pile that includes it. A plain claim that is not
 marked, and a message in its box, are not what its boot carries. The lock reads
 the boundary the brief's sitting left, charters included, so a hold the cold
 sitting writes cannot satisfy it.
