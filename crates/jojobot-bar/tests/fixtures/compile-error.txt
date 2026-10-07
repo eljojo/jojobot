@@ -1,4 +1,4 @@
-SABOTAGE crates/jojobot-domain/src/attention.rs: kept at /mnt/easy_files/claude/tmp/sabotage-8tnb8sxcattention.rs
+SABOTAGE crates/jojobot-domain/src/attention.rs: kept at /tmp/sabotage-8tnb8sxcattention.rs
 SABOTAGE APPLIED to the one site in crates/jojobot-domain/src/attention.rs
 fetching git input 'git+file:///home/claude/code/jojobot2'
 warning: Git tree '/home/claude/code/jojobot2' is dirty

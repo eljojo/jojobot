@@ -1,10 +1,10 @@
-SABOTAGE crates/jojobot-domain/src/attention.rs: kept at /mnt/easy_files/claude/tmp/sabotage-z1s9ad1hattention.rs
+SABOTAGE crates/jojobot-domain/src/attention.rs: kept at /tmp/sabotage-z1s9ad1hattention.rs
 SABOTAGE APPLIED to the one site in crates/jojobot-domain/src/attention.rs
 fetching git input 'git+file:///home/claude/code/jojobot2'
 warning: Git tree '/home/claude/code/jojobot2' is dirty
    Compiling jojobot-domain v0.1.0 (/home/claude/code/jojobot2/crates/jojobot-domain)
     Finished `test` profile [unoptimized + debuginfo] target(s) in 8.28s
-     Running unittests src/lib.rs (/mnt/easy_files/claude/cargo-target/jojobot2/debug/deps/jojobot_domain-e72a5a2609747439)
+     Running unittests src/lib.rs (/tmp/target/debug/deps/jojobot_domain-e72a5a2609747439)
 
 running 259 tests
 test clock::tests::the_real_clock_states_no_day_and_answers_the_wall_clock ... ok
