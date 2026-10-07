@@ -132,12 +132,17 @@ async fn the_current_binary_boots_on_a_store_an_older_binary_filled() {
     // the kind seed stopped part way — so the server serves and every read of
     // a store that was upgraded looks fine until somebody asks the half that
     // is missing.
+    //
+    // **An error line fails it too, whatever it says.** The boot logs a pass it
+    // could not finish at the error level, and a filter that names each
+    // message lets a new one through unseen.
     let warned: Vec<&String> = seen
         .iter()
         .filter(|line| {
             line.contains("FOLD EMPTY")
                 || line.contains("SEARCH INDEX EMPTY")
                 || line.contains("KINDS NOT LOADED")
+                || line.contains("ERROR")
         })
         .collect();
     assert!(

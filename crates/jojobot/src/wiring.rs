@@ -382,11 +382,24 @@ pub async fn boot_store(dir: &Path, port: u16, clock: Clock) -> anyhow::Result<B
         ),
     }
 
+    // **One set, read by both halves.** The layer above resolves what the
+    // build supplies into an answer; the store below has to see the same set
+    // when its guard decides whether a handle names anything, or a claim
+    // pointing at a supplied record is refused as naming nothing.
+    let supplied = jojobot_mcp::provisions();
+    let bare_memory = DoltMemory::open(store.pool().clone())
+        .knowing(supplied.clone())
+        .on_clock(clock);
+    let resolved = open_provisioned(bare_memory, supplied).await?;
+
     // **A reference-typed field value, stored as plain handle text before
     // this build lowered it at write time, rewritten onto the permanent id
     // it names** (rule 290). Runs after the three passes above for the same
     // reason: it reads the badge and the rename history they just made
-    // current. Louder than the first two, for the reason
+    // current. **It also runs after the kinds are loaded**, which
+    // `open_provisioned` does: a `reference:<kind>` cell is parsed through the
+    // kind set, so a pass that ran before it would fail on any store holding a
+    // kind-narrowed reference type. Louder than the first two, for the reason
     // `resolve_stale_pointer_columns` is: a row left unresolved holds a
     // stale handle a later collision could still hijack, so it is reported
     // as a problem to repair rather than a routine retry.
@@ -403,16 +416,6 @@ pub async fn boot_store(dir: &Path, port: u16, clock: Clock) -> anyhow::Result<B
              undone; a restart repeats the scan and finds less to do."
         ),
     }
-
-    // **One set, read by both halves.** The layer above resolves what the
-    // build supplies into an answer; the store below has to see the same set
-    // when its guard decides whether a handle names anything, or a claim
-    // pointing at a supplied record is refused as naming nothing.
-    let supplied = jojobot_mcp::provisions();
-    let bare_memory = DoltMemory::open(store.pool().clone())
-        .knowing(supplied.clone())
-        .on_clock(clock);
-    let resolved = open_provisioned(bare_memory, supplied).await?;
 
     // **Wrapped in the decorators the story harness shares too** — see this
     // module's own doc for why this is two stages rather than one. The search
