@@ -387,6 +387,7 @@ pub async fn boot_store(dir: &Path, port: u16, clock: Clock) -> anyhow::Result<B
     // when its guard decides whether a handle names anything, or a claim
     // pointing at a supplied record is refused as naming nothing.
     let supplied = jojobot_mcp::provisions();
+    let linking = DoltMemory::open(store.pool().clone()).knowing(supplied.clone());
     let bare_memory = DoltMemory::open(store.pool().clone())
         .knowing(supplied.clone())
         .on_clock(clock);
@@ -424,7 +425,11 @@ pub async fn boot_store(dir: &Path, port: u16, clock: Clock) -> anyhow::Result<B
     // value whose handle names no one thing stays as written and is named here**,
     // one line each, because the pass does not guess; a restart repeats the list
     // for as long as the value stays.
-    match badging.migrate_field_links().await {
+    // **Over an instance that is told what the build supplies**, which `badging`
+    // is not: a value naming a shipped record has no row to resolve through, and
+    // an instance with no provisions reads that handle as naming nothing and
+    // leaves the value as text with no link.
+    match linking.migrate_field_links().await {
         Ok(report) => {
             if report.lowered > 0 || report.linked > 0 || report.unlinked > 0 {
                 tracing::info!(
