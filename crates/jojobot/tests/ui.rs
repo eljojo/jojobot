@@ -2226,6 +2226,115 @@ async fn a_view_that_asks_for_what_is_overdue_renders_oldest_first() {
     ct.cancel();
 }
 
+/// **The overdue page reads today in the instance's zone, the same fallback the
+/// verbs use.** A browser states no timezone, so the page falls back to the
+/// instance's, then UTC. Reading UTC always puts the page a day out of step
+/// with every verb for the hours the instance's zone is on another day.
+///
+/// One of the two widest zones is on another day than UTC at any instant. A loop
+/// that falls due on the later of the two days is owed in exactly the frame
+/// standing on it; a loop that fell due on the earlier day is owed in both, so
+/// the page is shown to answer at all. The instance's record holds the zone.
+#[tokio::test]
+async fn the_overdue_page_reads_today_in_the_instances_zone() {
+    let utc = jojobot_domain::clock::Clock::default().today_in(&jiff::tz::TimeZone::UTC);
+    let (zone, there) = ["Etc/GMT+12", "Pacific/Kiritimati"]
+        .into_iter()
+        .map(|zone| {
+            let tz = jiff::tz::TimeZone::get(zone).expect("a zone");
+            (zone, jojobot_domain::clock::Clock::default().today_in(&tz))
+        })
+        .find(|(_, there)| *there != utc)
+        .expect("one of the widest zones is on another day than UTC");
+    let (earlier, later) = (utc.min(there), utc.max(there));
+    let a_week_before = |day: Date| {
+        day.checked_sub(jiff::Span::new().days(7))
+            .expect("a week before a day is a day")
+    };
+
+    let memory = memory_with_views().await;
+    for (handle, due) in [("rhythm:polish", later), ("rhythm:swim", earlier)] {
+        let mut new = NewEntity::new(EntityId(handle.into()), handle, "the fixture roster");
+        new.parent = Some(EntityId("person:alpha".into()));
+        memory
+            .add_entity(new)
+            .await
+            .expect("the loop is written")
+            .written()
+            .expect("nothing on this board collides with it");
+        memory
+            .capture(NewFact {
+                fields: [
+                    ("cadence_days".to_string(), "7".to_string()),
+                    ("advances_from".to_string(), "due_date".to_string()),
+                    ("counts_from".to_string(), a_week_before(due).to_string()),
+                ]
+                .into_iter()
+                .collect(),
+                ..NewFact::about(
+                    EntityId(handle.into()),
+                    "the loop was set up",
+                    Date::constant(2026, 3, 5),
+                )
+            })
+            .await
+            .expect("the schedule is written");
+    }
+    memory
+        .add_entity(NewEntity::new(
+            EntityId("topic:instance".into()),
+            "This instance",
+            "the operator",
+        ))
+        .await
+        .expect("the instance's record is written")
+        .written()
+        .expect("nothing on this board collides with it");
+    memory
+        .capture(NewFact {
+            fields: [("timezone".to_string(), zone.to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(
+                EntityId("topic:instance".into()),
+                "where the operator lives",
+                Date::constant(2026, 3, 5),
+            )
+        })
+        .await
+        .expect("the zone is written");
+
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let board = seeded_board_over(memory).await;
+    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let page = read(&client, addr, "/view:my-week/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    let answer = page
+        .split_once("id=\"answer\"")
+        .expect("the page carries the view's answer")
+        .1;
+    let answer = answer.split_once("</table>").expect("…and it closes").0;
+
+    assert!(
+        answer.contains("rhythm:swim"),
+        "a loop due on the earlier day is owed in either frame: {answer}"
+    );
+    assert_eq!(
+        answer.contains("rhythm:polish"),
+        there > utc,
+        "a loop due on the later day is owed exactly when the instance's day is the later \
+         one: the zone is on {there}, UTC on {utc}: {answer}"
+    );
+    ct.cancel();
+}
+
 /// **A handle that is no view is unaffected.**
 #[tokio::test]
 async fn a_page_that_is_no_view_carries_no_answer() {

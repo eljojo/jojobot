@@ -567,9 +567,11 @@ async fn view_section(
         let carriers = attention::shipped();
         let carriers: Vec<&dyn attention::Carrier> =
             carriers.iter().map(std::convert::AsRef::as_ref).collect();
-        // **The server's own day, in UTC.** A browser states no timezone, and
-        // UTC is the same stated fallback every other unzoned read here uses.
-        let today = state.clock.today_in(&jiff::tz::TimeZone::UTC);
+        // **The server's own day, in the instance's zone.** A browser states no
+        // timezone, so the page takes the frame every unzoned read takes: the
+        // zone the instance's record holds, and UTC only when it holds none.
+        let frame = jojobot_mcp::orientation::instance_zone::unzoned_frame(&*state.memory).await;
+        let today = state.clock.today_in(&frame);
         found.retain(|object| {
             attention::owed_as(object.entity.kind.as_token(), &carriers, &object.fields)
                 .owed_on(today)

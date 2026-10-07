@@ -139,7 +139,11 @@ impl Jojobot {
                 .map(|doc| doc.prose),
         }
         .filter(|prose| !prose.trim().is_empty());
-        let as_of = self.clock().today_in(&jiff::tz::TimeZone::UTC);
+        // **A rule's staleness is read on the day the boot serves it.** The boot
+        // reads it in the run's zone, else the instance's; a write guard has no
+        // run to ask, so it takes the instance's, then UTC, the frame every
+        // unzoned read shares.
+        let as_of = self.clock().today_in(&self.unzoned_frame().await);
         let rules: Vec<serde_json::Value> = carried_rules(in_force, seats)
             .into_iter()
             .map(|rule| {
@@ -409,5 +413,87 @@ impl Jojobot {
         held[at] = edited;
         self.refuses_a_boot_floor_over(&address.home, &held, seats.map(String::as_str), None)
             .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::harness::*;
+    use crate::mailboxes::testing::mailbox_handler;
+    use crate::memory::testing::*;
+
+    /// **The floor reads a rule's staleness on the day the boot serves.** The
+    /// boot reads it in the run's zone, else the instance's, so a floor read in
+    /// UTC disagrees with the boot for the hours the two zones are on different
+    /// days: a rule the boot flags as stale, with the note that comes with it,
+    /// is measured without it, or the other way round.
+    ///
+    /// One of the two widest zones is on another day than UTC at any instant,
+    /// and the instance lives in it. A rule whose last good day is the earlier
+    /// of the two days is stale in exactly the frame that stands on the later
+    /// one; the same rule with a last good day far ahead is stale in neither.
+    /// The floor must differ between the two exactly when the INSTANCE's frame
+    /// is the later one. Both worlds hold the same instance record and a last
+    /// good day of the same length, so only staleness separates them.
+    #[tokio::test]
+    async fn the_floor_reads_staleness_on_the_day_the_instances_zone_is_on() {
+        let zone = ["Etc/GMT+12", "Pacific/Kiritimati"]
+            .into_iter()
+            .find(|zone| {
+                let probe = mailbox_handler();
+                let tz = jiff::tz::TimeZone::get(zone).expect("a zone");
+                probe.clock().today_in(&tz) != probe.clock().today_in(&jiff::tz::TimeZone::UTC)
+            })
+            .expect("one of the widest zones is on another day than UTC");
+        let measured = |far_ahead: bool| async move {
+            let jojobot = mailbox_handler();
+            make_bot(&jojobot, "gamma").await;
+            let utc = jojobot.clock().today_in(&jiff::tz::TimeZone::UTC);
+            let there = jojobot
+                .clock()
+                .today_in(&jiff::tz::TimeZone::get(zone).expect("a zone"));
+            let last_good = match far_ahead {
+                true => "2999-12-31".to_string(),
+                false => utc.min(there).to_string(),
+            };
+            capture_ok(
+                &jojobot,
+                CaptureArgs {
+                    fields: Some([("starred".to_string(), "true".to_string())].into()),
+                    stale_after: Some(last_good),
+                    ..capture_args("bot:gamma", "a rule with a last good day")
+                },
+            )
+            .await;
+            capture_ok(
+                &jojobot,
+                CaptureArgs {
+                    fields: Some([("timezone".to_string(), zone.to_string())].into()),
+                    ..capture_args("topic:instance", "where the operator lives")
+                },
+            )
+            .await;
+            let held = jojobot
+                .memory
+                .recall(&EntityId("bot:gamma".into()))
+                .await
+                .expect("the bot's claims");
+            let rules = jojobot_domain::memory::rules_in_force(&held);
+            let total = jojobot
+                .boot_floor_if(&EntityId("bot:gamma".into()), &rules, 5, None, None)
+                .await
+                .expect("the floor")
+                .total;
+            (total, utc, there)
+        };
+        let (stale_somewhere, utc, there) = measured(false).await;
+        let (never_stale, _, _) = measured(true).await;
+        assert_eq!(
+            stale_somewhere > never_stale,
+            there > utc,
+            "the floor carries the stale note exactly when the instance's day is the later \
+             one: {stale_somewhere} against {never_stale}, the zone on {there} and UTC on {utc}"
+        );
     }
 }
