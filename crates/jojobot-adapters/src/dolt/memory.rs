@@ -598,6 +598,23 @@ impl DoltMemory {
         Ok(self.extend_with_supplied(rows))
     }
 
+    /// **[`guard::decide_existing`], without the listing a hit does not need.**
+    /// A handle that answers directly, stored or supplied, is one targeted row
+    /// and proceeds. Only a handle that answered to nothing builds
+    /// [`known`](Self::known), because the candidates it is blocked with come
+    /// from the whole roster.
+    async fn decide_existing_targeted(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        handle: &EntityId,
+    ) -> Result<guard::Decision, MemoryError> {
+        if self.resolve_by_id(tx, handle).await?.is_some() {
+            return Ok(guard::Decision::Proceed);
+        }
+        let index = self.known(tx).await?;
+        Ok(guard::decide_existing(handle, &index))
+    }
+
     /// Every rename event, inside the transaction a caller is already in.
     ///
     /// **Newest event first, within a former handle.** A former handle may
@@ -1647,15 +1664,16 @@ fn read_origin(token: &str) -> Origin {
     Origin::of_token(token).unwrap_or(Origin::Shipped)
 }
 
-fn entity_from(row: &sqlx::mysql::MySqlRow, aliases: Vec<String>) -> Result<Entity, MemoryError> {
-    let id = EntityId(row.try_get::<String, _>("id").map_err(store)?);
-    // **The two ways a stored handle fails to name a kind are not one failure**
-    // (rule 68). A process that loaded no set cannot read the most ordinary
-    // handle in the store, and reporting that as a damaged record sends a
-    // reader after damage that is not there — and names a repair only a person
-    // can perform, while the repair is a boot. So the never-loaded answer is
-    // the same refusal the write half of this rail gives, in the same words.
-    let kind = kinds::resolve(id.kind_token()).map_err(|why| match why {
+/// The kind a stored handle names, read off the handle itself.
+///
+/// **The two ways a stored handle fails to name a kind are not one failure**
+/// (rule 68). A process that loaded no set cannot read the most ordinary
+/// handle in the store, and reporting that as a damaged record sends a
+/// reader after damage that is not there — and names a repair only a person
+/// can perform, while the repair is a boot. So the never-loaded answer is
+/// the same refusal the write half of this rail gives, in the same words.
+fn kind_of_handle(id: &EntityId) -> Result<EntityKind, MemoryError> {
+    kinds::resolve(id.kind_token()).map_err(|why| match why {
         NotAKind::SetNeverLoaded => MemoryError::KindsNeverLoaded {
             attempted: Some(id.to_string()),
         },
@@ -1663,7 +1681,12 @@ fn entity_from(row: &sqlx::mysql::MySqlRow, aliases: Vec<String>) -> Result<Enti
         // cannot read, and it stays that. The sentence names no kinds: the set
         // is data (rule 213).
         NotAKind::NotDeclared { .. } => unreadable("its handle names no kind"),
-    })?;
+    })
+}
+
+fn entity_from(row: &sqlx::mysql::MySqlRow, aliases: Vec<String>) -> Result<Entity, MemoryError> {
+    let id = EntityId(row.try_get::<String, _>("id").map_err(store)?);
+    let kind = kind_of_handle(&id)?;
     Ok(Entity {
         kind,
         id,
@@ -2854,15 +2877,16 @@ impl Memory for DoltMemory {
         caller: &EntityId,
     ) -> Result<Guarded<Fact>, MemoryError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
-        // **What EXISTS**, for the same reason `capture` reads it: an edge may
-        // point at a record the build supplies.
-        let index = self.known(&mut tx).await?;
         // An edge's object names an entity, so an edit that attaches one is an
         // entity-touching write and faces the guard — screened before anything
-        // is rewritten.
+        // is rewritten. **What EXISTS includes what the build supplies**, for
+        // the same reason `capture` reads it: an edge may point at a record the
+        // build supplies. The check is one targeted row; the full listing is
+        // built only for a name that answered to nothing.
         if let Some(edge) = &patch.edge {
             validate_edge(edge)?;
-            if let guard::Decision::Block(candidates) = guard::decide_existing(&edge.object, &index)
+            if let guard::Decision::Block(candidates) =
+                self.decide_existing_targeted(&mut tx, &edge.object).await?
             {
                 return Ok(Guarded::Blocked {
                     attempted: edge.object.clone(),
@@ -2874,7 +2898,9 @@ impl Memory for DoltMemory {
         // reference names an entity, and nothing a write names is created as a
         // side effect of being named.
         for object in referenced_by(&patch.fields, &Self::types_in(&mut tx).await?) {
-            if let guard::Decision::Block(candidates) = guard::decide_existing(&object, &index) {
+            if let guard::Decision::Block(candidates) =
+                self.decide_existing_targeted(&mut tx, &object).await?
+            {
                 return Ok(Guarded::Blocked {
                     attempted: object,
                     candidates,
@@ -2886,6 +2912,7 @@ impl Memory for DoltMemory {
         // stale-but-renamed handle resolves through its own history, same as
         // every other lookup here.
         let Some((key, handle)) = self.resolve(&mut tx, &address.home).await? else {
+            let index = self.known(&mut tx).await?;
             return Err(MemoryError::UnknownEntity {
                 attempted: address.home.to_string(),
                 nearest: guard::screen(&address.home, &[], &index),
@@ -2893,6 +2920,7 @@ impl Memory for DoltMemory {
         };
         let resolved_address = FactAddress::new(key.clone(), address.local.clone());
         let Some(mut fact) = self.read_fact(&mut tx, &resolved_address).await? else {
+            let index = self.known(&mut tx).await?;
             if let Some(resolved) = index.iter().find(|e| e.id == handle)
                 && let Some(err) = jojobot_domain::memory::already_merged(&address.home, resolved)
             {
@@ -3039,11 +3067,7 @@ impl Memory for DoltMemory {
         let declared = Self::types_in(&mut tx).await?;
         // **Off the entity's own kind, never off `fact.home`** — that is a
         // badge now, and a badge carries no kind token to parse.
-        let kind = index
-            .iter()
-            .find(|e| e.id == handle)
-            .expect("resolved above")
-            .kind;
+        let kind = kind_of_handle(&handle)?;
         let governs = Self::kind_keys_in(&mut tx, kind.as_token()).await?;
         let before_fold = folded_fields(&held, &declared);
         let after_fold = stood_after(&held, &fact, &patch, &carried, &declared);

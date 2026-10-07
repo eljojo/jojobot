@@ -3614,6 +3614,147 @@ async fn a_backing_hit_answers_with_no_full_listing_and_a_miss_still_gets_candid
     store.stop().await;
 }
 
+/// **`update_fact` deferred the same way.** An edit whose handle, edge object
+/// and reference values all exist is answered by targeted reads; the full
+/// listing is built only for a name that answered to nothing, to say what it
+/// resembles. The misses below keep their candidates, and the hits are what
+/// keep those misses from passing over an edit that never ran.
+#[tokio::test]
+async fn an_update_fact_hit_answers_with_no_full_listing_and_a_miss_still_gets_candidates() {
+    let scratch = Scratch::new("resolve_update_fact");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("memory")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+
+    let memory = DoltMemory::open(pool);
+    let gamma = EntityId::person("person:gamma");
+    let delta = EntityId::person("person:delta");
+    for (who, called) in [(&gamma, "Gamma"), (&delta, "Delta")] {
+        memory
+            .add_entity(NewEntity::new(who.clone(), called, "user-named"))
+            .await
+            .expect("add ok")
+            .written()
+            .expect("not blocked");
+    }
+    let claim = memory
+        .capture(NewFact::about(gamma.clone(), "seeded", date(2026, 9, 1)))
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("not blocked");
+    let caller = EntityId("bot:sigma".into());
+
+    // A content edit: the handle exists and nothing else is named.
+    let before = memory.index_listings();
+    memory
+        .update_fact(
+            &claim.address(),
+            FactPatch {
+                content: Some("seeded again".into()),
+                provenance: Some(Provenance::Inference),
+                ..Default::default()
+            },
+            &caller,
+        )
+        .await
+        .expect("update_fact ok")
+        .written()
+        .expect("not blocked");
+    assert_eq!(
+        memory.index_listings(),
+        before,
+        "an edit of an existing claim must not build the full listing"
+    );
+
+    // An edit attaching an edge to an object that exists.
+    let before = memory.index_listings();
+    memory
+        .update_fact(
+            &claim.address(),
+            FactPatch {
+                edge: Some(Edge {
+                    shape: EdgeShape::Connection,
+                    object: delta.clone(),
+                }),
+                ..Default::default()
+            },
+            &caller,
+        )
+        .await
+        .expect("update_fact ok")
+        .written()
+        .expect("an edge at an existing object is not blocked");
+    assert_eq!(
+        memory.index_listings(),
+        before,
+        "an existing edge object is one targeted question, not a listing"
+    );
+
+    // An edge at an object that does not exist is still blocked, with the
+    // near candidates, and that is what builds the listing.
+    let before = memory.index_listings();
+    let blocked = memory
+        .update_fact(
+            &claim.address(),
+            FactPatch {
+                edge: Some(Edge {
+                    shape: EdgeShape::Connection,
+                    object: EntityId::person("person:gama"),
+                }),
+                ..Default::default()
+            },
+            &caller,
+        )
+        .await
+        .expect("update_fact ok");
+    match blocked {
+        jojobot_domain::memory::Guarded::Blocked { candidates, .. } => assert!(
+            !candidates.is_empty(),
+            "a near-miss edge object must still come back with candidates"
+        ),
+        _ => panic!("an edge at a missing object must be blocked"),
+    }
+    assert!(
+        memory.index_listings() > before,
+        "a miss must still build the listing, which is what the candidates come from"
+    );
+
+    // A claim on a handle nobody holds is an entity miss with candidates.
+    let before = memory.index_listings();
+    let err = memory
+        .update_fact(
+            &FactAddress::new(EntityId::person("person:gama"), claim.id.clone()),
+            FactPatch {
+                content: Some("nothing".into()),
+                provenance: Some(Provenance::Inference),
+                ..Default::default()
+            },
+            &caller,
+        )
+        .await
+        .expect_err("an unwritten handle must not resolve");
+    match err {
+        MemoryError::UnknownEntity { nearest, .. } => assert!(
+            !nearest.is_empty(),
+            "a near-miss handle must still come back with candidates"
+        ),
+        other => panic!("expected UnknownEntity, got {other:?}"),
+    }
+    assert!(
+        memory.index_listings() > before,
+        "a miss must still build the listing"
+    );
+
+    store.stop().await;
+}
+
 /// **`claim_histories` deferred the same way.**
 #[tokio::test]
 async fn a_claim_histories_hit_answers_with_no_full_listing_and_a_miss_still_gets_candidates() {
