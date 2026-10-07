@@ -423,6 +423,14 @@ pub const CARRIED_RULES: usize = 5;
 /// this many lines, never sixty lines.
 pub const UNSEATED_LISTED: usize = 20;
 
+/// **How many purpose groups a boot counts the left-out rules under** — a hard
+/// cap in things, beside [`UNSEATED_LISTED`] and for the same reason. A rule's
+/// `purpose` is whatever its writer typed, so grouping by it uncapped lets a
+/// bot with a distinct purpose per rule cost a boot a line per rule after all.
+/// The largest groups are named, and what the cap leaves out is counted as one
+/// figure, so the counts still add up to the rules left out.
+pub const UNSEATED_GROUPS: usize = 10;
+
 /// **One line of the unseated-rule listing** — the rule's `subject` field, else
 /// the head of its own words. Short, because twenty of them ride every boot of
 /// a bot whose floor can already sit near the ceiling.

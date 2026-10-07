@@ -138,24 +138,50 @@ pub(crate) fn unseated_rules(
         bot = bot.as_str()
     );
     if !rest.is_empty() {
-        let mut by_purpose = std::collections::BTreeMap::<String, usize>::new();
+        // **Each group is named by its purpose cut to the length of a listed
+        // line**, and two purposes that cut to the same name are one group.
+        // Whatever a writer typed as a purpose can be any length, and a key the
+        // size of a rule costs the boot what listing the rule would.
+        let mut cut = false;
+        let mut counted = std::collections::BTreeMap::<String, usize>::new();
         for rule in rest {
             let purpose = rule.fields.get("purpose").map(|p| p.trim()).unwrap_or("");
             let group = match purpose.is_empty() {
                 true => "unfiled",
                 false => purpose,
             };
-            *by_purpose.entry(group.to_string()).or_default() += 1;
+            let name = text::UNSEATED_LINE.render(group);
+            cut |= name != group;
+            *counted.entry(name).or_default() += 1;
         }
+        // **The largest groups are named and the rest are one figure.** Ties go
+        // to the name that sorts first, so the same rules always give the same
+        // boot.
+        let mut groups: Vec<(String, usize)> = counted.into_iter().collect();
+        groups.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        let beyond = groups.split_off(groups.len().min(text::UNSEATED_GROUPS));
+        let by_purpose: std::collections::BTreeMap<String, usize> = groups.into_iter().collect();
         block["left_out"] = serde_json::json!({
             "count": rest.len(),
             "by_purpose": by_purpose,
         });
+        if !beyond.is_empty() {
+            block["left_out"]["other_groups"] = serde_json::json!({
+                "groups": beyond.len(),
+                "rules": beyond.iter().map(|(_, n)| n).sum::<usize>(),
+            });
+        }
         how.push_str(
             " The rest are counted here and not listed: load a group with the same call and \
              fields: [{\"key\": \"purpose\", \"value\": the group, \"scope\": \"record\"}]. \
              Rules that name no purpose are the unfiled group, which only the whole load returns.",
         );
+        if cut || !beyond.is_empty() {
+            how.push_str(
+                " A group whose name was cut, or that is counted under other_groups, is \
+                 returned by the whole load as well.",
+            );
+        }
     }
     block["how_to_load"] = how.into();
     Some(block)

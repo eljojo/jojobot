@@ -791,6 +791,100 @@ async fn a_boot_lists_a_bounded_number_of_unseated_rules_and_counts_the_rest_by_
     story.finish().await;
 }
 
+/// **The groups a boot counts the left-out rules under are bounded in number
+/// and in the length of each name.** A rule's `purpose` is whatever its writer
+/// typed, so grouping by the raw value let one long purpose, or one distinct
+/// purpose per rule, cost a boot as much as listing every rule would have. Each
+/// group name is cut to the length of a listed line, the groups are capped, and
+/// what the cap leaves out is still counted, so the counts add up to the rules
+/// left out. A purpose that is short and common keeps its name whole.
+#[tokio::test]
+async fn a_boot_bounds_the_purpose_groups_it_counts_and_the_length_of_each_name() {
+    const LISTED: usize = 20;
+    const GROUPS: usize = 10;
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:sigma", "Sigma").await;
+
+    // Twenty rules fill the listing; the next ones are counted. Three of one
+    // short purpose, one with an enormous purpose, and thirty each with a
+    // purpose of its own.
+    for n in 0..LISTED {
+        rule(
+            &s,
+            "bot:sigma",
+            &format!("a listed rule {n}"),
+            json!({"subject": format!("listed {n}")}),
+        )
+        .await;
+    }
+    let enormous = "an enormously long purpose ".repeat(200);
+    for n in 0..3 {
+        rule(
+            &s,
+            "bot:sigma",
+            &format!("a habit {n}"),
+            json!({"purpose": "habit", "subject": format!("habit {n}")}),
+        )
+        .await;
+    }
+    rule(
+        &s,
+        "bot:sigma",
+        "a rule with a purpose nobody could print",
+        json!({"purpose": enormous, "subject": "the long one"}),
+    )
+    .await;
+    for n in 0..30 {
+        rule(
+            &s,
+            "bot:sigma",
+            &format!("a one-off {n}"),
+            json!({"purpose": format!("one-off purpose {n:02}"), "subject": format!("one-off {n}")}),
+        )
+        .await;
+    }
+    let left_over = 3 + 1 + 30;
+
+    let (sigma, _) = story.call("start_here", json!({"bot": "sigma"})).await;
+    let body = sigma.json();
+    let left_out = &body["identity"]["unseated_rules"]["left_out"];
+    assert_eq!(left_out["count"], left_over, "{body}");
+    let by_purpose = left_out["by_purpose"]
+        .as_object()
+        .expect("grouped by purpose");
+
+    assert!(
+        by_purpose.len() <= GROUPS,
+        "{} groups against a cap of {GROUPS}: {left_out}",
+        by_purpose.len()
+    );
+    for name in by_purpose.keys() {
+        assert!(
+            name.chars().count() <= 80,
+            "a group name is as short as a listed line: {name:?}"
+        );
+    }
+    // The positive beside both bounds: the common short purpose keeps its name
+    // and its count, as the groups did before.
+    assert_eq!(by_purpose["habit"], 3, "{left_out}");
+    // What the cap leaves out is counted, so the whole adds up.
+    let shown: u64 = by_purpose.values().map(|n| n.as_u64().unwrap()).sum();
+    let beyond = &left_out["other_groups"];
+    assert_eq!(
+        shown + beyond["rules"].as_u64().expect("the rest are counted"),
+        left_over as u64,
+        "the groups and what the cap left out add up to the rules left out: {left_out}"
+    );
+    assert!(
+        beyond["groups"].as_u64().unwrap() > 0,
+        "the cap left groups out: {left_out}"
+    );
+
+    s.wrap("booted a bot whose rules carry many purposes").await;
+    story.finish().await;
+}
+
 /// **The call a boot names for loading rules returns the ones in force, and
 /// says what it left out.** `recall` on a bot with `facts: true` hands back
 /// every record it holds, retired ones included, because going straight to a
