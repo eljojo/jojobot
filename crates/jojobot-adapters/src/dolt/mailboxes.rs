@@ -401,8 +401,12 @@ fn countable_predicate() -> String {
     let day = "((0[13578]|1[02])-(0[1-9]|[12][0-9]|3[01])\
                |(0[469]|11)-(0[1-9]|[12][0-9]|30)\
                |02-(0[1-9]|1[0-9]|2[0-8]))";
+    // **`\z`, never `$`.** The store's `$` also matches before a final line
+    // break, so a stamp ending in one would be counted as readable while the
+    // row reader refuses it. `\z` is the end of the text and nothing else, and
+    // the backslash is doubled once more for the SQL string it sits in.
     let stamp = format!(
-        "^[0-8][0-9]{{3}}-{day}T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]([.][0-9]{{1,9}})?Z$"
+        "^[0-8][0-9]{{3}}-{day}T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]([.][0-9]{{1,9}})?Z\\\\z"
     );
     format!("(m.state IN ({states}) AND m.sent_at REGEXP '{stamp}')")
 }
@@ -1278,28 +1282,31 @@ mod tests {
         store.stop().await;
     }
 
-    /// **A stamp with a trailing newline is not counted as readable**, which is
-    /// what a read of every row says of it. The store's end anchor matches before
-    /// a final newline, so the pattern accepts the row, the count says "new" and
-    /// the row reader cannot read it.
-    ///
-    /// Ignored because it fails today and the change to the pattern is not this
-    /// case's to make. Run it with `--ignored` to watch it fail.
+    /// **A stamp that ends in a line break is not counted as readable**, which
+    /// is what a read of every row says of it. The store's `$` anchor matches
+    /// before a final line break, so a pattern ending in it accepts the row, the
+    /// count says "new", and the row reader cannot read it. Each ending the
+    /// pattern language treats as a line break is tried on its own board.
     #[tokio::test]
-    #[ignore = "known defect: card 2053 item 14, the store's REGEXP end anchor accepts a trailing newline; the fix is the em's to dispatch"]
-    async fn a_stamp_with_a_trailing_newline_is_counted_as_a_read_of_every_row_counts_it() {
-        let (mut store, mail, _first) = board("counts-trailing-newline").await;
-        unreadable(&store, "trailnl", "new", "2026-03-01T00:00:00Z\n").await;
+    async fn a_stamp_with_a_trailing_line_break_is_counted_as_a_read_of_every_row_counts_it() {
+        for (name, stamp) in [
+            ("counts-trailing-lf", "2026-03-01T00:00:00Z\n"),
+            ("counts-trailing-cr", "2026-03-01T00:00:00Z\r"),
+            ("counts-trailing-crlf", "2026-03-01T00:00:00Z\r\n"),
+        ] {
+            let (mut store, mail, _first) = board(name).await;
+            unreadable(&store, "trailing", "new", stamp).await;
 
-        let counted = mail.list_mailboxes().await.expect("list ok");
-        let oracle = mail.boxes_by_reading_every_row().await;
-        assert_eq!(
-            serde_json::to_value(&counted).expect("boxes serialize"),
-            serde_json::to_value(&oracle).expect("boxes serialize"),
-            "the store's counts disagree with a read of every row"
-        );
+            let counted = mail.list_mailboxes().await.expect("list ok");
+            let oracle = mail.boxes_by_reading_every_row().await;
+            assert_eq!(
+                serde_json::to_value(&counted).expect("boxes serialize"),
+                serde_json::to_value(&oracle).expect("boxes serialize"),
+                "the store's counts disagree with a read of every row for {stamp:?}"
+            );
 
-        store.stop().await;
+            store.stop().await;
+        }
     }
 
     /// 🚨 **A count of the boxes ships no message text.** Every answer the
