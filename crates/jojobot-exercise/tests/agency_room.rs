@@ -1129,6 +1129,71 @@ async fn december_the_heads_words_opening_the_value_hold_the_decision_slot() {
     assert!(december[11].0, "{}", saying(&outcomes));
 }
 
+/// **December's yes-or-no slot, answered in either capital.** `no` and `No` are
+/// the same answer; `yes` and `maybe` are not.
+async fn done_slot_after_writing(value: &str) -> (bool, String) {
+    let mut lab = played(2, None).await;
+    let sid = lab.sitting("2026-12-10").await;
+    lab.say(
+        &sid,
+        CAMPAIGN,
+        "The answer to spot_done.",
+        json!({"fields": {"spot_done": value}}),
+    )
+    .await;
+    lab.ends("Phase 4", 4).await;
+    let outcomes = lab.judge().await;
+    (of_sitting(&outcomes, "Phase 4")[7].0, saying(&outcomes))
+}
+
+#[tokio::test]
+async fn december_done_as_a_capitalised_no_holds_the_done_slot() {
+    let (held, said) = done_slot_after_writing("No").await;
+    assert!(held, "{said}");
+}
+
+#[tokio::test]
+async fn december_done_as_maybe_reds_the_done_slot() {
+    let (held, said) = done_slot_after_writing("maybe").await;
+    assert!(!held, "{said}");
+}
+
+/// **A suite linked as a handle reads in lower case.** May and December both
+/// name it, and neither may need the camel case.
+#[tokio::test]
+async fn may_the_suite_written_as_a_handle_holds_the_suite_lock() {
+    let (held, said) = held_after_writing(
+        Some(0),
+        "2026-05-20",
+        "Phase 2",
+        6,
+        &[],
+        &[(APP, "The loginflowsuite verified login.")],
+    )
+    .await;
+    assert!(held, "{said}");
+}
+
+#[tokio::test]
+async fn december_landed_with_the_suite_in_lower_case_holds_the_landed_slot() {
+    let mut lab = played(2, None).await;
+    let sid = lab.sitting("2026-12-10").await;
+    lab.say(
+        &sid,
+        APP,
+        "The answer to app_landed.",
+        json!({"fields": {"app_landed": "login a1b2c3d, verified by the loginflowsuite; menu sync c0ffee1"}}),
+    )
+    .await;
+    lab.ends("Phase 4", 4).await;
+    let outcomes = lab.judge().await;
+    assert!(
+        of_sitting(&outcomes, "Phase 4")[14].0,
+        "{}",
+        saying(&outcomes)
+    );
+}
+
 // ── December: an answer given in the reply and written nowhere ───────────────
 
 /// **A December that answers in the reply alone fails every slot.** The earlier

@@ -129,6 +129,10 @@ entity  org:moes-tavern | Moe's Tavern
 # **The same goes for a name the model may link instead of typing**: a handle
 # is stored in lower case, so `avern` is in "Tavern" and in `org:moes-tavern`,
 # and `amma` is in "Gamma" and in `thing:gamma`.
+#
+# **A needle with capitals inside it, or a yes or no, is read with
+# `carries-any-case`**: `LoginFlowSuite` is stored in lower case when the model
+# links it, and `no` is `No` when the model starts a value with it.
 
 recall {"fields": [{"value": "2026-10-12"}]}
 carries 2026-10-12
@@ -257,7 +261,7 @@ say     May: the commit login landed as is not on record by name
 window  phase-end
 
 search  {"query": "login suite verified LoginFlowSuite"}
-carries LoginFlowSuite
+carries-any-case LoginFlowSuite
 carries "status":"active"
 say     May: the suite that verified login is not on record by name
 window  phase-end
@@ -445,7 +449,7 @@ say     December: approval does not say draft 3
 window  phase-end
 
 recall {"fields": [{"key": "spot_done"}]}
-carries "spot_done":"no
+carries-any-case "spot_done":"no
 say     December: spot_done does not say no, so the film is recorded as done or not recorded as anything
 window  phase-end
 
@@ -486,7 +490,7 @@ window  phase-end
 recall {"fields": [{"key": "app_landed"}]}
 carries a1b2c3d
 carries c0ffee1
-carries LoginFlowSuite
+carries-any-case LoginFlowSuite
 say     December: app_landed does not carry both commits and the suite that verified the first
 window  phase-end
 ```

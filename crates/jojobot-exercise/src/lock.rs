@@ -6,9 +6,10 @@
 //!
 //! * the **query** is jojobot's own vocabulary — the verb and the arguments a
 //!   session would send, or the name of a view. Nothing is translated;
-//! * the **assertion** is this format's own, and it is three words that do not
-//!   branch. Pushing it into jojobot would grow a test framework inside a query
-//!   surface, which is worse than the cost it saves;
+//! * the **assertion** is this format's own, and it is a few words that do not
+//!   branch (`carries`, `carries-any-case`, `lacks`, `at least N of`). Pushing
+//!   it into jojobot would grow a test framework inside a query surface, which
+//!   is worse than the cost it saves;
 //! * the **sentence** is authored prose and is never generated. *The pump says
 //!   `sent` for where the job has got to* is worth more than a boolean because
 //!   somebody wrote it about this room.
@@ -95,8 +96,42 @@ pub enum Asks {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Expect {
     Carries(String),
+    /// **`carries`, ignoring case.** For a value whose right spellings differ
+    /// only in capitals — `no` and `No`, a name a model may store as a handle.
+    /// It is a separate word so that no lock reads case-insensitively by
+    /// accident: a needle that has one right spelling uses `carries`.
+    CarriesAnyCase(String),
     Lacks(String),
     AtLeast(usize, String),
+}
+
+impl Expect {
+    /// **What this assertion found missing in `answer`**, or nothing when it
+    /// holds. One place, so what a lock checks and what a case can ask are the
+    /// same code.
+    pub(crate) fn missed_in(&self, answer: &str) -> Option<String> {
+        match self {
+            Expect::Carries(text) if !answer.contains(text.as_str()) => {
+                Some(format!("{text:?} is not in what came back"))
+            }
+            Expect::CarriesAnyCase(text)
+                if !answer.to_lowercase().contains(&text.to_lowercase()) =>
+            {
+                Some(format!("{text:?} is not in what came back, in any case"))
+            }
+            Expect::Lacks(text) if answer.contains(text.as_str()) => {
+                Some(format!("{text:?} is in what came back and should not be"))
+            }
+            Expect::AtLeast(how_many, text) => {
+                let found = answer.matches(text.as_str()).count();
+                match found < *how_many {
+                    true => Some(format!("{text:?} came back {found} times, not {how_many}")),
+                    false => None,
+                }
+            }
+            Expect::Carries(_) | Expect::CarriesAnyCase(_) | Expect::Lacks(_) => None,
+        }
+    }
 }
 
 /// **When a lock's query runs.** `Live` is every lock this format has ever
@@ -269,6 +304,7 @@ fn one(lines: &[String], phase: Option<&str>) -> Result<Lock> {
         let rest = rest.trim().to_string();
         match word {
             "carries" => expects.push(Expect::Carries(rest)),
+            "carries-any-case" => expects.push(Expect::CarriesAnyCase(rest)),
             "lacks" => expects.push(Expect::Lacks(rest)),
             "at" => {
                 let counted = rest
@@ -309,8 +345,8 @@ fn one(lines: &[String], phase: Option<&str>) -> Result<Lock> {
                 };
             }
             other => bail!(
-                "{other:?} asserts nothing — a lock says carries, lacks, at least N of, say, or \
-                 window",
+                "{other:?} asserts nothing — a lock says carries, carries-any-case, lacks, at \
+                 least N of, say, or window",
             ),
         }
     }
@@ -520,23 +556,7 @@ impl crate::run::Expectation for Lock {
             }
         };
         for expect in &self.expects {
-            let missed = match expect {
-                Expect::Carries(text) if !answer.contains(text.as_str()) => {
-                    Some(format!("{text:?} is not in what came back"))
-                }
-                Expect::Lacks(text) if answer.contains(text.as_str()) => {
-                    Some(format!("{text:?} is in what came back and should not be"))
-                }
-                Expect::AtLeast(how_many, text) => {
-                    let found = answer.matches(text.as_str()).count();
-                    match found < *how_many {
-                        true => Some(format!("{text:?} came back {found} times, not {how_many}")),
-                        false => None,
-                    }
-                }
-                Expect::Carries(_) | Expect::Lacks(_) => None,
-            };
-            if let Some(missed) = missed {
+            if let Some(missed) = expect.missed_in(&answer) {
                 return crate::run::Outcome {
                     name: self.name.clone(),
                     held: false,
@@ -625,6 +645,73 @@ mod tests {
         )
         .expect("a negative with its positive is a real lock");
         assert_eq!(paired[0].expects.len(), 2);
+    }
+
+    /// **`carries-any-case` reads, and it counts as a positive** so a lock
+    /// whose only positive is one still carries the negative beside it. The
+    /// same lock with a bare negative alone is refused, as it always was.
+    #[test]
+    fn a_lock_may_carry_a_needle_in_any_case_and_it_counts_as_a_positive() {
+        let read = read(
+            "```locks\n\
+             recall {\"fields\": [{\"key\": \"spot_done\"}]}\n\
+             carries-any-case \"spot_done\":\"no\n\
+             lacks   \"spot_done\":\"yes\n\
+             say     the film is recorded as not done\n\
+             ```\n",
+        )
+        .expect("the lock reads");
+        assert_eq!(
+            read[0].expects,
+            vec![
+                Expect::CarriesAnyCase("\"spot_done\":\"no".into()),
+                Expect::Lacks("\"spot_done\":\"yes".into()),
+            ]
+        );
+    }
+
+    /// **The pair the new word exists for**: `no` and `No` pass, `yes` and
+    /// `maybe` fail. The plain word still refuses the capital, so the case is
+    /// about the word and not about the answer.
+    #[test]
+    fn carries_any_case_accepts_either_spelling_and_still_refuses_a_different_value() {
+        let any = Expect::CarriesAnyCase("\"spot_done\":\"no".into());
+        let plain = Expect::Carries("\"spot_done\":\"no".into());
+        for held in ["{\"spot_done\":\"no\"}", "{\"spot_done\":\"No\"}"] {
+            assert_eq!(any.missed_in(held), None, "{held}");
+        }
+        for missed in ["{\"spot_done\":\"yes\"}", "{\"spot_done\":\"maybe\"}"] {
+            assert!(any.missed_in(missed).is_some(), "{missed}");
+        }
+        assert!(
+            plain.missed_in("{\"spot_done\":\"No\"}").is_some(),
+            "the plain word must stay case-sensitive"
+        );
+    }
+
+    /// **The needle walk matches the way the lock does**, so a needle that only
+    /// the capital spelling carries is found there too.
+    #[test]
+    fn the_needle_walk_finds_a_needle_in_any_case_where_the_lock_does() {
+        let answer = serde_json::json!({"objects": [{"fields": {"spot_done": "No"}}]});
+        let mut found = Vec::new();
+        super::places(
+            &answer,
+            String::new(),
+            "\"spot_done\":\"no",
+            true,
+            &mut found,
+        );
+        assert_eq!(found.len(), 1, "{found:?}");
+        let mut plain = Vec::new();
+        super::places(
+            &answer,
+            String::new(),
+            "\"spot_done\":\"no",
+            false,
+            &mut plain,
+        );
+        assert!(plain.is_empty(), "{plain:?}");
     }
 
     /// **`window own-phase` parses, under a phase heading, and carries the
@@ -1138,25 +1225,35 @@ impl NeedleVerdict {
 /// underneath it, so without this every needle reads as two places and every
 /// lock reads as ambiguous. **That version printed fourteen findings where
 /// there were three.**
-fn places(value: &serde_json::Value, at: String, needle: &str, into: &mut Vec<String>) {
+fn places(
+    value: &serde_json::Value,
+    at: String,
+    needle: &str,
+    any_case: bool,
+    into: &mut Vec<String>,
+) {
+    let holds = |text: &str| match any_case {
+        true => text.to_lowercase().contains(&needle.to_lowercase()),
+        false => text.contains(needle),
+    };
     match value {
         serde_json::Value::Object(map) => {
             for (key, child) in map {
                 let here = format!("{at}.{key}");
                 if let Some(pair) = rendered_pair(key, child)
-                    && pair.contains(needle)
+                    && holds(&pair)
                 {
                     into.push(here.clone());
                 }
-                places(child, here, needle, into);
+                places(child, here, needle, any_case, into);
             }
         }
         serde_json::Value::Array(items) => {
             for (nth, child) in items.iter().enumerate() {
-                places(child, format!("{at}[{nth}]"), needle, into);
+                places(child, format!("{at}[{nth}]"), needle, any_case, into);
             }
         }
-        serde_json::Value::String(text) if text.contains(needle) => into.push(at),
+        serde_json::Value::String(text) if holds(text) => into.push(at),
         _ => {}
     }
 }
@@ -1237,12 +1334,13 @@ pub async fn needle_verdicts_over(
             // places, which is a different check and is not this one. **A
             // first version folded them in and reported one as a finding for
             // doing exactly what it was written to do.**
-            let needle = match expect {
-                Expect::Carries(needle) => needle,
+            let (needle, any_case) = match expect {
+                Expect::Carries(needle) => (needle, false),
+                Expect::CarriesAnyCase(needle) => (needle, true),
                 Expect::Lacks(_) | Expect::AtLeast(..) => continue,
             };
             let mut found = Vec::new();
-            places(&parsed, String::new(), needle, &mut found);
+            places(&parsed, String::new(), needle, any_case, &mut found);
             found.sort();
             found.dedup();
             // ⚠️ **The envelope is *outside every collection*, not *outside
@@ -1430,7 +1528,7 @@ pub fn standing_findings(locks: &[Lock]) -> Vec<StandingFinding> {
             .expects
             .iter()
             .filter_map(|expect| match expect {
-                Expect::Carries(needle) => Some(needle),
+                Expect::Carries(needle) | Expect::CarriesAnyCase(needle) => Some(needle),
                 Expect::Lacks(_) | Expect::AtLeast(..) => None,
             })
             .collect();
