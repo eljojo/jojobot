@@ -400,6 +400,19 @@ pub struct Mailbox {
     pub quarantined: Vec<MessageId>,
 }
 
+impl Mailbox {
+    /// **Whether this is a person's box rather than a bot's.** Mail in it is
+    /// written to the person and read by nobody who speaks through this
+    /// surface: every read path asks this one question and refuses on yes.
+    ///
+    /// The rule is the owner's kind, so it needs no column and no list of
+    /// names. An owner whose kind cannot be read is not private by guess; no
+    /// box can be made for one, because the create guard resolves its owner.
+    pub fn is_private(&self) -> bool {
+        self.owner.kind() == Some(crate::memory::EntityKind::PERSON)
+    }
+}
+
 /// Per-state message counts for one mailbox.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StateCounts {
@@ -980,6 +993,26 @@ pub struct Quarantined {
 mod tests {
     use super::testing::{InMemoryMailboxes, contract};
     use super::*;
+
+    /// **A box owned by a person is private; a box owned by a bot is not.** The
+    /// rule is the owner's kind and nothing else, so it needs no column and no
+    /// list of names, and a box nobody could have named in advance is still
+    /// covered the moment its owner is a person.
+    #[test]
+    fn a_box_is_private_when_a_person_owns_it() {
+        crate::memory::kinds::load_shipped();
+        let held = |owner: &str| Mailbox {
+            name: MailboxName("anything".into()),
+            owner: EntityId(owner.into()),
+            counts: StateCounts::default(),
+            quarantined: Vec::new(),
+        };
+        assert!(held("person:milhouse").is_private());
+        assert!(!held("bot:epsilon").is_private());
+        // An owner this process cannot read the kind of is not private by guess:
+        // the answer is the kind's, and a hand-edited id has none.
+        assert!(!held("nonsense").is_private());
+    }
 
     /// The full behavioural contract holds for the fake — the same suite the
     /// store's own adapter runs against, so the two answer alike.

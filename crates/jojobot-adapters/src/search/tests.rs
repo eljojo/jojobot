@@ -2279,8 +2279,30 @@ impl jojobot_domain::mailbox::Mailboxes for Board {
         unimplemented!("this double only scans messages")
     }
 
+    /// **One box per name the messages sit in, each owned by the bot of that
+    /// name**, and unreadable exactly when the scan is: the index asks which
+    /// boxes are a person's before it indexes a board, so a double that could be
+    /// scanned and not listed would answer where the store refuses.
     async fn list_mailboxes(&self) -> Result<Vec<jojobot_domain::mailbox::Mailbox>, MailboxError> {
-        unimplemented!("this double only scans messages")
+        if self.blind.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(MailboxError::Store("the board cannot be read".into()));
+        }
+        let names: std::collections::BTreeSet<MailboxName> = self
+            .messages
+            .read()
+            .expect("messages poisoned")
+            .iter()
+            .map(|message| message.mailbox.clone())
+            .collect();
+        Ok(names
+            .into_iter()
+            .map(|name| jojobot_domain::mailbox::Mailbox {
+                owner: jojobot_domain::memory::EntityId(format!("bot:{}", name.as_str())),
+                name,
+                counts: Default::default(),
+                quarantined: Vec::new(),
+            })
+            .collect())
     }
 
     async fn post_message(
@@ -6566,6 +6588,100 @@ async fn a_board_of_two() -> (Arc<InMemoryMailboxes>, Arc<IndexedMailboxes>, Ret
     mail.rebuild().await.expect("rebuild");
     let port = Retrieval::new(index, vec![mail.clone()]);
     (inner, mail, port)
+}
+
+/// **Mail in a person's box never enters the index, by any route.** Search
+/// with mail returns hits from every bot's box by design, so a person's box is
+/// excluded where the index is WRITTEN: its text is not in the postings, and no
+/// filter on hits has to remember. Three routes write the index, and each is
+/// exercised: the boot load, a post through the verb, and the verbs that change
+/// a message afterwards (read, retire). A public message beside it is served
+/// after every one, so an index that served nothing would not pass.
+#[tokio::test]
+async fn mail_in_a_persons_box_never_enters_the_index() {
+    jojobot_domain::memory::kinds::load_shipped();
+    let inner = Arc::new(InMemoryMailboxes::knowing_any_owner());
+    let held = MailboxName("person-milhouse".into());
+    inner
+        .create_mailbox(
+            &held,
+            &jojobot_domain::memory::EntityId("person:milhouse".into()),
+            None,
+        )
+        .await
+        .expect("the store opens it");
+    mail_contract::create(inner.as_ref(), "pm").await;
+    // Written before the index existed, so the boot load is the route.
+    mail_contract::post(
+        inner.as_ref(),
+        "person-milhouse",
+        "dev",
+        "the zebra figure is hidden",
+        0,
+    )
+    .await;
+    mail_contract::post(inner.as_ref(), "pm", "dev", "the kiln is relined", 1).await;
+
+    let index = Arc::new(FullTextIndex::open().expect("index opens"));
+    let mail = Arc::new(IndexedMailboxes::new(inner.clone(), index.clone()));
+    mail.rebuild().await.expect("rebuild");
+    let port = Retrieval::new(index.clone(), vec![mail.clone()]);
+    // **Through the port, a search refreshes the whole board first**, which
+    // would evict a message a verb wrongly indexed and hide the leak. So the
+    // routes a verb writes are read straight from the index, before any
+    // refresh; the boot load and the refresh are read through the port.
+    let served = |word: &'static str| {
+        let port = &port;
+        async move {
+            port.search(&asking_for_mail(word))
+                .await
+                .expect("search ok")
+                .len()
+        }
+    };
+    let hits = |word: &'static str| {
+        let index = index.clone();
+        async move {
+            index
+                .search(&asking_for_mail(word))
+                .expect("search ok")
+                .len()
+        }
+    };
+    assert_eq!(served("kiln").await, 1, "the public message is served");
+    assert_eq!(
+        served("zebra").await,
+        0,
+        "the boot load and the refresh left the person's out"
+    );
+
+    // A post through the verb.
+    let posted = mail_contract::post(
+        mail.as_ref(),
+        "person-milhouse",
+        "dev",
+        "the giraffe figure is hidden too",
+        2,
+    )
+    .await;
+    mail_contract::post(mail.as_ref(), "pm", "dev", "the damper is hand-cut", 3).await;
+    assert_eq!(hits("damper").await, 1, "the public post is served");
+    assert_eq!(
+        hits("giraffe").await,
+        0,
+        "a post to the person is not indexed"
+    );
+
+    // The verbs that change a message afterwards re-index it, and this one
+    // must stay out through each.
+    mail.read_message(&posted.id).await.expect("read ok");
+    assert_eq!(hits("giraffe").await, 0, "a read does not index it");
+    mail.mark_processed(&posted.id, Some("filed"))
+        .await
+        .expect("retire ok");
+    assert_eq!(hits("giraffe").await, 0, "a retirement does not index it");
+    assert_eq!(hits("zebra").await, 0, "…and the first one is still out");
+    assert_eq!(hits("kiln").await, 1, "…while the public ones are served");
 }
 
 /// **A message removed from the store stops being served, with no write to

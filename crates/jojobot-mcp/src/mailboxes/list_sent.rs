@@ -148,11 +148,19 @@ impl Jojobot {
         // unreadable too, so they cannot be filtered to this caller; the count
         // is reported per box and the ids are named — `ids`, in the same
         // spelling `quarantined_json` uses, and for the same reason.
-        let unreadable: Vec<serde_json::Value> = self
+        let board = self
             .mailboxes
             .list_mailboxes()
             .await
-            .map_err(mailbox_error)?
+            .map_err(mailbox_error)?;
+        // **The boxes whose mail this listing shows no text of.** Read from the
+        // same board as the unreadable report, so one read answers both.
+        let private: std::collections::BTreeSet<&mailbox::MailboxName> = board
+            .iter()
+            .filter(|b| b.is_private())
+            .map(|b| &b.name)
+            .collect();
+        let unreadable: Vec<serde_json::Value> = board
             .iter()
             .filter(|b| only.is_none_or(|name| b.name.as_str() == name))
             .filter(|b| !b.quarantined.is_empty())
@@ -196,7 +204,9 @@ impl Jojobot {
                                 be here, and a person has to repair it before any verb can act on it.",
             "messages": sent
                 .iter()
-                .map(|m| if bodies {
+                .map(|m| if private.contains(&m.mailbox) {
+                    private_listing_json(m)
+                } else if bodies {
                     message_json(m)
                 } else {
                     message_receipt_json(m, None)
@@ -204,6 +214,22 @@ impl Jojobot {
                 .collect::<Vec<_>>(),
         }))
     }
+}
+
+/// **A message to a person's box, as a sender is allowed to see it**: its id,
+/// when it was sent and its subject. No body, no opening line, no size, no
+/// state, no addressee and no sender, to the bot that wrote it as to any other:
+/// a later run of that bot must not be able to read what an earlier one sent.
+/// The elision is said, because a reader has to tell withheld from absent.
+fn private_listing_json(message: &Message) -> serde_json::Value {
+    serde_json::json!({
+        "id": message.id.as_str(),
+        "sent_at": message.sent_at.to_string(),
+        "subject": message.subject,
+        "private": true,
+        "how_to_read": "this message is in a person's box, so no bot reads it back, its \
+                        writer included",
+    })
 }
 
 #[cfg(test)]
@@ -617,5 +643,99 @@ mod tests {
             advice.contains("alias") && advice.contains("bot:gamma"),
             "the refusal has to say this is an alias and name the bot it belongs to: {advice}",
         );
+    }
+
+    /// **A message to a person's box is listed by id, time and subject, and no
+    /// more, to everyone who asks.** The bot that wrote it, a later run of that
+    /// bot and a different bot asking after its outbox all see the same three
+    /// things, with bodies asked for and without. A later session must not be
+    /// able to read what its predecessor sent to the person, so the text is
+    /// withheld even from the sender. A message to a bot's box beside it keeps
+    /// its ordinary rendering, so the withholding is the box's and not a
+    /// blanket one.
+    #[tokio::test]
+    async fn a_message_to_a_persons_box_is_listed_by_id_time_and_subject_only() {
+        let jojobot = mailbox_handler();
+        let held = a_persons_box(&jojobot, "milhouse").await;
+        make_box(&jojobot, "pm").await;
+        let writer = owning(&jojobot, "epsilon").await;
+        let other = owning(&jojobot, "sigma").await;
+        let private = send_titled(
+            &jojobot,
+            "person:milhouse",
+            "epsilon",
+            Some("the quarterly figure"),
+            "the secret figure is 4242",
+        )
+        .await;
+        send(&jojobot, "pm", "epsilon", "an ordinary report").await;
+        assert_eq!(
+            store_counts(&jojobot, &held).await,
+            (1, 0, 0),
+            "the post landed, counted from the store"
+        );
+
+        for (sid, sender) in [(Some(writer), None), (Some(other), Some("bot:epsilon"))] {
+            for include_bodies in [None, Some(true)] {
+                let listed = json_of(
+                    &jojobot
+                        .list_sent(Parameters(ListSentArgs {
+                            limit: None,
+                            sender: sender.map(str::to_string),
+                            to: None,
+                            include_bodies,
+                            sid: sid.clone(),
+                        }))
+                        .await
+                        .expect("list_sent ok"),
+                );
+                assert_eq!(listed["count"], 2, "both messages are listed: {listed}");
+                let messages = listed["messages"].as_array().expect("messages");
+                let to_the_person = messages
+                    .iter()
+                    .find(|m| m["id"] == private["id"])
+                    .unwrap_or_else(|| panic!("the message to the person is listed: {listed}"));
+                let keys: std::collections::BTreeSet<&str> = to_the_person
+                    .as_object()
+                    .expect("an object")
+                    .keys()
+                    .map(String::as_str)
+                    .collect();
+                for allowed in &keys {
+                    assert!(
+                        ["id", "sent_at", "subject", "private", "how_to_read"].contains(allowed),
+                        "{allowed} is shown for a message to a person: {to_the_person}"
+                    );
+                }
+                for needed in ["id", "sent_at", "subject"] {
+                    assert!(keys.contains(needed), "{needed} is shown: {to_the_person}");
+                }
+                for leaked in ["4242", "epsilon", "person-milhouse"] {
+                    assert!(
+                        !to_the_person.to_string().contains(leaked),
+                        "the listing carries {leaked}: {to_the_person}"
+                    );
+                }
+                // The note is a sentence somebody reads: one line, one space
+                // between words.
+                let note = to_the_person["how_to_read"]
+                    .as_str()
+                    .expect("the withholding is said");
+                assert!(
+                    !note.contains("  ") && !note.contains('\n'),
+                    "the note reads as one line: {note:?}"
+                );
+                // The ordinary message beside it is rendered as it always was.
+                let ordinary = messages
+                    .iter()
+                    .find(|m| m["id"] != private["id"])
+                    .expect("the ordinary message");
+                assert_eq!(ordinary["mailbox"], "pm", "{ordinary}");
+                assert!(
+                    ordinary.to_string().contains("ordinary report"),
+                    "{ordinary}"
+                );
+            }
+        }
     }
 }

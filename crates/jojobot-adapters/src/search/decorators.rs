@@ -528,15 +528,57 @@ impl IndexedMailboxes {
         // Before the read, never after — the point has to predate the board
         // read it will be handed back with.
         let began = self.index.reading_begins();
-        let messages = self.inner.scan_messages().await?;
+        let messages = self.indexable_board().await?;
         self.index
             .ingest_mail_changes(&messages, began)
             .map_err(indexing)?;
         Ok(messages.len())
     }
 
-    fn reindex(&self, message: &Message) -> Result<(), MailboxError> {
-        self.index.ingest_message(message).map_err(indexing)
+    /// **The board as the index may hold it: every message but the ones in a
+    /// person's box.** That mail is written to a person and read by nobody who
+    /// speaks through search, so its text never enters the index. The exclusion
+    /// is made here, where the index is written, rather than on the hits a
+    /// query returns, so there is no filter to forget and no posting to leak.
+    ///
+    /// A board whose boxes cannot be read is an error: the messages would have
+    /// no owners to be judged by.
+    async fn indexable_board(&self) -> Result<Vec<Message>, MailboxError> {
+        let messages = self.inner.scan_messages().await?;
+        let private = self.private_boxes().await?;
+        Ok(messages
+            .into_iter()
+            .filter(|message| !private.contains(&message.mailbox))
+            .collect())
+    }
+
+    /// The names of the boxes a person owns.
+    async fn private_boxes(
+        &self,
+    ) -> Result<std::collections::BTreeSet<jojobot_domain::mailbox::MailboxName>, MailboxError>
+    {
+        Ok(self
+            .inner
+            .list_mailboxes()
+            .await?
+            .into_iter()
+            .filter(|held| held.is_private())
+            .map(|held| held.name)
+            .collect())
+    }
+
+    /// Index one message a verb just wrote or changed, unless it is in a
+    /// person's box. **A board that cannot say whose box it is leaves the
+    /// message out**: the next refresh reads the whole board and indexes it if
+    /// it belongs there, while a message wrongly indexed could not be taken
+    /// back.
+    async fn reindex(&self, message: &Message) -> Result<(), MailboxError> {
+        match self.private_boxes().await {
+            Ok(private) if !private.contains(&message.mailbox) => {
+                self.index.ingest_message(message).map_err(indexing)
+            }
+            _ => Ok(()),
+        }
     }
 }
 
@@ -684,7 +726,7 @@ impl Refresh for IndexedMailboxes {
     /// it.
     async fn refresh(&self) {
         let began = self.index.reading_begins();
-        match self.inner.scan_messages().await {
+        match self.indexable_board().await {
             Ok(messages) => {
                 if self.index.ingest_mail_changes(&messages, began).is_err() {
                     self.index.mail_refresh_failed();
@@ -750,7 +792,7 @@ impl Mailboxes for IndexedMailboxes {
     ) -> Result<jojobot_domain::mailbox::Guarded<Message>, MailboxError> {
         let written = self.inner.post_message(message).await?;
         if let jojobot_domain::mailbox::Guarded::Written(message) = &written {
-            self.reindex(message)?;
+            self.reindex(message).await?;
         }
         Ok(written)
     }
@@ -764,7 +806,7 @@ impl Mailboxes for IndexedMailboxes {
         let delivered = self.inner.read_mailbox(name, taken_by).await?;
         if let jojobot_domain::mailbox::Guarded::Written(delivery) = &delivered {
             for message in &delivery.messages {
-                self.reindex(&message.message)?;
+                self.reindex(&message.message).await?;
             }
         }
         Ok(delivered)
@@ -775,7 +817,7 @@ impl Mailboxes for IndexedMailboxes {
         id: &jojobot_domain::mailbox::MessageId,
     ) -> Result<jojobot_domain::mailbox::Delivered, MailboxError> {
         let delivered = self.inner.read_message(id).await?;
-        self.reindex(&delivered.message)?;
+        self.reindex(&delivered.message).await?;
         Ok(delivered)
     }
 
@@ -785,7 +827,7 @@ impl Mailboxes for IndexedMailboxes {
         notes: Option<&str>,
     ) -> Result<Message, MailboxError> {
         let processed = self.inner.mark_processed(id, notes).await?;
-        self.reindex(&processed)?;
+        self.reindex(&processed).await?;
         Ok(processed)
     }
 

@@ -1135,4 +1135,67 @@ mod tests {
              never claiming it is the reader's own: {message}"
         );
     }
+
+    /// **No bot's read of its own box ever reaches a person's.** The bot that
+    /// wrote to a person and a different bot each read, and count, their own
+    /// box: they get their own mail, none of the person's, and the person's
+    /// message is left exactly where it was. The positive is each bot's own mail
+    /// arriving, so a read that returned nothing at all would not pass; the
+    /// person's box is counted from the store, not from the verb.
+    #[tokio::test]
+    async fn a_bots_read_of_its_own_box_never_reaches_a_persons() {
+        let jojobot = mailbox_handler();
+        let held = a_persons_box(&jojobot, "milhouse").await;
+        let writer = owning(&jojobot, "epsilon").await;
+        let other = owning(&jojobot, "sigma").await;
+        send(
+            &jojobot,
+            "person:milhouse",
+            "epsilon",
+            "the secret figure is 4242",
+        )
+        .await;
+        // A third bot writes both notes, so neither reader's own post takes
+        // delivery of the mail the read below is meant to find.
+        owning(&jojobot, "delta").await;
+        send(&jojobot, "epsilon", "delta", "a note for epsilon").await;
+        send(&jojobot, "sigma", "delta", "a note for sigma").await;
+        assert_eq!(
+            store_counts(&jojobot, &held).await,
+            (1, 0, 0),
+            "the post landed, counted from the store"
+        );
+
+        for (sid, own_note) in [(writer, "note for epsilon"), (other, "note for sigma")] {
+            let counted = json_of(
+                &jojobot
+                    .read_mailbox(Parameters(ReadMailboxArgs {
+                        counts_only: Some(true),
+                        new_only: None,
+                        sid: Some(sid.clone()),
+                    }))
+                    .await
+                    .expect("counting ok"),
+            );
+            assert_eq!(counted["counts"]["new"], 1, "{counted}");
+            let delivered = json_of(
+                &jojobot
+                    .read_mailbox(Parameters(ReadMailboxArgs {
+                        counts_only: None,
+                        new_only: None,
+                        sid: Some(sid),
+                    }))
+                    .await
+                    .expect("read ok"),
+            );
+            assert_eq!(delivered["count"], 1, "{delivered}");
+            assert!(delivered.to_string().contains(own_note), "{delivered}");
+            assert!(!delivered.to_string().contains("4242"), "{delivered}");
+        }
+        assert_eq!(
+            store_counts(&jojobot, &held).await,
+            (1, 0, 0),
+            "neither read moved the person's message"
+        );
+    }
 }

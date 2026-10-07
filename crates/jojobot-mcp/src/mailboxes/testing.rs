@@ -140,6 +140,40 @@ pub(crate) async fn a_second_box(jojobot: &Jojobot, bot: &str, name: &str) {
     );
 }
 
+/// A person's box, **written straight to the store**: no verb on this surface
+/// opens one yet, and every guard below is about a box that exists. The name is
+/// derived the way the real one is, and the person is the owner. Returns the
+/// box's name.
+pub(crate) async fn a_persons_box(jojobot: &Jojobot, person: &str) -> MailboxName {
+    let name = MailboxName(format!("person-{person}"));
+    let written = jojobot
+        .mailboxes
+        .create_mailbox(&name, &EntityId::new(EntityKind::PERSON, person), None)
+        .await
+        .expect("the store writes it");
+    assert!(
+        matches!(written, mailbox::Guarded::Written(_)),
+        "the fixture person box {name:?} was never opened, so nothing below is private"
+    );
+    name
+}
+
+/// What the store holds in a box, counted from the store's own board read and
+/// not from any verb: the numbers a guard's refusal must leave exactly as they
+/// were.
+pub(crate) async fn store_counts(jojobot: &Jojobot, name: &MailboxName) -> (usize, usize, usize) {
+    let board = jojobot
+        .mailboxes
+        .list_mailboxes()
+        .await
+        .expect("list_mailboxes ok");
+    let held = board
+        .iter()
+        .find(|b| &b.name == name)
+        .unwrap_or_else(|| panic!("no box {name:?} on the board"));
+    (held.counts.new, held.counts.read, held.counts.processed)
+}
+
 /// A mailbox world that answers nothing. Shared by both orientation doors:
 /// they make the same promise, so they are held to it by the same double.
 pub(crate) struct DownMailboxes;

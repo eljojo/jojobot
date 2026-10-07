@@ -66,6 +66,18 @@ impl Jojobot {
             .message_by_id(&id)
             .await
             .map_err(mailbox_error)?;
+        // **A person's box is read by no bot, in any state.** Asked before the
+        // archive exception below, because that exception is about a bot's
+        // box: `processed` stays readable from any BOT's box, and a person's
+        // box is not one. A board that cannot say refuses too.
+        if let Some(message) = &located
+            && self
+                .box_is_private(&message.mailbox)
+                .await
+                .map_err(mailbox_error)?
+        {
+            return Ok(private_box(&id));
+        }
         if let Some(message) = located
             // **The guard is on the STATE CHANGE, not on the bytes.** `processed`
             // is a terminal archive: reading one moves nothing and takes nothing
@@ -426,5 +438,67 @@ mod tests {
                 "the advice teaches the retired store ({retired:?}): {advice}"
             );
         }
+    }
+
+    /// **A message in a person's box is read by no bot, in any state.** The
+    /// bot that wrote it, a different bot and a caller with no handle all meet
+    /// the same refusal, whether the message is waiting or already processed:
+    /// `processed` is readable from any other box, and this box is not another
+    /// box. The refusal carries none of the message, moves nothing, and is
+    /// paired with the post that landed, counted from the store.
+    #[tokio::test]
+    async fn a_message_in_a_persons_box_is_read_by_no_bot_in_any_state() {
+        let jojobot = mailbox_handler();
+        let held = a_persons_box(&jojobot, "milhouse").await;
+        let writer = owning(&jojobot, "epsilon").await;
+        let other = owning(&jojobot, "sigma").await;
+        let posted = send_titled(
+            &jojobot,
+            "person:milhouse",
+            "epsilon",
+            Some("the quarterly figure"),
+            "the secret figure is 4242",
+        )
+        .await;
+        let id = posted["id"].as_str().expect("an id").to_string();
+        assert_eq!(
+            store_counts(&jojobot, &held).await,
+            (1, 0, 0),
+            "the post landed, counted from the store"
+        );
+
+        let readers = vec![Some(writer), Some(other), None];
+        for state in ["waiting", "processed"] {
+            if state == "processed" {
+                jojobot
+                    .mailboxes
+                    .mark_processed(&mailbox::MessageId(id.clone()), None)
+                    .await
+                    .expect("the store retires it");
+            }
+            for reader in &readers {
+                let refused = json_of(
+                    &jojobot
+                        .read_message(Parameters(ReadMessageArgs {
+                            message_id: id.clone(),
+                            sid: reader.clone(),
+                        }))
+                        .await
+                        .expect("a refusal is an answer"),
+                );
+                assert_eq!(refused["status"], "blocked", "{state}: {refused}");
+                for leaked in ["4242", "quarterly", "epsilon"] {
+                    assert!(
+                        !refused.to_string().contains(leaked),
+                        "{state}: the refusal carries {leaked}: {refused}"
+                    );
+                }
+            }
+        }
+        assert_eq!(
+            store_counts(&jojobot, &held).await,
+            (0, 0, 1),
+            "no refusal moved anything: the message is where the retirement left it"
+        );
     }
 }

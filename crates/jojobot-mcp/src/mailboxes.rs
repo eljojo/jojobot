@@ -18,6 +18,7 @@ pub mod declined;
 pub mod list_sent;
 pub mod mark_processed;
 pub mod post_message;
+pub mod private;
 pub mod read_mailbox;
 pub mod read_message;
 #[cfg(test)]
@@ -31,6 +32,7 @@ pub use read_mailbox::ReadMailboxArgs;
 pub use read_message::ReadMessageArgs;
 
 pub(crate) use declined::*;
+pub(crate) use private::private_box;
 pub(crate) use wire::*;
 
 /// This context's half of the surface — one router per verb file, summed.
