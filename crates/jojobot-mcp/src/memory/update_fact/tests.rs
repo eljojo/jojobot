@@ -2951,10 +2951,80 @@ async fn a_due_moment_no_carrier_derives_can_be_cleared_and_a_derived_one_cannot
         refused_clear.to_string().contains("cadence_days"),
         "a clear of a derived due_on is still refused: {refused_clear}",
     );
+    assert!(
+        !refused_clear.to_string().contains("ended"),
+        "a loop is not ended with a promise's key: {refused_clear}",
+    );
     assert_eq!(
         fields_of(&jojobot, "rhythm:descale").await["due_on"],
         "2026-08-08",
         "a refused clear moves nothing",
+    );
+}
+
+/// **Ending a promise takes its stored due moment off, and reopening puts it
+/// back.** `ended` decides whether the day still counts, so a write naming only
+/// it moves the due moment like a write to the day itself. The promise keeps its
+/// `promised_by` throughout, which is what its kind requires.
+#[tokio::test]
+async fn ending_a_promise_takes_the_stored_due_moment_off_and_reopening_puts_it_back() {
+    let jojobot = handler();
+    ensure(&jojobot, "person:ned-flanders").await;
+    jojobot
+        .add_entity(Parameters(AddEntityArgs {
+            parent: Some("person:ned-flanders".into()),
+            ..add_args("promise", "return-the-wrench", "return-the-wrench")
+        }))
+        .await
+        .expect("add ok");
+    let captured = capture_ok(
+        &jojobot,
+        CaptureArgs {
+            provenance: Some("testimony".into()),
+            fields: Some(
+                [("promised_by".to_string(), "2026-07-01".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+            ..capture_args("promise:return-the-wrench", "back by the first")
+        },
+    )
+    .await;
+    let address = address_of(&captured);
+    assert_eq!(
+        fields_of(&jojobot, "promise:return-the-wrench").await["due_on"],
+        "2026-07-01",
+        "the due moment this case ends has to be stored first",
+    );
+
+    update_ok(
+        &jojobot,
+        UpdateFactArgs {
+            fields: Some(
+                [("ended".to_string(), "delivered".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+            ..update_args(&address)
+        },
+    )
+    .await;
+    let ended = fields_of(&jojobot, "promise:return-the-wrench").await;
+    assert!(ended.get("due_on").is_none(), "{ended}");
+    assert_eq!(ended["promised_by"], "2026-07-01", "{ended}");
+
+    update_ok(
+        &jojobot,
+        UpdateFactArgs {
+            clear_fields: Some(vec!["ended".into()]),
+            ..update_args(&address)
+        },
+    )
+    .await;
+    assert_eq!(
+        fields_of(&jojobot, "promise:return-the-wrench").await["due_on"],
+        "2026-07-01",
+        "reopening the promise puts its day back",
     );
 }
 
@@ -3018,6 +3088,13 @@ async fn an_edit_that_writes_or_clears_the_due_moment_is_refused() {
                 "the refusal names '{carrier_key}', a key that sets a due day: {said}",
             );
         }
+        // **A promise's way out is `ended`.** Clearing its day is refused by
+        // the kind's own floor, so the remedy for a promise names the key that
+        // works.
+        assert!(
+            said.contains("ended"),
+            "a promise's refusal names the key that ends it: {said}",
+        );
         let held = fields_of(&jojobot, "promise:return-the-wrench").await;
         assert_eq!(
             held["due_on"], "2026-07-01",

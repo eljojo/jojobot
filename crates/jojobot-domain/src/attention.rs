@@ -513,6 +513,21 @@ pub trait Carrier: Send + Sync {
     fn derives_due(&self) -> bool {
         false
     }
+    /// **The key that stops a thing falling due while it keeps its day**, and
+    /// the words it holds. A carrier whose day is required by its kind cannot
+    /// be told to forget it, so ending is the way out. None by default.
+    fn ending(&self) -> Option<Ending> {
+        None
+    }
+}
+
+/// **How a thing stops falling due without losing its day.**
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ending {
+    /// The key to write.
+    pub key: &'static str,
+    /// The words it holds.
+    pub words: Vec<&'static str>,
 }
 
 /// **The loop carrier**: a rhythm falls due a cadence after the date its cycle
@@ -684,6 +699,21 @@ impl Carrier for Promises {
         )
     }
 
+    /// **How it ended decides whether the day still counts**, so a write that
+    /// names only that can move the due moment.
+    fn also_reads(&self) -> &'static [&'static str] {
+        &[ENDED]
+    }
+
+    /// **A promise keeps its day** (its kind requires it), so ending it is how
+    /// it stops falling due.
+    fn ending(&self) -> Option<Ending> {
+        Some(Ending {
+            key: ENDED,
+            words: PromiseEnd::ALL.map(PromiseEnd::as_token).to_vec(),
+        })
+    }
+
     /// **An ended promise owes nothing**, whichever way it ended, and the
     /// stored due moment is taken off with it — the read finds what is owed by
     /// that key, so ending is a write the same mover already handles. **An
@@ -742,6 +772,19 @@ pub fn due_key_groups(carriers: &[&dyn Carrier]) -> Vec<Vec<String>> {
                 .collect()
         })
         .collect()
+}
+
+/// **Every key that changes what a thing owes without setting its day**, once
+/// each, in carrier order: what a carrier reads beyond its interface.
+pub fn due_reads(carriers: &[&dyn Carrier]) -> Vec<String> {
+    let setting = due_keys(carriers);
+    let mut keys: Vec<String> = Vec::new();
+    for key in carriers.iter().flat_map(|carrier| carrier.also_reads()) {
+        if !setting.iter().any(|set| set == key) && !keys.iter().any(|seen| seen == key) {
+            keys.push((*key).to_string());
+        }
+    }
+    keys
 }
 
 /// **Every key that makes a thing fall due**, once each, in carrier order.

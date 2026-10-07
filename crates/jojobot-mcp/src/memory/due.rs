@@ -53,6 +53,13 @@ pub(crate) fn what_makes_a_thing_fall_due(carriers: &[&dyn attention::Carrier]) 
             named(group, "and"),
         ));
     }
+    let reads = attention::due_reads(carriers);
+    if !reads.is_empty() {
+        sentences.push(format!(
+            "{} set no day and still change what a thing owes.",
+            named(&reads, "and"),
+        ));
+    }
     sentences.push(
         "Every other key is kept as you wrote it and nothing acts on it: it never makes a \
          thing fall due or appear in what is owed."
@@ -140,24 +147,43 @@ impl Jojobot {
         if !writes && !cleared.iter().any(|k| k == key) {
             return None;
         }
+        let held = self.memory.fields(subject).await.ok();
+        let carriers = self.carriers();
         if !writes
-            && let Ok(held) = self.memory.fields(subject).await
-            && !self
-                .carriers()
+            && let Some(held) = &held
+            && !carriers
                 .iter()
-                .any(|carrier| carrier.interface().matched_by(&held).is_some())
+                .any(|carrier| carrier.interface().matched_by(held).is_some())
         {
             return None;
         }
-        let setting = attention::due_keys(&self.carriers());
+        // **The carrier that answers for what the thing holds once this write
+        // lands**, so the way out named is the one that works for it.
+        let mut projected = held.unwrap_or_default();
+        projected.extend(sent.iter().map(|(k, v)| (k.clone(), v.clone())));
+        let ending = carriers
+            .iter()
+            .find(|carrier| carrier.interface().matched_by(&projected).is_some())
+            .and_then(|carrier| carrier.ending());
+        let setting = attention::due_keys(&carriers);
+        let way_out = match ending {
+            Some(ending) => format!(
+                "To remove it, write '{}' as one of {}: this one keeps its day, so ending it is \
+                 how it stops falling due, and jojobot removes '{key}' with it.",
+                ending.key,
+                ending.words.join(", "),
+            ),
+            None => format!(
+                "To remove it, clear the one it came from, and jojobot removes '{key}' with it."
+            ),
+        };
         Some(blocked_body(
             subject,
             &[],
             format!(
                 "Nothing was written. '{key}' is jojobot's own key and a caller does not {}. \
                  jojobot sets it from the day a thing carries and keeps it current. The keys \
-                 that set a due day are {}. To move it, change one of them. To remove it, clear \
-                 the one it came from, and jojobot removes '{key}' with it.",
+                 that set a due day are {}. To move it, change one of them. {way_out}",
                 if writes { "write it" } else { "clear it" },
                 setting.join(", "),
             ),
@@ -209,6 +235,14 @@ mod tests {
             assert!(
                 with.contains(&format!("`{key}`")),
                 "`{key}` is named: {with}"
+            );
+        }
+        // **The keys that change what is owed without setting a day are named
+        // too**, from the carriers and not typed here.
+        for key in ["ended", "outcome"] {
+            assert!(
+                with.contains(&format!("`{key}`")) && without.contains(&format!("`{key}`")),
+                "`{key}` changes what is owed, so the text names it: {with}",
             );
         }
         assert_eq!(
