@@ -33,6 +33,12 @@ help: ## List the targets
 # `jojobot-bar` runs the same phases with the same flags, writes the whole
 # thing to `target/bar/check.log`, and prints a short verdict built from what
 # it captured directly rather than from a pipe.
+#
+# **The test phase runs the test binaries side by side**, eight at a time, and
+# runs the same binaries the plain `cargo test --workspace` would. `BAR_JOBS=<n>`
+# sets the number; the verdict's `jobs:` line says what it was. Several bars run
+# on one machine at once, so raise it for a measurement, not by habit. `make
+# test` is still the plain serial workspace run.
 check: ## The DONE bar: formatted, green, clippy-clean
 	CARGO=$(CARGO) $(CARGO) run -q --locked -p jojobot-bar -- check
 

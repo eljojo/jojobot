@@ -23,8 +23,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 
 use jojobot_bar::{
-    FileGrowth, FileSize, Summary, grown_files, oversized_files, render_size_report,
-    summarize_test_output, test_healthy,
+    FileGrowth, FileSize, Summary, TEST_JOBS_VARIABLE, grown_files, jobs_limit, oversized_files,
+    render_size_report, summarize_test_output, test_healthy, test_jobs,
 };
 
 /// **The cargo binary the outer `make` recipe was told to use.** The
@@ -81,6 +81,75 @@ fn run_phase(
     let bytes = fs::read(log_path)?;
     let phase_text = String::from_utf8_lossy(&bytes[start as usize..]).into_owned();
     Ok((status.success(), phase_text))
+}
+
+/// **Run each job as its own `cargo test --workspace <job> --no-fail-fast
+/// --locked`, `limit` at a time**, and return whether every one
+/// exited zero together with all of their text.
+///
+/// Each job writes stdout and stderr into one file of its own, as
+/// [`run_phase`] does, so a job's lines stay in the order it printed them.
+/// The jobs are appended to the log in listing order, whatever order they
+/// finished in, each under the command that ran it. A job that cannot be
+/// started counts as a failed job and says why in its own section; it never
+/// ends the others.
+fn run_test_jobs(
+    log_path: &Path,
+    cargo: &str,
+    jobs: &[Vec<String>],
+    limit: usize,
+) -> std::io::Result<(bool, String)> {
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let dir = log_path.with_extension("jobs");
+    fs::create_dir_all(&dir)?;
+    let next = AtomicUsize::new(0);
+    let done: Mutex<Vec<Option<(bool, String)>>> = Mutex::new(vec![None; jobs.len()]);
+    let workers = limit.min(jobs.len().max(1));
+    std::thread::scope(|scope| {
+        for _ in 0..workers {
+            scope.spawn(|| {
+                loop {
+                    let i = next.fetch_add(1, Ordering::SeqCst);
+                    let Some(job) = jobs.get(i) else { break };
+                    let file = dir.join(format!("{i}.log"));
+                    let result = (|| -> std::io::Result<(bool, String)> {
+                        let out = File::create(&file)?;
+                        let err = out.try_clone()?;
+                        let status = Command::new(cargo)
+                            .arg("test")
+                            .arg("--workspace")
+                            .args(job)
+                            .args(["--no-fail-fast", "--locked"])
+                            .stdout(Stdio::from(out))
+                            .stderr(Stdio::from(err))
+                            .status()?;
+                        Ok((status.success(), fs::read_to_string(&file)?))
+                    })()
+                    .unwrap_or_else(|e| (false, format!("bar: could not run this job: {e}\n")));
+                    done.lock().expect("no job panics while holding this")[i] = Some(result);
+                }
+            });
+        }
+    });
+
+    let mut all_ok = true;
+    let mut all_text = String::new();
+    let mut log = OpenOptions::new().append(true).open(log_path)?;
+    let results = done.into_inner().expect("no job panics while holding this");
+    for (job, result) in jobs.iter().zip(results) {
+        let (ok, text) = result.unwrap_or((false, String::from("bar: this job never ran\n")));
+        all_ok &= ok;
+        writeln!(
+            log,
+            "\n$ cargo test --workspace {} --no-fail-fast --locked",
+            job.join(" ")
+        )?;
+        log.write_all(text.as_bytes())?;
+        all_text.push_str(&text);
+    }
+    Ok((all_ok, all_text))
 }
 
 fn fresh_log(path: &Path) -> std::io::Result<()> {
@@ -174,6 +243,15 @@ fn run_check() -> std::io::Result<ExitCode> {
 }
 
 fn run_check_phases() -> std::io::Result<ExitCode> {
+    // **Refused before any phase runs**, so a limit that is not a number never
+    // costs a build and never reads as a green run at some other number.
+    let limit = match jobs_limit(std::env::var(TEST_JOBS_VARIABLE).ok().as_deref()) {
+        Ok(limit) => limit,
+        Err(refusal) => {
+            eprintln!("bar: {refusal}");
+            return Ok(ExitCode::from(2));
+        }
+    };
     let cargo = cargo_bin();
     let log_path = PathBuf::from("target/bar/check.log");
     fresh_log(&log_path)?;
@@ -224,13 +302,31 @@ fn run_check_phases() -> std::io::Result<ExitCode> {
     }
     summary.phase_ok("build", "compiled");
 
-    let (ok, text) = run_phase(
+    // **The same run as `cargo test --workspace --no-fail-fast --locked`,
+    // split by test binary and run side by side.** One serial run sums every
+    // suite's wall time; the slowest single suite is what the split leaves.
+    // The listing says which binaries exist, so a binary the plain run would
+    // execute is in exactly one job and the suite and case counts are the same.
+    let (listed, listing) = run_phase(
         &log_path,
-        "cargo test --workspace --no-fail-fast --locked",
+        "cargo test --workspace --no-run --locked",
         &cargo,
-        &["test", "--workspace", "--no-fail-fast", "--locked"],
+        &["test", "--workspace", "--no-run", "--locked"],
     )?;
+    let (ok, text) = if listed {
+        run_test_jobs(&log_path, &cargo, &test_jobs(&listing), limit)?
+    } else {
+        // A listing that failed is a build that failed: the same text reads
+        // as "did not compile", exactly as a failed plain run did.
+        (false, listing)
+    };
     let verdict = summarize_test_output(&text);
+    // **The limit that produced the timing**, on the verdict, so a wall time
+    // read later says what it was measured at.
+    summary.phase_ok(
+        "jobs",
+        &format!("{limit} test binaries at a time ({TEST_JOBS_VARIABLE})"),
+    );
     summary.test_phase(ok, &verdict);
     if !test_healthy(ok, &verdict) {
         summary.phase_skipped("lint");

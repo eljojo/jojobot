@@ -80,6 +80,74 @@ pub fn summarize_test_output(output: &str) -> TestVerdict {
     verdict
 }
 
+/// **How many test binaries run at once when nothing says otherwise.** Eight
+/// is most of the gain on the measured workspace; more buys little and several
+/// bars run on one machine at the same time.
+pub const TEST_JOBS_DEFAULT: usize = 8;
+
+/// The environment variable that sets how many test binaries run at once.
+pub const TEST_JOBS_VARIABLE: &str = "BAR_JOBS";
+
+/// **How many test binaries to run at once**, from the value of
+/// [`TEST_JOBS_VARIABLE`] if it is set. A value that is not a whole number of
+/// at least one is an error that names the variable and the value: a limit
+/// that fell back to the default would make a timing read later say it ran at
+/// a number it did not.
+pub fn jobs_limit(value: Option<&str>) -> Result<usize, String> {
+    let Some(value) = value else {
+        return Ok(TEST_JOBS_DEFAULT);
+    };
+    match value.trim().parse::<usize>() {
+        Ok(n) if n >= 1 => Ok(n),
+        _ => Err(format!(
+            "{TEST_JOBS_VARIABLE} is {value:?}: it must be a whole number of at least 1"
+        )),
+    }
+}
+
+/// **The `cargo test` runs that, together, are `cargo test --workspace`.**
+///
+/// Read off `cargo test --workspace --no-run`, which prints one `Executable`
+/// line per test binary it built. Each integration-test file is a job of its
+/// own, named so a package is not needed: `--workspace --test <name>` selects
+/// that file wherever it lives. The unit tests of every library, the unit tests
+/// of every binary and the doc-tests are one job each. Nothing is skipped: a
+/// binary the plain run would execute is in exactly one of these.
+pub fn test_jobs(listing: &str) -> Vec<Vec<String>> {
+    let mut libs = false;
+    let mut bins = false;
+    let mut files: Vec<String> = Vec::new();
+    for line in listing.lines() {
+        let Some(executable) = line.trim().strip_prefix("Executable ") else {
+            continue;
+        };
+        if let Some(source) = executable.strip_prefix("unittests ") {
+            if source.starts_with("src/lib.rs") {
+                libs = true;
+            } else {
+                bins = true;
+            }
+        } else if let Some(file) = executable.strip_prefix("tests/")
+            && let Some((name, _)) = file.split_once(".rs")
+            && !files.iter().any(|f| f == name)
+        {
+            files.push(name.to_string());
+        }
+    }
+    let mut jobs: Vec<Vec<String>> = Vec::new();
+    if libs {
+        jobs.push(vec!["--lib".to_string()]);
+    }
+    if bins {
+        jobs.push(vec!["--bins".to_string()]);
+    }
+    jobs.extend(files.into_iter().map(|f| vec!["--test".to_string(), f]));
+    // The doc-tests print no `Executable` line, so this job does not wait on
+    // the listing to name them.
+    jobs.push(vec!["--doc".to_string()]);
+    jobs
+}
+
 /// **`ok. 58 passed; 0 failed; ...` → `(58, 0)`.** Reads the number sitting
 /// immediately before the word it names, so it does not care whether the
 /// line opens with `ok.` or `FAILED.` — the two words this looks for are the
@@ -377,6 +445,69 @@ mod tests {
     const GREEN: &str = include_str!("../tests/fixtures/green-full-check.txt");
     const ONE_FAILING: &str = include_str!("../tests/fixtures/one-failing-test.txt");
     const COMPILE_ERROR: &str = include_str!("../tests/fixtures/compile-error.txt");
+    /// A verbatim `cargo test --workspace --no-run` capture on this workspace.
+    const NO_RUN_LISTING: &str = include_str!("../tests/fixtures/no-run-listing.txt");
+
+    /// **Every test binary a real listing names is in exactly one job.** The
+    /// fixture is what cargo printed, so this reads the real format. Integration
+    /// test files come out one job each, and the three groups (library unit
+    /// tests, binary unit tests, doc-tests) one job each, so the jobs together
+    /// are the plain workspace run and nothing else.
+    #[test]
+    fn a_real_listing_becomes_one_job_per_test_file_and_one_per_group() {
+        let jobs = test_jobs(NO_RUN_LISTING);
+        let files: Vec<&str> = NO_RUN_LISTING
+            .lines()
+            .filter_map(|l| l.trim().strip_prefix("Executable tests/"))
+            .filter_map(|l| l.split(".rs").next())
+            .collect();
+        assert!(
+            files.len() > 20,
+            "the fixture lost its test files: {files:?}"
+        );
+        for file in &files {
+            let named: Vec<&Vec<String>> = jobs
+                .iter()
+                .filter(|j| j == &&vec!["--test".to_string(), file.to_string()])
+                .collect();
+            assert_eq!(named.len(), 1, "{file} must be exactly one job: {jobs:?}");
+        }
+        for group in ["--lib", "--bins", "--doc"] {
+            assert!(
+                jobs.contains(&vec![group.to_string()]),
+                "the {group} job is missing: {jobs:?}"
+            );
+        }
+        assert_eq!(
+            jobs.len(),
+            files.len() + 3,
+            "a job that names no binary in the listing: {jobs:?}"
+        );
+    }
+
+    /// **The limit is the default unless the variable says a whole number of
+    /// at least one, and anything else is refused by name.**
+    #[test]
+    fn the_job_limit_is_the_default_or_a_positive_whole_number_and_nothing_else() {
+        assert_eq!(jobs_limit(None), Ok(TEST_JOBS_DEFAULT));
+        assert_eq!(jobs_limit(Some("3")), Ok(3));
+        assert_eq!(jobs_limit(Some(" 12 ")), Ok(12));
+        for bad in ["0", "many", "", "-2", "2.5"] {
+            let err = jobs_limit(Some(bad)).expect_err(bad);
+            assert!(
+                err.contains(TEST_JOBS_VARIABLE) && err.contains(&format!("{bad:?}")),
+                "the refusal must name the variable and the value: {err}"
+            );
+        }
+    }
+
+    /// **A listing that names no binary still runs the doc-tests and nothing
+    /// else.** The doc-tests print no `Executable` line, so their job cannot
+    /// depend on the listing naming anything.
+    #[test]
+    fn an_empty_listing_still_runs_the_doc_tests() {
+        assert_eq!(test_jobs(""), vec![vec!["--doc".to_string()]]);
+    }
 
     /// **A real green run reads as compiled, with every suite's counts
     /// summed and nothing failed.** The fixture is a verbatim capture of an
