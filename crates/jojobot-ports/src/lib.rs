@@ -167,8 +167,9 @@ impl Allocator {
         })
     }
 
-    /// Claim one named port, or `None` when another claimer holds it. This is
-    /// the lock alone: it does not ask whether anything is listening.
+    /// Claim one named port, or `None` when another claimer holds it or its
+    /// claim file cannot be opened. This is the lock alone: it does not ask
+    /// whether anything is listening.
     pub fn try_claim(&self, port: u16) -> Result<Option<Claim>, PortsError> {
         let io_error = |what: String| move |source| PortsError::Io { what, source };
         std::fs::create_dir_all(&self.dir).map_err(io_error(format!(
@@ -176,15 +177,23 @@ impl Allocator {
             self.dir.display()
         )))?;
         let path = self.dir.join(port.to_string());
-        let file = OpenOptions::new()
+        let file = match OpenOptions::new()
             .create(true)
             .truncate(false)
             .write(true)
             .open(&path)
-            .map_err(io_error(format!(
-                "opening the port claim {}",
-                path.display()
-            )))?;
+        {
+            Ok(file) => file,
+            // A claim file another user made and this one may not write is a
+            // port somebody else holds, which is the answer a held lock gives.
+            Err(refused) if refused.kind() == io::ErrorKind::PermissionDenied => return Ok(None),
+            Err(source) => {
+                return Err(PortsError::Io {
+                    what: format!("opening the port claim {}", path.display()),
+                    source,
+                });
+            }
+        };
         // SAFETY: `flock` takes a descriptor this function owns and no pointer.
         if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
             return Ok(Some(Claim {
