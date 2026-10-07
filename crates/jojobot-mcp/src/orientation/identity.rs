@@ -283,13 +283,19 @@ impl Jojobot {
         if let Some(obj) = body.as_object_mut() {
             if carried_count < total_in_force {
                 obj.insert("rules_elided".into(), true.into());
+                let starred = in_force
+                    .iter()
+                    .filter(|rule| rule.fields.get("starred").is_some_and(|v| v == "true"))
+                    .count();
                 let mut note = format!(
                     "{carried_count} of {total_in_force} rules in force are carried here — the \
                      ones marked to carry. The rest are at home, not lost, and some of them may \
                      still bind this bot: recall {} with facts: true to read them all. To mark a \
                      rule so a future boot carries it, write it with fields: {{\"starred\": \
-                     \"true\"}} — that is the only thing a boot checks, and the cap above is how \
-                     many marked seats fit, never a selector among them.",
+                     \"true\"}} — that is the only thing a boot checks. This bot has {seat_count} \
+                     seats and {starred} rules are starred. When more are starred than there are \
+                     seats, the newest starred rules keep them and the older ones lose theirs. \
+                     Every rule in force that has no seat is listed in `unseated_rules`.",
                     bot.as_str()
                 );
                 if let Some(seats) = &seats {
@@ -964,6 +970,57 @@ mod tests {
                 .any(|r| r["content"] == "the kettle needs descaling"),
             "a starred THOUGHT must not ride the boot — the floor is outside the room: \
              {rules:?}"
+        );
+    }
+
+    /// **A boot that carries some of a bot's rules says how many seats the bot
+    /// has and where the rules without one are listed.** A bot told only "2 of
+    /// 7 are carried" cannot know how many it may mark, or what happens to a
+    /// marked rule when the seats are full. The count is read against the seats
+    /// the bot actually has, and the key the note names is read against the
+    /// boot's own answer, so the note cannot name a list the boot does not
+    /// carry.
+    #[tokio::test]
+    async fn a_boot_that_carries_some_rules_says_how_many_seats_there_are() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        for n in 0..7 {
+            capture_ok(
+                &jojobot,
+                CaptureArgs {
+                    fields: (n < 2).then(|| {
+                        [("starred".to_string(), "true".to_string())]
+                            .into_iter()
+                            .collect()
+                    }),
+                    ..capture_args("bot:gamma", &format!("rule number {n} binds this bot"))
+                },
+            )
+            .await;
+        }
+
+        let booted = boot(&jojobot, "gamma").await;
+        let identity = &booted["identity"];
+        let seats = jojobot_domain::memory::rule_seats_of(&Default::default()).to_string();
+        assert!(
+            !["2", "7"].contains(&seats.as_str()),
+            "the case needs a seat count that no other number in the note can be: {seats}"
+        );
+        assert_eq!(
+            identity["rules"].as_array().expect("rules").len(),
+            2,
+            "the case rests on two starred rules riding the boot: {identity}"
+        );
+        let note = identity["rules_note"]
+            .as_str()
+            .unwrap_or_else(|| panic!("a boot carrying some rules explains it: {identity}"));
+        assert!(
+            note.contains(&seats),
+            "the note does not state how many seats the bot has ({seats}): {note}"
+        );
+        assert!(
+            identity["unseated_rules"].is_object() && note.contains("unseated_rules"),
+            "the note names the list of rules with no seat, and the boot carries it: {identity}"
         );
     }
 
