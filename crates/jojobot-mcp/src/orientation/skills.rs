@@ -440,7 +440,7 @@ the work named in `subject`.
 ## A label on one claim
 
 A key you write on a claim becomes a field of the claim's subject. A label that
-belongs to one claim, such as a decision number or a cross-reference, is not a
+belongs to one claim, such as a ticket number or a cross-reference, is not a
 key: put it in the claim's words or in its `details`. Six keys describe their own
 record and do not fold onto the subject: `read_from`, `read_ref`, `starred`,
 `subject`, `purpose` and `recorded_by`. Any other key folds onto the subject, as
@@ -1071,7 +1071,14 @@ mod tests {
     #[test]
     fn the_projects_procedure_says_a_label_on_one_claim_is_not_a_key() {
         let section = projects_section("A label on one claim");
-        for word in ["field", "subject", "details", "folds", "cross-reference"] {
+        for word in [
+            "field",
+            "subject",
+            "details",
+            "folds",
+            "cross-reference",
+            "ticket",
+        ] {
             assert!(
                 names(&section, word),
                 "the label section does not say {word:?}: {section}"
