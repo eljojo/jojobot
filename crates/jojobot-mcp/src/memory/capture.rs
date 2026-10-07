@@ -1058,13 +1058,20 @@ impl Jojobot {
                 // capture's alone.** The motivating case is exactly a
                 // capture carrying `status`, an argument only update_fact
                 // has — checking capture's own schema alone would miss it.
-                if !sent_field_keys.is_empty()
+                //
+                // **Only keys the subject's kind leaves undeclared** — a key
+                // the kind declares is its own column, never a shadow.
+                let undeclared_keys = crate::teaching::keys_the_kind_leaves_undeclared(
+                    fact.subject.kind(),
+                    &sent_field_keys,
+                );
+                if !undeclared_keys.is_empty()
                     && let Some(capture_properties) =
                         crate::teaching::published_arguments("capture")
                     && let Some(update_fact_properties) =
                         crate::teaching::published_arguments("update_fact")
                     && let Some((shadowed, owning_verb)) = crate::teaching::shadowed_argument_verb(
-                        sent_field_keys.iter().map(String::as_str),
+                        undeclared_keys.iter().copied(),
                         "capture",
                         &capture_properties,
                         "update_fact",

@@ -2309,6 +2309,64 @@ async fn a_field_that_shadows_update_facts_own_argument_is_taught_once() {
     );
 }
 
+/// **`update_fact`'s copy of the declared-key exemption.** An edit that sets
+/// a work's `status` column as a field is writing the column the kind
+/// declares, so it is never told that `status` is the claim's own argument.
+/// Paired with a key the kind does not declare, in the same session, which
+/// still fires the one teaching the column did not spend.
+#[tokio::test]
+async fn an_edit_writing_a_declared_key_is_not_taught_it_shadows_an_argument() {
+    let jojobot = handler();
+    let captured = capture_ok(&jojobot, capture_args("work:sigma", "the piece is open")).await;
+    let address = address_of(&captured);
+
+    let column = json_of(
+        &jojobot
+            .update_fact(Parameters(UpdateFactArgs {
+                fields: Some(
+                    [("status".to_string(), "now".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..update_args(&address)
+            }))
+            .await
+            .expect("update ok"),
+    );
+    assert!(
+        !column["teaching"]
+            .as_array()
+            .map(|t| t.iter().any(|t| t
+                .as_str()
+                .is_some_and(|s| s.contains("is stored as ordinary data"))))
+            .unwrap_or(false),
+        "a work's own status column is not a field shadowing an argument: {column}"
+    );
+
+    let shadow = json_of(
+        &jojobot
+            .update_fact(Parameters(UpdateFactArgs {
+                fields: Some(
+                    [("provenance".to_string(), "testimony".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..update_args(&address)
+            }))
+            .await
+            .expect("update ok"),
+    );
+    assert!(
+        shadow["teaching"]
+            .as_array()
+            .map(|t| t.iter().any(|t| t.as_str().is_some_and(
+                |s| s.contains("\"provenance\"") && s.contains("is stored as ordinary data")
+            )))
+            .unwrap_or(false),
+        "a key the kind does not declare still shadows: {shadow}"
+    );
+}
+
 /// **The same wiring as `capture`'s, for `update_fact`.** `update_fact`
 /// carries no entity of its own — only a `FactAddress`, home and local id
 /// — so this reaches no extra store read: the written fact's own

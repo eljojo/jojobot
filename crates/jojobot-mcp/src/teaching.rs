@@ -222,6 +222,26 @@ pub(crate) fn shadowed_argument<'a>(
     sent.into_iter().find(|key| properties.contains_key(*key))
 }
 
+/// **The sent field keys the subject's kind does NOT declare.** A key the kind
+/// declares is that kind's own column — `status` on a piece of work — so
+/// writing it as a field is the write the caller meant, and offering the
+/// claim's own `status` argument for it would send them to the wrong one.
+pub(crate) fn keys_the_kind_leaves_undeclared(
+    kind: Option<EntityKind>,
+    sent: &[String],
+) -> Vec<&str> {
+    let declared: Vec<String> = kind
+        .map(|kind| jojobot_domain::memory::kinds::keys_of(kind.as_token()))
+        .unwrap_or_default()
+        .into_iter()
+        .map(|field| field.key)
+        .collect();
+    sent.iter()
+        .map(String::as_str)
+        .filter(|key| !declared.iter().any(|d| d == key))
+        .collect()
+}
+
 /// **Which verb a shadowed key's argument actually belongs to — the
 /// current call's own, or the OTHER verb's when a caller has moved a key
 /// across from one to the other.** Checked against `current`'s own
@@ -1810,6 +1830,64 @@ mod tests {
                 })
             }),
             "a capture carrying its own argument names capture, not update_fact: {shadowing}"
+        );
+    }
+
+    /// **A key the subject's kind DECLARES is the caller's column, not a
+    /// shadow.** A piece of work declares `status`, so a capture writing it as
+    /// a field means the column and must never be told to call update_fact
+    /// naming `status` as an argument — that argument is the claim's own
+    /// state. Paired with the key the kind does not declare, on the same
+    /// session: the declared key must not spend the domain's one teaching, and
+    /// the undeclared one must still fire it.
+    #[tokio::test]
+    async fn a_capture_writing_a_declared_key_is_not_taught_it_shadows_an_argument() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+        let declared: Vec<String> = jojobot_domain::memory::kinds::keys_of("work")
+            .into_iter()
+            .map(|f| f.key)
+            .collect();
+        assert!(
+            declared.iter().any(|d| d == "status"),
+            "the case rests on a work thing declaring `status`"
+        );
+
+        let mut column = capture_args("work:sigma", "the piece is under way");
+        column.fields = Some(
+            [("status".to_string(), "now".to_string())]
+                .into_iter()
+                .collect(),
+        );
+        let column = capture_as(&jojobot, &sid, column).await;
+        assert!(
+            !column["teaching"]
+                .as_array()
+                .map(|t| t.iter().any(|t| t
+                    .as_str()
+                    .is_some_and(|s| s.contains("is stored as ordinary data"))))
+                .unwrap_or(false),
+            "a work's own status column is not a field shadowing an argument: {column}"
+        );
+
+        let mut shadow = capture_args("work:sigma", "the piece has a note");
+        shadow.fields = Some(
+            [("provenance".to_string(), "testimony".to_string())]
+                .into_iter()
+                .collect(),
+        );
+        let shadow = capture_as(&jojobot, &sid, shadow).await;
+        assert!(
+            shadow["teaching"]
+                .as_array()
+                .map(|t| t
+                    .iter()
+                    .any(|t| t.as_str().is_some_and(|s| s.contains("\"provenance\"")
+                        && s.contains("is stored as ordinary data"))))
+                .unwrap_or(false),
+            "a key the kind does not declare still shadows, and the declared one spent nothing: \
+             {shadow}"
         );
     }
 }

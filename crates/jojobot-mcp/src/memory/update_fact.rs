@@ -598,13 +598,20 @@ impl Jojobot {
                 // **Against the UNION of both verbs' arguments** — see
                 // `capture`'s own copy: an update_fact carrying `check_in`,
                 // capture's own argument, is caught the same way.
-                if !sent_field_keys.is_empty()
+                //
+                // **Only keys the subject's kind leaves undeclared** — a key
+                // the kind declares is its own column, never a shadow.
+                let undeclared_keys = crate::teaching::keys_the_kind_leaves_undeclared(
+                    fact.subject.kind(),
+                    &sent_field_keys,
+                );
+                if !undeclared_keys.is_empty()
                     && let Some(update_fact_properties) =
                         crate::teaching::published_arguments("update_fact")
                     && let Some(capture_properties) =
                         crate::teaching::published_arguments("capture")
                     && let Some((shadowed, owning_verb)) = crate::teaching::shadowed_argument_verb(
-                        sent_field_keys.iter().map(String::as_str),
+                        undeclared_keys.iter().copied(),
                         "update_fact",
                         &update_fact_properties,
                         "capture",
