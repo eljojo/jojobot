@@ -136,10 +136,14 @@ fn an_outsider_on_a_port_the_kernel_never_hands_out() -> (TcpListener, u16) {
 
 /// **A port a process outside these harnesses holds is passed over.** The lock
 /// keeps other claimers away; it says nothing about a process that does not
-/// ask it, and the bind beside the lock is what covers that. The range here is
-/// the one port an outsider is listening on, so the only honest answer is that
-/// nothing can be claimed, and the control is the same allocator over a port
-/// nobody holds, which claims it.
+/// ask it, and the bind beside the lock is what covers that. The first range
+/// is the one port an outsider is listening on, so the only honest answer is
+/// that nothing can be claimed. The control is a wider range over the same
+/// port, asked while the outsider still holds it: the allocator hands out one
+/// of the other ports, never the held one. **The control does not release the
+/// outsider and claim that port again**, which any other process can bind in
+/// between; it needs one free port among sixty-three, and the held one is
+/// never it.
 #[test]
 fn a_port_an_outsider_listens_on_is_passed_over() {
     let (outsider, held) = an_outsider_on_a_port_the_kernel_never_hands_out();
@@ -153,13 +157,17 @@ fn a_port_an_outsider_listens_on_is_passed_over() {
         matches!(over_the_outsider.claim(), Err(PortsError::Exhausted { .. })),
         "a port an outsider was already bound to was handed out, so the store would fail to take it",
     );
-    drop(outsider);
-    let free = Allocator::within(held, held + 1, scratch("outsider-gone"));
-    assert_eq!(
-        free.claim().expect("the port is free now").port(),
+
+    let around_the_outsider = Allocator::within(held, held + 64, scratch("outsider-around"));
+    let claimed = around_the_outsider
+        .claim()
+        .expect("a free port among the sixty-three the outsider is not on");
+    assert_ne!(
+        claimed.port(),
         held,
-        "the same port was refused after the outsider let go",
+        "the port the outsider holds was handed out beside free ports",
     );
+    drop(outsider);
 }
 
 /// **The range stays below the kernel's outgoing range**, where an ordinary
