@@ -193,3 +193,68 @@ async fn a_cold_session_finds_what_is_next_and_what_waits_on_whom_from_the_keys(
     s.wrap("work laid down on the shipped keys").await;
     story.finish().await;
 }
+
+/// "What is behind this?" — the question asked of a thing, with no key named.
+///
+/// `depends_on` lists what stands behind a piece of work, and a list that names
+/// two things names both. A reader who walks IN from either one, or searches
+/// for what points at it, finds the work, the same as the relation walk does by
+/// the key's own name (decision log 374: a link is any field that names another
+/// thing). A list with one item that is not a handle is prose, and the work
+/// holding it is found from neither.
+#[tokio::test]
+async fn a_work_item_depending_on_two_things_is_found_from_each_of_them() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("work:phi", "Phi").await;
+    s.add("work:sigma", "Sigma").await;
+    s.add("work:first-mix", "First mix").await;
+    s.add("work:loop-check-in", "Loop check-in").await;
+    s.event_with(
+        "work:first-mix",
+        "waits on two things",
+        json!({"depends_on": "work:phi, work:sigma"}),
+        &[],
+    )
+    .await;
+    s.event_with(
+        "work:loop-check-in",
+        "mentions one thing and something undecided",
+        // An undeclared key: `depends_on` is declared to hold references, and
+        // a write putting a non-handle in it is refused.
+        json!({"see_also": "work:phi, not yet decided"}),
+        &[],
+    )
+    .await;
+
+    // ── an unscoped walk in, from each of the two ───────────────────────────
+    for behind in ["work:phi", "work:sigma"] {
+        s.call(
+            "recall",
+            json!({"subject": behind, "follow": {"direction": "in"}}),
+        )
+        .await
+        .says("work:first-mix");
+    }
+    // …and the list with an item that is not a handle reaches nobody, which
+    // the first walk above would not show on its own: it asked about the one
+    // thing both lists name.
+    s.call(
+        "recall",
+        json!({"subject": "work:phi", "follow": {"direction": "in"}}),
+    )
+    .await
+    .never_says("work:loop-check-in");
+
+    // ── the search edge, by the other end of the list ───────────────────────
+    s.call(
+        "search",
+        json!({"edge": {"object": "work:sigma", "shape": "connection"}}),
+    )
+    .await
+    .says("work:first-mix");
+
+    s.wrap("looked behind two things and found the work that waits on both")
+        .await;
+    story.finish().await;
+}

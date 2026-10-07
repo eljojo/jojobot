@@ -1979,8 +1979,9 @@ fn an_unscoped_walk_out_reaches_the_target_of_its_own_mention() {
 }
 
 /// A corpus where a handle sits in a field value under a key nobody
-/// declared, beside three values that are not links: a handle nothing
-/// answers to, a handle inside a longer string, and a comma-joined list.
+/// declared, and a list of handles sits under another, beside three values
+/// that are not links: a handle nothing answers to, a handle inside a longer
+/// string, and a list with one item that is not a handle.
 fn field_holders() -> Vec<DocScan> {
     let holding = |home: &str, key: &str, value: &str| Fact {
         fields: [(key.to_string(), value.to_string())].into(),
@@ -2017,14 +2018,25 @@ fn field_holders() -> Vec<DocScan> {
                 "topic:all-rules,topic:widgets",
             )],
         ),
+        doc(
+            entity("person:barney-gumble", "Barney"),
+            "",
+            vec![holding(
+                "person:barney-gumble",
+                "mixed",
+                "topic:all-rules, nothing else yet",
+            )],
+        ),
     ]
 }
 
-/// **A field holding a handle is a link whatever its key.** An unscoped walk
-/// in reaches the one record whose value IS the handle, under a key no type
-/// declared, labelled as a field link. The three values beside it that only
-/// look like links are not reached — the positive keeps the three negatives
-/// from passing over an empty answer.
+/// **A field holding a handle is a link whatever its key, and so is a list of
+/// handles** (decision log 374: a link is any field that names another thing).
+/// An unscoped walk in reaches the record whose value IS the handle and the one
+/// whose value is a list of handles, under keys no type declared, labelled as
+/// field links. The three values beside them that only look like links are not
+/// reached — the positives keep the three negatives from passing over an empty
+/// answer, and the list with one item that is not a handle stays prose.
 #[test]
 fn an_unscoped_walk_in_reaches_a_handle_held_under_an_undeclared_key() {
     let scanned = field_holders();
@@ -2049,17 +2061,43 @@ fn an_unscoped_walk_in_reaches_a_handle_held_under_an_undeclared_key() {
 
     assert_eq!(
         handles(reached),
-        vec!["person:homer"],
-        "only the value that is the whole handle is a link: {reached:?}",
+        vec!["person:homer", "person:patana"],
+        "a value that is a handle, and a list that is only handles, are links: {reached:?}",
     );
+    for one in reached {
+        assert_eq!(
+            one.via
+                .as_ref()
+                .expect("a reached object says how the walk got to it")
+                .link,
+            Link::Field,
+            "labelled as a field link, never as an edge: {reached:?}",
+        );
+    }
+
+    // The second handle of the list is reached too, not only the first.
+    let widgets = resolved(
+        &scanned,
+        &[],
+        &GraphQuery {
+            select: Selection {
+                subject: Some(EntityId("topic:widgets".into())),
+                ..Selection::default()
+            },
+            follow: Some(Follow {
+                along: Along::AnyEdge,
+                direction: Some(Direction::In),
+                ..Follow::hop()
+            }),
+            ..GraphQuery::default()
+        },
+    )
+    .expect("a subject with a walk");
     assert_eq!(
-        reached[0]
-            .via
-            .as_ref()
-            .expect("a reached object says how the walk got to it")
-            .link,
-        Link::Field,
-        "labelled as a field link, never as an edge: {reached:?}",
+        handles(&widgets[0].connected),
+        vec!["person:patana"],
+        "{:?}",
+        widgets[0].connected,
     );
 }
 
@@ -2101,6 +2139,17 @@ fn an_unscoped_walk_out_reaches_a_handle_held_under_an_undeclared_key() {
     assert!(
         gayle.is_empty(),
         "a handle that resolves to nothing is not a link: {gayle:?}"
+    );
+    let patana = out_of("person:patana");
+    assert_eq!(
+        handles(&patana),
+        vec!["topic:all-rules", "topic:widgets"],
+        "every handle in a list of handles is reached: {patana:?}"
+    );
+    let barney = out_of("person:barney-gumble");
+    assert!(
+        barney.is_empty(),
+        "a list with an item that is not a handle is prose: {barney:?}"
     );
 }
 
@@ -2850,6 +2899,100 @@ fn a_list_of_references_walks_to_every_handle_in_it() {
         "the second name in the cell is not the whole cell, so an equality on the cell \
              finds nothing: {back:?}",
     );
+}
+
+/// **An unscoped walk reaches every handle in a declared list of
+/// references**, the same handles the relation walk above reaches by the key's
+/// own name. Reading a list cell as one value reached nobody: the walk asked
+/// whether the WHOLE cell was a handle, and `person:bart, person:milhouse` is
+/// not one.
+///
+/// Both directions and both ends of the list, because the first item can be
+/// reached while the rest are not. Paired with the relation walk on the same
+/// corpus, which already reaches them: the unscoped walk is held to agree.
+#[test]
+fn an_unscoped_walk_reaches_every_handle_in_a_declared_list_of_references() {
+    let declarations = vec![types::DeclaredType::new(
+        "outing",
+        vec![types::Field::listing(
+            "came_along",
+            types::ValueType::Reference,
+        )],
+    )];
+    let scanned = vec![
+        doc(entity("person:bart", "Bart"), "Bart's page.", Vec::new()),
+        doc(
+            entity("person:milhouse", "Milhouse"),
+            "The other one.",
+            Vec::new(),
+        ),
+        doc(
+            entity("event:winter-fest", "Winter Fest"),
+            "The outing's page.",
+            vec![Fact {
+                fields: [(
+                    "came_along".to_string(),
+                    "person:bart, person:milhouse".to_string(),
+                )]
+                .into_iter()
+                .collect(),
+                ..fact("event:winter-fest", "f1", "who came along")
+            }],
+        ),
+    ];
+    let walk = |from: &str, along: Along, direction: Direction| {
+        let found = resolved(
+            &scanned,
+            &declarations,
+            &GraphQuery {
+                select: Selection {
+                    subject: Some(EntityId(from.into())),
+                    ..Selection::default()
+                },
+                include: Include {
+                    facts: false,
+                    prose: false,
+                    stood_for: false,
+                },
+                follow: Some(Follow {
+                    along,
+                    direction: Some(direction),
+                    ..Follow::hop()
+                }),
+                history: None,
+            },
+        )
+        .expect("a subject with a walk");
+        handles(&found[0].connected)
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<String>>()
+    };
+
+    // The relation walk is the positive the unscoped one is held to.
+    assert_eq!(
+        walk(
+            "person:milhouse",
+            Along::Relation("came_along".into()),
+            Direction::In
+        ),
+        vec!["event:winter-fest".to_string()],
+    );
+    for (from, direction, expected) in [
+        (
+            "event:winter-fest",
+            Direction::Out,
+            vec!["person:bart", "person:milhouse"],
+        ),
+        ("person:bart", Direction::In, vec!["event:winter-fest"]),
+        ("person:milhouse", Direction::In, vec!["event:winter-fest"]),
+    ] {
+        assert_eq!(
+            walk(from, Along::AnyEdge, direction),
+            expected.into_iter().map(str::to_string).collect::<Vec<_>>(),
+            "the unscoped walk {direction:?} from {from} misses a handle in the list",
+        );
+    }
 }
 
 /// declares an inverse, because there is nothing to declare — the same key

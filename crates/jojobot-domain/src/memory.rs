@@ -3151,16 +3151,32 @@ impl Fact {
         found
     }
 
-    /// **The field values that are, whole, a handle** — the half of
-    /// [`Fact::linked`] that sits under a key. A handle inside a longer string
-    /// is prose and is not here, and neither is one entry of a comma-joined
-    /// list. Search and recall both read links through this, so the two cannot
-    /// disagree about which values are one.
+    /// **The field values that name other things** — the half of
+    /// [`Fact::linked`] that sits under a key. A value is a link when it is,
+    /// whole, a handle, or when it is a comma-joined list of which EVERY item
+    /// is a handle (decision log 374: a link is any field that names another
+    /// thing, declared or not). A handle inside a longer string is prose, and
+    /// so is a list with one item that is not a handle: the reader cannot tell
+    /// which of its items were meant as links. Search and recall both read
+    /// links through this, so the two cannot disagree about which values are
+    /// one.
     pub fn field_handles(&self) -> Vec<EntityId> {
         self.fields
             .values()
-            .map(|v| EntityId(v.trim().to_string()))
-            .filter(|id| validate_subject(id).is_ok())
+            .flat_map(|value| {
+                let whole = EntityId(value.trim().to_string());
+                if validate_subject(&whole).is_ok() {
+                    return vec![whole];
+                }
+                let items: Vec<EntityId> = value
+                    .split(',')
+                    .map(|item| EntityId(item.trim().to_string()))
+                    .collect();
+                match items.len() > 1 && items.iter().all(|id| validate_subject(id).is_ok()) {
+                    true => items,
+                    false => Vec::new(),
+                }
+            })
             .collect()
     }
 
