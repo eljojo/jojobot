@@ -2900,7 +2900,12 @@ const DONUTS: [&str; 3] = ["donut", "donuts", "doughnuts"];
 fn says_the_product(claim: &Value) -> bool {
     let said = spoken(claim);
     let has = |word: &str| said.iter().any(|s| s == word);
-    has("36") || has("thirty-six") || (has("three") && has("dozen"))
+    // "thirty six" is two words side by side, so it is read as a pair and
+    // never as a "thirty" and a "six" anywhere in the claim.
+    let spaced = said
+        .windows(2)
+        .any(|pair| pair[0] == "thirty" && pair[1] == "six");
+    has("36") || has("thirty-six") || spaced || (has("three") && has("dozen"))
 }
 
 /// **What the operator gave reads back as the operator's word.**

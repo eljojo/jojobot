@@ -176,6 +176,9 @@ enum Donuts {
     /// The number of people filed as the operator's word and the three each
     /// never recorded as theirs. A standing rule says "three" elsewhere.
     EachNeverRecorded,
+    /// The count and its recap written in words, "thirty six" with a space,
+    /// and as inference. The figure is right and no digit states it.
+    SpelledOut,
 }
 
 /// **Where the first standing rule goes.**
@@ -461,19 +464,26 @@ async fn played(room: &Surface, sid: &str, sitting: Sitting) {
         Donuts::Apart => ("testimony", "inference", "inference"),
         Donuts::AllDefault => ("inference", "inference", "inference"),
         Donuts::RecapAsTestimony => ("testimony", "inference", "testimony"),
-        Donuts::EachNeverRecorded => ("testimony", "inference", "inference"),
+        Donuts::EachNeverRecorded | Donuts::SpelledOut => ("testimony", "inference", "inference"),
     };
     let operator_said = match sitting.donuts {
         Donuts::EachNeverRecorded => "Twelve people are coming.",
         _ => "Twelve people are coming and each of them eats three donuts.",
     };
+    let (worked, recap) = match sitting.donuts {
+        Donuts::SpelledOut => (
+            "Thirty six donuts to buy.",
+            "Recap: twelve people at three donuts each, so thirty six donuts to buy.",
+        ),
+        _ => (
+            "36 donuts to buy.",
+            "Recap: twelve people at three donuts each, so 36 donuts to buy.",
+        ),
+    };
     for (content, provenance) in [
         (operator_said, said_by),
-        ("36 donuts to buy.", worked_by),
-        (
-            "Recap: twelve people at three donuts each, so 36 donuts to buy.",
-            recap_by,
-        ),
+        (worked, worked_by),
+        (recap, recap_by),
     ] {
         let said = as_the_occupant(
             room,
@@ -1113,6 +1123,20 @@ async fn the_numbers_lock_reds_when_only_a_rule_about_something_else_says_three(
     })
     .await;
     assert_eq!(held, all_but(&[NUMBERS]), "{said}");
+}
+
+/// **A count written in words with a space still counts as stated.** The
+/// count lock read "36", "thirty-six" and "three dozen", so a right answer
+/// written "thirty six" left no claim stating the count and the lock reddened
+/// on a correct sitting.
+#[tokio::test]
+async fn the_count_lock_holds_when_the_count_is_written_thirty_six_with_a_space() {
+    let (held, said) = held_after(Sitting {
+        donuts: Donuts::SpelledOut,
+        ..right()
+    })
+    .await;
+    assert_eq!(held, vec![true; LOCKS], "{said}");
 }
 
 /// **A recap that restates the worked-out count as the operator's word.**
