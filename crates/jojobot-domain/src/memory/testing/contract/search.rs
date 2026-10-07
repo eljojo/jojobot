@@ -1096,26 +1096,95 @@ pub async fn a_type_query_flags_a_bad_value_and_returns_the_record<M: Memory, S:
     );
 }
 
+/// **Every retrieval case of the contract, listed once**, for the reason the
+/// memory list is: counting and running read the same list. `$store` and
+/// `$search` are the two halves the case is run against.
+macro_rules! retrieval_cases {
+    ($m:ident, $store:ident, $search:ident) => {
+        $m!(search_finds_a_fact_captured_moments_ago($store, $search));
+        $m!(search_fact_hits_carry_an_address_and_provenance(
+            $store, $search
+        ));
+        $m!(a_term_from_a_superseded_wording_is_found_only_when_asked_for($store, $search));
+        $m!(a_hit_carries_the_clocks_the_store_kept($store, $search));
+        $m!(search_excludes_superseded_by_default_and_lists_it_on_request($store, $search));
+        $m!(search_excludes_a_retracted_record_by_default(
+            $store, $search
+        ));
+        $m!(search_answers_ask_across_by_kind_and_edge($store, $search));
+        $m!(search_by_edge_object_alone_finds_any_shape($store, $search));
+        $m!(search_pins_a_named_entity_first($store, $search));
+        $m!(search_fact_hits_name_their_subject_and_home(
+            $store, $search
+        ));
+        $m!(search_entity_hits_carry_their_edges($store, $search));
+        $m!(a_name_the_duplicate_wore_finds_the_survivor_after_a_fold(
+            $store, $search
+        ));
+        $m!(search_finds_things_that_answer_a_type_structurally(
+            $store, $search
+        ));
+        $m!(search_keeps_only_what_fits_when_the_caller_asks(
+            $store, $search
+        ));
+        $m!(a_type_query_flags_a_bad_value_and_returns_the_record(
+            $store, $search
+        ));
+    };
+}
+
+/// **How many cases the whole contract lists, retrieval included.**
+pub fn searchable_case_count() -> usize {
+    let mut total = 0usize;
+    macro_rules! counted {
+        ($case:expr) => {
+            total += 1;
+        };
+    }
+    retrieval_cases!(counted, nothing, nowhere);
+    case_count() + total
+}
+
 /// Run the whole contract, **including retrieval**, against a store that
 /// carries the search projection. The search half can't live in `run_all`:
 /// the bare Memory port has no read side for it.
 pub async fn run_all_searchable<M: Memory, S: Search>(store: &M, search: &S) {
-    run_all(store).await;
+    run_part_searchable(store, search, 0, 1).await;
+}
 
-    search_finds_a_fact_captured_moments_ago(store, search).await;
-    search_fact_hits_carry_an_address_and_provenance(store, search).await;
-    a_term_from_a_superseded_wording_is_found_only_when_asked_for(store, search).await;
-    a_hit_carries_the_clocks_the_store_kept(store, search).await;
-    search_excludes_superseded_by_default_and_lists_it_on_request(store, search).await;
-    search_excludes_a_retracted_record_by_default(store, search).await;
-    search_answers_ask_across_by_kind_and_edge(store, search).await;
-    search_by_edge_object_alone_finds_any_shape(store, search).await;
-    search_pins_a_named_entity_first(store, search).await;
-    search_fact_hits_name_their_subject_and_home(store, search).await;
-    search_entity_hits_carry_their_edges(store, search).await;
-    a_name_the_duplicate_wore_finds_the_survivor_after_a_fold(store, search).await;
-
-    search_finds_things_that_answer_a_type_structurally(store, search).await;
-    search_keeps_only_what_fits_when_the_caller_asks(store, search).await;
-    a_type_query_flags_a_bad_value_and_returns_the_record(store, search).await;
+/// **One part of the contract including retrieval**: `part` of `of`, cut from
+/// the memory list and from the retrieval list alike. The answer is how many
+/// cases this call ran, so the parts' answers add up to
+/// [`searchable_case_count`].
+pub async fn run_part_searchable<M: Memory, S: Search>(
+    store: &M,
+    search: &S,
+    part: usize,
+    of: usize,
+) -> usize {
+    let mut ran = run_part(store, part, of).await;
+    let mut counted_retrieval = 0usize;
+    macro_rules! counting {
+        ($case:expr) => {
+            counted_retrieval += 1;
+        };
+    }
+    retrieval_cases!(counting, nothing, nowhere);
+    let (from, to) = part_bounds(counted_retrieval, part, of);
+    let mut position = 0usize;
+    macro_rules! run {
+        ($case:expr) => {
+            if (from..to).contains(&position) {
+                $case.await;
+                ran += 1;
+            }
+            position += 1;
+        };
+    }
+    retrieval_cases!(run, store, search);
+    assert_eq!(
+        position, counted_retrieval,
+        "the run walked a different list than it counted"
+    );
+    ran
 }

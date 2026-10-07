@@ -13093,194 +13093,257 @@ pub async fn a_merge_that_would_overfill_a_room_or_a_body_cap_is_refused<M: Memo
         .expect("a thought exactly at the cap lands");
 }
 
+/// **Every case of the memory contract, listed once.** The list is a macro so
+/// that counting the cases and running a slice of them read the same list: a
+/// case added here is counted and run, and no second list can drift from it.
+/// `$m` is called once per case, with the case's call as its argument; `$store`
+/// is the store the case is run against.
+macro_rules! all_cases {
+    ($m:ident, $store:ident) => {
+        $m!(capture_reads_back($store));
+        $m!(preserves_all_fields($store));
+        $m!(a_claim_can_say_nothing_about_when_the_thing_happened($store));
+        $m!(a_claims_span_covers_every_day_it_ran($store));
+        $m!(happened_through_with_no_start_is_refused($store));
+        $m!(a_patch_may_widen_a_standing_start_but_not_orphan_one($store));
+        $m!(the_day_a_thing_happened_is_versioned_like_the_rest_of_the_claim($store));
+        $m!(derived_from_must_name_a_fact_that_exists($store));
+        $m!(derived_from_on_an_edit_must_name_a_fact_that_exists($store));
+        $m!(pipe_in_content_round_trips($store));
+        $m!(a_backslash_in_content_round_trips($store));
+        $m!(details_hold_paragraph_breaks_and_round_trip($store));
+        $m!(both_provenances_survive($store));
+        $m!(a_content_replacement_without_provenance_is_refused($store));
+        $m!(edge_whitespace_is_normalized($store));
+        $m!(multiple_facts_all_recallable($store));
+        $m!(subjects_are_isolated($store));
+        $m!(malicious_subjects_are_rejected($store));
+        $m!(recall_unknown_is_a_miss_not_an_empty_page($store));
+
+        $m!(every_kind_holds_facts($store));
+
+        $m!(a_claim_carries_when_it_was_taken_in($store));
+        $m!(folding_a_duplicate_makes_the_split_answer_whole($store));
+        $m!(a_fold_carries_the_lineage_that_points_at_what_it_moved($store));
+        $m!(a_fold_moves_the_duplicates_names_to_the_survivor($store));
+        $m!(a_fold_repoints_a_pointer_wearing_a_former_handle_of_the_folded_side($store));
+        $m!(a_walk_from_a_folded_handle_says_where_it_went($store));
+        $m!(a_claims_lineage_is_walkable_from_its_source($store));
+        $m!(a_folded_value_says_who_backs_it($store));
+        $m!(a_summed_key_has_no_backing_to_report($store));
+        $m!(a_machine_read_claim_names_what_it_was_read_from($store));
+        $m!(referring_to_answers_from_the_far_end($store));
+        $m!(referring_to_follows_a_declared_reference_key($store));
+        $m!(referring_to_finds_a_reference_to_a_renamed_target($store));
+        $m!(a_merge_into_the_callers_own_bot_cannot_carry_a_ceiling_onto_it($store));
+        $m!(referring_to_finds_a_target_named_in_a_list_of_references($store));
+        $m!(a_work_items_status_is_held_to_its_projects_columns($store));
+        $m!(a_child_names_its_parent_and_reads_back($store));
+        $m!(children_are_handles_and_one_level_deep($store));
+        $m!(a_write_that_rewrites_a_child_leaves_it_where_it_was($store));
+        $m!(a_parent_that_is_not_a_handle_is_refused_before_the_guard($store));
+        $m!(children_of_an_unknown_entity_is_a_miss($store));
+        $m!(an_unnamed_parent_is_refused_and_provisions_nothing($store));
+        $m!(nothing_may_be_its_own_parent($store));
+
+        $m!(prose_is_replaced_whole_and_reads_back($store));
+        $m!(add_entity_reads_back($store));
+        $m!(list_entities_filters_by_kind($store));
+        $m!(update_entity_edits_metadata_in_place($store));
+        $m!(update_entity_screens_a_colliding_rename($store));
+        $m!(update_entity_screens_a_colliding_alias($store));
+        $m!(update_entity_is_not_blocked_by_its_own_labels($store));
+        $m!(update_entity_does_not_re_screen_the_handle($store));
+        $m!(update_entity_without_a_rename_is_not_screened($store));
+        $m!(update_entity_unknown_handle_never_creates($store));
+        $m!(a_second_rename_of_a_stale_handle_reports_where_it_went($store));
+        $m!(add_entity_keeps_its_alternate_names($store));
+        $m!(add_entity_screens_every_name_an_entity_answers_to($store));
+
+        $m!(capture_writes_an_edge_that_reads_back($store));
+        $m!(reading_a_bots_thoughts_never_touches_their_history($store));
+        $m!(a_thought_pointing_at_a_thread_is_in_the_room($store));
+        $m!(a_room_fulls_subject_is_never_a_bare_badge($store));
+        $m!(a_bots_room_enforces_its_capacity($store));
+        $m!(the_ceiling_guard_reads_the_fold_across_every_edit_and_retract_path($store));
+        $m!(update_fact_drawing_a_connection_edge_into_a_full_room_is_refused($store));
+        $m!(a_thoughts_body_is_capped_at_its_containers_own_value_or_the_default($store));
+        $m!(the_default_body_cap_binds_only_a_thing_that_carries_a_capacity($store));
+        $m!(
+            update_fact_over_the_body_cap_is_refused_on_content_and_on_the_edge_that_makes_it_a_thought(
+                $store
+            )
+        );
+        $m!(a_thing_cannot_set_its_own_thought_body_cap_either($store));
+        $m!(an_edit_that_leaves_an_over_cap_thoughts_content_untouched_still_lands($store));
+        $m!(an_edit_to_a_thought_already_in_an_over_capacity_room_still_lands($store));
+        $m!(an_uncapped_thing_is_refused_nothing($store));
+        $m!(a_non_bots_room_enforces_its_capacity_too($store));
+        $m!(a_borrow_crosses_the_ceiling_exactly_once($store));
+        $m!(an_aged_thought_frees_the_room($store));
+        $m!(an_edit_into_a_room_counts_it_the_way_a_capture_does($store));
+        $m!(an_archived_thought_frees_its_slot($store));
+        $m!(a_dropped_thoughts_edge_survives_the_pointers_own_rename($store));
+        $m!(every_edge_shape_reads_back($store));
+        $m!(a_wrong_kind_edge_object_is_refused($store));
+        $m!(an_edge_object_is_screened_by_the_guard($store));
+        $m!(update_fact_attaches_an_edge($store));
+        $m!(update_fact_sets_and_clears_a_field($store));
+
+        $m!(a_key_written_many_times_holds_one_value_and_counts($store));
+        $m!(a_counter_totals_its_writes_and_keeps_them($store));
+        $m!(an_edit_appends_and_the_value_it_replaced_stays_in_the_history($store));
+        $m!(clearing_a_key_leaves_its_writes_behind($store));
+        $m!(history_of_an_unwritten_key_is_empty_and_of_no_entity_is_a_miss($store));
+        $m!(a_correction_keeps_what_the_claim_used_to_say($store));
+        $m!(claim_history_of_no_record_is_a_miss_and_of_no_entity_is_an_entity_miss($store));
+        $m!(each_write_of_a_claim_records_its_own_moment($store));
+
+        $m!(a_records_fields_survive_capture($store));
+        $m!(a_records_ref_is_screened_by_the_guard($store));
+        $m!(a_reserved_field_key_is_refused($store));
+        $m!(retracting_a_record_marks_it_and_records_why($store));
+        $m!(a_retraction_is_one_way($store));
+        $m!(the_retraction_marker_is_not_one_of_the_things_fields($store));
+        $m!(clearing_the_retraction_marker_is_refused($store));
+        $m!(a_retraction_needs_no_reason($store));
+        $m!(retracting_an_unknown_address_never_writes($store));
+
+        $m!(facts_carry_a_usable_address($store));
+        $m!(update_fact_edits_in_place($store));
+        $m!(an_edit_can_carry_a_new_day_and_omitted_leaves_it_alone($store));
+        $m!(a_refutation_is_an_ordinary_content_edit($store));
+        $m!(promotion_to_testimony_needs_confirmation($store));
+        $m!(demotion_to_inference_is_free($store));
+
+        $m!(a_hedged_claim_round_trips($store));
+        $m!(standing_defaults_to_what_the_provenance_implies($store));
+        $m!(a_capture_declares_its_own_standing($store));
+        $m!(settling_a_hedge_needs_confirmation_and_keeps_its_provenance($store));
+        $m!(reopening_a_settled_claim_needs_no_ceremony($store));
+        $m!(a_patch_moves_only_the_axis_it_names($store));
+        $m!(update_fact_unknown_address_never_creates($store));
+        $m!(update_fact_tells_an_unknown_handle_from_an_empty_entity($store));
+
+        $m!(capture_requires_an_existing_subject($store));
+        $m!(capture_requires_an_existing_edge_object($store));
+        $m!(update_fact_requires_an_existing_edge_object($store));
+        $m!(a_rename_and_a_recreated_handle_does_not_hijack_an_edge($store));
+        $m!(a_rename_and_a_recreated_handle_does_not_hijack_a_ref($store));
+        $m!(a_rename_and_a_recreated_handle_does_not_hijack_a_parent($store));
+        $m!(a_same_handle_rename_with_a_different_parent_reparents($store));
+        $m!(a_same_handle_rename_naming_no_real_change_is_still_refused($store));
+        $m!(a_same_handle_rename_naming_an_unknown_parent_is_blocked($store));
+        $m!(malformed_entity_fields_are_rejected($store));
+        $m!(a_cross_link_takes_the_task_layers_own_grammar($store));
+        $m!(a_field_at_the_validators_limit_survives_storage($store));
+
+        $m!(a_declared_type_reads_back($store));
+        $m!(the_type_roster_is_ordered_by_name($store));
+        $m!(declaring_a_type_again_replaces_its_keys($store));
+        $m!(a_type_with_no_keys_is_refused_and_writes_nothing($store));
+        $m!(a_shipped_type_refuses_a_callers_redeclaration($store));
+        $m!(a_shipped_write_displacing_a_callers_type_is_remembered($store));
+        $m!(a_shipped_type_declared_fresh_displaces_nothing($store));
+        $m!(two_stored_types_may_name_one_key($store));
+        $m!(a_stored_type_matches_a_record_that_never_declared_it($store));
+
+        $m!(a_graph_query_selects_a_kind_and_returns_its_prose($store));
+        $m!(a_graph_query_filters_on_a_stored_value_and_walks_an_edge($store));
+        $m!(a_walk_marks_a_link_whose_claim_the_store_took_back($store));
+        $m!(a_documents_id_is_not_the_handle_and_survives_a_rewrite($store));
+        $m!(a_value_is_found_without_naming_the_key_it_is_under($store));
+        $m!(a_rewrite_can_take_the_edge_off_and_leaves_it_alone_otherwise($store));
+        $m!(a_declared_reference_key_is_walkable_against_the_store($store));
+        $m!(a_trip_records_who_came_and_answers_from_either_end($store));
+        $m!(the_kinds_are_rows_and_a_shipped_one_is_closed($store));
+        $m!(an_owned_kind_this_build_dropped_is_reclaimed($store));
+        $m!(a_pet_is_its_own_kind_in_the_store($store));
+        $m!(a_rhythm_is_refused_without_a_parent($store));
+        $m!(a_rhythm_holding_a_cadence_and_no_advances_from_is_refused($store));
+        $m!(a_promise_is_refused_without_a_parent_and_keeps_its_day($store));
+        $m!(a_kind_the_software_ships_lands_on_a_callers_type_of_that_name($store));
+        $m!(a_snooze_day_holds_the_loop_back_only_while_the_snooze_is_the_last_check_in($store));
+        $m!(a_bots_own_boot_seats_are_not_its_own_to_set($store));
+        $m!(a_thing_reads_back_as_its_fields_folded($store));
+        $m!(the_newest_write_wins_however_old_the_record_it_landed_in($store));
+        $m!(a_cleared_key_is_not_resurrected_by_an_older_record($store));
+        $m!(clearing_a_key_the_record_never_carried_changes_nothing($store));
+        $m!(a_reference_keeps_the_kind_it_points_at($store));
+        $m!(a_write_cannot_put_a_value_the_type_refuses($store));
+        $m!(a_type_named_after_a_kind_does_not_gate_that_kinds_writes($store));
+        $m!(neither_half_writes_over_the_others_keys($store));
+        $m!(a_closed_set_refuses_a_write_outside_it($store));
+        $m!(a_reference_must_name_an_entity_that_exists($store));
+        $m!(a_write_cannot_break_a_fit_that_already_exists($store));
+        $m!(a_supersede_that_breaks_a_fit_is_refused_and_a_retraction_is_not($store));
+        $m!(a_walk_flags_a_link_drawn_by_a_claim_archived_through_an_ordinary_edit($store));
+        $m!(a_declared_type_governs_no_write($store));
+        $m!(a_long_history_is_cut_to_its_newest_and_says_how_many($store));
+        $m!(a_read_of_facts_says_how_many_times_each_was_written($store));
+        $m!(a_walk_with_no_facts_carries_no_revision_counts($store));
+        $m!(claim_histories_agrees_with_claim_history_per_fact($store));
+
+        $m!(archive_entity_persists_the_reason_and_the_moment($store));
+        $m!(a_second_archive_is_refused_not_overwritten($store));
+
+        $m!(add_entity_refuses_a_session_kind_handle($store));
+        $m!(merge_refuses_a_session_kind_handle_on_either_side($store));
+        $m!(a_merge_that_would_overfill_a_room_or_a_body_cap_is_refused($store));
+
+    };
+}
+
+/// How many parts a real store runs the contract in, side by side.
+pub const PARTS: usize = 4;
+
+/// **How many cases the memory contract lists.**
+pub fn case_count() -> usize {
+    let mut total = 0usize;
+    macro_rules! counted {
+        ($case:expr) => {
+            total += 1;
+        };
+    }
+    all_cases!(counted, nothing);
+    total
+}
+
+/// **The cases of one part, as `from..to` positions in the list**: `of` parts
+/// of `total` cases, each a run of neighbours and no two sharing one.
+///
+/// Neighbours stay together because a case may lean on a record a case near it
+/// wrote. Every part runs on a store of its own, filled by its own cases only.
+pub fn part_bounds(total: usize, part: usize, of: usize) -> (usize, usize) {
+    (part * total / of, (part + 1) * total / of)
+}
+
+/// The whole contract on one store.
 pub async fn run_all<M: Memory>(store: &M) {
-    capture_reads_back(store).await;
-    preserves_all_fields(store).await;
-    a_claim_can_say_nothing_about_when_the_thing_happened(store).await;
-    a_claims_span_covers_every_day_it_ran(store).await;
-    happened_through_with_no_start_is_refused(store).await;
-    a_patch_may_widen_a_standing_start_but_not_orphan_one(store).await;
-    the_day_a_thing_happened_is_versioned_like_the_rest_of_the_claim(store).await;
-    derived_from_must_name_a_fact_that_exists(store).await;
-    derived_from_on_an_edit_must_name_a_fact_that_exists(store).await;
-    pipe_in_content_round_trips(store).await;
-    a_backslash_in_content_round_trips(store).await;
-    details_hold_paragraph_breaks_and_round_trip(store).await;
-    both_provenances_survive(store).await;
-    a_content_replacement_without_provenance_is_refused(store).await;
-    edge_whitespace_is_normalized(store).await;
-    multiple_facts_all_recallable(store).await;
-    subjects_are_isolated(store).await;
-    malicious_subjects_are_rejected(store).await;
-    recall_unknown_is_a_miss_not_an_empty_page(store).await;
+    run_part(store, 0, 1).await;
+}
 
-    every_kind_holds_facts(store).await;
-
-    a_claim_carries_when_it_was_taken_in(store).await;
-    folding_a_duplicate_makes_the_split_answer_whole(store).await;
-    a_fold_carries_the_lineage_that_points_at_what_it_moved(store).await;
-    a_fold_moves_the_duplicates_names_to_the_survivor(store).await;
-    a_fold_repoints_a_pointer_wearing_a_former_handle_of_the_folded_side(store).await;
-    a_walk_from_a_folded_handle_says_where_it_went(store).await;
-    a_claims_lineage_is_walkable_from_its_source(store).await;
-    a_folded_value_says_who_backs_it(store).await;
-    a_summed_key_has_no_backing_to_report(store).await;
-    a_machine_read_claim_names_what_it_was_read_from(store).await;
-    referring_to_answers_from_the_far_end(store).await;
-    referring_to_follows_a_declared_reference_key(store).await;
-    referring_to_finds_a_reference_to_a_renamed_target(store).await;
-    a_merge_into_the_callers_own_bot_cannot_carry_a_ceiling_onto_it(store).await;
-    referring_to_finds_a_target_named_in_a_list_of_references(store).await;
-    a_work_items_status_is_held_to_its_projects_columns(store).await;
-    a_child_names_its_parent_and_reads_back(store).await;
-    children_are_handles_and_one_level_deep(store).await;
-    a_write_that_rewrites_a_child_leaves_it_where_it_was(store).await;
-    a_parent_that_is_not_a_handle_is_refused_before_the_guard(store).await;
-    children_of_an_unknown_entity_is_a_miss(store).await;
-    an_unnamed_parent_is_refused_and_provisions_nothing(store).await;
-    nothing_may_be_its_own_parent(store).await;
-
-    prose_is_replaced_whole_and_reads_back(store).await;
-    add_entity_reads_back(store).await;
-    list_entities_filters_by_kind(store).await;
-    update_entity_edits_metadata_in_place(store).await;
-    update_entity_screens_a_colliding_rename(store).await;
-    update_entity_screens_a_colliding_alias(store).await;
-    update_entity_is_not_blocked_by_its_own_labels(store).await;
-    update_entity_does_not_re_screen_the_handle(store).await;
-    update_entity_without_a_rename_is_not_screened(store).await;
-    update_entity_unknown_handle_never_creates(store).await;
-    a_second_rename_of_a_stale_handle_reports_where_it_went(store).await;
-    add_entity_keeps_its_alternate_names(store).await;
-    add_entity_screens_every_name_an_entity_answers_to(store).await;
-
-    capture_writes_an_edge_that_reads_back(store).await;
-    reading_a_bots_thoughts_never_touches_their_history(store).await;
-    a_thought_pointing_at_a_thread_is_in_the_room(store).await;
-    a_room_fulls_subject_is_never_a_bare_badge(store).await;
-    a_bots_room_enforces_its_capacity(store).await;
-    the_ceiling_guard_reads_the_fold_across_every_edit_and_retract_path(store).await;
-    update_fact_drawing_a_connection_edge_into_a_full_room_is_refused(store).await;
-    a_thoughts_body_is_capped_at_its_containers_own_value_or_the_default(store).await;
-    the_default_body_cap_binds_only_a_thing_that_carries_a_capacity(store).await;
-    update_fact_over_the_body_cap_is_refused_on_content_and_on_the_edge_that_makes_it_a_thought(
-        store,
-    )
-    .await;
-    a_thing_cannot_set_its_own_thought_body_cap_either(store).await;
-    an_edit_that_leaves_an_over_cap_thoughts_content_untouched_still_lands(store).await;
-    an_edit_to_a_thought_already_in_an_over_capacity_room_still_lands(store).await;
-    an_uncapped_thing_is_refused_nothing(store).await;
-    a_non_bots_room_enforces_its_capacity_too(store).await;
-    a_borrow_crosses_the_ceiling_exactly_once(store).await;
-    an_aged_thought_frees_the_room(store).await;
-    an_edit_into_a_room_counts_it_the_way_a_capture_does(store).await;
-    an_archived_thought_frees_its_slot(store).await;
-    a_dropped_thoughts_edge_survives_the_pointers_own_rename(store).await;
-    every_edge_shape_reads_back(store).await;
-    a_wrong_kind_edge_object_is_refused(store).await;
-    an_edge_object_is_screened_by_the_guard(store).await;
-    update_fact_attaches_an_edge(store).await;
-    update_fact_sets_and_clears_a_field(store).await;
-
-    a_key_written_many_times_holds_one_value_and_counts(store).await;
-    a_counter_totals_its_writes_and_keeps_them(store).await;
-    an_edit_appends_and_the_value_it_replaced_stays_in_the_history(store).await;
-    clearing_a_key_leaves_its_writes_behind(store).await;
-    history_of_an_unwritten_key_is_empty_and_of_no_entity_is_a_miss(store).await;
-    a_correction_keeps_what_the_claim_used_to_say(store).await;
-    claim_history_of_no_record_is_a_miss_and_of_no_entity_is_an_entity_miss(store).await;
-    each_write_of_a_claim_records_its_own_moment(store).await;
-
-    a_records_fields_survive_capture(store).await;
-    a_records_ref_is_screened_by_the_guard(store).await;
-    a_reserved_field_key_is_refused(store).await;
-    retracting_a_record_marks_it_and_records_why(store).await;
-    a_retraction_is_one_way(store).await;
-    the_retraction_marker_is_not_one_of_the_things_fields(store).await;
-    clearing_the_retraction_marker_is_refused(store).await;
-    a_retraction_needs_no_reason(store).await;
-    retracting_an_unknown_address_never_writes(store).await;
-
-    facts_carry_a_usable_address(store).await;
-    update_fact_edits_in_place(store).await;
-    an_edit_can_carry_a_new_day_and_omitted_leaves_it_alone(store).await;
-    a_refutation_is_an_ordinary_content_edit(store).await;
-    promotion_to_testimony_needs_confirmation(store).await;
-    demotion_to_inference_is_free(store).await;
-
-    a_hedged_claim_round_trips(store).await;
-    standing_defaults_to_what_the_provenance_implies(store).await;
-    a_capture_declares_its_own_standing(store).await;
-    settling_a_hedge_needs_confirmation_and_keeps_its_provenance(store).await;
-    reopening_a_settled_claim_needs_no_ceremony(store).await;
-    a_patch_moves_only_the_axis_it_names(store).await;
-    update_fact_unknown_address_never_creates(store).await;
-    update_fact_tells_an_unknown_handle_from_an_empty_entity(store).await;
-
-    capture_requires_an_existing_subject(store).await;
-    capture_requires_an_existing_edge_object(store).await;
-    update_fact_requires_an_existing_edge_object(store).await;
-    a_rename_and_a_recreated_handle_does_not_hijack_an_edge(store).await;
-    a_rename_and_a_recreated_handle_does_not_hijack_a_ref(store).await;
-    a_rename_and_a_recreated_handle_does_not_hijack_a_parent(store).await;
-    a_same_handle_rename_with_a_different_parent_reparents(store).await;
-    a_same_handle_rename_naming_no_real_change_is_still_refused(store).await;
-    a_same_handle_rename_naming_an_unknown_parent_is_blocked(store).await;
-    malformed_entity_fields_are_rejected(store).await;
-    a_cross_link_takes_the_task_layers_own_grammar(store).await;
-    a_field_at_the_validators_limit_survives_storage(store).await;
-
-    a_declared_type_reads_back(store).await;
-    the_type_roster_is_ordered_by_name(store).await;
-    declaring_a_type_again_replaces_its_keys(store).await;
-    a_type_with_no_keys_is_refused_and_writes_nothing(store).await;
-    a_shipped_type_refuses_a_callers_redeclaration(store).await;
-    a_shipped_write_displacing_a_callers_type_is_remembered(store).await;
-    a_shipped_type_declared_fresh_displaces_nothing(store).await;
-    two_stored_types_may_name_one_key(store).await;
-    a_stored_type_matches_a_record_that_never_declared_it(store).await;
-
-    a_graph_query_selects_a_kind_and_returns_its_prose(store).await;
-    a_graph_query_filters_on_a_stored_value_and_walks_an_edge(store).await;
-    a_walk_marks_a_link_whose_claim_the_store_took_back(store).await;
-    a_documents_id_is_not_the_handle_and_survives_a_rewrite(store).await;
-    a_value_is_found_without_naming_the_key_it_is_under(store).await;
-    a_rewrite_can_take_the_edge_off_and_leaves_it_alone_otherwise(store).await;
-    a_declared_reference_key_is_walkable_against_the_store(store).await;
-    a_trip_records_who_came_and_answers_from_either_end(store).await;
-    the_kinds_are_rows_and_a_shipped_one_is_closed(store).await;
-    an_owned_kind_this_build_dropped_is_reclaimed(store).await;
-    a_pet_is_its_own_kind_in_the_store(store).await;
-    a_rhythm_is_refused_without_a_parent(store).await;
-    a_rhythm_holding_a_cadence_and_no_advances_from_is_refused(store).await;
-    a_promise_is_refused_without_a_parent_and_keeps_its_day(store).await;
-    a_kind_the_software_ships_lands_on_a_callers_type_of_that_name(store).await;
-    a_snooze_day_holds_the_loop_back_only_while_the_snooze_is_the_last_check_in(store).await;
-    a_bots_own_boot_seats_are_not_its_own_to_set(store).await;
-    a_thing_reads_back_as_its_fields_folded(store).await;
-    the_newest_write_wins_however_old_the_record_it_landed_in(store).await;
-    a_cleared_key_is_not_resurrected_by_an_older_record(store).await;
-    clearing_a_key_the_record_never_carried_changes_nothing(store).await;
-    a_reference_keeps_the_kind_it_points_at(store).await;
-    a_write_cannot_put_a_value_the_type_refuses(store).await;
-    a_type_named_after_a_kind_does_not_gate_that_kinds_writes(store).await;
-    neither_half_writes_over_the_others_keys(store).await;
-    a_closed_set_refuses_a_write_outside_it(store).await;
-    a_reference_must_name_an_entity_that_exists(store).await;
-    a_write_cannot_break_a_fit_that_already_exists(store).await;
-    a_supersede_that_breaks_a_fit_is_refused_and_a_retraction_is_not(store).await;
-    a_walk_flags_a_link_drawn_by_a_claim_archived_through_an_ordinary_edit(store).await;
-    a_declared_type_governs_no_write(store).await;
-    a_long_history_is_cut_to_its_newest_and_says_how_many(store).await;
-    a_read_of_facts_says_how_many_times_each_was_written(store).await;
-    a_walk_with_no_facts_carries_no_revision_counts(store).await;
-    claim_histories_agrees_with_claim_history_per_fact(store).await;
-
-    archive_entity_persists_the_reason_and_the_moment(store).await;
-    a_second_archive_is_refused_not_overwritten(store).await;
-
-    add_entity_refuses_a_session_kind_handle(store).await;
-    merge_refuses_a_session_kind_handle_on_either_side(store).await;
-    a_merge_that_would_overfill_a_room_or_a_body_cap_is_refused(store).await;
+/// **One part of the contract: `part` of `of`.** Run every part in `0..of` and
+/// each case runs exactly once. The answer is how many cases this call ran, so
+/// the parts' answers add up to [`case_count`].
+pub async fn run_part<M: Memory>(store: &M, part: usize, of: usize) -> usize {
+    let total = case_count();
+    let (from, to) = part_bounds(total, part, of);
+    let mut position = 0usize;
+    let mut ran = 0usize;
+    macro_rules! run {
+        ($case:expr) => {
+            if (from..to).contains(&position) {
+                $case.await;
+                ran += 1;
+            }
+            position += 1;
+        };
+    }
+    all_cases!(run, store);
+    assert_eq!(
+        position, total,
+        "the run walked a different list than it counted"
+    );
+    ran
 }

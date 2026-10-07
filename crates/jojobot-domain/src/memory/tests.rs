@@ -374,6 +374,27 @@ async fn fake_satisfies_the_contract() {
     contract::run_all(&InMemoryMemory::booted()).await;
 }
 
+/// **The contract dealt into parts runs every case once, and each part holds on
+/// a store of its own.** A real store runs the parts side by side, one store
+/// each. The parts' counts must add up to the whole list's, or a case was
+/// dropped between them. Every part must also have something to run, or a part
+/// is a store started for nothing. A part that leans on a case outside it
+/// fails here, on a store its own cases alone have filled.
+#[tokio::test]
+async fn the_parts_of_the_contract_run_every_case_once_each_on_its_own_store() {
+    let total = contract::case_count();
+    let mut ran = Vec::new();
+    for part in 0..contract::PARTS {
+        let store = InMemoryMemory::booted();
+        crate::memory::kinds::seed(&store)
+            .await
+            .expect("the kinds are seeded, as a real store's boot does");
+        ran.push(contract::run_part(&store, part, contract::PARTS).await);
+    }
+    assert!(ran.iter().all(|n| *n > 0), "a part ran nothing: {ran:?}");
+    assert_eq!(ran.iter().sum::<usize>(), total, "parts: {ran:?}");
+}
+
 /// A role's exclusivity against the fake — the same suite the gated
 /// integration test runs against real Dolt.
 #[tokio::test]

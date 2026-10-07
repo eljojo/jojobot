@@ -70,6 +70,35 @@ async fn the_contract_holds_over_the_fake() {
     .await;
 }
 
+/// **The same, dealt into parts: every case, retrieval included, runs once
+/// across the parts, and each part holds on an index of its own.**
+#[tokio::test]
+async fn the_parts_of_the_searchable_contract_run_every_case_once_each_on_its_own_index() {
+    let mut ran = Vec::new();
+    for part in 0..contract::PARTS {
+        let store =
+            Arc::new(IndexedMemory::new(Arc::new(InMemoryMemory::booted())).expect("index opens"));
+        jojobot_domain::memory::kinds::seed(store.as_ref())
+            .await
+            .expect("the kinds are seeded, as a real store's boot does");
+        ran.push(
+            contract::run_part_searchable(
+                store.as_ref(),
+                &Retrieval::new(store.index(), vec![store.clone()]),
+                part,
+                contract::PARTS,
+            )
+            .await,
+        );
+    }
+    assert!(ran.iter().all(|n| *n > 0), "a part ran nothing: {ran:?}");
+    assert_eq!(
+        ran.iter().sum::<usize>(),
+        contract::searchable_case_count(),
+        "parts: {ran:?}"
+    );
+}
+
 // --- the index as a projection --------------------------------------------
 
 /// A doc built by hand, so the index's behaviour can be examined without a

@@ -1688,51 +1688,74 @@ async fn the_substrate_keeps_what_a_correction_overwrote() {
     store.stop().await;
 }
 
-/// **The memory contract, against the real store.**
+/// **A contract run in parts, each on a database of its own, side by side.**
 ///
-/// One store for every case, which is what this contract is written for: its
-/// assertions are subset-based — what was captured comes back, never an exact
-/// total — because it also runs against a shared, pre-populated real
-/// collection. Handing each case its own database here would prove less than
-/// the suite is designed to prove, not more.
-#[tokio::test]
-async fn dolt_satisfies_the_memory_contract() {
-    let scratch = Scratch::new("memory");
+/// The contract is dealt into [`memory::PARTS`] parts of neighbouring cases and
+/// each part runs against a database that only its own cases fill, on one
+/// server. **A store per case is ruled out**: the assertions are subset-based —
+/// what was captured comes back, never an exact total — because the contract
+/// also runs against a shared, pre-populated real collection, and a case handed
+/// a store to itself would prove less than the suite is designed to prove.
+/// **A shared store per part is the unit**, so every case still runs among the
+/// writes of the cases beside it.
+///
+/// `run_part` answers how many cases it ran. The parts' answers must add up to
+/// `expected`, which the contract counts from its own list: a case dropped
+/// between the parts, or a part left out of the run, turns this red.
+async fn the_contract_in_parts<F, Fut>(what: &str, expected: usize, run_part: F)
+where
+    F: Fn(sqlx::MySqlPool, usize) -> Fut,
+    Fut: std::future::Future<Output = usize> + Send + 'static,
+{
+    let scratch = Scratch::new(what);
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("memory")
-        .await
-        .expect("a database of this case's own");
-    migrate::run(&pool).await.expect("the schema");
-    booted(&pool).await;
-
-    memory::run_all(&DoltMemory::open(pool)).await;
+    let mut parts = Vec::new();
+    for part in 0..memory::PARTS {
+        let pool = store
+            .database(&format!("{what}part{part}"))
+            .await
+            .expect("a database of this part's own");
+        migrate::run(&pool).await.expect("the schema");
+        booted(&pool).await;
+        parts.push(tokio::spawn(run_part(pool, part)));
+    }
+    let mut ran = Vec::new();
+    for part in parts {
+        ran.push(part.await.expect("a part of the contract held"));
+    }
+    assert!(ran.iter().all(|n| *n > 0), "a part ran nothing: {ran:?}");
+    assert_eq!(ran.iter().sum::<usize>(), expected, "parts: {ran:?}");
 
     store.stop().await;
+}
+
+/// **The memory contract, against the real store.** Run in parts; see
+/// [`the_contract_in_parts`] for what that holds.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn dolt_satisfies_the_memory_contract() {
+    the_contract_in_parts("memory", memory::case_count(), |pool, part| async move {
+        memory::run_part(&DoltMemory::open(pool), part, memory::PARTS).await
+    })
+    .await;
 }
 
 /// **The same contract, wrapped in a fold, against the real store.** `Folded`
 /// forwards every guard, every read and every write it does not itself
 /// refresh straight to Dolt, so this is the regression test for that claim
 /// against the store the fold exists to spare, not only against the fake.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn dolt_satisfies_the_memory_contract_when_folded() {
-    let scratch = Scratch::new("memory_folded");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = store
-        .database("memory")
-        .await
-        .expect("a database of this case's own");
-    migrate::run(&pool).await.expect("the schema");
-    booted(&pool).await;
-
-    memory::run_all(&Folded::new(Arc::new(DoltMemory::open(pool)))).await;
-
-    store.stop().await;
+    the_contract_in_parts(
+        "memory_folded",
+        memory::case_count(),
+        |pool, part| async move {
+            let folded = Folded::new(Arc::new(DoltMemory::open(pool)));
+            memory::run_part(&folded, part, memory::PARTS).await
+        },
+    )
+    .await;
 }
 
 /// **`scan_entity` must answer exactly what `scan` would answer for the same
@@ -2204,36 +2227,33 @@ async fn dolt_names_the_survivor_for_an_address_stale_after_a_fold() {
 }
 
 /// **…and the same contract including retrieval**, with the search projection
-/// over this store.
+/// over this store. Run in parts; see [`the_contract_in_parts`].
 ///
 /// It is the one thing `run_all` cannot reach: `scan` feeds the projection and
 /// no verb a caller calls returns it, so a scan that came back empty would
 /// leave every case above green and every search answer wrong. The projection
 /// itself is unchanged — it sits above the port and does not care which store
 /// answers, which is the claim this case actually tests.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn the_indexed_dolt_store_satisfies_the_whole_contract() {
-    let scratch = Scratch::new("memory-indexed");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = store
-        .database("memoryindexed")
-        .await
-        .expect("a database of this case's own");
-    migrate::run(&pool).await.expect("the schema");
-    booted(&pool).await;
-
-    let indexed = Arc::new(
-        IndexedMemory::new(Arc::new(DoltMemory::open(pool))).expect("the search index opens"),
-    );
-    memory::run_all_searchable(
-        indexed.as_ref(),
-        &Retrieval::new(indexed.index(), vec![indexed.clone()]),
+    the_contract_in_parts(
+        "memory-indexed",
+        memory::searchable_case_count(),
+        |pool, part| async move {
+            let indexed = Arc::new(
+                IndexedMemory::new(Arc::new(DoltMemory::open(pool)))
+                    .expect("the search index opens"),
+            );
+            memory::run_part_searchable(
+                indexed.as_ref(),
+                &Retrieval::new(indexed.index(), vec![indexed.clone()]),
+                part,
+                memory::PARTS,
+            )
+            .await
+        },
     )
     .await;
-
-    store.stop().await;
 }
 
 /// **What the REAL store keeps when the build supplies half the text.**
