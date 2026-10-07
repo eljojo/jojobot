@@ -577,3 +577,185 @@ fn a_probe_run_where_no_test_ran_is_not_called_blind() {
         "the file did not come back after the probe",
     );
 }
+
+/// **A checkout of its own, holding a copy of the tool.** The tool names the
+/// checkout it lives in, so two copies in two directories are two lines.
+fn a_checkout_with_the_tool(named: &str) -> PathBuf {
+    let root = std::env::temp_dir().join(format!("sabotage-checkout-{named}"));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join("scripts")).expect("the case makes a checkout");
+    fs::copy(tool(), root.join("scripts/sabotage")).expect("the case copies the tool");
+    root
+}
+
+/// Start the tool at `at` over `path` with a command that never ends on its
+/// own, and wait until the file is really mutated.
+fn start_and_wait_for_the_mutation(
+    at: &std::path::Path,
+    state: &std::path::Path,
+    path: &PathBuf,
+) -> std::process::Child {
+    let mut running = Command::new(at)
+        .env("SABOTAGE_STATE_DIR", state)
+        .arg(path)
+        .arg("41")
+        .arg("42")
+        .arg("--")
+        .args(["sleep", "30"])
+        .stdout(Stdio::null())
+        .spawn()
+        .expect("the tool starts");
+    let mut mutated = false;
+    for _ in 0..400 {
+        if fs::read_to_string(path).is_ok_and(|now| now.contains("42")) {
+            mutated = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    if !mutated {
+        let _ = running.kill();
+        let _ = running.wait();
+        panic!("the file was never sabotaged, so what follows proves nothing");
+    }
+    running
+}
+
+/// 🚨 **Runs that start together each leave their own entry.**
+///
+/// The record was one file every run read and rewrote whole, so two runs
+/// starting at once could each read the old list and the second write dropped
+/// the first run's entry. A hard kill of the dropped run was then never
+/// reported. Here eight runs start at once, every one is killed outright, and
+/// the next invocation has to name all eight files.
+#[test]
+fn runs_that_start_together_all_leave_an_entry_a_later_run_reports() {
+    let state = private_state("together");
+    let paths: Vec<PathBuf> = (0..8)
+        .map(|n| a_file(&format!("together-{n}"), "the answer is 41\n"))
+        .collect();
+    let mut running: Vec<std::process::Child> = paths
+        .iter()
+        .map(|path| {
+            Command::new(tool())
+                .env("SABOTAGE_STATE_DIR", &state)
+                .arg(path)
+                .arg("41")
+                .arg("42")
+                .arg("--")
+                .args(["sleep", "30"])
+                .stdout(Stdio::null())
+                .spawn()
+                .expect("the tool starts")
+        })
+        .collect();
+    for path in &paths {
+        let mut mutated = false;
+        for _ in 0..400 {
+            if fs::read_to_string(path).is_ok_and(|now| now.contains("42")) {
+                mutated = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        assert!(mutated, "{path:?} was never sabotaged");
+    }
+    for child in &mut running {
+        Command::new("kill")
+            .arg("-KILL")
+            .arg(child.id().to_string())
+            .status()
+            .expect("the case can send a hard kill");
+        child.wait().expect("the tool ends");
+    }
+
+    let bystander = a_file("together-bystander", "nothing to see here\n");
+    let (said, _) = sabotage_with_state(&state, &bystander, "nothing", "something", &["true"]);
+    for path in &paths {
+        assert!(
+            said.contains(path.to_str().unwrap()),
+            "a run's entry was lost, so its hard kill is never reported: {path:?} in {said}",
+        );
+    }
+}
+
+/// 🚨 **The startup report names only the entries of its own checkout.**
+///
+/// Every line shares one state directory, so the report listed other lines'
+/// mutations as if they were the caller's. A hard-killed run in one checkout is
+/// reported by the next run in that checkout and by none in another, so each
+/// line sees what is its own to put back.
+#[test]
+fn a_hard_kill_is_reported_in_its_own_checkout_and_in_no_other() {
+    let state = private_state("checkouts");
+    let mine = a_checkout_with_the_tool("mine");
+    let theirs = a_checkout_with_the_tool("theirs");
+    let path = a_file("checkouts-killed", "the answer is 41\n");
+
+    let mut running =
+        start_and_wait_for_the_mutation(&mine.join("scripts/sabotage"), &state, &path);
+    Command::new("kill")
+        .arg("-KILL")
+        .arg(running.id().to_string())
+        .status()
+        .expect("the case can send a hard kill");
+    running.wait().expect("the tool ends");
+
+    let run_in = |checkout: &std::path::Path, named: &str| {
+        let bystander = a_file(named, "nothing to see here\n");
+        let ran = Command::new(checkout.join("scripts/sabotage"))
+            .env("SABOTAGE_STATE_DIR", &state)
+            .arg(&bystander)
+            .arg("nothing")
+            .arg("something")
+            .arg("--")
+            .arg("true")
+            .output()
+            .expect("the tool runs");
+        String::from_utf8_lossy(&ran.stdout).into_owned()
+    };
+    let other = run_in(&theirs, "checkouts-other-line");
+    assert!(
+        !other.contains("SABOTAGE OUTSTANDING"),
+        "another checkout's mutation was reported as this one's: {other}",
+    );
+    let own = run_in(&mine, "checkouts-own-line");
+    assert!(
+        own.contains("SABOTAGE OUTSTANDING") && own.contains(path.to_str().unwrap()),
+        "the checkout that was killed in does not find its own entry: {own}",
+    );
+}
+
+/// 🚨 **A run that is still going is not outstanding.**
+///
+/// A record of a live run names a file that is mutated on purpose. Another
+/// invocation in the same checkout read it as left behind: it reported the live
+/// mutation as a hard kill's, and an invocation that started before the first
+/// run had mutated its file read the record as a put-back and removed it, so a
+/// kill that came later was never reported. Only a run whose process is gone
+/// is outstanding.
+#[test]
+fn a_run_that_is_still_going_is_not_reported_and_keeps_its_entry() {
+    let state = private_state("live");
+    let path = a_file("live-run", "the answer is 41\n");
+    let mut running = start_and_wait_for_the_mutation(&tool(), &state, &path);
+
+    let bystander = a_file("live-bystander", "nothing to see here\n");
+    let (said, _) = sabotage_with_state(&state, &bystander, "nothing", "something", &["true"]);
+    assert!(
+        !said.contains("SABOTAGE OUTSTANDING"),
+        "a mutation a live run holds on purpose was reported as left behind: {said}",
+    );
+
+    Command::new("kill")
+        .arg("-KILL")
+        .arg(running.id().to_string())
+        .status()
+        .expect("the case can send a hard kill");
+    running.wait().expect("the tool ends");
+    let (said, _) = sabotage_with_state(&state, &bystander, "nothing", "something", &["true"]);
+    assert!(
+        said.contains("SABOTAGE OUTSTANDING") && said.contains(path.to_str().unwrap()),
+        "the entry the bystander passed over was lost, so the kill is not reported: {said}",
+    );
+}

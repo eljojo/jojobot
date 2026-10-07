@@ -78,45 +78,79 @@ USAGE = "usage: scripts/sabotage <file> <from> <to> -- <command...>"
 
 # **Where an in-flight mutation is recorded, so a later invocation can find
 # what a hard kill left behind.** `SABOTAGE_STATE_DIR` is a caller's override
-# — the test suite sets it, so concurrent test runs each get their own file
-# rather than racing on one shared default. Outside a test, the default is a
-# fixed path under the system temp directory: fixed, so a later invocation
-# looks in the same place the interrupted one wrote to, and under the temp
-# directory rather than the tracked tree, so there is nothing here for git to
-# see.
+# — the test suite sets it, so concurrent test runs each get their own
+# directory. Outside a test, the default is a fixed path under the system temp
+# directory: fixed, so a later invocation looks in the same place the
+# interrupted one wrote to, and under the temp directory rather than the
+# tracked tree, so there is nothing here for git to see.
+#
+# ⚠️ **One file per run, never one file for all of them.** Every line shares
+# this directory, and one file that each run read and rewrote whole lost an
+# entry when two runs started or ended together: the second write carried the
+# list the first had not yet joined. A run now writes and removes only its own
+# file, so no run can drop another's entry.
 STATE_DIR = os.environ.get("SABOTAGE_STATE_DIR") or os.path.join(
     tempfile.gettempdir(), "jojobot-sabotage"
 )
-STATE_FILE = os.path.join(STATE_DIR, "in-flight")
+RECORD_PREFIX = "run-"
+
+# **The checkout this copy of the tool lives in**, which is what makes a record
+# one line's own. Every line has its own checkout and so its own copy, so a
+# record names its checkout and the startup report names only the records of
+# the checkout it runs from.
+CHECKOUT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-def _read_in_flight():
-    """Every mutation an earlier run marked and never cleared, as recorded."""
-    if not os.path.isfile(STATE_FILE):
+def _record_path(kept):
+    return os.path.join(STATE_DIR, RECORD_PREFIX + os.path.basename(kept))
+
+
+def _records():
+    """Every record on disk as `(record file, checkout, pid, target, kept)`."""
+    if not os.path.isdir(STATE_DIR):
         return []
-    entries = []
-    with open(STATE_FILE, encoding="utf-8") as reading:
-        for line in reading:
-            target, tab, kept = line.rstrip("\n").partition("\t")
-            if tab and target and kept:
-                entries.append((target, kept))
-    return entries
+    found = []
+    for name in sorted(os.listdir(STATE_DIR)):
+        if not name.startswith(RECORD_PREFIX):
+            continue
+        record = os.path.join(STATE_DIR, name)
+        try:
+            with open(record, encoding="utf-8") as reading:
+                fields = reading.read().rstrip("\n").split("\t")
+        except OSError:
+            continue
+        if len(fields) == 4 and all(fields) and fields[1].isdigit():
+            checkout, pid, target, kept = fields
+            found.append((record, checkout, int(pid), target, kept))
+    return found
 
 
-def _write_in_flight(entries):
-    os.makedirs(STATE_DIR, exist_ok=True)
-    with open(STATE_FILE, "w", encoding="utf-8") as writing:
-        for target, kept in entries:
-            writing.write(f"{target}\t{kept}\n")
+def _running(pid):
+    """**Whether a process by that number is still there.** A permission error
+    means it is, owned by somebody else."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 def mark_in_flight(path, kept):
     """**Written before the mutation, so a hard kill still leaves a trace.**
 
     Nothing after this line is guaranteed to run — that is the whole reason
-    it exists — so everything this record needs has to be true already.
+    it exists — so everything this record needs has to be true already. It is
+    written to a name of its own and renamed into place, so a reader never
+    sees half a record.
     """
-    _write_in_flight([*_read_in_flight(), (path, kept)])
+    os.makedirs(STATE_DIR, exist_ok=True)
+    record = _record_path(kept)
+    partial = record + ".partial"
+    with open(partial, "w", encoding="utf-8") as writing:
+        writing.write(f"{CHECKOUT}\t{os.getpid()}\t{path}\t{kept}\n")
+    os.replace(partial, record)
 
 
 def clear_in_flight(path, kept):
@@ -127,17 +161,25 @@ def clear_in_flight(path, kept):
     to survive. Only `SIGKILL` skips it, which is the one case the record is
     for.
     """
-    _write_in_flight(
-        [(t, k) for t, k in _read_in_flight() if (t, k) != (path, kept)]
-    )
+    try:
+        os.unlink(_record_path(kept))
+    except FileNotFoundError:
+        pass
 
 
 def report_outstanding():
-    """**What an earlier run left mutated, named with its own restore command.**
+    """**What an earlier run in this checkout left mutated, named with its own
+    restore command.**
 
     Runs first, in every invocation, whatever that invocation goes on to do —
     it is a report, never a gate, so a caller ignoring it is exactly as free
     to run as one who never saw it.
+
+    **Only this checkout's records are named.** Another line's mutation is
+    that line's to put back, and listing it here sent a line to look at a tree
+    it does not own. Its record is left exactly as it is.
+
+    **A run whose process is still there is not reported either.**
 
     **An entry whose file already reads as its kept copy is not reported.**
     Somebody put it back — by hand, or some other way — and a tool that kept
@@ -151,12 +193,20 @@ def report_outstanding():
     Every entry still genuinely outstanding is kept on record, so it is
     reported again on the next invocation too, until it is actually resolved.
     """
-    entries = _read_in_flight()
-    remaining = []
-    for target, kept in entries:
-        if not os.path.isfile(kept):
+    for record, checkout, pid, target, kept in _records():
+        # **A run that is still going holds its mutation on purpose**, so it is
+        # neither outstanding nor a record to prune: its file reads as its kept
+        # copy until the run has mutated it, and pruning then would lose the
+        # entry of a run that is about to be killed.
+        if checkout != CHECKOUT or _running(pid):
             continue
-        if os.path.isfile(target) and _same_bytes(target, kept):
+        if not os.path.isfile(kept) or (
+            os.path.isfile(target) and _same_bytes(target, kept)
+        ):
+            try:
+                os.unlink(record)
+            except FileNotFoundError:
+                pass
             continue
         print(
             f"SABOTAGE OUTSTANDING: {target} is still mutated from a run that never "
@@ -164,9 +214,6 @@ def report_outstanding():
             f"Put it back with: cp {kept} {target}",
             flush=True,
         )
-        remaining.append((target, kept))
-    if remaining != entries:
-        _write_in_flight(remaining)
 
 
 def _same_bytes(one, other):
