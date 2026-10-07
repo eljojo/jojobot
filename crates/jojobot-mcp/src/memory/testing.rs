@@ -542,6 +542,12 @@ impl Memory for DownMemory {
     async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
         self.1.archive_entity(id, reason).await
     }
+    async fn restore_entity(
+        &self,
+        id: &EntityId,
+    ) -> Result<(Entity, jojobot_domain::memory::Archived), MemoryError> {
+        self.1.restore_entity(id).await
+    }
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
         match self.0 {
             Down::Writes => Err(MemoryError::Store("a claim cannot be written".into())),
@@ -694,6 +700,12 @@ impl Memory for FoldBehindMemory {
     async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
         self.0.archive_entity(id, reason).await
     }
+    async fn restore_entity(
+        &self,
+        id: &EntityId,
+    ) -> Result<(Entity, jojobot_domain::memory::Archived), MemoryError> {
+        self.0.restore_entity(id).await
+    }
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
         match self.0.capture(fact).await? {
             Guarded::Written(fact) => Err(fold_behind(Landed::Fact(Box::new(fact)))),
@@ -842,6 +854,12 @@ impl Memory for RacingMemory {
     async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
         self.inner.archive_entity(id, reason).await
     }
+    async fn restore_entity(
+        &self,
+        id: &EntityId,
+    ) -> Result<(Entity, jojobot_domain::memory::Archived), MemoryError> {
+        self.inner.restore_entity(id).await
+    }
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
         self.inner.capture(fact).await
     }
@@ -986,6 +1004,12 @@ impl Memory for ConflictingMemory {
     }
     async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
         self.0.archive_entity(id, reason).await
+    }
+    async fn restore_entity(
+        &self,
+        id: &EntityId,
+    ) -> Result<(Entity, jojobot_domain::memory::Archived), MemoryError> {
+        self.0.restore_entity(id).await
     }
     async fn capture(&self, _fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
         Err(MemoryError::Conflict)

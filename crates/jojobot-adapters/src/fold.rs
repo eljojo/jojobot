@@ -27,9 +27,9 @@ use async_trait::async_trait;
 use jiff::civil::Date;
 
 use jojobot_domain::memory::{
-    ClaimWrite, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactId, FactPatch,
-    FieldBacking, FieldWrite, FormerHandle, Guarded, Landed, Memory, MemoryError, Merge, NewEntity,
-    NewFact, Retraction, WriteSummary,
+    Archived, ClaimWrite, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactId,
+    FactPatch, FieldBacking, FieldWrite, FormerHandle, Guarded, Landed, Memory, MemoryError, Merge,
+    NewEntity, NewFact, Retraction, WriteSummary,
     search::{self, DocScan},
     types::{self, DeclaredType},
 };
@@ -193,6 +193,10 @@ impl Memory for Folded {
 
     async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
         self.inner.archive_entity(id, reason).await
+    }
+
+    async fn restore_entity(&self, id: &EntityId) -> Result<(Entity, Archived), MemoryError> {
+        self.inner.restore_entity(id).await
     }
 
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
@@ -728,6 +732,9 @@ mod tests {
         async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
             self.0.archive_entity(id, reason).await
         }
+        async fn restore_entity(&self, id: &EntityId) -> Result<(Entity, Archived), MemoryError> {
+            self.0.restore_entity(id).await
+        }
         async fn rename_entity(
             &self,
             from: &EntityId,
@@ -903,6 +910,9 @@ mod tests {
         }
         async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
             self.inner.archive_entity(id, reason).await
+        }
+        async fn restore_entity(&self, id: &EntityId) -> Result<(Entity, Archived), MemoryError> {
+            self.inner.restore_entity(id).await
         }
         async fn rename_entity(
             &self,
@@ -1128,6 +1138,9 @@ mod tests {
         }
         async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
             self.inner.archive_entity(id, reason).await
+        }
+        async fn restore_entity(&self, id: &EntityId) -> Result<(Entity, Archived), MemoryError> {
+            self.inner.restore_entity(id).await
         }
         async fn rename_entity(
             &self,

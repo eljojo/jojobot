@@ -38,9 +38,9 @@ use jiff::civil::Date;
 
 use jojobot_domain::memory::owned::{Provisions, extended, guard_extension};
 use jojobot_domain::memory::{
-    ClaimWrite, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactId, FactPatch,
-    FieldBacking, FieldWrite, FormerHandle, Guarded, Memory, MemoryError, Merge, NewEntity,
-    NewFact, Retraction, WriteSummary, guard, search, types,
+    Archived, ClaimWrite, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactId,
+    FactPatch, FieldBacking, FieldWrite, FormerHandle, Guarded, Memory, MemoryError, Merge,
+    NewEntity, NewFact, Retraction, WriteSummary, guard, search, types,
 };
 
 /// A store, plus what this build supplies over it.
@@ -387,6 +387,14 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
             });
         }
         self.inner.archive_entity(id, reason).await
+    }
+    async fn restore_entity(&self, id: &EntityId) -> Result<(Entity, Archived), MemoryError> {
+        if self.provisions.record_for(id).is_some() {
+            return Err(MemoryError::SuppliedHandle {
+                attempted: id.to_string(),
+            });
+        }
+        self.inner.restore_entity(id).await
     }
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
         self.inner.capture(fact).await

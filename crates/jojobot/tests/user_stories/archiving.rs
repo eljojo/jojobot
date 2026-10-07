@@ -75,3 +75,61 @@ async fn a_mistaken_entry_drops_out_of_the_default_list_and_stays_reachable_by_n
 
     story.finish().await;
 }
+
+/// "I archived it on bad advice. It was fine. Put it back."
+///
+/// Restoring is the same verb with `restore: true`. The thing returns to the
+/// default list with its claims and its children exactly as they were, and a
+/// claim on it records both acts, so a later reader can tell it was out of the
+/// list for a while and why it came back.
+#[tokio::test]
+async fn an_archived_thing_is_put_back_with_its_records_and_the_history_of_both_acts() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+
+    s.add("project:atlas", "Atlas").await;
+    s.add_under("project:atlas", "work:phi", "Phi").await;
+    s.fact("project:atlas", "the plan for the launch").await;
+    s.list("project").await.says("project:atlas");
+
+    s.call(
+        "archive_entity",
+        json!({"handle": "project:atlas", "reason": "a mistaken filing"}),
+    )
+    .await;
+    s.list("project").await.never_says("project:atlas");
+
+    // Asking to restore what was never archived is refused, and says nothing was written.
+    s.refused(
+        "archive_entity",
+        json!({"handle": "work:phi", "reason": "just checking", "restore": true}),
+    )
+    .await
+    .says("work:phi");
+
+    let restored = s
+        .call(
+            "archive_entity",
+            json!({
+                "handle": "project:atlas",
+                "reason": "the filing was fine after all",
+                "restore": true,
+            }),
+        )
+        .await;
+    restored.says("project:atlas").says("\"restored\":true");
+
+    // Back in the default list, with its claim and its child as they were.
+    s.list("project").await.says("project:atlas");
+    let atlas = s.recall("project:atlas").await;
+    atlas.says("the plan for the launch");
+    s.list("work").await.says("work:phi");
+
+    // The history of both acts is on the thing: why it left, when, and why it came back.
+    atlas
+        .never_says("\"archived\":{")
+        .says("a mistaken filing")
+        .says("the filing was fine after all");
+
+    story.finish().await;
+}

@@ -939,6 +939,7 @@ mod tests {
                     .archive_entity(Parameters(ArchiveEntityArgs {
                         handle: "bot:gamma".into(),
                         reason: "test".into(),
+                        restore: None,
                         sid: Some(sid.clone()),
                     }))
                     .await

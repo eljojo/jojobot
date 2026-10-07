@@ -542,6 +542,12 @@ impl super::Memory for Mentioning {
     ) -> Result<Entity, super::MemoryError> {
         self.inner.archive_entity(id, reason).await
     }
+    async fn restore_entity(
+        &self,
+        id: &EntityId,
+    ) -> Result<(Entity, super::Archived), super::MemoryError> {
+        self.inner.restore_entity(id).await
+    }
     /// **Resolved on the way in.** Every handle an author wrote becomes the
     /// badge its row wears, so the claim keeps a pointer rather than a
     /// spelling.

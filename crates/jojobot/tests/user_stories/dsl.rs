@@ -188,6 +188,18 @@ impl jojobot_domain::memory::Memory for Blindable {
     ) -> Result<jojobot_domain::memory::Entity, jojobot_domain::memory::MemoryError> {
         self.inner.archive_entity(id, reason).await
     }
+    async fn restore_entity(
+        &self,
+        id: &jojobot_domain::memory::EntityId,
+    ) -> Result<
+        (
+            jojobot_domain::memory::Entity,
+            jojobot_domain::memory::Archived,
+        ),
+        jojobot_domain::memory::MemoryError,
+    > {
+        self.inner.restore_entity(id).await
+    }
 
     async fn capture(
         &self,

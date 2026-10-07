@@ -2137,6 +2137,54 @@ impl Memory for DoltMemory {
         Ok(entity)
     }
 
+    async fn restore_entity(&self, id: &EntityId) -> Result<(Entity, Archived), MemoryError> {
+        validate_write_subject(id)?;
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        // **A row, never a supplied record**, for the reason archiving reads
+        // the same way: a build-shipped record has no row to change.
+        let rows = self.index(&mut tx).await?;
+        let Some(mut entity) = rows.iter().find(|e| &e.id == id).cloned() else {
+            if self.supplied.record_for(id).is_some() {
+                return Err(MemoryError::SuppliedHandle {
+                    attempted: id.to_string(),
+                });
+            }
+            return Err(MemoryError::UnknownEntity {
+                attempted: id.to_string(),
+                nearest: guard::screen(id, &[], &rows),
+            });
+        };
+        if let Some(into) = &entity.merged_into {
+            return Err(MemoryError::AlreadyMerged {
+                attempted: id.to_string(),
+                into: into.to_string(),
+            });
+        }
+        let Some(was) = entity.archived.take() else {
+            return Err(MemoryError::NotArchived {
+                attempted: id.to_string(),
+            });
+        };
+        // The parent rides as the key the row stores, exactly as archiving
+        // writes it back.
+        let stored = if let Some(parent) = &entity.parent {
+            let stored_parent = self
+                .resolve(&mut tx, parent)
+                .await?
+                .map(|(key, _)| key)
+                .unwrap_or_else(|| parent.clone());
+            Entity {
+                parent: Some(stored_parent),
+                ..entity.clone()
+            }
+        } else {
+            entity.clone()
+        };
+        write_entity(&mut tx, &self.draw, &stored, &self.clock).await?;
+        tx.commit().await.map_err(store)?;
+        Ok((entity, was))
+    }
+
     async fn rename_entity(
         &self,
         from: &EntityId,

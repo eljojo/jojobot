@@ -3909,6 +3909,22 @@ impl Memory for Scanned {
         });
         Ok(entity.clone())
     }
+    /// The mirror of the archive above, under the same terms.
+    async fn restore_entity(&self, id: &EntityId) -> Result<(Entity, Archived), MemoryError> {
+        let mut docs = self.docs.write().expect("docs poisoned");
+        let doc = docs
+            .iter_mut()
+            .find(|d| d.entity.as_ref().is_some_and(|e| &e.id == id))
+            .ok_or_else(|| MemoryError::Store("this double edits pages it holds".into()))?;
+        let entity = doc.entity.as_mut().expect("found by its entity");
+        let was = entity
+            .archived
+            .take()
+            .ok_or_else(|| MemoryError::NotArchived {
+                attempted: id.to_string(),
+            })?;
+        Ok((entity.clone(), was))
+    }
     /// Same shape as `update_entity` above: no guard, because what is
     /// under test is what the decorator does after the write, not
     /// whether it was allowed.
@@ -4082,6 +4098,9 @@ impl Memory for SummarizedScan {
     }
     async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
         self.inner.archive_entity(id, reason).await
+    }
+    async fn restore_entity(&self, id: &EntityId) -> Result<(Entity, Archived), MemoryError> {
+        self.inner.restore_entity(id).await
     }
     async fn update_entity(
         &self,
@@ -4259,6 +4278,9 @@ impl Memory for Delegated {
         unimplemented!("this double answers the three reads a store owns")
     }
     async fn archive_entity(&self, _: &EntityId, _: &str) -> Result<Entity, MemoryError> {
+        unimplemented!("this double answers the three reads a store owns")
+    }
+    async fn restore_entity(&self, _: &EntityId) -> Result<(Entity, Archived), MemoryError> {
         unimplemented!("this double answers the three reads a store owns")
     }
     async fn capture(&self, _: NewFact) -> Result<Guarded<Fact>, MemoryError> {
@@ -7103,6 +7125,9 @@ impl Memory for FixedWriteSummary {
     }
     async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
         self.0.archive_entity(id, reason).await
+    }
+    async fn restore_entity(&self, id: &EntityId) -> Result<(Entity, Archived), MemoryError> {
+        self.0.restore_entity(id).await
     }
     async fn rename_entity(
         &self,

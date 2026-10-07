@@ -219,6 +219,12 @@ mod tests {
             async fn archive_entity(&self, _: &EntityId, _: &str) -> Result<Entity, MemoryError> {
                 unimplemented!("the owner index only reads the index")
             }
+            async fn restore_entity(
+                &self,
+                _: &EntityId,
+            ) -> Result<(Entity, jojobot_domain::memory::Archived), MemoryError> {
+                unimplemented!("the owner index only reads the index")
+            }
             async fn capture(&self, _: NewFact) -> Result<Guarded<Fact>, MemoryError> {
                 unimplemented!("the owner index only reads the index")
             }

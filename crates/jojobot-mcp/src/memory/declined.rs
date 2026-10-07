@@ -263,9 +263,19 @@ pub(crate) fn memory_declined(
             format!(
                 "'{attempted}' is already archived — the entity jojobot holds is the one you \
                  asked for. This call wrote nothing because there was nothing left to write, and \
-                 a further attempt would say the same. Archiving is one-way: nothing takes an \
-                 entity back out of it over this surface. Recall it by handle to read why and \
+                 a further attempt would say the same. Recall it by handle to read why and \
                  when it was archived."
+            ),
+        )),
+        // **The mirror of the answer above:** the entity jojobot holds is
+        // already the one the caller wanted back.
+        MemoryError::NotArchived { attempted } => Ok(blocked_body(
+            &EntityId(attempted.clone()),
+            &[],
+            format!(
+                "'{attempted}' is not archived — it is already in every default read. This call \
+                 wrote nothing because there was nothing to restore, and a further attempt \
+                 would say the same."
             ),
         )),
         // **Half an attribution is what is missing, and the caller has both
@@ -924,6 +934,7 @@ pub(crate) fn memory_error(e: MemoryError) -> McpError {
         | MemoryError::UnsourcedObservation
         | MemoryError::AlreadyRetracted { .. }
         | MemoryError::AlreadyArchived { .. }
+        | MemoryError::NotArchived { .. }
         | MemoryError::NothingToMerge { .. }
         | MemoryError::AlreadyMerged { .. }
         | MemoryError::NothingToRename { .. }

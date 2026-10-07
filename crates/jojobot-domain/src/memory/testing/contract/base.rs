@@ -10952,6 +10952,103 @@ pub async fn a_handle_under_an_undeclared_key_follows_a_rename<M: Memory>(store:
     );
 }
 
+/// **An archived entity can be restored, and restoring moves nothing else.**
+///
+/// Archiving touches only the entity's own state: its claims, its edges and its
+/// children stand as recorded. Restoring clears that state and says what it
+/// cleared, and the entity is back in the default listing. Each half alone
+/// passes on a store nobody wants: a restore that forgets the archive reason
+/// leaves the history unwritable, and one that touched the claims or children
+/// would be undoing more than was done.
+pub async fn an_archived_entity_is_restored_and_nothing_else_moves<M: Memory>(store: &M) {
+    let board = EntityId("project:contract-restore-board".into());
+    let card = EntityId("work:contract-restore-card".into());
+    add(
+        store,
+        NewEntity::new(board.clone(), "Contract Restore Board", "contract-fixture"),
+    )
+    .await;
+    add(
+        store,
+        NewEntity {
+            parent: Some(board.clone()),
+            ..NewEntity::new(card.clone(), "Contract Restore Card", "contract-fixture")
+        },
+    )
+    .await;
+    let said = capture(
+        store,
+        NewFact::about(board.clone(), "the board holds the card", date(2026, 9, 1)),
+    )
+    .await;
+
+    // Not archived yet: there is nothing to restore, and nothing is written.
+    assert!(
+        matches!(
+            store.restore_entity(&board).await,
+            Err(MemoryError::NotArchived { .. })
+        ),
+        "a restore of something that was never archived is refused"
+    );
+
+    store
+        .archive_entity(&board, "wrong advice")
+        .await
+        .expect("the archive lands");
+    let state = || async {
+        store
+            .list_entities(Some(EntityKind::PROJECT))
+            .await
+            .expect("the listing reads")
+            .into_iter()
+            .find(|e| e.id == board)
+            .map(|e| e.archived.is_some())
+    };
+    assert_eq!(state().await, Some(true), "the archive is on the row");
+
+    let (restored, was) = store
+        .restore_entity(&board)
+        .await
+        .expect("the restore lands");
+    assert!(restored.archived.is_none(), "{restored:?}");
+    assert_eq!(was.reason, "wrong advice", "the archive it cleared is said");
+    assert_eq!(state().await, Some(false), "the archive is off the row");
+    assert!(
+        store
+            .recall(&board)
+            .await
+            .expect("recall reads")
+            .iter()
+            .any(|fact| fact.id == said.id),
+        "the claims stood through the archive and the restore"
+    );
+    assert!(
+        store
+            .children(&board)
+            .await
+            .expect("children reads")
+            .contains(&card),
+        "so did the children"
+    );
+
+    // A second restore has nothing left to do; a name that answers to nothing
+    // is a miss; and the cycle can go round again.
+    assert!(matches!(
+        store.restore_entity(&board).await,
+        Err(MemoryError::NotArchived { .. })
+    ));
+    assert!(matches!(
+        store
+            .restore_entity(&EntityId("project:contract-restore-nobody".into()))
+            .await,
+        Err(MemoryError::UnknownEntity { .. })
+    ));
+    store
+        .archive_entity(&board, "again")
+        .await
+        .expect("a restored entity can be archived again");
+}
+
 /// **A kind the code learned today survives the store.**
 ///
 /// The store keeps a kind as a string and reads it back off the handle, so
@@ -13482,6 +13579,7 @@ macro_rules! all_cases {
         $m!(a_reference_must_name_an_entity_that_exists($store));
         $m!(a_field_naming_nothing_is_refused_under_any_key($store));
         $m!(a_handle_under_an_undeclared_key_follows_a_rename($store));
+        $m!(an_archived_entity_is_restored_and_nothing_else_moves($store));
         $m!(a_write_cannot_break_a_fit_that_already_exists($store));
         $m!(a_supersede_that_breaks_a_fit_is_refused_and_a_retraction_is_not($store));
         $m!(a_walk_flags_a_link_drawn_by_a_claim_archived_through_an_ordinary_edit($store));

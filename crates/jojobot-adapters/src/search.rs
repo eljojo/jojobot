@@ -40,9 +40,9 @@ use jojobot_domain::mailbox::{MailboxError, Mailboxes, Message};
 use std::collections::BTreeMap;
 
 use jojobot_domain::memory::{
-    ClaimWrite, Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress,
-    FactId, FactPatch, FactStatus, FieldWrite, FormerHandle, Guarded, Memory, MemoryError, Merge,
-    NewEntity, NewFact, Retraction, WriteSummary,
+    Archived, ClaimWrite, Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact,
+    FactAddress, FactId, FactPatch, FactStatus, FieldWrite, FormerHandle, Guarded, Memory,
+    MemoryError, Merge, NewEntity, NewFact, Retraction, WriteSummary,
     guard::{self, MatchReason},
     kinds,
     search::{

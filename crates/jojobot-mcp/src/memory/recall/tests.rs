@@ -5555,6 +5555,7 @@ async fn an_archived_loop_drops_out_of_the_owed_read_and_is_counted() {
         .archive_entity(Parameters(ArchiveEntityArgs {
             handle: "rhythm:polish".into(),
             reason: "no longer kept".into(),
+            restore: None,
             sid: Some(sid),
         }))
         .await

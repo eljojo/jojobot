@@ -229,6 +229,12 @@ impl Memory for IndexedMemory {
         Ok(entity)
     }
 
+    async fn restore_entity(&self, id: &EntityId) -> Result<(Entity, Archived), MemoryError> {
+        let restored = self.inner.restore_entity(id).await?;
+        self.refresh(&restored.0.id).await;
+        Ok(restored)
+    }
+
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
         let written = self.inner.capture(fact).await?;
         if let Guarded::Written(fact) = &written {

@@ -4384,6 +4384,14 @@ pub enum MemoryError {
         /// The handle that was aimed at.
         attempted: String,
     },
+    /// **An entity that was never archived, asked to be restored.** The row
+    /// jojobot holds is already the state the caller asked for, so a restore
+    /// writes nothing, the way a second archive writes nothing.
+    #[error("'{attempted}' is not archived")]
+    NotArchived {
+        /// The handle that was aimed at.
+        attempted: String,
+    },
     /// **The addressed row cannot be taken back**, and `why` says which of the
     /// two remaining reasons it is: itself a retraction, or an ordinary fact —
     /// which is fixed in place rather than retracted.
@@ -4875,6 +4883,22 @@ pub trait Memory: Send + Sync {
     /// forwarding row is not a thing to rename; naming nothing at all is
     /// [`MemoryError::UnknownEntity`].
     async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError>;
+
+    /// **Bring an archived entity back into every default read**, and say what
+    /// it was archived for: the entity as it stands now, and the archive it was
+    /// taken out of.
+    ///
+    /// Archiving touched only the entity's own state, never its claims, edges or
+    /// children, so restoring clears that state and nothing else. The answer
+    /// carries the archive it cleared because the row no longer does: whoever
+    /// restores has to be able to record what was undone.
+    ///
+    /// An entity that is not archived is [`MemoryError::NotArchived`], for the
+    /// same reason a second archive is [`MemoryError::AlreadyArchived`]. A
+    /// build-supplied record is [`MemoryError::SuppliedHandle`], a folded one
+    /// [`MemoryError::AlreadyMerged`], and a name that answers to nothing
+    /// [`MemoryError::UnknownEntity`].
+    async fn restore_entity(&self, id: &EntityId) -> Result<(Entity, Archived), MemoryError>;
 
     /// Write a fact and return it with the id its home assigned, its content
     /// normalized. The returned fact must be visible — byte-identical — to a

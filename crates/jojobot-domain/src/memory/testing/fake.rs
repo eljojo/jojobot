@@ -1013,6 +1013,40 @@ impl Memory for InMemoryMemory {
         Ok(entity.clone())
     }
 
+    async fn restore_entity(&self, id: &EntityId) -> Result<(Entity, Archived), MemoryError> {
+        validate_write_subject(id)?;
+        let mut entities = self.entities.lock().expect("fake mutex poisoned");
+        let Some(entity) = entities.iter_mut().find(|e| &e.id == id) else {
+            if self
+                .supplied
+                .lock()
+                .expect("fake mutex poisoned")
+                .record_for(id)
+                .is_some()
+            {
+                return Err(MemoryError::SuppliedHandle {
+                    attempted: id.to_string(),
+                });
+            }
+            return Err(MemoryError::UnknownEntity {
+                attempted: id.to_string(),
+                nearest: guard::screen(id, &[], &entities),
+            });
+        };
+        if let Some(into) = &entity.merged_into {
+            return Err(MemoryError::AlreadyMerged {
+                attempted: id.to_string(),
+                into: into.to_string(),
+            });
+        }
+        let Some(was) = entity.archived.take() else {
+            return Err(MemoryError::NotArchived {
+                attempted: id.to_string(),
+            });
+        };
+        Ok((entity.clone(), was))
+    }
+
     async fn rename_entity(
         &self,
         from: &EntityId,
