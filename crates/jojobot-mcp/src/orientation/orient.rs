@@ -379,10 +379,16 @@ impl Jojobot {
             claim,
         } = req;
         // **The zone this call resolves days in:** the one the session sent,
-        // else the instance's, else UTC. A run that holds no zone of its own is
-        // answered in the instance's on every later call too (see
-        // [`Jojobot::dated`]); a resume that sends none keeps the zone it holds.
-        let frame = timezone.or(instance_zone.name());
+        // else the zone a resumed run already holds, else the instance's, else
+        // UTC. A run that holds no zone of its own is answered in the instance's
+        // on every later call too (see [`Jojobot::dated`]); a resume that sends
+        // none keeps the zone it holds, and the boot's own days (a rule's
+        // staleness, the day a claim is dated) are read in it too.
+        let held_zone = match (timezone, resume) {
+            (None, Some(sid)) => self.registry.lookup(sid).and_then(|handle| handle.zone),
+            _ => None,
+        };
+        let frame = timezone.or(held_zone.as_deref()).or(instance_zone.name());
         let frame_zone = || {
             frame
                 .and_then(|name| jiff::tz::TimeZone::get(name).ok())

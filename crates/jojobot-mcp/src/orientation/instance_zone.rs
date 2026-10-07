@@ -257,6 +257,64 @@ mod tests {
         assert_eq!(stamped_with_no_date(&jojobot, &sid).await, day_in(own));
     }
 
+    /// 🚨 **A resume that sends no zone reads the boot's own day in the run's
+    /// zone.** The reported zone and every later stamp were the run's, but the
+    /// day the BOOT used, which decides whether the bot's rules have aged, came
+    /// from the instance's zone. The run is in the zone whose day is later and
+    /// the instance in the earlier one, and a rule is good through the
+    /// instance's day: past in the run's day, not past in the instance's. The
+    /// control is a fresh boot that sends none, which is the instance's, and
+    /// reads the rule as good.
+    #[tokio::test]
+    async fn a_resume_that_sends_no_zone_reads_a_rules_staleness_in_the_runs_day() {
+        let (runs, instances) = ("Pacific/Kiritimati", "Etc/GMT+12");
+        assert!(
+            day_in(runs) > day_in(instances),
+            "the case needs the run's zone a day ahead of the instance's"
+        );
+        let jojobot = handler();
+        make_bot(&jojobot, "otto").await;
+        ensure(&jojobot, "person:milhouse").await;
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                stale_after: Some(day_in(instances)),
+                fields: Some(
+                    [("starred".to_string(), "true".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..capture_args("bot:otto", "checks the board before starting")
+            },
+        )
+        .await;
+        the_operator_sets_the_zone(&jojobot, instances).await;
+        let sid = booted_in(&jojobot, "otto", runs, Some("new")).await;
+        stamped_with_no_date(&jojobot, &sid).await;
+
+        let stale = |body: &serde_json::Value| {
+            body["identity"]["rules"]
+                .as_array()
+                .and_then(|rules| rules.first().cloned())
+                .unwrap_or_else(|| panic!("the boot carries the bot's rules: {body}"))
+                .get("stale")
+                .is_some()
+        };
+        let resumed = boot_answering_dated(&jojobot, "otto", &sid, None, None).await;
+        assert_eq!(resumed["timezone"]["from"], "run", "{resumed}");
+        assert!(
+            stale(&resumed),
+            "the boot read the rule in the instance's day, not the run's: {resumed}"
+        );
+
+        let fresh = boot_answering_dated(&jojobot, "otto", "new", None, None).await;
+        assert_eq!(fresh["timezone"]["from"], "instance", "{fresh}");
+        assert!(
+            !stale(&fresh),
+            "a fresh boot with no zone is the instance's, where the rule still stands: {fresh}"
+        );
+    }
+
     /// **A read that carries no handle is answered in the instance's zone too.**
     #[tokio::test]
     async fn a_read_with_no_handle_is_answered_in_the_instances_zone() {
