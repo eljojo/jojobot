@@ -1379,7 +1379,10 @@ fn add_entity_names_the_argument_that_gives_a_new_thing_its_first_fields() {
     let description = add_entity.description.as_deref().unwrap_or_default();
     // The argument counts only in backticks, as the identifier it is: the word
     // `fields` is also in the sentence that explains it.
-    for word in ["`fields`", "capture"] {
+    // The claim is inference, so a field that needs the operator's word is
+    // written with `capture` and testimony: the description says so, or nobody
+    // files testimony as inference by accident.
+    for word in ["`fields`", "capture", "testimony"] {
         assert!(
             description.contains(word),
             "add_entity's description does not name {word}: {description}"

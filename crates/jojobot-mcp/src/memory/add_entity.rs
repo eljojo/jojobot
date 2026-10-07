@@ -198,8 +198,10 @@ impl Jojobot {
                        and it opens the mailbox that bot owns in the same act. Send `fields` \
                        to give the new thing its first fields in the same call: they are \
                        written as its first claim, under every guard a capture faces, and a \
-                       field that is refused refuses the whole call and creates nothing. \
-                       Returns the stored entity. If its handle or any of its names \
+                       field that is refused refuses the whole call and creates nothing. The \
+                       claim is inference: a field that needs the operator's own word \
+                       (testimony), or one you read in a system of record (observation), is \
+                       written with capture. Returns the stored entity. If its handle or any of its names \
                        resembles something jojobot already knows, NOTHING is written: the \
                        result says status: blocked with candidates and how_to_proceed. Use the \
                        candidate you meant, or re-call with the override_token that refusal \
