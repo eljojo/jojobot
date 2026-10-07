@@ -312,6 +312,77 @@ async fn the_colleagues_view_leaves_operational_keys_out_and_names_what_it_left_
     story.finish().await;
 }
 
+/// **The note a view's narrowing leaves tells the truth about the way back.**
+/// When `keys` came from the view, asking the view again without `keys` applies
+/// the view's keys again and loops, so the note names the two calls that do
+/// return every key: leave the view out, or pass `keys` naming the ones wanted.
+/// Both are followed here as the note gives them, and a direct `keys` call, where
+/// "ask again without keys" is true, says nothing of a view.
+#[tokio::test]
+async fn the_note_a_view_leaves_names_calls_that_return_the_keys_it_left_out() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    s.add("bot:omega", "Omega").await;
+    s.event_with(
+        "bot:omega",
+        "what omega is for",
+        json!({"one_liner": "runs the office", "probe/last": "2026-10-01", "nudge/quiet": "on"}),
+        &[],
+    )
+    .await;
+    let field_of = |answer: &serde_json::Value, handle: &str| -> serde_json::Value {
+        answer["objects"]
+            .as_array()
+            .and_then(|list| list.iter().find(|object| object["id"] == handle))
+            .unwrap_or_else(|| panic!("the answer lists {handle}: {answer}"))
+            .clone()
+    };
+
+    // The view names its keys, so the note is about a view.
+    let colleagues = s.call("recall", json!({"view": "colleagues"})).await.json();
+    let omega = field_of(&colleagues, "bot:omega");
+    let note = omega["fields_left_out"]
+        .as_str()
+        .unwrap_or_else(|| panic!("omega names what it left out: {colleagues}"));
+    for word in ["view", "keys", "probe/last", "nudge/quiet"] {
+        assert!(
+            note.contains(word),
+            "the note does not name `{word}`, so it does not say how to get the keys back: {note}"
+        );
+    }
+
+    // Advice one, as given: leave the view out and send its kind.
+    let without_the_view = s.call("recall", json!({"kind": "bot"})).await.json();
+    let whole = field_of(&without_the_view, "bot:omega");
+    assert_eq!(whole["fields"]["probe/last"], "2026-10-01", "{whole}");
+    assert_eq!(whole["fields"]["nudge/quiet"], "on", "{whole}");
+    // Advice two, as given: the view again, with `keys` naming the keys left out.
+    let named = s
+        .call(
+            "recall",
+            json!({"view": "colleagues", "keys": ["probe/last", "nudge/quiet"]}),
+        )
+        .await
+        .json();
+    let wanted = field_of(&named, "bot:omega");
+    assert_eq!(wanted["fields"]["probe/last"], "2026-10-01", "{wanted}");
+    assert_eq!(wanted["fields"]["nudge/quiet"], "on", "{wanted}");
+
+    // The pairing: narrowed by the caller's own `keys`, the note says nothing of
+    // a view, because "ask again without keys" is exactly right there.
+    let direct = s
+        .call("recall", json!({"kind": "bot", "keys": ["one_liner"]}))
+        .await
+        .json();
+    let direct_omega = field_of(&direct, "bot:omega");
+    let direct_note = direct_omega["fields_left_out"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the direct call names what it left out: {direct}"));
+    assert!(direct_note.contains("keys"), "{direct_note}");
+    assert!(!direct_note.contains("view"), "{direct_note}");
+    story.finish().await;
+}
+
 /// **A session that was told nothing finds the capability and uses it.**
 ///
 /// The bar a view has to clear is not that it exists — it is that an agent

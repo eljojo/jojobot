@@ -976,6 +976,16 @@ fn charter_json(
     }
 }
 
+/// **The keys an answer is narrowed to, and where they came from.** The source
+/// decides what an object's note tells a reader to do: keys the caller named are
+/// undone by asking again without them, and keys a view supplied are not,
+/// because the view supplies them again.
+#[derive(Clone, Copy)]
+struct KeyNarrowing<'a> {
+    keys: &'a [String],
+    by_view: bool,
+}
+
 /// One object on the wire, and everything it reached.
 ///
 /// **Absence means "not asked for"** on both halves that can be turned off:
@@ -986,7 +996,7 @@ fn object_json(
     object: &graph::Object,
     include: graph::Include,
     as_of: jiff::civil::Date,
-    only: Option<&[String]>,
+    only: Option<KeyNarrowing<'_>>,
 ) -> serde_json::Value {
     // **A folded handle is not a thing, and it is never served as an empty
     // one.** It goes on answering because a handle somebody wrote down must
@@ -1027,7 +1037,7 @@ fn object_json(
     // chart is not handed the operational keys of each node. **What it left out
     // is named**, never dropped silently: a reader who had to infer
     // narrowed-from-empty would infer wrong.
-    let wanted = |key: &str| only.is_none_or(|keys| keys.iter().any(|k| k == key));
+    let wanted = |key: &str| only.is_none_or(|narrowed| narrowed.keys.iter().any(|k| k == key));
     fields.insert(
         "fields".into(),
         object
@@ -1045,11 +1055,20 @@ fn object_json(
         .filter(|key| !wanted(key))
         .collect();
     if !left_out.is_empty() {
+        // **The way back depends on who narrowed.** Keys the caller named come
+        // back by asking again without them. Keys a view supplied do not: the
+        // view supplies them again, so the advice would loop. The note names
+        // the two calls that do return them.
+        let way_back = if only.is_some_and(|narrowed| narrowed.by_view) {
+            "the view named the ones it shows; ask again without view, sending its kind \
+             yourself, or with keys naming these"
+        } else {
+            "ask again without keys to read them all"
+        };
         fields.insert(
             "fields_left_out".into(),
             format!(
-                "{} of this object's keys are not here: {} — ask again without keys to read \
-                 them all",
+                "{} of this object's keys are not here: {} — {way_back}",
                 left_out.len(),
                 left_out.join(", ")
             )
@@ -1424,6 +1443,10 @@ impl Jojobot {
         // `RecallArgs` would mean converting them twice for no reason. Used
         // only when the caller named no `fields` of its own; a caller that did
         // meant that filter, exactly as every other view-filled argument works.
+        // **Whether the caller named `keys` itself**, taken before a view fills
+        // the call in: the note an object leaves when it is narrowed tells a
+        // different way back for keys a view supplied.
+        let caller_named_keys = args.keys.is_some();
         let (args, view_filters) = match args.view.clone() {
             None => (args, Vec::new()),
             Some(named) => match self.asked_by_name(&named, args).await {
@@ -1566,6 +1589,7 @@ impl Jojobot {
         // **Which keys of each object's fields come back**, when the call or
         // the view it named said. Kept as sent: matching is by key name.
         let only_keys = args.keys.clone();
+        let keys_from_view = args.view.is_some() && !caller_named_keys && only_keys.is_some();
         let include = graph::Include {
             facts: args.facts.unwrap_or(false),
             prose: asked_prose || want_charter,
@@ -2133,7 +2157,15 @@ impl Jojobot {
                 .zip(held)
                 .zip(backing.into_iter().chain(std::iter::repeat(None)))
                 .map(|(((idx, o), held), backing)| {
-                    let mut rendered = object_json(o, include, today, only_keys.as_deref());
+                    let mut rendered = object_json(
+                        o,
+                        include,
+                        today,
+                        only_keys.as_deref().map(|keys| KeyNarrowing {
+                            keys,
+                            by_view: keys_from_view,
+                        }),
+                    );
                     if let (Some(want), Some(removed)) =
                         (wanted_status, left_out_by_status.get(&o.entity.id))
                     {
