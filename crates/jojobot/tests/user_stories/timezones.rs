@@ -34,6 +34,57 @@ fn day_in(zone: &str) -> jiff::civil::Date {
         .date()
 }
 
+/// **The days a zone was on while `call` ran**: its day before the call and its
+/// day after. The server reads its own clock once, somewhere between the two, so
+/// the day it answers with is one of them. That is one day, unless midnight in
+/// that zone fell inside the call, and then either is right. Comparing an answer
+/// with a day read at any other moment could fail on a run that straddled
+/// midnight, which is what this replaces.
+async fn days_during<T>(
+    zone: &str,
+    call: impl std::future::Future<Output = T>,
+) -> (T, Vec<jiff::civil::Date>) {
+    let before = day_in(zone);
+    let answered = call.await;
+    let after = day_in(zone);
+    let days = if before == after {
+        vec![before]
+    } else {
+        vec![before, after]
+    };
+    (answered, days)
+}
+
+/// A claim's stamped day must be one of the days its zone was on during the call.
+fn assert_one_of(stamped: &str, days: &[jiff::civil::Date], why: &str) {
+    assert!(
+        days.iter().any(|day| day.to_string() == stamped),
+        "{why}: stamped {stamped}, the zone was on {days:?}",
+    );
+}
+
+/// **A call that straddled midnight is right on either day**, and only on those
+/// two. The window is built by hand because a midnight cannot be summoned.
+#[test]
+fn a_call_across_midnight_is_right_on_either_day_and_on_no_other() {
+    let before = jiff::civil::date(2026, 10, 7);
+    let after = jiff::civil::date(2026, 10, 8);
+    for stamped in ["2026-10-07", "2026-10-08"] {
+        assert_one_of(stamped, &[before, after], "either side of midnight");
+    }
+    let outside = std::panic::catch_unwind(|| {
+        assert_one_of("2026-10-09", &[before, after], "a day after the call");
+    });
+    assert!(outside.is_err(), "a day outside the window was accepted");
+    let earlier = std::panic::catch_unwind(|| {
+        assert_one_of("2026-10-06", &[before], "a day before the call");
+    });
+    assert!(
+        earlier.is_err(),
+        "a day before a one-day window was accepted"
+    );
+}
+
 #[tokio::test]
 async fn two_runs_in_two_zones_read_one_claim_in_their_own_day() {
     const AHEAD: &str = "Pacific/Kiritimati";
@@ -89,12 +140,14 @@ async fn two_runs_in_two_zones_read_one_claim_in_their_own_day() {
     // ── a claim with no date is stamped with the run's own day ──────────────
     first.add("person:milhouse", "Milhouse").await;
     let dated = async |s: &super::dsl::Session, zone: &str| {
-        let stamped = s
-            .undated_fact("person:milhouse", "said he would come along")
-            .await;
-        assert_eq!(
-            stamped,
-            day_in(zone).to_string(),
+        let (stamped, days) = days_during(
+            zone,
+            s.undated_fact("person:milhouse", "said he would come along"),
+        )
+        .await;
+        assert_one_of(
+            &stamped,
+            &days,
             "the claim is stamped with the day it is where the run is",
         );
     };
@@ -118,12 +171,16 @@ async fn two_runs_in_two_zones_read_one_claim_in_their_own_day() {
     due_for(&behind).await.never_says("rhythm:water-the-fern");
 
     // …and each answer says which day it was asked about, in its own frame.
-    due_for(&ahead)
-        .await
-        .says(&format!("\"overdue_as_of\":\"{}\"", day_in(AHEAD)));
-    due_for(&behind)
-        .await
-        .says(&format!("\"overdue_as_of\":\"{}\"", day_in(BEHIND)));
+    for (run, zone) in [(&ahead, AHEAD), (&behind, BEHIND)] {
+        let (answer, days) = days_during(zone, due_for(run)).await;
+        let body = answer.json().to_string();
+        assert!(
+            days.iter()
+                .any(|day| body.contains(&format!("\"overdue_as_of\":\"{day}\""))),
+            "the answer does not say which day it was asked about, in its own frame \
+             ({zone} was on {days:?}): {body}",
+        );
+    }
 
     // ── a run that named no zone is answered in the stated fallback ─────────
     //
@@ -131,10 +188,14 @@ async fn two_runs_in_two_zones_read_one_claim_in_their_own_day() {
     // used UTC and a build that reads the run's zone are told apart by nothing
     // above — because UTC is a zone like any other.
     let unframed = story.session_in("UTC", Some("new")).await;
-    let stamped = unframed.undated_fact("person:milhouse", "and he did").await;
-    assert_eq!(
-        stamped,
-        day_in("UTC").to_string(),
+    let (stamped, days) = days_during(
+        "UTC",
+        unframed.undated_fact("person:milhouse", "and he did"),
+    )
+    .await;
+    assert_one_of(
+        &stamped,
+        &days,
         "a run with no frame of its own is answered in UTC",
     );
 
@@ -173,9 +234,11 @@ async fn an_instance_that_holds_its_operators_zone_answers_a_run_that_sends_none
     assert_eq!(first_boot["timezone"]["from"], "default", "{first_boot}");
     assert_eq!(first_boot["timezone"]["zone"], "UTC", "{first_boot}");
     first.add("person:milhouse", "Milhouse").await;
-    assert_eq!(
-        first.undated_fact("person:milhouse", "said hello").await,
-        day_in("UTC").to_string(),
+    let (stamped, days) =
+        days_during("UTC", first.undated_fact("person:milhouse", "said hello")).await;
+    assert_one_of(
+        &stamped,
+        &days,
         "with no zone written, a run that sends none is answered in UTC",
     );
 
@@ -193,17 +256,23 @@ async fn an_instance_that_holds_its_operators_zone_answers_a_run_that_sends_none
     let (boot, later) = story.boot_sending_no_zone(Some("new")).await;
     assert_eq!(boot["timezone"]["from"], "instance", "{boot}");
     assert_eq!(boot["timezone"]["zone"], operators, "{boot}");
-    assert_eq!(
-        later.undated_fact("person:milhouse", "said goodbye").await,
-        day_in(operators).to_string(),
+    let (stamped, days) = days_during(
+        operators,
+        later.undated_fact("person:milhouse", "said goodbye"),
+    )
+    .await;
+    assert_one_of(
+        &stamped,
+        &days,
         "a run that sends none is answered in the instance's zone",
     );
 
     // A run that sends a zone of its own still gets that one.
     let own = story.session_in(other, Some("new")).await;
-    assert_eq!(
-        own.undated_fact("person:milhouse", "waved").await,
-        day_in(other).to_string(),
+    let (stamped, days) = days_during(other, own.undated_fact("person:milhouse", "waved")).await;
+    assert_one_of(
+        &stamped,
+        &days,
         "a zone the session sends wins over the instance's",
     );
     story.finish().await;
