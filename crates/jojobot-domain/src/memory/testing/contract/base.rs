@@ -3150,6 +3150,8 @@ pub async fn update_entity_without_a_rename_is_not_screened<M: Memory>(store: &M
 /// Updating an entity that doesn't exist errors with the nearest candidates
 /// — it never quietly creates one.
 pub async fn update_entity_unknown_handle_never_creates<M: Memory>(store: &M) {
+    // The near miss the error has to name is this case's own to provision.
+    ensure(store, &EntityId("thing:contract-red-bike".into())).await;
     let ghost = EntityId("thing:contract-red-bikee".into());
     let err = store
         .update_entity(
@@ -12099,6 +12101,11 @@ pub async fn a_kind_the_software_ships_lands_on_a_callers_type_of_that_name<M: M
 /// parent is written, and the same edit that is refused for the day lands for
 /// a key that is not required.
 pub async fn a_promise_is_refused_without_a_parent_and_keeps_its_day<M: Memory>(store: &M) {
+    // The promise kind's required day is a key the store holds once the kinds
+    // are seeded, which a store's boot does and this case may not assume.
+    crate::memory::kinds::seed(store)
+        .await
+        .expect("the kinds are seeded");
     let owner = EntityId("thing:contract-kettle".into());
     ensure(store, &owner).await;
     let promise = EntityId("promise:contract-borrowed-wrench".into());

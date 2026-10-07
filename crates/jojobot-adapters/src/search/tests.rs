@@ -78,9 +78,6 @@ async fn the_parts_of_the_searchable_contract_run_every_case_once_each_on_its_ow
     for part in 0..contract::PARTS {
         let store =
             Arc::new(IndexedMemory::new(Arc::new(InMemoryMemory::booted())).expect("index opens"));
-        jojobot_domain::memory::kinds::seed(store.as_ref())
-            .await
-            .expect("the kinds are seeded, as a real store's boot does");
         ran.push(
             contract::run_part_searchable(
                 store.as_ref(),

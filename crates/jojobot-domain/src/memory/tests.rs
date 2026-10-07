@@ -386,13 +386,36 @@ async fn the_parts_of_the_contract_run_every_case_once_each_on_its_own_store() {
     let mut ran = Vec::new();
     for part in 0..contract::PARTS {
         let store = InMemoryMemory::booted();
-        crate::memory::kinds::seed(&store)
-            .await
-            .expect("the kinds are seeded, as a real store's boot does");
         ran.push(contract::run_part(&store, part, contract::PARTS).await);
     }
     assert!(ran.iter().all(|n| *n > 0), "a part ran nothing: {ran:?}");
     assert_eq!(ran.iter().sum::<usize>(), total, "parts: {ran:?}");
+}
+
+/// **Every case of the contract holds alone, on a store of its own.** A part is
+/// a run of neighbouring cases on a fresh store, so a case that leans on a
+/// record some other case wrote passes the run of the whole list and fails as
+/// soon as a part is cut between the two. Running each case by itself is the
+/// strictest cut there is: every case held here holds in any part.
+#[tokio::test]
+async fn every_case_of_the_contract_holds_alone_on_a_store_of_its_own() {
+    let total = contract::case_count();
+    let mut failing = Vec::new();
+    for case in 0..total {
+        let ran = tokio::spawn(async move {
+            contract::run_part(&InMemoryMemory::booted(), case, total).await
+        })
+        .await;
+        match ran {
+            Ok(1) => {}
+            Ok(other) => failing.push(format!("case {case}: ran {other} cases, not one")),
+            Err(panic) => failing.push(format!("case {case}: {panic}")),
+        }
+    }
+    assert!(
+        failing.is_empty(),
+        "cases that need another case: {failing:#?}"
+    );
 }
 
 /// A role's exclusivity against the fake — the same suite the gated
