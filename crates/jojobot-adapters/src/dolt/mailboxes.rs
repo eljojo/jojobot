@@ -50,6 +50,19 @@ pub struct DoltMailboxes {
     pool: MySqlPool,
     owners: Arc<dyn OwnerIndex>,
     draw: Draw,
+    /// What the board reads have loaded so far, so a case can say which rows a
+    /// verb asked the store for.
+    #[cfg(test)]
+    loaded: Arc<Loaded>,
+}
+
+/// **What the reads of the board have pulled out of the store**, counted at the
+/// one place that reads it.
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct Loaded {
+    rows: std::sync::atomic::AtomicUsize,
+    body_bytes: std::sync::atomic::AtomicUsize,
 }
 
 impl DoltMailboxes {
@@ -63,6 +76,8 @@ impl DoltMailboxes {
             pool,
             owners,
             draw: ids::drawing(),
+            #[cfg(test)]
+            loaded: Arc::default(),
         }
     }
 
@@ -167,7 +182,78 @@ impl DoltMailboxes {
     /// collision on demand.
     #[cfg(test)]
     pub(crate) fn drawing(pool: MySqlPool, owners: Arc<dyn OwnerIndex>, draw: Draw) -> Self {
-        DoltMailboxes { pool, owners, draw }
+        DoltMailboxes {
+            pool,
+            owners,
+            draw,
+            loaded: Arc::default(),
+        }
+    }
+
+    /// **How many messages sit in each state of each box, taken by the store**
+    /// for every row it can count without loading, and by the row reader for
+    /// the rest — see [`countable_predicate`]. A healthy board loads no row.
+    async fn tally(&self, tx: &mut Transaction<'_, MySql>) -> Result<Tally, MailboxError> {
+        let countable = countable_predicate();
+        let grouped = sqlx::query(&format!(
+            "SELECT m.mailbox AS mailbox, m.state AS state, COUNT(*) AS n
+             FROM message m WHERE {countable}
+             GROUP BY m.mailbox, m.state"
+        ))
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(store)?;
+        let mut counts: std::collections::HashMap<String, StateCounts> = Default::default();
+        for row in &grouped {
+            let mailbox: String = row.try_get("mailbox").map_err(store)?;
+            let token: String = row.try_get("state").map_err(store)?;
+            let n: i64 = row.try_get("n").map_err(store)?;
+            let state = MessageState::from_token(&token).ok_or_else(|| {
+                tracing::error!(%token, "the store counted a state this build does not know");
+                MailboxError::Store("the mailbox store could not be reached".into())
+            })?;
+            let tally = counts.entry(mailbox).or_default();
+            for _ in 0..n {
+                tally.add(state);
+            }
+        }
+        let rest = self.cards(tx, Scope::NotCountable).await?;
+        let mut unreadable = Vec::new();
+        for card in rest {
+            match card.readable() {
+                Some(message) => counts
+                    .entry(message.mailbox.as_str().to_string())
+                    .or_default()
+                    .add(message.state),
+                None => unreadable.push(card),
+            }
+        }
+        Ok(Tally { counts, unreadable })
+    }
+
+    /// **The same boxes, by loading every row's marks and counting them
+    /// here** — the straightforward reading [`DoltMailboxes::tally`] has to
+    /// agree with, kept so a case can hold the two to each other.
+    #[cfg(test)]
+    async fn boxes_by_reading_every_row(&self) -> Vec<Mailbox> {
+        let mut tx = self.pool.begin().await.expect("a transaction");
+        let rows = sqlx::query("SELECT name, owner FROM mailbox ORDER BY name")
+            .fetch_all(&mut *tx)
+            .await
+            .expect("the boxes");
+        let cards = self.cards(&mut tx, Scope::Marks).await.expect("the marks");
+        let mut counts: std::collections::HashMap<String, StateCounts> = Default::default();
+        let mut unreadable = Vec::new();
+        for card in cards {
+            match card.readable() {
+                Some(message) => counts
+                    .entry(message.mailbox.as_str().to_string())
+                    .or_default()
+                    .add(message.state),
+                None => unreadable.push(card),
+            }
+        }
+        boxes_from(&rows, &Tally { counts, unreadable })
     }
 
     /// Every box name, for the guards that screen against them.
@@ -179,27 +265,88 @@ impl DoltMailboxes {
         Ok(names.into_iter().map(MailboxName).collect())
     }
 
-    /// Every card on the board, readable and not, in delivery order.
+    /// The cards a verb asked about, readable and not, in delivery order.
     ///
     /// **One reader for every verb**, so what counts as unreadable cannot come
     /// to mean two different things in two places — the bug that would let a
     /// card be counted here and refused there.
-    async fn cards(&self, tx: &mut Transaction<'_, MySql>) -> Result<Vec<Card>, MailboxError> {
-        let rows = sqlx::query(
-            // **A LEFT join, because a message that has not been delivered has
-            // no row over there** — and that absence is a fact about the
-            // message rather than a reason to leave it out.
-            "SELECT m.id, m.mailbox, m.ordinal, m.body, m.subject, m.sender, m.sent_at, m.state,
-                    m.notes, m.in_reply_to, m.sender_mail_waiting_at_send, m.posted_by_session,
+    ///
+    /// **Each verb names what it needs.** Loading the whole board and picking
+    /// the rows afterwards cost every call a read of every message ever sent,
+    /// bodies included, and grew with all traffic.
+    async fn cards(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        scope: Scope<'_>,
+    ) -> Result<Vec<Card>, MailboxError> {
+        // **A LEFT join, because a message that has not been delivered has no
+        // row over there** — and that absence is a fact about the message
+        // rather than a reason to leave it out.
+        const WHOLE: &str = "SELECT m.id, m.mailbox, m.ordinal, m.body, m.subject, m.sender,
+                    m.sent_at, m.state, m.notes, m.in_reply_to,
+                    m.sender_mail_waiting_at_send, m.posted_by_session,
                     m.quarantined_by, m.quarantine_reason,
                     d.taken_by
              FROM message m
-             LEFT JOIN message_delivery d ON d.message_id = m.id",
-        )
-        .fetch_all(&mut **tx)
-        .await
+             LEFT JOIN message_delivery d ON d.message_id = m.id";
+        // **What decides whether a row is readable, and nothing else.** The
+        // text columns read as empty, so a count of the boxes carries no
+        // message text; the same row reader judges the rest.
+        const MARKS: &str = "SELECT m.id, m.mailbox, m.ordinal, '' AS body,
+                    CAST(NULL AS CHAR) AS subject, '' AS sender,
+                    m.sent_at, m.state, CAST(NULL AS CHAR) AS notes,
+                    CAST(NULL AS CHAR) AS in_reply_to,
+                    CAST(NULL AS SIGNED) AS sender_mail_waiting_at_send,
+                    CAST(NULL AS CHAR) AS posted_by_session,
+                    m.quarantined_by, m.quarantine_reason,
+                    CAST(NULL AS CHAR) AS taken_by
+             FROM message m";
+        let rows = match scope {
+            Scope::Board => sqlx::query(WHOLE).fetch_all(&mut **tx).await,
+            #[cfg(test)]
+            Scope::Marks => sqlx::query(MARKS).fetch_all(&mut **tx).await,
+            Scope::NotCountable => {
+                sqlx::query(&format!("{MARKS} WHERE NOT {}", countable_predicate()))
+                    .fetch_all(&mut **tx)
+                    .await
+            }
+            Scope::Mailbox(name) => {
+                sqlx::query(&format!("{WHOLE} WHERE m.mailbox = ?"))
+                    .bind(name.as_str())
+                    .fetch_all(&mut **tx)
+                    .await
+            }
+            Scope::Message(id) => {
+                sqlx::query(&format!("{WHOLE} WHERE m.id = ?"))
+                    .bind(id.as_str())
+                    .fetch_all(&mut **tx)
+                    .await
+            }
+            // The column's comparison ignores case, so the rows this returns
+            // are a superset of the sender's: the caller keeps the exact ones.
+            Scope::Senders(senders) => {
+                let marks = vec!["?"; senders.len()].join(", ");
+                let text = format!("{WHOLE} WHERE m.sender IN ({marks})");
+                let mut query = sqlx::query(&text);
+                for sender in senders {
+                    query = query.bind(*sender);
+                }
+                query.fetch_all(&mut **tx).await
+            }
+        }
         .map_err(store)?;
         let mut cards: Vec<Card> = rows.iter().map(card_from).collect::<Result<_, _>>()?;
+        #[cfg(test)]
+        {
+            use std::sync::atomic::Ordering::Relaxed;
+            self.loaded.rows.fetch_add(cards.len(), Relaxed);
+            let bodies: usize = cards
+                .iter()
+                .filter_map(Card::readable)
+                .map(|m| m.body.len())
+                .sum();
+            self.loaded.body_bytes.fetch_add(bodies, Relaxed);
+        }
         // **Oldest by the instant the sender declared**, with the store's own
         // ordinal breaking a tie — the same total order every other tier reads.
         // Sorted here rather than in SQL because the stamp is text: a column
@@ -207,6 +354,76 @@ impl DoltMailboxes {
         cards.sort_by_key(Card::order);
         Ok(cards)
     }
+}
+
+/// **What a count of the boxes is made from**: how many readable messages sit
+/// in each state of each box, and the cards no verb can read.
+struct Tally {
+    counts: std::collections::HashMap<String, StateCounts>,
+    unreadable: Vec<Card>,
+}
+
+/// **The one place a count of the boxes is put together**, from a tally however
+/// it was taken.
+fn boxes_from(rows: &[sqlx::mysql::MySqlRow], tally: &Tally) -> Vec<Mailbox> {
+    rows.iter()
+        .map(|row| {
+            let name = MailboxName(row.get::<String, _>("name"));
+            Mailbox {
+                quarantined: tally
+                    .unreadable
+                    .iter()
+                    .filter(|c| c.mailbox() == &name)
+                    .map(|c| c.id().clone())
+                    .collect(),
+                owner: EntityId(row.get::<String, _>("owner")),
+                counts: tally.counts.get(name.as_str()).copied().unwrap_or_default(),
+                name,
+            }
+        })
+        .collect()
+}
+
+/// **The rows the store can count without loading them**: a state the build
+/// knows and a send time of a shape that always parses. The pattern is
+/// deliberately narrower than what parses — no leap day, no `:60`, no year past
+/// 8999, no day the month may lack — so a row it accepts is one the row reader
+/// would also call readable, and every other row is loaded and judged by that
+/// reader. The store compares these two columns by case, so a state or a stamp
+/// in the wrong case is not accepted either; a case holds that to the row
+/// reader, because a change of collation would break it without a word.
+fn countable_predicate() -> String {
+    let states = MessageState::ALL
+        .iter()
+        .map(|state| format!("'{}'", state.as_token()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let day = "((0[13578]|1[02])-(0[1-9]|[12][0-9]|3[01])\
+               |(0[469]|11)-(0[1-9]|[12][0-9]|30)\
+               |02-(0[1-9]|1[0-9]|2[0-8]))";
+    let stamp = format!(
+        "^[0-8][0-9]{{3}}-{day}T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]([.][0-9]{{1,9}})?Z$"
+    );
+    format!("(m.state IN ({states}) AND m.sent_at REGEXP '{stamp}')")
+}
+
+/// **Which rows of the board a verb asks for.**
+#[derive(Clone, Copy)]
+enum Scope<'a> {
+    /// Every message, whole. Only a read that answers about every box needs it.
+    Board,
+    /// Every message's marks and none of its text: the straightforward reading
+    /// a count of the boxes has to agree with. Only a case asks for it.
+    #[cfg(test)]
+    Marks,
+    /// The marks of every row [`countable_predicate`] does not accept.
+    NotCountable,
+    /// One box's messages.
+    Mailbox(&'a MailboxName),
+    /// One message, by its id.
+    Message(&'a MessageId),
+    /// Everything sent under any of these spellings of a sender, in any box.
+    Senders(&'a [&'a str]),
 }
 
 /// One row, read as far as it can be read.
@@ -516,33 +733,9 @@ impl Mailboxes for DoltMailboxes {
             .fetch_all(&mut *tx)
             .await
             .map_err(store)?;
-        let cards = self.cards(&mut tx).await?;
+        let tally = self.tally(&mut tx).await?;
         tx.commit().await.map_err(store)?;
-
-        Ok(rows
-            .iter()
-            .map(|row| {
-                let name = MailboxName(row.get::<String, _>("name"));
-                let mut counts = StateCounts::default();
-                for message in cards
-                    .iter()
-                    .filter(|c| c.mailbox() == &name)
-                    .filter_map(Card::readable)
-                {
-                    counts.add(message.state);
-                }
-                Mailbox {
-                    quarantined: cards
-                        .iter()
-                        .filter(|c| c.mailbox() == &name && c.readable().is_none())
-                        .map(|c| c.id().clone())
-                        .collect(),
-                    owner: EntityId(row.get::<String, _>("owner")),
-                    name,
-                    counts,
-                }
-            })
-            .collect())
+        Ok(boxes_from(&rows, &tally))
     }
 
     async fn post_message(&self, message: NewMessage) -> Result<Guarded<Message>, MailboxError> {
@@ -638,7 +831,7 @@ impl Mailboxes for DoltMailboxes {
         }
 
         let mut tx = self.pool.begin().await.map_err(store)?;
-        let cards = self.cards(&mut tx).await?;
+        let cards = self.cards(&mut tx, Scope::Mailbox(name)).await?;
         let mut delivered = Vec::new();
         for message in cards
             .iter()
@@ -684,15 +877,39 @@ impl Mailboxes for DoltMailboxes {
 
     async fn scan_messages(&self) -> Result<Vec<Message>, MailboxError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
-        let cards = self.cards(&mut tx).await?;
+        let cards = self.cards(&mut tx, Scope::Board).await?;
         tx.commit().await.map_err(store)?;
         Ok(cards.iter().filter_map(Card::readable).cloned().collect())
+    }
+
+    async fn message_by_id(&self, id: &MessageId) -> Result<Option<Message>, MailboxError> {
+        // **No shape check**: an id of no valid shape is no message, which is
+        // the miss the delivering verb then refuses in its own words.
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        let cards = self.cards(&mut tx, Scope::Message(id)).await?;
+        tx.commit().await.map_err(store)?;
+        Ok(cards.iter().find_map(Card::readable).cloned())
+    }
+
+    async fn sent_by(&self, senders: &[&str]) -> Result<Vec<Message>, MailboxError> {
+        if senders.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        let cards = self.cards(&mut tx, Scope::Senders(senders)).await?;
+        tx.commit().await.map_err(store)?;
+        Ok(cards
+            .iter()
+            .filter_map(Card::readable)
+            .filter(|m| senders.contains(&m.sender.trim()))
+            .cloned()
+            .collect())
     }
 
     async fn read_message(&self, id: &MessageId) -> Result<Delivered, MailboxError> {
         validate_message_id(id)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
-        let cards = self.cards(&mut tx).await?;
+        let cards = self.cards(&mut tx, Scope::Message(id)).await?;
         let card =
             cards
                 .iter()
@@ -752,7 +969,7 @@ impl Mailboxes for DoltMailboxes {
         validate_message_id(id)?;
         validate_notes(notes)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
-        let cards = self.cards(&mut tx).await?;
+        let cards = self.cards(&mut tx, Scope::Message(id)).await?;
         let card =
             cards
                 .iter()
@@ -788,7 +1005,7 @@ impl Mailboxes for DoltMailboxes {
     ) -> Result<Quarantined, MailboxError> {
         validate_message_id(id)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
-        let cards = self.cards(&mut tx).await?;
+        let cards = self.cards(&mut tx, Scope::Message(id)).await?;
         let card =
             cards
                 .iter()
@@ -895,6 +1112,198 @@ mod tests {
             .expect("not blocked")
             .id;
         (store, mail, readable)
+    }
+
+    /// **The board holds mail for other boxes too.** `board` opens one box with
+    /// one message in it; this adds a second box with three, so a read of one
+    /// box can be told from a read of the board.
+    async fn with_a_second_box(mail: &DoltMailboxes) -> Vec<MessageId> {
+        mail.create_mailbox(
+            &MailboxName("workshop".into()),
+            &EntityId("bot:delta".into()),
+            None,
+        )
+        .await
+        .expect("create ok")
+        .written()
+        .expect("not blocked");
+        let mut ids = Vec::new();
+        for n in 0..3 {
+            ids.push(
+                mail.post_message(NewMessage {
+                    mailbox: MailboxName("workshop".into()),
+                    body: format!("a body for the workshop, number {n}"),
+                    subject: None,
+                    sender: "delta".into(),
+                    sent_at: format!("2026-01-0{}T00:00:00Z", n + 2)
+                        .parse()
+                        .expect("a fixed instant"),
+                    in_reply_to: None,
+                    sender_mail_waiting_at_send: None,
+                    posted_by_session: None,
+                })
+                .await
+                .expect("post ok")
+                .written()
+                .expect("not blocked")
+                .id,
+            );
+        }
+        ids
+    }
+
+    /// The rows the board reads have loaded since the last call, and the body
+    /// bytes among them.
+    fn took(mail: &DoltMailboxes) -> (usize, usize) {
+        use std::sync::atomic::Ordering::Relaxed;
+        (
+            mail.loaded.rows.swap(0, Relaxed),
+            mail.loaded.body_bytes.swap(0, Relaxed),
+        )
+    }
+
+    /// 🚨 **A read of one box, or one message, loads that box or that message.**
+    ///
+    /// Every verb used to load every message ever sent, with its body, and then
+    /// pick the rows it wanted — a cost that grows with all traffic and ran on
+    /// every call. The store holds four messages in two boxes here, and each
+    /// verb is asked what it loaded.
+    #[tokio::test]
+    async fn a_verb_about_one_box_or_one_message_loads_only_that_box_or_message() {
+        let (mut store, mail, first) = board("scoped-reads").await;
+        let others = with_a_second_box(&mail).await;
+        took(&mail);
+
+        mail.read_mailbox(&MailboxName("inbox".into()), TakenBy::Reading)
+            .await
+            .expect("read ok");
+        assert_eq!(
+            took(&mail).0,
+            1,
+            "reading the inbox loaded rows of other boxes"
+        );
+
+        mail.message_by_id(&others[2])
+            .await
+            .expect("found")
+            .expect("it is there");
+        assert_eq!(took(&mail).0, 1, "finding one message loaded others");
+
+        let sent = mail.sent_by(&["delta"]).await.expect("sent ok");
+        assert_eq!(sent.len(), 3, "the sender sent three messages");
+        assert_eq!(
+            took(&mail).0,
+            3,
+            "listing one sender's mail loaded other senders' mail"
+        );
+
+        mail.read_message(&others[0]).await.expect("read ok");
+        assert_eq!(took(&mail).0, 1, "taking one message loaded other messages");
+
+        mail.mark_processed(&others[1], None)
+            .await
+            .expect("processed");
+        assert_eq!(took(&mail).0, 1, "retiring one message loaded others");
+
+        mail.quarantine(
+            &first,
+            &MailboxName("inbox".into()),
+            "a reason",
+            "2026-02-01T00:00:00Z".parse().expect("a fixed instant"),
+        )
+        .await
+        .expect("quarantined");
+        assert_eq!(took(&mail).0, 1, "quarantining one message loaded others");
+
+        store.stop().await;
+    }
+
+    /// **The counts the store computes are the counts a read of every row
+    /// gives**, on a board holding every shape of row the readability rule
+    /// tells apart: healthy rows, a leap day, a fraction of a second, a state
+    /// in the wrong case, a stamp in the wrong case, dates that do not exist, a
+    /// second the clock never had, text that is no stamp, and a row quarantined
+    /// on purpose. Asked of the real store, because the rule is the real
+    /// store's comparison and pattern semantics.
+    #[tokio::test]
+    async fn the_counts_the_store_computes_match_a_read_of_every_row() {
+        let (mut store, mail, first) = board("counts-oracle").await;
+        with_a_second_box(&mail).await;
+        for (id, state, sent_at) in [
+            ("leapok", "new", "2028-02-29T00:00:00Z"),
+            ("leapno", "new", "2026-02-29T00:00:00Z"),
+            ("fraction", "read", "2026-12-31T23:59:59.123456789Z"),
+            ("lowerstate", "new", "2026-03-01T00:00:00Z"),
+            ("upperstate", "NEW", "2026-03-01T00:00:00Z"),
+            ("lowert", "new", "2026-03-01t00:00:00Z"),
+            ("lowerz", "new", "2026-03-01T00:00:00z"),
+            ("april31", "new", "2026-04-31T00:00:00Z"),
+            ("month13", "new", "2026-13-01T00:00:00Z"),
+            ("second60", "new", "2026-03-01T00:00:60Z"),
+            ("far", "processed", "9999-12-31T00:00:00Z"),
+            ("text", "processed", "last tuesday"),
+            ("blank", "read", ""),
+            ("nostate", "pending", "2026-03-01T00:00:00Z"),
+            ("longfraction", "new", "2026-03-01T00:00:00.1234567890Z"),
+            ("anychar", "new", "2026-03-01T00:00:00X5Z"),
+        ] {
+            unreadable(&store, id, state, sent_at).await;
+        }
+        mail.quarantine(
+            &first,
+            &MailboxName("inbox".into()),
+            "a reason",
+            "2026-02-01T00:00:00Z".parse().expect("a fixed instant"),
+        )
+        .await
+        .expect("quarantined");
+
+        let counted = mail.list_mailboxes().await.expect("list ok");
+        let oracle = mail.boxes_by_reading_every_row().await;
+        assert_eq!(
+            serde_json::to_value(&counted).expect("boxes serialize"),
+            serde_json::to_value(&oracle).expect("boxes serialize"),
+            "the store's counts disagree with a read of every row"
+        );
+        // And the oracle is not vacuous: the board holds readable rows, and
+        // rows the rule refuses, in the box that was asked.
+        let inbox = counted
+            .iter()
+            .find(|b| b.name == MailboxName("inbox".into()))
+            .expect("the inbox is there");
+        assert!(inbox.counts.total() >= 3, "{inbox:?}");
+        assert!(inbox.quarantined.len() >= 6, "{inbox:?}");
+
+        store.stop().await;
+    }
+
+    /// 🚨 **A count of the boxes ships no message text.** Every answer the
+    /// surface gives asks for a box's count of new mail, and the counts and the
+    /// list of unreadable ids need only each row's state, send time and
+    /// quarantine marks.
+    #[tokio::test]
+    async fn counting_the_boxes_loads_no_message_text_and_counts_what_it_did() {
+        let (mut store, mail, _first) = board("counting").await;
+        with_a_second_box(&mail).await;
+        took(&mail);
+
+        let boxes = mail.list_mailboxes().await.expect("list ok");
+        let (rows, bodies) = took(&mail);
+        assert_eq!(
+            rows, 0,
+            "a readable row is counted by the store, not loaded to be counted"
+        );
+        assert_eq!(bodies, 0, "the count loaded message bodies");
+        let new_in = |name: &str| {
+            boxes
+                .iter()
+                .find(|b| b.name == MailboxName(name.into()))
+                .map(|b| b.counts.new)
+        };
+        assert_eq!(new_in("inbox"), Some(1));
+        assert_eq!(new_in("workshop"), Some(3));
+
+        store.stop().await;
     }
 
     /// A draw that hands back a fixed sequence, so what the store does with a

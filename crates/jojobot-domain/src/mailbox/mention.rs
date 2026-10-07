@@ -169,6 +169,42 @@ impl Mailboxes for Mentioning {
         Ok(messages)
     }
 
+    async fn message_by_id(&self, id: &MessageId) -> Result<Option<Message>, MailboxError> {
+        let Some(message) = self.inner.message_by_id(id).await? else {
+            return Ok(None);
+        };
+        let mut one = [message];
+        self.render_all(&mut one).await?;
+        let [message] = one;
+        Ok(Some(message))
+    }
+
+    /// **Asked under every spelling the sender is stored as**: the permanent
+    /// id of whoever the handle names today, and the handle itself for a row
+    /// written before ids existed. What comes back is read under the names
+    /// things wear today and kept only when the sender renders as the one
+    /// asked about, which is what the whole-board read always meant.
+    async fn sent_by(&self, senders: &[&str]) -> Result<Vec<Message>, MailboxError> {
+        let known = self.known().await?;
+        let former = self.former().await?;
+        let mut spellings: Vec<String> = Vec::new();
+        for sender in senders {
+            for spelling in [
+                Self::storage_sender_for(sender, &known, &former),
+                (*sender).to_string(),
+            ] {
+                if !spellings.contains(&spelling) {
+                    spellings.push(spelling);
+                }
+            }
+        }
+        let asked: Vec<&str> = spellings.iter().map(String::as_str).collect();
+        let mut messages = self.inner.sent_by(&asked).await?;
+        self.render_all(&mut messages).await?;
+        messages.retain(|m| senders.contains(&m.sender.trim()));
+        Ok(messages)
+    }
+
     /// **Resolved on the way in.** The handle an author wrote becomes the
     /// badge its row wears, so the message keeps a pointer rather than a
     /// spelling.

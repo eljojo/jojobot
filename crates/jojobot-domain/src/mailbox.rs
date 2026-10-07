@@ -865,6 +865,27 @@ pub trait Mailboxes: Send + Sync {
     /// has nothing to index.
     async fn scan_messages(&self) -> Result<Vec<Message>, MailboxError>;
 
+    /// **One readable message by its id, from whatever box and in whatever
+    /// state**, or `None` when no readable message wears it. A read, not a
+    /// delivery, like [`Mailboxes::scan_messages`]: nothing moves.
+    ///
+    /// **Asked of the store by id.** A caller that wants one message must not
+    /// pay for every message ever sent.
+    async fn message_by_id(&self, id: &MessageId) -> Result<Option<Message>, MailboxError>;
+
+    /// **Every readable message sent under any of these `senders`**, in any
+    /// box and any state, in the order [`Mailboxes::scan_messages`] returns
+    /// them. A read, not a delivery.
+    ///
+    /// **More than one spelling, because a sender is stored under the permanent
+    /// id of whoever wrote it, or as a plain handle when it was written before
+    /// that existed.** A caller that knows one person by several spellings asks
+    /// for all of them in one read.
+    ///
+    /// **Asked of the store by sender**, so a sender's own list does not read
+    /// everybody's mail.
+    async fn sent_by(&self, senders: &[&str]) -> Result<Vec<Message>, MailboxError>;
+
     /// Leave a message in a box, filed in `new`. **The mailbox must already
     /// exist** — an unknown name comes back [`Guarded::Blocked`], never a new box.
     ///

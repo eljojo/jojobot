@@ -117,9 +117,9 @@ impl Jojobot {
         let only = only.as_deref();
         let bodies = args.include_bodies.unwrap_or(false);
 
-        // Built on the scan, which is the one read that moves nothing: it is
-        // how the search projection is rebuilt, and its "nothing moves" is
-        // pinned by the shared contract on every tier.
+        // Built on `sent_by`, a read that moves nothing and asks the store for
+        // this sender's mail alone: its "nothing moves" is pinned by the shared
+        // contract on every tier.
         // **The tie breaks on the scan's own order, reversed.** The board read
         // hands messages back oldest first, with the store's ordinal breaking a
         // tie inside one instant, so its position IS the total order every
@@ -130,12 +130,11 @@ impl Jojobot {
         // shape the store is free to change.
         let mut sent: Vec<(usize, Message)> = self
             .mailboxes
-            .scan_messages()
+            .sent_by(&[sender])
             .await
             .map_err(mailbox_error)?
             .into_iter()
             .enumerate()
-            .filter(|(_, m)| m.sender.trim() == sender)
             .filter(|(_, m)| only.is_none_or(|name| m.mailbox.as_str() == name))
             .collect();
         sent.sort_by(|(a_at, a), (b_at, b)| b.sent_at.cmp(&a.sent_at).then_with(|| b_at.cmp(a_at)));

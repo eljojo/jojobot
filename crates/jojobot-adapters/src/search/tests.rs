@@ -2250,6 +2250,17 @@ impl jojobot_domain::mailbox::Mailboxes for Board {
         Ok(snapshot)
     }
 
+    async fn message_by_id(
+        &self,
+        _: &jojobot_domain::mailbox::MessageId,
+    ) -> Result<Option<Message>, MailboxError> {
+        unimplemented!("this double only scans messages")
+    }
+
+    async fn sent_by(&self, _: &[&str]) -> Result<Vec<Message>, MailboxError> {
+        unimplemented!("this double only scans messages")
+    }
+
     async fn create_mailbox(
         &self,
         _: &MailboxName,

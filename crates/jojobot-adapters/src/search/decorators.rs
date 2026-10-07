@@ -712,6 +712,17 @@ impl Mailboxes for IndexedMailboxes {
         self.inner.scan_messages().await
     }
 
+    async fn message_by_id(
+        &self,
+        id: &jojobot_domain::mailbox::MessageId,
+    ) -> Result<Option<Message>, MailboxError> {
+        self.inner.message_by_id(id).await
+    }
+
+    async fn sent_by(&self, senders: &[&str]) -> Result<Vec<Message>, MailboxError> {
+        self.inner.sent_by(senders).await
+    }
+
     async fn post_message(
         &self,
         message: jojobot_domain::mailbox::NewMessage,

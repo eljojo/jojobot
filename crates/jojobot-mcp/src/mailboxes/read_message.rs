@@ -55,19 +55,17 @@ impl Jojobot {
         // moves `new` to `read`, and a refusal handed back over a message it had
         // already moved would be the breach plus a lie about it.
         //
-        // Located through `scan_messages`, which is the read that moves nothing
-        // — the same one `list_sent` is built on. An id it cannot place falls
+        // Located through `message_by_id`, which is a read that moves nothing
+        // and asks the store for this one id. An id it cannot place falls
         // through untouched: a message nobody can find is not deliverable
         // either, and the verb below owns those two refusals (an id that names
         // nothing, and one naming something unreadable) with words this has no
         // business duplicating.
         let located = self
             .mailboxes
-            .scan_messages()
+            .message_by_id(&id)
             .await
-            .map_err(mailbox_error)?
-            .into_iter()
-            .find(|m| m.id == id);
+            .map_err(mailbox_error)?;
         if let Some(message) = located
             // **The guard is on the STATE CHANGE, not on the bytes.** `processed`
             // is a terminal archive: reading one moves nothing and takes nothing

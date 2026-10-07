@@ -503,6 +503,23 @@ impl Mailboxes for InMemoryMailboxes {
             .collect())
     }
 
+    async fn message_by_id(&self, id: &MessageId) -> Result<Option<Message>, MailboxError> {
+        Ok(self
+            .scan_messages()
+            .await?
+            .into_iter()
+            .find(|m| &m.id == id))
+    }
+
+    async fn sent_by(&self, senders: &[&str]) -> Result<Vec<Message>, MailboxError> {
+        Ok(self
+            .scan_messages()
+            .await?
+            .into_iter()
+            .filter(|m| senders.contains(&m.sender.trim()))
+            .collect())
+    }
+
     async fn read_message(&self, id: &MessageId) -> Result<Delivered, MailboxError> {
         validate_message_id(id)?;
         self.refuse_if_quarantined(id)?;
@@ -1501,6 +1518,105 @@ pub mod contract {
         );
     }
 
+    /// **One message is found by its id, from any box and in any state, and
+    /// finding it moves nothing.** An id nobody wears is a miss rather than a
+    /// failure, and a message that was quarantined on purpose is not served.
+    pub async fn a_message_is_found_by_its_id_from_any_box_and_state(store: &dyn Mailboxes) {
+        create(store, "inbox").await;
+        create(store, "errands").await;
+        let fresh = post(store, "inbox", "alpha", "still new", 0).await;
+        let done = post(store, "errands", "otto", "long since handled", 60).await;
+        let doomed = post(store, "inbox", "alpha", "the count is wrong", 120).await;
+        store
+            .mark_processed(&done.id, Some("filed"))
+            .await
+            .expect("ok");
+        store
+            .quarantine(&doomed.id, &name("inbox"), "not to be trusted", at(5))
+            .await
+            .expect("quarantined");
+
+        let found = store
+            .message_by_id(&fresh.id)
+            .await
+            .expect("message_by_id ok")
+            .expect("a new message is found");
+        assert_eq!(
+            (found.mailbox.as_str(), found.body.as_str()),
+            ("inbox", "still new")
+        );
+        let archived = store
+            .message_by_id(&done.id)
+            .await
+            .expect("message_by_id ok")
+            .expect("a processed message is found from another box");
+        assert_eq!(archived.state, MessageState::Processed);
+        assert_eq!(archived.body, "long since handled");
+
+        assert!(
+            store
+                .message_by_id(&MessageId("nosuch".into()))
+                .await
+                .expect("a miss is an answer")
+                .is_none(),
+            "an id nobody wears is no message"
+        );
+        assert!(
+            store
+                .message_by_id(&doomed.id)
+                .await
+                .expect("a quarantined message is an answer")
+                .is_none(),
+            "a message quarantined on purpose is not served"
+        );
+
+        // A find is a read: the new message is still new.
+        let counts = counts(store, "inbox").await.expect("inbox exists");
+        assert_eq!(counts.new, 1, "finding a message took delivery of it");
+    }
+
+    /// **A sender's mail is found by sender, across boxes and states, in the
+    /// order the scan reads, and finding it moves nothing.** Another sender's
+    /// mail is not in it.
+    pub async fn a_senders_mail_is_found_by_sender_across_boxes_and_states(store: &dyn Mailboxes) {
+        create(store, "inbox").await;
+        create(store, "errands").await;
+        post(store, "inbox", "alpha", "alpha one", 0).await;
+        let handled = post(store, "errands", "alpha", "alpha two", 60).await;
+        post(store, "inbox", "milhouse", "somebody else's", 90).await;
+        post(store, "errands", "alpha", "alpha three", 120).await;
+        store
+            .mark_processed(&handled.id, Some("filed"))
+            .await
+            .expect("ok");
+
+        let sent = store.sent_by(&["alpha"]).await.expect("sent_by ok");
+        let bodies: Vec<(&str, &str)> = sent
+            .iter()
+            .map(|m| (m.mailbox.as_str(), m.body.as_str()))
+            .collect();
+        assert_eq!(
+            bodies,
+            vec![
+                ("inbox", "alpha one"),
+                ("errands", "alpha two"),
+                ("errands", "alpha three"),
+            ],
+            "every box, every state, oldest first, and nobody else's"
+        );
+        assert!(
+            store
+                .sent_by(&["nobody"])
+                .await
+                .expect("sent_by ok")
+                .is_empty(),
+            "a sender who sent nothing has an empty list"
+        );
+
+        let counts = counts(store, "inbox").await.expect("inbox exists");
+        assert_eq!(counts.new, 2, "listing what was sent took delivery of mail");
+    }
+
     /// An id nothing answers to is a miss here for the same reason it is one
     /// for `mark_processed` — and it is the same answer, so one client branch
     /// handles both.
@@ -2264,6 +2380,8 @@ pub mod contract {
         read_message_leaves_a_processed_message_terminal(&fresh().await).await;
         reading_an_unknown_message_is_a_miss(&fresh().await).await;
         a_scan_sees_every_box_and_every_state(&fresh().await).await;
+        a_message_is_found_by_its_id_from_any_box_and_state(&fresh().await).await;
+        a_senders_mail_is_found_by_sender_across_boxes_and_states(&fresh().await).await;
         a_body_survives_the_round_trip(&fresh().await).await;
         a_crlf_body_normalizes_to_plain_newlines(&fresh().await).await;
         a_body_of_markup_and_a_loose_fence_survives(&fresh().await).await;

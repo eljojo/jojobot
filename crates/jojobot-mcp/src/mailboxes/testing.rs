@@ -262,6 +262,19 @@ impl mailbox::Mailboxes for DownMailboxes {
             "the mailbox world is down".into(),
         ))
     }
+    async fn message_by_id(
+        &self,
+        _: &mailbox::MessageId,
+    ) -> Result<Option<mailbox::Message>, mailbox::MailboxError> {
+        Err(mailbox::MailboxError::Store(
+            "the mailbox world is down".into(),
+        ))
+    }
+    async fn sent_by(&self, _: &[&str]) -> Result<Vec<mailbox::Message>, mailbox::MailboxError> {
+        Err(mailbox::MailboxError::Store(
+            "the mailbox world is down".into(),
+        ))
+    }
     async fn read_message(
         &self,
         _: &mailbox::MessageId,
@@ -330,6 +343,18 @@ impl mailbox::Mailboxes for UnopenableMailboxes {
     async fn scan_messages(&self) -> Result<Vec<mailbox::Message>, mailbox::MailboxError> {
         self.0.scan_messages().await
     }
+    async fn message_by_id(
+        &self,
+        id: &mailbox::MessageId,
+    ) -> Result<Option<mailbox::Message>, mailbox::MailboxError> {
+        self.0.message_by_id(id).await
+    }
+    async fn sent_by(
+        &self,
+        senders: &[&str],
+    ) -> Result<Vec<mailbox::Message>, mailbox::MailboxError> {
+        self.0.sent_by(senders).await
+    }
     async fn read_message(
         &self,
         id: &mailbox::MessageId,
@@ -391,6 +416,18 @@ impl mailbox::Mailboxes for CountingMailboxes {
     }
     async fn scan_messages(&self) -> Result<Vec<mailbox::Message>, mailbox::MailboxError> {
         self.inner.scan_messages().await
+    }
+    async fn message_by_id(
+        &self,
+        id: &mailbox::MessageId,
+    ) -> Result<Option<mailbox::Message>, mailbox::MailboxError> {
+        self.inner.message_by_id(id).await
+    }
+    async fn sent_by(
+        &self,
+        senders: &[&str],
+    ) -> Result<Vec<mailbox::Message>, mailbox::MailboxError> {
+        self.inner.sent_by(senders).await
     }
     async fn read_message(
         &self,
