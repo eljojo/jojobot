@@ -10,6 +10,57 @@
 use super::*;
 use jojobot_domain::attention;
 
+/// **Which keys make a thing fall due, in words**, built from the carriers so a
+/// carrier added later is named with no edit here.
+///
+/// A carrier whose interface is one key is a date that is the day itself, and
+/// those are named together. A carrier of several keys sets the day from all of
+/// them, and each group is named as a group. The last sentence says what every
+/// other key is, because the whole text exists for the model that reads "a key
+/// you invent is kept" and takes it to mean the key will be acted on.
+///
+/// Empty when there are no carriers: a sentence about no keys would teach
+/// nothing, and a caller that asks for one must not publish a stub.
+pub(crate) fn what_makes_a_thing_fall_due(carriers: &[&dyn attention::Carrier]) -> String {
+    fn named(keys: &[String], last: &str) -> String {
+        let quoted: Vec<String> = keys.iter().map(|key| format!("`{key}`")).collect();
+        match quoted.split_last() {
+            None => String::new(),
+            Some((only, [])) => only.clone(),
+            Some((tail, rest)) => format!("{} {last} {tail}", rest.join(", ")),
+        }
+    }
+    let groups = attention::due_key_groups(carriers);
+    if groups.iter().all(Vec::is_empty) {
+        return String::new();
+    }
+    let dates: Vec<String> = groups
+        .iter()
+        .filter(|group| group.len() == 1)
+        .flatten()
+        .cloned()
+        .collect();
+    let mut sentences: Vec<String> = Vec::new();
+    if !dates.is_empty() {
+        sentences.push(format!(
+            "A date under {} makes a thing fall due on that day.",
+            named(&dates, "or"),
+        ));
+    }
+    for group in groups.iter().filter(|group| group.len() > 1) {
+        sentences.push(format!(
+            "{} together set when a thing falls due.",
+            named(group, "and"),
+        ));
+    }
+    sentences.push(
+        "Every other key is kept as you wrote it and nothing acts on it: it never makes a \
+         thing fall due or appear in what is owed."
+            .to_string(),
+    );
+    sentences.join(" ")
+}
+
 impl Jojobot {
     /// **What this write should do to the stored due moment.**
     /// [`attention::DueMove::Unchanged`] covers both "this write cannot move
@@ -82,14 +133,7 @@ impl Jojobot {
         if !writes && !cleared.iter().any(|k| k == key) {
             return None;
         }
-        let mut setting: Vec<String> = Vec::new();
-        for carrier in self.carriers() {
-            for field in carrier.interface().fields {
-                if !setting.contains(&field.key) {
-                    setting.push(field.key);
-                }
-            }
-        }
+        let setting = attention::due_keys(&self.carriers());
         Some(blocked_body(
             subject,
             &[],
@@ -102,5 +146,59 @@ impl Jojobot {
                 setting.join(", "),
             ),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
+    use std::collections::BTreeMap;
+
+    /// A carrier the build does not ship, with one date key of its own.
+    struct Pledges;
+
+    impl attention::Carrier for Pledges {
+        fn interface(&self) -> DeclaredType {
+            DeclaredType::new("pledged", vec![Field::new("pledged_for", ValueType::Date)])
+        }
+        fn due(&self, _: &BTreeMap<String, String>) -> attention::Due {
+            attention::Due::Never
+        }
+    }
+
+    /// **A carrier added later is named with no edit to the text.**
+    ///
+    /// The shipped carriers are named, the carrier the build does not ship is
+    /// named beside them, and a build with no carriers publishes nothing rather
+    /// than a sentence about no keys. Both halves, so a generator that ignored
+    /// its input and one that typed the shipped keys each fail.
+    #[test]
+    fn a_carrier_added_later_is_named_with_no_edit() {
+        let shipped = attention::shipped();
+        let mut carriers: Vec<&dyn attention::Carrier> =
+            shipped.iter().map(std::convert::AsRef::as_ref).collect();
+        let without = what_makes_a_thing_fall_due(&carriers);
+        assert!(
+            !without.is_empty() && !without.contains("`pledged_for`"),
+            "the shipped carriers alone name the shipped keys and no other: {without}",
+        );
+        carriers.push(&Pledges);
+        let with = what_makes_a_thing_fall_due(&carriers);
+        assert!(
+            with.contains("`pledged_for`"),
+            "a carrier added to the list is named in the text built from it: {with}",
+        );
+        for key in attention::due_keys(&carriers) {
+            assert!(
+                with.contains(&format!("`{key}`")),
+                "`{key}` is named: {with}"
+            );
+        }
+        assert_eq!(
+            what_makes_a_thing_fall_due(&[]),
+            "",
+            "no carriers, no sentence",
+        );
     }
 }

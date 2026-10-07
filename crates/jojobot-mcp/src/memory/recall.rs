@@ -178,6 +178,11 @@ pub struct RecallArgs {
     /// `scope: record` asks about the occasions instead, and **every `record`
     /// filter must hold on ONE record**: those describe a single record rather
     /// than separate questions.
+    ///
+    /// **Several filters asked of the thing must ALL hold on one thing.** The
+    /// list is an AND, never an OR: an object comes back only when it holds every
+    /// key the filters name, each at its own value. To ask for either of two
+    /// values, make two calls.
     #[serde(default)]
     pub(crate) fields: Option<Vec<KeyFilterArgs>>,
     /// Whether each object's records come back — the claims its fields were

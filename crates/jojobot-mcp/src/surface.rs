@@ -831,6 +831,59 @@ fn the_tool_surface_is_exactly_this_list() {
     );
 }
 
+/// **Every key a shipped carrier reads is named where a write is described.**
+///
+/// At the moment a model writes, everything it reads says a key it invents is
+/// kept as written. Nothing said which keys make a thing fall due, so a model
+/// wrote a key no carrier reads and told the operator the thing would come up.
+/// The two write verbs' `fields` descriptions and the served instructions name
+/// the keys, and they are built from the shipped carriers, so a carrier added
+/// later is named with no edit here.
+///
+/// ⚠️ **It fails when the corpus comes back empty**, because a sweep over
+/// nothing reports success: the keys are counted before they are looked for.
+#[test]
+fn every_key_a_shipped_carrier_reads_is_named_where_a_write_is_described() {
+    // **Read off each carrier's own interface, never through the function the
+    // published text is built with**: a key that function dropped would then be
+    // missing from the corpus too, and the sweep would agree with the bug.
+    let keys: Vec<String> = jojobot_domain::attention::shipped()
+        .iter()
+        .flat_map(|carrier| carrier.interface().fields)
+        .map(|field| field.key)
+        .collect();
+    assert!(
+        keys.len() >= 7,
+        "the shipped carriers name {} keys, which is too few to be the carriers — the corpus is \
+         not being read: {keys:?}",
+        keys.len(),
+    );
+
+    let tools = Jojobot::tool_router().list_all();
+    let mut places: Vec<(String, String)> =
+        vec![("the served instructions".into(), crate::instructions())];
+    for verb in ["capture", "update_fact"] {
+        let tool = tools
+            .iter()
+            .find(|t| t.name.as_ref() == verb)
+            .unwrap_or_else(|| panic!("the surface offers {verb}"));
+        let schema = serde_json::to_value(&tool.input_schema).expect("the schema serializes");
+        let described = schema["properties"]["fields"]["description"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{verb}'s fields argument carries a description"));
+        places.push((format!("{verb}'s fields argument"), described.to_string()));
+    }
+    assert_eq!(places.len(), 3, "three places describe a write");
+    for (place, text) in &places {
+        for key in &keys {
+            assert!(
+                text.contains(&format!("`{key}`")),
+                "{place} does not name `{key}`, a key a shipped carrier reads: {text}",
+            );
+        }
+    }
+}
+
 /// **Every served place that teaches the provenance vocabulary teaches all
 /// three values.**
 ///

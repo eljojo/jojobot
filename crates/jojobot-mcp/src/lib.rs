@@ -185,11 +185,45 @@ impl Jojobot {
     /// it and its context being named here — the same deliberate friction
     /// `the_tool_surface_is_exactly_this_list` puts in front of a new tool.
     pub fn tool_router() -> ToolRouter<Self> {
-        Self::core_router()
-            + mailboxes::router()
-            + memory::router()
-            + orientation::router()
-            + session::router()
+        Self::publishing_what_falls_due(
+            Self::core_router()
+                + mailboxes::router()
+                + memory::router()
+                + orientation::router()
+                + session::router(),
+        )
+    }
+
+    /// **The two write verbs' `fields` description, ended with the keys that
+    /// make a thing fall due.** Every other line a model reads at the write says
+    /// a key it invents is kept, and nothing there said which keys are acted on.
+    /// The text is built from the shipped carriers, so it cannot name a key no
+    /// carrier reads or miss one that does.
+    fn publishing_what_falls_due(mut router: ToolRouter<Self>) -> ToolRouter<Self> {
+        let carriers = jojobot_domain::attention::shipped();
+        let carriers: Vec<&dyn jojobot_domain::attention::Carrier> =
+            carriers.iter().map(std::convert::AsRef::as_ref).collect();
+        let falls_due = memory::due::what_makes_a_thing_fall_due(&carriers);
+        if falls_due.is_empty() {
+            return router;
+        }
+        for verb in ["capture", "update_fact"] {
+            let Some(route) = router.map.get_mut(verb) else {
+                continue;
+            };
+            let schema = Arc::make_mut(&mut route.attr.input_schema);
+            let Some(described) = schema
+                .get_mut("properties")
+                .and_then(|properties| properties.get_mut("fields"))
+                .and_then(|fields| fields.get_mut("description"))
+            else {
+                continue;
+            };
+            if let Some(text) = described.as_str() {
+                *described = serde_json::Value::String(format!("{text}\n\n{falls_due}"));
+            }
+        }
+        router
     }
 
     pub fn new(
@@ -291,6 +325,19 @@ pub(crate) const SERVER_NAME: &str = "jojobot";
 /// remembered it: a version is a fact about the binary, so it comes from the
 /// build.
 pub(crate) const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// **What the server tells a client at connection**: the written instructions,
+/// then the keys that make a thing fall due, built from the shipped carriers.
+pub(crate) fn instructions() -> String {
+    let carriers = jojobot_domain::attention::shipped();
+    let carriers: Vec<&dyn jojobot_domain::attention::Carrier> =
+        carriers.iter().map(std::convert::AsRef::as_ref).collect();
+    let falls_due = memory::due::what_makes_a_thing_fall_due(&carriers);
+    if falls_due.is_empty() {
+        return INSTRUCTIONS.to_string();
+    }
+    format!("{INSTRUCTIONS}\n\n**WHAT FALLS DUE.** {falls_due}")
+}
 
 pub(crate) const INSTRUCTIONS: &str = "jojobot — a personal-assistant server. Two worlds live here.\
                  \n\n**MEMORY.** What jojobot knows is **entities** — each with a typed \
@@ -424,7 +471,7 @@ impl ServerHandler for Jojobot {
             me
         })
         .with_protocol_version(ProtocolVersion::V_2024_11_05)
-        .with_instructions(INSTRUCTIONS.to_string())
+        .with_instructions(instructions())
     }
 
     /// **Tell a client, the moment it connects, that the list it is about to

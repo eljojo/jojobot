@@ -726,6 +726,35 @@ pub fn due_is_derived(carriers: &[&dyn Carrier], fields: &BTreeMap<String, Strin
         .is_some_and(|carrier| carrier.derives_due())
 }
 
+/// **The keys each carrier's interface names, one group per carrier, in the
+/// order the carriers are asked.** What a thing carries to fall due is read off
+/// the carriers and nowhere else, so every text that says which keys those are
+/// is built from this and never typed.
+pub fn due_key_groups(carriers: &[&dyn Carrier]) -> Vec<Vec<String>> {
+    carriers
+        .iter()
+        .map(|carrier| {
+            carrier
+                .interface()
+                .fields
+                .into_iter()
+                .map(|field| field.key)
+                .collect()
+        })
+        .collect()
+}
+
+/// **Every key that makes a thing fall due**, once each, in carrier order.
+pub fn due_keys(carriers: &[&dyn Carrier]) -> Vec<String> {
+    let mut keys: Vec<String> = Vec::new();
+    for key in due_key_groups(carriers).into_iter().flatten() {
+        if !keys.contains(&key) {
+            keys.push(key);
+        }
+    }
+    keys
+}
+
 /// The carriers this build ships.
 pub fn shipped() -> Vec<Box<dyn Carrier>> {
     vec![
