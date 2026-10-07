@@ -650,13 +650,16 @@ mod tests {
         );
     }
 
-    /// **The projects procedure names only arguments the surface publishes.**
+    /// **These routes are still taught, and each argument they rest on is one
+    /// the surface publishes.** It checks "at least these": a tip that dropped
+    /// one of them, or a surface that renamed one, reddens it. What the body
+    /// names beyond this list is the next case's question.
     ///
     /// A tip that tells a session to send `history_most` is a tip that fails on
     /// the call it describes if the argument is renamed, and no test of the
     /// verb notices. The arguments are read off the surface, not written here.
     #[test]
-    fn the_projects_procedure_names_only_arguments_the_surface_takes() {
+    fn the_projects_procedure_still_teaches_the_routes_its_tips_rest_on() {
         let text = body("projects");
         let published = crate::arguments::published_argument_names();
         for argument in [
@@ -676,6 +679,84 @@ mod tests {
             assert!(
                 published.contains(argument),
                 "the projects procedure names `{argument}` and no verb publishes it",
+            );
+        }
+    }
+
+    /// **Words the procedure names that are not arguments**: the keys a tip asks
+    /// a session to write, the values those keys take, a kind and a skill. A
+    /// word a tip adds that is neither published nor on this list fails the
+    /// case below, so adding a tip means saying here what its words are.
+    const NOT_ARGUMENTS: &[&str] = &[
+        "answered",
+        "asked",
+        "blocks",
+        "drafted",
+        "promise",
+        "promised_by",
+        "regarding",
+        "rhythms",
+        "state",
+    ];
+
+    /// **Every argument the procedure names is one the surface publishes.**
+    ///
+    /// The body marks arguments in two places: the `name: value` pairs of its
+    /// worked calls, outside any quotes, braces and brackets, and the words it
+    /// puts in backticks. Both are read here, so a tip that teaches a
+    /// misspelled or invented argument cannot pass.
+    ///
+    /// A word in backticks that is not an argument must be on
+    /// [`NOT_ARGUMENTS`]. That is the price of a full scan, and it is paid at
+    /// the moment somebody adds the tip.
+    #[test]
+    fn the_projects_procedure_names_no_argument_the_surface_does_not_take() {
+        let published = crate::arguments::published_argument_names();
+        let mut named: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+
+        // The pairs of the worked calls: indented lines, stripped of what is
+        // inside quotes, braces and brackets, then every `word:` left.
+        for line in body("projects").lines().filter(|l| l.starts_with("    ")) {
+            let mut bare = String::new();
+            let (mut quoted, mut depth) = (false, 0usize);
+            for c in line.chars() {
+                match c {
+                    '"' => quoted = !quoted,
+                    '{' | '[' if !quoted => depth += 1,
+                    '}' | ']' if !quoted => depth = depth.saturating_sub(1),
+                    _ if !quoted && depth == 0 => bare.push(c),
+                    _ => {}
+                }
+            }
+            for word in bare.split_whitespace() {
+                if let Some(argument) = word.strip_suffix(':') {
+                    named.insert(argument.to_string());
+                }
+            }
+        }
+
+        // The words in backticks: a `word: "value"` pair names its word, and a
+        // bare identifier names itself.
+        for chunk in body("projects").split('`').skip(1).step_by(2) {
+            let word = chunk.split(':').next().unwrap_or(chunk).trim();
+            let identifier = !word.is_empty()
+                && word
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c == '_' || c.is_ascii_digit());
+            if identifier && !NOT_ARGUMENTS.contains(&word) {
+                named.insert(word.to_string());
+            }
+        }
+
+        assert!(
+            named.len() >= 8,
+            "the scan found only {named:?}, so it is not reading the body"
+        );
+        for argument in &named {
+            assert!(
+                published.contains(argument.as_str()),
+                "the projects procedure names `{argument}`, which no verb publishes and which \
+                 is not on NOT_ARGUMENTS as a key or a value"
             );
         }
     }
