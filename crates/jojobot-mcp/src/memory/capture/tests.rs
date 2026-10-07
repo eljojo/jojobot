@@ -2861,3 +2861,233 @@ async fn a_captured_field_equal_to_todays_default_is_named_in_the_receipt() {
         "a field with no shipped default must carry no note: {ordinary}"
     );
 }
+
+/// A promise under somebody, ready to take a day.
+async fn a_promise(jojobot: &Jojobot, handle: &str) {
+    ensure(jojobot, "person:ned-flanders").await;
+    jojobot
+        .add_entity(Parameters(AddEntityArgs {
+            parent: Some("person:ned-flanders".into()),
+            ..add_args("promise", handle, handle)
+        }))
+        .await
+        .expect("add ok");
+}
+
+/// **What the cross-kind owed question and the per-kind one each say is owed
+/// on a day** — the two reads whose agreement is the point of the stored due
+/// moment.
+async fn owed_both_ways(jojobot: &Jojobot, day: &str) -> (Vec<String>, Vec<String>) {
+    let ask = |args: serde_json::Value| async move {
+        let args: RecallArgs = serde_json::from_value(args).expect("recall args");
+        let body = json_of(&jojobot.recall(Parameters(args)).await.expect("recall ok"));
+        let mut handles: Vec<String> = body["objects"]
+            .as_array()
+            .expect("objects is an array")
+            .iter()
+            .map(|o| o["id"].as_str().expect("an id").to_string())
+            .collect();
+        handles.sort();
+        handles
+    };
+    let by_key = ask(serde_json::json!({
+        "fields": [{"key": "due_on"}], "overdue": {"as_of": day},
+    }))
+    .await;
+    let by_kind = ask(serde_json::json!({
+        "kind": "promise", "overdue": {"as_of": day},
+    }))
+    .await;
+    (by_key, by_kind)
+}
+
+/// **A plain capture of a day carrier copies the caller's own date and keeps
+/// the caller's word.**
+///
+/// A promise's day, a thing's run-out day and a decision's day are dates the
+/// caller said. Setting the stored due moment from them adds no date nobody
+/// said, so the record stays testimony. **Paired with the rhythm case in the
+/// same body**: where jojobot does the arithmetic, the record is still a
+/// derivation, so this cannot pass on a build that never demotes.
+#[tokio::test]
+async fn a_plain_capture_of_a_day_carrier_keeps_the_callers_word() {
+    let jojobot = handler();
+    a_promise(&jojobot, "return-the-wrench").await;
+    for (subject, key, day) in [
+        ("promise:return-the-wrench", "promised_by", "2026-07-01"),
+        ("thing:torque-wrench", "runs_out", "2026-08-02"),
+        ("thing:standing-desk", "decide_by", "2026-09-03"),
+    ] {
+        let receipt = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                provenance: Some("testimony".into()),
+                fields: Some([(key.to_string(), day.to_string())].into_iter().collect()),
+                ..capture_args(subject, "the operator said the day")
+            },
+        )
+        .await;
+        assert_eq!(
+            receipt["provenance"], "testimony",
+            "{subject}: a date the caller said was filed as a derivation: {receipt}",
+        );
+        assert_eq!(
+            fields_of(&jojobot, subject).await["due_on"],
+            day,
+            "{subject}: the stored due moment is the caller's own date",
+        );
+    }
+
+    a_weekly_rhythm(&jojobot, "descale", "2026-08-01", "check_in_date").await;
+    let moved = capture_ok(
+        &jojobot,
+        CaptureArgs {
+            provenance: Some("testimony".into()),
+            fields: Some(
+                [("cadence_days".to_string(), "14".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+            ..capture_args("rhythm:descale", "fortnightly now")
+        },
+    )
+    .await;
+    assert_eq!(
+        moved["provenance"], "inference",
+        "a due moment jojobot worked out from a cadence is still its own arithmetic: {moved}",
+    );
+}
+
+/// **A caller cannot write the stored due moment.** It is jojobot's, set from
+/// the carrier keys, and a hand-written copy is how the two owed reads came to
+/// disagree. The refusal names the keys that do set a due day, and nothing is
+/// written. **Paired with the same capture without `due_on`**, which lands,
+/// so the refusal is about the key and not about the record.
+#[tokio::test]
+async fn a_capture_that_writes_the_due_moment_by_hand_is_refused() {
+    let jojobot = handler();
+    a_promise(&jojobot, "return-the-wrench").await;
+
+    let refused = blocked(
+        &jojobot
+            .capture(Parameters(CaptureArgs {
+                provenance: Some("testimony".into()),
+                fields: Some(
+                    [
+                        ("promised_by".to_string(), "2026-01-16".to_string()),
+                        ("due_on".to_string(), "2026-01-16".to_string()),
+                    ]
+                    .into_iter()
+                    .collect(),
+                ),
+                ..capture_args("promise:return-the-wrench", "back by the sixteenth")
+            }))
+            .await
+            .expect("capture answers"),
+    );
+    let said = refused.to_string();
+    for carrier_key in ["runs_out", "decide_by", "promised_by", "cadence_days"] {
+        assert!(
+            said.contains(carrier_key),
+            "the refusal names '{carrier_key}', a key that sets a due day: {said}",
+        );
+    }
+    let held = fields_of(&jojobot, "promise:return-the-wrench").await;
+    assert!(
+        held.get("promised_by").is_none() && held.get("due_on").is_none(),
+        "a refused capture leaves the record as it was: {held}",
+    );
+
+    let landed = capture_ok(
+        &jojobot,
+        CaptureArgs {
+            provenance: Some("testimony".into()),
+            fields: Some(
+                [("promised_by".to_string(), "2026-01-16".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+            ..capture_args("promise:return-the-wrench", "back by the sixteenth")
+        },
+    )
+    .await;
+    assert_eq!(landed["provenance"], "testimony", "{landed}");
+    assert_eq!(
+        fields_of(&jojobot, "promise:return-the-wrench").await["due_on"],
+        "2026-01-16",
+    );
+    let (by_key, by_kind) = owed_both_ways(&jojobot, "2026-02-01").await;
+    assert_eq!(by_key, ["promise:return-the-wrench"], "{by_key:?}");
+    assert_eq!(by_kind, by_key, "the two owed reads agree on a promise");
+}
+
+/// **A store the deployed code filled reads correctly under the new code, and
+/// the next write to a carrier key puts the stored due moment right.**
+///
+/// The deployed code let a caller write the stored due moment and clear it. A
+/// promise can therefore hold a hand-written `due_on` that is not its day, and
+/// another can hold its day and no `due_on`. Neither is refused or rewritten
+/// on read: the per-kind read finds both, and the cross-kind read, which finds a
+/// thing by the stored key, misses the one that lost it. A capture of the
+/// carrier key heals both.
+#[tokio::test]
+async fn a_promise_the_deployed_code_left_without_its_due_moment_is_healed_by_its_next_carrier_write()
+ {
+    let memory = std::sync::Arc::new(InMemoryMemory::booted());
+    let jojobot = handler_over(memory.clone());
+    a_promise(&jojobot, "return-the-wrench").await;
+    a_promise(&jojobot, "return-the-desk").await;
+    memory.fields_past_the_guard(
+        &EntityId("promise:return-the-wrench".into()),
+        &[("promised_by", "2026-07-01"), ("due_on", "2026-06-01")],
+    );
+    memory.fields_past_the_guard(
+        &EntityId("promise:return-the-desk".into()),
+        &[("promised_by", "2026-07-02")],
+    );
+
+    // **The disagreement the deployed code left, and the reads still serve it.**
+    // The cross-kind read finds a thing by the stored key, so the promise that
+    // lost its key is missing from it; the per-kind read finds both.
+    let (by_key, by_kind) = owed_both_ways(&jojobot, "2026-07-10").await;
+    assert_eq!(
+        by_key,
+        ["promise:return-the-wrench"],
+        "the cross-kind read finds only the promise that still holds the key: {by_key:?}",
+    );
+    assert_eq!(
+        by_kind,
+        ["promise:return-the-desk", "promise:return-the-wrench"],
+        "the per-kind read finds both: {by_kind:?}",
+    );
+
+    for (subject, day) in [
+        ("promise:return-the-wrench", "2026-07-01"),
+        ("promise:return-the-desk", "2026-07-02"),
+    ] {
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                fields: Some(
+                    [("promised_by".to_string(), day.to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..capture_args(subject, "still the day")
+            },
+        )
+        .await;
+        assert_eq!(
+            fields_of(&jojobot, subject).await["due_on"],
+            day,
+            "{subject}: the carrier write set the stored due moment from the carrier",
+        );
+    }
+    let (by_key, by_kind) = owed_both_ways(&jojobot, "2026-07-10").await;
+    assert_eq!(
+        by_key,
+        ["promise:return-the-desk", "promise:return-the-wrench"],
+        "{by_key:?}",
+    );
+    assert_eq!(by_kind, by_key, "the two reads agree once both are healed");
+}

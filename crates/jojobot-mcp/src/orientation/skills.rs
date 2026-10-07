@@ -260,6 +260,12 @@ To see what is owed, loops and promises together, call `recall` with
 `fields: [{"key": "due_on"}]` and `overdue: {}`. Add `kind: "promise"` to see
 the promises alone.
 
+`due_on` is the key you ask by, and jojobot sets it. Do not write it and do not
+clear it: a write that sends it is refused. Write the day on the thing that
+carries it (`promised_by` on a promise, `runs_out`, `decide_by`, or a loop's
+cadence), and jojobot keeps `due_on` current. To move a day, change that key.
+To take it away, clear that key.
+
 ## Keep the pressure low
 
 Offer a rhythm in one line at the start of a session. Then do the work the

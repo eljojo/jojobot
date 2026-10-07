@@ -149,3 +149,86 @@ async fn a_borrowed_thing_that_has_to_go_back_is_owed_beside_the_loops() {
     s.wrap("two promises made, one kept and one let go").await;
     story.finish().await;
 }
+
+/// "It is due the first of July — and nobody can tell jojobot otherwise."
+///
+/// The stored due moment is jojobot's own key. A promise the operator dated is
+/// filed as the operator's word and falls due on that day in the cross-kind
+/// owed question and in the per-kind one alike. A session that tries to write
+/// the stored key, or to clear it, is refused with the keys that do set a day,
+/// and the promise is left as it was, so the two reads cannot come to
+/// disagree.
+#[tokio::test]
+async fn the_stored_due_moment_is_jojobots_and_a_promise_keeps_the_operators_word() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+
+    s.add("person:ned-flanders", "Ned").await;
+    s.add_under(
+        "person:ned-flanders",
+        "promise:return-the-wrench",
+        "Return the wrench",
+    )
+    .await;
+
+    // ── the operator's own day is filed as the operator's word ───────────────
+    let dated = s
+        .call(
+            "capture",
+            json!({
+                "subject": "promise:return-the-wrench",
+                "content": "has to go back to the neighbour",
+                "provenance": "testimony",
+                "fields": {"promised_by": "2026-07-01"},
+            }),
+        )
+        .await;
+    dated.says("\"provenance\":\"testimony\"");
+    let address = dated.field("address");
+
+    // ── writing the stored key is refused, and says what sets a day ──────────
+    let refused = s
+        .refused(
+            "capture",
+            json!({
+                "subject": "promise:return-the-wrench",
+                "content": "back by the sixteenth",
+                "provenance": "testimony",
+                "fields": {"promised_by": "2026-01-16", "due_on": "2026-01-16"},
+            }),
+        )
+        .await;
+    for key in ["promised_by", "runs_out", "decide_by"] {
+        refused.says(key);
+    }
+    s.refused(
+        "update_fact",
+        json!({"address": address, "fields": {"due_on": "2026-01-16"}}),
+    )
+    .await;
+    // ── clearing it is refused too ───────────────────────────────────────────
+    s.refused(
+        "update_fact",
+        json!({"address": address, "clear_fields": ["due_on"]}),
+    )
+    .await;
+
+    // ── the promise is as it was, and both reads say it is owed ──────────────
+    let held = s.recall("promise:return-the-wrench").await;
+    held.says("\"due_on\":\"2026-07-01\"");
+    held.says("\"promised_by\":\"2026-07-01\"");
+    held.never_says("2026-01-16");
+    let by_key = s.shape("owed by key", owed_on("2026-07-05")).await;
+    by_key.says("promise:return-the-wrench");
+    let by_kind = s
+        .shape(
+            "owed by kind",
+            json!({"kind": "promise", "overdue": {"as_of": "2026-07-05"}}),
+        )
+        .await;
+    by_kind.says("promise:return-the-wrench");
+
+    s.wrap("a promise dated and two hand-written copies refused")
+        .await;
+    story.finish().await;
+}

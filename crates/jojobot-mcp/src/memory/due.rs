@@ -16,6 +16,10 @@ impl Jojobot {
     /// anything" (skipped before any read) and "it would not move it",
     /// since neither has anything for a caller to add or take off.
     ///
+    /// **The second answer is whether the moved day is jojobot's arithmetic**
+    /// rather than a copy of a date the caller wrote: only then does the record
+    /// carrying it stop being the caller's word.
+    ///
     /// A read failure here answers `Unchanged` too, silently: this is
     /// jojobot's own bookkeeping riding along on somebody else's write, and
     /// it must never be the reason that write fails.
@@ -24,7 +28,7 @@ impl Jojobot {
         subject: &EntityId,
         incoming: &std::collections::BTreeMap<String, String>,
         cleared: &[String],
-    ) -> attention::DueMove {
+    ) -> (attention::DueMove, bool) {
         let carriers = self.carriers();
         // **The keys a carrier's answer reads, not only the ones that make a
         // thing its business** — see `Carrier::also_reads`.
@@ -38,11 +42,11 @@ impl Jojobot {
             .iter()
             .any(|c| cleared.iter().any(|key| watched(*c, key)));
         if !touches_incoming && !touches_cleared {
-            return attention::DueMove::Unchanged;
+            return (attention::DueMove::Unchanged, false);
         }
         let mut projected = match self.memory.fields(subject).await {
             Ok(fields) => fields,
-            Err(_) => return attention::DueMove::Unchanged,
+            Err(_) => return (attention::DueMove::Unchanged, false),
         };
         let existing_due_on = projected
             .get(attention::DUE_ON)
@@ -51,6 +55,52 @@ impl Jojobot {
             projected.remove(key);
         }
         projected.extend(incoming.iter().map(|(k, v)| (k.clone(), v.clone())));
-        attention::moved_due_moment(&carriers, existing_due_on, &projected)
+        (
+            attention::moved_due_moment(&carriers, existing_due_on, &projected),
+            attention::due_is_derived(&carriers, &projected),
+        )
+    }
+
+    /// **The refusal for a caller that writes or clears the stored due moment.**
+    ///
+    /// It is jojobot's own: set from the keys that make a thing fall due, kept
+    /// current by every write to them. A hand-written copy is not read by the
+    /// per-kind question and a cleared one drops the thing out of the cross-kind
+    /// one, so the two reads then disagree about what is owed. The way to move
+    /// or remove it is to change or clear the key it comes from.
+    ///
+    /// `sent` and `cleared` are what the CALLER sent, taken before jojobot adds
+    /// its own computed copy.
+    pub(crate) fn refuses_a_hand_written_due_moment(
+        &self,
+        subject: &EntityId,
+        sent: &std::collections::BTreeMap<String, String>,
+        cleared: &[String],
+    ) -> Option<CallToolResult> {
+        let key = attention::DUE_ON;
+        let writes = sent.contains_key(key);
+        if !writes && !cleared.iter().any(|k| k == key) {
+            return None;
+        }
+        let mut setting: Vec<String> = Vec::new();
+        for carrier in self.carriers() {
+            for field in carrier.interface().fields {
+                if !setting.contains(&field.key) {
+                    setting.push(field.key);
+                }
+            }
+        }
+        Some(blocked_body(
+            subject,
+            &[],
+            format!(
+                "Nothing was written. '{key}' is jojobot's own key and a caller does not {}. \
+                 jojobot sets it from the day a thing carries and keeps it current. The keys \
+                 that set a due day are {}. To move it, change one of them. To remove it, clear \
+                 the one it came from, and jojobot removes '{key}' with it.",
+                if writes { "write it" } else { "clear it" },
+                setting.join(", "),
+            ),
+        ))
     }
 }

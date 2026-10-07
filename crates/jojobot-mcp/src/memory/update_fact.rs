@@ -305,14 +305,23 @@ impl Jojobot {
         // status change to archived, or a key that differs from the ceiling's
         // only by whitespace, because none of those name the key in what
         // THIS write sends — see `refuses_own_ceiling_change`.
+        // **The stored due moment is jojobot's, so a caller's own copy of it, or
+        // a clear of it, is refused before anything is written** — see
+        // `refuses_a_hand_written_due_moment`. Checked on what the caller sent,
+        // ahead of the mover, which adds and clears its own.
+        if let Some(refused) =
+            self.refuses_a_hand_written_due_moment(&address.home, &fields, &cleared)
+        {
+            return Ok(refused);
+        }
         // **Kept current here too.** An edit that moves a cadence, a policy or
         // a basis is a write like any other write that could move the due
         // moment — the mechanism does not care that this one is a patch
         // rather than a fresh capture.
-        let due_on_computed = self
+        let (due_on_computed, due_on_derived) = self
             .moved_due_moment(&address.home, &fields, &cleared)
             .await;
-        let due_on_set = matches!(due_on_computed, attention::DueMove::Set(_));
+        let due_on_set = matches!(due_on_computed, attention::DueMove::Set(_)) && due_on_derived;
         match due_on_computed {
             attention::DueMove::Set(due_on) => {
                 fields.insert(attention::DUE_ON.to_string(), due_on.to_string());

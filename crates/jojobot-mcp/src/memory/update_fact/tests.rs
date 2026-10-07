@@ -2850,3 +2850,94 @@ async fn archiving_a_claim_does_not_list_every_entity_to_resolve_one_handle() {
         "the archiving edit listed every entity in the store"
     );
 }
+
+/// **An edit cannot write or clear the stored due moment either.** It is
+/// jojobot's, set from the carrier keys. Sending it in `fields` or naming it in
+/// `clear_fields` is refused before anything is written, and the record keeps
+/// its day, its due moment and the caller's word. **Paired with the same edit
+/// moving the carrier key**, which lands and moves the due moment, so the
+/// refusals are about `due_on` and not about editing this record.
+#[tokio::test]
+async fn an_edit_that_writes_or_clears_the_due_moment_is_refused() {
+    let jojobot = handler();
+    ensure(&jojobot, "person:ned-flanders").await;
+    jojobot
+        .add_entity(Parameters(AddEntityArgs {
+            parent: Some("person:ned-flanders".into()),
+            ..add_args("promise", "return-the-wrench", "return-the-wrench")
+        }))
+        .await
+        .expect("add ok");
+    let captured = capture_ok(
+        &jojobot,
+        CaptureArgs {
+            provenance: Some("testimony".into()),
+            fields: Some(
+                [("promised_by".to_string(), "2026-07-01".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+            ..capture_args("promise:return-the-wrench", "back by the first")
+        },
+    )
+    .await;
+    assert_eq!(captured["provenance"], "testimony", "{captured}");
+    let address = address_of(&captured);
+
+    for edit in [
+        UpdateFactArgs {
+            fields: Some(
+                [("due_on".to_string(), "2026-01-16".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+            ..update_args(&address)
+        },
+        UpdateFactArgs {
+            clear_fields: Some(vec!["due_on".into()]),
+            ..update_args(&address)
+        },
+    ] {
+        let refused = blocked(
+            &jojobot
+                .update_fact(Parameters(edit))
+                .await
+                .expect("answers"),
+        );
+        let said = refused.to_string();
+        for carrier_key in ["runs_out", "decide_by", "promised_by", "cadence_days"] {
+            assert!(
+                said.contains(carrier_key),
+                "the refusal names '{carrier_key}', a key that sets a due day: {said}",
+            );
+        }
+        let held = fields_of(&jojobot, "promise:return-the-wrench").await;
+        assert_eq!(
+            held["due_on"], "2026-07-01",
+            "a refused edit moves nothing: {held}"
+        );
+        assert_eq!(held["promised_by"], "2026-07-01", "{held}");
+    }
+
+    let moved = update_ok(
+        &jojobot,
+        UpdateFactArgs {
+            fields: Some(
+                [("promised_by".to_string(), "2026-07-09".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+            ..update_args(&address)
+        },
+    )
+    .await;
+    assert_eq!(
+        moved["provenance"], "testimony",
+        "a copied date is still the caller's word on an edit: {moved}",
+    );
+    assert_eq!(
+        fields_of(&jojobot, "promise:return-the-wrench").await["due_on"],
+        "2026-07-09",
+        "moving the carrier key moves the due moment",
+    );
+}

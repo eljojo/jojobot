@@ -128,7 +128,9 @@ async fn the_desk_history_lock_holds_when_the_window_is_left_alone() {
 /// **The exact real regression: told "the desk stays", a sitting clears the
 /// key that carries the deadline rather than leaving it on record.** This
 /// replays `update_fact address=thing:standing-desk#f2 clear_fields=[runs_out,
-/// due_on]`, the call Run 23's March sitting actually made.
+/// due_on]`, the call Run 23's March sitting actually made, **without `due_on`**:
+/// the stored due moment is jojobot's, a caller's clear of it is refused, and
+/// jojobot takes it off with `runs_out`.
 #[tokio::test]
 async fn the_desk_history_lock_reds_when_the_window_is_cleared_outright() {
     let (_room, surface, sid) = furnished().await;
@@ -138,7 +140,7 @@ async fn the_desk_history_lock_reds_when_the_window_is_cleared_outright() {
             "update_fact",
             json!({
                 "address": "thing:standing-desk#f2",
-                "clear_fields": ["runs_out", "due_on"],
+                "clear_fields": ["runs_out"],
                 "details": "The window is closed and the operator decided the desk stays, so \
                             it will stop coming up.",
                 "recorded_at": "2026-03-15",

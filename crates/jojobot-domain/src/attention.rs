@@ -505,6 +505,14 @@ pub trait Carrier: Send + Sync {
     }
     /// When this thing falls due, read off what it holds.
     fn due(&self, fields: &BTreeMap<String, String>) -> Due;
+    /// **Whether the day [`Carrier::due`] answers is jojobot's own arithmetic.**
+    /// A carrier that copies a date the caller wrote answers `false`, so a
+    /// record carrying that date stays the caller's word. One that works the
+    /// day out from other keys answers `true`, and the record carrying it is a
+    /// derivation. `false` by default.
+    fn derives_due(&self) -> bool {
+        false
+    }
 }
 
 /// **The loop carrier**: a rhythm falls due a cadence after the date its cycle
@@ -512,6 +520,12 @@ pub trait Carrier: Send + Sync {
 pub struct Rhythms;
 
 impl Carrier for Rhythms {
+    /// **A loop's due day is a cadence after a basis**, worked out by jojobot
+    /// from keys that are not themselves a day anyone said.
+    fn derives_due(&self) -> bool {
+        true
+    }
+
     /// **A cadence, a policy and a basis — none of them required here.** A
     /// thing holding any one of the three is this carrier's business; which
     /// of them it is missing, and whether that is a defect or simply not yet
@@ -700,6 +714,16 @@ pub fn owed(carriers: &[&dyn Carrier], fields: &BTreeMap<String, String>) -> Due
         .find(|carrier| carrier.interface().matched_by(fields).is_some())
         .map(|carrier| carrier.due(fields))
         .unwrap_or(Due::Never)
+}
+
+/// **Whether the day a thing falls due is jojobot's own arithmetic**, read off
+/// the carrier that answers for these fields. A thing no carrier answers for
+/// derives nothing.
+pub fn due_is_derived(carriers: &[&dyn Carrier], fields: &BTreeMap<String, String>) -> bool {
+    carriers
+        .iter()
+        .find(|carrier| carrier.interface().matched_by(fields).is_some())
+        .is_some_and(|carrier| carrier.derives_due())
 }
 
 /// The carriers this build ships.

@@ -784,6 +784,13 @@ impl Jojobot {
         if let Some(refused) = jojobot_domain::memory::refuses_role_fields(fields.keys()) {
             return memory_declined("capture", refused);
         }
+        // **The stored due moment is jojobot's, so a caller's own copy of it is
+        // refused before anything is written** — see
+        // `refuses_a_hand_written_due_moment`. Checked on what the caller sent,
+        // ahead of the check-in and the mover, which add their own.
+        if let Some(refused) = self.refuses_a_hand_written_due_moment(&subject, &fields, &[]) {
+            return Ok(refused);
+        }
         let mut opened_the_loop = false;
         if let Some(outcome) = args.check_in.as_deref() {
             match self
@@ -801,8 +808,8 @@ impl Jojobot {
         // by a plain capture is a write like any other, and the due moment it
         // carries is jojobot's own arithmetic riding along in the same
         // record — exactly as a check-in's own computed keys already do.
-        let due_on_computed = self.moved_due_moment(&subject, &fields, &[]).await;
-        let due_on_set = matches!(due_on_computed, attention::DueMove::Set(_));
+        let (due_on_computed, due_on_derived) = self.moved_due_moment(&subject, &fields, &[]).await;
+        let due_on_set = matches!(due_on_computed, attention::DueMove::Set(_)) && due_on_derived;
         if let attention::DueMove::Set(due_on) = due_on_computed {
             fields.insert(attention::DUE_ON.to_string(), due_on.to_string());
         }
@@ -824,7 +831,10 @@ impl Jojobot {
         // words are not what is being demoted: the record is a caller's
         // sentence and a computed schedule together, and only one of those
         // has anybody's word behind it. A moved due moment is the same
-        // arithmetic on a plain capture that never asked for a check-in.
+        // arithmetic on a plain capture that never asked for a check-in —
+        // **but only where jojobot worked the day out.** A promise's day, a
+        // run-out day and a decision's day are copied from a date the caller
+        // wrote, which adds no date nobody said, so that record stays theirs.
         let provenance = if args.check_in.is_some() || due_on_set {
             Provenance::Inference
         } else {
