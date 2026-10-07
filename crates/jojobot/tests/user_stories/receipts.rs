@@ -208,3 +208,95 @@ async fn two_accounts_of_one_evening_and_the_receipt_that_says_both_stand() {
 
     story.finish().await;
 }
+
+/// **A receipt says which keys reached the thing and which stayed on the
+/// record.** Six keys describe their own claim and never fold onto the thing, so
+/// a receipt that said every key a record carries had "moved" told a bot that
+/// starred a rule that the star was now the bot's. The data was right and the
+/// sentence was wrong. The receipt now names the keys that moved to the subject
+/// apart from the keys that stayed, each in its own place.
+#[tokio::test]
+async fn a_receipt_says_a_mark_stayed_on_the_record_and_an_ordinary_key_moved_to_the_thing() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:omega", "Omega").await;
+
+    let both = s
+        .call(
+            "capture",
+            json!({
+                "subject": "bot:omega", "content": "keep the kettle descaled",
+                "provenance": "testimony",
+                "fields": {"starred": "true", "one_liner": "keeps the kettle descaled"},
+            }),
+        )
+        .await
+        .json();
+    let said = both["postcondition"].as_str().expect("a postcondition");
+    // The sentence about what moved names the ordinary key and not the mark.
+    // The receipt is a sentence somebody reads: one space between words.
+    assert!(
+        !said.contains("  "),
+        "the receipt reads as one line: {said:?}"
+    );
+    // `removed` is in the receipt's first sentence, so the word is found
+    // between spaces.
+    let at = said.find(" moved ").expect("the receipt says what moved");
+    let before = &said[..at];
+    let after = &said[at..];
+    assert!(
+        before.contains("one_liner"),
+        "the key that moved is named: {said}"
+    );
+    assert!(
+        !before.contains("starred"),
+        "the mark did not move to the bot, so it is not named as having moved: {said}"
+    );
+    // The mark is named as staying, with the read that returns it.
+    assert!(after.contains("starred"), "the mark is named: {said}");
+    assert!(
+        after.contains("facts"),
+        "…with the read that returns it: {said}"
+    );
+
+    // A capture carrying only a mark moves nothing, and says nothing moved.
+    let only_a_mark = s
+        .call(
+            "capture",
+            json!({
+                "subject": "bot:omega", "content": "keep the floor swept",
+                "provenance": "testimony", "fields": {"starred": "true"},
+            }),
+        )
+        .await
+        .json();
+    let said = only_a_mark["postcondition"]
+        .as_str()
+        .expect("a postcondition");
+    assert!(
+        said.contains("starred") && !said.contains(" moved "),
+        "a mark alone moves nothing: {said}"
+    );
+
+    // A capture carrying only an ordinary key says it moved, as it always did.
+    let only_ordinary = s
+        .call(
+            "capture",
+            json!({
+                "subject": "bot:omega", "content": "the kettle is a blue one",
+                "provenance": "testimony", "fields": {"colour": "blue"},
+            }),
+        )
+        .await
+        .json();
+    let said = only_ordinary["postcondition"]
+        .as_str()
+        .expect("a postcondition");
+    assert!(
+        said.contains("colour") && said.contains(" moved "),
+        "{said}"
+    );
+
+    s.wrap("wrote a mark and an ordinary key").await;
+    story.finish().await;
+}

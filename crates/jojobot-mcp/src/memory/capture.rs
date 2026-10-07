@@ -443,15 +443,41 @@ impl Jojobot {
         } else {
             String::new()
         };
-        let keys = if fact.fields.is_empty() {
-            String::new()
-        } else {
-            format!(
-                " This record carries {}, so what those keys answer for {} has moved to it; the \
-                 records that set them are untouched and still say what they said.",
-                fact.fields.keys().cloned().collect::<Vec<_>>().join(", "),
-                fact.subject.as_str(),
-            )
+        // **Keys that reached the subject, told apart from keys that stayed.**
+        // The six that describe their own claim never fold onto the thing, so a
+        // receipt that said every key had moved to it told a bot that starred a
+        // rule that the star was now the bot's. The set is the shipped
+        // `record-labels` type, so a seventh key is placed with no edit here.
+        let describing = crate::seed::describing_keys();
+        let (stayed, reached): (Vec<&String>, Vec<&String>) = fact
+            .fields
+            .keys()
+            .partition(|key| describing.contains(*key));
+        let join = |keys: &[&String]| {
+            keys.iter()
+                .map(|key| key.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let keys = {
+            let mut said = String::new();
+            if !reached.is_empty() {
+                said.push_str(&format!(
+                    " This record carries {}, so what those keys answer for {} has moved to \
+                     it; the records that set them are untouched and still say what they said.",
+                    join(&reached),
+                    fact.subject.as_str(),
+                ));
+            }
+            if !stayed.is_empty() {
+                said.push_str(&format!(
+                    " {} stay on this record only: they describe it and do not fold onto {}. \
+                     Read them with facts: true.",
+                    join(&stayed),
+                    fact.subject.as_str(),
+                ));
+            }
+            said
         };
         let basis = if opened_the_loop {
             let derived = fact
