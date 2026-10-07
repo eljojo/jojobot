@@ -24,5 +24,5 @@ pub mod search;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "testing"))]
 mod log_capture;

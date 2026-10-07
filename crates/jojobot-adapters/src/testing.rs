@@ -20,9 +20,28 @@
 /// A range with no port left is a test that cannot start, and this says so in
 /// the arbiter's own words. It returns a bare port because every caller wants
 /// one and has nowhere to put an error.
+///
+/// **It also installs the store log sink** ([`install_store_log_sink`]): every
+/// test that starts a store claims a port first, so this is the one call they
+/// all make, and none has to remember a second.
 pub fn free_port() -> u16 {
+    install_store_log_sink();
     jojobot_ports::claim_for_life()
         .unwrap_or_else(|refusal| panic!("no port can be claimed for this test: {refusal}"))
+}
+
+/// **Install the log sink a test that starts a store reads its refusals from.**
+/// Idempotent, and the process's one global subscriber: a second call, from any
+/// thread, finds the first one's. `free_port` calls it, because a test that
+/// claims a port is about to start a store.
+pub fn install_store_log_sink() {
+    let _ = crate::log_capture::log_sink();
+}
+
+/// **Everything the sink has kept so far**, process-wide, for a test that asserts
+/// on what the store's refusal logged.
+pub fn store_log() -> String {
+    crate::log_capture::log_sink().text()
 }
 
 #[cfg(test)]

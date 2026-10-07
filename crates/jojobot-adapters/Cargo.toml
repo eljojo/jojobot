@@ -36,11 +36,16 @@ thiserror = { workspace = true }
 # The store's server is asked to die with jojobot, and that is a kernel flag set
 # between the fork and the exec rather than anything the parent can do after.
 libc = { workspace = true }
+# Test support only, behind the `testing` feature: the log sink a test that starts
+# a store has installed. The scan's split-brain report and a refused migration are
+# log lines, and "it gets logged" is not a claim a test can make by reading the
+# code — this subscribes to the events and asserts on what actually came out.
+tracing-subscriber = { workspace = true, optional = true }
 
 # The port helper these suites share lives behind this feature so it compiles
 # for tests and NEVER ships in a production binary.
 [features]
-testing = ["dep:jojobot-ports"]
+testing = ["dep:jojobot-ports", "dep:tracing-subscriber"]
 
 [dev-dependencies]
 tokio = { workspace = true }
@@ -50,7 +55,3 @@ jojobot-adapters = { path = ".", features = ["testing"] }
 # The shared contract + fake live behind the domain's `testing` feature; the
 # contract runs here against the real Outline adapter (gated integration test).
 jojobot-domain = { workspace = true, features = ["testing"] }
-# Dev only. The scan's split-brain report IS a log line, and "it gets logged" is
-# not a claim a test can make by reading the code — this subscribes to the
-# events and asserts on what actually came out.
-tracing-subscriber = { workspace = true }

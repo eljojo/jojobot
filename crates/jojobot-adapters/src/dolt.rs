@@ -150,6 +150,10 @@ pub struct Dolt {
     /// The server's address without a database on the end, so another
     /// database on the same server can be opened.
     server: String,
+    /// What the server wrote to its own stderr, the last lines of it, kept for
+    /// as long as the store is up. A refused statement is answered with the
+    /// store's words kept out (rule 53), and this is where a test reads them.
+    stderr: StderrTail,
 }
 
 impl Dolt {
@@ -214,6 +218,7 @@ impl Dolt {
             child,
             pool,
             server,
+            stderr,
         })
     }
 
@@ -465,6 +470,36 @@ impl Dolt {
         self.pool.close().await;
         let _ = self.child.kill().await;
     }
+
+    /// **What the server itself has said on stderr, the last lines of it.** For a
+    /// test or a person reading why a statement was refused; nothing served to
+    /// an agent reads it.
+    pub fn server_stderr(&self) -> String {
+        self.stderr.snapshot()
+    }
+}
+
+/// **What a failing run should show of the server's own words**, or nothing when
+/// the run is not failing or the server said nothing. Separate from the drop so
+/// it can be read without a panic.
+#[cfg(any(test, feature = "testing"))]
+fn the_servers_words_for_a_failure(failing: bool, tail: &str) -> Option<String> {
+    (failing && !tail.is_empty()).then(|| format!("the store's own stderr, last lines:\n{tail}"))
+}
+
+/// **A test that fails with a store up shows what the store's server said.** The
+/// harness prints what a failed test wrote to stderr beside its panic, so a
+/// refused statement comes with the server's side of it, which the error a
+/// caller gets leaves out. A store dropped on the way to a pass says nothing.
+#[cfg(any(test, feature = "testing"))]
+impl Drop for Dolt {
+    fn drop(&mut self) {
+        if let Some(words) =
+            the_servers_words_for_a_failure(std::thread::panicking(), &self.stderr.snapshot())
+        {
+            eprintln!("{words}");
+        }
+    }
 }
 
 /// One permanent-id migration's own outcome, for a caller to log — the
@@ -642,6 +677,34 @@ fn die_with_this_process(_spawning: &mut tokio::process::Command) {}
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    /// **A failing run shows what the server said, and a passing one stays
+    /// quiet.** Either half alone passes on a helper that does the other.
+    #[test]
+    fn the_servers_words_are_shown_for_a_failure_and_for_nothing_else() {
+        let shown = the_servers_words_for_a_failure(true, "table already exists")
+            .expect("a failing run with something to show says it");
+        assert!(shown.contains("table already exists"), "{shown}");
+        assert_eq!(the_servers_words_for_a_failure(false, "a line"), None);
+        assert_eq!(the_servers_words_for_a_failure(true, ""), None);
+    }
+
+    /// **A store that has come up still holds what its server wrote to stderr.**
+    /// The tail used to be read only for a start that failed, and was gone by
+    /// the time a statement was refused.
+    #[tokio::test]
+    async fn a_started_store_keeps_what_its_server_said() {
+        let scratch = Scratch::new("server-stderr");
+        let mut store = Dolt::start(&scratch.0, crate::testing::free_port())
+            .await
+            .expect("the store comes up");
+        let said = store.server_stderr();
+        assert!(
+            !said.is_empty(),
+            "the server writes a line to stderr as it starts, and none was kept",
+        );
+        store.stop().await;
+    }
 
     /// A directory of this test's own, removed when it is done.
     pub(crate) struct Scratch(pub(crate) PathBuf);
