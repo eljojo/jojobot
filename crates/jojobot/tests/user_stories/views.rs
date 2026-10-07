@@ -112,6 +112,65 @@ async fn a_session_asks_a_shipped_view_and_its_own_by_name_through_one_read() {
     story.finish().await;
 }
 
+/// **The colleagues view reads as an org chart from either end.** A bot
+/// carries `reports_to` holding its manager's handle, and one read of the view
+/// answers who a bot reports to and who reports to it, with no second call.
+#[tokio::test]
+async fn the_colleagues_view_shows_who_each_bot_reports_to_and_who_reports_to_it() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    s.add("bot:omega", "Omega").await;
+    s.add("bot:sigma", "Sigma").await;
+    s.add("bot:psi", "Psi").await;
+    for report in ["bot:sigma", "bot:psi"] {
+        s.event_with(
+            report,
+            "answers to omega",
+            json!({"reports_to": "bot:omega"}),
+            &[],
+        )
+        .await;
+    }
+
+    let colleagues = s.call("recall", json!({"view": "colleagues"})).await.json();
+    let objects = colleagues["objects"].as_array().expect("a list of bots");
+    let bot = |handle: &str| {
+        objects
+            .iter()
+            .find(|object| object["id"] == handle)
+            .unwrap_or_else(|| panic!("the view lists {handle}: {colleagues}"))
+    };
+    let ids = |list: &serde_json::Value| -> Vec<String> {
+        let mut found: Vec<String> = list
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item["id"].as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        found.sort();
+        found
+    };
+
+    // Out: a report names its manager, in its own fields.
+    assert_eq!(bot("bot:sigma")["fields"]["reports_to"], "bot:omega");
+    assert_eq!(bot("bot:psi")["fields"]["reports_to"], "bot:omega");
+    // In: the manager lists who reports to it, in the same answer.
+    assert_eq!(
+        ids(&bot("bot:omega")["connected"]),
+        ["bot:psi", "bot:sigma"],
+        "{colleagues}"
+    );
+    // The pairing: a bot nobody reports to lists nobody.
+    assert!(
+        ids(&bot("bot:gamma")["connected"]).is_empty(),
+        "nobody reports to gamma: {colleagues}"
+    );
+    story.finish().await;
+}
+
 /// **A session that was told nothing finds the capability and uses it.**
 ///
 /// The bar a view has to clear is not that it exists — it is that an agent

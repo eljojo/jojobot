@@ -155,6 +155,30 @@ impl InMemoryMemory {
         fake
     }
 
+    /// **A booted store whose shipped kinds carry the keys a startup declares
+    /// for them** — [`kinds::seed`]'s own two writes, done in this object's
+    /// state, then the boot.
+    ///
+    /// [`booted`](Self::booted) holds the shipped kinds as rows with no keys,
+    /// which is right for a case about something else and wrong for one that
+    /// walks a relation a shipped kind declares: the walk is refused for naming
+    /// a key no type declares, on a store production never runs.
+    ///
+    /// [`kinds::seed`]: crate::memory::kinds::seed
+    pub fn seeded() -> Self {
+        let fake = Self::new();
+        for token in crate::memory::kinds::SHIPPED {
+            fake.keys_of_kind(
+                token,
+                crate::memory::types::Origin::Shipped,
+                crate::memory::kinds::keys_of(token),
+            )
+            .expect("a shipped kind's keys declare on a fresh store");
+        }
+        fake.boot();
+        fake
+    }
+
     /// **Boot a store that is already standing** — the second of the two steps,
     /// on its own, for a case that has to write rows before the set is filled.
     ///

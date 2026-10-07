@@ -68,6 +68,19 @@ pub fn provisions() -> Vec<Provision> {
         // to thousands of characters, so asking for six of them at once is the
         // most expensive answer this server has. A caller who wants one asks
         // `recall` for it directly, with `charter: true`.
-        view("view:colleagues", "The Colleagues", &[("selects", "bot")]),
+        //
+        // **It reads as an org chart from either end.** A bot's own fields say
+        // who it reports to, and the walk inward along `reports_to` lists who
+        // reports to it, so one read answers both. Display only: nothing acts
+        // on the key.
+        view(
+            "view:colleagues",
+            "The Colleagues",
+            &[
+                ("selects", "bot"),
+                ("follow_relation", "reports_to"),
+                ("follow_direction", "in"),
+            ],
+        ),
     ]
 }

@@ -182,6 +182,12 @@ pub fn keys_of(token: &str) -> Vec<super::types::Field> {
                 crate::attention::PromiseEnd::ALL.map(crate::attention::PromiseEnd::as_token),
             ),
         ],
+        // **Who a bot reports to**, the handle of its manager. A handle held in
+        // a field is a link whatever the key is called; declaring the key is
+        // what lets the chart be walked by its name, out to a manager and in to
+        // everyone who reports there. Optional, because a bot is whole without
+        // one. Display only: nothing here acts on it.
+        "bot" => vec![Field::pointing_at("reports_to", super::EntityKind::BOT)],
         // **A question asked by name.** The keys are what a view IS: what it
         // selects over, and what it keeps. They are required because a view
         // missing either is a question nobody can ask — unlike a loop, where
@@ -552,6 +558,32 @@ mod tests {
         assert!(
             declared.iter().all(|f| f.key != "due_on"),
             "a deadline key on work is not shipped: {declared:?}",
+        );
+    }
+
+    /// **A bot names who it reports to, as a link to another bot, and requires
+    /// nothing.** The key is declared so that the chart is walkable by its own
+    /// name in both directions: out to a manager, in to everyone who reports
+    /// there. The spelling is pinned as a literal because it is stored in a
+    /// fields bag and nothing outside this process declares it.
+    #[test]
+    fn the_bot_kind_names_reports_to_as_a_link_to_a_bot_and_requires_nothing() {
+        use super::super::types::ValueType;
+        let declared = keys_of("bot");
+        let reports_to = declared
+            .iter()
+            .find(|f| f.key == "reports_to")
+            .unwrap_or_else(|| panic!("the bot kind names 'reports_to': {declared:?}"));
+        assert_eq!(reports_to.holds, ValueType::Reference, "{reports_to:?}");
+        assert_eq!(
+            reports_to.points_at,
+            Some(crate::memory::EntityKind::BOT),
+            "a manager is another bot: {reports_to:?}"
+        );
+        assert!(!reports_to.list, "a bot reports to one: {reports_to:?}");
+        assert!(
+            declared.iter().all(|f| !f.required),
+            "a bot is whole without a manager: {declared:?}"
         );
     }
 

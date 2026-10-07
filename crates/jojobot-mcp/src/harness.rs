@@ -97,7 +97,7 @@ pub(crate) fn handler_shipped() -> Jojobot {
     // adapter's own tests make for this exact shape.
     Jojobot::new(
         Arc::new(jojobot_adapters::provisioned::Provisioned::new(
-            InMemoryMemory::booted().knowing(supplied.clone()),
+            InMemoryMemory::seeded().knowing(supplied.clone()),
             supplied,
         )),
         Arc::new(SpySearch::default()),

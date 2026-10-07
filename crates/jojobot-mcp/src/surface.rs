@@ -1127,6 +1127,26 @@ fn the_colleagues_one_liner_key_is_named_on_a_surface_a_bot_would_meet() {
     );
 }
 
+/// **The org chart's key is named beside the one-liner.** `view:colleagues`
+/// shows who each bot reports to from `reports_to`, so the surface that points
+/// a bot at `one_liner` for its self-description points at `reports_to` for
+/// who it answers to, and says which verb writes both. The key is pinned as a
+/// literal, since it is stored and nothing outside this process declares it.
+#[test]
+fn the_colleagues_reports_to_key_is_named_where_the_one_liner_is() {
+    let tools = Jojobot::tool_router().list_all();
+    let set_charter = tools
+        .iter()
+        .find(|t| t.name == "set_charter")
+        .expect("set_charter is a tool");
+    let description = set_charter.description.as_deref().unwrap_or_default();
+    assert!(
+        description.contains("reports_to"),
+        "the key view:colleagues shows the chart from must be named where a bot describing \
+         itself would read it: {description}"
+    );
+}
+
 /// **`retract` and `update_fact`'s `clear_edge` used to both claim the same
 /// case — a past event that turned out never to have happened.** `retract`
 /// names itself the move for it; `clear_edge`'s own worked example, until
