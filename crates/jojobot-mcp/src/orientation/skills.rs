@@ -329,8 +329,10 @@ write-up, a count or a dashboard.
 ## What belongs to the operator
 
 Which rhythms exist, how often each one runs, and when each one last ran.
-These are the operator's decisions and the operator's data. This procedure
-is only how you offer a rhythm and how you close it.
+On a loop in the operator's own life, these are the operator's decisions and
+the operator's data. On a loop under the bot that carries it, how often it
+runs (`cadence_days`) is that bot's pick, by the same rule as `advances_from`.
+This procedure is only how you offer a rhythm and how you close it.
 "#;
 
 const PROJECTS: &str = r#"# projects
@@ -697,6 +699,31 @@ mod tests {
                 attention::ADVANCES_FROM
             );
         }
+    }
+
+    /// **The closing section says how often a loop runs is picked by the same
+    /// rule as the date it advances from.** On a loop under the bot that carries
+    /// it, that bot picks `cadence_days` as it picks `advances_from`; the section
+    /// that said the operator decides how often every loop runs contradicted the
+    /// rule above it. A key counts only in backticks, and the section is found
+    /// by its heading.
+    #[test]
+    fn the_rhythms_closing_section_gives_a_bots_own_loop_its_cadence_by_the_same_rule() {
+        let text = body("rhythms");
+        let section = text
+            .split("\n## ")
+            .find(|section| section.starts_with("What belongs to the operator"))
+            .expect("the rhythms procedure closes on what belongs to the operator");
+        for key in [attention::CADENCE_DAYS, attention::ADVANCES_FROM] {
+            assert!(
+                section.contains(&format!("`{key}`")),
+                "the closing section does not name `{key}`: {section}"
+            );
+        }
+        assert!(
+            names(section, "bot"),
+            "the closing section does not say a bot picks on its own loop: {section}"
+        );
     }
 
     /// **The rider on a loop opened with history already behind it.** The
