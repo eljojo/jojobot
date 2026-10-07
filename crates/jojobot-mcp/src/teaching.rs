@@ -117,6 +117,25 @@ pub(crate) const CLAIM_DIRECTION_TEACHING: &str = "A claim hangs on the thing it
     the claim should have been about never sees it, because that read returns what it was \
     asked for and an inbound edge grants the other party nothing.";
 
+/// **The domain of the one line that names the `projects` skill.** Spent by
+/// the first write a session makes about a project or a piece of work, whichever
+/// verb it is: creating one and capturing on one are the same moment to a
+/// reader who was never told the skill exists.
+pub(crate) const PROJECTS_SKILL_DOMAIN: &str = "projects-skill";
+
+/// **The one place that says which writes are about a project's work**: the
+/// kind of the thing written about, or created. `capture` and `add_entity` both
+/// ask it, so a narrower ruling is a change to this function and nothing else.
+pub(crate) fn is_project_work(kind: Option<EntityKind>) -> bool {
+    matches!(kind, Some(EntityKind::PROJECT | EntityKind::WORK))
+}
+
+/// **Ships in the binary, one line, exactly as the other teachings do.** It
+/// names the skill and what it holds; the procedure is fetched, never sent.
+pub(crate) const PROJECTS_SKILL_TEACHING: &str = "You are writing about a project's work: \
+    start_here with skill: \"projects\" has the routes for a date that moves, a decision, an \
+    open question and what you worked out from what was said.";
+
 /// **The sixth domain — a creation forced past a near-miss refusal.** Named on
 /// the call that makes the deliberate near-duplicate, which is the one moment
 /// the repair can be told before it is needed. It rides a creation that was

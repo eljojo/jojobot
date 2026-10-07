@@ -89,6 +89,9 @@ mod pets;
 /// A server acting out a day, and the day it fills in when nobody types one.
 #[path = "user_stories/pretending.rs"]
 mod pretending;
+/// What a project's dates, decisions and questions are written as.
+#[path = "user_stories/projects.rs"]
+mod projects;
 #[path = "user_stories/promises.rs"]
 mod promises;
 #[path = "user_stories/quarantining.rs"]

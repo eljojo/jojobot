@@ -5,8 +5,8 @@
 
 use super::*;
 use crate::teaching::{
-    DUPLICATE_REPAIR_DOMAIN, DUPLICATE_REPAIR_TEACHING, RHYTHM_HISTORY_DOMAIN,
-    RHYTHM_HISTORY_TEACHING,
+    DUPLICATE_REPAIR_DOMAIN, DUPLICATE_REPAIR_TEACHING, PROJECTS_SKILL_DOMAIN,
+    PROJECTS_SKILL_TEACHING, RHYTHM_HISTORY_DOMAIN, RHYTHM_HISTORY_TEACHING,
 };
 
 /// Arguments to `add_entity`.
@@ -258,6 +258,16 @@ impl Jojobot {
                         .await
                 {
                     crate::answer::note_teaching(&mut body, RHYTHM_HISTORY_TEACHING);
+                }
+                // **Shares its domain with `capture`'s line about a project**,
+                // so whichever write about a project comes first is the one
+                // that names the skill, and never both.
+                if crate::teaching::is_project_work(entity.id.kind())
+                    && self
+                        .first_contact(PROJECTS_SKILL_DOMAIN, Some(&caller))
+                        .await
+                {
+                    crate::answer::note_teaching(&mut body, PROJECTS_SKILL_TEACHING);
                 }
                 // **Checked before the gate, never after** — `first_contact`
                 // has a side effect, and an ordinary creation must not spend

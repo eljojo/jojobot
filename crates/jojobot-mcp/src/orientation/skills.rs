@@ -60,6 +60,12 @@ pub(crate) const SKILLS: &[Skill] = &[
         body: ASKING,
     },
     Skill {
+        name: "projects",
+        when_to_use: "When you are recording a project's work, its decisions or its open \
+                      questions.",
+        body: PROJECTS,
+    },
+    Skill {
         name: "evidence",
         when_to_use: "Before you write anything that the operator will read later. This \
                       includes a claim about a person, a summary, a portrait, and a note.",
@@ -315,6 +321,81 @@ These are the operator's decisions and the operator's data. This procedure
 is only how you offer a rhythm and how you close it.
 "#;
 
+// PLACEHOLDER — the work-keys tip. Card 1984 ships the keys for a piece of work
+// (status columns, owner, depends_on, waiting_on). The tip naming them goes in
+// this body, as a section after "An open question", once that commit is on
+// main. Until then the skill names no key the engine does not yet declare.
+const PROJECTS: &str = r#"# projects
+
+**A project's work is dates that move, decisions made in a room, questions
+nobody has asked yet, and things you worked out from what was said.** Each has
+one route the engine accepts. Each also has a convenient wrong place: a
+sentence, which a later question cannot read.
+
+## A date that moves
+
+A slip is a new due day. Write the day under the same key every time it
+changes. Do not write "the copy moved again" and do not keep a count.
+
+    capture  subject: "project:atlas"  fields: {"copy_due": "2026-04-06"}
+
+"How many times did it move" is then a read of that key's history:
+
+    recall  subject: "project:atlas"  history: "copy_due"
+
+The answer holds every write of the key, oldest first, with the day each was
+written. The count of the writes is the answer.
+
+## A decision
+
+Write the operator's own words as the operator's word: `provenance: "testimony"`.
+Do not rephrase them. Then write each option that was weighed as a claim of
+its own, say whose option it was by writing `@` and their handle in the words, and say
+which one was turned down. A decision without the rejected option cannot be
+told from one nobody weighed.
+
+## What you worked out from what somebody said
+
+This is two records. The first is their words, as testimony. The second is your
+conclusion, with `provenance: "inference"` and `derived_from` set to the
+address of the first. Never write your conclusion as the operator's word.
+
+    recall  built_on: "<address of their words>"
+
+lists what was worked out from them. When the words turn out to be misread,
+that is the list to check.
+
+## A pause until a day, on something with no loop
+
+Nothing falls due on a thing that has no loop. A pause on it is a promise
+regarding it: a `promise` entity with `promised_by` the day and `regarding`
+the thing. See the `rhythms` skill for what is owed and how to read it.
+
+## An open question
+
+A question nobody has asked yet is a claim that carries its state and the thing
+it blocks. Write `state` as `drafted`, `asked` or `answered`, and `blocks` as
+the handle of what waits on it. Write the same key again when the state
+changes. A later read for the questions that are drafted and never asked is a
+read of that key:
+
+    recall  fields: [{"key": "state", "value": "drafted"}]  facts: true
+
+## A retrospective
+
+A retrospective is a history read. A long read is cut: a key's history comes
+back with its newest twenty writes and says how many it left out. Raise
+`history_most` before you conclude anything from it.
+
+    recall  subject: "project:atlas"  history: "health"  history_most: 100
+
+## An answer the operator asked to have kept
+
+Write it down. An answer you gave in the conversation is gone for the next
+session. When the operator asks for an answer under a name, write it under
+that name, on what it is about, so a later session reads it from the record.
+"#;
+
 const EVIDENCE: &str = r#"# evidence
 
 Each claim you write has two properties, and a later reader needs both.
@@ -567,5 +648,53 @@ mod tests {
             "the rider sends a session down a route without saying the loop needs its cadence \
              before the route works: {section}"
         );
+    }
+
+    /// **The projects procedure names only arguments the surface publishes.**
+    ///
+    /// A tip that tells a session to send `history_most` is a tip that fails on
+    /// the call it describes if the argument is renamed, and no test of the
+    /// verb notices. The arguments are read off the surface, not written here.
+    #[test]
+    fn the_projects_procedure_names_only_arguments_the_surface_takes() {
+        let text = body("projects");
+        let published = crate::arguments::published_argument_names();
+        for argument in [
+            "subject",
+            "history",
+            "history_most",
+            "built_on",
+            "derived_from",
+            "provenance",
+            "fields",
+            "facts",
+        ] {
+            assert!(
+                names(text, argument),
+                "the projects procedure no longer names `{argument}`, so a tip lost its route",
+            );
+            assert!(
+                published.contains(argument),
+                "the projects procedure names `{argument}` and no verb publishes it",
+            );
+        }
+    }
+
+    /// **The index says what the skill is for in words a session can compare
+    /// against what it is doing**, and the body is not in it.
+    #[test]
+    fn the_projects_skill_is_indexed_by_what_a_session_can_see_it_doing() {
+        let index = super::index();
+        let entry = index
+            .as_array()
+            .expect("the index is a list")
+            .iter()
+            .find(|skill| skill["name"] == "projects")
+            .expect("the index lists the projects skill");
+        let when = entry["when_to_use"].as_str().expect("what it is for");
+        for seen in ["recording", "decisions", "open questions"] {
+            assert!(when.contains(seen), "{when}");
+        }
+        assert!(entry.get("body").is_none(), "the index ships no body");
     }
 }
