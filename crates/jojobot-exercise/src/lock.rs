@@ -7,9 +7,10 @@
 //! * the **query** is jojobot's own vocabulary — the verb and the arguments a
 //!   session would send, or the name of a view. Nothing is translated;
 //! * the **assertion** is this format's own, and it is a few words that do not
-//!   branch (`carries`, `carries-any-case`, `lacks`, `at least N of`). Pushing
-//!   it into jojobot would grow a test framework inside a query surface, which
-//!   is worse than the cost it saves;
+//!   branch (`carries`, `carries-any-case`, `lacks`, `at least N of`), with one
+//!   exception: `carries-either` takes any one of several end states a room
+//!   accepts as right. Pushing more into jojobot would grow a test framework
+//!   inside a query surface, which is worse than the cost it saves;
 //! * the **sentence** is authored prose and is never generated. *The pump says
 //!   `sent` for where the job has got to* is worth more than a boolean because
 //!   somebody wrote it about this room.
@@ -91,8 +92,9 @@ pub enum Asks {
     Check(String),
 }
 
-/// What must be so about the answer. **None of these branches**, which is what
-/// keeps the vocabulary from becoming a language somebody has to learn.
+/// What must be so about the answer. **None of these branches except
+/// [`Expect::CarriesEither`]**, which is what keeps the vocabulary from becoming
+/// a language somebody has to learn.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Expect {
     Carries(String),
@@ -101,6 +103,12 @@ pub enum Expect {
     /// It is a separate word so that no lock reads case-insensitively by
     /// accident: a needle that has one right spelling uses `carries`.
     CarriesAnyCase(String),
+    /// **`carries`, for a value with more than one right end state.** Any one
+    /// of the alternatives is enough. It is for a room where two routes are
+    /// both legitimate and leave different words in the store, and it is the
+    /// only assertion that says "or": use it for end states, never to loosen a
+    /// needle that has one right spelling.
+    CarriesEither(Vec<String>),
     Lacks(String),
     AtLeast(usize, String),
 }
@@ -129,7 +137,17 @@ impl Expect {
                     false => None,
                 }
             }
-            Expect::Carries(_) | Expect::CarriesAnyCase(_) | Expect::Lacks(_) => None,
+            Expect::CarriesEither(alternatives)
+                if !alternatives
+                    .iter()
+                    .any(|text| answer.contains(text.as_str())) =>
+            {
+                Some(format!("none of {alternatives:?} is in what came back"))
+            }
+            Expect::CarriesEither(_)
+            | Expect::Carries(_)
+            | Expect::CarriesAnyCase(_)
+            | Expect::Lacks(_) => None,
         }
     }
 }
@@ -314,6 +332,16 @@ fn one(lines: &[String], phase: Option<&str>) -> Result<Lock> {
         match word {
             "carries" => expects.push(Expect::Carries(rest)),
             "carries-any-case" => expects.push(Expect::CarriesAnyCase(rest)),
+            "carries-either" => {
+                let alternatives: Vec<String> = rest
+                    .split(" | ")
+                    .map(|one| one.trim().to_string())
+                    .collect();
+                if alternatives.len() < 2 || alternatives.iter().any(String::is_empty) {
+                    bail!("`carries-either` reads `carries-either <text> | <text>`, two or more");
+                }
+                expects.push(Expect::CarriesEither(alternatives));
+            }
             "lacks" => expects.push(Expect::Lacks(rest)),
             "at" => {
                 let counted = rest
@@ -354,8 +382,8 @@ fn one(lines: &[String], phase: Option<&str>) -> Result<Lock> {
                 };
             }
             other => bail!(
-                "{other:?} asserts nothing — a lock says carries, carries-any-case, lacks, at \
-                 least N of, say, or window",
+                "{other:?} asserts nothing — a lock says carries, carries-any-case, carries-either, \
+                 lacks, at least N of, say, or window",
             ),
         }
     }
@@ -698,6 +726,58 @@ mod tests {
             plain.missed_in("{\"spot_done\":\"No\"}").is_some(),
             "the plain word must stay case-sensitive"
         );
+    }
+
+    /// **`carries-either` reads, and it counts as a positive**, so a lock whose
+    /// only positive is one still carries the negative beside it. A single
+    /// alternative is no alternative and is refused.
+    #[test]
+    fn a_lock_may_carry_either_of_two_end_states_and_it_counts_as_a_positive() {
+        let locks = read(
+            "```locks\n\
+             recall {\"subject\": \"project:the-shed\"}\n\
+             carries-either \"status\":\"next\" | \"status\":\"considering\"\n\
+             lacks   \"status\":\"done\"\n\
+             say     the shed holds an end state\n\
+             ```\n",
+        )
+        .expect("the lock reads");
+        assert_eq!(
+            locks[0].expects,
+            vec![
+                Expect::CarriesEither(vec![
+                    "\"status\":\"next\"".into(),
+                    "\"status\":\"considering\"".into(),
+                ]),
+                Expect::Lacks("\"status\":\"done\"".into()),
+            ]
+        );
+        let one = read(
+            "```locks\n\
+             recall {}\n\
+             carries-either \"status\":\"next\"\n\
+             say     one alternative is not an either\n\
+             ```\n",
+        )
+        .expect_err("one alternative is no either");
+        assert!(format!("{one:#}").contains("carries-either"), "{one:#}");
+    }
+
+    /// **Either alternative holds, and neither fails.** The pair the word
+    /// exists for: each alternative alone passes, an answer with a third value
+    /// fails, and the plain word still wants the one needle it names.
+    #[test]
+    fn carries_either_holds_on_any_alternative_and_fails_on_none() {
+        let either = Expect::CarriesEither(vec![
+            "\"value\":\"next\"".into(),
+            "\"value\":\"considering\"".into(),
+        ]);
+        for held in ["{\"value\":\"next\"}", "{\"value\":\"considering\"}"] {
+            assert_eq!(either.missed_in(held), None, "{held}");
+        }
+        for missed in ["{\"value\":\"someday\"}", "{}"] {
+            assert!(either.missed_in(missed).is_some(), "{missed}");
+        }
     }
 
     /// **A lock with two missing needles names both.** A reader who fixed the
@@ -1369,7 +1449,10 @@ pub async fn needle_verdicts_over(
             let (needle, any_case) = match expect {
                 Expect::Carries(needle) => (needle, false),
                 Expect::CarriesAnyCase(needle) => (needle, true),
-                Expect::Lacks(_) | Expect::AtLeast(..) => continue,
+                // **Nor is `carries-either`**: the alternative the room did not
+                // take is absent by design, and `Nowhere` would report that
+                // legitimate route as a finding.
+                Expect::Lacks(_) | Expect::AtLeast(..) | Expect::CarriesEither(_) => continue,
             };
             let mut found = Vec::new();
             places(&parsed, String::new(), needle, any_case, &mut found);
@@ -1561,7 +1644,7 @@ pub fn standing_findings(locks: &[Lock]) -> Vec<StandingFinding> {
             .iter()
             .filter_map(|expect| match expect {
                 Expect::Carries(needle) | Expect::CarriesAnyCase(needle) => Some(needle),
-                Expect::Lacks(_) | Expect::AtLeast(..) => None,
+                Expect::Lacks(_) | Expect::AtLeast(..) | Expect::CarriesEither(_) => None,
             })
             .collect();
         let paired = carried.iter().any(|needle| pins_status(needle));
