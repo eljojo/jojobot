@@ -136,3 +136,73 @@ async fn a_read_on_a_lost_handle_is_refused_while_one_with_no_handle_is_served()
         .await;
     story.finish().await;
 }
+
+/// "I came back to a bot that had a run in flight, and the refusal told me
+/// where to go and not what I would meet there."
+///
+/// A boot naming only the bot hands back the choice and no handle when the bot
+/// has a run worth picking up, so "call start_here with your bot name" does not
+/// by itself end in a handle. The refusal names the whole route: the boot, then
+/// the answer to its offer.
+///
+/// **The story follows the route the refusal names** rather than asserting the
+/// sentence and stopping, because the advice is only worth what following it
+/// recovers.
+#[tokio::test]
+async fn a_write_with_no_handle_is_told_the_whole_route_to_one() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("person:milhouse", "Milhouse").await;
+    // A run in flight, which is what turns the next boot into an offer.
+    s.journal("started on something and stopped without telling its story")
+        .await;
+
+    // ── a caller that holds nothing, and a handle that addresses nothing ────
+    let write = json!({
+        "subject": "person:milhouse",
+        "content": "learned before booting",
+        "provenance": "testimony",
+    });
+    let mut unbound = write.clone();
+    unbound["sid"] = json!(null);
+    let mut lost = write.clone();
+    lost["sid"] = json!(LOST);
+    for args in [unbound, lost] {
+        let refusal = s.refused("capture", args).await;
+        refusal
+            .says("\"wrote\":false")
+            .says("start_here")
+            // The second step of the route, by its argument's name.
+            .says("resume");
+    }
+
+    // ── follow it: the boot, which hands back the offer and no handle ───────
+    let (offer, unanswered) = story
+        .call("start_here", json!({"bot": "otto", "brief": true}))
+        .await;
+    offer.says("choices");
+    assert!(
+        unanswered.is_none(),
+        "the boot the refusal names answers with an offer and no handle, which is why the \
+         refusal has to name what comes after it"
+    );
+
+    // ── …and the answer to the offer, which ends in a handle that writes ────
+    let (_, booted) = story
+        .call(
+            "start_here",
+            json!({"bot": "otto", "brief": true, "resume": "new"}),
+        )
+        .await;
+    let fresh = booted.expect("answering the offer with new hands back a handle");
+    fresh
+        .fact("person:milhouse", "learned after booting, with a handle")
+        .await;
+    fresh
+        .recall("person:milhouse")
+        .await
+        .says("learned after booting");
+
+    fresh.wrap("followed the refusal's route to a handle").await;
+    story.finish().await;
+}

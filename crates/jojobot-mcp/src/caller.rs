@@ -62,7 +62,10 @@ pub(crate) fn session_unbound() -> CallToolResult {
     let how_to_proceed: WayForward =
         "Nothing was written. This call carried no `sid`, and jojobot will not \
                            guess which session is writing. Call start_here with your bot name to \
-                           get one, then pass it on every call — reads included. It is the only \
+                           get one. A bot with a run in flight is handed a choice and no handle: \
+                           call start_here again with resume set to the sid of the run you are \
+                           picking up, or to \"new\" for a fresh session. Then pass the handle on \
+                           every call — reads included. It is the only \
                            address, and it is what tells jojobot which bot is asking: most \
                            clients open a fresh connection per tool call, so nothing about who \
                            you are survives from your last one. IF START_HERE ALSO HANDS BACK NO \
@@ -151,9 +154,10 @@ impl Jojobot {
                 raw,
                 format!(
                     "Nothing was written. That session is gone: '{raw}' is not a handle jojobot \
-                 is holding. Call start_here with your bot name to boot again — the work on \
-                 the board is untouched, and it will be offered back by what it was working \
-                 on."
+                 is holding. Call start_here with your bot name to boot again. If it hands \
+                 back a choice and no handle, call it again with resume set to the sid of the \
+                 run you are picking up, or to \"new\" for a fresh session. The work on the \
+                 board is untouched, and it will be offered back by what it was working on."
                 ),
             ));
         };
