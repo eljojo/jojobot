@@ -15,6 +15,7 @@ fn boundary(runs: usize) -> Boundary {
         mail: String::new(),
         world: String::new(),
         board: String::new(),
+        charters: String::new(),
         runs_offered: runs,
         answers: Vec::new(),
     }

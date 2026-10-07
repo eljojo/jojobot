@@ -2988,15 +2988,52 @@ async fn the_first_standing_rule_rides_the_boot(seen: &Observed<'_>) -> Result<(
     }
 }
 
-/// The job the setup never names and only the hold does.
+/// The job the brief names and then keeps the helper off.
 const HELD_OFF: &str = "espresso";
+
+/// The words that hold a job back. A job named beside none of them is a job
+/// handed over.
+const HOLDING_BACK: [&str; 15] = [
+    "off",
+    "not",
+    "never",
+    "no",
+    "hold",
+    "held",
+    "until",
+    "wait",
+    "avoid",
+    "away",
+    "without",
+    "restricted",
+    "exclude",
+    "excluded",
+    "reserved",
+];
+
+/// **Whether one sentence of the text names the held job and holds it back.**
+/// Sentences end at a full stop, a semicolon, an exclamation or question mark,
+/// or a line break, so a charter that lists the job in one line and says "not"
+/// in another does not count.
+fn holds_the_job_back(text: &str) -> bool {
+    text.to_lowercase()
+        .split(['.', ';', '!', '?', '\n'])
+        .filter(|sentence| sentence.contains(HELD_OFF))
+        .any(|sentence| {
+            sentence
+                .split(|c: char| !c.is_alphanumeric() && c != '\'')
+                .any(|word| HOLDING_BACK.contains(&word) || word.ends_with("n't"))
+        })
+}
 
 /// **The hold is where the second assistant's own boot looks.**
 ///
-/// A rule it holds that is marked to ride the boot, or a line in its charter.
-/// A plain claim on it is not carried, and neither is a message in its box. The
-/// setup hands it two things and names the third nowhere, so the word being
-/// there means a hold put it there.
+/// A rule it holds that is marked to ride the boot, or a line in its charter,
+/// and the line names the job and holds it back. A plain claim on it is not
+/// carried, and neither is a message in its box. A line that only names the job
+/// is a handover, which the brief also does: the pile the helper is given
+/// includes it. Read off the boundary the brief's sitting left, never the live
+/// room, so a hold a later sitting writes cannot satisfy it.
 async fn the_hold_is_on_the_helper(seen: &Observed<'_>) -> Result<(), String> {
     let after = after_the_brief(seen)?;
     let helper = bots_on(&after.board)
@@ -3005,7 +3042,7 @@ async fn the_hold_is_on_the_helper(seen: &Observed<'_>) -> Result<(), String> {
         .filter_map(|bot| bot["handle"].as_str().map(str::to_string))
         .next()
         .ok_or("there is no second assistant, so there is nothing to hold off")?;
-    let on_it = |text: &str| text.to_lowercase().contains(HELD_OFF);
+    let on_it = holds_the_job_back;
     // A rule rides its owner's boot only when it is marked to.
     let in_a_carried_rule = search_hits(&after.world)
         .into_iter()
@@ -3020,15 +3057,15 @@ async fn the_hold_is_on_the_helper(seen: &Observed<'_>) -> Result<(), String> {
     if in_a_carried_rule {
         return Ok(());
     }
-    // ⚠️ The charter is read live: a snapshot's prose hit is a cut snippet, and a
-    // hold written late in a charter would read as absent.
-    let read = seen
-        .room
-        .call("recall", json!({"subject": helper, "charter": true}))
-        .await;
-    let parsed = read_json(&read)?;
+    // ⚠️ The charter comes from the boundary's own whole-charter reading, not the
+    // world snapshot, whose prose hit is a cut snippet: a hold written late in a
+    // charter would read as absent there.
+    let parsed = read_json(&after.charters)?;
     let in_charter = parsed["objects"]
-        .get(0)
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|object| object["id"] == helper.as_str())
         .and_then(|object| object["charter"].as_str())
         .is_some_and(on_it);
     match in_charter {

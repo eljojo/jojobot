@@ -61,7 +61,7 @@ says which is possible before anyone has run it:
 | `app_landed` | the key the entry names | OCCUPANT. A commit and a suite are plain values. |
 | the split-bill discussion on the ordering phase | five locks across three sittings, each asked at the end of its own: January, the question reached from a work item by kind and by any link; May, Martin's answer reached through Martin, and January's question still readable; September, Krusty's closing word reached through Krusty, and May's answer still readable | PRODUCT if there is no way to keep successive entries on one item without the later one replacing the earlier. OCCUPANT if the model overwrote the earlier entry or attributed an answer to the wrong person. |
 | `split_bill` | the key the entry names | OCCUPANT if the slot names the earlier state, the wrong closer or the wrong month. PRODUCT only if the closer and the month could not be kept at all. |
-| Radio | nobody | **Never mentioned, so there was none.** A transcript read and unlockable: no lock can ask about what nobody said. |
+| Radio | nobody | **Never mentioned as part of the campaign, so there was none.** The only radios in the story are the staff's, in September, as what the misread quote meant. A transcript read and unlockable: no lock can ask about what nobody said. |
 
 Each sitting's own locks are floors. **They say what the sitting itself stored**,
 so December's reds read against a column of greens.
@@ -423,7 +423,7 @@ window  phase-end
 >
 > Nobody will answer you, but your answer is being read. You must answer.
 >
-> start jojobot as assistant — it is 10 December 2026 and I need the retrospective on the Krusty Burger launch and the ordering app. Keep each answer where a later sitting of yours can find it, under the name I give it, on whatever it is about. budget_truth: what the real budget was, as a number in thousands. owners: who owned each part of the launch. approval: which draft of the film Lisa approved, as the draft number. spot_done: whether the 30 was done, yes or no. slips: how many times a milestone on the film's critical path slipped, as a number. undelivered: what we committed to and did not deliver. For the app, app_next: what is next and what it is waiting on. menu_first: who decided what goes first, in their words, and what was turned down. rests_on_misread: what we believed that rested on something misread. never_asked: which question we drafted and never asked. app_landed: what has landed, with the commits. split_bill: what the discussion about splitting one bill between guests concluded, who closed it, and in which month. And was there ever any radio?
+> start jojobot as assistant — it is 10 December 2026 and I need the retrospective on the Krusty Burger launch and the ordering app. Nothing has changed on the film, the stations or the print ads since September. Keep each answer where a later sitting of yours can find it, under the name I give it, on whatever it is about. budget_truth: what the real budget was, as a number in thousands. owners: who owned each part of the launch. approval: which draft of the film Lisa approved, as the draft number. spot_done: whether the 30 was done, yes or no. slips: how many times a milestone on the film's critical path slipped, as a number. undelivered: what we committed to and did not deliver. For the app, app_next: what is next and what it is waiting on. menu_first: who decided what goes first, in their words, and what was turned down. rests_on_misread: what we believed that rested on something misread. never_asked: which question we drafted and never asked. app_landed: what has landed, with the commits. split_bill: what the discussion about splitting one bill between guests concluded, who closed it, and in which month. And was there ever any radio?
 
 ```locks
 # December's slots. Each is the key the entry names. The answer lists only
@@ -459,10 +459,12 @@ window  phase-end
 # to be the one about that deliverable. No edge shape is asked for: a key
 # holding the handle counts, and a name written into a sentence does not.
 #
-# The fragments are `pot` in "spot", `rint` in "print", `ocial` in "social"
-# and `vent` in "event", which are the operator's own words for them. A model
-# that names a record unlike the operator's word reads as red here, and the
-# room says so rather than pretending the fragment cannot miss.
+# The fragments are `pot` in "spot", `rint` in "print" and `ocial` in "social",
+# which are the operator's own words for them. The launch event takes the whole
+# word `event`, in any case: the fragment `vent` is also in "inventory", which
+# is what Ralph booked for the print ads. A model that names a record unlike
+# the operator's word reads as red here, and the room says so rather than
+# pretending the fragment cannot miss.
 
 recall {"fields": [{"value": "person:milhouse"}]}
 carries person:milhouse
@@ -490,7 +492,7 @@ window  phase-end
 
 recall {"fields": [{"value": "person:ralph"}]}
 carries person:ralph
-carries vent
+carries-any-case event
 say     December: nothing about the launch event holds Ralph as a value, so who owns it is prose and not a thing a walk can follow
 window  phase-end
 

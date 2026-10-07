@@ -79,10 +79,13 @@ not in it cannot be kept. The boot says how many rules it has seats for, so the
 trap is solvable from what a model reads.
 
 **The hold lock reads what the helper's own boot carries**: a rule it holds that
-is marked to ride the boot, or a line in its charter. It does not read that the
-words say "hold". A plain claim that is not marked, and a message in its box,
-are not what its boot carries. The setup names no espresso manual, so only the
-hold can put the word there.
+is marked to ride the boot, or a line in its charter. The sentence has to name
+the espresso manual and hold it back, with one of a short list of words such as
+"off", "not" or "until". A sentence that only names it is a handover, and the
+brief hands the helper a pile that includes it. A plain claim that is not
+marked, and a message in its box, are not what its boot carries. The lock reads
+the boundary the brief's sitting left, charters included, so a hold the cold
+sitting writes cannot satisfy it.
 
 ## The identity rule — binding, and the same as every room's
 

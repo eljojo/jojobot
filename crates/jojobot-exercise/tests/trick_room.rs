@@ -205,6 +205,9 @@ enum Hold {
     NotCarried,
     /// A line in the helper's charter, which its boot carries.
     InCharter,
+    /// A rule on the helper marked to ride its boot that hands it the job and
+    /// holds nothing back.
+    HandedTheJob,
 }
 
 /// **One first sitting, every choice named.** `right()` is the sitting that
@@ -567,6 +570,16 @@ async fn played(room: &Surface, sid: &str, sitting: Sitting) {
             )
             .await;
             assert!(!said.contains("\"status\":\"blocked\""), "{said}");
+        }
+        Hold::HandedTheJob => {
+            note(
+                room,
+                sid,
+                "bot:gamma",
+                "Your reading: power loss, consensus, and the espresso manual.",
+                json!({"fields": {"starred": "true"}}),
+            )
+            .await
         }
         Hold::OnTheAssistant => {
             note(
@@ -1194,6 +1207,55 @@ async fn the_hold_lock_reds_when_the_claim_on_the_helper_is_not_carried() {
     })
     .await;
     assert_eq!(held, all_but(&[HOLD]), "{said}");
+}
+
+/// **A job handed to the helper is not a hold on it.** The rule names the
+/// espresso manual and rides the helper's boot, and it says nothing that keeps
+/// the helper off the job.
+#[tokio::test]
+async fn the_hold_lock_reds_when_the_helper_is_handed_the_job_and_nothing_holds_it_back() {
+    let (held, said) = held_after(Sitting {
+        hold: Hold::HandedTheJob,
+        ..right()
+    })
+    .await;
+    assert_eq!(held, all_but(&[HOLD]), "{said}");
+}
+
+/// **A hold written after the brief ended is not a hold the brief wrote.** The
+/// brief leaves the hold as a message and nothing on the helper. A charter line
+/// is written after that, as a cold reader that found the message would write
+/// it. The charter holds the job when the room is read live, and the lock
+/// still reds, because it reads the room as the brief left it.
+#[tokio::test]
+async fn a_hold_written_after_the_brief_does_not_satisfy_the_hold_lock() {
+    let (_room, surface, sid) = furnished().await;
+    played(
+        &surface,
+        &sid,
+        Sitting {
+            hold: Hold::MessageOnly,
+            ..right()
+        },
+    )
+    .await;
+    let boundaries = around_the_brief(&surface).await;
+    let said = as_the_occupant(
+        &surface,
+        &sid,
+        "set_charter",
+        json!({"bot": "gamma",
+               "prose": "You read what the operator does not get to. Stay off the espresso manual until told otherwise."}),
+    )
+    .await;
+    assert!(!said.contains("\"status\":\"blocked\""), "{said}");
+    let live = surface
+        .call("recall", json!({"subject": "bot:gamma", "charter": true}))
+        .await;
+    assert!(live.contains("espresso"), "{live}");
+    let outcomes = judge_all(&surface, &boundaries).await;
+    let held: Vec<bool> = outcomes.iter().map(|o| o.held).collect();
+    assert_eq!(held, all_but(&[HOLD]), "{}", saying(&outcomes));
 }
 
 /// **A hold sent as a message and nowhere on the helper is not on the helper.**

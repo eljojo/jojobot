@@ -101,6 +101,11 @@ pub struct Boundary {
     /// A boot that resumes nothing writes nothing, so taking this costs the
     /// room no state.
     pub board: String,
+    /// **Every bot's charter as it stood when the phase ended.** A charter is
+    /// whole here, where the world snapshot above carries a prose hit cut to a
+    /// snippet, and it is read at the boundary so a later phase that writes one
+    /// cannot change what a check about this phase reads.
+    pub charters: String,
     /// **What the locks that ask at a phase's end were answered when it ended.**
     /// Each is a live query sent to the room at this boundary, never a needle
     /// over the snapshot above.
@@ -1376,6 +1381,9 @@ pub async fn boundary_asking(
     let board = room
         .call("start_here", json!({"bot": "assistant", "brief": true}))
         .await;
+    let charters = room
+        .call("recall", json!({"kind": "bot", "charter": true}))
+        .await;
     let runs_offered = serde_json::from_str::<serde_json::Value>(&board)
         .ok()
         .and_then(|b| b["session"]["choices"].as_array().map(Vec::len))
@@ -1386,6 +1394,7 @@ pub async fn boundary_asking(
         mail,
         world: format!("{entities}\n{everything}"),
         board,
+        charters,
         answers,
     }
 }
@@ -1415,6 +1424,7 @@ mod tests {
             world: String::new(),
             runs_offered: 0,
             board: String::new(),
+            charters: String::new(),
             answers: Vec::new(),
         }
     }
@@ -1809,6 +1819,7 @@ mod tests {
             mail: "what the board reported".into(),
             runs_offered: 2,
             board: "the runs the door offered".into(),
+            charters: String::new(),
             answers: Vec::new(),
         }];
         let rendered = run.rendered(None);

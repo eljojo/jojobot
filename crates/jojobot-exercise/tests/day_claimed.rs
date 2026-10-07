@@ -59,6 +59,7 @@ fn at(before: &str, world: &str) -> Boundary {
         mail: String::new(),
         world: world.to_string(),
         board: String::new(),
+        charters: String::new(),
         runs_offered: 0,
         answers: Vec::new(),
     }

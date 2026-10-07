@@ -574,6 +574,16 @@ async fn december(lab: &mut Lab, wrong: Wrong) {
             json!({"fields": {"owners": "person:ralph"}}),
         )
         .await;
+        // Ralph's print booking, filed under a key that names the inventory and
+        // holds his handle. It is not the event, and a needle that is a
+        // fragment of the word `event` can match the word `inventory`.
+        lab.say(
+            &sid,
+            "work:first-mix",
+            "Ralph booked the print inventory.",
+            json!({"fields": {"print_inventory": "person:ralph"}}),
+        )
+        .await;
     } else {
         lab.say(
             &sid,
