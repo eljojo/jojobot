@@ -214,6 +214,16 @@ impl Jojobot {
             .find(|carrier| carrier.interface().matched_by(&projected).is_some())
             .and_then(|carrier| carrier.ending());
         let setting = attention::due_keys(&carriers);
+        let finished = if jojobot_domain::memory::kinds::holds_columns(subject.kind_token()) {
+            format!(
+                " If the work is finished, set `{}` to `{}`: it keeps its dates and stops \
+                 falling due.",
+                jojobot_domain::memory::kinds::STATUS,
+                jojobot_domain::memory::kinds::FINISHED,
+            )
+        } else {
+            String::new()
+        };
         let way_out = match ending {
             Some(ending) => format!(
                 "To remove it, write '{}' as one of {}: this one keeps its day, so ending it is \
@@ -231,7 +241,7 @@ impl Jojobot {
             format!(
                 "Nothing was written. '{key}' is jojobot's own key and a caller does not {}. \
                  jojobot sets it from the day a thing carries and keeps it current. The keys \
-                 that set a due day are {}. To move it, change one of them. {way_out}",
+                 that set a due day are {}. To move it, change one of them. {way_out}{finished}",
                 if writes { "write it" } else { "clear it" },
                 setting.join(", "),
             ),
