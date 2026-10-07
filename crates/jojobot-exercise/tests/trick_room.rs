@@ -3,7 +3,7 @@
 //! Nothing here drives a model. Each lock is run against a real room whose
 //! state is put there by hand, through the verbs, the way an occupant would.
 //!
-//! **Eleven locks, and each is proven twice.** A first sitting that wrote every
+//! **Thirteen locks, and each is proven twice.** A first sitting that wrote every
 //! fact where its reader looks holds all of them. A first sitting that wrote
 //! ONE fact in the convenient wrong place reds exactly the lock that reads it.
 //! Those are the discrimination cases, and the solvability cases are named
@@ -91,12 +91,14 @@ const CHAIRS_BEFORE: usize = 2;
 const CHAIRS_AFTER: usize = 3;
 const DESK_BEFORE: usize = 4;
 const DESK_AFTER: usize = 5;
-const MAUDE: usize = 6;
-const NUMBERS: usize = 7;
-const COUNT: usize = 8;
-const RULE: usize = 9;
-const HOLD: usize = 10;
-const LOCKS: usize = 11;
+const TICKET_OWED: usize = 6;
+const NOT_ON_BART: usize = 7;
+const MAUDE: usize = 8;
+const NUMBERS: usize = 9;
+const COUNT: usize = 10;
+const RULE: usize = 11;
+const HOLD: usize = 12;
+const LOCKS: usize = 13;
 
 /// **Where the fern's pause goes.**
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -141,6 +143,24 @@ enum Desk {
     /// Both days under a key of the model's own, which nothing reads as a day
     /// something is owed.
     InventedKey,
+}
+
+/// **Where the refund window's closing day goes.**
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Ticket {
+    /// The tickets as a thing of their own, carrying the day the window runs
+    /// out.
+    OnTheTickets,
+    /// A promise to claim the refund, owed on the day and regarding the
+    /// tickets.
+    AsAPromise,
+    /// The day carried by the person who bought them.
+    OnThePerson,
+    /// The tickets as a thing of their own, the day in a sentence and under a
+    /// key nothing reads as a day something is owed.
+    InventedKey,
+    /// The tickets as a thing of their own, the day only in a sentence.
+    InAProse,
 }
 
 /// **What each number is backed as.**
@@ -189,6 +209,7 @@ struct Sitting {
     chairs: Chairs,
     maude: Maude,
     desk: Desk,
+    ticket: Ticket,
     donuts: Donuts,
     rule: Rule,
     hold: Hold,
@@ -200,6 +221,7 @@ fn right() -> Sitting {
         chairs: Chairs::PromiseOnTheDay,
         maude: Maude::Edge,
         desk: Desk::Corrected,
+        ticket: Ticket::OnTheTickets,
         donuts: Donuts::Apart,
         rule: Rule::FirstOnly,
         hold: Hold::OnTheHelper,
@@ -352,6 +374,79 @@ async fn played(room: &Surface, sid: &str, sitting: Sitting) {
                 sid,
                 "thing:standing-desk",
                 "Correction: the warranty runs out on 2026-12-10.",
+                json!({}),
+            )
+            .await
+        }
+    }
+
+    // The tickets, and the day the refund window closes.
+    if sitting.ticket != Ticket::OnThePerson {
+        as_the_occupant(
+            room,
+            sid,
+            "add_entity",
+            json!({"kind": "thing", "handle": "tau", "name": "The show tickets",
+                   "source": "user-named"}),
+        )
+        .await;
+    }
+    match sitting.ticket {
+        Ticket::OnTheTickets => {
+            note(
+                room,
+                sid,
+                "thing:tau",
+                "The refund window on the tickets closes.",
+                json!({"fields": {"runs_out": "2026-12-01"}}),
+            )
+            .await
+        }
+        Ticket::AsAPromise => {
+            as_the_occupant(
+                room,
+                sid,
+                "add_entity",
+                json!({"kind": "promise", "handle": "return-the-wrench",
+                       "name": "Claim the refund", "source": "user-named",
+                       "parent": "person:bart"}),
+            )
+            .await;
+            note(
+                room,
+                sid,
+                "promise:return-the-wrench",
+                "Claim the refund before the window closes.",
+                json!({"fields": {"promised_by": "2026-12-01", "regarding": "thing:tau"}}),
+            )
+            .await
+        }
+        Ticket::OnThePerson => {
+            note(
+                room,
+                sid,
+                "person:bart",
+                "Bought tickets for the show on 2026-11-14.",
+                json!({"fields": {"runs_out": "2026-12-01"}}),
+            )
+            .await
+        }
+        Ticket::InventedKey => {
+            note(
+                room,
+                sid,
+                "thing:tau",
+                "The refund window closes on 2026-12-01.",
+                json!({"fields": {"refund_by": "2026-12-01"}}),
+            )
+            .await
+        }
+        Ticket::InAProse => {
+            note(
+                room,
+                sid,
+                "thing:tau",
+                "The refund window closes on 2026-12-01.",
                 json!({}),
             )
             .await
@@ -579,9 +674,9 @@ async fn the_entries_name_no_verb_no_key_and_no_place() {
     }
 }
 
-/// **Eleven locks, all in the first phase.**
+/// **Thirteen locks, all in the first phase.**
 #[test]
-fn the_room_has_eleven_locks_in_the_first_sitting() {
+fn the_room_has_thirteen_locks_in_the_first_sitting() {
     let checks = expectations::for_playbook(TRICK_ROOM).expect("the room has expectations");
     let names: Vec<String> = checks.iter().map(|c| c.name().to_string()).collect();
     assert_eq!(names.len(), LOCKS, "{names:?}");
@@ -613,6 +708,7 @@ async fn an_untouched_room_holds_only_the_locks_that_ask_for_an_absence() {
             CHAIRS_AFTER,
             MAUDE,
             DESK_AFTER,
+            TICKET_OWED,
             NUMBERS,
             COUNT,
             RULE,
@@ -923,6 +1019,70 @@ async fn the_desk_lock_reds_when_the_day_is_under_a_key_of_the_models_own() {
     })
     .await;
     assert_eq!(held, all_but(&[DESK_AFTER]), "{said}");
+}
+
+/// **A deadline on the person who bought the tickets is owed as the person.**
+/// The lock that asks whether the window is owed holds, because something
+/// carries the day, and the one that asks that the person is not what falls due
+/// reds. Paired with the solvable cases, which hold both.
+#[tokio::test]
+async fn the_ticket_lock_reds_when_the_deadline_is_on_the_person() {
+    let (held, said) = held_after(Sitting {
+        ticket: Ticket::OnThePerson,
+        ..right()
+    })
+    .await;
+    assert_eq!(held, all_but(&[NOT_ON_BART]), "{said}");
+}
+
+/// **A day under a key nothing reads is never owed**, and a day in a sentence
+/// is not either. Either way the window is lost: the lock that asks whether it
+/// is owed reds, and the one about the person holds because nobody carries it.
+#[tokio::test]
+async fn the_ticket_lock_reds_when_the_day_is_under_a_key_of_the_models_own() {
+    let (held, said) = held_after(Sitting {
+        ticket: Ticket::InventedKey,
+        ..right()
+    })
+    .await;
+    assert_eq!(held, all_but(&[TICKET_OWED]), "{said}");
+}
+
+#[tokio::test]
+async fn the_ticket_lock_reds_when_the_day_is_only_in_a_sentence() {
+    let (held, said) = held_after(Sitting {
+        ticket: Ticket::InAProse,
+        ..right()
+    })
+    .await;
+    assert_eq!(held, all_but(&[TICKET_OWED]), "{said}");
+}
+
+/// **Solvable: a promise regarding the tickets is the other right home.** The
+/// lock reads the outcome and not the route, so it holds.
+#[tokio::test]
+async fn solvable_a_promise_regarding_the_tickets_holds_both_ticket_locks() {
+    let (held, said) = held_after(Sitting {
+        ticket: Ticket::AsAPromise,
+        ..right()
+    })
+    .await;
+    assert_eq!(held, vec![true; LOCKS], "{said}");
+}
+
+/// **Solvable: the tickets are owed after the day and the person never is.**
+#[tokio::test]
+async fn solvable_the_window_is_owed_on_the_tickets_after_it_closes_and_the_person_is_not() {
+    let (_room, surface, sid) = furnished().await;
+    played(&surface, &sid, right()).await;
+    let owed = surface
+        .call(
+            "recall",
+            json!({"fields": [{"key": "due_on"}], "overdue": {"as_of": "2026-12-02"}}),
+        )
+        .await;
+    assert!(owed.contains("\"id\":\"thing:tau\""), "{owed}");
+    assert!(!owed.contains("\"id\":\"person:bart\""), "{owed}");
 }
 
 /// **The operator's numbers on the default backing read back as a guess.**

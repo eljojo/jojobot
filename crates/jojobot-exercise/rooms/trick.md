@@ -8,7 +8,7 @@ write it.
 
 ## Why a room, and what each trap is for
 
-Bots keep writing facts where no later reader looks. Six habits, each an
+Bots keep writing facts where no later reader looks. Seven habits, each an
 instance of one shape: **a fact is written, and the question that needs it is
 answered from somewhere else.**
 
@@ -27,6 +27,9 @@ answered from somewhere else.**
   was written.
 * **Bot coordination.** A helper is set up and then told to stay off one job.
   The hold has to be where the helper's own reader looks.
+* **An occasion's deadline.** Somebody bought tickets, and the refund window
+  closes on a day. The deadline belongs to the tickets. The convenient place is
+  the person, because the person is the one the sentence is about.
 
 **The room gives every fact and never the move.** The entry names no verb and
 no place to look. The brief is the operator talking, in turns inside one
@@ -50,7 +53,7 @@ locks are scoped to the state at the END OF PHASE 1, so a cold sitting that
 finds a note in the wrong place and refiles it cannot hide the misbehaviour
 the room measures.
 
-**The six owed-by-day locks ask at the end of phase 1 too.** What is owed as of
+**The eight owed-by-day locks ask at the end of phase 1 too.** What is owed as of
 a day is computed by the server, so they use the `phase-end` window: the run
 sends each lock's own query when phase 1 ends and keeps the answer, and the lock
 reads that answer, never the finished room.
@@ -59,6 +62,15 @@ reads that answer, never the finished room.
 folding chairs exist at the start as a `thing` with no loop and no promise on
 it. A pause is a promise regarding it, or the thing itself falling due, and the
 lock asks the outcome and not the kind.
+
+**The tickets lock measures where the deadline is filed.** It asks what is owed
+on a day after the window closed, and it is red when the person is what falls
+due and red when nothing is owed at all. It does not decide whether the keys on
+an occasion's record should pass up to the thing it belongs to, which is a
+product question of its own. The room asks only where the model puts the day.
+The person is furniture and the tickets are not: the lock finds the owed day by
+the day itself and the person by the handle the room supplied, never by a
+handle the model invented.
 
 **The rule lock reads the boot, not the model's choice of key.** It does not
 say whether a cold session that was handed a request the rule refuses would
@@ -105,6 +117,9 @@ entity  person:ned-flanders | Ned Flanders
 
 # The thing whose day is given and then corrected.
 entity  thing:standing-desk | The Standing Desk
+
+# The person who buys the tickets. The tickets are the model's to create.
+entity  person:bart | Bart Simpson
 ```
 
 ## Phase 1 — the brief
@@ -126,9 +141,11 @@ entity  thing:standing-desk | The Standing Desk
 > I want a second assistant for the reading I keep not getting to. Give it a name that says what it is for. Hand it the long piece on how filesystems handle power loss, and the paper about consensus that everybody quotes.
 > ---- answer before reading on ----
 > There is a third thing on that pile, the manual for the espresso machine. Keep the second assistant off it until I say otherwise.
+> ---- answer before reading on ----
+> Bart bought tickets for the Krusty show on 2026-11-14, and the refund window closes on 2026-12-01.
 
 ```locks
-# THE SIX OWED-BY-DAY LOCKS ASK AT THE END OF THIS PHASE (`window phase-end`):
+# THE EIGHT OWED-BY-DAY LOCKS ASK AT THE END OF THIS PHASE (`window phase-end`):
 # what is owed as of a day is the server's answer, kept when the phase ends.
 #
 # The pause on a loop that exists. Two days are asked, either side of the one
@@ -175,6 +192,25 @@ recall {"fields": [{"key": "due_on"}], "overdue": {"as_of": "2026-12-11"}}
 carries rhythm:swap-the-air-filter
 carries standing-desk
 say     the standing desk is not owed on 2026-12-11, so the corrected day never reached the warranty
+window  phase-end
+
+# An occasion's deadline. The refund window closes on 2026-12-01 and the day
+# asked is the one after. The owed answer finds a carrier by the keys it holds,
+# so the deadline reads the same whether it sits on the tickets as a day they
+# run out, or as a promise regarding them: the lock asks the outcome and not the
+# route. Two directions. Something owes the day, and the person who bought the
+# tickets is not what owes it; each rests on the air filter being owed, so an
+# answer that lost everything cannot pass the second.
+recall {"fields": [{"key": "due_on"}], "overdue": {"as_of": "2026-12-02"}}
+carries rhythm:swap-the-air-filter
+carries "due_on":"2026-12-01"
+say     nothing is owed on the day the refund window closed, so the deadline was lost or put where nothing computes that it has passed
+window  phase-end
+
+recall {"fields": [{"key": "due_on"}], "overdue": {"as_of": "2026-12-02"}}
+carries rhythm:swap-the-air-filter
+lacks   "id":"person:bart"
+say     the person who bought the tickets is what is owed on 2026-12-02, so the deadline was filed on the person and not on the tickets
 window  phase-end
 
 # THE LOCKS BELOW READ THE STATE AT THE END OF THIS PHASE TOO.
