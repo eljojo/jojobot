@@ -452,10 +452,8 @@ impl Jojobot {
             // resolves the typed handle itself.
             let carried = match self.memory.recall(&address.home).await {
                 Ok(carried) => carried,
-                Err(e @ (MemoryError::Store(_) | MemoryError::Conflict)) => {
-                    return memory_declined("update_fact", e);
-                }
-                Err(_) => Vec::new(),
+                Err(MemoryError::UnknownEntity { .. }) => Vec::new(),
+                Err(e) => return memory_declined("update_fact", e),
             };
             let refused = carried
                 .iter()

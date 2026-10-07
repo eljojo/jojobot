@@ -79,8 +79,9 @@ impl Jojobot {
         //
         // **A store that cannot be read refuses, it does not pass.** The guard
         // cannot say the record carries no role field when it could not read
-        // the record. Any other error means the home resolves to nothing, so
-        // there is nothing to guard and the write below gives its own answer.
+        // the record, whatever the error was. A home that does not exist is
+        // the one miss with nothing to guard: the write below gives its own
+        // answer for it.
         //
         // **The record is found by its local id within the home the store
         // resolves.** A read serves the current handle, so an address typed
@@ -90,10 +91,8 @@ impl Jojobot {
         // would cost the size of the store on every retraction.
         let carried = match self.memory.recall(&address.home).await {
             Ok(carried) => carried,
-            Err(e @ (MemoryError::Store(_) | MemoryError::Conflict)) => {
-                return memory_declined("retract", e);
-            }
-            Err(_) => Vec::new(),
+            Err(MemoryError::UnknownEntity { .. }) => Vec::new(),
+            Err(e) => return memory_declined("retract", e),
         };
         let refused = carried
             .iter()
@@ -869,6 +868,68 @@ mod tests {
                 .expect("retract ok"),
         );
         assert_eq!(landed["retracted"]["status"], "archived", "{landed}");
+    }
+
+    /// **A read that fails with something other than a store error refuses
+    /// too.** A read that could not tell whether the record carries a role field
+    /// says nothing about the record, so the guard cannot pass it. Only a home
+    /// that does not exist has nothing to guard. Paired with the healthy store,
+    /// where taking back an ordinary claim still lands.
+    #[tokio::test]
+    async fn retract_refuses_a_role_record_when_the_read_fails_for_another_reason() {
+        let (healthy, blind) = crate::memory::testing::healthy_and_down(
+            crate::memory::testing::Down::RecallNeverLoaded,
+        );
+        let claim_address = crate::memory::testing::a_claimed_role(&healthy).await;
+
+        let refused = blocked(
+            &blind
+                .retract(Parameters(retract_args(
+                    &claim_address,
+                    "the kinds are gone",
+                )))
+                .await
+                .expect("a refusal is an answer, not a protocol failure"),
+        );
+        assert_eq!(refused["wrote"], false, "{refused}");
+        let after = healthy
+            .memory
+            .fields(&EntityId("bot:gamma".into()))
+            .await
+            .expect("fields ok");
+        assert!(
+            after.contains_key("role/dev-dispatch/holder"),
+            "the claim's holder left the fold with the read failing: {after:?}"
+        );
+
+        let address = a_record(&healthy, "an ordinary claim").await;
+        let landed = json_of(
+            &healthy
+                .retract(Parameters(retract_args(&address, "it did not happen")))
+                .await
+                .expect("retract ok"),
+        );
+        assert_eq!(landed["retracted"]["status"], "archived", "{landed}");
+    }
+
+    /// **A home that does not exist is the one read failure the guard passes.**
+    /// There is nothing on it to guard, so the answer is the write's own: the
+    /// unknown handle, with the way to create it. Paired with the refusals
+    /// above, which a guard that passed every read failure would not give.
+    #[tokio::test]
+    async fn retract_of_an_unknown_home_gets_the_unknown_entity_answer() {
+        let jojobot = handler();
+        let refused = blocked(
+            &jojobot
+                .retract(Parameters(retract_args(
+                    "person:nobody#f1",
+                    "no such thing",
+                )))
+                .await
+                .expect("a refusal is an answer, not a protocol failure"),
+        );
+        assert_eq!(refused["wrote"], false, "{refused}");
+        assert_eq!(refused["attempted"], "person:nobody", "{refused}");
     }
 
     /// **A role's own record cannot be taken back through the handle its bot

@@ -2715,6 +2715,67 @@ async fn update_fact_refuses_to_archive_a_role_record_when_the_store_cannot_be_r
     assert_ne!(landed["status"], "blocked", "{landed}");
 }
 
+/// **A read that fails with something other than a store error refuses an
+/// archive too**, for the reason `retract`'s own case gives. Paired with the
+/// healthy store, where archiving an ordinary claim still lands.
+#[tokio::test]
+async fn update_fact_refuses_to_archive_a_role_record_when_the_read_fails_for_another_reason() {
+    let (healthy, blind) = healthy_and_down(crate::memory::testing::Down::RecallNeverLoaded);
+    let claim_address = a_claimed_role(&healthy).await;
+
+    let refused = json_of(
+        &blind
+            .update_fact(Parameters(UpdateFactArgs {
+                status: Some("archived".into()),
+                ..update_args(&claim_address)
+            }))
+            .await
+            .expect("a refusal is an answer, not a protocol failure"),
+    );
+    assert_eq!(refused["status"], "blocked", "{refused}");
+    assert_eq!(refused["wrote"], false, "{refused}");
+    let after = healthy
+        .memory
+        .fields(&EntityId("bot:gamma".into()))
+        .await
+        .expect("fields ok");
+    assert!(
+        after.contains_key("role/dev-dispatch/holder"),
+        "the claim's holder left the fold with the read failing: {after:?}"
+    );
+
+    let ordinary =
+        address_of(&capture_ok(&healthy, capture_args("person:alpha", "ordinary")).await);
+    let landed = json_of(
+        &healthy
+            .update_fact(Parameters(UpdateFactArgs {
+                status: Some("archived".into()),
+                ..update_args(&ordinary)
+            }))
+            .await
+            .expect("update_fact ok"),
+    );
+    assert_ne!(landed["status"], "blocked", "{landed}");
+}
+
+/// **A home that does not exist is the one read failure the archive guard
+/// passes**, for the reason `retract`'s own case gives.
+#[tokio::test]
+async fn update_fact_archiving_an_unknown_home_gets_the_unknown_entity_answer() {
+    let jojobot = handler();
+    let refused = json_of(
+        &jojobot
+            .update_fact(Parameters(UpdateFactArgs {
+                status: Some("archived".into()),
+                ..update_args("person:nobody#f1")
+            }))
+            .await
+            .expect("a refusal is an answer, not a protocol failure"),
+    );
+    assert_eq!(refused["status"], "blocked", "{refused}");
+    assert_eq!(refused["attempted"], "person:nobody", "{refused}");
+}
+
 /// **A role's own record cannot be archived through the handle its bot wore
 /// before a rename**, for the reason `retract`'s own case gives. Paired with
 /// archiving an ordinary claim through the former handle, which lands.

@@ -343,6 +343,11 @@ pub(crate) enum Down {
     /// A claim read, the one a guard on the record's own fields depends on
     /// before it lets a retraction or an archive through.
     Recall,
+    /// A claim read that fails with something other than a store error: the
+    /// kind set was never loaded, so no handle can be read. The guard above
+    /// has to refuse on this too, because it cannot say a record carries no
+    /// role field when it could not read the record.
+    RecallNeverLoaded,
     /// Every write of a claim: a capture and an edit both fail with a store
     /// error, while every read answers.
     Writes,
@@ -457,9 +462,11 @@ impl Memory for DownMemory {
     async fn list_entities(&self, kind: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError> {
         match self.0 {
             Down::EntityIndex => Err(MemoryError::Store("the entity index cannot be read".into())),
-            Down::TypeRoster | Down::Vocabulary | Down::Recall | Down::Writes => {
-                self.1.list_entities(kind).await
-            }
+            Down::TypeRoster
+            | Down::Vocabulary
+            | Down::Recall
+            | Down::RecallNeverLoaded
+            | Down::Writes => self.1.list_entities(kind).await,
         }
     }
     async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
@@ -487,9 +494,11 @@ impl Memory for DownMemory {
             Down::Vocabulary => Err(MemoryError::Store(
                 "the kind vocabulary cannot be read".into(),
             )),
-            Down::EntityIndex | Down::TypeRoster | Down::Recall | Down::Writes => {
-                self.1.declared_kinds().await
-            }
+            Down::EntityIndex
+            | Down::TypeRoster
+            | Down::Recall
+            | Down::RecallNeverLoaded
+            | Down::Writes => self.1.declared_kinds().await,
         }
     }
 
@@ -502,9 +511,11 @@ impl Memory for DownMemory {
     ) -> Result<Vec<jojobot_domain::memory::types::DeclaredType>, MemoryError> {
         match self.0 {
             Down::TypeRoster => Err(MemoryError::Store("the type roster cannot be read".into())),
-            Down::Vocabulary | Down::EntityIndex | Down::Recall | Down::Writes => {
-                self.1.declared_types().await
-            }
+            Down::Vocabulary
+            | Down::EntityIndex
+            | Down::Recall
+            | Down::RecallNeverLoaded
+            | Down::Writes => self.1.declared_types().await,
         }
     }
     async fn update_entity(
@@ -532,14 +543,19 @@ impl Memory for DownMemory {
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
         match self.0 {
             Down::Writes => Err(MemoryError::Store("a claim cannot be written".into())),
-            Down::EntityIndex | Down::TypeRoster | Down::Vocabulary | Down::Recall => {
-                self.1.capture(fact).await
-            }
+            Down::EntityIndex
+            | Down::TypeRoster
+            | Down::Vocabulary
+            | Down::Recall
+            | Down::RecallNeverLoaded => self.1.capture(fact).await,
         }
     }
     async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
         match self.0 {
             Down::Recall => Err(MemoryError::Store("a claim cannot be read".into())),
+            Down::RecallNeverLoaded => Err(MemoryError::KindsNeverLoaded {
+                attempted: Some(subject.to_string()),
+            }),
             Down::EntityIndex | Down::TypeRoster | Down::Vocabulary | Down::Writes => {
                 self.1.recall(subject).await
             }
@@ -572,9 +588,11 @@ impl Memory for DownMemory {
     ) -> Result<Guarded<Fact>, MemoryError> {
         match self.0 {
             Down::Writes => Err(MemoryError::Store("a claim cannot be written".into())),
-            Down::EntityIndex | Down::TypeRoster | Down::Vocabulary | Down::Recall => {
-                self.1.update_fact(address, patch, caller).await
-            }
+            Down::EntityIndex
+            | Down::TypeRoster
+            | Down::Vocabulary
+            | Down::Recall
+            | Down::RecallNeverLoaded => self.1.update_fact(address, patch, caller).await,
         }
     }
     async fn retract(
