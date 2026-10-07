@@ -91,6 +91,9 @@ mod my_past_runs;
 /// The boot names the operator, and what waits on them is one read away.
 #[path = "user_stories/operator.rs"]
 mod operator;
+/// A bot leaves the operator a message, and no bot can read it back.
+#[path = "user_stories/operators_mailbox.rs"]
+mod operators_mailbox;
 #[path = "user_stories/paragraphs.rs"]
 mod paragraphs;
 #[path = "user_stories/party.rs"]

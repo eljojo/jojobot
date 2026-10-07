@@ -33,8 +33,10 @@ impl Jojobot {
                        nothing. To reach another box, post_message writes into it without reading \
                        it, which is the shape of a request. THE ARCHIVE IS THE EXCEPTION, and it \
                        is not a loophole: a `processed` message comes back unchanged and flagged, \
-                       from any box, because processed is terminal — reading one moves nothing and \
-                       takes nothing on, and it is what a search hit over old mail points at. \
+                       from any bot's box, because processed is terminal — reading one moves nothing \
+                       and takes nothing on, and it is what a search hit over old mail points at. \
+                       THE OPERATOR'S BOX IS NOT A BOT'S: no bot opens a message in it, in any \
+                       state, whoever wrote it. \
                        Same envelope a delivery hands over, seen_before and all: true means \
                        somebody had already taken this message, so it is a leftover rather than \
                        fresh mail. Taking delivery is NOT handling: call mark_processed once you \

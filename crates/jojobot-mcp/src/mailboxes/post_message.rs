@@ -15,6 +15,10 @@ pub struct PostMessageArgs {
     ///
     /// **It must already exist** — a name no bot answers to comes back with
     /// candidates and nothing is written.
+    ///
+    /// **The operator is the one person you may write to**, by their person
+    /// handle (`person:` and the slug): the boot names it under `operator`.
+    /// Nobody else has a box, and no bot reads the operator's box back.
     pub(crate) to: String,
     /// The message itself. Prose: paragraphs are fine.
     ///
@@ -50,8 +54,9 @@ pub struct PostMessageArgs {
 }
 
 /// **A bare name is a bot.** `gamma` and `bot:gamma` address the same colleague, and
-/// a caller writing to one should not have to spell the kind — this surface has
-/// exactly one kind of correspondent.
+/// a caller writing to one should not have to spell the kind — a bot is the
+/// ordinary correspondent. The one person who has a box, the operator, is
+/// addressed by a full handle and never by a bare name.
 pub(crate) fn bot_handle(named: &str) -> EntityId {
     let named = named.trim();
     match named.contains(':') {
@@ -126,6 +131,12 @@ impl Jojobot {
                     .map(|b| b.as_str().to_string())
                     .collect::<Vec<_>>()
                     .join(", "),
+            ),
+            // A person is not booted and has no creation to finish: the
+            // operator's box opens at the first post to them.
+            OwnBox::None if addressee.kind() == Some(EntityKind::PERSON) => format!(
+                "Nothing was found. '{addressee}' has no mailbox yet: the operator's box opens \
+                 at the first post_message to them, and nothing has been sent."
             ),
             OwnBox::None => match named_by(addressee, &bots) {
                 Some((owner, via_alias)) => format!(
@@ -254,9 +265,12 @@ impl Jojobot {
                        whose mail is missing or doubled both come back status: blocked with \
                        nothing written. The answer says which — the first is a name to fix, \
                        offered the bots that do exist; the second is damage on a bot that really \
-                       is there, and it says what repairs it. There is no verb that opens a box: a \
-                       box is some bot's own and arrives with it, so a name nobody answers to is a \
-                       name nobody drains. Returns the stored message, including the id that \
+                       is there, and it says what repairs it. No verb opens a bot's \
+                       box: it arrives with the bot, so a name nobody answers to is a name nobody \
+                       drains. THE ONE PERSON YOU MAY ADDRESS IS THE OPERATOR, by their person \
+                       handle (`person:` and the slug), which the boot names under `operator`: your first post to them \
+                       opens their box, nobody else has one, and no bot reads it back, you \
+                       included. Returns the stored message, including the id that \
                        read_message and mark_processed later target. Give it a `subject`: one line \
                        saying what the message is about, which is what a reader sees on the \
                        listing and on a search hit before opening anything — put it there rather \
@@ -331,9 +345,17 @@ impl Jojobot {
                  its full handle."
             )));
         }
-        let destination = match self.own_box(&addressee).await {
-            OwnBox::The(name) => name,
-            elsewhere => return Ok(self.no_such_addressee(&addressee, elsewhere).await),
+        // **A person is addressed by their handle, and only the operator has a
+        // box.** Posting to the operator is what opens it the first time.
+        let destination = match addressee.kind() {
+            Some(EntityKind::PERSON) => match self.operators_box(&addressee).await {
+                Ok(name) => name,
+                Err(refused) => return Ok(refused),
+            },
+            _ => match self.own_box(&addressee).await {
+                OwnBox::The(name) => name,
+                elsewhere => return Ok(self.no_such_addressee(&addressee, elsewhere).await),
+            },
         };
         // **Read before the write, and before delivered_with_the_post drains
         // it.** This is the true count for the sender right now — the same
@@ -1062,5 +1084,168 @@ mod tests {
             advice.contains("start_here"),
             "a name nothing answers to still points at the repair that fits it: {advice}",
         );
+    }
+
+    /// **The first post to the operator's handle opens their box, and the post
+    /// lands in it.** The box is named for the person, owned by them, and the
+    /// only one they have: a second post goes to the same box. Counted from the
+    /// store, not from the verb.
+    #[tokio::test]
+    async fn the_first_post_to_the_operator_opens_their_one_box_and_lands() {
+        let jojobot = mailbox_handler();
+        owning(&jojobot, "epsilon").await;
+        name_the_operator(&jojobot, "milhouse").await;
+        assert!(
+            boxes_owned_by(&jojobot, "person:milhouse").await.is_empty(),
+            "naming the operator opens nothing: a post is what opens the box"
+        );
+
+        let first = send(&jojobot, "person:milhouse", "epsilon", "the first note").await;
+        assert_eq!(first["mailbox"], "person-milhouse", "{first}");
+        let opened = boxes_owned_by(&jojobot, "person:milhouse").await;
+        assert_eq!(opened.len(), 1, "one box: {opened:?}");
+        assert_eq!(store_counts(&jojobot, &opened[0]).await, (1, 0, 0));
+
+        send(&jojobot, "person:milhouse", "epsilon", "the second note").await;
+        assert_eq!(
+            boxes_owned_by(&jojobot, "person:milhouse").await,
+            opened,
+            "a second post opens no second box"
+        );
+        assert_eq!(store_counts(&jojobot, &opened[0]).await, (2, 0, 0));
+    }
+
+    /// **Only the operator has a box.** A post to any other person is blocked,
+    /// says so without naming anybody else, and opens nothing; the same call to
+    /// the operator lands, so the refusal is about the addressee.
+    #[tokio::test]
+    async fn a_post_to_a_person_who_is_not_the_operator_is_blocked_and_opens_nothing() {
+        let jojobot = mailbox_handler();
+        owning(&jojobot, "epsilon").await;
+        name_the_operator(&jojobot, "milhouse").await;
+        crate::memory::testing::ensure(&jojobot, "person:ned-flanders").await;
+
+        let refused = json_of(
+            &jojobot
+                .post_message(Parameters(PostMessageArgs {
+                    to: "person:ned-flanders".into(),
+                    sid: as_bot(&jojobot, "epsilon"),
+                    subject: None,
+                    body: "for somebody else".into(),
+                    in_reply_to: None,
+                }))
+                .await
+                .expect("a refusal is an answer"),
+        );
+        assert_eq!(refused["status"], "blocked", "{refused}");
+        assert_eq!(refused["wrote"], false, "{refused}");
+        assert!(
+            !refused.to_string().contains("milhouse"),
+            "the refusal names nobody else: {refused}"
+        );
+        assert!(
+            boxes_owned_by(&jojobot, "person:ned-flanders")
+                .await
+                .is_empty(),
+            "nothing was opened for them"
+        );
+
+        send(&jojobot, "person:milhouse", "epsilon", "for the operator").await;
+        assert_eq!(boxes_owned_by(&jojobot, "person:milhouse").await.len(), 1);
+    }
+
+    /// **With no operator named, a post to a person is blocked with the way to
+    /// name one**, and opens nothing. The same call lands once the operator is
+    /// named, so the refusal is about the missing name.
+    #[tokio::test]
+    async fn a_post_to_a_person_while_nobody_is_the_operator_says_how_to_name_one() {
+        let jojobot = mailbox_handler();
+        owning(&jojobot, "epsilon").await;
+        crate::memory::testing::ensure(&jojobot, "person:milhouse").await;
+
+        let refused = json_of(
+            &jojobot
+                .post_message(Parameters(PostMessageArgs {
+                    to: "person:milhouse".into(),
+                    sid: as_bot(&jojobot, "epsilon"),
+                    subject: None,
+                    body: "for the operator".into(),
+                    in_reply_to: None,
+                }))
+                .await
+                .expect("a refusal is an answer"),
+        );
+        assert_eq!(refused["status"], "blocked", "{refused}");
+        let way = refused["how_to_proceed"].as_str().expect("a way forward");
+        for identifier in ["add_entity", "topic:instance", "operator"] {
+            assert!(way.contains(identifier), "{identifier} is named: {way}");
+        }
+        assert!(boxes_owned_by(&jojobot, "person:milhouse").await.is_empty());
+
+        name_the_operator(&jojobot, "milhouse").await;
+        send(&jojobot, "person:milhouse", "epsilon", "for the operator").await;
+        assert_eq!(boxes_owned_by(&jojobot, "person:milhouse").await.len(), 1);
+    }
+
+    /// **Re-pointing the operator leaves the old box where it is.** The first
+    /// person's box stays, private, with its mail; the new operator gets their
+    /// own box at the first post to them. Nothing is deleted or re-owned.
+    #[tokio::test]
+    async fn naming_a_new_operator_leaves_the_old_operators_box_and_opens_a_new_one() {
+        let jojobot = mailbox_handler();
+        owning(&jojobot, "epsilon").await;
+        name_the_operator(&jojobot, "milhouse").await;
+        send(&jojobot, "person:milhouse", "epsilon", "for the first").await;
+        let old = boxes_owned_by(&jojobot, "person:milhouse").await;
+
+        name_the_operator(&jojobot, "ned-flanders").await;
+        send(&jojobot, "person:ned-flanders", "epsilon", "for the second").await;
+
+        assert_eq!(boxes_owned_by(&jojobot, "person:milhouse").await, old);
+        assert_eq!(store_counts(&jojobot, &old[0]).await, (1, 0, 0));
+        let new = boxes_owned_by(&jojobot, "person:ned-flanders").await;
+        assert_eq!(new.len(), 1);
+        assert_ne!(new, old);
+        // The old operator is no longer addressable: only the one named has a box.
+        let refused = json_of(
+            &jojobot
+                .post_message(Parameters(PostMessageArgs {
+                    to: "person:milhouse".into(),
+                    sid: as_bot(&jojobot, "epsilon"),
+                    subject: None,
+                    body: "to the old operator".into(),
+                    in_reply_to: None,
+                }))
+                .await
+                .expect("a refusal is an answer"),
+        );
+        assert_eq!(refused["status"], "blocked", "{refused}");
+    }
+
+    /// **A box that resembles the operator's name does not stop it opening.**
+    /// A bot's box `person-lisa-box` contains `person-lisa`, which the creation
+    /// screen flags as a resemblance. The operator's box name is derived and its
+    /// owner differs, so the box opens, and the other box is untouched.
+    #[tokio::test]
+    async fn a_box_that_resembles_the_operators_does_not_stop_it_opening() {
+        let jojobot = mailbox_handler();
+        owning(&jojobot, "epsilon").await;
+        // Written straight to the store: the memory screen would refuse a bot
+        // handle this close to the person's, and the box screen is what is
+        // being exercised.
+        a_second_box(&jojobot, "omega", "person-lisa-box").await;
+        name_the_operator(&jojobot, "lisa").await;
+
+        let landed = send(&jojobot, "person:lisa", "epsilon", "for the operator").await;
+        assert_eq!(landed["mailbox"], "person-lisa", "{landed}");
+        assert_eq!(
+            boxes_owned_by(&jojobot, "person:lisa").await.len(),
+            1,
+            "the person has one box"
+        );
+        let other = boxes_owned_by(&jojobot, "bot:omega").await;
+        assert_eq!(other.len(), 1, "the other box is still its owner's");
+        assert_eq!(other[0].as_str(), "person-lisa-box");
+        assert_eq!(store_counts(&jojobot, &other[0]).await, (0, 0, 0));
     }
 }

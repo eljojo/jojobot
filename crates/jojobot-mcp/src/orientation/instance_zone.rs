@@ -64,28 +64,42 @@ impl Jojobot {
     }
 }
 
+/// **The sentence that says the operator has no entity yet, and which two
+/// writes make one.** The boot carries it as its operator line and a post to a
+/// person who is not named carries it as the way forward, so the two cannot
+/// tell a caller different things.
+pub(crate) fn no_operator_yet() -> String {
+    format!(
+        "no entity yet: add_entity a person, then capture {INSTANCE_OPERATOR_KEY} on \
+         {INSTANCE_RECORD}"
+    )
+}
+
 impl Jojobot {
+    /// **The person the instance's record names as its operator**, or `None`
+    /// when the record or the key is absent or the store cannot be read. A
+    /// store that cannot be read names nobody: the caller cannot be told who
+    /// the operator is by guessing.
+    pub(crate) async fn instance_operator(&self) -> Option<EntityId> {
+        self.memory
+            .fields(&EntityId(INSTANCE_RECORD.to_string()))
+            .await
+            .ok()
+            .and_then(|fields| fields.get(INSTANCE_OPERATOR_KEY).cloned())
+            .map(|raw| raw.trim().to_string())
+            .filter(|handle| !handle.is_empty())
+            .map(EntityId)
+    }
+
     /// **The boot's one line about the operator**: the handle the instance's
     /// record holds under [`INSTANCE_OPERATOR_KEY`], or a sentence saying there
     /// is no entity yet and which two writes make one. A record that is absent,
     /// a key that is absent and a store that cannot be read all say the same
     /// thing, because the boot cannot name a person it did not read.
     pub(crate) async fn operator_answer(&self) -> serde_json::Value {
-        let held = self
-            .memory
-            .fields(&EntityId(INSTANCE_RECORD.to_string()))
-            .await
-            .ok()
-            .and_then(|fields| fields.get(INSTANCE_OPERATOR_KEY).cloned())
-            .map(|raw| raw.trim().to_string())
-            .filter(|handle| !handle.is_empty());
-        match held {
-            Some(handle) => handle.into(),
-            None => format!(
-                "no entity yet: add_entity a person, then capture {INSTANCE_OPERATOR_KEY} on \
-                 {INSTANCE_RECORD}"
-            )
-            .into(),
+        match self.instance_operator().await {
+            Some(operator) => operator.as_str().into(),
+            None => no_operator_yet().into(),
         }
     }
 }

@@ -1390,6 +1390,71 @@ fn add_entity_names_the_argument_that_gives_a_new_thing_its_first_fields() {
     }
 }
 
+/// **The operator's box is taught where a caller meets it.** A bot reads
+/// `post_message` to learn whom it may write to, `read_message` to learn what
+/// it may open, and `list_sent` to learn what it may see of its own outbox. Each
+/// says what is different about the one person who has a box: they are
+/// addressed by their handle, no bot reads their mail back, and an outbox
+/// listing shows only the id, time and subject.
+///
+/// Pinned on the words only those sentences carry, read from the published
+/// descriptions and the `to` argument's schema, which is where a client reads
+/// them.
+#[test]
+fn the_operators_box_is_taught_where_a_bot_posts_reads_and_lists() {
+    let tools = Jojobot::tool_router().list_all();
+    let tool = |name: &str| {
+        tools
+            .iter()
+            .find(|t| t.name.as_ref() == name)
+            .unwrap_or_else(|| panic!("the surface offers {name}"))
+    };
+    let described = |name: &str| {
+        tool(name)
+            .description
+            .as_deref()
+            .unwrap_or_default()
+            .to_string()
+    };
+
+    let post = described("post_message");
+    // `first post` is the clause that says the post is what opens their box;
+    // `operator` alone also sits in the argument's own backticks.
+    for word in ["operator", "person:", "handle", "first post"] {
+        assert!(
+            post.contains(word),
+            "post_message does not say `{word}`: {post}"
+        );
+    }
+    let schema = serde_json::to_value(&*tool("post_message").input_schema).expect("schema");
+    let to = schema["properties"]["to"]["description"]
+        .as_str()
+        .expect("`to` carries a description");
+    for word in ["operator", "person:"] {
+        assert!(
+            to.contains(word),
+            "post_message's `to` does not say `{word}`: {to}"
+        );
+    }
+    let read = described("read_message");
+    assert!(
+        read.to_lowercase().contains("operator"),
+        "read_message does not say the operator's box is never opened: {read}"
+    );
+    let listed = described("list_sent");
+    // The sentence about mail to the operator is the first place the word
+    // appears, and `subject` must sit within it.
+    let lower = listed.to_lowercase();
+    let at = lower
+        .find("operator")
+        .expect("list_sent names the operator");
+    let window: String = lower[at..].chars().take(120).collect();
+    assert!(
+        window.contains("subject"),
+        "list_sent does not say mail to the operator is listed by subject: {listed}"
+    );
+}
+
 /// **The second call for who reports to a bot is named where `reports_to` is
 /// taught.** The colleagues view says only whom each bot reports to, so the
 /// surface that tells a bot to write the key also says how to read the other

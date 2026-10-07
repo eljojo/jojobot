@@ -587,6 +587,36 @@ impl Story {
         .unwrap()
     }
 
+    /// **What the mail store holds in every box a handle owns**, counted from
+    /// the store itself and not from any verb: `(new, read, processed)` summed.
+    /// A story uses it for the claim a verb cannot make about itself, that a
+    /// refusal moved nothing and that a post landed.
+    pub async fn mail_held_by(&self, owner: &str) -> (usize, usize, usize) {
+        use jojobot_domain::mailbox::Mailboxes;
+        let boxes = self.mail.list_mailboxes().await.expect("the board reads");
+        boxes
+            .iter()
+            .filter(|held| held.owner.as_str() == owner)
+            .fold((0, 0, 0), |(new, read, done), held| {
+                (
+                    new + held.counts.new,
+                    read + held.counts.read,
+                    done + held.counts.processed,
+                )
+            })
+    }
+
+    /// **Retire a message in the store itself**, the way the operator's own
+    /// reading surface will: no verb on the served surface does this for a
+    /// message in a person's box, so the story reaches past it.
+    pub async fn retire_in_the_store(&self, id: &str) {
+        use jojobot_domain::mailbox::Mailboxes;
+        self.mail
+            .mark_processed(&jojobot_domain::mailbox::MessageId(id.to_string()), None)
+            .await
+            .expect("the store retires it");
+    }
+
     /// **Open the operator's own page for a handle, the way a browser does.**
     ///
     /// The whole login runs — the gate turns the browser away, the issuer

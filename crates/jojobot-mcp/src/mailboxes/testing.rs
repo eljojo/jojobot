@@ -140,22 +140,49 @@ pub(crate) async fn a_second_box(jojobot: &Jojobot, bot: &str, name: &str) {
     );
 }
 
-/// A person's box, **written straight to the store**: no verb on this surface
-/// opens one yet, and every guard below is about a box that exists. The name is
-/// derived the way the real one is, and the person is the owner. Returns the
-/// box's name.
+/// **The operator's box, opened the way a post opens it**: the person is named
+/// as the operator and the box is opened through the same route the first post
+/// takes. Returns the box's name. Every guard below is about a box that exists,
+/// and this one exists by the real route.
 pub(crate) async fn a_persons_box(jojobot: &Jojobot, person: &str) -> MailboxName {
-    let name = MailboxName(format!("person-{person}"));
-    let written = jojobot
+    name_the_operator(jojobot, person).await;
+    let owner = EntityId::new(EntityKind::PERSON, person);
+    match jojobot.operators_box(&owner).await {
+        Ok(name) => name,
+        Err(refused) => panic!(
+            "the fixture person box for {owner} was never opened, so nothing below is private: \
+             {refused:?}"
+        ),
+    }
+}
+
+/// **Name a person as the instance's operator**, the way the operator does: the
+/// person exists, and `topic:instance` holds their handle under `operator`.
+pub(crate) async fn name_the_operator(jojobot: &Jojobot, person: &str) {
+    let handle = format!("person:{person}");
+    crate::memory::testing::ensure(jojobot, &handle).await;
+    crate::memory::testing::capture_ok(
+        jojobot,
+        CaptureArgs {
+            fields: Some([("operator".to_string(), handle)].into()),
+            provenance: Some("testimony".into()),
+            ..crate::memory::testing::capture_args("topic:instance", "who the operator is")
+        },
+    )
+    .await;
+}
+
+/// Every box a handle owns, from the store's own board read.
+pub(crate) async fn boxes_owned_by(jojobot: &Jojobot, owner: &str) -> Vec<MailboxName> {
+    jojobot
         .mailboxes
-        .create_mailbox(&name, &EntityId::new(EntityKind::PERSON, person), None)
+        .list_mailboxes()
         .await
-        .expect("the store writes it");
-    assert!(
-        matches!(written, mailbox::Guarded::Written(_)),
-        "the fixture person box {name:?} was never opened, so nothing below is private"
-    );
-    name
+        .expect("list_mailboxes ok")
+        .into_iter()
+        .filter(|held| held.owner.as_str() == owner)
+        .map(|held| held.name)
+        .collect()
 }
 
 /// What the store holds in a box, counted from the store's own board read and

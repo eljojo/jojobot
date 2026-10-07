@@ -67,7 +67,10 @@ impl Jojobot {
                        your own mail — your `sid` already says who that is. Pass one to ask after \
                        somebody else's outgoing mail: it is matched exactly against the bot \
                        handle recorded on each message (`bot:gamma`), which is allowed, because \
-                       where a message got to is not private to its sender. Each message may also \
+                       where a message got to is not private to its sender. MAIL TO THE OPERATOR \
+                       is listed by id, time and subject only, even to you and even with \
+                       include_bodies, because no bot reads the operator's box back. Each message \
+                       may also \
                        carry `sender_mail_waiting_at_send`, stamped once when it was posted — see \
                        `post_message`'s own description for what it means; `null` there is unknown, \
                        never zero."
@@ -737,5 +740,43 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// **Asking after mail to a person who has no box yet is not told to boot
+    /// them.** A person is not booted: their box opens at the first post to the
+    /// operator. The refusal says so, and the same question lists the message
+    /// once it has been sent.
+    #[tokio::test]
+    async fn asking_after_a_person_with_no_box_yet_does_not_say_to_boot_them() {
+        let jojobot = mailbox_handler();
+        let sender = owning(&jojobot, "epsilon").await;
+        name_the_operator(&jojobot, "milhouse").await;
+        let ask = || async {
+            json_of(
+                &jojobot
+                    .list_sent(Parameters(ListSentArgs {
+                        limit: None,
+                        sender: None,
+                        to: Some("person:milhouse".into()),
+                        include_bodies: None,
+                        sid: Some(sender.clone()),
+                    }))
+                    .await
+                    .expect("an answer"),
+            )
+        };
+
+        let before = ask().await;
+        assert_eq!(before["status"], "blocked", "{before}");
+        let way = before["how_to_proceed"].as_str().expect("a way forward");
+        assert!(!way.contains("start_here"), "a person is not booted: {way}");
+        assert!(
+            way.contains("post_message"),
+            "the way forward is a post: {way}"
+        );
+
+        send(&jojobot, "person:milhouse", "epsilon", "for the operator").await;
+        let after = ask().await;
+        assert_eq!(after["count"], 1, "{after}");
     }
 }

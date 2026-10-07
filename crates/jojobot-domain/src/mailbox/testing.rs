@@ -680,7 +680,7 @@ pub mod contract {
     /// reach across would make every implementor of a mail store answer a
     /// question about entities; a stated precondition leaves each tier to
     /// satisfy it with the tools it already has.
-    pub const OWNERS: &[&str] = &["bot:gamma", "bot:delta"];
+    pub const OWNERS: &[&str] = &["bot:gamma", "bot:delta", "person:milhouse"];
 
     /// An owner from [`OWNERS`] — the one this suite files boxes under unless a
     /// case is about ownership itself.
@@ -961,6 +961,41 @@ pub mod contract {
         // same handle back for every box.
         assert_eq!(owner_of("inbox"), first);
         assert_eq!(owner_of("errands"), second);
+    }
+
+    /// **A person can own a box, and the board says it is private.** The rule
+    /// every read path rests on is the owner's kind, so it has to survive the
+    /// store: a box a person owns comes back from the board with that owner, and
+    /// is private, while a bot's box beside it is not. Two owners of two kinds
+    /// so a store that answered the same for every box would fail one half.
+    pub async fn a_box_owned_by_a_person_is_private_on_the_board(store: &dyn Mailboxes) {
+        crate::memory::kinds::load_shipped();
+        let bot = EntityId(OWNERS[0].to_string());
+        let person = EntityId(OWNERS[2].to_string());
+        assert_eq!(person.kind(), Some(crate::memory::EntityKind::PERSON));
+        store
+            .create_mailbox(&name("inbox"), &bot, None)
+            .await
+            .expect("create ok")
+            .written()
+            .expect("not blocked");
+        store
+            .create_mailbox(&name("person-milhouse"), &person, None)
+            .await
+            .expect("create ok")
+            .written()
+            .expect("not blocked");
+
+        let listed = store.list_mailboxes().await.expect("list ok");
+        let held = |n: &str| {
+            listed
+                .iter()
+                .find(|m| m.name.as_str() == n)
+                .unwrap_or_else(|| panic!("{n} is on the board: {listed:?}"))
+        };
+        assert_eq!(held("person-milhouse").owner, person);
+        assert!(held("person-milhouse").is_private());
+        assert!(!held("inbox").is_private());
     }
 
     /// **A box is created FOR somebody, so an owner nobody knows is refused.**
@@ -2369,6 +2404,7 @@ pub mod contract {
         a_repoint_refuses_when_the_owner_holds_more_than_one_box(&fresh().await).await;
         a_repoint_refuses_a_destination_name_a_different_owner_already_holds(&fresh().await).await;
         a_box_carries_its_owner_onto_the_board(&fresh().await).await;
+        a_box_owned_by_a_person_is_private_on_the_board(&fresh().await).await;
         a_box_for_an_owner_nobody_knows_is_refused(&fresh().await).await;
         creating_a_near_miss_is_blocked_and_writes_nothing(&fresh().await).await;
         a_confirmed_near_miss_creates_the_sibling_box(&fresh().await).await;
