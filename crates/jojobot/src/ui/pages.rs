@@ -570,10 +570,15 @@ async fn view_section(
         // **The server's own day, in UTC.** A browser states no timezone, and
         // UTC is the same stated fallback every other unzoned read here uses.
         let today = state.clock.today_in(&jiff::tz::TimeZone::UTC);
-        found.retain(|object| attention::owed(&carriers, &object.fields).owed_on(today));
+        found.retain(|object| {
+            attention::owed_as(object.entity.kind.as_token(), &carriers, &object.fields)
+                .owed_on(today)
+        });
         // Oldest due first — see the identical line in recall.rs's own owed
         // read, the other caller of this same domain function.
-        found.sort_by_key(|object| attention::owed(&carriers, &object.fields).staleness());
+        found.sort_by_key(|object| {
+            attention::owed_as(object.entity.kind.as_token(), &carriers, &object.fields).staleness()
+        });
     }
     if found.is_empty() {
         return "<h2>What this view answers</h2>\n\

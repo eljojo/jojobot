@@ -93,12 +93,23 @@ impl Jojobot {
         let watched = |c: &dyn attention::Carrier, key: &str| {
             c.interface().fields.iter().any(|f| f.key == key) || c.also_reads().contains(&key)
         };
+        // **A work item or a project is finished at `done`**, so its status is
+        // watched too: a write that moves it into or out of `done` moves the
+        // stored moment off or back.
+        let kind = subject
+            .kind()
+            .map(|kind| kind.as_token().to_string())
+            .unwrap_or_default();
+        let finishes = jojobot_domain::memory::kinds::holds_columns(&kind);
+        let status = jojobot_domain::memory::kinds::STATUS;
         let touches_incoming = carriers
             .iter()
-            .any(|c| incoming.keys().any(|key| watched(*c, key)));
+            .any(|c| incoming.keys().any(|key| watched(*c, key)))
+            || (finishes && incoming.contains_key(status));
         let touches_cleared = carriers
             .iter()
-            .any(|c| cleared.iter().any(|key| watched(*c, key)));
+            .any(|c| cleared.iter().any(|key| watched(*c, key)))
+            || (finishes && cleared.iter().any(|key| key == status));
         if !touches_incoming && !touches_cleared {
             return (attention::DueMove::Unchanged, false);
         }
@@ -114,7 +125,7 @@ impl Jojobot {
         }
         projected.extend(incoming.iter().map(|(k, v)| (k.clone(), v.clone())));
         (
-            attention::moved_due_moment(&carriers, existing_due_on, &projected),
+            attention::moved_due_moment_as(&kind, &carriers, existing_due_on, &projected),
             attention::due_is_derived(&carriers, &projected),
         )
     }

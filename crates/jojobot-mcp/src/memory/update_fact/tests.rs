@@ -2962,6 +2962,212 @@ async fn a_due_moment_no_carrier_derives_can_be_cleared_and_a_derived_one_cannot
     );
 }
 
+/// **A work item at `done` is not owed, and its date stays on the record.**
+/// The same item at `now` is owed. The stored due moment comes off when the
+/// item is finished and comes back when it leaves `done`, and the cross-kind
+/// owed read, which finds a thing by that stored key, follows. Both the stored
+/// key and the read are asked, so neither can pass alone.
+#[tokio::test]
+async fn a_finished_work_item_is_not_owed_and_comes_back_when_it_is_reopened() {
+    let jojobot = handler();
+    ensure(&jojobot, "project:atlas").await;
+    jojobot
+        .add_entity(Parameters(AddEntityArgs {
+            parent: Some("project:atlas".into()),
+            ..add_args("work", "phi", "phi")
+        }))
+        .await
+        .expect("add ok");
+    let captured = capture_ok(
+        &jojobot,
+        CaptureArgs {
+            provenance: Some("testimony".into()),
+            fields: Some(
+                [
+                    ("decide_by".to_string(), "2026-01-01".to_string()),
+                    ("status".to_string(), "now".to_string()),
+                ]
+                .into_iter()
+                .collect(),
+            ),
+            ..capture_args("work:phi", "wire the shed")
+        },
+    )
+    .await;
+    let address = address_of(&captured);
+
+    let owed_now = |jojobot: &Jojobot| {
+        let jojobot = jojobot.clone();
+        async move {
+            let read = json_of(
+                &jojobot
+                    .recall(Parameters(RecallArgs {
+                        subject: None,
+                        facts: None,
+                        fields: Some(vec![super::recall::KeyFilterArgs {
+                            key: Some("due_on".into()),
+                            value: None,
+                            compare: None,
+                            scope: None,
+                        }]),
+                        overdue: Some(super::recall::OverdueArgs {
+                            as_of: Some("2026-06-01".into()),
+                        }),
+                        ..recall_args("work:phi")
+                    }))
+                    .await
+                    .expect("recall ok"),
+            );
+            read["objects"]
+                .as_array()
+                .expect("objects is an array")
+                .iter()
+                .any(|object| object["id"] == "work:phi")
+        }
+    };
+    assert_eq!(
+        fields_of(&jojobot, "work:phi").await["due_on"],
+        "2026-01-01",
+        "the due moment this case takes off has to be stored first",
+    );
+    assert!(owed_now(&jojobot).await, "at now the item is owed");
+
+    update_ok(
+        &jojobot,
+        UpdateFactArgs {
+            fields: Some(
+                [("status".to_string(), "done".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+            ..update_args(&address)
+        },
+    )
+    .await;
+    let finished = fields_of(&jojobot, "work:phi").await;
+    assert!(finished.get("due_on").is_none(), "{finished}");
+    assert_eq!(
+        finished["decide_by"], "2026-01-01",
+        "the date stays: it says why the item was due",
+    );
+    assert!(!owed_now(&jojobot).await, "at done the item is not owed");
+
+    update_ok(
+        &jojobot,
+        UpdateFactArgs {
+            fields: Some(
+                [("status".to_string(), "now".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+            ..update_args(&address)
+        },
+    )
+    .await;
+    assert_eq!(
+        fields_of(&jojobot, "work:phi").await["due_on"],
+        "2026-01-01",
+        "leaving done puts the stored moment back",
+    );
+    assert!(
+        owed_now(&jojobot).await,
+        "back at now the item is owed again"
+    );
+
+    // **Taking the status off also reopens it**: the cleared side of the same
+    // watch, which a write naming a status does not reach.
+    update_ok(
+        &jojobot,
+        UpdateFactArgs {
+            fields: Some(
+                [("status".to_string(), "done".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+            ..update_args(&address)
+        },
+    )
+    .await;
+    assert!(
+        fields_of(&jojobot, "work:phi")
+            .await
+            .get("due_on")
+            .is_none(),
+        "finished again, so the moment is off again",
+    );
+    update_ok(
+        &jojobot,
+        UpdateFactArgs {
+            clear_fields: Some(vec!["status".into()]),
+            ..update_args(&address)
+        },
+    )
+    .await;
+    assert_eq!(
+        fields_of(&jojobot, "work:phi").await["due_on"],
+        "2026-01-01",
+        "a status that is gone no longer finishes the item",
+    );
+}
+
+/// **The owed read leaves out a finished item whatever it stored.** A work item
+/// written before the mover knew about `done` can hold a stored due moment at
+/// `done`; the read, which finds a thing by that key, must still not return it,
+/// and the same item at `now` is returned.
+#[tokio::test]
+async fn the_owed_read_leaves_out_a_finished_item_that_still_holds_a_stored_moment() {
+    let memory = std::sync::Arc::new(InMemoryMemory::booted());
+    let jojobot = handler_over(memory.clone());
+    ensure(&jojobot, "project:atlas").await;
+    for handle in ["phi", "first-mix"] {
+        let added = json_of(
+            &jojobot
+                .add_entity(Parameters(AddEntityArgs {
+                    parent: Some("project:atlas".into()),
+                    ..add_args("work", handle, handle)
+                }))
+                .await
+                .expect("add ok"),
+        );
+        assert_ne!(added["status"], "blocked", "{added}");
+    }
+    for (handle, status) in [("phi", "done"), ("first-mix", "now")] {
+        memory.fields_past_the_guard(
+            &EntityId(format!("work:{handle}")),
+            &[
+                ("decide_by", "2026-01-01"),
+                ("due_on", "2026-01-01"),
+                ("status", status),
+            ],
+        );
+    }
+    let read = json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                subject: None,
+                fields: Some(vec![super::recall::KeyFilterArgs {
+                    key: Some("due_on".into()),
+                    value: None,
+                    compare: None,
+                    scope: None,
+                }]),
+                overdue: Some(super::recall::OverdueArgs {
+                    as_of: Some("2026-06-01".into()),
+                }),
+                ..recall_args("work:phi")
+            }))
+            .await
+            .expect("recall ok"),
+    );
+    let owed: Vec<&str> = read["objects"]
+        .as_array()
+        .expect("objects is an array")
+        .iter()
+        .filter_map(|object| object["id"].as_str())
+        .collect();
+    assert_eq!(owed, ["work:first-mix"], "{read}");
+}
+
 /// **Ending a promise takes its stored due moment off, and reopening puts it
 /// back.** `ended` decides whether the day still counts, so a write naming only
 /// it moves the due moment like a write to the day itself. The promise keeps its

@@ -746,6 +746,16 @@ pub fn owed(carriers: &[&dyn Carrier], fields: &BTreeMap<String, String>) -> Due
         .unwrap_or(Due::Never)
 }
 
+/// **What is owed by a thing of this kind**: [`owed`], except that a finished
+/// work item or project owes nothing. Its date stays on the record; it is no
+/// longer asked for.
+pub fn owed_as(kind: &str, carriers: &[&dyn Carrier], fields: &BTreeMap<String, String>) -> Due {
+    if crate::memory::kinds::is_finished(kind, fields) {
+        return Due::Never;
+    }
+    owed(carriers, fields)
+}
+
 /// **Whether the day a thing falls due is jojobot's own arithmetic**, read off
 /// the carrier that answers for these fields. A thing no carrier answers for
 /// derives nothing.
@@ -853,6 +863,24 @@ pub fn moved_due_moment(
         _ if existing.is_some() => DueMove::Cleared,
         _ => DueMove::Unchanged,
     }
+}
+
+/// **[`moved_due_moment`], for a thing of this kind.** A finished work item or
+/// project owes nothing, so its stored moment is taken off when it holds one
+/// and put back by the write that moves it out of `done`.
+pub fn moved_due_moment_as(
+    kind: &str,
+    carriers: &[&dyn Carrier],
+    existing: Option<Date>,
+    projected: &BTreeMap<String, String>,
+) -> DueMove {
+    if crate::memory::kinds::is_finished(kind, projected) {
+        return match existing {
+            Some(_) => DueMove::Cleared,
+            None => DueMove::Unchanged,
+        };
+    }
+    moved_due_moment(carriers, existing, projected)
 }
 
 /// **What a write leaves behind when it clears part of a rhythm's
@@ -1716,6 +1744,59 @@ mod tests {
             owed(&asked, &BTreeMap::new()),
             Due::Never,
             "a thing with no schedule of any kind owes nothing",
+        );
+    }
+
+    /// **A finished work item or project owes nothing, and nothing else does
+    /// that.** The same decide-by day is owed on a work item at `now`, owed on a
+    /// thing of another kind that carries a `status` of its own, and not owed on a
+    /// work item or a project at `done`. The mover agrees: the finished one
+    /// loses its stored moment and the one back at `now` gets it again.
+    #[test]
+    fn a_finished_work_item_or_project_is_not_owed_and_nothing_else_is_finished() {
+        let carriers: Vec<Box<dyn Carrier>> = shipped();
+        let asked: Vec<&dyn Carrier> = carriers.iter().map(AsRef::as_ref).collect();
+        let held = |status: &str| -> BTreeMap<String, String> {
+            [
+                (DECIDE_BY.to_string(), "2026-01-01".to_string()),
+                ("status".to_string(), status.to_string()),
+            ]
+            .into_iter()
+            .collect()
+        };
+        let past = date(2026, 6, 1);
+
+        for kind in ["work", "project"] {
+            assert!(
+                owed_as(kind, &asked, &held("now")).owed_on(past),
+                "{kind} at now with a past decide_by is owed",
+            );
+            assert!(
+                !owed_as(kind, &asked, &held("done")).owed_on(past),
+                "{kind} at done is not owed",
+            );
+            assert_eq!(
+                owed(&asked, &held("done")),
+                Due::On(date(2026, 1, 1)),
+                "the date stays on the record: only the kind-aware question leaves it out",
+            );
+        }
+        assert!(
+            owed_as("thing", &asked, &held("done")).owed_on(past),
+            "a status on a thing of another kind finishes nothing",
+        );
+
+        assert_eq!(
+            moved_due_moment_as("work", &asked, Some(date(2026, 1, 1)), &held("done")),
+            DueMove::Cleared,
+        );
+        assert_eq!(
+            moved_due_moment_as("work", &asked, None, &held("now")),
+            DueMove::Set(date(2026, 1, 1)),
+        );
+        assert_eq!(
+            moved_due_moment_as("thing", &asked, Some(date(2026, 1, 1)), &held("done")),
+            DueMove::Unchanged,
         );
     }
 

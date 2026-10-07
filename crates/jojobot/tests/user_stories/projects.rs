@@ -311,6 +311,46 @@ async fn a_pause_on_a_thing_with_no_loop_is_a_promise_regarding_it() {
     story.finish().await;
 }
 
+/// **A piece of work that is done is not owed, and the day it was due stays
+/// on it.** The wiring had to be decided by the first of January; it was left
+/// at `now` and is late, then it is finished and nothing is late.
+#[tokio::test]
+async fn a_piece_of_work_that_is_done_is_no_longer_owed() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    s.add("project:atlas", "The Campaign").await;
+    s.add_under("project:atlas", "work:phi", "The Wiring").await;
+    s.event_with(
+        "work:phi",
+        "the wiring is decided by the first of January",
+        json!({"decide_by": "2026-01-01", "status": "now"}),
+        &[],
+    )
+    .await;
+
+    let owed = || {
+        s.call(
+            "recall",
+            json!({"fields": [{"key": "due_on"}], "overdue": {"as_of": "2026-06-01"}}),
+        )
+    };
+    owed().await.says("work:phi");
+
+    s.event_with(
+        "work:phi",
+        "the wiring is finished",
+        json!({"status": "done"}),
+        &[],
+    )
+    .await;
+    owed().await.never_says("work:phi");
+    // The day it was due is still on the record, so why it was due is not lost.
+    s.call("recall", json!({"subject": "work:phi"}))
+        .await
+        .says("\"decide_by\":\"2026-01-01\"");
+    story.finish().await;
+}
+
 /// Where an open question is filed: a `work` thing of its own, so that it folds
 /// its own `state` and a key filter on `state` finds every question whatever
 /// the others say.

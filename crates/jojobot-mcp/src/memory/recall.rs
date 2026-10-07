@@ -449,6 +449,12 @@ fn hit_candidate_ceiling(hit_count: usize, limit: usize) -> bool {
 }
 
 /// Which clock a neighbourhood read compares.
+/// **What an object owes, asked of its kind too**: a finished work item or
+/// project owes nothing — see [`attention::owed_as`].
+fn owed_by(carriers: &[&dyn attention::Carrier], object: &graph::Object) -> attention::Due {
+    attention::owed_as(object.entity.kind.as_token(), carriers, &object.fields)
+}
+
 fn parse_clock(raw: Option<&str>) -> Result<graph::Clock, McpError> {
     match raw.map(str::trim) {
         None | Some("") | Some("recorded_on") => Ok(graph::Clock::RecordedOn),
@@ -1792,19 +1798,19 @@ impl Jojobot {
             // what is late.
             let asked = self.carriers();
             let before = found.len();
-            found.retain(|object| attention::owed(&asked, &object.fields).owed_on(as_of));
+            found.retain(|object| owed_by(&asked, object).owed_on(as_of));
             overdue_excluded = Some(before - found.len());
             // **Oldest due first — which has gone quiet longest, answered by
             // the order rather than left for a caller to re-derive from dates
             // it was never given.** Ordering an already-found, already-filtered
             // set costs nothing extra to find.
-            found.sort_by_key(|object| attention::owed(&asked, &object.fields).staleness());
+            found.sort_by_key(|object| owed_by(&asked, object).staleness());
             // **Read off the same `Due` the order already came from**, so the
             // number on the wire cannot disagree with the position it is in.
             overdue_by_days = Some(
                 found
                     .iter()
-                    .map(|object| attention::owed(&asked, &object.fields).days_overdue(as_of))
+                    .map(|object| owed_by(&asked, object).days_overdue(as_of))
                     .collect(),
             );
         }

@@ -45,6 +45,14 @@ pub const WORK_STATUSES: [&str; 5] = ["someday", "next", "now", "waiting", "done
 /// The key a work thing or a project holds its status under.
 pub const STATUS: &str = "status";
 
+/// **Whether a thing of this kind is finished**: a work item or a project whose
+/// status is `done`. A finished thing is not owed, and its date stays on the
+/// record. Every other kind owes by its dates alone, whatever a `status` key
+/// on it says.
+pub fn is_finished(kind: &str, fields: &std::collections::BTreeMap<String, String>) -> bool {
+    holds_columns(kind) && fields.get(STATUS).is_some_and(|held| held.trim() == "done")
+}
+
 /// The key a project holds its own ordered list of statuses under.
 pub const COLUMNS: &str = "columns";
 
