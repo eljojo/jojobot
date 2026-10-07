@@ -2199,6 +2199,9 @@ struct Board {
     /// it answers without ever suspending. See [`Scanned::park`].
     park: std::sync::atomic::AtomicBool,
     parked: std::sync::atomic::AtomicBool,
+    /// **The boxes the board lists, when they are not the ones its messages
+    /// sit in** — a rename that landed between the scan and the listing.
+    listed: RwLock<Option<Vec<jojobot_domain::mailbox::Mailbox>>>,
 }
 
 impl Board {
@@ -2208,7 +2211,13 @@ impl Board {
             blind: std::sync::atomic::AtomicBool::new(false),
             park: std::sync::atomic::AtomicBool::new(false),
             parked: std::sync::atomic::AtomicBool::new(false),
+            listed: RwLock::new(None),
         })
+    }
+
+    /// From here the board lists exactly these boxes.
+    fn lists_only(&self, boxes: Vec<jojobot_domain::mailbox::Mailbox>) {
+        *self.listed.write().expect("listing poisoned") = Some(boxes);
     }
 
     fn blinded(&self) {
@@ -2286,6 +2295,9 @@ impl jojobot_domain::mailbox::Mailboxes for Board {
     async fn list_mailboxes(&self) -> Result<Vec<jojobot_domain::mailbox::Mailbox>, MailboxError> {
         if self.blind.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(MailboxError::Store("the board cannot be read".into()));
+        }
+        if let Some(listed) = self.listed.read().expect("listing poisoned").clone() {
+            return Ok(listed);
         }
         let names: std::collections::BTreeSet<MailboxName> = self
             .messages
@@ -6682,6 +6694,72 @@ async fn mail_in_a_persons_box_never_enters_the_index() {
     assert_eq!(hits("giraffe").await, 0, "a retirement does not index it");
     assert_eq!(hits("zebra").await, 0, "…and the first one is still out");
     assert_eq!(hits("kiln").await, 1, "…while the public ones are served");
+}
+
+/// **A person's box renamed between the scan and the listing is not served.**
+/// The index judges each message by the box it sits in, from a listing read
+/// after the scan. A person renamed in between leaves the scan holding the old
+/// box name and the listing only the new one, so a message is private by a name
+/// the listing no longer knows. It must be left out, not treated as public for
+/// being unmatched; the next refresh reads both under one name. A message in a
+/// box that stays public is served throughout.
+#[tokio::test]
+async fn a_persons_box_renamed_between_the_scan_and_the_listing_is_not_indexed() {
+    jojobot_domain::memory::kinds::load_shipped();
+    let board = Board::new(vec![
+        message(
+            "1",
+            "person-milhouse",
+            "bot:sigma",
+            Some("the quarterly figure"),
+            "the zebra figure is hidden",
+            MessageState::New,
+        ),
+        message(
+            "2",
+            "pm",
+            "bot:sigma",
+            Some("the kiln"),
+            "the kiln is relined",
+            MessageState::New,
+        ),
+    ]);
+    // After the scan, the person was renamed: the listing knows the new name
+    // and not the one the scan read the message under.
+    board.lists_only(vec![
+        jojobot_domain::mailbox::Mailbox {
+            name: MailboxName("person-ned-flanders".into()),
+            owner: jojobot_domain::memory::EntityId("person:ned-flanders".into()),
+            counts: Default::default(),
+            quarantined: Vec::new(),
+        },
+        jojobot_domain::mailbox::Mailbox {
+            name: MailboxName("pm".into()),
+            owner: jojobot_domain::memory::EntityId("bot:omega".into()),
+            counts: Default::default(),
+            quarantined: Vec::new(),
+        },
+    ]);
+    let index = Arc::new(FullTextIndex::open().expect("index opens"));
+    let mail = Arc::new(IndexedMailboxes::new(board.clone(), index.clone()));
+    mail.rebuild().await.expect("rebuild");
+    let port = Retrieval::new(index, vec![mail.clone()]);
+    assert_eq!(
+        port.search(&asking_for_mail("kiln"))
+            .await
+            .expect("search ok")
+            .len(),
+        1,
+        "the message in a box that stays public is served"
+    );
+    assert_eq!(
+        port.search(&asking_for_mail("zebra"))
+            .await
+            .expect("search ok")
+            .len(),
+        0,
+        "a message in a box the listing no longer knows is not served"
+    );
 }
 
 /// **A message removed from the store stops being served, with no write to

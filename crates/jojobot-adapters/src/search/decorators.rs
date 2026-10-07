@@ -535,25 +535,33 @@ impl IndexedMailboxes {
         Ok(messages.len())
     }
 
-    /// **The board as the index may hold it: every message but the ones in a
-    /// person's box.** That mail is written to a person and read by nobody who
-    /// speaks through search, so its text never enters the index. The exclusion
-    /// is made here, where the index is written, rather than on the hits a
-    /// query returns, so there is no filter to forget and no posting to leak.
+    /// **The board as the index may hold it: the messages in a box the board
+    /// still lists and no person owns.** That mail is written to a person and
+    /// read by nobody who speaks through search, so its text never enters the
+    /// index. The exclusion is made here, where the index is written, rather than
+    /// on the hits a query returns, so there is no filter to forget and no
+    /// posting to leak.
+    ///
+    /// **A box the listing does not know leaves its messages out.** The listing
+    /// is read after the scan, and a rename can land between the two: the scan
+    /// holds a message under the old name of a box and the listing only the new
+    /// one. Judging by "not in the set of private names" would call that message
+    /// public for being unmatched. Judging by "in the set of public names" calls
+    /// it nothing yet, and the next refresh reads both under one name.
     ///
     /// A board whose boxes cannot be read is an error: the messages would have
     /// no owners to be judged by.
     async fn indexable_board(&self) -> Result<Vec<Message>, MailboxError> {
         let messages = self.inner.scan_messages().await?;
-        let private = self.private_boxes().await?;
+        let public = self.public_boxes().await?;
         Ok(messages
             .into_iter()
-            .filter(|message| !private.contains(&message.mailbox))
+            .filter(|message| public.contains(&message.mailbox))
             .collect())
     }
 
-    /// The names of the boxes a person owns.
-    async fn private_boxes(
+    /// The names of the boxes the board lists that no person owns.
+    async fn public_boxes(
         &self,
     ) -> Result<std::collections::BTreeSet<jojobot_domain::mailbox::MailboxName>, MailboxError>
     {
@@ -562,19 +570,19 @@ impl IndexedMailboxes {
             .list_mailboxes()
             .await?
             .into_iter()
-            .filter(|held| held.is_private())
+            .filter(|held| !held.is_private())
             .map(|held| held.name)
             .collect())
     }
 
-    /// Index one message a verb just wrote or changed, unless it is in a
-    /// person's box. **A board that cannot say whose box it is leaves the
-    /// message out**: the next refresh reads the whole board and indexes it if
-    /// it belongs there, while a message wrongly indexed could not be taken
-    /// back.
+    /// Index one message a verb just wrote or changed, when its box is on the
+    /// board and no person owns it. **A board that cannot say whose box it is,
+    /// or does not list the box, leaves the message out**: the next refresh reads
+    /// the whole board and indexes it if it belongs there, while a message
+    /// wrongly indexed could not be taken back.
     async fn reindex(&self, message: &Message) -> Result<(), MailboxError> {
-        match self.private_boxes().await {
-            Ok(private) if !private.contains(&message.mailbox) => {
+        match self.public_boxes().await {
+            Ok(public) if public.contains(&message.mailbox) => {
                 self.index.ingest_message(message).map_err(indexing)
             }
             _ => Ok(()),
