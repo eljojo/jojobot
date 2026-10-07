@@ -48,10 +48,20 @@ async fn furnished() -> (Room, Surface, String) {
     (room, surface, sid)
 }
 
-/// A call the occupant would make.
+/// A call the occupant would make. **A refused call stops the case**: a helper
+/// that kept the answer and never read it let a wrong argument name go through
+/// as a call that did nothing, and every case after it ran on a room the
+/// occupant had not built.
 async fn as_the_occupant(room: &Surface, sid: &str, verb: &str, mut args: Value) -> String {
     args["sid"] = json!(sid);
-    room.call(verb, args).await
+    let said = room.call(verb, args).await;
+    let body: Value = serde_json::from_str(&said)
+        .unwrap_or_else(|e| panic!("{verb} answered something that is not JSON ({e}): {said}"));
+    assert!(
+        body["status"] != "blocked" && body["transport_error"].is_null(),
+        "{verb} was refused, so the room is not the one this case describes: {said}",
+    );
+    said
 }
 
 /// Every check this room registers, run against it.
@@ -102,7 +112,7 @@ async fn worked_the_first_phase(room: &Surface, sid: &str) {
         "set_charter",
         json!({
             "bot": "gamma",
-            "charter": "You read what the operator does not get to, and you say what is in it.",
+            "prose": "You read what the operator does not get to, and you say what is in it.",
         }),
     )
     .await;
