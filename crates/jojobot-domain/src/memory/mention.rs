@@ -833,6 +833,14 @@ impl super::Memory for Mentioning {
         self.inner.echoed_defaults(entity, fields).await
     }
 
+    async fn composed_prose(
+        &self,
+        entity: &EntityId,
+        own: &str,
+    ) -> Result<String, super::MemoryError> {
+        self.inner.composed_prose(entity, own).await
+    }
+
     async fn scan_entity(
         &self,
         entity: &EntityId,

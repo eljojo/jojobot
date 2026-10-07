@@ -5053,6 +5053,18 @@ pub trait Memory: Send + Sync {
             .find(|d| d.entity.as_ref().is_some_and(|e| &e.id == entity)))
     }
 
+    /// **The prose a read of `entity` would answer with, were `own` the half
+    /// the instance wrote.** A store that supplies a layer of its own for an
+    /// entity joins that layer to `own` exactly as its reads do, so a writer
+    /// can measure what a boot WILL serve before it writes.
+    ///
+    /// The default is `own`, which is right for a store that supplies nothing.
+    /// **Every wrapper forwards it**, because one that does not answers with
+    /// the default and the layer underneath goes uncounted.
+    async fn composed_prose(&self, _entity: &EntityId, own: &str) -> Result<String, MemoryError> {
+        Ok(own.trim().to_string())
+    }
+
     /// A cheap signal for whether anything has been written since a caller
     /// last looked, so a refresh can skip paying for [`scan`](Memory::scan)
     /// when nothing changed.

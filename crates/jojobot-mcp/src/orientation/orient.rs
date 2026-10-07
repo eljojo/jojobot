@@ -566,6 +566,19 @@ impl Jojobot {
             self.stated_clock(),
         );
         let remaining_for_prose = text::BOOT_ANSWER.budget.saturating_sub(floor_len);
+        // **A floor over the ceiling is said, not refused.** The boot never
+        // declines, and any entity grows the snapshot every bot's boot carries,
+        // so a bot can be pushed over by a write that nobody could refuse. The
+        // answer carries the sizes and the ways down instead.
+        let over_the_ceiling = bot
+            .filter(|_| floor_len > text::BOOT_ANSWER.budget)
+            .map(|bot| {
+                super::floor::over_the_ceiling(
+                    bot,
+                    floor_len,
+                    &super::floor::floor_parts(floor_len, &snapshot, &floor_identity),
+                )
+            });
 
         let mut identity = identity;
         rank_rule_details(&mut identity, remaining_for_prose);
@@ -615,6 +628,9 @@ impl Jojobot {
             if let Some(note) = essay.note {
                 obj.insert("orientation_note".into(), note.into());
             }
+        }
+        if let (Some(notice), Some(obj)) = (over_the_ceiling, answer.as_object_mut()) {
+            obj.insert("over_the_ceiling".into(), notice);
         }
         json_result(&answer)
     }
@@ -1578,6 +1594,40 @@ mod tests {
             whole <= jojobot_domain::text::BOOT_ANSWER.budget,
             "the whole essay shipped in {whole} characters, over the ceiling"
         );
+    }
+
+    /// **A fresh instance's anonymous boot ships the whole essay inside the
+    /// ceiling.** The boot trims itself to the ceiling and says what it cut, so
+    /// an essay that grew past it would still answer and nothing would fail:
+    /// the next boot would carry less and say so. This holds the whole answer,
+    /// uncut, to the ceiling on an instance with nothing in it but what the
+    /// software ships, which is the case a first reader meets.
+    #[tokio::test]
+    async fn a_fresh_instances_anonymous_boot_ships_the_whole_essay_inside_the_ceiling() {
+        let jojobot = handler();
+        let booted = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    claim: None,
+                    timezone: None,
+                    bot: None,
+                    brief: Some(false),
+                    skill: None,
+                    section: None,
+                    resume: None,
+                    sid: None,
+                    today: None,
+                }))
+                .await
+                .expect("start_here ok"),
+        );
+        let whole = booted.to_string().chars().count();
+        let budget = jojobot_domain::text::BOOT_ANSWER.budget;
+        assert_eq!(
+            booted["orientation_elided"], false,
+            "the essay no longer fits whole: the answer is {whole} of {budget} characters"
+        );
+        assert!(whole <= budget, "{whole} characters against {budget}");
     }
 
     /// **Whatever the store's size, the serialized whole answer is at or under

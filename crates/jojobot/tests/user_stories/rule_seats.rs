@@ -345,6 +345,8 @@ async fn a_charter_that_would_take_the_boot_over_the_ceiling_is_refused_naming_t
         "largest first: {body}"
     );
     assert_eq!(sizes.iter().sum::<u64>(), floor, "{body}");
+    // Every blocked body carries `candidates`, so one client branch reads them.
+    assert!(body["candidates"].is_array(), "{body}");
     for named in ["snapshot", "carried rules"] {
         assert!(
             parts.iter().any(|p| p["part"] == named),
@@ -439,5 +441,93 @@ async fn creating_a_bot_says_which_bots_it_pushes_over_the_ceiling() {
     again.never_says("pushes_over");
 
     s.wrap("added colleagues beside a full boot").await;
+    story.finish().await;
+}
+
+/// **A boot the world grew past the ceiling says so, and names what to drop.**
+/// Any entity grows every bot's snapshot, so a write that cannot be refused for
+/// it can still leave a bot's boot over. The ceiling is a property of the boot
+/// answer, so the answer reports it: the same sizes the refusals carry, and the
+/// ways down.
+///
+/// Paired with the same bot one write earlier, exactly at the ceiling, where
+/// the answer says nothing: a build that always said it passes the second half
+/// alone.
+#[tokio::test]
+async fn a_boot_the_world_grew_past_the_ceiling_says_so_and_names_what_to_drop() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:omega", "Omega").await;
+
+    // ── omega's boot sits exactly at the ceiling ────────────────────────────
+    //
+    // A write measures the floor without the session block a boot carries, so a
+    // charter that fills the ceiling at the write boots a little over. The
+    // boot's own answer says by how much, and that is what is taken back off.
+    let filled = fill_the_ceiling_with_a_charter(&s, "bot:omega").await;
+    let (probe, _) = story.call("start_here", json!({"bot": "omega"})).await;
+    let session_block = probe.json()["over_the_ceiling"]["over"]
+        .as_u64()
+        .expect("a boot over its ceiling says by how much");
+    s.call(
+        "set_charter",
+        json!({"bot": "omega", "prose": charter_of(filled - session_block)}),
+    )
+    .await;
+    let (at, _) = story.call("start_here", json!({"bot": "omega"})).await;
+    at.never_says("over_the_ceiling");
+
+    // ── a person arrives, which no rule refuses ─────────────────────────────
+    s.add("person:milhouse", "Milhouse").await;
+    let (over, _) = story.call("start_here", json!({"bot": "omega"})).await;
+    let body = over.json();
+    let said = &body["over_the_ceiling"];
+    assert!(said["over"].as_u64().unwrap_or(0) >= 1, "{body}");
+    assert_eq!(said["budget"].as_u64(), Some(BOOT_CEILING), "{body}");
+    let parts = said["floor_parts"].as_array().expect("the parts are named");
+    assert_eq!(parts[0]["part"], "charter", "{body}");
+    assert_eq!(
+        parts
+            .iter()
+            .map(|p| p["characters"].as_u64().unwrap())
+            .sum::<u64>(),
+        said["floor"].as_u64().unwrap(),
+        "the parts add up to the floor: {body}"
+    );
+    // The ways down are named by the verb that does each.
+    let how = said["how_to_proceed"].as_str().expect("a way forward");
+    for verb in ["set_charter", "update_fact"] {
+        assert!(how.contains(verb), "{verb} is a way down: {how}");
+    }
+
+    s.wrap("added a person beside a full boot").await;
+    story.finish().await;
+}
+
+/// **A charter is measured as the boot composes it.** The boot serves the
+/// build's own layer joined to what the instance wrote, so a charter that fits
+/// alone can still leave the boot over. The shipped identity carries a layer
+/// and a bot nobody shipped for does not: filled to the ceiling by the same
+/// check, their boots are the same size within what names and records weigh.
+/// Counting the proposed charter alone left the shipped identity several
+/// thousand characters over.
+#[tokio::test]
+async fn a_charter_is_measured_with_the_layer_the_build_ships() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:omega", "Omega").await;
+
+    fill_the_ceiling_with_a_charter(&s, "bot:omega").await;
+    fill_the_ceiling_with_a_charter(&s, "bot:assistant").await;
+    let (omega, _) = story.call("start_here", json!({"bot": "omega"})).await;
+    let (assistant, _) = story.call("start_here", json!({"bot": "assistant"})).await;
+    let (omega, assistant) = (omega.size(), assistant.size());
+    assert!(
+        omega.abs_diff(assistant) < 1_000,
+        "the check lets the shipped identity's boot run {assistant} against {omega}"
+    );
+
+    s.wrap("filled two bots to the ceiling and compared their boots")
+        .await;
     story.finish().await;
 }

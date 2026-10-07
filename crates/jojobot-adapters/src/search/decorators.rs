@@ -384,6 +384,10 @@ impl Memory for IndexedMemory {
         self.inner.scan_entity(entity).await
     }
 
+    async fn composed_prose(&self, entity: &EntityId, own: &str) -> Result<String, MemoryError> {
+        self.inner.composed_prose(entity, own).await
+    }
+
     // **No document is re-read on either of these** — a declaration is not
     // a document: it says which keys a writer should fill and is carried by
     // no entity, so there is no ONE doc for `refresh` to re-scan.

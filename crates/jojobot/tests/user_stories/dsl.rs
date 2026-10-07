@@ -1567,6 +1567,11 @@ pub struct Answer {
 }
 
 impl Answer {
+    /// **How many characters the answer is** — the unit a ceiling is stated in.
+    pub fn size(&self) -> usize {
+        self.body.chars().count()
+    }
+
     /// **The answer as structure**, for the claims a substring cannot make.
     ///
     /// `says` reads the payload as text, which is right for *this wording is

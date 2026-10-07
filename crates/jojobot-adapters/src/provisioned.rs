@@ -133,6 +133,16 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
         Ok(scanned)
     }
 
+    /// **What a boot will serve for this charter**, the build's layer joined to
+    /// `own` by the same function [`resolve`](Self::resolve) joins a stored
+    /// doc's prose with.
+    async fn composed_prose(&self, entity: &EntityId, own: &str) -> Result<String, MemoryError> {
+        match self.provisions.prose_for(entity) {
+            Some(shipped) => Ok(extended(shipped, own)),
+            None => self.inner.composed_prose(entity, own).await,
+        }
+    }
+
     async fn scan_entity(&self, entity: &EntityId) -> Result<Option<search::DocScan>, MemoryError> {
         match self.inner.scan_entity(entity).await? {
             Some(mut doc) => {

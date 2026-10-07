@@ -315,6 +315,10 @@ impl Memory for Folded {
         self.inner.scan_entity(entity).await
     }
 
+    async fn composed_prose(&self, entity: &EntityId, own: &str) -> Result<String, MemoryError> {
+        self.inner.composed_prose(entity, own).await
+    }
+
     async fn write_summary(&self) -> Result<Option<WriteSummary>, MemoryError> {
         self.inner.write_summary().await
     }

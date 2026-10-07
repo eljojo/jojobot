@@ -422,6 +422,7 @@ pub(crate) fn memory_declined(
                 "status": "blocked",
                 "attempted": subject,
                 "wrote": false,
+                "candidates": [],
                 "floor": floor,
                 "budget": budget,
                 "over": floor - budget,
@@ -443,11 +444,8 @@ pub(crate) fn memory_declined(
                     // caller.
                     _ => format!(
                         "Nothing was written: {e}. The largest part of the floor is {largest}; \
-                         floor_parts lists every part. Unstar a rule on {subject} with \
-                         update_fact, shorten the rules that are starred or its charter with \
-                         set_charter, or have a different identity lower rule_seats on \
-                         {subject} — a bot cannot write rule_seats about itself — and a rule \
-                         that binds at one moment is better carried by a skill than by a seat."
+                         floor_parts lists every part. {}",
+                        crate::orientation::floor::ways_down(subject),
                     ),
                 },
             });

@@ -27,6 +27,73 @@ fn json_len(value: &serde_json::Value) -> usize {
     value.to_string().chars().count()
 }
 
+/// **What a floor of `total` is made of**, largest first. The three named
+/// parts are measured and the last is whatever they leave, so the parts add up
+/// to `total`. Shared by the refusals and by the boot, so the two cannot name
+/// different sizes for one floor.
+pub(crate) fn floor_parts(
+    total: usize,
+    snapshot: &serde_json::Value,
+    identity: &serde_json::Value,
+) -> Vec<(String, usize)> {
+    let named = [
+        ("charter", json_len(&identity["charter"])),
+        ("snapshot", json_len(snapshot)),
+        ("carried rules", json_len(&identity["rules"])),
+    ];
+    let rest = total.saturating_sub(named.iter().map(|(_, n)| n).sum::<usize>());
+    let mut parts: Vec<(String, usize)> = named
+        .into_iter()
+        .chain([("orientation, skills and bot record", rest)])
+        .map(|(name, n)| (name.to_string(), n))
+        .collect();
+    parts.sort_by_key(|part| std::cmp::Reverse(part.1));
+    parts
+}
+
+/// **The ways a bot's floor comes down**, each named by the verb that does it.
+/// One sentence for the refusal that stops a write and the notice a boot
+/// carries, so what a caller is told to do cannot differ between them.
+pub(crate) fn ways_down(subject: &str) -> String {
+    format!(
+        "Unstar a rule on {subject} with update_fact, shorten the rules that are starred or its \
+         charter with set_charter, or have a different identity lower rule_seats on {subject} — \
+         a bot cannot write rule_seats about itself — and a rule that binds at one moment is \
+         better carried by a skill than by a seat."
+    )
+}
+
+/// **The notice a boot carries when what it cannot cut is over the ceiling.**
+/// The ceiling is a property of the answer, so the answer says so: any entity
+/// grows every bot's snapshot, and no write that cannot be refused should be
+/// refused for it. The sizes are the refusals' own.
+pub(crate) fn over_the_ceiling(
+    bot: &EntityId,
+    total: usize,
+    parts: &[(String, usize)],
+) -> serde_json::Value {
+    let budget = jojobot_domain::text::BOOT_ANSWER.budget;
+    let largest = parts
+        .first()
+        .map(|(part, n)| format!("{part} ({n} characters)"))
+        .unwrap_or_default();
+    serde_json::json!({
+        "floor": total,
+        "budget": budget,
+        "over": total.saturating_sub(budget),
+        "floor_parts": parts
+            .iter()
+            .map(|(part, n)| serde_json::json!({"part": part, "characters": n}))
+            .collect::<Vec<_>>(),
+        "how_to_proceed": format!(
+            "What this boot cannot cut is over its ceiling, and the boot ships anyway. The \
+             largest part is {largest}; floor_parts lists every part. {} Entities count toward \
+             the snapshot: archive_entity takes one that is no longer wanted out of its counts.",
+            ways_down(bot.as_str()),
+        ),
+    })
+}
+
 impl Jojobot {
     /// **The boot's floor for `bot` if it held `in_force` rules and `seats`
     /// seats**, in characters — the same sum `orient` measures, with every
@@ -46,7 +113,12 @@ impl Jojobot {
         let index = self.memory.list_entities(None).await;
         let entity = index.as_ref().ok()?.iter().find(|e| &e.id == bot)?.clone();
         let charter = match charter {
-            Some(proposed) => Some(proposed.to_string()),
+            // **The charter as the boot composes it**: the build's layer joined
+            // to what the instance wrote, through the same store the boot reads.
+            // The proposed text alone is what a caller sends and not what a
+            // boot serves, and counting it alone leaves a bot with a shipped
+            // layer thousands of characters over a ceiling the check passed.
+            Some(proposed) => Some(self.memory.composed_prose(bot, proposed).await.ok()?),
             None => self
                 .memory
                 .scan_entity(bot)
@@ -79,18 +151,7 @@ impl Jojobot {
             &serde_json::Value::Null,
             self.stated_clock(),
         );
-        let named = [
-            ("charter", json_len(&identity["charter"])),
-            ("snapshot", json_len(&snapshot)),
-            ("carried rules", json_len(&identity["rules"])),
-        ];
-        let rest = total.saturating_sub(named.iter().map(|(_, n)| n).sum::<usize>());
-        let mut parts: Vec<(String, usize)> = named
-            .into_iter()
-            .chain([("orientation, skills and bot record", rest)])
-            .map(|(name, n)| (name.to_string(), n))
-            .collect();
-        parts.sort_by_key(|part| std::cmp::Reverse(part.1));
+        let parts = floor_parts(total, &snapshot, &identity);
         Some(Floor { total, parts })
     }
 
