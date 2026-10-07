@@ -819,30 +819,50 @@ pub(crate) fn memory_declined(
             ref subject,
             ref key,
             may,
-            ref managers,
+            ref allowed,
         } => Ok(blocked_body(
             &EntityId(subject.clone()),
             &[],
-            // **Who may make the write is named** (rule 261): the operator
-            // always may, and the relation says who else.
+            // **The bots that may make the write are named** (rule 261), and
+            // the operator never is: the operator acts through the assistant,
+            // which is above every bot that has a chain. The four ceilings keep
+            // the words they have always had.
             match may {
                 jojobot_domain::memory::MayWrite::DifferentIdentity => format!(
                     "Nothing was written: {e}. A different identity has to set '{key}' on \
                      '{subject}' — ask another bot, or the operator, to raise or lower it \
                      instead."
                 ),
-                jojobot_domain::memory::MayWrite::Subject => format!(
-                    "Nothing was written: {e}. '{subject}' has to write '{key}' itself — ask it, \
-                     or the operator."
-                ),
-                jojobot_domain::memory::MayWrite::Ancestor => format!(
-                    "Nothing was written: {e}. Ask {} to write '{key}' on '{subject}'.",
-                    match managers.is_empty() {
-                        true => "the operator".to_string(),
-                        false => format!("{}, or the operator,", managers.join(", ")),
-                    }
-                ),
+                jojobot_domain::memory::MayWrite::Subject => {
+                    format!("Nothing was written: {e}. '{subject}' has to write '{key}' itself.")
+                }
+                jojobot_domain::memory::MayWrite::Ancestor
+                | jojobot_domain::memory::MayWrite::Superior => match allowed.is_empty() {
+                    true => format!(
+                        "Nothing was written: {e}. No bot is recorded above '{subject}', so \
+                         '{key}' on it has to be set through whoever is at the top of the chart."
+                    ),
+                    false => format!(
+                        "Nothing was written: {e}. Ask {} to write '{key}' on '{subject}'.",
+                        allowed.join(" or ")
+                    ),
+                },
             },
+        )),
+        // **A chart write that would put a bot under one of its own reports.**
+        // Refused whoever asks, so the way forward is a different manager, not a
+        // different caller.
+        MemoryError::ChartCycle {
+            ref subject,
+            ref manager,
+        } => Ok(blocked_body(
+            &EntityId(subject.clone()),
+            &[],
+            format!(
+                "Nothing was written: {e}. '{manager}' is at or below '{subject}' in the chart. \
+                 Name a manager that is not, or move '{manager}' out from under '{subject}' \
+                 first."
+            ),
         )),
         // **A merge into the caller's own bot that would carry a ceiling onto
         // it.** The refusal says the MERGE was refused and why, not that the
@@ -963,6 +983,7 @@ pub(crate) fn memory_error(e: MemoryError) -> McpError {
         | MemoryError::UnconfirmedSettling
         | MemoryError::RoomFull { .. }
         | MemoryError::KeyNotYours { .. }
+        | MemoryError::ChartCycle { .. }
         | MemoryError::MergeCarriesGuardedKeys { .. }
         | MemoryError::ThoughtTooLong { .. }
         | MemoryError::MergeOverfillsRoom { .. }
@@ -1086,21 +1107,22 @@ mod tests {
         }
     }
 
-    /// **A refused key write names who may make it** (rule 261), for every
-    /// relation a key can declare. No key the build ships is an ancestor key or
-    /// a subject-only key yet, so these two arms are reached here and nowhere
-    /// else: the case is what keeps them honest until one is.
+    /// **A refused key write names the bots that may make it** (rule 261), for
+    /// every relation a key can declare, and never "the operator": the
+    /// operator acts through the assistant, which is above every bot that has a
+    /// chain. The two relations no ordinary caller reaches by a key of its own
+    /// are reached here, and the cycle refusal beside them.
     #[test]
-    fn a_refused_key_write_names_who_may_make_it_for_every_relation() {
+    fn a_refused_key_write_names_the_bots_that_may_make_it_for_every_relation() {
         use jojobot_domain::memory::MayWrite;
-        let refused = |may, managers: &[&str]| {
+        let refused = |may, allowed: &[&str]| {
             let result = memory_declined(
                 "capture",
                 MemoryError::KeyNotYours {
                     subject: "bot:sigma".into(),
                     key: "a_key".into(),
                     may,
-                    managers: managers.iter().map(|m| m.to_string()).collect(),
+                    allowed: allowed.iter().map(|m| m.to_string()).collect(),
                 },
             )
             .expect("a refusal is an answer");
@@ -1109,20 +1131,44 @@ mod tests {
                 .expect("a way forward")
                 .to_string()
         };
-        // Above the thing: the chain is named, and so is the operator.
-        let above = refused(MayWrite::Ancestor, &["bot:gamma", "bot:omega"]);
-        for who in ["bot:gamma", "bot:omega"] {
-            assert!(above.contains(who), "{who} may make it: {above}");
+        for may in [MayWrite::Ancestor, MayWrite::Superior] {
+            // The bots that may are named in the way forward, and the operator
+            // is not named at all.
+            let said = refused(may, &["bot:gamma", "bot:omega"]);
+            for who in ["bot:gamma", "bot:omega"] {
+                assert!(said.contains(who), "{who} may make it: {said}");
+            }
+            assert!(!said.contains("operator"), "{said}");
+            // Nobody recorded above: said, and not an empty list of people.
+            let none = refused(may, &[]);
+            assert!(none.contains("top of the chart"), "{none}");
+            assert!(!none.contains("operator"), "{none}");
         }
-        // The operator is named twice: by the reason, and by the way forward,
-        // which is its own sentence and not a copy of the reason.
-        assert_eq!(above.matches("operator").count(), 2, "{above}");
-        // No chain recorded: the operator is still named, and no empty list is.
-        let none = refused(MayWrite::Ancestor, &[]);
-        assert_eq!(none.matches("operator").count(), 2, "{none}");
-        // The thing itself, and a different identity.
+        // The thing itself, and a different identity (whose words are the four
+        // ceilings' own and are unchanged).
         assert!(refused(MayWrite::Subject, &[]).contains("bot:sigma"));
         assert!(refused(MayWrite::DifferentIdentity, &[]).contains("different identity"));
+    }
+
+    /// **A chart cycle is refused with a way forward that names a different
+    /// manager**, since no different caller helps.
+    #[test]
+    fn a_chart_cycle_is_refused_naming_both_bots() {
+        let result = memory_declined(
+            "capture",
+            MemoryError::ChartCycle {
+                subject: "bot:assistant".into(),
+                manager: "bot:sigma".into(),
+            },
+        )
+        .expect("a refusal is an answer");
+        let said = blocked(&result)["how_to_proceed"]
+            .as_str()
+            .expect("a way forward")
+            .to_string();
+        for who in ["bot:assistant", "bot:sigma"] {
+            assert!(said.contains(who), "{who}: {said}");
+        }
     }
 
     /// **The store being down is a failure, not a blocked answer** — the other

@@ -1500,6 +1500,69 @@ impl DoltMemory {
         Ok(folded_fields(&writes, &declared))
     }
 
+    /// **A fold with its `reports_to` served as the handle it answers to
+    /// today.** The store keeps the permanent id, and the chart is judged in
+    /// handles, so every fold handed to a chart question goes through here
+    /// first. A value that is already a handle is kept as written.
+    async fn with_manager_rendered(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        fold: &std::collections::BTreeMap<String, String>,
+    ) -> Result<std::collections::BTreeMap<String, String>, MemoryError> {
+        let mut rendered = fold.clone();
+        if let Some(stored) = fold.get(jojobot_domain::memory::REPORTS_TO) {
+            let handle = self.current_handle(tx, &EntityId(stored.clone())).await?;
+            rendered.insert(
+                jojobot_domain::memory::REPORTS_TO.to_string(),
+                handle.to_string(),
+            );
+        }
+        Ok(rendered)
+    }
+
+    /// **The chart around a write, read inside the write's own transaction**:
+    /// the bots above `subject`, the manager the write names and the bots above
+    /// that one. Read in the transaction so no chart change can land between the
+    /// question and the write it gates.
+    async fn lineage_in(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        subject: &EntityId,
+        named: Option<EntityId>,
+    ) -> Result<jojobot_domain::memory::Lineage, MemoryError> {
+        let above = self.chain_above_in(tx, subject).await?;
+        let above_named = match &named {
+            Some(manager) => self.chain_above_in(tx, manager).await?,
+            None => Vec::new(),
+        };
+        Ok(jojobot_domain::memory::Lineage {
+            above,
+            named,
+            above_named,
+        })
+    }
+
+    /// The bots above `start` on its `reports_to` chain, nearest first.
+    async fn chain_above_in(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        start: &EntityId,
+    ) -> Result<Vec<EntityId>, MemoryError> {
+        let mut walk = jojobot_domain::memory::ChainWalk::from(start);
+        while let Some(at) = walk.at().cloned() {
+            let held = match self.resolve(tx, &at).await? {
+                Some((key, _)) => Self::held_by(tx, &key).await?,
+                None => Default::default(),
+            };
+            let held = self.with_manager_rendered(tx, &held).await?;
+            walk.step(
+                held.get(jojobot_domain::memory::REPORTS_TO)
+                    .map(String::as_str),
+            );
+        }
+        Ok(walk.above())
+    }
+
     /// **The columns of the project a work item or project is filed under**, read inside
     /// the write's own transaction off the project's folded fields. `None` is a
     /// thing that is not work, one under no project, or one whose project lists
@@ -3445,14 +3508,19 @@ impl Memory for DoltMemory {
         // `refuses_unlicensed_change` and `refuses_room_overflow` in the
         // domain crate for why the fold rather than the raw patch, and why
         // no ageing here.
+        let chart_before = self.with_manager_rendered(&mut tx, &before_fold).await?;
+        let chart_after = self.with_manager_rendered(&mut tx, &after_fold).await?;
+        let lineage =
+            match jojobot_domain::memory::chart_wanted_by_change(&chart_before, &chart_after) {
+                Some(named) => Some(self.lineage_in(&mut tx, &handle, named).await?),
+                None => None,
+            };
         if let Some(err) = jojobot_domain::memory::refuses_unlicensed_change(
             &handle,
             caller,
             &before_fold,
             &after_fold,
-            // No key the build ships is an ancestor key yet, so no chain is
-            // read here; one that is fails closed until this reads it.
-            None,
+            lineage.as_ref(),
         ) {
             return Err(err);
         }
@@ -3636,12 +3704,17 @@ impl Memory for DoltMemory {
         // it**, decided over what the duplicate holds, read inside this
         // transaction so no write can land between the question and the move.
         let carried = Self::held_by(&mut tx, &folded_key).await?;
+        let carried = self.with_manager_rendered(&mut tx, &carried).await?;
+        let lineage = match jojobot_domain::memory::needs_the_chart(&carried) {
+            Some(named) => Some(self.lineage_in(&mut tx, &survivor_handle, named).await?),
+            None => None,
+        };
         if let Some(err) = jojobot_domain::memory::refuses_merge_carrying(
             caller,
             &survivor_handle,
             &folded_handle,
             &carried,
-            None,
+            lineage.as_ref(),
         ) {
             return Err(err);
         }
@@ -3968,14 +4041,19 @@ impl Memory for DoltMemory {
             &Default::default(),
             &declared,
         );
+        let chart_before = self.with_manager_rendered(&mut tx, &before_fold).await?;
+        let chart_after = self.with_manager_rendered(&mut tx, &after_fold).await?;
+        let lineage =
+            match jojobot_domain::memory::chart_wanted_by_change(&chart_before, &chart_after) {
+                Some(named) => Some(self.lineage_in(&mut tx, &handle, named).await?),
+                None => None,
+            };
         if let Some(err) = jojobot_domain::memory::refuses_unlicensed_change(
             &handle,
             caller,
             &before_fold,
             &after_fold,
-            // No key the build ships is an ancestor key yet, so no chain is
-            // read here; one that is fails closed until this reads it.
-            None,
+            lineage.as_ref(),
         ) {
             return Err(err);
         }

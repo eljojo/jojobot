@@ -32,6 +32,8 @@ mod carried_role;
 mod catching_up;
 #[path = "user_stories/challenge.rs"]
 mod challenge;
+#[path = "user_stories/chart.rs"]
+mod chart;
 /// A rule settled by reading it at its address, not by taking somebody's word.
 #[path = "user_stories/citing.rs"]
 mod citing;

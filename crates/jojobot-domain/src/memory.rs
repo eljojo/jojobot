@@ -1959,10 +1959,14 @@ pub enum MayWrite {
     /// **Only a different identity.** The thing a key binds cannot write it: a
     /// ceiling only holds if raising it costs something other than asking.
     DifferentIdentity,
-    /// **Only a bot above the thing on its `reports_to` chain.** The operator
-    /// always may, and is named in the refusal; no session is the operator, so
-    /// the chain is the only part code can check.
+    /// **Only a bot above the thing on its chain.**
     Ancestor,
+    /// **The chart's own relation: a bot above the thing, and a bot that
+    /// adopts it.** A thing with a manager changes it only through the bots
+    /// above it. A thing with none takes the manager named by that manager, or
+    /// by a bot above it. And nobody puts a thing under one of its own reports,
+    /// whoever asks (decision log 381).
+    Superior,
 }
 
 /// **A key the build guards, and who may write it.** The table is the build's
@@ -1976,11 +1980,14 @@ pub struct GuardedKey {
     pub may: MayWrite,
 }
 
+/// **The key a bot's manager is written under.** The chart is a chain of these.
+pub const REPORTS_TO: &str = "reports_to";
+
 /// **The keys this build guards.** Its own room's capacity, its own thoughts'
 /// body cap, its own boot seats and the role its boot claims: each binds the
-/// thing it is read off, so each is a different-identity key, held to the same
-/// predicate every other relation is.
-pub const GUARDED_KEYS: [GuardedKey; 4] = [
+/// thing it is read off, so each is a different-identity key. And the chart:
+/// who a bot reports to is changed only by a superior.
+pub const GUARDED_KEYS: [GuardedKey; 5] = [
     GuardedKey {
         key: THOUGHT_CAPACITY,
         may: MayWrite::DifferentIdentity,
@@ -1997,45 +2004,204 @@ pub const GUARDED_KEYS: [GuardedKey; 4] = [
         key: CLAIMS_ROLE,
         may: MayWrite::DifferentIdentity,
     },
+    GuardedKey {
+        key: REPORTS_TO,
+        may: MayWrite::Superior,
+    },
 ];
 
-/// **The bots above a thing on its `reports_to` chain, nearest first**, when a
-/// caller has read them. `None` is "not read", which an ancestor key treats as
-/// "nobody may": a write that forgot to read the lineage fails closed.
-pub type Managers<'a> = Option<&'a [EntityId]>;
+/// **How far up a chain is read.** A chart deeper than this is a loop or a
+/// mistake, and a read that ran on would never return.
+pub const MAX_CHAIN: usize = 32;
 
-/// **Who may write, in words**, for a refusal to name them (rule 261). The
-/// operator always may, so every relation that leaves anybody out names them.
-fn who_may(may: MayWrite, subject: &str, managers: &[String]) -> String {
+/// **The chart around a write**, read by whoever makes it: the bots above the
+/// thing, the manager the write names, and the bots above that one. Built only
+/// for a write that touches a key whose relation needs it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Lineage {
+    /// The bots above the thing on its chain, nearest first.
+    pub above: Vec<EntityId>,
+    /// The manager the write names, if it names one.
+    pub named: Option<EntityId>,
+    /// The bots above `named` on its chain, nearest first.
+    pub above_named: Vec<EntityId>,
+}
+
+/// What a write is judged against when its key's relation needs the chart.
+/// `None` is "not read", which such a key treats as "nobody may": a write that
+/// forgot to read the lineage fails closed.
+pub type Managers<'a> = Option<&'a Lineage>;
+
+/// **A walk up a chain, one read at a time.** The caller reads the manager of
+/// [`at`](Self::at), hands it to [`step`](Self::step), and repeats until `at`
+/// is `None`. The walk owns the parts that must not differ between the three
+/// places that read a chart: it stops at a loop, at a value that is no handle
+/// and at [`MAX_CHAIN`].
+pub struct ChainWalk {
+    seen: Vec<EntityId>,
+    at: Option<EntityId>,
+}
+
+impl ChainWalk {
+    /// Start below `start`: the first read is `start`'s own manager.
+    pub fn from(start: &EntityId) -> ChainWalk {
+        ChainWalk {
+            seen: vec![start.clone()],
+            at: Some(start.clone()),
+        }
+    }
+
+    /// The bot whose manager is read next, or `None` when the walk is over.
+    pub fn at(&self) -> Option<&EntityId> {
+        self.at.as_ref()
+    }
+
+    /// Take the manager just read for [`at`](Self::at): the value of its
+    /// `reports_to`, if it has one.
+    pub fn step(&mut self, held: Option<&str>) {
+        self.at = held
+            .and_then(manager_in)
+            .filter(|next| !self.seen.contains(next))
+            .filter(|_| self.seen.len() <= MAX_CHAIN);
+        if let Some(next) = &self.at {
+            self.seen.push(next.clone());
+        }
+    }
+
+    /// The bots above the start, nearest first.
+    pub fn above(self) -> Vec<EntityId> {
+        self.seen.into_iter().skip(1).collect()
+    }
+}
+
+/// **The manager a `reports_to` value names**, when it names one.
+pub fn manager_in(value: &str) -> Option<EntityId> {
+    let named = EntityId(value.trim().to_string());
+    validate_subject(&named).is_ok().then_some(named)
+}
+
+/// **Whether a write touches a key whose relation needs the chart read**, and
+/// the manager it names, if it names one. `Some` means the caller has to build
+/// a [`Lineage`] before asking; `None` means none of the keys here need one.
+pub fn chart_wanted(
+    keys: &[&GuardedKey],
+    written: &BTreeMap<String, String>,
+) -> Option<Option<EntityId>> {
+    keys.iter()
+        .any(|rule| matches!(rule.may, MayWrite::Ancestor | MayWrite::Superior))
+        .then(|| written.get(REPORTS_TO).and_then(|value| manager_in(value)))
+}
+
+/// **Whether a write naming `fields` needs the chart read first.**
+pub fn needs_the_chart(fields: &BTreeMap<String, String>) -> Option<Option<EntityId>> {
+    chart_wanted(&guarded_keys_in(fields), fields)
+}
+
+/// **Whether a change to the fold needs the chart read first**: some key whose
+/// relation needs it is a key the change touches. The manager named is the one
+/// the fold will hold afterwards.
+pub fn chart_wanted_by_change(
+    before: &BTreeMap<String, String>,
+    after: &BTreeMap<String, String>,
+) -> Option<Option<EntityId>> {
+    let touched: Vec<&GuardedKey> = GUARDED_KEYS
+        .iter()
+        .filter(|rule| before.get(rule.key) != after.get(rule.key))
+        .collect();
+    chart_wanted(&touched, after)
+}
+
+/// **Why a chart write is refused.**
+enum Why {
+    /// The caller is not licensed.
+    NotLicensed,
+    /// The write would put `subject` under one of its own reports.
+    Cycle(String),
+}
+
+/// **Whether `caller` may write a key declared as `may` about `subject`.**
+fn licensed(
+    may: MayWrite,
+    subject: &EntityId,
+    caller: &EntityId,
+    lineage: Managers,
+) -> Result<(), Why> {
+    let yes = match may {
+        MayWrite::Subject => caller == subject,
+        MayWrite::DifferentIdentity => caller != subject,
+        MayWrite::Ancestor => lineage.is_some_and(|l| l.above.contains(caller)),
+        MayWrite::Superior => {
+            let Some(l) = lineage else {
+                return Err(Why::NotLicensed);
+            };
+            // **Nobody puts a thing under its own report, whoever asks.** The
+            // manager named may not be the thing, nor sit below it.
+            if let Some(named) = &l.named
+                && (named == subject || l.above_named.contains(subject))
+            {
+                return Err(Why::Cycle(named.to_string()));
+            }
+            match (l.above.is_empty(), &l.named) {
+                // A thing with a manager: only the bots above it change that.
+                (false, _) => l.above.contains(caller),
+                // A thing with none adopts the manager named: by that manager,
+                // or by a bot above it.
+                (true, Some(named)) => caller == named || l.above_named.contains(caller),
+                // Nothing to change: no manager, and none named.
+                (true, None) => false,
+            }
+        }
+    };
+    yes.then_some(()).ok_or(Why::NotLicensed)
+}
+
+/// **The bots that may make a write**, for a refusal to name (rule 261).
+fn who_may_write(may: MayWrite, lineage: Managers) -> Vec<String> {
+    let names = |bots: &[EntityId]| bots.iter().map(ToString::to_string).collect::<Vec<_>>();
+    match (may, lineage) {
+        (MayWrite::Ancestor, Some(l)) => names(&l.above),
+        (MayWrite::Superior, Some(l)) if !l.above.is_empty() => names(&l.above),
+        (MayWrite::Superior, Some(l)) => l
+            .named
+            .iter()
+            .map(ToString::to_string)
+            .chain(names(&l.above_named))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// **Who may write, in words**, for a refusal to name them. The bots are
+/// named, and the operator never is: the operator acts through the assistant,
+/// which is above every bot that has a chain.
+fn who_may(may: MayWrite, subject: &str, allowed: &[String]) -> String {
+    let bots = || allowed.join(", ");
     match may {
         MayWrite::Subject => format!("only '{subject}' itself may write it"),
         MayWrite::DifferentIdentity => {
             "only a different identity may raise or lower it".to_string()
         }
-        MayWrite::Ancestor => match managers.is_empty() {
-            true => format!(
-                "only a bot above '{subject}' on its reports_to chain, or the operator, may \
-                 write it, and no chain is recorded for it"
-            ),
-            false => format!(
-                "only a bot above '{subject}' on its reports_to chain ({}) or the operator may \
-                 write it",
-                managers.join(", ")
-            ),
-        },
+        MayWrite::Ancestor | MayWrite::Superior if allowed.is_empty() => {
+            format!("no bot is recorded above '{subject}' to write it")
+        }
+        MayWrite::Ancestor => format!("only a bot above '{subject}' may write it: {}", bots()),
+        MayWrite::Superior => format!(
+            "only the bots that may place '{subject}' in the chart may write it: {}",
+            bots()
+        ),
     }
 }
 
 /// The text of [`MemoryError::KeyNotYours`]. The different-identity relation
 /// keeps the words the four ceilings have always had.
-fn key_not_yours(subject: &str, key: &str, may: MayWrite, managers: &[String]) -> String {
+fn key_not_yours(subject: &str, key: &str, may: MayWrite, allowed: &[String]) -> String {
     match may {
         MayWrite::DifferentIdentity => format!(
             "'{subject}' cannot set its own {key}: only a different identity may raise or lower it"
         ),
         _ => format!(
             "'{subject}' cannot write {key}: {}",
-            who_may(may, subject, managers)
+            who_may(may, subject, allowed)
         ),
     }
 }
@@ -2046,7 +2212,7 @@ fn merge_carries(
     survivor: &str,
     keys: &str,
     may: MayWrite,
-    managers: &[String],
+    allowed: &[String],
 ) -> String {
     match may {
         MayWrite::DifferentIdentity => format!(
@@ -2055,32 +2221,24 @@ fn merge_carries(
         ),
         _ => format!(
             "merging '{duplicate}' into '{survivor}' would carry {keys} onto it, and {}",
-            who_may(may, survivor, managers)
+            who_may(may, survivor, allowed)
         ),
     }
 }
 
-/// **Whether `caller` may write a key declared as `may` about `subject`.**
-fn licensed(may: MayWrite, subject: &EntityId, caller: &EntityId, managers: Managers) -> bool {
-    match may {
-        MayWrite::Subject => caller == subject,
-        MayWrite::DifferentIdentity => caller != subject,
-        MayWrite::Ancestor => managers.is_some_and(|chain| chain.contains(caller)),
-    }
-}
-
-/// **The refusal for a key `caller` may not write about `subject`.** Carries
-/// the chain so the refusal can name who may.
-fn unlicensed(rule: &GuardedKey, subject: &EntityId, managers: Managers) -> MemoryError {
-    MemoryError::KeyNotYours {
-        subject: subject.to_string(),
-        key: rule.key.to_string(),
-        may: rule.may,
-        managers: managers
-            .unwrap_or_default()
-            .iter()
-            .map(ToString::to_string)
-            .collect(),
+/// **The refusal for a key `caller` may not write about `subject`.**
+fn refusal(why: Why, rule: &GuardedKey, subject: &EntityId, lineage: Managers) -> MemoryError {
+    match why {
+        Why::Cycle(manager) => MemoryError::ChartCycle {
+            subject: subject.to_string(),
+            manager,
+        },
+        Why::NotLicensed => MemoryError::KeyNotYours {
+            subject: subject.to_string(),
+            key: rule.key.to_string(),
+            may: rule.may,
+            allowed: who_may_write(rule.may, lineage),
+        },
     }
 }
 
@@ -2098,14 +2256,6 @@ pub fn guarded_keys_in(fields: &BTreeMap<String, String>) -> Vec<&'static Guarde
         .collect()
 }
 
-/// **Whether a write naming `fields` needs the subject's `reports_to` chain
-/// read first**: some key it names is an ancestor key.
-pub fn needs_the_chain(fields: &BTreeMap<String, String>) -> bool {
-    guarded_keys_in(fields)
-        .iter()
-        .any(|rule| rule.may == MayWrite::Ancestor)
-}
-
 /// **A key may only be written by whom it declares.**
 ///
 /// `subject` is who the write is about; `caller` is who is making it. A write
@@ -2121,9 +2271,9 @@ pub fn refuses_unlicensed_write(
     subject: &EntityId,
     caller: &EntityId,
     fields: &BTreeMap<String, String>,
-    managers: Managers,
+    lineage: Managers,
 ) -> Option<MemoryError> {
-    refuses_unlicensed_write_by(&GUARDED_KEYS, subject, caller, fields, managers)
+    refuses_unlicensed_write_by(&GUARDED_KEYS, subject, caller, fields, lineage)
 }
 
 /// [`refuses_unlicensed_write`] against a table of the caller's choosing, so a
@@ -2133,13 +2283,16 @@ pub fn refuses_unlicensed_write_by(
     subject: &EntityId,
     caller: &EntityId,
     fields: &BTreeMap<String, String>,
-    managers: Managers,
+    lineage: Managers,
 ) -> Option<MemoryError> {
     table
         .iter()
         .filter(|rule| fields.contains_key(rule.key))
-        .find(|rule| !licensed(rule.may, subject, caller, managers))
-        .map(|rule| unlicensed(rule, subject, managers))
+        .find_map(|rule| {
+            licensed(rule.may, subject, caller, lineage)
+                .err()
+                .map(|why| refusal(why, rule, subject, lineage))
+        })
 }
 
 /// **The edit-and-retraction twin of [`refuses_unlicensed_write`].**
@@ -2165,9 +2318,9 @@ pub fn refuses_unlicensed_change(
     caller: &EntityId,
     before: &BTreeMap<String, String>,
     after: &BTreeMap<String, String>,
-    managers: Managers,
+    lineage: Managers,
 ) -> Option<MemoryError> {
-    refuses_unlicensed_change_by(&GUARDED_KEYS, subject, caller, before, after, managers)
+    refuses_unlicensed_change_by(&GUARDED_KEYS, subject, caller, before, after, lineage)
 }
 
 /// [`refuses_unlicensed_change`] against a table of the caller's choosing.
@@ -2177,13 +2330,16 @@ pub fn refuses_unlicensed_change_by(
     caller: &EntityId,
     before: &BTreeMap<String, String>,
     after: &BTreeMap<String, String>,
-    managers: Managers,
+    lineage: Managers,
 ) -> Option<MemoryError> {
     table
         .iter()
         .filter(|rule| before.get(rule.key) != after.get(rule.key))
-        .find(|rule| !licensed(rule.may, subject, caller, managers))
-        .map(|rule| unlicensed(rule, subject, managers))
+        .find_map(|rule| {
+            licensed(rule.may, subject, caller, lineage)
+                .err()
+                .map(|why| refusal(why, rule, subject, lineage))
+        })
 }
 
 /// **A merge cannot carry a guarded key onto a thing the caller may not write
@@ -2205,16 +2361,9 @@ pub fn refuses_merge_carrying(
     survivor: &EntityId,
     duplicate: &EntityId,
     carried: &BTreeMap<String, String>,
-    managers: Managers,
+    lineage: Managers,
 ) -> Option<MemoryError> {
-    refuses_merge_carrying_by(
-        &GUARDED_KEYS,
-        caller,
-        survivor,
-        duplicate,
-        carried,
-        managers,
-    )
+    refuses_merge_carrying_by(&GUARDED_KEYS, caller, survivor, duplicate, carried, lineage)
 }
 
 /// [`refuses_merge_carrying`] against a table of the caller's choosing.
@@ -2224,16 +2373,20 @@ pub fn refuses_merge_carrying_by(
     survivor: &EntityId,
     duplicate: &EntityId,
     carried: &BTreeMap<String, String>,
-    managers: Managers,
+    lineage: Managers,
 ) -> Option<MemoryError> {
     if duplicate == survivor {
         return None;
     }
-    let barred: Vec<&GuardedKey> = table
-        .iter()
-        .filter(|rule| carried.contains_key(rule.key))
-        .filter(|rule| !licensed(rule.may, survivor, caller, managers))
-        .collect();
+    let mut barred: Vec<&GuardedKey> = Vec::new();
+    for rule in table.iter().filter(|rule| carried.contains_key(rule.key)) {
+        match licensed(rule.may, survivor, caller, lineage) {
+            Ok(()) => {}
+            // A merge that would invert the chart is the chart's own refusal.
+            Err(why @ Why::Cycle(_)) => return Some(refusal(why, rule, survivor, lineage)),
+            Err(Why::NotLicensed) => barred.push(rule),
+        }
+    }
     let first = barred.first()?;
     Some(MemoryError::MergeCarriesGuardedKeys {
         duplicate: duplicate.to_string(),
@@ -2244,11 +2397,7 @@ pub fn refuses_merge_carrying_by(
             .collect::<Vec<_>>()
             .join(", "),
         may: first.may,
-        managers: managers
-            .unwrap_or_default()
-            .iter()
-            .map(ToString::to_string)
-            .collect(),
+        allowed: who_may_write(first.may, lineage),
     })
 }
 
@@ -4399,7 +4548,7 @@ pub enum MemoryError {
     /// thing it is about. A ceiling only holds if raising it costs something
     /// other than asking — see [`refuses_unlicensed_write`]. The refusal names
     /// who may make the write (rule 261).
-    #[error("{}", key_not_yours(.subject, .key, *.may, .managers))]
+    #[error("{}", key_not_yours(.subject, .key, *.may, .allowed))]
     KeyNotYours {
         /// The handle the write was about.
         subject: String,
@@ -4407,15 +4556,29 @@ pub enum MemoryError {
         key: String,
         /// Who the key's declaration licenses.
         may: MayWrite,
-        /// The bots above `subject`, nearest first, when the write needed them.
-        managers: Vec<String>,
+        /// The bots that may make the write, when its relation names them.
+        allowed: Vec<String>,
+    },
+    /// **A chart write that would put a bot under one of its own reports.**
+    /// Refused whoever asks (decision log 381): the assistant has no manager,
+    /// and a bot below it that named itself the assistant's manager would
+    /// invert the chart.
+    #[error(
+        "naming '{manager}' as the manager of '{subject}' would put '{subject}' under one of \
+         its own reports"
+    )]
+    ChartCycle {
+        /// The bot whose manager was being written.
+        subject: String,
+        /// The manager the write named.
+        manager: String,
     },
     /// **A merge that would carry a guarded key onto a thing the caller may not
     /// write it on.** Everything the duplicate holds moves to the survivor and
     /// folds there, so a caller that wrote a key on another thing, which is
     /// allowed, could merge that thing into one it may not write the key on.
     /// See [`refuses_merge_carrying`].
-    #[error("{}", merge_carries(.duplicate, .survivor, .keys, *.may, .managers))]
+    #[error("{}", merge_carries(.duplicate, .survivor, .keys, *.may, .allowed))]
     MergeCarriesGuardedKeys {
         /// The handle that would be folded away, as it answers now.
         duplicate: String,
@@ -4425,8 +4588,9 @@ pub enum MemoryError {
         keys: String,
         /// Who the first of those keys' declarations licenses.
         may: MayWrite,
-        /// The bots above `survivor`, nearest first, when the merge needed them.
-        managers: Vec<String>,
+        /// The bots that may place the keys on `survivor`, when the relation
+        /// names them.
+        allowed: Vec<String>,
     },
     /// **A thought's body is over its container's cap.** See
     /// [`refuses_thought_over_cap`] — only ever raised on a write that

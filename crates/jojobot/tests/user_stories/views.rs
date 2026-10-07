@@ -126,14 +126,17 @@ async fn the_colleagues_view_says_who_each_bot_reports_to_and_a_second_call_says
     s.add("bot:omega", "Omega").await;
     s.add("bot:sigma", "Sigma").await;
     s.add("bot:psi", "Psi").await;
+    // Only a manager places a bot under it, so omega writes its own reports.
+    let omega = story.as_bot("bot:omega").await;
     for report in ["bot:sigma", "bot:psi"] {
-        s.event_with(
-            report,
-            "answers to omega",
-            json!({"reports_to": "bot:omega"}),
-            &[],
-        )
-        .await;
+        omega
+            .event_with(
+                report,
+                "answers to omega",
+                json!({"reports_to": "bot:omega"}),
+                &[],
+            )
+            .await;
     }
 
     let colleagues = s.call("recall", json!({"view": "colleagues"})).await.json();
@@ -220,16 +223,19 @@ async fn the_colleagues_view_leaves_operational_keys_out_and_names_what_it_left_
         &[],
     )
     .await;
-    s.event_with(
-        "bot:sigma",
-        "what sigma is for",
-        json!({
-            "one_liner": "keeps the books", "reports_to": "bot:omega",
-            "probe/last": "2026-10-02", "nudge/quiet": "on",
-        }),
-        &[],
-    )
-    .await;
+    // Only a manager places a bot under it, so omega writes sigma's record.
+    let omega = story.as_bot("bot:omega").await;
+    omega
+        .event_with(
+            "bot:sigma",
+            "what sigma is for",
+            json!({
+                "one_liner": "keeps the books", "reports_to": "bot:omega",
+                "probe/last": "2026-10-02", "nudge/quiet": "on",
+            }),
+            &[],
+        )
+        .await;
 
     let colleagues = s.call("recall", json!({"view": "colleagues"})).await.json();
     let objects = colleagues["objects"].as_array().expect("a list of bots");

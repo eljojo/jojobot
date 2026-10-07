@@ -785,16 +785,26 @@ impl Jojobot {
         } else {
             subject.clone()
         };
-        if let Some(refused) =
-            // No key the build ships is an ancestor key yet, so no chain is
-            // read; one that is fails closed until this reads it.
-            jojobot_domain::memory::refuses_unlicensed_write(
-                &ceiling_subject,
-                &caller.bot,
-                &fields,
-                None,
-            )
-        {
+        // **The chart is read here, before the write, and not inside it.** A
+        // fresh capture carries no caller down to the store, so the chain this
+        // write is judged against can be one write old: a chart change that
+        // lands between this read and the store's write is judged against the
+        // chart before it. Chart changes are rare and made by superiors, and the
+        // window is accepted (decision log 381); the edit, the retraction and
+        // the merge read the chart inside their own transaction.
+        let lineage = match jojobot_domain::memory::needs_the_chart(&fields) {
+            Some(named) => match self.chart_around(&ceiling_subject, named).await {
+                Ok(lineage) => Some(lineage),
+                Err(e) => return memory_declined("capture", e),
+            },
+            None => None,
+        };
+        if let Some(refused) = jojobot_domain::memory::refuses_unlicensed_write(
+            &ceiling_subject,
+            &caller.bot,
+            &fields,
+            lineage.as_ref(),
+        ) {
             return memory_declined("capture", refused);
         }
         // **A role's own two fields are the boot door's, whoever is asking.**
@@ -1080,6 +1090,42 @@ impl Jojobot {
                 Blocked::MustExist("capture"),
             )),
         }
+    }
+}
+
+impl Jojobot {
+    /// **The chart around a write**: the bots above `subject`, the manager the
+    /// write names and the bots above that one. Read through the store's own
+    /// folded fields, one bot at a time, and a read that fails refuses the
+    /// write rather than waving it through.
+    pub(crate) async fn chart_around(
+        &self,
+        subject: &EntityId,
+        named: Option<EntityId>,
+    ) -> Result<jojobot_domain::memory::Lineage, MemoryError> {
+        let above = self.chain_above(subject).await?;
+        let above_named = match &named {
+            Some(manager) => self.chain_above(manager).await?,
+            None => Vec::new(),
+        };
+        Ok(jojobot_domain::memory::Lineage {
+            above,
+            named,
+            above_named,
+        })
+    }
+
+    /// The bots above `start` on its `reports_to` chain, nearest first.
+    async fn chain_above(&self, start: &EntityId) -> Result<Vec<EntityId>, MemoryError> {
+        let mut walk = jojobot_domain::memory::ChainWalk::from(start);
+        while let Some(at) = walk.at().cloned() {
+            let held = self.memory.fields(&at).await?;
+            walk.step(
+                held.get(jojobot_domain::memory::REPORTS_TO)
+                    .map(String::as_str),
+            );
+        }
+        Ok(walk.above())
     }
 }
 

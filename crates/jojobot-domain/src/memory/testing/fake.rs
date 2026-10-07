@@ -775,6 +775,42 @@ impl InMemoryMemory {
         super::super::folded_fields(&self.writes_on(entity, &facts), &self.declarations())
     }
 
+    /// **The chart around a write**, read from the records the write holds: the
+    /// bots above `subject`, the manager the write names and the bots above
+    /// that one. Passed the records rather than locking them, because the write
+    /// path reads this while it already holds them.
+    fn lineage_among(
+        &self,
+        facts: &[Fact],
+        subject: &EntityId,
+        named: Option<EntityId>,
+    ) -> super::super::Lineage {
+        let above = self.chain_above_among(facts, subject);
+        let above_named = match &named {
+            Some(manager) => self.chain_above_among(facts, manager),
+            None => Vec::new(),
+        };
+        super::super::Lineage {
+            above,
+            named,
+            above_named,
+        }
+    }
+
+    /// The bots above `start` on its `reports_to` chain, nearest first.
+    fn chain_above_among(&self, facts: &[Fact], start: &EntityId) -> Vec<EntityId> {
+        let declared = self.declarations();
+        let mut walk = super::super::ChainWalk::from(start);
+        while let Some(at) = walk.at().cloned() {
+            let held = match self.storage_key(&at) {
+                Some(key) => super::super::folded_fields(&self.writes_on(&key, facts), &declared),
+                None => Default::default(),
+            };
+            walk.step(held.get(super::super::REPORTS_TO).map(String::as_str));
+        }
+        walk.above()
+    }
+
     /// What has been declared — which is what says how each key folds.
     fn declarations(&self) -> Vec<crate::memory::types::DeclaredType> {
         self.types.lock().expect("fake mutex poisoned").clone()
@@ -1958,9 +1994,15 @@ impl Memory for InMemoryMemory {
         // **The ceiling and the room, both on the state this edit leaves
         // behind** — the same check the real store runs, atomically with the
         // write it gates.
-        if let Some(err) =
-            super::super::refuses_unlicensed_change(&handle, caller, &before, &after, None)
-        {
+        let lineage = super::super::chart_wanted_by_change(&before, &after)
+            .map(|named| self.lineage_among(&facts, &handle, named));
+        if let Some(err) = super::super::refuses_unlicensed_change(
+            &handle,
+            caller,
+            &before,
+            &after,
+            lineage.as_ref(),
+        ) {
             return Err(err);
         }
         let becomes_thought = edited.status == FactStatus::Active
@@ -2148,12 +2190,14 @@ impl Memory for InMemoryMemory {
             &self.writes_on(&folded_key, &held_facts),
             &self.declarations(),
         );
+        let lineage = super::super::needs_the_chart(&carried)
+            .map(|named| self.lineage_among(&held_facts, &survivor_handle, named));
         if let Some(err) = super::super::refuses_merge_carrying(
             caller,
             &survivor_handle,
             &folded_handle,
             &carried,
-            None,
+            lineage.as_ref(),
         ) {
             return Err(err);
         }
@@ -2479,12 +2523,14 @@ impl Memory for InMemoryMemory {
             &Default::default(),
             &declared,
         );
+        let lineage = super::super::chart_wanted_by_change(&before_fold, &after_fold)
+            .map(|named| self.lineage_among(&facts, &handle, named));
         if let Some(err) = super::super::refuses_unlicensed_change(
             &handle,
             caller,
             &before_fold,
             &after_fold,
-            None,
+            lineage.as_ref(),
         ) {
             return Err(err);
         }

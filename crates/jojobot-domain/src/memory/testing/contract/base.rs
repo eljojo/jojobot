@@ -2017,6 +2017,196 @@ pub async fn referring_to_finds_a_reference_to_a_renamed_target<M: Memory>(store
     );
 }
 
+/// **The chart is judged against the chain read inside the write.** A bot
+/// changes who it reports to only through the bots above it; a bot with no
+/// manager takes the one named by that manager or a bot above it; and nobody is
+/// put under one of its own reports. The three paths that change the fold
+/// without a caller's spelling are covered: an edit, a retraction and a merge.
+/// Each is refused for a stranger and for the bot itself, and lands for the
+/// bots the chain allows, so the guard reads who is calling and what the chart
+/// is, not merely what changed. A chart that loops answers instead of
+/// hanging.
+pub async fn the_chart_is_judged_against_the_chain_read_inside_the_write<M: Memory>(store: &M) {
+    let top = EntityId("bot:contract-chart-apex".into());
+    let mid = EntityId("bot:contract-chart-midway".into());
+    let low = EntityId("bot:contract-chart-basement".into());
+    let stranger = EntityId("bot:contract-chart-outsider".into());
+    let orphan = EntityId("bot:contract-chart-foundling".into());
+    let orphan_two = EntityId("bot:contract-chart-waif".into());
+    let donor = EntityId("bot:contract-chart-benefactor".into());
+    for (id, name) in [
+        (&top, "Apex"),
+        (&mid, "Midway"),
+        (&low, "Basement"),
+        (&stranger, "Outsider"),
+        (&orphan, "Foundling"),
+        (&orphan_two, "Waif"),
+        (&donor, "Benefactor"),
+    ] {
+        add(store, NewEntity::new(id.clone(), name, "contract-fixture")).await;
+    }
+    let reporting = |manager: &EntityId| -> std::collections::BTreeMap<String, String> {
+        [(crate::memory::REPORTS_TO.to_string(), manager.to_string())]
+            .into_iter()
+            .collect()
+    };
+    // The chart is laid down through the store, which guards nothing at a
+    // fresh capture: mid reports to top, low reports to mid.
+    capture(
+        store,
+        NewFact {
+            fields: reporting(&top),
+            ..NewFact::about(mid.clone(), "mid reports to top", date(2026, 10, 1))
+        },
+    )
+    .await;
+    let placed = capture(
+        store,
+        NewFact {
+            fields: reporting(&mid),
+            ..NewFact::about(low.clone(), "low reports to mid", date(2026, 10, 1))
+        },
+    )
+    .await;
+    let to = |manager: &EntityId| FactPatch {
+        fields: reporting(manager),
+        ..Default::default()
+    };
+    let refused_for = |who: &str, err: &MemoryError| {
+        assert!(
+            matches!(err, MemoryError::KeyNotYours { .. }),
+            "{who}: expected KeyNotYours, got {err:?}"
+        );
+    };
+
+    // ── an edit: only the chain changes a manager ───────────────────────────
+    for outsider in [&stranger, &low] {
+        let err = store
+            .update_fact(&placed.address(), to(&top), outsider)
+            .await
+            .expect_err("a bot outside the chain cannot move low in the chart");
+        refused_for(outsider.as_str(), &err);
+    }
+    store
+        .update_fact(&placed.address(), to(&top), &mid)
+        .await
+        .expect("mid is above low and moves it up")
+        .written()
+        .expect("the guard must not block a superior");
+    store
+        .update_fact(&placed.address(), to(&mid), &top)
+        .await
+        .expect("top is above low and may move it back")
+        .written()
+        .expect("the guard must not block a superior");
+
+    // ── a cycle is refused whoever asks ─────────────────────────────────────
+    let upside_down = capture(
+        store,
+        NewFact::about(top.clone(), "top has no manager yet", date(2026, 10, 2)),
+    )
+    .await;
+    for caller in [&low, &top, &stranger] {
+        let err = store
+            .update_fact(&upside_down.address(), to(&low), caller)
+            .await
+            .expect_err("a bot cannot be put under one of its own reports");
+        assert!(
+            matches!(err, MemoryError::ChartCycle { .. }),
+            "{caller}: expected ChartCycle, got {err:?}"
+        );
+    }
+
+    // ── adoption: a bot with no manager takes the one named ─────────────────
+    let adopted = capture(
+        store,
+        NewFact::about(orphan.clone(), "orphan has no manager", date(2026, 10, 2)),
+    )
+    .await;
+    let err = store
+        .update_fact(&adopted.address(), to(&mid), &stranger)
+        .await
+        .expect_err("a stranger cannot place an orphan under mid");
+    refused_for("stranger", &err);
+    store
+        .update_fact(&adopted.address(), to(&mid), &mid)
+        .await
+        .expect("mid adopts the orphan")
+        .written()
+        .expect("the bot named may adopt");
+
+    // ── a retraction: taking back a manager is a change to the chart ────────
+    let err = store
+        .retract(
+            &placed.address(),
+            Some("a mistake"),
+            date(2026, 10, 3),
+            &stranger,
+        )
+        .await
+        .expect_err("a stranger cannot take back low's manager");
+    refused_for("stranger", &err);
+    store
+        .retract(
+            &placed.address(),
+            Some("a mistake"),
+            date(2026, 10, 3),
+            &top,
+        )
+        .await
+        .expect("top is above low and may take its manager back");
+
+    // ── a merge: a manager arrives folded in from another thing ─────────────
+    capture(
+        store,
+        NewFact {
+            fields: reporting(&mid),
+            ..NewFact::about(donor.clone(), "donor reports to mid", date(2026, 10, 4))
+        },
+    )
+    .await;
+    let err = store
+        .merge(&donor, &orphan_two, None, date(2026, 10, 4), &stranger)
+        .await
+        .expect_err("a stranger cannot place orphan two under mid by merging");
+    assert!(
+        matches!(err, MemoryError::MergeCarriesGuardedKeys { .. }),
+        "expected MergeCarriesGuardedKeys, got {err:?}"
+    );
+    store
+        .merge(&donor, &orphan_two, None, date(2026, 10, 4), &mid)
+        .await
+        .expect("mid may adopt orphan two by merging its donor in");
+
+    // ── a chart that loops answers instead of hanging ───────────────────────
+    let one = EntityId("bot:contract-chart-ouroboros".into());
+    let two = EntityId("bot:contract-chart-tailbiter".into());
+    for (id, name) in [(&one, "Ouroboros"), (&two, "Tailbiter")] {
+        add(store, NewEntity::new(id.clone(), name, "contract-fixture")).await;
+    }
+    let looped = capture(
+        store,
+        NewFact {
+            fields: reporting(&two),
+            ..NewFact::about(one.clone(), "one reports to two", date(2026, 10, 5))
+        },
+    )
+    .await;
+    capture(
+        store,
+        NewFact {
+            fields: reporting(&one),
+            ..NewFact::about(two.clone(), "two reports to one", date(2026, 10, 5))
+        },
+    )
+    .await;
+    let err = store
+        .update_fact(&looped.address(), to(&top), &stranger)
+        .await
+        .expect_err("a stranger cannot move a bot in a looped chart");
+    refused_for("stranger", &err);
+}
+
 /// **A merge into the caller's own bot cannot carry a ceiling onto it, and the
 /// store decides that itself.** A caller-side check made before the merge
 /// leaves a gap a second session of the same bot can write a ceiling into, so
@@ -13438,6 +13628,7 @@ macro_rules! all_cases {
         $m!(referring_to_follows_a_declared_reference_key($store));
         $m!(referring_to_finds_a_reference_to_a_renamed_target($store));
         $m!(a_merge_into_the_callers_own_bot_cannot_carry_a_ceiling_onto_it($store));
+        $m!(the_chart_is_judged_against_the_chain_read_inside_the_write($store));
         $m!(referring_to_finds_a_target_named_in_a_list_of_references($store));
         $m!(a_work_items_status_is_held_to_its_projects_columns($store));
         $m!(a_child_names_its_parent_and_reads_back($store));

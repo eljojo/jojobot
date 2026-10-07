@@ -81,9 +81,9 @@ fn a_key_declares_who_may_write_it_relative_to_its_subject() {
     let bot = handle("bot:sigma");
     let other = handle("bot:delta");
     let manager = handle("bot:gamma");
-    let above = [manager.clone()];
-    let refused = |key: &str, caller: &EntityId, managers: Option<&[EntityId]>| {
-        refuses_unlicensed_write_by(&WHO_MAY, &bot, caller, &writing(key), managers)
+    let above = lineage(&["bot:gamma"], None, &[]);
+    let refused = |key: &str, caller: &EntityId, chain: Option<&Lineage>| {
+        refuses_unlicensed_write_by(&WHO_MAY, &bot, caller, &writing(key), chain)
     };
 
     // The subject itself only.
@@ -104,23 +104,31 @@ fn a_key_declares_who_may_write_it_relative_to_its_subject() {
     assert!(refused("anything_else", &bot, None).is_none());
 }
 
-/// **The refusal names who may make the write** (rule 261): the chain for an
-/// ancestor key, and the operator, who always may.
+/// **The refusal names who may make the write** (rule 261): the bots above the
+/// subject for an ancestor key, never "the operator" — the operator acts
+/// through the assistant, which is above every bot that has a chain.
 #[test]
 fn a_refused_key_write_names_who_may_make_it() {
     let bot = handle("bot:sigma");
-    let above = [handle("bot:gamma"), handle("bot:omega")];
+    let above = lineage(&["bot:gamma", "bot:omega"], None, &[]);
     let refused =
         refuses_unlicensed_write_by(&WHO_MAY, &bot, &bot, &writing("only_above"), Some(&above))
             .expect("the subject is not above itself");
     let said = refused.to_string();
-    for who in ["bot:gamma", "bot:omega", "operator"] {
+    for who in ["bot:gamma", "bot:omega"] {
         assert!(said.contains(who), "{who} may write it: {said}");
     }
+    assert!(!said.contains("operator"), "{said}");
     // No chain recorded is said, not left to read as an empty list of people.
-    let none = refuses_unlicensed_write_by(&WHO_MAY, &bot, &bot, &writing("only_above"), Some(&[]))
-        .expect("nobody above");
-    assert!(none.to_string().contains("operator"), "{none}");
+    let none = refuses_unlicensed_write_by(
+        &WHO_MAY,
+        &bot,
+        &bot,
+        &writing("only_above"),
+        Some(&lineage(&[], None, &[])),
+    )
+    .expect("nobody above");
+    assert!(none.to_string().contains("no bot"), "{none}");
 }
 
 /// **The same predicate judges an edit's fold and a merge**, so a key that
@@ -165,6 +173,186 @@ fn a_change_to_the_fold_and_a_merge_are_judged_by_the_same_relation() {
     );
 }
 
+fn lineage(above: &[&str], named: Option<&str>, above_named: &[&str]) -> Lineage {
+    Lineage {
+        above: above.iter().map(|h| handle(h)).collect(),
+        named: named.map(handle),
+        above_named: above_named.iter().map(|h| handle(h)).collect(),
+    }
+}
+
+fn reporting_to(manager: &str) -> BTreeMap<String, String> {
+    [(REPORTS_TO.to_string(), manager.to_string())].into()
+}
+
+/// **A bot cannot be put under one of its own reports, whoever asks.** The
+/// assistant is at the top of the chain and has no manager, so the write that
+/// names a bot below it as its manager would be allowed by adoption (the bot
+/// named is the caller) and would invert the chart. Written before the rule,
+/// and refused for the named bot, for the assistant itself and for a bot
+/// naming itself.
+#[test]
+fn a_write_that_puts_a_bot_under_its_own_report_is_refused_whoever_asks() {
+    let top = handle("bot:assistant");
+    let line = handle("bot:sigma");
+    // The line names itself the assistant's manager: it is the bot named, so
+    // adoption would let it, and it sits below the assistant.
+    let inverted = lineage(&[], Some("bot:sigma"), &["bot:assistant"]);
+    for caller in [&line, &top] {
+        let refused =
+            refuses_unlicensed_write(&top, caller, &reporting_to("bot:sigma"), Some(&inverted))
+                .expect("the chart cannot be inverted");
+        assert!(
+            matches!(refused, MemoryError::ChartCycle { .. }),
+            "{caller}: {refused:?}"
+        );
+    }
+    // A bot cannot be its own manager.
+    let itself = lineage(&[], Some("bot:sigma"), &[]);
+    assert!(matches!(
+        refuses_unlicensed_write(&line, &line, &reporting_to("bot:sigma"), Some(&itself)),
+        Some(MemoryError::ChartCycle { .. })
+    ));
+}
+
+/// **Adoption: a bot with no manager takes the one named by that bot or by one
+/// above it, and a bot that has one changes it only through its chain.** Every
+/// branch is asked of both of its answers, since a rule that refused
+/// everything, or allowed everything, would pass the half that agrees.
+#[test]
+fn a_first_manager_is_adopted_and_a_changed_one_stays_with_the_chain() {
+    let orphan = handle("bot:sigma");
+    let named = "bot:gamma";
+    let adopts = |caller: &str, above_named: &[&str]| {
+        refuses_unlicensed_write(
+            &orphan,
+            &handle(caller),
+            &reporting_to(named),
+            Some(&lineage(&[], Some(named), above_named)),
+        )
+    };
+    // The bot named adopts its report; a bot above it may place one under it.
+    assert!(adopts("bot:gamma", &["bot:omega"]).is_none());
+    assert!(adopts("bot:omega", &["bot:omega"]).is_none());
+    // A stranger, and the orphan naming its own boss, are refused.
+    assert!(adopts("bot:delta", &["bot:omega"]).is_some());
+    assert!(adopts("bot:sigma", &["bot:omega"]).is_some());
+
+    // With a manager already, only the chain changes it.
+    let managed = |caller: &str| {
+        refuses_unlicensed_write(
+            &orphan,
+            &handle(caller),
+            &reporting_to(named),
+            Some(&lineage(&["bot:rho", "bot:omega"], Some(named), &[])),
+        )
+    };
+    assert!(managed("bot:rho").is_none());
+    assert!(managed("bot:omega").is_none());
+    // The bot being named is not on the chain, so it cannot take a report
+    // away from its manager; and a stranger cannot either.
+    assert!(managed("bot:gamma").is_some());
+    assert!(managed("bot:delta").is_some());
+    assert!(managed("bot:sigma").is_some());
+
+    // Clearing the key is a change to the chart too.
+    let cleared = |caller: &str| {
+        refuses_unlicensed_write(
+            &orphan,
+            &handle(caller),
+            &BTreeMap::from([(REPORTS_TO.to_string(), String::new())]),
+            Some(&lineage(&["bot:rho"], None, &[])),
+        )
+    };
+    assert!(cleared("bot:rho").is_none());
+    assert!(cleared("bot:delta").is_some());
+}
+
+/// **The refusal names the bots that may make the write**, never "the
+/// operator": the operator acts through the assistant, which is above every bot
+/// that has a chain.
+#[test]
+fn a_refused_chart_write_names_the_bots_that_may_make_it() {
+    let orphan = handle("bot:sigma");
+    let stranger = handle("bot:delta");
+    // A bot with a manager: its chain.
+    let said = refuses_unlicensed_write(
+        &orphan,
+        &stranger,
+        &reporting_to("bot:gamma"),
+        Some(&lineage(&["bot:rho", "bot:omega"], Some("bot:gamma"), &[])),
+    )
+    .expect("a stranger may not change it")
+    .to_string();
+    for who in ["bot:rho", "bot:omega"] {
+        assert!(said.contains(who), "{who} may: {said}");
+    }
+    // A bot without one: the bot being named, and the bots above it.
+    let said = refuses_unlicensed_write(
+        &orphan,
+        &stranger,
+        &reporting_to("bot:gamma"),
+        Some(&lineage(&[], Some("bot:gamma"), &["bot:omega"])),
+    )
+    .expect("a stranger may not adopt")
+    .to_string();
+    for who in ["bot:gamma", "bot:omega"] {
+        assert!(said.contains(who), "{who} may: {said}");
+    }
+    assert!(!said.contains("operator"), "{said}");
+}
+
+/// **A walk up the chart stops where a chart can stop**: at a bot with no
+/// manager, at a value that is no handle, at a loop and at the depth bound. A
+/// chart that looped, or ran for ever, would hang the write that asks. Every
+/// stop is paired with a walk that does continue, since a walk that always
+/// stopped at once would pass the stops alone.
+#[test]
+fn a_walk_up_the_chart_stops_at_the_top_a_loop_a_non_handle_and_the_depth_bound() {
+    // Reading a handle needs the kinds a booted store loads.
+    let _booted = InMemoryMemory::booted();
+    let walk = |start: &str, managers: &dyn Fn(&str) -> Option<String>| {
+        let mut walk = ChainWalk::from(&handle(start));
+        let mut reads = 0;
+        while let Some(at) = walk.at().cloned() {
+            // A walk that never stops must fail here and not hang the suite.
+            reads += 1;
+            assert!(reads < 10 * MAX_CHAIN, "the walk does not stop");
+            walk.step(managers(at.as_str()).as_deref());
+        }
+        walk.above()
+    };
+    // A chain that continues: a to b to c, and c has none.
+    let above = walk("bot:delta", &|at| match at {
+        "bot:delta" => Some("bot:gamma".into()),
+        "bot:gamma" => Some("bot:omega".into()),
+        _ => None,
+    });
+    assert_eq!(above, vec![handle("bot:gamma"), handle("bot:omega")]);
+    // A loop: a to b to a stops at b, and the start is not its own manager.
+    let looped = walk("bot:delta", &|at| match at {
+        "bot:delta" => Some("bot:gamma".into()),
+        _ => Some("bot:delta".into()),
+    });
+    assert_eq!(looped, vec![handle("bot:gamma")]);
+    // A value that is no handle ends the walk without a manager.
+    let prose = walk("bot:delta", &|_| Some("whoever is free".into()));
+    assert!(prose.is_empty(), "{prose:?}");
+    // A chart longer than the bound stops at it.
+    let endless = walk("bot:delta", &|at| {
+        let n: usize = at
+            .rsplit('-')
+            .next()
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(0);
+        // Built at run time: the roster scan reads only handles in the source.
+        let slug = format!("link-{}", n + 1);
+        Some(format!("bot:{slug}"))
+    });
+    assert!(endless.len() <= MAX_CHAIN + 1, "{}", endless.len());
+    assert!(endless.len() > 1);
+}
+
 /// **The four keys a bot cannot write about itself are declarations in the
 /// one table**, each a different-identity key, so moving them changed nothing a
 /// caller sees.
@@ -177,7 +365,13 @@ fn the_four_existing_keys_are_different_identity_keys() {
             .unwrap_or_else(|| panic!("{key} is declared"));
         assert_eq!(rule.may, MayWrite::DifferentIdentity, "{key}");
     }
-    assert_eq!(GUARDED_KEYS.len(), 4);
+    // …and the chart's own key is the one superior-only key beside them.
+    let chart = GUARDED_KEYS
+        .iter()
+        .find(|rule| rule.key == REPORTS_TO)
+        .expect("reports_to is declared");
+    assert_eq!(chart.may, MayWrite::Superior);
+    assert_eq!(GUARDED_KEYS.len(), 5);
 }
 
 fn thought(id: &str, pointer: &str) -> Fact {
