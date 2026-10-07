@@ -10754,6 +10754,96 @@ pub async fn a_reference_must_name_an_entity_that_exists<M: Memory>(store: &M) {
         .expect("a phrase under a reference key is messy, not a broken link");
 }
 
+/// **A field value that names another thing must name one that exists, under
+/// whatever key it sits.**
+///
+/// A field whose value is a handle is a link whether or not a type declared the
+/// key, and the walk draws it. A write that stored one naming nothing would
+/// leave a link into a node nobody recorded, which is what an edge's object and
+/// a declared reference key are already refused for.
+///
+/// **Five halves, and each alone passes on a store nobody wants.** A miss is
+/// refused with the handle that missed, on capture and on an edit. The same key
+/// naming a thing that exists lands, or the rule is a wall. A list of handles is
+/// held to every item. And prose that merely looks like a handle stays prose: a
+/// handle inside a longer sentence, and a list with an item that is no handle.
+pub async fn a_field_naming_nothing_is_refused_under_any_key<M: Memory>(store: &M) {
+    let ledger = EntityId("thing:contract-blocks-ledger".into());
+    ensure(store, &ledger).await;
+    let real = EntityId("work:contract-blocks-real".into());
+    ensure(store, &real).await;
+    let nobody = "work:contract-blocks-nobody";
+    let on = |value: &str, said: &str| NewFact {
+        fields: [("blocks".to_string(), value.to_string())]
+            .into_iter()
+            .collect(),
+        ..NewFact::about(ledger.clone(), said, date(2026, 6, 1))
+    };
+
+    // A miss is refused, naming what missed.
+    let missing = store
+        .capture(on(nobody, "waits on work that is not recorded"))
+        .await
+        .expect("a miss is an answer, not a failure");
+    assert!(
+        matches!(&missing, Guarded::Blocked { attempted, .. } if attempted.as_str() == nobody),
+        "a handle under an undeclared key that names nothing is blocked, got {missing:?}",
+    );
+
+    // The same key naming a thing that exists goes straight through.
+    let landed = store
+        .capture(on(real.as_str(), "waits on the real work"))
+        .await
+        .expect("capture succeeds")
+        .written()
+        .expect("a handle naming a real thing lands");
+
+    // A list is held to every item: one missing item refuses the whole write.
+    let listed_missing = store
+        .capture(on(
+            &format!("{}, {nobody}", real.as_str()),
+            "waits on two things, one of them not recorded",
+        ))
+        .await
+        .expect("a miss is an answer, not a failure");
+    assert!(
+        matches!(&listed_missing, Guarded::Blocked { attempted, .. } if attempted.as_str() == nobody),
+        "an item of a list that names nothing blocks the list, got {listed_missing:?}",
+    );
+
+    // Prose that looks handle-like stays prose.
+    for prose in [
+        format!("held up by {nobody} until Friday"),
+        format!("{}, and whatever else turns up", real.as_str()),
+    ] {
+        store
+            .capture(on(&prose, "a note, not a link"))
+            .await
+            .expect("capture succeeds")
+            .written()
+            .expect("a value that is not a handle is not asked to exist");
+    }
+
+    // The edit path names things too.
+    let edited = store
+        .update_fact(
+            &landed.address(),
+            FactPatch {
+                fields: [("blocks".to_string(), nobody.to_string())]
+                    .into_iter()
+                    .collect(),
+                ..Default::default()
+            },
+            &other_caller(),
+        )
+        .await
+        .expect("a miss is an answer, not a failure");
+    assert!(
+        matches!(&edited, Guarded::Blocked { attempted, .. } if attempted.as_str() == nobody),
+        "an edit that sets a handle naming nothing is blocked too, got {edited:?}",
+    );
+}
+
 /// **A kind the code learned today survives the store.**
 ///
 /// The store keeps a kind as a string and reads it back off the handle, so
@@ -13282,6 +13372,7 @@ macro_rules! all_cases {
         $m!(neither_half_writes_over_the_others_keys($store));
         $m!(a_closed_set_refuses_a_write_outside_it($store));
         $m!(a_reference_must_name_an_entity_that_exists($store));
+        $m!(a_field_naming_nothing_is_refused_under_any_key($store));
         $m!(a_write_cannot_break_a_fit_that_already_exists($store));
         $m!(a_supersede_that_breaks_a_fit_is_refused_and_a_retraction_is_not($store));
         $m!(a_walk_flags_a_link_drawn_by_a_claim_archived_through_an_ordinary_edit($store));

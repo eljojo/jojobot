@@ -826,6 +826,9 @@ const ROSTER: &[&str] = &[
     "work:contract-the-stay",
     "work:upgrade-fixture-prior",
     "work:upgrade-fixture-task",
+    "work:contract-blocks-real",
+    "work:contract-blocks-nobody",
+    "thing:contract-blocks-ledger",
 ];
 
 /// Every file in the workspace that can carry a handle.
