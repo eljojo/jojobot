@@ -117,7 +117,10 @@ async fn a_post_does_not_ship_again_the_mail_the_bot_is_already_working() {
             .await;
         posted
             .says("\"leftovers\"")
-            .says("\"count\":2")
+            // **The count is read at its own address.** A text needle for
+            // `"count":2` is satisfied by 20, and by any other key called
+            // `count` in the answer.
+            .number("/your_mail/leftovers/count", 2)
             // The call that returns them is named, so a bot that wants them
             // back knows where.
             .says("read_mailbox")
@@ -137,7 +140,9 @@ async fn a_post_does_not_ship_again_the_mail_the_bot_is_already_working() {
     posted
         .says(&envelope(&third))
         .says("the grate is bent")
-        .says("\"count\":2")
+        // The third rides back whole, and the two already worked are counted.
+        .number("/your_mail/count", 1)
+        .number("/your_mail/leftovers/count", 2)
         .never_says(&envelope(&first));
 
     // ── nothing was lost: the crash contract still hands back all three ─────
