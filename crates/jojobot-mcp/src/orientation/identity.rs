@@ -133,7 +133,8 @@ pub(crate) fn unseated_rules(
         "These rules are in force and have no seat, so they are not carried whole. Before \
          acting in an area a listed rule names, load it: recall with history_record set to its \
          address reads that one rule, and recall {bot} with facts: true and status: \"active\" \
-         loads every rule in force and says how many retired records it left out.",
+         loads every active record, the rules among them, and says how many retired \
+         records it left out.",
         bot = bot.as_str()
     );
     if !rest.is_empty() {

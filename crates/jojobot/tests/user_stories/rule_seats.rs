@@ -656,6 +656,9 @@ async fn a_boot_lists_each_unseated_rule_and_a_session_fetches_one_by_its_addres
         .as_str()
         .expect("the note says how to load");
     assert!(how.contains("history_record"), "{how}");
+    // The call that loads everything returns every active record, so the note
+    // says the rules are among them rather than that it loads only rules.
+    assert!(how.contains("among"), "{how}");
 
     // ── one rule, fetched exactly by the address its line carries ───────────
     let one = s
