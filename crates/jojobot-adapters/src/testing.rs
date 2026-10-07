@@ -30,6 +30,24 @@ pub fn free_port() -> u16 {
         .unwrap_or_else(|refusal| panic!("no port can be claimed for this test: {refusal}"))
 }
 
+/// **How long a case that is not about connection speed lets a pool take to
+/// hand out a connection while its store starts.** As long as a store is given
+/// to answer at all.
+const UNHURRIED: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// **Start a store for a case that is about something other than how fast a pool
+/// opens a connection.** [`Dolt::start`] gives the pool a probe's window, a fifth
+/// of a second, and the proof query that follows runs on that pool. A loaded
+/// machine can exceed it without anything being wrong with the case, and the
+/// start then fails with a pool timeout. This is the same start with the window
+/// a store has to answer in.
+pub async fn start_unhurried(
+    data_dir: &std::path::Path,
+    port: u16,
+) -> Result<crate::dolt::Dolt, crate::dolt::StartError> {
+    crate::dolt::Dolt::start_acquiring_within(data_dir, port, UNHURRIED).await
+}
+
 /// **Install the log sink a test that starts a store reads its refusals from.**
 /// Idempotent, and the process's one global subscriber: a second call, from any
 /// thread, finds the first one's. `free_port` calls it, because a test that
@@ -47,7 +65,6 @@ pub fn store_log() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dolt::Dolt;
     use crate::dolt::tests::Scratch;
 
     /// **A port the suites are handed is claimed in the arbiter every harness
@@ -89,12 +106,11 @@ mod tests {
             "the arbiter handed one port to two claimers"
         );
 
-        let window = std::time::Duration::from_secs(30);
         let here = scratch.0.join("one");
         let there = scratch.0.join("other");
         let (first, second) = tokio::join!(
-            Dolt::start_acquiring_within(&here, here_port, window),
-            Dolt::start_acquiring_within(&there, there_port, window),
+            start_unhurried(&here, here_port),
+            start_unhurried(&there, there_port),
         );
 
         let mut first = first.expect("the first store comes up");

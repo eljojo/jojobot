@@ -23,7 +23,7 @@ use jojobot_adapters::dolt::teaching::DoltTeachings;
 use jojobot_adapters::fold::Folded;
 use jojobot_adapters::provisioned::Provisioned;
 use jojobot_adapters::search::{IndexedMemory, Retrieval};
-use jojobot_adapters::testing::free_port;
+use jojobot_adapters::testing::{free_port, start_unhurried};
 use jojobot_domain::mailbox::testing::contract as mailboxes;
 use jojobot_domain::mailbox::{
     MailboxError, MailboxName, Mailboxes, NewMessage, OwnerIndex, OwnerLookup,
@@ -2808,26 +2808,49 @@ async fn dolt_satisfies_the_teaching_contract() {
 /// `TeachingError` alike, by design, so a teaching failure never fails the
 /// verb it rides on. The distinction still matters at the adapter, which is
 /// what this proves.)
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_teaching_write_that_conflicts_with_another_is_told_apart_from_a_failed_store() {
+    // **The racers overlap by construction, not by luck.** A conflict needs two
+    // transactions that have both written before either commits. With a small
+    // pool, and connections opened as each racer asks for one, a racer could
+    // finish its whole transaction before the next had a connection, and a
+    // loaded machine made that happen. So every racer has a connection of its own,
+    // opened before any of them starts, and a barrier releases them together.
+    const RACERS: usize = 16;
     let scratch = Scratch::new("teaching-conflict-not-a-failure");
-    let mut store = Dolt::start(&scratch.0, free_port())
+    let port = free_port();
+    let mut store = start_unhurried(&scratch.0, port)
         .await
         .expect("the store comes up");
-    let pool = store
+    store
         .database("teaching_conflict_not_a_failure")
         .await
         .expect("a database of its own");
+    let pool = sqlx::mysql::MySqlPoolOptions::new()
+        .max_connections(RACERS as u32)
+        .connect(&format!(
+            "mysql://root@127.0.0.1:{port}/teaching_conflict_not_a_failure"
+        ))
+        .await
+        .expect("a pool onto that database");
     migrate::run(&pool).await.expect("the schema");
+    let mut opened = Vec::new();
+    for _ in 0..RACERS {
+        opened.push(pool.acquire().await.expect("a connection for a racer"));
+    }
+    drop(opened);
     let teaching_store = DoltTeachings::open(pool);
 
     let sid = Sid("tchr".into());
+    let together = Arc::new(tokio::sync::Barrier::new(RACERS));
     let mut handles = Vec::new();
-    for i in 0..16u64 {
+    for i in 0..RACERS as u64 {
         let racer = teaching_store.clone();
         let sid = sid.clone();
+        let together = together.clone();
         let at = mailboxes::epoch() + jiff::Span::new().seconds(i as i64);
         handles.push(tokio::spawn(async move {
+            together.wait().await;
             racer.first_contact(&sid, "same-domain", at).await
         }));
     }

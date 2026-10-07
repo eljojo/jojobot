@@ -16,7 +16,7 @@
 use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
-use jojobot_adapters::testing::free_port;
+use jojobot_adapters::testing::{free_port, start_unhurried};
 use jojobot_domain::memory::types::{DeclaredType, Field, Origin, ValueType};
 use jojobot_domain::memory::{
     Boot, EntityId, EntityKind, FactPatch, Memory, NewEntity, NewFact, Provenance, graph, kinds,
@@ -475,7 +475,7 @@ async fn a_store(what: &str) -> (Dolt, DoltMemory, tokio::sync::MutexGuard<'stat
     let path =
         std::env::temp_dir().join(format!("jojobot-kind-schema-{}-{what}", std::process::id()));
     std::fs::create_dir_all(&path).expect("a scratch directory");
-    let server = Dolt::start(&path, free_port())
+    let server = start_unhurried(&path, free_port())
         .await
         .expect("the store comes up");
     migrate::run(server.pool()).await.expect("the schema");
