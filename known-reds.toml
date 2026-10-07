@@ -10,12 +10,6 @@
 
 
 [[known_red]]
-test = "room::tests::the_server_announces_its_address_only_once_that_address_answers"
-card = 2041
-owner = "dev4"
-since = "2026-10-07"
-
-[[known_red]]
 test = "the_jobs_run_side_by_side"
 card = 2041
 owner = "dev4"

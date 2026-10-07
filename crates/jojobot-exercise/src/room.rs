@@ -1190,9 +1190,9 @@ mod tests {
     /// waits out its whole two-minute deadline before saying anything, which is
     /// the worst way for a broken contract to announce itself.
     ///
-    /// **So this case is deliberately fast**: it spawns one server directly
-    /// rather than through [`Room`], because going through `Room` would mean
-    /// waiting out the very deadline this exists to avoid.
+    /// **So this case fails fast on a broken contract**: it spawns one server
+    /// directly rather than through [`Room`], because going through `Room` would
+    /// mean waiting out the very deadline this exists to avoid.
     ///
     /// ⚠️ **The needle is [`serving_line`], the same function the room watches
     /// with** — so if you reword what the server prints, this is what breaks,
@@ -1226,22 +1226,53 @@ mod tests {
         let log = server.stdout.take().expect("the server's own log");
 
         let wanted = super::serving_line(&endpoint);
-        // **Short on purpose.** A server that is coming up reaches this line in
-        // about a second; the room's own deadline is minutes, because a room
-        // waits out a store migration. This case exists to fail FAST when the
-        // contract breaks, so it is bounded by what the line takes rather than
-        // by what a room is willing to wait.
-        let announced = tokio::time::timeout(
-            std::time::Duration::from_secs(15),
-            tokio::task::spawn_blocking(move || {
+        // **Waits on two events, and on no time of its own.** How long a server
+        // takes to start is not what this case asserts: on a machine running
+        // several bars at once a first start takes many times the second it
+        // takes alone. So the wait is for the address to answer, bounded only by
+        // the room's own start-up deadline, and then for the line, which the
+        // server prints as the next thing it does and so must arrive within a
+        // short grace of that. A server that exits closes its log and ends the
+        // wait. A line that is reworded still fails in seconds of the address
+        // answering, which is what keeps a broken contract from waiting out a
+        // room's whole deadline.
+        const GRACE_AFTER_ANSWERING: std::time::Duration = std::time::Duration::from_secs(10);
+        let seen = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let reader = {
+            let seen = seen.clone();
+            std::thread::spawn(move || {
                 use std::io::BufRead;
-                std::io::BufReader::new(log)
+                let found = std::io::BufReader::new(log)
                     .lines()
                     .map_while(Result::ok)
-                    .any(|line| line.contains(&wanted))
-            }),
-        )
-        .await;
+                    .any(|line| line.contains(&wanted));
+                seen.store(found, std::sync::atomic::Ordering::SeqCst);
+            })
+        };
+        let began = std::time::Instant::now();
+        let mut answering_since: Option<std::time::Instant> = None;
+        let announced = loop {
+            if seen.load(std::sync::atomic::Ordering::SeqCst) {
+                break true;
+            }
+            // The server exited, or closed its log, without the line.
+            if reader.is_finished() {
+                break seen.load(std::sync::atomic::Ordering::SeqCst);
+            }
+            if began.elapsed() > super::READY_TIMEOUT {
+                break false;
+            }
+            match answering_since {
+                Some(since) if since.elapsed() > GRACE_AFTER_ANSWERING => break false,
+                Some(_) => {}
+                None => {
+                    if std::net::TcpStream::connect(("127.0.0.1", served)).is_ok() {
+                        answering_since = Some(std::time::Instant::now());
+                    }
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        };
 
         let answering = std::net::TcpStream::connect(("127.0.0.1", served)).is_ok();
         let _ = server.kill();
@@ -1249,7 +1280,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
 
         assert!(
-            matches!(announced, Ok(Ok(true))),
+            announced,
             "the server never printed {:?} — a room watches for that line and would wait out \
              its whole deadline before reporting anything. If the wording changed, change \
              `serving_line` with it.",
