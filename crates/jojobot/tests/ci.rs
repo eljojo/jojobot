@@ -196,8 +196,8 @@ fn dry_run(args: &[&str]) -> String {
 fn the_pre_push_target_runs_the_rooms_the_year_room_and_release_qa() {
     let rooms = dry_run(&["rooms"]);
     assert!(
-        rooms.contains("--features rooms") && !rooms.contains("year"),
-        "`rooms` must run the room suites and leave the year room out: {rooms}",
+        rooms.contains("jojobot-bar -- rooms") && !rooms.contains("year"),
+        "`rooms` must run the room suites through the bar and leave the year room out: {rooms}",
     );
 
     let year = dry_run(&["room", "ROOM=year"]);
@@ -210,7 +210,7 @@ fn the_pre_push_target_runs_the_rooms_the_year_room_and_release_qa() {
     for step in [
         "jojobot-bar -- check",
         "--test dolt_store",
-        "--features rooms",
+        "jojobot-bar -- rooms",
         "make room ROOM=year",
         "nix build",
         "nix flake check",

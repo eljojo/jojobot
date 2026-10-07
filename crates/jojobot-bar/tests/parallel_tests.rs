@@ -84,6 +84,10 @@ struct Ran {
 }
 
 fn run_check(env: &[(&str, &str)]) -> Ran {
+    run_bar(&["check"], env)
+}
+
+fn run_bar(args: &[&str], env: &[(&str, &str)]) -> Ran {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("clock")
@@ -93,7 +97,7 @@ fn run_check(env: &[(&str, &str)]) -> Ran {
     let cargo = write_cargo(&dir);
     let started = Instant::now();
     let out = Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
-        .arg("check")
+        .args(args)
         .current_dir(&dir)
         .env("CARGO", &cargo)
         // The caller's own limit must not decide what a case measures.
@@ -305,4 +309,91 @@ fn a_limit_that_is_not_a_number_is_refused_before_any_phase_runs() {
         "a phase ran under a limit nobody could read: {:?}",
         ran.calls
     );
+}
+
+/// **`bar rooms` runs each named room target as a job of its own, side by
+/// side, and builds the workspace once first.** The room suites spawn the built
+/// server, so the build comes before any of them. Each job is `cargo test -p
+/// jojobot-exercise --features rooms --test <name> --no-fail-fast --locked`.
+/// One red room reddens the run and stops none of the others.
+#[test]
+fn bar_rooms_builds_once_then_runs_each_named_room_and_a_red_one_stops_none() {
+    let ran = run_bar(
+        &[
+            "rooms", "--test", "alpha", "--test", "beta", "--test", "gamma",
+        ],
+        &[],
+    );
+    let builds = ran.calls.iter().filter(|c| c.starts_with("build ")).count();
+    assert_eq!(builds, 1, "the workspace is built once: {:?}", ran.calls);
+    let jobs: Vec<&String> = ran
+        .calls
+        .iter()
+        .filter(|c| c.starts_with("test "))
+        .collect();
+    assert_eq!(jobs.len(), 3, "one job per room: {jobs:?}");
+    for room in ["alpha", "beta", "gamma"] {
+        let hits: Vec<&&String> = jobs
+            .iter()
+            .filter(|j| j.contains(&format!("--test {room} ")))
+            .collect();
+        assert_eq!(hits.len(), 1, "{room} must run once: {jobs:?}");
+        for flag in [
+            "-p jojobot-exercise",
+            "--features rooms",
+            "--no-fail-fast",
+            "--locked",
+        ] {
+            assert!(hits[0].contains(flag), "{room} lost {flag}: {}", hits[0]);
+        }
+    }
+    assert!(
+        !ran.success,
+        "a red room must redden the run: {}",
+        ran.stdout
+    );
+    assert!(
+        ran.stdout.contains("the_beta_case") && ran.stdout.contains("8 passed"),
+        "the red case is not named, or the three rooms are not summed (3 + 2 + 3): {}",
+        ran.stdout
+    );
+    assert!(
+        ran.stdout.lines().any(|l| l.starts_with("jobs:")),
+        "the verdict does not name the limit: {}",
+        ran.stdout
+    );
+}
+
+/// **The rooms overlap, under the same limit as the bar's test phase.** Twelve
+/// one-second rooms with the limit at two never show a third running, and show
+/// two.
+#[test]
+fn bar_rooms_honours_the_job_limit() {
+    let args: Vec<String> = (1..=12)
+        .flat_map(|i| ["--test".to_string(), format!("room{i}")])
+        .collect();
+    let mut argv: Vec<&str> = vec!["rooms"];
+    argv.extend(args.iter().map(String::as_str));
+    let ran = run_bar(&argv, &[("FAKE_BETA", "ok"), ("BAR_JOBS", "2")]);
+    assert!(ran.success, "the run was meant to be green: {}", ran.stdout);
+    assert_eq!(
+        ran.peak, 2,
+        "rooms ran {} at once under a limit of 2",
+        ran.peak
+    );
+}
+
+/// **A bare `bar rooms` names no room and is refused**, rather than reading as
+/// a green run over nothing.
+#[test]
+fn bar_rooms_with_no_room_named_is_refused() {
+    let ran = run_bar(&["rooms"], &[]);
+    assert_eq!(
+        ran.exit,
+        Some(2),
+        "stdout: {} stderr: {}",
+        ran.stdout,
+        ran.stderr
+    );
+    assert!(ran.calls.is_empty(), "something ran: {:?}", ran.calls);
 }

@@ -40,8 +40,12 @@ fn main() -> ExitCode {
     let result = match args.first().map(String::as_str) {
         Some("check") => run_check(),
         Some("narrow") => run_narrow(&args[1..]),
+        Some("rooms") => run_rooms(&args[1..]),
         _ => {
-            eprintln!("usage: bar check | bar narrow --crate <name> [--filter <substring>]");
+            eprintln!(
+                "usage: bar check | bar narrow --crate <name> [--filter <substring>] \
+                 | bar rooms --test <name> [--test <name> ...]"
+            );
             return ExitCode::from(2);
         }
     };
@@ -96,6 +100,7 @@ fn run_phase(
 fn run_test_jobs(
     log_path: &Path,
     cargo: &str,
+    prefix: &[&str],
     jobs: &[Vec<String>],
     limit: usize,
 ) -> std::io::Result<(bool, String)> {
@@ -119,7 +124,7 @@ fn run_test_jobs(
                         let err = out.try_clone()?;
                         let status = Command::new(cargo)
                             .arg("test")
-                            .arg("--workspace")
+                            .args(prefix)
                             .args(job)
                             .args(["--no-fail-fast", "--locked"])
                             .stdout(Stdio::from(out))
@@ -143,13 +148,88 @@ fn run_test_jobs(
         all_ok &= ok;
         writeln!(
             log,
-            "\n$ cargo test --workspace {} --no-fail-fast --locked",
+            "\n$ cargo test {} {} --no-fail-fast --locked",
+            prefix.join(" "),
             job.join(" ")
         )?;
         log.write_all(text.as_bytes())?;
         all_text.push_str(&text);
     }
     Ok((all_ok, all_text))
+}
+
+/// **`bar rooms --test <name> [--test <name> ...]`: the room suites, side by
+/// side.** The Makefile names the room targets, read out of the exercise
+/// manifest, so the bar holds no list of rooms. Each is one job:
+/// `cargo test -p jojobot-exercise --features rooms --test <name>`. The
+/// workspace is built first, because a room spawns the built server and a test
+/// run does not rebuild it. The limit is the same `BAR_JOBS` as the test phase.
+fn run_rooms(args: &[String]) -> std::io::Result<ExitCode> {
+    let mut jobs: Vec<Vec<String>> = Vec::new();
+    let mut rest = args.iter();
+    while let Some(flag) = rest.next() {
+        match (flag.as_str(), rest.next()) {
+            ("--test", Some(name)) => jobs.push(vec!["--test".to_string(), name.clone()]),
+            _ => {
+                eprintln!("usage: bar rooms --test <name> [--test <name> ...]");
+                return Ok(ExitCode::from(2));
+            }
+        }
+    }
+    if jobs.is_empty() {
+        eprintln!("bar rooms names no room: bar rooms --test <name> [--test <name> ...]");
+        return Ok(ExitCode::from(2));
+    }
+    let limit = match jobs_limit(std::env::var(TEST_JOBS_VARIABLE).ok().as_deref()) {
+        Ok(limit) => limit,
+        Err(refusal) => {
+            eprintln!("bar: {refusal}");
+            return Ok(ExitCode::from(2));
+        }
+    };
+    let cargo = cargo_bin();
+    let log_path = PathBuf::from("target/bar/rooms.log");
+    fresh_log(&log_path)?;
+    let mut summary = Summary::new();
+
+    let (ok, text) = run_phase(
+        &log_path,
+        "cargo build --workspace --locked",
+        &cargo,
+        &["build", "--workspace", "--locked"],
+    )?;
+    if !ok {
+        let verdict = summarize_test_output(&text);
+        if verdict.compiled {
+            summary.phase_failed("build", "see log");
+        } else {
+            summary.phase_failed("build", "DID NOT COMPILE — see log");
+        }
+        summary.phase_skipped("test");
+        finish(&mut summary, &log_path);
+        return Ok(ExitCode::FAILURE);
+    }
+    summary.phase_ok("build", "compiled");
+
+    let (ok, text) = run_test_jobs(
+        &log_path,
+        &cargo,
+        &["-p", "jojobot-exercise", "--features", "rooms"],
+        &jobs,
+        limit,
+    )?;
+    let verdict = summarize_test_output(&text);
+    summary.phase_ok(
+        "jobs",
+        &format!("{limit} test binaries at a time ({TEST_JOBS_VARIABLE})"),
+    );
+    summary.test_phase(ok, &verdict);
+    finish(&mut summary, &log_path);
+    Ok(if test_healthy(ok, &verdict) {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    })
 }
 
 fn fresh_log(path: &Path) -> std::io::Result<()> {
@@ -314,7 +394,13 @@ fn run_check_phases() -> std::io::Result<ExitCode> {
         &["test", "--workspace", "--no-run", "--locked"],
     )?;
     let (ok, text) = if listed {
-        run_test_jobs(&log_path, &cargo, &test_jobs(&listing), limit)?
+        run_test_jobs(
+            &log_path,
+            &cargo,
+            &["--workspace"],
+            &test_jobs(&listing),
+            limit,
+        )?
     } else {
         // A listing that failed is a build that failed: the same text reads
         // as "did not compile", exactly as a failed plain run did.

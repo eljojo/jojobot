@@ -163,14 +163,15 @@ integration: ## Run the suites against the real store
 # and `cargo test -p jojobot-exercise` does not rebuild it. Without the build
 # an edit to served code is checked against the old binary.
 #
-# Every target reports and none stops at the first failure, as `test` does.
+# **The rooms run side by side**, through the bar, under the same `BAR_JOBS`
+# limit as `make check` (eight by default). Every room runs and none stops
+# another; the whole log is `target/bar/rooms.log`.
 # **Each room target is named with `--test`, read out of the manifest.** The
 # feature alone would also run the harness's unit tests and every test file
 # that is not a room suite, which `make check` already runs.
 ROOM_TESTS := $(shell awk '/^name = /{n=$$3; gsub(/"/,"",n)} /^required-features = \["rooms"\]/{print n}' crates/jojobot-exercise/Cargo.toml)
 rooms: ## Every room suite except the year room
-	$(CARGO) build --workspace --locked
-	$(CARGO) test -p jojobot-exercise --features rooms $(addprefix --test ,$(ROOM_TESTS)) --no-fail-fast --locked
+	CARGO=$(CARGO) $(CARGO) run -q --locked -p jojobot-bar -- rooms $(addprefix --test ,$(ROOM_TESTS))
 
 # **One room's suite**, by the name of its test file without the `_room`
 # ending: `make room ROOM=year`, `make room ROOM=vault`. A file without that
