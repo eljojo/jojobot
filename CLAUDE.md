@@ -634,7 +634,8 @@ roles and never an operator.
   `cargo test -p jojobot-exercise` does not rebuild it — **so an edit to any
   served source, checked only through the rooms, reads GREEN because the code
   under test was never loaded.** That is the strongest possible wrong reason
-  for a pass. **Build the workspace in the same command as the run.** ⚠️ **And
+  for a pass. **Build the workspace in the same command as the run** —
+  `make rooms` and `make room` do. ⚠️ **And
   the same trap reads the other way: a REFUSAL you did not expect may be the
   old binary publishing the old schema rather than a second copy of a rule.**
 - ⚠️ **An exit code belongs to the LAST command in the pipeline, so any verdict
@@ -725,6 +726,16 @@ roles and never an operator.
   is free. **It reports every target rather than stopping at the first failure,
   so its count is coverage** — a red run names each suite's verdict instead of
   leaving a reader to guess which parts ran.
+- **The bar has levels, and `make check` runs no room.** Each suite that
+  stands up a room sits behind a cargo feature, so the bar compiles and lints
+  it and never runs it. `make rooms` runs every room but the year,
+  `make room ROOM=<name>` runs one, and `make year` runs the year room. The
+  rooms run at a carry; the year room runs only before a push. `make prepush`
+  is release QA: the bar, the real store, the rooms, the year room,
+  `nix build` and `nix flake check`, reporting every step. **A slice that
+  touches a room's document, a room's test file or the exercise harness runs
+  the matching `make room`, or `make rooms`, before it reports** — the bar
+  alone cannot see it.
 - **`make paid` is a third tier and `make check` never runs it.** It reaches the
   network, drives a real model through a playbook against an instance it spawns
   and throws away, and it costs money. **It must never run by accident**, which
