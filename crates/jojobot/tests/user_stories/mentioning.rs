@@ -557,6 +557,72 @@ async fn the_way_a_link_is_stored_is_refused_when_a_caller_writes_it() {
         .await
         .says("\"blocks\":\"work:sigma\"")
         .never_says("k7h2mn");
+    story.finish().await;
+}
 
+/// **A bot's outbox follows it through a rename.** Mail is stored under the
+/// handle its sender wore the day it was sent, and a rename changes the handle
+/// and not the bot. Asking after the renamed bot's outbox by the handle it
+/// wears now finds the mail it sent under the old one, beside the mail it sends
+/// afterwards, and finds nothing of a colleague's.
+#[tokio::test]
+async fn a_renamed_bots_outbox_still_lists_the_mail_it_sent_under_its_old_handle() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:sigma", "Sigma").await;
+    s.add("bot:omega", "Omega").await;
+    let sigma = story.as_bot("bot:sigma").await;
+    let omega = story.as_bot("bot:omega").await;
+
+    // Mail sent under the handle the bot wears today, and a colleague's beside
+    // it, which no question about the renamed bot may return.
+    let before = sigma
+        .post("otto", "before the rename", "the kiln is relined")
+        .await;
+    let colleagues = omega.post("otto", "not sigma's", "the flue is clear").await;
+    assert_eq!(
+        s.call("list_sent", json!({"sender": "bot:sigma"}))
+            .await
+            .number("/count", 1)
+            .json()["messages"][0]["id"],
+        before.as_str(),
+        "before the rename the outbox holds the one message"
+    );
+
+    s.call(
+        "rename_entity",
+        json!({"handle": "bot:sigma", "to": "bot:psi", "recorded_at": "2026-08-02"}),
+    )
+    .await;
+
+    // ── asked by the handle the bot wears now ───────────────────────────────
+    // An id is a short counter, so it is matched as the `id` entry it is and
+    // not as a digit that any timestamp also carries.
+    let id = |id: &str| format!("\"id\":\"{id}\"");
+    let listed = s.call("list_sent", json!({"sender": "bot:psi"})).await;
+    listed
+        .number("/count", 1)
+        .says(&id(&before))
+        .says("the kiln is relined")
+        .never_says(&id(&colleagues))
+        .never_says("the flue is clear");
+    assert_eq!(
+        listed.json()["messages"][0]["sender"],
+        "bot:psi",
+        "the sender reads as the handle it wears now: {}",
+        listed.json()
+    );
+
+    // ── and the mail it sends afterwards joins the same listing ─────────────
+    let psi = story.as_bot("bot:psi").await;
+    let after = psi
+        .post("otto", "after the rename", "the damper is hand-cut")
+        .await;
+    let both = s.call("list_sent", json!({"sender": "bot:psi"})).await;
+    both.number("/count", 2)
+        .says(&id(&before))
+        .says(&id(&after));
+
+    s.wrap("renamed a bot and asked after its outbox").await;
     story.finish().await;
 }

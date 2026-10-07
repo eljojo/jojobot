@@ -289,3 +289,72 @@ async fn the_refusal_for_a_hand_written_due_moment_tells_finished_work_to_be_mar
 
     story.finish().await;
 }
+
+/// **The refusal for a hand-written due moment on a promise names how a promise
+/// ends, and following it works.** A promise cannot clear its day, because its
+/// kind requires one, so the advice to clear the key the moment came from would
+/// loop. A promise stops falling due when `ended` is written. The refusal names
+/// that key and its words, and the story follows it: the promise keeps its day,
+/// is no longer owed, and the owed read says so.
+#[tokio::test]
+async fn a_promises_refusal_names_ended_and_ending_it_stops_it_falling_due() {
+    use jojobot_domain::attention::PromiseEnd;
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("person:ned-flanders", "Ned").await;
+    s.add_under(
+        "person:ned-flanders",
+        "promise:return-the-wrench",
+        "Return the wrench",
+    )
+    .await;
+    let dated = s
+        .call(
+            "capture",
+            json!({
+                "subject": "promise:return-the-wrench",
+                "content": "has to go back to the neighbour",
+                "provenance": "testimony",
+                "fields": {"promised_by": "2026-07-01"},
+            }),
+        )
+        .await;
+    let address = dated.json()["address"]
+        .as_str()
+        .expect("an address")
+        .to_string();
+    let owed = |day: &str| owed_on(day);
+    s.shape("owed before it ends", owed("2026-07-05"))
+        .await
+        .says("promise:return-the-wrench");
+
+    // ── the refusal names the key and its words ─────────────────────────────
+    let refused = s
+        .refused(
+            "update_fact",
+            json!({"address": address, "fields": {"due_on": "2026-01-16"}}),
+        )
+        .await;
+    refused.says("ended");
+    for end in PromiseEnd::ALL {
+        refused.says(end.as_token());
+    }
+    // The words are STORED as keys' values and nothing outside this process
+    // declares them, so one of them is pinned as the literal it is.
+    refused.says("delivered");
+
+    // ── following it ends the promise, which keeps its day ──────────────────
+    s.call(
+        "update_fact",
+        json!({"address": address, "fields": {"ended": PromiseEnd::Delivered.as_token()}}),
+    )
+    .await;
+    let held = s.recall("promise:return-the-wrench").await;
+    held.says("\"promised_by\":\"2026-07-01\"");
+    s.shape("owed after it ends", owed("2026-07-05"))
+        .await
+        .never_says("promise:return-the-wrench");
+
+    s.wrap("ended a promise the way the refusal said").await;
+    story.finish().await;
+}

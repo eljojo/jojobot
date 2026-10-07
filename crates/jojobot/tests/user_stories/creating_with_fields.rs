@@ -160,3 +160,54 @@ async fn a_promise_made_with_its_day_has_its_due_moment_stored() {
     owed.says("promise:return-the-wrench");
     story.finish().await;
 }
+
+/// **A value that names nothing is refused over the wire, under any key.** A
+/// handle held in a field is a link whatever the key is called, so a key no type
+/// declared is held to the same rule as a declared reference: the handle has to
+/// name something. A comma list of handles is held item by item, and a handle
+/// inside a sentence is prose and is not asked about. Each refusal sits beside
+/// the same write landing, so a build that refused every field would not pass.
+#[tokio::test]
+async fn a_field_that_names_nothing_is_refused_under_any_key_and_a_sentence_is_not() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("project:atlas", "Atlas").await;
+    s.add("person:lisa", "Lisa").await;
+    s.add_under("project:atlas", "work:phi", "Phi").await;
+
+    let write = |value: &str| {
+        json!({
+            "subject": "work:phi", "content": "who this waits on",
+            "provenance": "testimony", "fields": {"blocks": value},
+        })
+    };
+
+    // ── a handle that names nothing, under a key no type declared ───────────
+    let refused = s.refused("capture", write("person:contract-nobody")).await;
+    refused
+        .says("person:contract-nobody")
+        .says("\"wrote\":false");
+    // …and a list in which one item names nothing is refused for that item.
+    s.refused("capture", write("person:lisa,person:contract-nobody"))
+        .await
+        .says("person:contract-nobody");
+    s.recall("work:phi").await.never_says("contract-nobody");
+
+    // ── the same write, naming something that exists, lands ─────────────────
+    s.call("capture", write("person:lisa")).await;
+    s.recall("work:phi").await.says("person:lisa");
+
+    // ── a list of handles that all exist lands, and a sentence is prose ─────
+    s.add("person:milhouse", "Milhouse").await;
+    s.call("capture", write("person:lisa,person:milhouse"))
+        .await;
+    s.call(
+        "capture",
+        write("read person:contract-nobody before friday"),
+    )
+    .await;
+
+    s.wrap("wrote fields that name things and one that did not")
+        .await;
+    story.finish().await;
+}
