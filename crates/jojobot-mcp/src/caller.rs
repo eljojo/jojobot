@@ -986,7 +986,7 @@ mod tests {
                             crm: None,
                             boot: None,
                             parent: None,
-                            fields: None,
+                            sets: None,
                             override_token: None,
                             sid: Some(dead.clone()),
                         }))

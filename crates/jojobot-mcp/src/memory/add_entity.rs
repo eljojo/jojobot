@@ -89,21 +89,21 @@ pub struct AddEntityArgs {
     /// what says on what.
     #[serde(default)]
     pub(crate) parent: Option<String>,
-    /// **The new thing's first fields**, written as its first claim in the same
-    /// act, so a piece of work is made and says where it stands in one call.
-    /// The claim says the thing's name and carries these keys, exactly as a
-    /// `capture` of them would, and it faces every guard a capture does: a key
-    /// the kind declares is held to what it declares, and a key that holds a
+    /// **What this call sets on the new thing**, written as its first claim in
+    /// the same act, so a piece of work is made and says where it stands in one
+    /// call. The claim says the thing's name and carries these keys, exactly as
+    /// the keys of a `capture` would, and it faces every guard a capture does: a
+    /// key the kind declares is held to what it declares, and a key that holds a
     /// handle must name a thing that exists.
     ///
-    /// **Whole or not at all.** A field that is refused refuses the whole call
-    /// and nothing is created, so there is never a half-made thing. Leave it off
-    /// and the call creates the thing alone, as before.
+    /// **Whole or not at all.** A key that is refused refuses the whole call and
+    /// nothing is created, so there is never a half-made thing. Leave it off and
+    /// the call creates the thing alone, as before.
     ///
     /// The claim is `inference`, as a capture's is when it says nothing. To put
-    /// the operator's own word behind a field, write it with `capture`.
+    /// the operator's own word behind a key, write it with `capture`.
     #[serde(default)]
-    pub(crate) fields: Option<std::collections::BTreeMap<String, String>>,
+    pub(crate) sets: Option<std::collections::BTreeMap<String, String>>,
     /// The token a previous call's refusal handed you, sent back after you read
     /// its candidates and judged them a different entity. It lifts only the
     /// refusal that minted it — a token you made up, or one from another
@@ -195,10 +195,10 @@ impl Jojobot {
         description = "Bring a new entity into existence — the required first step before any \
                        other write may name it. The kinds are the `kind` argument's, which is \
                        the one place they are listed; creating a bot is creating an identity, \
-                       and it opens the mailbox that bot owns in the same act. Send `fields` \
-                       to give the new thing its first fields in the same call: they are \
-                       written as its first claim, under every guard a capture faces, and a \
-                       field that is refused refuses the whole call and creates nothing. The \
+                       and it opens the mailbox that bot owns in the same act. Send `sets` \
+                       to set keys on the new thing in the same call: they are written as \
+                       its first claim, under every guard a capture faces, and a key that is \
+                       refused refuses the whole call and creates nothing. The \
                        claim is inference: a field that needs the operator's own word \
                        (testimony), or one you read in a system of record (observation), is \
                        written with capture. Returns the stored entity. If its handle or any of its names \
@@ -259,7 +259,7 @@ impl Jojobot {
         // first claim in the same act**, through the store's own combined write:
         // the store runs the guards of a capture inside the transaction that
         // creates the thing, and a refusal takes the creation back with it.
-        let first_fields = args.fields.clone().filter(|fields| !fields.is_empty());
+        let first_fields = args.sets.clone().filter(|sets| !sets.is_empty());
         let mut fold_behind = None;
         let (added, first_claim) = match first_fields {
             None => match self.memory.add_entity(new).await {

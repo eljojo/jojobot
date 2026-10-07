@@ -64,7 +64,7 @@ async fn the_boot_names_the_operator_and_what_waits_on_them_is_one_read_away() {
             json!({
                 "kind": "work", "handle": "phi", "name": "Phi", "source": "user-named",
                 "parent": "project:atlas",
-                "fields": {"status": "waiting", "waiting_on": "person:lisa"},
+                "sets": {"status": "waiting", "waiting_on": "person:lisa"},
             }),
         )
         .await

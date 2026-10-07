@@ -1288,6 +1288,43 @@ fn capture_provenance_says_what_a_bots_instruction_is_and_what_its_report_is_not
     }
 }
 
+/// **`add_entity`'s own description names the argument that sets a new thing.**
+/// A new argument the verb's description does not mention is the commonest way a
+/// capability goes unfound. The argument is `sets`: what this call sets on the
+/// new thing, in the same word every write verb uses for it. It is read out of
+/// the published schema, so a rename fails here, the old name `fields` is
+/// asserted absent, and the description is pinned on the argument's name and on
+/// the verb it follows the guards of.
+#[test]
+fn add_entity_names_the_argument_that_gives_a_new_thing_its_first_fields() {
+    let tools = Jojobot::tool_router().list_all();
+    let add_entity = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "add_entity")
+        .expect("the surface offers add_entity");
+    let schema = serde_json::to_value(&add_entity.input_schema).expect("the schema serializes");
+    assert!(
+        schema["properties"]["sets"].is_object(),
+        "add_entity publishes no `sets`: {schema}"
+    );
+    assert!(
+        schema["properties"].get("fields").is_none(),
+        "add_entity still publishes `fields`, which is the record's own word: {schema}"
+    );
+    let description = add_entity.description.as_deref().unwrap_or_default();
+    // The argument counts only in backticks, as the identifier it is: the word
+    // `sets` is also in the sentence that explains it.
+    // The claim is inference, so a field that needs the operator's word is
+    // written with `capture` and testimony: the description says so, or nobody
+    // files testimony as inference by accident.
+    for word in ["`sets`", "capture", "testimony"] {
+        assert!(
+            description.contains(word),
+            "add_entity's description does not name {word}: {description}"
+        );
+    }
+}
+
 /// **`recall` says what its three newest behaviours are, where a caller reads
 /// them.** A view's keys come back by asking without the view, a status filter
 /// narrows the claims an answer lists, and a comma list of handles is a field
@@ -1355,37 +1392,6 @@ fn the_capture_description_says_a_handle_in_a_field_is_a_link() {
         assert!(
             window.contains(word),
             "`{word}` is not within 300 characters after `GIVE IT FIELDS`: {window}"
-        );
-    }
-}
-
-/// **`add_entity`'s own description names the argument that gives a new thing
-/// its first fields.** A new argument the verb's description does not mention is
-/// the commonest way a capability goes unfound. The argument is read out of the
-/// published schema, so a rename fails here, and the description is pinned on the
-/// argument's name and on the verb it follows the guards of.
-#[test]
-fn add_entity_names_the_argument_that_gives_a_new_thing_its_first_fields() {
-    let tools = Jojobot::tool_router().list_all();
-    let add_entity = tools
-        .iter()
-        .find(|t| t.name.as_ref() == "add_entity")
-        .expect("the surface offers add_entity");
-    let schema = serde_json::to_value(&add_entity.input_schema).expect("the schema serializes");
-    assert!(
-        schema["properties"]["fields"].is_object(),
-        "add_entity publishes no `fields`: {schema}"
-    );
-    let description = add_entity.description.as_deref().unwrap_or_default();
-    // The argument counts only in backticks, as the identifier it is: the word
-    // `fields` is also in the sentence that explains it.
-    // The claim is inference, so a field that needs the operator's word is
-    // written with `capture` and testimony: the description says so, or nobody
-    // files testimony as inference by accident.
-    for word in ["`fields`", "capture", "testimony"] {
-        assert!(
-            description.contains(word),
-            "add_entity's description does not name {word}: {description}"
         );
     }
 }

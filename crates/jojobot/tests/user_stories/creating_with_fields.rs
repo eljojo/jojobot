@@ -1,8 +1,9 @@
 //! "Make this piece of work, and say where it stands."
 //!
 //! Creating a thing and giving it its first fields used to take two calls, and
-//! a plan of thirty-five items cost about seventy-five. `add_entity` takes the
-//! new thing's first fields and writes them as its first claim in the same act.
+//! a plan of thirty-five items cost about seventy-five. `add_entity` takes
+//! `sets`, the keys to set on the new thing, and writes them as its first claim
+//! in the same act.
 //!
 //! **Creation is one act, so it is whole or it is not there.** A field the kind
 //! refuses, or a link to a handle nobody holds, refuses the whole call and
@@ -28,7 +29,7 @@ async fn one_call_makes_a_piece_of_work_and_says_where_it_stands() {
             json!({
                 "kind": "work", "handle": "phi", "name": "Phi", "source": "user-named",
                 "parent": "project:atlas",
-                "fields": {"status": "next", "owner": "person:lisa"},
+                "sets": {"status": "next", "owner": "person:lisa"},
             }),
         )
         .await
@@ -66,7 +67,7 @@ async fn a_refused_field_refuses_the_whole_call_and_creates_nothing() {
         json!({
             "kind": "work", "handle": "sigma", "name": "Sigma", "source": "user-named",
             "parent": "project:atlas",
-            "fields": {"status": status},
+            "sets": {"status": status},
         })
     };
     s.refused("add_entity", sent("drafted, not asked"))
@@ -94,7 +95,7 @@ async fn a_link_to_nothing_blocks_the_call_and_creates_nothing() {
         json!({
             "kind": "work", "handle": "first-mix", "name": "First mix", "source": "user-named",
             "parent": "project:atlas",
-            "fields": {"owner": owner},
+            "sets": {"owner": owner},
         })
     };
     let refused = s
@@ -120,7 +121,7 @@ async fn a_supplied_handle_is_refused_with_fields_as_it_is_without() {
             "add_entity",
             json!({
                 "kind": "view", "handle": "colleagues", "name": "My Colleagues",
-                "source": "user-named", "fields": {"selects": "person"},
+                "source": "user-named", "sets": {"selects": "person"},
             }),
         )
         .await;
@@ -143,7 +144,7 @@ async fn a_promise_made_with_its_day_has_its_due_moment_stored() {
         json!({
             "kind": "promise", "handle": "return-the-wrench", "name": "Return the wrench",
             "source": "user-named", "parent": "project:atlas",
-            "fields": {"promised_by": "2026-11-20"},
+            "sets": {"promised_by": "2026-11-20"},
         }),
     )
     .await;

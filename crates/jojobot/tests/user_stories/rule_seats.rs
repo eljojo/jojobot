@@ -1014,7 +1014,7 @@ async fn a_bot_created_with_fields_is_held_to_the_ceiling_a_capture_is() {
     let creation = |handle: &str, fields: serde_json::Value| {
         json!({
             "kind": "bot", "handle": handle, "name": handle, "source": "user-named",
-            "fields": fields,
+            "sets": fields,
         })
     };
     let heavy = "heavyrule ".repeat(4000);
