@@ -1113,6 +1113,24 @@ impl NeedleVerdict {
     }
 }
 
+impl NeedleVerdict {
+    /// **Whether this needle is a finding the run's boundaries do not excuse.**
+    ///
+    /// Only an envelope needle can be excused, because only it is a value no
+    /// partner needle can pin. An ambiguous needle matches in several places
+    /// in the final answer, so a later sitting can supply the match its lock
+    /// holds on whatever phase made the needle true first.
+    pub fn stands_as_finding(
+        &self,
+        partners: &[&Matched],
+        boundaries: &[crate::run::Boundary],
+    ) -> bool {
+        self.is_finding(partners)
+            && !(matches!(self.matched, Matched::Envelope(_))
+                && self.is_scoped_to_its_phase(boundaries))
+    }
+}
+
 /// **Every distinct place a needle matches**, deduplicated.
 ///
 /// ⚠️ **The dedupe is load-bearing and it is what a first version got wrong.**
@@ -1296,7 +1314,7 @@ pub async fn needle_summary(
                 .filter(|other| other.needle != verdict.needle)
                 .map(|other| &other.matched)
                 .collect();
-            if verdict.is_finding(&partners) && !verdict.is_scoped_to_its_phase(boundaries) {
+            if verdict.stands_as_finding(&partners, boundaries) {
                 summary
                     .findings
                     .push(format!("{} — {}", verdict.lock, verdict.needle));
@@ -1836,5 +1854,57 @@ mod standing_tests {
         assert!(!envelope_verdict(None).is_scoped_to_its_phase(&made_true));
         assert!(!envelope_verdict(Some("Phase 2")).is_scoped_to_its_phase(&[]));
         assert!(!envelope_verdict(Some("Phase 9")).is_scoped_to_its_phase(&made_true));
+    }
+
+    fn ambiguous_verdict(phase: Option<&str>) -> NeedleVerdict {
+        NeedleVerdict {
+            lock: "Phase 2 — the second sitting: a lock".to_string(),
+            needle: "\"kept\":\"yes\"".to_string(),
+            matched: Matched::Ambiguous(vec![".a[0]".to_string(), ".b[0]".to_string()]),
+            phase: phase.map(str::to_string),
+        }
+    }
+
+    /// Boundaries that scope the needle `"kept":"yes"` to Phase 2: false in the
+    /// reading before it and true in the one after.
+    fn scoping_boundaries() -> [crate::run::Boundary; 2] {
+        [
+            reading("Phase 2 — the second sitting", "{}"),
+            reading("Phase 3 — the third sitting", "{\"kept\":\"yes\"}"),
+        ]
+    }
+
+    /// **An ambiguous needle with nothing else to carry its lock stays a
+    /// finding even when its phase made it true.** It matches in several places
+    /// in the final answer, so a later sitting can supply the match the lock
+    /// holds on. Phase-scoping says the needle appeared in the phase, never
+    /// that every match came from it.
+    #[test]
+    fn an_ambiguous_needle_with_no_partner_is_a_finding_even_when_its_phase_made_it_true() {
+        let boundaries = scoping_boundaries();
+        let verdict = ambiguous_verdict(Some("Phase 2"));
+        assert!(
+            verdict.is_scoped_to_its_phase(&boundaries),
+            "the boundaries must scope the needle, or this case measures nothing",
+        );
+        assert!(verdict.stands_as_finding(&[], &boundaries));
+    }
+
+    /// **The envelope needle the same boundaries scope is excused**, and an
+    /// ambiguous one with a partner that matches once is not a finding at all.
+    /// Together they say the case above is about the kind of match and not
+    /// about the boundaries or the partner rule.
+    #[test]
+    fn an_envelope_needle_its_phase_made_true_is_excused_and_a_partnered_ambiguous_one_is_no_finding()
+     {
+        let boundaries = [
+            reading("Phase 2 — the second sitting", "{\"archived_excluded\":0}"),
+            reading("Phase 3 — the third sitting", "{\"archived_excluded\":1}"),
+        ];
+        assert!(!envelope_verdict(Some("Phase 2")).stands_as_finding(&[], &boundaries));
+        let once = Matched::Once(".c[0]".to_string());
+        assert!(
+            !ambiguous_verdict(Some("Phase 2")).stands_as_finding(&[&once], &scoping_boundaries())
+        );
     }
 }
