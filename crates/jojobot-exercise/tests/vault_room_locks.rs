@@ -377,3 +377,188 @@ async fn a_kind_scoped_browse_cannot_see_the_archived_piano_but_its_own_handle_c
         "the piano's own handle could not see its own check-in after archival: {by_handle}",
     );
 }
+
+// ── The four locks about what only works with one machine ───────────────────
+//
+// A field whose value is another thing's handle is a link, whatever its key,
+// so these locks ask from the machine's end — what points here — and do not
+// care by which route the pointing was written.
+
+/// **The ways a sitting can say a thing only works with a machine.**
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Route {
+    /// An edge from the thing to the machine.
+    Edge,
+    /// The machine's handle written into the claim's words.
+    Mention,
+    /// The machine's handle in the claim's reference list.
+    Ref,
+    /// The machine's handle as the value of a key, whatever the key.
+    Field,
+    /// The words alone: "only works with the server".
+    Prose,
+}
+
+/// **What a claim carries to say it is for `machine`, by `route`.**
+fn saying_for(route: Route, machine: &str, words: &str) -> serde_json::Value {
+    let mut said = json!({
+        "content": words,
+        "provenance": "testimony",
+    });
+    match route {
+        Route::Edge => {
+            said["shape"] = json!("connection");
+            said["object"] = json!(machine);
+        }
+        Route::Mention => said["content"] = json!(format!("{words} @{machine}")),
+        Route::Ref => said["refs"] = json!([machine]),
+        Route::Field => said["fields"] = json!({"for": machine}),
+        Route::Prose => {}
+    }
+    said
+}
+
+async fn note_on(
+    surface: &Surface,
+    sid: &str,
+    subject: &str,
+    day: &str,
+    mut said: serde_json::Value,
+) {
+    said["subject"] = json!(subject);
+    said["recorded_at"] = json!(day);
+    let answer = as_the_occupant(surface, sid, "capture", said).await;
+    assert!(
+        !answer.contains("\"status\":\"blocked\""),
+        "the sitting's own write was refused: {answer}"
+    );
+}
+
+/// **April's drive, June's dock and October's note**, the way the year writes
+/// them, with the link written by `route`. `note_on_the_dock` is the wrong
+/// October: a note put on everything that is for a machine.
+async fn the_year_of_the_two_machines(
+    surface: &Surface,
+    sid: &str,
+    route: Route,
+    note_on_the_dock: bool,
+) {
+    for (handle, name) in [
+        ("backup-drive", "The Backup Drive"),
+        ("laptop-dock", "The Laptop Dock"),
+    ] {
+        let added = as_the_occupant(
+            surface,
+            sid,
+            "add_entity",
+            json!({"kind": "thing", "handle": handle, "name": name, "source": "the operator"}),
+        )
+        .await;
+        assert!(!added.contains("\"status\":\"blocked\""), "{added}");
+    }
+    note_on(
+        surface,
+        sid,
+        "thing:backup-drive",
+        "2026-04-19",
+        saying_for(route, "machine:omicron", "formatted for the server"),
+    )
+    .await;
+    note_on(
+        surface,
+        sid,
+        "thing:laptop-dock",
+        "2026-06-14",
+        saying_for(route, "machine:theta", "only works with the laptop"),
+    )
+    .await;
+    note_on(
+        surface,
+        sid,
+        "thing:backup-drive",
+        "2026-10-11",
+        json!({"content": "goes with the server when it goes", "provenance": "testimony"}),
+    )
+    .await;
+    if note_on_the_dock {
+        note_on(
+            surface,
+            sid,
+            "thing:laptop-dock",
+            "2026-10-11",
+            json!({"content": "packed up with everything else", "provenance": "testimony"}),
+        )
+        .await;
+    }
+}
+
+/// The four locks, in the order the year asks them.
+const FOR_FRAGMENTS: [&str; 4] = [
+    "no thing is on record as being for Omicron",
+    "no thing is on record as being for Theta",
+    "the thing that only works with Omicron carries no note",
+    "the thing that only works with Theta was either lost",
+];
+
+async fn the_four_for_locks(surface: &Surface) -> Vec<bool> {
+    let mut held_all = Vec::new();
+    for fragment in FOR_FRAGMENTS {
+        held_all.push(held(surface, &lock_named(fragment)).await.held);
+    }
+    held_all
+}
+
+/// **Every route that links the thing to the machine holds all four locks.**
+/// The locks read what points at the machine, so an edge, a mention, a
+/// reference and a key holding the handle each pass.
+#[tokio::test]
+async fn a_thing_linked_to_the_machine_by_an_edge_holds_the_for_locks() {
+    let (_room, surface, sid) = furnished().await;
+    the_year_of_the_two_machines(&surface, &sid, Route::Edge, false).await;
+    assert_eq!(the_four_for_locks(&surface).await, vec![true; 4]);
+}
+
+#[tokio::test]
+async fn a_thing_linked_to_the_machine_by_a_mention_holds_the_for_locks() {
+    let (_room, surface, sid) = furnished().await;
+    the_year_of_the_two_machines(&surface, &sid, Route::Mention, false).await;
+    assert_eq!(the_four_for_locks(&surface).await, vec![true; 4]);
+}
+
+#[tokio::test]
+async fn a_thing_linked_to_the_machine_by_a_reference_holds_the_for_locks() {
+    let (_room, surface, sid) = furnished().await;
+    the_year_of_the_two_machines(&surface, &sid, Route::Ref, false).await;
+    assert_eq!(the_four_for_locks(&surface).await, vec![true; 4]);
+}
+
+#[tokio::test]
+async fn a_thing_linked_to_the_machine_by_a_key_holding_the_handle_holds_the_for_locks() {
+    let (_room, surface, sid) = furnished().await;
+    the_year_of_the_two_machines(&surface, &sid, Route::Field, false).await;
+    assert_eq!(the_four_for_locks(&surface).await, vec![true; 4]);
+}
+
+/// **A sitting that wrote only prose fails all four**: nothing points at
+/// either machine, so a later question about what goes with the server cannot
+/// find the drive.
+#[tokio::test]
+async fn a_thing_that_only_says_the_server_in_words_fails_the_for_locks() {
+    let (_room, surface, sid) = furnished().await;
+    the_year_of_the_two_machines(&surface, &sid, Route::Prose, false).await;
+    assert_eq!(the_four_for_locks(&surface).await, vec![false; 4]);
+}
+
+/// **A note put on everything that is for a machine reddens the Theta lock
+/// alone.** The route that links is right and the October sitting selected on
+/// the link instead of on the machine, so the dock was given a note it was
+/// not meant to get.
+#[tokio::test]
+async fn a_note_on_the_dock_too_reddens_only_the_theta_selection_lock() {
+    let (_room, surface, sid) = furnished().await;
+    the_year_of_the_two_machines(&surface, &sid, Route::Edge, true).await;
+    assert_eq!(
+        the_four_for_locks(&surface).await,
+        vec![true, true, true, false]
+    );
+}

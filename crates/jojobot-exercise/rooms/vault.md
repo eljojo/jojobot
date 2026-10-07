@@ -370,14 +370,16 @@ recall {"subject": "event:wagstaff-fair", "facts": true}
 carries "recorded_at":"2026-04-19"
 say     April: nothing on the fair carries this sitting's own day, so the stall the operator said yes to is not on record and September has nothing to owe
 
-# 🚨 **The dependency, as the operator's key with the machine's handle as its
-# value.** "The server" is Omicron and the drive only works with it. October
-# retires the server and asks what goes with it, in words that never say
-# "drive". A value that is not the machine's handle is not a link — jojobot's
-# own rule, not this room's — so a drive filed `for: the server` is a drive
-# nobody can find from the server.
-recall {"kind": "thing", "fields": [{"key": "for", "value": "machine:omicron"}]}
-carries "for":"machine:omicron"
+# 🚨 **The dependency, asked from the machine's end.** "The server" is Omicron
+# and the drive only works with it. October retires the server and asks what
+# goes with it, in words that never say "drive". What is locked is that
+# something POINTS at the machine, by whichever route: an edge, the machine's
+# handle in a claim's words or its references, or the handle as the value of a
+# key. A field whose value is a handle is a link whatever its key, so the walk
+# from the machine reaches them all. A sitting that wrote only "it only works
+# with the server" has written something nobody can find from the server.
+recall {"subject": "machine:omicron", "follow": {"direction": "in", "depth": 1}, "facts": true}
+carries "direction":"in"
 say     April: no thing is on record as being for Omicron, so what gets packed off with the server in October cannot be asked
 
 # The floor moved. December tells the project that moved from the project that
@@ -458,11 +460,11 @@ recall {"subject": "org:quahog-community-college", "facts": true}
 carries "recorded_at":"2026-06-14"
 say     June: nothing on the college carries this sitting's own day, so what the course takes and when it starts is filed under whoever mentioned it, or nowhere
 
-# The control for October's dependency question: a second thing under the
-# same key, for the OTHER machine. Without it, "everything for Omicron" is
-# "everything with the key" and the selection measures nothing.
-recall {"kind": "thing", "fields": [{"key": "for", "value": "machine:theta"}]}
-carries "for":"machine:theta"
+# The control for October's dependency question: a second thing pointing at
+# the OTHER machine, by any route. Without it, "everything for Omicron" is
+# "everything that points anywhere" and the selection measures nothing.
+recall {"subject": "machine:theta", "follow": {"direction": "in", "depth": 1}, "facts": true}
+carries "direction":"in"
 say     June: no thing is on record as being for Theta, so October's selection has nothing to leave alone
 
 recall {"kind": "rhythm", "history": "last_check_in"}
@@ -654,18 +656,21 @@ lacks   "standing":"open"
 say     October: either the usual road no longer carries its four timings, or one of them was opened along with the wharf's — a verdict resting on four mornings was treated like one resting on one
 
 # 🚨 **THE DEPENDENCY, WALKED FROM THE MACHINE'S END.** The operator never
-# says "drive"; the drive is `for` Omicron since April and nothing else is.
-# What is locked is the write: the one thing that goes with the server gained
-# a note on this sitting's day, and April's own record is still there under it.
-recall {"kind": "thing", "fields": [{"key": "for", "value": "machine:omicron"}], "facts": true}
+# says "drive"; the drive points at Omicron since April and nothing else does.
+# What is locked is the write: what goes with the server gained a note on this
+# sitting's day, and April's own record is still there under it. The two dates
+# are in one answer and the lock cannot say they sit on one thing; the walk
+# reaches only what points at the machine, which is what bounds it.
+recall {"subject": "machine:omicron", "follow": {"direction": "in", "depth": 1}, "facts": true}
 carries "recorded_at":"2026-10-11"
 carries "recorded_at":"2026-04-19"
 say     October: the thing that only works with Omicron carries no note from this sitting, so it goes wherever the boxes go
 
 # **The other half, and the operator asked for it by name: leave alone what
 # goes with the laptop.** June's record is the positive; a note dated today
-# on the dock is a sitting that put a note on everything with the key.
-recall {"kind": "thing", "fields": [{"key": "for", "value": "machine:theta"}], "facts": true}
+# on the dock is a sitting that put a note on everything that points at a
+# machine.
+recall {"subject": "machine:theta", "follow": {"direction": "in", "depth": 1}, "facts": true}
 carries "recorded_at":"2026-06-14"
 lacks   "recorded_at":"2026-10-11"
 say     October: the thing that only works with Theta was either lost or given a note it was not supposed to get, so the selection was on the key rather than on the machine
