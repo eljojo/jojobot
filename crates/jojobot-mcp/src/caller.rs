@@ -251,7 +251,10 @@ impl Jojobot {
     async fn write_refused_if_wrapped(&self, caller: &Caller) -> Option<CallToolResult> {
         let card = caller.card.as_ref()?;
         let session = self.sessions.read_session(card).await.ok()?;
-        if session.state != SessionState::Wrapped {
+        // **A wrapped run whose wrap window is open takes writes**, exactly as
+        // the session store's own check says: it is still `wrapped`, and the
+        // one last change a wrap code reopens it for is more than a journal beat.
+        if session.state != SessionState::Wrapped || session.takes_writes() {
             return None;
         }
         Some(

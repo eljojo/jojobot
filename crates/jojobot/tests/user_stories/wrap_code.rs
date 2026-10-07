@@ -310,3 +310,79 @@ async fn answering_new_to_the_offer_starts_a_newer_run_and_ends_the_window() {
     assert_eq!(all["the run left open"], "active", "{all:?}");
     assert_eq!(all["the newest run"], "active", "{all:?}");
 }
+
+#[tokio::test]
+async fn a_reopened_run_can_capture_and_post_and_the_second_wrap_ends_both() {
+    let story = Story::begin("bot:otto").await;
+    let first = story.session().await;
+    first.add("person:milhouse", "Milhouse").await;
+    working_on(&first, "the run that reopens", "did the work").await;
+    let code = first
+        .call("wrap_session", json!({"story": "told"}))
+        .await
+        .json()["wrap_code"]
+        .as_str()
+        .expect("a code")
+        .to_string();
+
+    // Before the code is used, the memory and mail verbs refuse the wrapped run
+    // as they refuse the journal. This is the half the writes below depend on:
+    // a window that is open from the start would pass them all.
+    first
+        .refused(
+            "capture",
+            json!({"subject": "person:milhouse", "content": "too early", "provenance": "testimony"}),
+        )
+        .await
+        .says("\"wrote\":false");
+
+    let (_, reopened) = story
+        .call(
+            "start_here",
+            json!({"bot": "otto", "brief": true, "resume": code}),
+        )
+        .await;
+    let reopened = reopened.expect("the code hands back the wrapped run's sid");
+
+    // A last change is more than a journal beat: a claim lands, and a message
+    // goes out.
+    reopened
+        .call(
+            "capture",
+            json!({"subject": "person:milhouse", "content": "likes the last change",
+                   "provenance": "testimony"}),
+        )
+        .await;
+    reopened
+        .call(
+            "post_message",
+            json!({"to": "otto", "subject": "a last word", "body": "sent from the reopened run"}),
+        )
+        .await;
+    reopened
+        .call(
+            "recall",
+            json!({"subject": "person:milhouse", "facts": true}),
+        )
+        .await
+        .says("likes the last change");
+
+    // The second wrap closes the window, and both verbs refuse again.
+    reopened
+        .call("wrap_session", json!({"story": "second story"}))
+        .await;
+    reopened
+        .refused(
+            "capture",
+            json!({"subject": "person:milhouse", "content": "too late", "provenance": "testimony"}),
+        )
+        .await
+        .says("\"wrote\":false");
+    reopened
+        .refused(
+            "post_message",
+            json!({"to": "otto", "subject": "too late", "body": "sent after the second wrap"}),
+        )
+        .await
+        .says("\"wrote\":false");
+}
