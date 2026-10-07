@@ -26,7 +26,7 @@ use std::fs::{File, OpenOptions};
 use std::io;
 use std::net::TcpListener;
 use std::os::fd::AsRawFd as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Mutex, OnceLock};
 
@@ -103,6 +103,27 @@ impl std::fmt::Display for PortsError {
 }
 
 impl std::error::Error for PortsError {}
+
+/// **What a refused open of a claim file means**: `Ok` when the port is held by
+/// somebody else, an error when nothing can be claimed from where the file is.
+///
+/// A claim file another user made and this one may not write is a port somebody
+/// else holds, which is the answer a held lock gives. That is a refusal on a file
+/// that is THERE. The same kind of refusal on a file that is not there is the
+/// directory refusing the file's creation, and every port in the range would
+/// read as held while none is, so it is an error that names the path.
+///
+/// `file_exists` is passed in, so the rule holds without a file system that
+/// denies the process anything.
+fn open_refusal(path: &Path, refused: io::Error, file_exists: bool) -> Result<(), PortsError> {
+    if refused.kind() == io::ErrorKind::PermissionDenied && file_exists {
+        return Ok(());
+    }
+    Err(PortsError::Io {
+        what: format!("opening the port claim {}", path.display()),
+        source: refused,
+    })
+}
 
 /// A source of claims over one range, with its claim files in one directory.
 ///
@@ -184,14 +205,11 @@ impl Allocator {
             .open(&path)
         {
             Ok(file) => file,
-            // A claim file another user made and this one may not write is a
-            // port somebody else holds, which is the answer a held lock gives.
-            Err(refused) if refused.kind() == io::ErrorKind::PermissionDenied => return Ok(None),
-            Err(source) => {
-                return Err(PortsError::Io {
-                    what: format!("opening the port claim {}", path.display()),
-                    source,
-                });
+            Err(refused) => {
+                return match open_refusal(&path, refused, path.exists()) {
+                    Ok(()) => Ok(None),
+                    Err(error) => Err(error),
+                };
             }
         };
         // SAFETY: `flock` takes a descriptor this function owns and no pointer.
@@ -239,4 +257,39 @@ pub fn claim_for_life() -> Result<u16, PortsError> {
     let port = claim.port();
     KEPT.lock().expect("no claim panics while held").push(claim);
     Ok(port)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn denied() -> io::Error {
+        io::Error::from(io::ErrorKind::PermissionDenied)
+    }
+
+    /// **A refused claim file that exists is a held port; one that does not
+    /// exist is an error naming the path.** Fed an error of the kind, so it needs
+    /// no file system that denies the process a write, and holds under root.
+    #[test]
+    fn a_refusal_on_a_file_that_is_there_is_held_and_one_that_is_not_is_an_error() {
+        let path = Path::new("/claims/31900");
+        assert!(
+            open_refusal(path, denied(), true).is_ok(),
+            "a file another user made is a port somebody holds",
+        );
+        match open_refusal(path, denied(), false) {
+            Err(PortsError::Io { what, source }) => {
+                assert!(what.contains("/claims/31900"), "the path is named: {what}");
+                assert_eq!(source.kind(), io::ErrorKind::PermissionDenied);
+            }
+            other => panic!("a directory that refuses the file is an I/O error: {other:?}"),
+        }
+        assert!(
+            matches!(
+                open_refusal(path, io::Error::from(io::ErrorKind::NotFound), true),
+                Err(PortsError::Io { .. })
+            ),
+            "only a permission refusal is ever the answer a held port gives",
+        );
+    }
 }

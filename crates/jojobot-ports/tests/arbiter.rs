@@ -279,3 +279,61 @@ fn a_claim_file_another_user_made_is_a_port_that_is_held() {
         assert_ne!(claim.port(), first, "the unwritable claim was handed out");
     }
 }
+
+/// **A claim directory nobody may write is an I/O error naming it, and not
+/// every port held.**
+///
+/// Creating a claim file in a directory the claimer may not write is refused
+/// with the same kind a single unwritable file is, and treating the two alike
+/// reported a whole range as held while no port was. The answer has to name the
+/// directory so a person can fix it, for the one port and for the range.
+///
+/// **It can only run where the process is denied a write**, which a root
+/// process never is: the case probes first and says so when it cannot be
+/// denied. The rule it exercises is held independently of that by the cases in
+/// the library, which feed the classifier an error of the kind and so need no
+/// permission at all.
+#[test]
+fn a_claim_directory_nobody_may_write_is_an_io_error_naming_it() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = scratch("unwritable-dir");
+    let first = 32_100;
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555))
+        .expect("a directory nobody may write");
+    if std::fs::write(dir.join("probe"), b"").is_ok() {
+        eprintln!("skipped: this process may write a directory with no write bit, as root may");
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).expect("restore");
+        return;
+    }
+
+    let allocator = Allocator::within(first, first + 40, dir.clone());
+    let one = allocator
+        .try_claim(first)
+        .err()
+        .expect("a directory that cannot be written is an error and not a held port");
+    let range = allocator
+        .claim()
+        .err()
+        .expect("a range in a directory that cannot be written is not exhausted");
+    for (what, err) in [("one port", one), ("the range", range)] {
+        match err {
+            PortsError::Io { what: said, .. } => assert!(
+                said.contains(&dir.display().to_string()),
+                "the error for {what} must name the directory: {said}",
+            ),
+            other => panic!("{what} answered {other} and not an I/O error"),
+        }
+    }
+
+    // The positive the refusal is measured against: the same directory, once it
+    // may be written, hands the port out.
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).expect("restore");
+    assert!(
+        allocator
+            .try_claim(first)
+            .expect("a writable directory is no error")
+            .is_some(),
+        "the port is free once the directory may be written",
+    );
+}
