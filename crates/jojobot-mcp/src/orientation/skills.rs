@@ -406,7 +406,9 @@ next".
 `next`, `now`, `waiting` or `done`. A word outside the five is refused, and the
 refusal names them. `owner` is the handle of the person who does the work.
 `waiting_on` is the handle of the person whose move it is. `depends_on` lists
-the handles of the work that must come first, separated by commas.
+the handles of the work that must come first, separated by commas. A work item
+or a project at `done` is not owed, and its dates stay on it, so do not clear a
+date to quiet finished work.
 
     capture  subject: "work:sigma"  fields: {"status": "waiting", "waiting_on": "person:lisa", "depends_on": "work:phi, work:first-mix"}
 
@@ -937,6 +939,24 @@ mod tests {
         assert!(
             published.contains("parent"),
             "the surface publishes no `parent`, so this case is pinning the wrong argument"
+        );
+    }
+
+    /// **The status section says a finished piece of work is not owed.** A
+    /// session that wrote a date on a work item and then marked it `done`
+    /// would otherwise clear the date to quiet it, which erases why it was due.
+    /// Pinned on the one word that carries the claim, inside the section that
+    /// names the `done` status.
+    #[test]
+    fn the_projects_procedure_says_a_done_piece_of_work_is_not_owed() {
+        let text = body("projects");
+        let section = text
+            .split("\n## ")
+            .find(|section| section.starts_with("Where a piece of work stands"))
+            .expect("the projects procedure has a status section");
+        assert!(
+            section.contains("`done`") && section.contains("owed"),
+            "the status section does not say what `done` does to what is owed"
         );
     }
 
