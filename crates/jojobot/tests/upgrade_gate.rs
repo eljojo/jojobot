@@ -71,10 +71,77 @@ async fn the_current_binary_boots_on_a_store_an_older_binary_filled() {
     }
     restoring.stop().await;
 
+    // **The current binary boots over the restored store TWICE, and the second
+    // boot changes nothing.** The first boot runs every migration and every
+    // start pass the build has. A pass that is not idempotent, or a boot that
+    // writes on every start, shows as a store that differs after the second
+    // boot, and no read of the store would say so. The store is stopped and
+    // dumped after each boot, before anything reads it, because a read through
+    // the surface is itself attributed.
+    let first = boot_current(&state_dir, store_port, &git_ref).await;
+    first.stop().await;
+    let after_first = dump_store(&state_dir).await;
+    let second = boot_current(&state_dir, store_port, &git_ref).await;
+    second.stop().await;
+    let after_second = dump_store(&state_dir).await;
+    if after_first != after_second {
+        let changed: Vec<String> = after_first
+            .lines()
+            .zip(after_second.lines())
+            .filter(|(before, after)| before != after)
+            .take(5)
+            .map(|(before, after)| format!("- {before}\n+ {after}"))
+            .collect();
+        panic!(
+            "the second boot of the current binary changed the store recorded at {git_ref} \
+             (a boot that writes on every start, or a pass that is not idempotent). {} lines \
+             before, {} after. First differences:\n{}",
+            after_first.lines().count(),
+            after_second.lines().count(),
+            changed.join("\n")
+        );
+    }
+
+    // The third boot is the one every read below goes through.
+    let third = boot_current(&state_dir, store_port, &git_ref).await;
+    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", third.http_port))
+        .await
+        .expect("connecting to the current binary");
+    let role_holder = std::fs::read_to_string(FIXTURE_ROLE_HOLDER)
+        .unwrap_or_else(|e| panic!("reading {FIXTURE_ROLE_HOLDER}: {e}"))
+        .trim()
+        .to_string();
+    assert_every_recorded_record_reads_back(&surface, &git_ref, &role_holder).await;
+    surface.finish().await;
+
+    third.stop().await;
+    drop(scratch);
+}
+
+/// **A running copy of the current binary over a restored store.**
+struct Booted {
+    child: tokio::process::Child,
+    http_port: u16,
+}
+
+impl Booted {
+    /// Stop it, and wait until the store's own lock is released: the dump that
+    /// follows needs the directory to itself.
+    async fn stop(mut self) {
+        let _ = self.child.start_kill();
+        let _ = self.child.wait().await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+}
+
+/// **Boot the current binary on the store in `state_dir`** and hold it to the
+/// boot's own account of itself: it reaches its serving line, and it says no
+/// part of its own boot failed.
+async fn boot_current(state_dir: &std::path::Path, store_port: u16, git_ref: &str) -> Booted {
     let binary = jojobot_exercise::room::server_binary().expect("a jojobot binary to run");
     let http_port = free_port();
     let mut child = tokio::process::Command::new(&binary)
-        .env("STATE_DIRECTORY", &state_dir)
+        .env("STATE_DIRECTORY", state_dir)
         .env("JOJOBOT_STORE_PORT", store_port.to_string())
         .env("JOJOBOT_BIND", format!("127.0.0.1:{http_port}"))
         .env("JOJOBOT_ALLOW_NO_AUTH", "1")
@@ -150,20 +217,39 @@ async fn the_current_binary_boots_on_a_store_an_older_binary_filled() {
         "the current binary booted on a store recorded at {git_ref} and said part of its own \
          boot failed: {warned:?}"
     );
+    Booted { child, http_port }
+}
 
-    let surface = Surface::connect(&format!("http://127.0.0.1:{http_port}/mcp"))
+/// **The whole store as text**, dumped by the store's own tool from the
+/// directory the binary keeps it in, with no binary running. The same dump the
+/// recording is made with, so two of them compare row for row.
+async fn dump_store(state_dir: &std::path::Path) -> String {
+    let database_dir = state_dir.join("db").join("jojobot");
+    assert!(
+        database_dir.join(".dolt").is_dir(),
+        "the binary's database directory is not where boot_store puts it: {}",
+        database_dir.display()
+    );
+    let dump = tokio::process::Command::new("dolt")
+        .arg("dump")
+        .arg("-r")
+        .arg("sql")
+        .arg("-f")
+        .arg("-fn")
+        .arg("gate-compare.sql")
+        .current_dir(&database_dir)
+        .output()
         .await
-        .expect("connecting to the current binary");
-    let role_holder = std::fs::read_to_string(FIXTURE_ROLE_HOLDER)
-        .unwrap_or_else(|e| panic!("reading {FIXTURE_ROLE_HOLDER}: {e}"))
-        .trim()
-        .to_string();
-    assert_every_recorded_record_reads_back(&surface, &git_ref, &role_holder).await;
-    surface.finish().await;
-
-    let _ = child.start_kill();
-    let _ = child.wait().await;
-    drop(scratch);
+        .expect("dolt dump runs");
+    assert!(
+        dump.status.success(),
+        "dolt dump failed: {}",
+        String::from_utf8_lossy(&dump.stderr)
+    );
+    let text = std::fs::read_to_string(database_dir.join("gate-compare.sql"))
+        .expect("the dump is where dolt put it");
+    let _ = std::fs::remove_file(database_dir.join("gate-compare.sql"));
+    text
 }
 
 /// **A naive split, safe for what this fixture actually contains**: this
@@ -351,6 +437,10 @@ async fn assert_every_recorded_record_reads_back(
         if !read.contains(needle) || !read.contains(state) {
             fail(&format!("the {state} mail message"), &read);
         }
+        // **The sender is the bot's handle**, not an id and not nothing.
+        if !read.contains("\"sender\":\"bot:assistant\"") {
+            fail(&format!("the sender of the {state} mail message"), &read);
+        }
     }
 
     // The wrapped session — `list_runs` is the direct read on a bot's own
@@ -379,19 +469,29 @@ async fn assert_every_recorded_record_reads_back(
     if !runs.iter().any(|run| run["state"] == "wrapped") {
         fail("the wrapped session's own state", &read);
     }
+    // **The starred rule rides the boot** of the identity it was written on.
+    if !booted["identity"]["rules"].as_array().is_some_and(|rules| {
+        rules
+            .iter()
+            .any(|rule| rule["content"] == "the recorder keeps its recording rule")
+    }) {
+        fail(
+            "the starred rule on the assistant's boot",
+            &booted.to_string(),
+        );
+    }
+    assert_the_newer_shapes_read_back(surface, git_ref).await;
     // **What this build newly interprets, read from records the older build
     // wrote as free text, and held on the next write.**
     assert_the_project_keys_and_the_due_day_read_back_and_bind(surface, git_ref, sid).await;
 }
 
-/// **A project, work filed under it, a hand-written due day and a caller's type
-/// named `project`, all written by the older build.**
+/// **A project, work filed under it and a due day the older build stored, all
+/// written by the older build.**
 ///
 /// Each is read back as written. Then two writes go through the served surface:
 /// a status the project lists lands, and a status it does not list is refused.
-/// The refusal is what shows the build's own `project` keys stand where the
-/// caller's type of that name stood, because a type holding only a `budget` key
-/// refuses no status.
+/// The refusal is what shows the build's own `project` keys hold the next write.
 async fn assert_the_project_keys_and_the_due_day_read_back_and_bind(
     surface: &Surface,
     git_ref: &str,
@@ -438,13 +538,13 @@ async fn assert_the_project_keys_and_the_due_day_read_back_and_bind(
     let read = surface
         .call("recall", json!({"subject": "thing:upgrade-fixture-thing"}))
         .await;
-    let thing = fields_of(&read, "the thing with a hand-written due day");
+    let thing = fields_of(&read, "the thing with a stored due day");
     if thing["due_on"] != "2026-12-01" {
-        fail("the hand-written due day", &read);
+        fail("the stored due day", &read);
     }
 
-    // **An edit that sets another key leaves the hand-written due day where it
-    // was**, and is not refused because of it.
+    // **An edit that sets another key leaves the stored due day where it was**,
+    // and is not refused because of it.
     let read = surface
         .call(
             "recall",
@@ -458,10 +558,10 @@ async fn assert_the_project_keys_and_the_due_day_read_back_and_bind(
         .and_then(|facts| {
             facts
                 .iter()
-                .find(|f| f["content"] == "a day written by hand")
+                .find(|f| f["content"] == "a day kept under decide_by")
         })
         .and_then(|fact| fact["address"].as_str())
-        .unwrap_or_else(|| fail("the record carrying the hand-written due day", &read))
+        .unwrap_or_else(|| fail("the record carrying the stored due day", &read))
         .to_string();
     let landed = surface
         .call(
@@ -470,7 +570,7 @@ async fn assert_the_project_keys_and_the_due_day_read_back_and_bind(
         )
         .await;
     if landed.contains("\"status\":\"blocked\"") {
-        fail("an edit beside the hand-written due day", &landed);
+        fail("an edit beside the stored due day", &landed);
     }
     let read = surface
         .call("recall", json!({"subject": "thing:upgrade-fixture-thing"}))
@@ -512,8 +612,76 @@ async fn assert_the_project_keys_and_the_due_day_read_back_and_bind(
         .await;
     if !refused.contains("\"status\":\"blocked\"") {
         fail(
-            "the build's own keys where the caller's `project` type stood",
+            "the project's own keys holding a status it does not list",
             &refused,
         );
+    }
+}
+
+/// **The shapes the first fixture was missing, each read back as the older
+/// build wrote it.** A claim read out of a system of record, a handle under a
+/// key nothing declares between two bots, the instance's own zone, and a piece
+/// of work at `done`.
+async fn assert_the_newer_shapes_read_back(surface: &Surface, git_ref: &str) {
+    let fail = |what: &str, body: &str| -> ! {
+        panic!("recorded at {git_ref}: {what} did not read back correctly: {body}")
+    };
+    let read_of = |read: &str, what: &str| -> serde_json::Value {
+        serde_json::from_str(read).unwrap_or_else(|_| fail(what, read))
+    };
+
+    // The claim read out of a system of record keeps its provenance and the
+    // system it names.
+    let read = surface
+        .call(
+            "recall",
+            json!({"subject": "place:upgrade-fixture-place", "facts": true}),
+        )
+        .await;
+    let parsed = read_of(&read, "the recorded observation");
+    let observed = parsed["objects"][0]["facts"]
+        .as_array()
+        .and_then(|facts| {
+            facts
+                .iter()
+                .find(|f| f["content"] == "the recorded place opens at nine")
+        })
+        .unwrap_or_else(|| fail("the recorded observation", &read));
+    if observed["provenance"] != "observation"
+        || observed["fields"]["read_from"] != "the recorded place's page"
+    {
+        fail("the observation's provenance or the system it names", &read);
+    }
+
+    // The handle under an undeclared key is served as the handle.
+    let read = surface
+        .call("recall", json!({"subject": "bot:assistant"}))
+        .await;
+    let parsed = read_of(&read, "the reports_to field");
+    if parsed["objects"][0]["fields"]["reports_to"] != "bot:upgrade-fixture-lead" {
+        fail("the handle under reports_to", &read);
+    }
+    // **A handle the older build kept as the text it was sent** is served as
+    // the handle.
+    if parsed["objects"][0]["fields"]["pairs_with"] != "bot:upgrade-fixture-lead" {
+        fail("the handle under a key nothing declares", &read);
+    }
+
+    // The instance's own record keeps the zone it works in.
+    let read = surface
+        .call("recall", json!({"subject": "topic:instance"}))
+        .await;
+    let parsed = read_of(&read, "the instance record");
+    if parsed["objects"][0]["fields"]["timezone"] != "America/New_York" {
+        fail("the instance's zone", &read);
+    }
+
+    // The finished piece of work is still finished.
+    let read = surface
+        .call("recall", json!({"subject": "work:upgrade-fixture-prior"}))
+        .await;
+    let parsed = read_of(&read, "the finished work");
+    if parsed["objects"][0]["fields"]["status"] != "done" {
+        fail("the finished work's status", &read);
     }
 }

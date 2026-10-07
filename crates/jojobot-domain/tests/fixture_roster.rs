@@ -129,6 +129,7 @@ const ROSTER: &[&str] = &[
     "bot:contract-ceiling-room-via-edit",
     "bot:contract-ceiling-room-with-space",
     "bot:contract-edit-ages-room",
+    "bot:upgrade-fixture-lead",
     "bot:contract-merge-cap",
     "bot:contract-merge-ceiling-carrier",
     "bot:contract-merge-ceiling-keeper",

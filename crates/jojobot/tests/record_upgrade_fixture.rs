@@ -359,38 +359,23 @@ async fn seed_representative_records(surface: &Surface) -> String {
         .await
         .expect("the task's status, owner and dependency are captured");
 
-    // **A due day written by hand on a thing that carries none of the keys
-    // that make one.** The later build keeps the stored due day its own and
-    // refuses a caller who sends it. What an earlier caller wrote has to
-    // read back as written.
+    // **A stored due day, derived by the deployed build from the key that makes
+    // one.** The deployed build refuses a caller who writes the day itself, so
+    // the recording holds the day it computed from `decide_by`. The later build
+    // has to read it back, and an edit beside it must leave it where it was.
     surface
         .must(
             "capture",
             json!({
                 "subject": "thing:upgrade-fixture-thing",
-                "content": "a day written by hand",
+                "content": "a day kept under decide_by",
                 "provenance": "testimony",
-                "fields": {"due_on": "2026-12-01"},
+                "fields": {"decide_by": "2026-12-01"},
                 "sid": sid,
             }),
         )
         .await
-        .expect("the hand-written due day is captured");
-
-    // **A caller's type under the name of a kind a later build gives keys.**
-    // `project` was a kind with no keys, so its name was a type's to hold
-    // only until this build ships the kind's keys over it.
-    surface
-        .must(
-            "declare_type",
-            json!({
-                "name": "project",
-                "fields": [{"key": "budget", "holds": "text"}],
-                "sid": sid,
-            }),
-        )
-        .await
-        .expect("the caller's type under the name of a keyless kind is declared");
+        .expect("the decide_by day is captured");
 
     // A thought in a room: an active claim on the bot's own handle, drawing
     // a connection edge.
@@ -408,6 +393,102 @@ async fn seed_representative_records(surface: &Surface) -> String {
         )
         .await
         .expect("the thought is captured");
+
+    // **A rule the boot carries.** A claim on the bot's own handle marked to
+    // ride its boot.
+    surface
+        .must(
+            "capture",
+            json!({
+                "subject": "bot:assistant",
+                "content": "the recorder keeps its recording rule",
+                "provenance": "testimony",
+                "fields": {"starred": "true"},
+                "sid": sid,
+            }),
+        )
+        .await
+        .expect("the starred rule is captured");
+
+    // **A claim read out of a system of record**, naming the system and what
+    // was read there.
+    surface
+        .must(
+            "capture",
+            json!({
+                "subject": "place:upgrade-fixture-place",
+                "content": "the recorded place opens at nine",
+                "provenance": "observation",
+                "fields": {"read_from": "the recorded place's page", "read_ref": "opening hours"},
+                "sid": sid,
+            }),
+        )
+        .await
+        .expect("the observation is captured");
+
+    // **A handle under a key the deployed build declares as a reference to a
+    // bot, between two bots.** The store keeps the permanent id it names.
+    surface
+        .must(
+            "add_entity",
+            json!({"kind": "bot", "handle": "upgrade-fixture-lead",
+                   "name": "A Recorded Lead", "source": "test", "sid": sid}),
+        )
+        .await
+        .expect("the second bot is added");
+    surface
+        .must(
+            "capture",
+            json!({
+                "subject": "bot:assistant",
+                "content": "the assistant reports to the recorded lead",
+                "provenance": "testimony",
+                "fields": {"reports_to": "bot:upgrade-fixture-lead"},
+                "sid": sid,
+            }),
+        )
+        .await
+        .expect("the reports_to field is captured");
+
+    // **A handle under a key nothing declares.** The deployed build keeps it as
+    // the text it was sent; a later build lowers it onto the permanent id and
+    // links it, and has to serve it back as the handle.
+    surface
+        .must(
+            "capture",
+            json!({
+                "subject": "bot:assistant",
+                "content": "the assistant pairs with the recorded lead",
+                "provenance": "testimony",
+                "fields": {"pairs_with": "bot:upgrade-fixture-lead"},
+                "sid": sid,
+            }),
+        )
+        .await
+        .expect("the undeclared handle field is captured");
+
+    // **The instance's own record, with the zone it works in.**
+    surface
+        .must(
+            "add_entity",
+            json!({"kind": "topic", "handle": "instance", "name": "This instance",
+                   "source": "test", "sid": sid}),
+        )
+        .await
+        .expect("the instance topic is added");
+    surface
+        .must(
+            "capture",
+            json!({
+                "subject": "topic:instance",
+                "content": "the instance works in one zone",
+                "provenance": "testimony",
+                "fields": {"timezone": "America/New_York"},
+                "sid": sid,
+            }),
+        )
+        .await
+        .expect("the instance zone is captured");
 
     // Mail in several states: one left new, one read, one processed.
     surface
