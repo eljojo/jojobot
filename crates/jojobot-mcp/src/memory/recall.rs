@@ -217,6 +217,15 @@ pub struct RecallArgs {
     /// whole, whatever this argument says.
     #[serde(default)]
     pub(crate) stood_for: Option<bool>,
+    /// **Which records `facts` lists: `active` or `archived`.** Left out, every
+    /// record comes back whatever its status — going straight to a known thing
+    /// is the direct door, and a retired record read that way is correct.
+    /// `active` is the records that still stand; the answer says how many
+    /// retired ones it left out and which call returns them, so a narrowed read
+    /// never passes for the whole of what a thing holds. `archived` is the
+    /// other half. It narrows the records of the objects the call selected.
+    #[serde(default)]
+    pub(crate) status: Option<String>,
     /// Whether each object's **prose** comes back — the human half of its page,
     /// whole. Off by default, because a page is bigger than a claim and shipping
     /// every one of them unasked is a cost the caller cannot decline.
@@ -1485,6 +1494,22 @@ impl Jojobot {
         let history_most = args
             .history_most
             .map_or(graph::WRITES_SHOWN, |most| most as usize);
+        // **Two words and nothing between them**, so a typo is refused rather
+        // than read as "every record".
+        let wanted_status = match args.status.as_deref().map(str::trim) {
+            None | Some("") => None,
+            Some("active") => Some(jojobot_domain::memory::FactStatus::Active),
+            Some("archived") => Some(jojobot_domain::memory::FactStatus::Archived),
+            Some(other) => {
+                return memory_declined(
+                    "recall",
+                    MemoryError::InvalidQuery(format!(
+                        "status is active or archived, and '{other}' is neither — leave it out \
+                         to read every record"
+                    )),
+                );
+            }
+        };
         let want_charter = args.charter.unwrap_or(false);
         let asked_prose = args.prose.unwrap_or(false);
         let include = graph::Include {
@@ -1972,6 +1997,19 @@ impl Jojobot {
         // **A claim reached this session** — computed before `found` is
         // consumed below, the same trigger `search` uses: a read that asked
         // for facts and got none never touched the domain.
+        // **A narrowed listing says what it left out.** Applied after every
+        // step above that could reorder or drop an object, and keyed by the
+        // object's handle, so the counts cannot drift from what is rendered.
+        let mut left_out_by_status = std::collections::HashMap::<EntityId, usize>::new();
+        if let Some(want) = wanted_status {
+            for object in found.iter_mut() {
+                let before = object.facts.len();
+                object.facts.retain(|fact| fact.status == want);
+                let removed = before - object.facts.len();
+                object.facts_held = object.facts_held.saturating_sub(removed);
+                left_out_by_status.insert(object.entity.id.clone(), removed);
+            }
+        }
         let claims_reached = found.iter().any(|object| !object.facts.is_empty());
         let mut body = serde_json::json!({
             "count": found.len(),
@@ -2040,6 +2078,28 @@ impl Jojobot {
                 .zip(backing.into_iter().chain(std::iter::repeat(None)))
                 .map(|(((idx, o), held), backing)| {
                     let mut rendered = object_json(o, include, today);
+                    if let (Some(want), Some(removed)) =
+                        (wanted_status, left_out_by_status.get(&o.entity.id))
+                    {
+                        rendered["facts_status"] = want.as_token().into();
+                        if *removed > 0 {
+                            let (key, other) = match want {
+                                jojobot_domain::memory::FactStatus::Active => {
+                                    ("archived_left_out", "archived")
+                                }
+                                jojobot_domain::memory::FactStatus::Archived => {
+                                    ("active_left_out", "active")
+                                }
+                            };
+                            rendered[key] = serde_json::json!({
+                                "count": removed,
+                                "how_to_read": format!(
+                                    "recall again with status: \"{other}\" to read them, or \
+                                     with no status to read every record"
+                                ),
+                            });
+                        }
+                    }
                     // **Present, with a null value, on the one object this
                     // cannot measure — never absent.** Absent would read as
                     // "you did not ask", which is a different claim from

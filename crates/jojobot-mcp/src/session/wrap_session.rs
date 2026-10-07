@@ -587,6 +587,7 @@ mod tests {
                     fields: None,
                     facts: None,
                     stood_for: None,
+                    status: None,
                     prose: Some(true),
                     charter: None,
                     follow: None,

@@ -116,6 +116,7 @@ mod tests {
             fields: None,
             facts: None,
             stood_for: None,
+            status: None,
             prose: None,
             charter: None,
             history: None,

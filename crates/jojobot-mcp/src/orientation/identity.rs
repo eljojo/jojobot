@@ -87,6 +87,79 @@ pub(crate) fn carried_rules(in_force: &[Fact], seats: usize) -> Vec<&Fact> {
         .collect()
 }
 
+/// **The map of the rules a boot does not carry whole**: every rule in force
+/// that has no seat, one line each — its address and its `subject`, else the
+/// head of its words — up to [`text::UNSEATED_LISTED`]. Past that the rest are
+/// counted by their `purpose` (`unfiled` for none) and the call that loads
+/// them is named. `None` when every rule in force is seated, so a bot with
+/// nothing to map carries nothing. A boot and a write that measures the boot's
+/// floor both build it here, so they cannot disagree about its size.
+///
+/// A retired rule is never here: `in_force` is the rules that bind.
+pub(crate) fn unseated_rules(
+    bot: &EntityId,
+    in_force: &[Fact],
+    seats: usize,
+) -> Option<serde_json::Value> {
+    let seated: std::collections::HashSet<_> = carried_rules(in_force, seats)
+        .into_iter()
+        .map(|rule| rule.address())
+        .collect();
+    // Newest first, the tie-break the seats use, so the line a boot shows
+    // first is the rule most recently written.
+    let unseated: Vec<&Fact> = in_force
+        .iter()
+        .rev()
+        .filter(|rule| !seated.contains(&rule.address()))
+        .collect();
+    if unseated.is_empty() {
+        return None;
+    }
+    let (shown, rest) = unseated.split_at(unseated.len().min(text::UNSEATED_LISTED));
+    let line_of = |rule: &Fact| {
+        let subject = rule.fields.get("subject").map(|s| s.trim()).unwrap_or("");
+        text::UNSEATED_LINE.render(match subject.is_empty() {
+            true => &rule.content,
+            false => subject,
+        })
+    };
+    let mut block = serde_json::json!({
+        "listed": shown
+            .iter()
+            .map(|rule| serde_json::json!({"address": rule.address().to_string(), "line": line_of(rule)}))
+            .collect::<Vec<_>>(),
+    });
+    let mut how = format!(
+        "These rules are in force and have no seat, so they are not carried whole. Before \
+         acting in an area a listed rule names, load it: recall with history_record set to its \
+         address reads that one rule, and recall {bot} with facts: true and status: \"active\" \
+         loads every rule in force and says how many retired records it left out.",
+        bot = bot.as_str()
+    );
+    if !rest.is_empty() {
+        let mut by_purpose = std::collections::BTreeMap::<String, usize>::new();
+        for rule in rest {
+            let purpose = rule.fields.get("purpose").map(|p| p.trim()).unwrap_or("");
+            let group = match purpose.is_empty() {
+                true => "unfiled",
+                false => purpose,
+            };
+            *by_purpose.entry(group.to_string()).or_default() += 1;
+        }
+        block["left_out"] = serde_json::json!({
+            "count": rest.len(),
+            "by_purpose": by_purpose,
+        });
+        how.push_str(
+            " The rest are counted here and not listed: load a group with the same call and \
+             fields: [{\"key\": \"purpose\", \"value\": the group, \"scope\": \"record\"}]. \
+             Rules that name no purpose are the unfiled group, which only the whole load returns.",
+        );
+    }
+    block["how_to_load"] = how.into();
+    Some(block)
+}
+
 impl Jojobot {
     /// Who this session is: the bot's record, the charter its prose carries,
     /// the rules its facts carry, and the live state of the box it owns.
@@ -226,6 +299,12 @@ impl Jojobot {
             } else if let Some(seats) = &seats {
                 obj.insert("rules_note".into(), seats.sentence.clone().into());
             }
+        }
+        if let (Some(map), Some(obj)) = (
+            unseated_rules(bot, &in_force, seat_count),
+            body.as_object_mut(),
+        ) {
+            obj.insert("unseated_rules".into(), map);
         }
         if answering_an_offer && let Some(obj) = body.as_object_mut() {
             obj.insert(

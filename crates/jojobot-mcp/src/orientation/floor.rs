@@ -136,12 +136,21 @@ impl Jojobot {
                 rule
             })
             .collect();
-        let identity = serde_json::json!({
+        let mut identity = serde_json::json!({
             "bot": entity_json(&entity),
             "charter": charter,
             "charter_elided": false,
             "rules": rules,
         });
+        // The map of the rules that have no seat rides every boot, so a floor
+        // that left it out would undercount by exactly what a bot with many
+        // rules adds.
+        if let (Some(map), Some(obj)) = (
+            crate::orientation::identity::unseated_rules(bot, in_force, seats),
+            identity.as_object_mut(),
+        ) {
+            obj.insert("unseated_rules".into(), map);
+        }
         let snapshot = self.snapshot_block(Some(bot), entity_summary(&index)).await;
         let total = floor_len(
             false,

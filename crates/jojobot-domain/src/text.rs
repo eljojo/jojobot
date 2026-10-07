@@ -415,6 +415,26 @@ pub const BOOT_ANSWER: Capped = Capped { budget: 28_000 };
 /// refused where it is written.
 pub const CARRIED_RULES: usize = 5;
 
+/// **How many unseated rules a boot lists, one line each** — a hard cap in
+/// things, the same kind as [`CARRIED_RULES`] (rule 306). The listing is what a
+/// boot cannot cut, so it is bounded by a count and not by a ranking: past it
+/// the rest are counted by what they are for and the call that loads them is
+/// named. A bot holding sixty rules costs the boot a few group counts beyond
+/// this many lines, never sixty lines.
+pub const UNSEATED_LISTED: usize = 20;
+
+/// **One line of the unseated-rule listing** — the rule's `subject` field, else
+/// the head of its own words. Short, because twenty of them ride every boot of
+/// a bot whose floor can already sit near the ceiling.
+pub const UNSEATED_LINE: Fitted = Fitted {
+    name: "unseated-line",
+    budget: 80,
+    ellipsis: Ellipsis::WithinBudget,
+    flatten: true,
+    strip_unprintable: false,
+    when_empty: None,
+};
+
 /// **One named case, and the goldens are its floor.** The store respells
 /// underscore-emphasis as asterisk-emphasis: `_under_` comes back
 /// `*under*`. Nothing is escaped and nothing is lost — it is the same

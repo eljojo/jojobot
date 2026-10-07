@@ -548,3 +548,357 @@ async fn a_charter_is_measured_with_the_layer_the_build_ships() {
         .await;
     story.finish().await;
 }
+
+/// One rule on `bot`, written by the session's own bot — a claim with the
+/// fields it is given, in force until somebody archives it.
+async fn rule(
+    s: &super::dsl::Session,
+    bot: &str,
+    content: &str,
+    fields: serde_json::Value,
+) -> String {
+    let receipt = s
+        .call(
+            "capture",
+            json!({"subject": bot, "content": content, "provenance": "testimony", "fields": fields}),
+        )
+        .await;
+    receipt.json()["address"]
+        .as_str()
+        .expect("a write hands back the address")
+        .to_string()
+}
+
+/// **A boot lists every rule in force that has no seat, one line each, so a
+/// session can tell which one to load.** Seats stay all-or-nothing in what they
+/// carry whole; the line is the map of the rest. The subject field is the line
+/// when the rule has one, and the head of its words when it has not. A retired
+/// rule is never listed, and a listed rule is fetched exactly, by its address.
+#[tokio::test]
+async fn a_boot_lists_each_unseated_rule_and_a_session_fetches_one_by_its_address() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:omega", "Omega").await;
+
+    // Eight starred rules and the default five seats: the three oldest are not
+    // seated. Two more in force, with no star, and one retired.
+    let mut starred = Vec::new();
+    for n in 0..8 {
+        starred.push(
+            rule(
+                &s,
+                "bot:omega",
+                &format!("seated or not, starred rule {n}"),
+                json!({"starred": "true", "subject": format!("starred area {n}")}),
+            )
+            .await,
+        );
+    }
+    let plain = rule(
+        &s,
+        "bot:omega",
+        "plain rule with a subject, kept apart from the stars",
+        json!({"subject": "plain area"}),
+    )
+    .await;
+    let bare = rule(
+        &s,
+        "bot:omega",
+        "plain rule with no subject so its own words are the line",
+        json!({}),
+    )
+    .await;
+    let retired = rule(
+        &s,
+        "bot:omega",
+        "a retired instruction nobody follows",
+        json!({"subject": "retired area"}),
+    )
+    .await;
+    s.call(
+        "update_fact",
+        json!({"address": retired, "status": "archived"}),
+    )
+    .await;
+
+    let (booted, _) = story.call("start_here", json!({"bot": "omega"})).await;
+    let body = booted.json();
+    let listed = body["identity"]["unseated_rules"]["listed"]
+        .as_array()
+        .unwrap_or_else(|| panic!("a boot with unseated rules lists them: {body}"));
+    let line_of = |address: &str| {
+        listed
+            .iter()
+            .find(|entry| entry["address"] == address)
+            .map(|entry| entry["line"].as_str().unwrap_or_default().to_string())
+    };
+    // The three oldest starred rules, and the two plain ones: five lines.
+    assert_eq!(listed.len(), 5, "{body}");
+    for old in &starred[..3] {
+        assert!(line_of(old).is_some(), "{old} has no line: {body}");
+    }
+    assert_eq!(line_of(&plain).as_deref(), Some("plain area"), "{body}");
+    assert!(
+        line_of(&bare)
+            .expect("a rule with no subject is listed too")
+            .starts_with("plain rule with no subject"),
+        "the head of its words is the line: {body}"
+    );
+    // A seated rule is carried whole and not listed again; a retired one is
+    // neither.
+    for seated in &starred[3..] {
+        assert!(line_of(seated).is_none(), "{seated} is seated: {body}");
+    }
+    booted.never_says("a retired instruction nobody follows");
+    booted.never_says("retired area");
+    // The note names the call that loads one rule by its address.
+    let how = body["identity"]["unseated_rules"]["how_to_load"]
+        .as_str()
+        .expect("the note says how to load");
+    assert!(how.contains("history_record"), "{how}");
+
+    // ── one rule, fetched exactly by the address its line carries ───────────
+    let one = s
+        .call("recall", json!({"history_record": starred[0]}))
+        .await;
+    one.says("starred rule 0");
+    one.never_says("starred rule 1");
+    one.never_says("plain rule with a subject");
+
+    s.wrap("saw the unseated rules and fetched one").await;
+    story.finish().await;
+}
+
+/// **The list is bounded by a count of things, and past it the rest are
+/// counted by what they are for.** A bot holding sixty rules does not get a
+/// boot sixty lines longer: it gets the listed few, a count of the rest grouped
+/// by their `purpose` (rules that name none are `unfiled`), and the call that
+/// loads a group or all of them. The count is a literal here because nothing
+/// outside this process declares it.
+#[tokio::test]
+async fn a_boot_lists_a_bounded_number_of_unseated_rules_and_counts_the_rest_by_purpose() {
+    const LISTED: usize = 20;
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:omega", "Omega").await;
+    s.add("bot:upsilon", "Upsilon").await;
+
+    // Omega holds sixty rules, five of them seated by their stars. Fifty-five
+    // are not: ten of one purpose, fifteen of another, thirty with none.
+    for n in 0..5 {
+        rule(
+            &s,
+            "bot:omega",
+            &format!("a seated rule {n}"),
+            json!({"starred": "true"}),
+        )
+        .await;
+    }
+    for n in 0..55 {
+        let fields = match n {
+            0..10 => json!({"purpose": "hard-line", "subject": format!("line {n}")}),
+            10..25 => json!({"purpose": "habit", "subject": format!("habit {n}")}),
+            _ => json!({"subject": format!("unlabelled {n}")}),
+        };
+        rule(&s, "bot:omega", &format!("an unseated rule {n}"), fields).await;
+    }
+    // Upsilon holds thirty: the same five seated, twenty-five unseated.
+    for n in 0..5 {
+        rule(
+            &s,
+            "bot:upsilon",
+            &format!("a seated rule {n}"),
+            json!({"starred": "true"}),
+        )
+        .await;
+    }
+    for n in 0..25 {
+        rule(
+            &s,
+            "bot:upsilon",
+            &format!("an unseated rule {n}"),
+            json!({"subject": format!("unlabelled {n}")}),
+        )
+        .await;
+    }
+
+    let (omega, _) = story.call("start_here", json!({"bot": "omega"})).await;
+    let body = omega.json();
+    let unseated = &body["identity"]["unseated_rules"];
+    assert_eq!(
+        unseated["listed"].as_array().map(Vec::len),
+        Some(LISTED),
+        "{body}"
+    );
+    // Newest first: the twenty listed are the twenty most recently written, and
+    // the thirty-five left out are the oldest.
+    let listed = unseated["listed"].as_array().expect("the listed rules");
+    assert_eq!(listed[0]["line"], "unlabelled 54", "{body}");
+    assert_eq!(listed[LISTED - 1]["line"], "unlabelled 35", "{body}");
+    let left_out = &unseated["left_out"];
+    assert_eq!(left_out["count"], 55 - LISTED, "{body}");
+    let by_purpose = left_out["by_purpose"]
+        .as_object()
+        .expect("grouped by purpose");
+    assert_eq!(
+        by_purpose
+            .values()
+            .map(|n| n.as_u64().unwrap())
+            .sum::<u64>(),
+        (55 - LISTED) as u64,
+        "the groups add up to what was left out: {body}"
+    );
+    assert!(by_purpose.contains_key("unfiled"), "{body}");
+    assert!(by_purpose.contains_key("habit"), "{body}");
+    // The call that loads them is named, both for everything and for a group.
+    let how = unseated["how_to_load"].as_str().expect("the call is named");
+    for argument in ["history_record", "status", "purpose"] {
+        assert!(how.contains(argument), "{argument} is named: {how}");
+    }
+
+    // The group call the note names does what it says: one purpose, the rules
+    // in force, nothing of another group.
+    let habits = s
+        .call(
+            "recall",
+            json!({
+                "subject": "bot:omega", "facts": true, "status": "active",
+                "fields": [{"key": "purpose", "value": "habit", "scope": "record"}],
+            }),
+        )
+        .await;
+    habits.says("an unseated rule 10\"");
+    habits.never_says("an unseated rule 3\"");
+    habits.never_says("an unseated rule 30\"");
+
+    // ── what the listing costs is bounded by the cap, not by the rule count ─
+    //
+    // Upsilon has twenty-five rules to list and omega has fifty-five: past the
+    // cap the extra thirty cost a few group counts and nothing else.
+    let (upsilon, _) = story.call("start_here", json!({"bot": "upsilon"})).await;
+    let (omega_size, upsilon_size) = (omega.size(), upsilon.size());
+    assert!(
+        omega_size.abs_diff(upsilon_size) < 700,
+        "thirty more rules cost {} characters of boot",
+        omega_size.abs_diff(upsilon_size)
+    );
+    assert!(omega_size <= BOOT_CEILING as usize, "{omega_size}");
+
+    s.wrap("booted a bot holding sixty rules").await;
+    story.finish().await;
+}
+
+/// **The call a boot names for loading rules returns the ones in force, and
+/// says what it left out.** `recall` on a bot with `facts: true` hands back
+/// every record it holds, retired ones included, because going straight to a
+/// known address is the direct door. The boot names the same call with
+/// `status: "active"`: the retired records stay out, and the answer says how
+/// many and which call returns them.
+#[tokio::test]
+async fn loading_a_bots_rules_by_status_active_leaves_out_the_retired_and_counts_them() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:omega", "Omega").await;
+    rule(
+        &s,
+        "bot:omega",
+        "a rule in force",
+        json!({"subject": "one"}),
+    )
+    .await;
+    let retired = rule(
+        &s,
+        "bot:omega",
+        "a rule retired long ago",
+        json!({"subject": "two"}),
+    )
+    .await;
+    s.call(
+        "update_fact",
+        json!({"address": retired, "status": "archived"}),
+    )
+    .await;
+
+    // ── unchanged without the argument: every record, retired included ──────
+    s.call("recall", json!({"subject": "bot:omega", "facts": true}))
+        .await
+        .says("a rule in force")
+        .says("a rule retired long ago");
+
+    // ── with it: the retired record is out, and the count and the way back ──
+    let active = s
+        .call(
+            "recall",
+            json!({"subject": "bot:omega", "facts": true, "status": "active"}),
+        )
+        .await;
+    active
+        .says("a rule in force")
+        .never_says("a rule retired long ago");
+    let body = active.json();
+    let left_out = &body["objects"][0]["archived_left_out"];
+    assert_eq!(left_out["count"], 1, "{body}");
+    assert!(
+        left_out["how_to_read"]
+            .as_str()
+            .is_some_and(|how| how.contains("archived")),
+        "the call that returns them is named: {body}"
+    );
+
+    // ── and the other way: asking for the retired ones returns only those ───
+    s.call(
+        "recall",
+        json!({"subject": "bot:omega", "facts": true, "status": "archived"}),
+    )
+    .await
+    .says("a rule retired long ago")
+    .never_says("a rule in force");
+
+    s.wrap("loaded a bot's rules in force").await;
+    story.finish().await;
+}
+
+/// **The floor a write measures counts the unseated listing**, because the
+/// listing rides every boot. Two bots filled to the ceiling by the same check,
+/// one holding thirty rules with no seat and one holding none, boot over it by
+/// nearly the same amount — what a boot carries beyond what a write measures.
+/// A floor that left the listing out would let the first boot over by the whole
+/// listing as well.
+#[tokio::test]
+async fn the_floor_a_write_measures_counts_the_unseated_listing() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:omega", "Omega").await;
+    s.add("bot:upsilon", "Upsilon").await;
+    for n in 0..30 {
+        rule(
+            &s,
+            "bot:omega",
+            &format!("an unseated rule {n}"),
+            json!({"subject": format!("area {n}")}),
+        )
+        .await;
+    }
+    fill_the_ceiling_with_a_charter(&s, "bot:omega").await;
+    fill_the_ceiling_with_a_charter(&s, "bot:upsilon").await;
+    let over = |answer: super::dsl::Answer| {
+        answer.json()["over_the_ceiling"]["over"]
+            .as_u64()
+            .expect("a boot filled to the write's ceiling is over by what the write omits")
+    };
+    let (omega, _) = story.call("start_here", json!({"bot": "omega"})).await;
+    let (upsilon, _) = story.call("start_here", json!({"bot": "upsilon"})).await;
+    let (omega, upsilon) = (over(omega), over(upsilon));
+    // The two differ by the note a boot adds when some rules are not carried,
+    // which a write does not measure, and by nothing else: the listing alone
+    // is several times that.
+    assert!(
+        omega.abs_diff(upsilon) < 700,
+        "the listing is outside the floor a write measures: omega boots {omega} over, \
+         upsilon {upsilon}"
+    );
+
+    s.wrap("filled two bots to the ceiling, one holding many rules")
+        .await;
+    story.finish().await;
+}
