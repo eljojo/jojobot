@@ -88,6 +88,9 @@ mod mentioning;
 mod moving;
 #[path = "user_stories/my_past_runs.rs"]
 mod my_past_runs;
+/// The boot names the operator, and what waits on them is one read away.
+#[path = "user_stories/operator.rs"]
+mod operator;
 #[path = "user_stories/paragraphs.rs"]
 mod paragraphs;
 #[path = "user_stories/party.rs"]

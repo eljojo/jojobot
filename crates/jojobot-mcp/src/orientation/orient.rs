@@ -309,6 +309,14 @@ pub(super) fn entity_summary(
     }
 }
 
+/// **The two lines a boot reads off the instance's own record**, bundled so the
+/// floor measures both and a third line is one field rather than one more
+/// argument.
+pub(super) struct InstanceLines<'a> {
+    pub(super) timezone: &'a serde_json::Value,
+    pub(super) operator: &'a serde_json::Value,
+}
+
 /// **What a boot cannot cut, in characters** — the sum `orient` measures and a
 /// write that would grow it measures too, so the two cannot disagree about it.
 /// The essay's core rides in it for every boot that is not `brief`, exactly
@@ -321,7 +329,7 @@ pub(super) fn floor_len(
     session: &serde_json::Value,
     carried: &serde_json::Value,
     clock: Option<serde_json::Value>,
-    timezone: &serde_json::Value,
+    instance: InstanceLines<'_>,
 ) -> usize {
     let core = (!brief).then_some(essay::ORIENTATION_CORE);
     serde_json::json!({
@@ -333,7 +341,8 @@ pub(super) fn floor_len(
         "session": session,
         "carried_session": carried,
         "clock": clock,
-        "timezone": timezone,
+        "timezone": instance.timezone,
+        "operator": instance.operator,
     })
     .to_string()
     .chars()
@@ -573,6 +582,9 @@ impl Jojobot {
                 },
             }
         };
+        // **Who the operator is, in one line**, read from the instance's record
+        // beside the zone. It is measured in the floor below like the zone is.
+        let operator_answer = self.operator_answer().await;
         // **ONE declared ceiling for the WHOLE answer** — [`text::BOOT_ANSWER`]
         // — not for its prose alone (rule 138's own bar: a payload the client
         // cannot read, not a field inside it). Measure the FLOOR first:
@@ -605,7 +617,10 @@ impl Jojobot {
             &session,
             &carried,
             self.stated_clock(),
-            &timezone_answer,
+            InstanceLines {
+                timezone: &timezone_answer,
+                operator: &operator_answer,
+            },
         );
         let remaining_for_prose = text::BOOT_ANSWER.budget.saturating_sub(floor_len);
         // **A floor over the ceiling is said, not refused.** The boot never
@@ -663,6 +678,9 @@ impl Jojobot {
             // **The zone this boot answered days in, and who named it** — the
             // session, the instance, the run it resumed, or neither.
             "timezone": timezone_answer,
+            // **The operator, by the handle a `waiting_on` holds**, or one
+            // sentence saying there is no entity yet and how to make one.
+            "operator": operator_answer,
         });
         // **`brief` needs no note — the caller set that flag and already
         // knows why.** Every other reason an answer carries less than the

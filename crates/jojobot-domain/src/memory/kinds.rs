@@ -205,6 +205,13 @@ pub fn keys_of(token: &str) -> Vec<super::types::Field> {
         // everyone who reports there. Optional, because a bot is whole without
         // one. Display only: nothing here acts on it.
         "bot" => vec![Field::pointing_at("reports_to", super::EntityKind::BOT)],
+        // **Who the operator is**, held on the instance's own `topic` record
+        // and read by the boot. A reference to a person, so a handle written
+        // there is a link and a piece of work that waits on the operator holds
+        // the same handle under `waiting_on`. Optional: an instance is whole
+        // before anybody has made the operator an entity. Display only: no
+        // owner or permission model reads it.
+        "topic" => vec![Field::pointing_at("operator", super::EntityKind::PERSON)],
         // **A question asked by name.** The keys are what a view IS: what it
         // selects over, and what it keeps. They are required because a view
         // missing either is a question nobody can ask — unlike a loop, where
@@ -601,6 +608,33 @@ mod tests {
         assert!(
             declared.iter().all(|f| !f.required),
             "a bot is whole without a manager: {declared:?}"
+        );
+    }
+
+    /// **A topic names the operator, as a link to a person, and requires
+    /// nothing.** The instance's own record holds it, so the key is declared for
+    /// the same reason `reports_to` is: a handle held in a field is a link, and
+    /// the declaration is what makes it walkable by its name. The spelling is
+    /// pinned as a literal because it is stored in a fields bag and nothing
+    /// outside this process declares it.
+    #[test]
+    fn the_topic_kind_names_the_operator_as_a_link_to_a_person_and_requires_nothing() {
+        use super::super::types::ValueType;
+        let declared = keys_of("topic");
+        let operator = declared
+            .iter()
+            .find(|f| f.key == "operator")
+            .unwrap_or_else(|| panic!("the topic kind names 'operator': {declared:?}"));
+        assert_eq!(operator.holds, ValueType::Reference, "{operator:?}");
+        assert_eq!(
+            operator.points_at,
+            Some(crate::memory::EntityKind::PERSON),
+            "the operator is a person: {operator:?}"
+        );
+        assert!(!operator.list, "an instance has one operator: {operator:?}");
+        assert!(
+            declared.iter().all(|f| !f.required),
+            "a topic is whole without an operator: {declared:?}"
         );
     }
 

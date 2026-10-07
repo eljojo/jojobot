@@ -16,6 +16,11 @@ pub(crate) const INSTANCE_RECORD: &str = "topic:instance";
 /// The key on [`INSTANCE_RECORD`] that holds the zone, as an IANA name.
 pub(crate) const INSTANCE_ZONE_KEY: &str = "timezone";
 
+/// The key on [`INSTANCE_RECORD`] that holds the operator, as the handle of a
+/// person. A work thing that waits on the operator holds the same handle under
+/// `waiting_on`.
+pub(crate) const INSTANCE_OPERATOR_KEY: &str = "operator";
+
 /// What the instance's record says about its zone.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum InstanceZone {
@@ -55,6 +60,32 @@ impl Jojobot {
                 Ok(zone) => InstanceZone::Set(zone.iana_name().unwrap_or(raw).to_string()),
                 Err(_) => InstanceZone::Unresolvable(raw.to_string()),
             },
+        }
+    }
+}
+
+impl Jojobot {
+    /// **The boot's one line about the operator**: the handle the instance's
+    /// record holds under [`INSTANCE_OPERATOR_KEY`], or a sentence saying there
+    /// is no entity yet and which two writes make one. A record that is absent,
+    /// a key that is absent and a store that cannot be read all say the same
+    /// thing, because the boot cannot name a person it did not read.
+    pub(crate) async fn operator_answer(&self) -> serde_json::Value {
+        let held = self
+            .memory
+            .fields(&EntityId(INSTANCE_RECORD.to_string()))
+            .await
+            .ok()
+            .and_then(|fields| fields.get(INSTANCE_OPERATOR_KEY).cloned())
+            .map(|raw| raw.trim().to_string())
+            .filter(|handle| !handle.is_empty());
+        match held {
+            Some(handle) => handle.into(),
+            None => format!(
+                "no entity yet: add_entity a person, then capture {INSTANCE_OPERATOR_KEY} on \
+                 {INSTANCE_RECORD}"
+            )
+            .into(),
         }
     }
 }
