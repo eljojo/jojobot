@@ -495,7 +495,7 @@ async fn january(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "project:the-shed", "content": "considering the flat-pack kit, or building one",
-               "provenance": "testimony", "fields": {"status": "considering"}}),
+               "provenance": "testimony", "fields": {"status": "next"}}),
     )
     .await;
     did(
@@ -503,7 +503,7 @@ async fn january(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "project:kitchen-floor", "content": "considering",
-               "provenance": "testimony", "fields": {"status": "considering"}}),
+               "provenance": "testimony", "fields": {"status": "next"}}),
     )
     .await;
     did(
@@ -562,7 +562,7 @@ async fn february(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "project:the-shed", "content": "still can't decide; the kit's on offer again",
-               "provenance": "testimony", "fields": {"status": "considering"}}),
+               "provenance": "testimony", "fields": {"status": "next"}}),
     )
     .await;
     did(
@@ -632,7 +632,7 @@ async fn april(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "project:kitchen-floor", "content": "happening — Gene's mate is booked for June",
-               "provenance": "testimony", "fields": {"status": "doing"}}),
+               "provenance": "testimony", "fields": {"status": "now"}}),
     )
     .await;
     did(
@@ -676,7 +676,7 @@ async fn may(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "project:the-shed", "content": "went round it again with Linda; nothing decided",
-               "provenance": "testimony", "fields": {"status": "considering"}}),
+               "provenance": "testimony", "fields": {"status": "next"}}),
     )
     .await;
 }
@@ -783,7 +783,7 @@ async fn august(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "project:the-shed", "content": "Louise says just buy the kit; still torn",
-               "provenance": "testimony", "fields": {"status": "considering"}}),
+               "provenance": "testimony", "fields": {"status": "next"}}),
     )
     .await;
     did(

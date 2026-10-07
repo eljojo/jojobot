@@ -33,14 +33,30 @@ pub const SHIPPED: [&str; 16] = [
     "promise", "machine", "view", "session", "thread",
 ];
 
-/// **The keys a shipped kind carries**, and almost all of them carry none.
+/// **The statuses a `work` thing or a `project` holds**, in the order work
+/// moves through them: put off, up next, under way, blocked on somebody, over.
+///
+/// A closed set, and the build's: a status a cold session can ask "what is
+/// next" of has to be a word every writer spells the same way. A project that
+/// needs a finer state says it under a key of its own, which no kind refuses,
+/// and the refusal for an unlisted status says so.
+pub const WORK_STATUSES: [&str; 5] = ["someday", "next", "now", "waiting", "done"];
+
+/// The key a work thing or a project holds its status under.
+pub const STATUS: &str = "status";
+
+/// The key a project holds its own ordered list of statuses under.
+pub const COLUMNS: &str = "columns";
+
+/// **The keys a shipped kind carries**, and most of them carry none.
 ///
 /// What a `person` or a `place` holds is not the software's to decide, and a
 /// kind that names no key is coherent: its identity is its row. A kind names
 /// keys only where the software knows the shape — where the thing exists
-/// BECAUSE the software has a use for it.
+/// BECAUSE the software has a use for it. `work` and `project` name the
+/// project-management keys below; `promise` and `view` name theirs.
 ///
-/// **`rhythm` is the one, and it declares the WHOLE loop.** Every key the
+/// **`rhythm` declares the WHOLE loop.** Every key the
 /// check-in verb writes and the overdue read reads is named here: the two the
 /// arithmetic needs, the policy that chooses between them, what the check-in
 /// found, and the note. A key the machinery uses and the kind does not name is
@@ -108,6 +124,37 @@ pub fn keys_of(token: &str) -> Vec<super::types::Field> {
                 crate::attention::Outcome::ALL.map(crate::attention::Outcome::as_token),
             ),
         ],
+        // **A piece of work, and the keys a bot's own work needs so that none
+        // invents its own.** All optional: a work thing is whole with none of
+        // them, and a required key is a refusal waiting to happen. Each is a
+        // question a cold session asks — what is next, what waits on whom, what
+        // stands behind what — answered from the keys instead of from prose.
+        //
+        // **`owner` and `waiting_on` are references, and `depends_on` a list of
+        // them**, because a handle written there is a link whatever the key
+        // is called, and the declaration is what makes a record findable from
+        // each target. **No `due_on`**: how a key passes from a record up to
+        // its thing is not settled, and a deadline-shaped key here would
+        // multiply that defect.
+        "work" => vec![
+            status_key(),
+            Field::new("owner", ValueType::Reference),
+            Field::new("waiting_on", ValueType::Reference),
+            Field::listing("depends_on", ValueType::Reference),
+            Field::new("commit", ValueType::Text),
+            Field::new("verified_by", ValueType::Text),
+        ],
+        // **A project holds the same status, and the columns its work moves
+        // through.** One word has one meaning across the two kinds, so one
+        // function builds the key.
+        //
+        // **`columns` is the project's own ordered list of statuses**, a
+        // superset of the shipped five: the project places those where it likes
+        // and adds its own beside them. A work item filed under the project is
+        // held to that list on every write that sets its status, and the order
+        // is the one a reader walks. A project that lists none holds its work to
+        // the shipped five in their shipped order.
+        "project" => vec![status_key(), Field::listing(COLUMNS, ValueType::Text)],
         // **A thing somebody has to do by a day.** The keys are what the
         // owed-and-late read asks of it and what a question about it needs, and
         // nothing that describes. **One key is required: the day.** A promise
@@ -147,6 +194,31 @@ pub fn keys_of(token: &str) -> Vec<super::types::Field> {
         ],
         _ => Vec::new(),
     }
+}
+
+/// **Whether a thing of this kind moves through the columns of the project it
+/// is filed under** — work does, and so does a project filed under another.
+pub fn holds_columns(kind: &str) -> bool {
+    kind == "work" || kind == "project"
+}
+
+/// **The columns a project lists**, in the order it wrote them — `None` when it
+/// lists none, which means its work is held to [`WORK_STATUSES`].
+pub fn columns_of(fields: &std::collections::BTreeMap<String, String>) -> Option<Vec<String>> {
+    let items: Vec<String> = fields
+        .get(COLUMNS)?
+        .split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(str::to_string)
+        .collect();
+    (!items.is_empty()).then_some(items)
+}
+
+/// **The `status` key both work-shaped kinds declare**, built once so the two
+/// cannot name different words.
+fn status_key() -> super::types::Field {
+    super::types::Field::one_of(STATUS, WORK_STATUSES)
 }
 
 /// The set this process parses against. Empty until something loads it.
@@ -435,6 +507,77 @@ mod tests {
         assert!(
             !outcome.accepts("swapped"),
             "a word the verb does not accept is not one the key holds either",
+        );
+    }
+
+    /// **`work` ships the project-management keys, and every one is optional.**
+    ///
+    /// The spellings are pinned as literals: they are STORED in a fields bag
+    /// and nothing outside this process declares them, so a rename that moved
+    /// the constant and its assertion together would orphan every record
+    /// already written under the old spelling.
+    #[test]
+    fn the_work_kind_names_the_project_management_keys_and_requires_none() {
+        use super::super::types::ValueType;
+        let declared = keys_of("work");
+        let by_key = |key: &str| {
+            declared
+                .iter()
+                .find(|f| f.key == key)
+                .unwrap_or_else(|| panic!("the work kind names '{key}': {declared:?}"))
+        };
+        for reference in ["owner", "waiting_on"] {
+            let field = by_key(reference);
+            assert_eq!(field.holds, ValueType::Reference, "{field:?}");
+            assert!(!field.list, "{reference} names one thing: {field:?}");
+        }
+        let depends_on = by_key("depends_on");
+        assert_eq!(depends_on.holds, ValueType::Reference, "{depends_on:?}");
+        assert!(depends_on.list, "depends_on names several: {depends_on:?}");
+        for text in ["commit", "verified_by"] {
+            assert_eq!(by_key(text).holds, ValueType::Text, "{text}");
+        }
+        assert!(
+            declared.iter().all(|f| !f.required),
+            "a work thing is whole without any of them: {declared:?}",
+        );
+        assert!(
+            declared.iter().all(|f| f.key != "due_on"),
+            "a deadline key on work is not shipped: {declared:?}",
+        );
+    }
+
+    /// **`work` and `project` hold one status vocabulary, and it is a closed
+    /// set of five.** Free text here is what the keys exist to end: a status
+    /// nobody can compare is one a cold session cannot ask "what is next" of.
+    #[test]
+    fn work_and_project_hold_the_same_five_statuses() {
+        for kind in ["work", "project"] {
+            let status = keys_of(kind)
+                .into_iter()
+                .find(|f| f.key == "status")
+                .unwrap_or_else(|| panic!("the {kind} kind names status"));
+            assert_eq!(
+                status.one_of.as_deref(),
+                Some(&["someday", "next", "now", "waiting", "done"].map(String::from)[..]),
+                "{kind}: {status:?}",
+            );
+            assert!(!status.required, "{kind}: {status:?}");
+            assert!(status.accepts("waiting"), "{kind}");
+            assert!(
+                !status.accepts("drafted, not asked"),
+                "{kind}: free text is not a status",
+            );
+        }
+        let project = keys_of("project");
+        assert_eq!(
+            project.iter().map(|f| f.key.as_str()).collect::<Vec<_>>(),
+            ["status", "columns"],
+            "a project gets the status and its columns: {project:?}",
+        );
+        assert!(
+            project[1].list,
+            "the columns are an ordered list: {project:?}"
         );
     }
 }

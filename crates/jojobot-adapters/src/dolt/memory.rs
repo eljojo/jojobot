@@ -35,7 +35,7 @@ use jojobot_domain::memory::{
     Archived, ClaimWrite, Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact,
     FactAddress, FactId, FactPatch, FactStatus, FieldWrite, FormerHandle, Guarded, KeyWrite,
     Memory, MemoryError, Merge, NewEntity, NewFact, Provenance, Retraction, Standing, WriteSummary,
-    apply_entity_patch, apply_fact_patch, folded_fields, guard, guard_fit,
+    apply_entity_patch, apply_fact_patch, folded_fields, guard, guard_fit_in,
     kinds::{self, NotAKind},
     merge_account, normalize_content, normalize_details, normalize_prose, referenced_by,
     retraction_of, screen_entity_patch, search, standing_of, stood_after, stood_after_capture,
@@ -1258,6 +1258,40 @@ impl DoltMemory {
         // is one that may already have moved.
         let declared = Self::types_in(tx).await?;
         Ok(folded_fields(&writes, &declared))
+    }
+
+    /// **The columns of the project a work item or project is filed under**, read inside
+    /// the write's own transaction off the project's folded fields. `None` is a
+    /// thing that is not work, one under no project, or one whose project lists
+    /// none — each is held to the shipped five. `index` serves handles, so the
+    /// parent is found by the handle the entity wears today.
+    async fn project_columns_of(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        index: &[Entity],
+        thing: &EntityId,
+    ) -> Result<Option<Vec<String>>, MemoryError> {
+        let Some(entity) = index.iter().find(|e| &e.id == thing) else {
+            return Ok(None);
+        };
+        if !kinds::holds_columns(entity.kind.as_token()) {
+            return Ok(None);
+        }
+        let Some(parent) = &entity.parent else {
+            return Ok(None);
+        };
+        let is_project = index
+            .iter()
+            .any(|e| &e.id == parent && e.kind == EntityKind::PROJECT);
+        if !is_project {
+            return Ok(None);
+        }
+        let Some((key, _)) = self.resolve(tx, parent).await? else {
+            return Ok(None);
+        };
+        Ok(jojobot_domain::memory::kinds::columns_of(
+            &Self::held_by(tx, &key).await?,
+        ))
     }
 
     /// **Append what a write said about a record's keys**, each row taking the
@@ -2533,11 +2567,15 @@ impl Memory for DoltMemory {
         // its own kind, and nothing else — `subject_kind`, computed once
         // above, ahead of the cap check that also needs it.
         let governs = Self::kind_keys_in(&mut tx, subject_kind.as_token()).await?;
-        guard_fit(
+        let columns = self
+            .project_columns_of(&mut tx, &index, &subject_handle)
+            .await?;
+        guard_fit_in(
             subject_kind.as_token(),
             &folded_fields(&held, &declared),
             &stood_after_capture(&held, &stored, &declared),
             &governs,
+            columns.as_deref(),
         )?;
         Self::write_fact(&mut tx, &stored, &self.clock).await?;
         // Every key this record carries is a write of its own, appended to the
@@ -3071,7 +3109,19 @@ impl Memory for DoltMemory {
         let governs = Self::kind_keys_in(&mut tx, kind.as_token()).await?;
         let before_fold = folded_fields(&held, &declared);
         let after_fold = stood_after(&held, &fact, &patch, &carried, &declared);
-        guard_fit(kind.as_token(), &before_fold, &after_fold, &governs)?;
+        let columns = if kinds::holds_columns(kind.as_token()) {
+            let index = self.index(&mut tx).await?;
+            self.project_columns_of(&mut tx, &index, &handle).await?
+        } else {
+            None
+        };
+        guard_fit_in(
+            kind.as_token(),
+            &before_fold,
+            &after_fold,
+            &governs,
+            columns.as_deref(),
+        )?;
         // **The ceiling and the room, both on the state this edit leaves
         // behind, atomically with the write that would leave it.** See
         // `refuses_own_ceiling_change` and `refuses_room_overflow` in the

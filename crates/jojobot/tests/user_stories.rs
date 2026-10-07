@@ -136,3 +136,5 @@ mod upgrading;
 mod views;
 #[path = "user_stories/vocabulary.rs"]
 mod vocabulary;
+#[path = "user_stories/whats_next.rs"]
+mod whats_next;

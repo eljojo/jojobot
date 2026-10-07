@@ -4,7 +4,7 @@
 //! Paid run 23 found five locks unsatisfiable by construction: a lock is
 //! evaluated once, after every phase, against the final world
 //! (`jojobot_exercise::run::go`), and two room patterns collide with that.
-//! The kitchen-floor's `status` moves considering → doing → done on the
+//! The kitchen-floor's `status` moves next → now → done on the
 //! room's own later phases, so a lock reading the folded value can never
 //! hold at final evaluation for anything but `done`. And the piano's loop
 //! is archived outright in the room's last phase, which takes an archived
@@ -101,47 +101,44 @@ async fn write_kitchen_floor_status(surface: &Surface, sid: &str, status: &str) 
 
 /// **January's and April's kitchen-floor locks hold once the project
 /// finishes moving.** The floor is the one project the room moves this
-/// year — considering in January, doing in April, done in July — and a
+/// year — next in January, now in April, done in July — and a
 /// lock reading the key's own history sees all three regardless of order.
 #[tokio::test]
 async fn the_kitchen_floor_status_locks_hold_once_the_project_finishes_moving() {
     let (_room, surface, sid) = furnished().await;
-    for status in ["considering", "doing", "done"] {
+    for status in ["next", "now", "done"] {
         write_kitchen_floor_status(&surface, &sid, status).await;
     }
 
-    for fragment in [
-        "does not carry a considering write",
-        "does not carry a doing write",
-    ] {
+    for fragment in ["does not carry a next write", "does not carry a now write"] {
         let outcome = held(&surface, &lock_named(fragment)).await;
         assert!(outcome.held, "{fragment}: {}", outcome.saying);
     }
 }
 
-/// **The paired bar.** The doing write is skipped entirely; the doing lock
-/// must redden alone while the considering lock — an independent write —
+/// **The paired bar.** The now write is skipped entirely; the now lock
+/// must redden alone while the next lock — an independent write —
 /// stays held. Proves the rewrite reads what actually happened rather than
 /// holding regardless.
 #[tokio::test]
 async fn the_kitchen_floor_doing_lock_reddens_when_doing_was_never_written() {
     let (_room, surface, sid) = furnished().await;
-    for status in ["considering", "done"] {
+    for status in ["next", "done"] {
         write_kitchen_floor_status(&surface, &sid, status).await;
     }
 
-    let considering = held(&surface, &lock_named("does not carry a considering write")).await;
-    let doing = held(&surface, &lock_named("does not carry a doing write")).await;
+    let next = held(&surface, &lock_named("does not carry a next write")).await;
+    let now = held(&surface, &lock_named("does not carry a now write")).await;
     assert!(
-        considering.held,
-        "the independent control reddened too, so this proves nothing about the doing lock \
+        next.held,
+        "the independent control reddened too, so this proves nothing about the now lock \
          specifically: {}",
-        considering.saying,
+        next.saying,
     );
     assert!(
-        !doing.held,
-        "the doing lock held with no doing write ever made, so it measures nothing: {}",
-        doing.saying,
+        !now.held,
+        "the now lock held with no now write ever made, so it measures nothing: {}",
+        now.saying,
     );
 }
 

@@ -2668,6 +2668,28 @@ pub fn guard_fit(
     after: &BTreeMap<String, String>,
     declared: &[types::DeclaredType],
 ) -> Result<(), MemoryError> {
+    guard_fit_in(kind, before, after, declared, None)
+}
+
+/// **[`guard_fit`], for a thing filed under a project that lists its own
+/// columns.**
+///
+/// **A work item's status, and a project's own, is held to those columns
+/// instead of the shipped five**, and the refusal names that list. `project_columns` is what the
+/// caller read off the thing's project on this write: `None` is a thing under no
+/// project, or under one that lists none, and it is held to the declaration's
+/// own set. The store reads the project because a guard that stays pure cannot.
+///
+/// **A project's own list has to hold every shipped status**, so the shipped
+/// words mean the same thing on every board. A list that drops one is refused
+/// when it is written.
+pub fn guard_fit_in(
+    kind: &str,
+    before: &BTreeMap<String, String>,
+    after: &BTreeMap<String, String>,
+    declared: &[types::DeclaredType],
+    project_columns: Option<&[String]>,
+) -> Result<(), MemoryError> {
     // **The prefix as written, never the parsed kind.** A handle whose kind the
     // set never loaded still names one, and a guard that went quiet on an
     // unseeded process would stop refusing rather than say it could not tell.
@@ -2690,6 +2712,16 @@ pub fn guard_fit(
             if before.get(&field.key) == Some(value) {
                 continue;
             }
+            let governing = match project_columns {
+                Some(columns) if kinds::holds_columns(kind) && field.key == kinds::STATUS => {
+                    types::Field {
+                        one_of: Some(columns.to_vec()),
+                        ..field.clone()
+                    }
+                }
+                _ => field.clone(),
+            };
+            let field = &governing;
             if !field.accepts(value) {
                 let bad = types::Mistyped {
                     key: field.key.clone(),
@@ -2729,6 +2761,30 @@ pub fn guard_fit(
             return Err(MemoryError::BreaksFit {
                 name: declaration.name.clone(),
                 keys: lost,
+            });
+        }
+    }
+    // **A project's columns have to hold every shipped status.** A board that
+    // dropped one would leave the shipped word meaning nothing there, and "what
+    // is waiting" would answer differently from one project to the next. Checked
+    // when the list is set, like every other key a kind declares.
+    if kind == EntityKind::PROJECT.as_token()
+        && let Some(value) = after.get(kinds::COLUMNS)
+        && before.get(kinds::COLUMNS) != Some(value)
+    {
+        let listed = kinds::columns_of(after).unwrap_or_default();
+        if kinds::WORK_STATUSES
+            .iter()
+            .any(|shipped| !listed.iter().any(|column| column == shipped))
+        {
+            return Err(MemoryError::BreaksType {
+                name: kind.to_string(),
+                key: kinds::COLUMNS.to_string(),
+                wanted: format!(
+                    "a list holding every one of {}",
+                    kinds::WORK_STATUSES.join(", ")
+                ),
+                value: value.clone(),
             });
         }
     }

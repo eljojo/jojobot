@@ -336,6 +336,110 @@ async fn identity_does_not_lapse_when_a_thing_lacks_its_kinds_keys() {
     server.stop().await;
 }
 
+/// **A store holding work written under invented keys boots on the build that
+/// ships those keys, and every value reads back as it was written.**
+///
+/// The older build declared `work` with no keys, so a model invented its own:
+/// a free-text status, an owner that is a name rather than a handle, a list of
+/// dependencies that are sentences. Shipping the keys must not refuse the
+/// boot, rewrite the values or wedge the thing against an unrelated write. A
+/// value is checked when it is SET, so the stale ones stand until somebody
+/// writes the key again, and the repair is a value the key holds.
+#[tokio::test]
+async fn work_written_under_invented_keys_survives_the_kind_shipping_its_own() {
+    let (mut server, store, _turn) = a_store("work-upgrade").await;
+
+    // **The kind as an older build left it: a row and no key rows.** A
+    // declaration naming no keys takes none away, so the older state is made
+    // the way it was made, by there being nothing under the name.
+    sqlx::query("DELETE FROM type_field WHERE type_name = 'work'")
+        .execute(server.pool())
+        .await
+        .expect("the keys the seed just wrote come off");
+    kinds::reload(&store).await.expect("the set is re-read");
+
+    let thing = EntityId("work:phi".into());
+    added(&store, &thing, "Phi").await;
+    let invented: std::collections::BTreeMap<String, String> = [
+        ("status", "drafted, not asked"),
+        ("owner", "Marge"),
+        ("waiting_on", "sign-off from the board"),
+        ("depends_on", "the monorail, the funding"),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v.to_string()))
+    .collect();
+    store
+        .capture(NewFact {
+            provenance: Provenance::Testimony,
+            fields: invented.clone(),
+            ..NewFact::about(
+                thing.clone(),
+                "a first pass",
+                jiff::civil::date(2026, 10, 1),
+            )
+        })
+        .await
+        .expect("the older build took the invented keys")
+        .written()
+        .expect("nothing blocked it");
+
+    // The newer build starts: the same seed every startup runs.
+    migrate::seed_kinds(server.pool())
+        .await
+        .expect("the kinds are seeded");
+    kinds::reload(&store).await.expect("the set is re-read");
+
+    let held = store.fields(&thing).await.expect("the thing still reads");
+    for (key, value) in &invented {
+        assert_eq!(
+            held.get(key),
+            Some(value),
+            "'{key}' reads back as it was written after the upgrade",
+        );
+    }
+
+    // **An unrelated write is not measured against what is already there.**
+    captured(&store, &thing, "second pass", Some("note")).await;
+    assert_eq!(
+        store.fields(&thing).await.expect("reads")["status"],
+        "drafted, not asked",
+        "a write to another key leaves the old status standing",
+    );
+
+    // **The positive the negatives rest on: the shipped key governs a write
+    // that sets it.** Without this half the case passes on a build that
+    // declares nothing.
+    let refused = store
+        .capture(NewFact {
+            fields: [("status".to_string(), "mostly done".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(
+                thing.clone(),
+                "still free text",
+                jiff::civil::date(2026, 10, 2),
+            )
+        })
+        .await
+        .expect_err("free text is not a status once the kind ships the key");
+    let said = refused.to_string();
+    for allowed in jojobot_domain::memory::kinds::WORK_STATUSES {
+        assert!(
+            said.contains(allowed),
+            "the refusal names '{allowed}': {said}"
+        );
+    }
+    captured(&store, &thing, "waiting", Some("status")).await;
+    assert_eq!(
+        store.fields(&thing).await.expect("reads")["status"],
+        "waiting",
+        "a status the key holds repairs the thing",
+    );
+
+    server.stop().await;
+}
+
 /// **One store for this whole binary, and that is the file's premise rather
 /// than a convenience.**
 ///
@@ -432,7 +536,7 @@ async fn a_boot_does_not_destroy_a_schema_named_like_a_shipped_kind() {
 
     store
         .declare_type(DeclaredType::new(
-            "project",
+            "place",
             vec![Field::required("budget", ValueType::Text)],
         ))
         .await
@@ -448,7 +552,7 @@ async fn a_boot_does_not_destroy_a_schema_named_like_a_shipped_kind() {
         .await
         .expect("the roster reads")
         .into_iter()
-        .find(|declared| declared.name == "project");
+        .find(|declared| declared.name == "place");
     assert_eq!(
         held.map(|declared| declared
             .fields

@@ -1,10 +1,10 @@
 //! **The discriminating case pm asked for**: not a sample, the proof.
 //!
 //! Uses the real, original text of vault.md's January kitchen-floor lock —
-//! `recall {"subject": "project:kitchen-floor"} carries "status":"considering"`
+//! `recall {"subject": "project:kitchen-floor"} carries "status":"next"`
 //! — exactly as it shipped before c69e61f converted it to a history read.
-//! Replayed against the room's own real narrative (considering in January,
-//! doing in April, done in July — vault.md's own December phase says so in
+//! Replayed against the room's own real narrative (next in January,
+//! now in April, done in July — vault.md's own December phase says so in
 //! as many words), the live version of that lock is run against the
 //! finished room and the windowed version against January's own boundary.
 //! The live lock must be WRONG (the bug run 23 actually found); the
@@ -19,7 +19,7 @@ use serde_json::json;
 
 /// The real, original January lock, exactly as vault.md shipped it before
 /// c69e61f -- verified against `git show c69e61f^:crates/jojobot-exercise/rooms/vault.md`.
-const ORIGINAL_JANUARY_LOCK: &str = "recall {\"subject\": \"project:kitchen-floor\"}\ncarries \"status\":\"considering\"\nsay     January: the kitchen floor does not hold considering under the operator's own key, so it cannot be told apart from the shed when December asks which one moved";
+const ORIGINAL_JANUARY_LOCK: &str = "recall {\"subject\": \"project:kitchen-floor\"}\ncarries \"status\":\"next\"\nsay     January: the kitchen floor does not hold next under the operator's own key, so it cannot be told apart from the shed when December asks which one moved";
 
 fn as_shipped(phase: &str) -> Lock {
     let doc = format!("## {phase} — x\n\n```locks\n{ORIGINAL_JANUARY_LOCK}\n```\n");
@@ -64,16 +64,16 @@ async fn the_live_lock_is_wrong_and_the_windowed_lock_is_right() {
         "capture",
         json!({
             "subject": "project:kitchen-floor",
-            "content": "the kitchen floor is considering",
+            "content": "the kitchen floor is next",
             "provenance": "testimony",
-            "fields": {"status": "considering"},
+            "fields": {"status": "next"},
         }),
     )
     .await;
     let after_january: Boundary = boundary(&surface, "Phase 2 — x").await;
 
     // April and July: the room's own real narrative -- "the floor went
-    // considering, doing, done" -- landing after January's boundary was
+    // next, now, done" -- landing after January's boundary was
     // already taken.
     as_occupant(
         &surface,
@@ -81,9 +81,9 @@ async fn the_live_lock_is_wrong_and_the_windowed_lock_is_right() {
         "capture",
         json!({
             "subject": "project:kitchen-floor",
-            "content": "the kitchen floor is doing",
+            "content": "the kitchen floor is now",
             "provenance": "testimony",
-            "fields": {"status": "doing"},
+            "fields": {"status": "now"},
         }),
     )
     .await;
