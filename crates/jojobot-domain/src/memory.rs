@@ -1717,7 +1717,9 @@ pub fn validate_content(content: &str) -> Result<(), MemoryError> {
     }
     if breaks_the_row(content) {
         return Err(MemoryError::InvalidFact(
-            "content spans multiple lines; a claim is one line".into(),
+            "content spans multiple lines; a claim is one line, and the rest goes in details, \
+             which capture and update_fact take with paragraph breaks"
+                .into(),
         ));
     }
     Ok(())

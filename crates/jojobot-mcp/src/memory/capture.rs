@@ -26,7 +26,8 @@ pub struct CaptureArgs {
     /// comes back with candidates and nothing is written. Create it with
     /// `add_entity` first if it is genuinely new.
     pub(crate) subject: String,
-    /// The crisp claim to remember — single line, no line breaks.
+    /// The crisp claim to remember — single line, no line breaks. Put the rest in
+    /// `details`.
     ///
     /// Write `@kind:slug` to link to something that already exists, e.g.
     /// `@person:milhouse` — stored as the name that does not move, served as the

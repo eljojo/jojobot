@@ -92,6 +92,8 @@ async fn a_cold_session_finds_what_is_next_and_what_waits_on_whom_from_the_keys(
     for word in ["someday", "next", "now", "waiting", "done"] {
         refused.says(word);
     }
+    // The list is the project's columns, and writing columns extends it.
+    refused.says("columns");
 
     // **A word outside the project's columns is refused and the list is
     // named**, while a work item under no project is held to the five: the
@@ -108,6 +110,7 @@ async fn a_cold_session_finds_what_is_next_and_what_waits_on_whom_from_the_keys(
         .await;
     outside.says("inbox");
     outside.says("this release");
+    outside.says("columns");
     s.refused(
         "capture",
         json!({

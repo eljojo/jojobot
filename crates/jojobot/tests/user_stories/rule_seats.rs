@@ -146,6 +146,7 @@ async fn a_floor_the_boot_cannot_carry_is_refused_when_it_is_written() {
     )
     .await
     .says("rule_seats")
+    .says("set_charter")
     .says("\"wrote\":false");
     // Nothing was written.
     s.call("recall", json!({"subject": "bot:epsilon", "facts": true}))
@@ -170,6 +171,7 @@ async fn a_floor_the_boot_cannot_carry_is_refused_when_it_is_written() {
         .await
         .says("different identity")
         .says("update_fact")
+        .says("set_charter")
         .says("shorten")
         .says("\"wrote\":false");
 

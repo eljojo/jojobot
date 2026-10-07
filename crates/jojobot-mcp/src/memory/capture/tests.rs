@@ -2134,6 +2134,30 @@ async fn empty_content_is_a_blocked_answer() {
     );
 }
 
+/// **A line break in `content` is refused, and the refusal and the argument's
+/// own schema both say where the rest goes.** `details` holds paragraph
+/// breaks; the claim stays one line.
+#[tokio::test]
+async fn a_multi_line_claim_is_told_where_the_rest_goes() {
+    let body = blocked(
+        &handler()
+            .capture(Parameters(capture_args("alpha", "the claim\nand the rest")))
+            .await
+            .expect("a caller mistake is an answer, not a protocol failure"),
+    );
+    assert!(
+        body["how_to_proceed"]
+            .as_str()
+            .is_some_and(|advice| advice.contains("details")),
+        "the refusal names details: {body}"
+    );
+    let properties = crate::teaching::published_arguments("capture").expect("capture is a tool");
+    let content = properties["content"]["description"]
+        .as_str()
+        .expect("content is described");
+    assert!(content.contains("details"), "{content}");
+}
+
 /// **The write says it landed, never that it failed, when only the fold
 /// behind it could not confirm it** (rule 130) — `capture`'s own catch of
 /// `MemoryError::FoldBehind`, proven through the served verb rather than

@@ -393,7 +393,7 @@ impl Jojobot {
             .collect::<Vec<_>>()
             .join("; ");
         Some(misused(format!(
-            "Nothing was written. {} needs {named} — {takes}. A call without an argument the \
+            "Nothing ran. {} needs {named} — {takes}. A call without an argument the \
              verb requires is refused rather than guessed at. Send the call again with it.",
             request.name,
         )))
@@ -518,6 +518,28 @@ mod tests {
                 .is_none(),
             "a call with everything it requires passes straight through"
         );
+    }
+
+    /// **The gate covers read verbs, so its opening sentence cannot say
+    /// anything was written.** `read_message` writes nothing either way; the
+    /// `wrote: false` field carries that fact, and the sentence says only that
+    /// the call did not run. Paired with the same gate's answer on a write
+    /// verb, which opens the same way.
+    #[tokio::test]
+    async fn a_missing_argument_on_a_read_verb_does_not_claim_a_write_was_skipped() {
+        let jojobot = handler();
+        for tool in ["read_message", "capture"] {
+            let said =
+                advice(jojobot.missing_arguments(&call(tool, serde_json::json!({"sid": "any"}))));
+            assert!(
+                said.starts_with("Nothing ran"),
+                "{tool} opens with what did not happen to the call: {said}"
+            );
+            assert!(
+                !said.contains("written"),
+                "{tool} says nothing about writing: {said}"
+            );
+        }
     }
 
     /// **Inside a list the element is judged where its names would be**, and the

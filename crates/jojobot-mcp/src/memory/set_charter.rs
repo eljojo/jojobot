@@ -36,8 +36,10 @@ impl Jojobot {
     #[tool(
         description = "Write a bot's charter: the orienting text start_here hands a session that \
                        boots as this bot — what this identity is, its hard lines, where its work \
-                       lives. IT REPLACES RATHER THAN ADDS, so send the whole charter rather \
-                       than an addition. SEND WHAT YOU ARE WRITING, never a charter you just \
+                       lives. A CHARTER THAT WOULD TAKE THE BOOT OVER ITS CEILING IS REFUSED, \
+                       with floor_parts naming what the boot is made of; the way forward is a \
+                       shorter charter. IT REPLACES RATHER THAN ADDS, so send the whole charter \
+                       rather than an addition. SEND WHAT YOU ARE WRITING, never a charter you just \
                        read back: some of what a read hands you may be text the software \
                        already supplies, and a charter repeating it comes back status: \
                        blocked with nothing written and says so. \
@@ -112,6 +114,24 @@ mod tests {
     use super::*;
     use crate::harness::*;
     use crate::memory::testing::recall_args;
+
+    /// **The description says the boot ceiling holds a charter**, so a caller
+    /// learns that a long one is refused, and by what, before it sends one.
+    /// Pinned on `floor_parts`, the field the refusal carries.
+    #[test]
+    fn the_description_names_the_ceiling_and_what_a_refusal_carries() {
+        let tools = Jojobot::tool_router().list_all();
+        let tool = tools
+            .iter()
+            .find(|t| t.name.as_ref() == "set_charter")
+            .expect("set_charter is a tool");
+        let description = tool.description.as_deref().unwrap_or_default();
+        assert!(
+            description.to_lowercase().contains("ceiling"),
+            "{description}"
+        );
+        assert!(description.contains("floor_parts"), "{description}");
+    }
 
     /// `set_charter` writes the orienting prose and reads it back — and it is
     /// the same text a boot hands over, so what an operator writes is what a

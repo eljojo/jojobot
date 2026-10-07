@@ -441,10 +441,10 @@ pub(crate) fn memory_declined(
                     _ => format!(
                         "Nothing was written: {e}. The largest part of the floor is {largest}; \
                          floor_parts lists every part. Unstar a rule on {subject} with \
-                         update_fact, shorten the rules that are starred or its charter, or \
-                         have a different identity lower rule_seats on {subject} — a bot cannot \
-                         write rule_seats about itself — and a rule that binds at one moment is \
-                         better carried by a skill than by a seat."
+                         update_fact, shorten the rules that are starred or its charter with \
+                         set_charter, or have a different identity lower rule_seats on \
+                         {subject} — a bot cannot write rule_seats about itself — and a rule \
+                         that binds at one moment is better carried by a skill than by a seat."
                     ),
                 },
             });
@@ -500,7 +500,16 @@ pub(crate) fn memory_declined(
                  holding {wanted} — sending the same value again will not change the answer. \
                  Write a value that holds {wanted}, or say what you meant under a key of your \
                  own: adding keys is never refused, and only the keys a type names are held to \
-                 what it declared."
+                 what it declared.{}",
+                // **The allowed list is a project's columns**, so a caller who
+                // wants a word outside it is told the list can be extended.
+                match (name.as_str(), key.as_str()) {
+                    ("work" | "project", "status") => {
+                        " The allowed words are the project's columns: write columns on the \
+                         project to add a word of your own."
+                    }
+                    _ => "",
+                }
             ),
         )),
         // **A different refusal, so a different way forward.** These two are

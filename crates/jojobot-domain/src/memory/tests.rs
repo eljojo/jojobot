@@ -897,6 +897,17 @@ fn a_bare_carriage_return_is_refused_like_a_newline_in_content() {
     assert!(validate_content("hello world").is_ok());
 }
 
+/// **The refusal says where the rest of the text goes.** A claim is one line
+/// and `details` holds paragraph breaks, so a caller refused for a line break
+/// is told the argument by name.
+#[test]
+fn a_multi_line_content_refusal_names_details() {
+    let said = validate_content("first line\nsecond line")
+        .expect_err("a line break is refused")
+        .to_string();
+    assert!(said.contains("details"), "{said}");
+}
+
 /// **An entity answers to more than one name.** The display name is what it
 /// is *called*; an alias is what someone actually says — the nickname, the
 /// short form, the initials. Without them the guard cannot recognize a name
