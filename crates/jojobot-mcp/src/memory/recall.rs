@@ -575,8 +575,8 @@ fn held_json(
         // **Empty here is a choice this call made**, and saying "nothing points
         // at this" would be a claim nobody checked.
         Some(
-            "nothing here admits anybody. What else points here is not in this answer because \
-             this call walks links of its own: recall the handle on its own to see it",
+            "this answer lists no record that mentions this thing, because this call follows \
+             links of its own: recall the handle on its own to see the records that mention it",
         )
     } else if held.is_empty() {
         Some(
@@ -588,8 +588,8 @@ fn held_json(
         .all(|h| h.standing == entitlement::Standing::Related)
     {
         Some(
-            "nothing here admits anybody: these records name this thing through some other \
-             declared key, which is what you get when nothing gates it",
+            "these records mention this thing through a key other than `admits`: they link to it \
+             and say nothing about who may use it",
         )
     } else if kept.omitted() > 0 {
         Some(

@@ -139,3 +139,52 @@ async fn reading_the_thing_says_who_holds_what_gets_them_in() {
         .says("nothing points at this")
         .never_says("\"standing\":\"live\"");
 }
+
+/// **A record that only mentions a thing is not read as a rule about it.**
+///
+/// The held block said "nothing here admits anybody" over records that point at
+/// a place through a key other than `admits`, and the same words over a read
+/// that follows links of its own and lists none. Both read as a permission
+/// rule about the place. The block says the records mention the thing, and a
+/// reader who followed a link of its own is told where to see them.
+#[tokio::test]
+async fn a_record_that_only_mentions_a_thing_is_not_read_as_a_rule_about_it() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("place:moes", "Moe's").await;
+    s.add("place:leftorium", "The Leftorium").await;
+    s.add("thing:the-couch", "The Couch").await;
+    s.event_with(
+        "thing:the-couch",
+        "the couch goes on a trip",
+        json!({
+            "departs_from": "place:moes",
+            "arrives_at": "place:leftorium",
+            "leaves_on": "2026-08-01",
+            "returns_on": "2026-08-09",
+        }),
+        &[],
+    )
+    .await;
+
+    // Records point at the place, none of them through `admits`.
+    let pointed_at = s.recall("place:moes").await;
+    pointed_at
+        .says("the couch goes on a trip")
+        .says("\"liveness\":\"related\"")
+        .says("mention");
+
+    // A call that follows links of its own lists none of them, and says where
+    // they are.
+    let walking = s
+        .call(
+            "recall",
+            json!({
+                "subject": "place:leftorium",
+                "follow": {"shape": "location", "direction": "in"},
+            }),
+        )
+        .await;
+    walking.says("mention");
+    story.finish().await;
+}
