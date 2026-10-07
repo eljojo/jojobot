@@ -42,12 +42,17 @@ case "$1" in
     mkdir -p "$running"
     touch "$running/$$"
     ls "$running" | wc -l >> "$(dirname "$0")/peak.log"
-    # FAKE_MEET=<tenths of a second>: wait until a second job is running too,
-    # for at most that long. An overlap is then something the job sees happen,
-    # not something a one-second sleep has to be long enough to catch.
-    if [ -n "$FAKE_MEET" ]; then
+    # FAKE_MEET=<tenths of a second>: wait until FAKE_MEET_JOBS jobs (two when
+    # it is unset) are running, for at most that long. An overlap is then
+    # something the job sees happen, not something a one-second sleep has to be
+    # long enough to catch.
+    # Only the first FAKE_MEET_JOBS jobs to start wait; the jobs after them
+    # have nothing left to meet.
+    echo started >> "$(dirname "$0")/started.log"
+    ordinal="$(wc -l < "$(dirname "$0")/started.log")"
+    if [ -n "$FAKE_MEET" ] && [ "$ordinal" -le "${FAKE_MEET_JOBS:-2}" ]; then
       n=0
-      while [ "$(ls "$running" | wc -l)" -lt 2 ] && [ "$n" -lt "$FAKE_MEET" ]; do
+      while [ "$(ls "$running" | wc -l)" -lt "${FAKE_MEET_JOBS:-2}" ] && [ "$n" -lt "$FAKE_MEET" ]; do
         sleep 0.1
         n=$((n + 1))
       done
@@ -272,13 +277,20 @@ fn never_more_jobs_run_at_once_than_the_limit_says() {
     );
 }
 
-/// **With no variable set the limit is eight.** The verdict names the limit
-/// the run used, which is what says eight. How many jobs the stub saw at once
-/// depends on how fast a loaded machine starts them, so the count is only held
-/// to be above one and no higher than the limit.
+/// **With no variable set, eight jobs run at once.** The verdict names the limit
+/// the run used, which is what says eight, and the stub proves it: thirteen jobs
+/// each wait until eight are running together, so a bar that ran seven at once
+/// sees seven in every job and a bar that ran nine could not, because the
+/// limit holds. The peak is eight exactly, on a machine of any speed, since the
+/// jobs wait for each other rather than for a clock.
 #[test]
 fn the_limit_is_eight_when_nothing_sets_it() {
-    let ran = run_check(&[("FAKE_FILES", "12"), ("FAKE_BETA", "ok")]);
+    let ran = run_check(&[
+        ("FAKE_FILES", "12"),
+        ("FAKE_BETA", "ok"),
+        ("FAKE_MEET", "100"),
+        ("FAKE_MEET_JOBS", "8"),
+    ]);
     assert!(ran.success, "the run was meant to be green: {}", ran.stdout);
     let line = ran
         .stdout
@@ -289,9 +301,9 @@ fn the_limit_is_eight_when_nothing_sets_it() {
         line.contains(" 8 "),
         "the default is not eight jobs at once: {line}"
     );
-    assert!(
-        ran.peak > 1 && ran.peak <= 8,
-        "the jobs ran {} at once under a limit of 8",
+    assert_eq!(
+        ran.peak, 8,
+        "the jobs ran {} at once under a default of eight",
         ran.peak
     );
 }
