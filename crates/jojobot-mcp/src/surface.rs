@@ -1147,6 +1147,31 @@ fn the_colleagues_reports_to_key_is_named_where_the_one_liner_is() {
     );
 }
 
+/// **capture's `provenance` says what a bot's instruction is, and what a bot's
+/// report is not.** A claim that records what another bot instructed or decided
+/// within its own remit is an observation read from that bot, and a world fact
+/// the bot only reported is not covered by it. Pinned on the two words only
+/// those points carry, read out of the schema a client receives, and on the key
+/// that names the message the claim was read from.
+#[test]
+fn capture_provenance_says_what_a_bots_instruction_is_and_what_its_report_is_not() {
+    let tools = Jojobot::tool_router().list_all();
+    let capture = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "capture")
+        .expect("the surface offers capture");
+    let schema = serde_json::to_value(&capture.input_schema).expect("the schema serializes");
+    let described = schema["properties"]["provenance"]["description"]
+        .as_str()
+        .expect("the provenance argument carries its own description");
+    for word in ["read_from", "read_ref", "remit", "reported"] {
+        assert!(
+            described.contains(word),
+            "the provenance description does not say `{word}`: {described}"
+        );
+    }
+}
+
 /// **The second call for who reports to a bot is named where `reports_to` is
 /// taught.** The colleagues view says only whom each bot reports to, so the
 /// surface that tells a bot to write the key also says how to read the other

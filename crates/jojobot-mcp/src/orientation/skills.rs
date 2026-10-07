@@ -470,6 +470,14 @@ Marking who worked it out is not the same as marking how settled it is. A
 claim you worked out starts open. A claim the operator states and hedges is
 also open, and it is still theirs.
 
+## What another bot told you
+
+What another bot instructed or decided within its own remit you record as an
+observation, with `read_from` set to its handle and `read_ref` to the message
+id: it reads back settled and never names the operator, but a world fact the
+bot only reported is not covered, and stays a claim you worked out until you
+read it at its own source.
+
 ## Four rules
 
 1. Only the operator settles a claim. Write claims that you worked out.
@@ -669,6 +677,29 @@ mod tests {
             names(paragraph, "check-in"),
             "the paragraph that says a loop is opened does not name the check-in: {paragraph}"
         );
+    }
+
+    /// **The evidence procedure says what a bot's instruction is, and what a
+    /// bot's report is not.** What another bot instructed or decided within its
+    /// own remit is recorded as an observation read from that bot, and a world
+    /// fact the bot only reported stays a claim you worked out until you read it
+    /// at its own source. Pinned on the two keys that carry the observation, in
+    /// backticks, and on the two words only those points carry.
+    #[test]
+    fn the_evidence_procedure_says_what_a_bots_instruction_is_and_what_its_report_is_not() {
+        let text = body("evidence");
+        for key in ["read_from", "read_ref"] {
+            assert!(
+                text.contains(&format!("`{key}`")),
+                "the evidence procedure does not name `{key}`"
+            );
+        }
+        for word in ["remit", "reported"] {
+            assert!(
+                names(text, word),
+                "the evidence procedure does not say `{word}`"
+            );
+        }
     }
 
     /// **The asking procedure names the second call beside the colleagues

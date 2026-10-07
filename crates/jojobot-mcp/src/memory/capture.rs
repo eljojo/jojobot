@@ -47,6 +47,12 @@ pub struct CaptureArgs {
     /// naming the system, and `read_ref` for what was read there if you have
     /// one. Without it the call is refused, because a claim that reads back
     /// settled and cannot be gone back to is worse than one filed as a guess.
+    ///
+    /// **What another bot instructed or decided within its own remit is an
+    /// `observation` read from it** — `read_from` its handle, `read_ref` the
+    /// message id, read back settled and never naming the operator — **but a
+    /// world fact a bot only reported is not covered** and stays `inference`
+    /// until you read it at its own source.
     #[serde(default)]
     pub(crate) provenance: Option<String>,
     /// `settled` or `open` — **how sure anyone is**, which is a different
