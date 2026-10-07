@@ -162,6 +162,7 @@ pub(crate) fn recall_args(subject: &str) -> RecallArgs {
         status: None,
         prose: None,
         charter: None,
+        keys: None,
         follow: None,
         overdue: None,
         near: None,

@@ -60,6 +60,7 @@ fn of(subject: &str) -> RecallArgs {
         status: None,
         prose: None,
         charter: None,
+        keys: None,
         follow: None,
         overdue: None,
         near: None,
@@ -3646,6 +3647,98 @@ async fn a_value_selects_and_a_walk_nests() {
     );
 }
 
+/// **`keys` narrows the fields of every object in the answer, walked ones
+/// included, and an object that held more says which it left out.**
+///
+/// The three halves are one case so each reads against the others: the asked-for
+/// key is there, the others are not and are named, and an object with nothing
+/// else to leave out carries no note.
+#[tokio::test]
+async fn keys_narrow_every_objects_fields_and_the_answer_names_what_it_left_out() {
+    let jojobot = handler();
+    for (kind, slug, name) in [
+        ("event", "birthday-party", "Birthday Party"),
+        ("person", "patana", "Patana"),
+    ] {
+        jojobot
+            .add_entity(Parameters(add_args(kind, slug, name)))
+            .await
+            .expect("add_entity ok");
+    }
+    capture_ok(
+        &jojobot,
+        CaptureArgs {
+            shape: Some("attendance".into()),
+            object: Some("event:birthday-party".into()),
+            fields: Some(
+                [("nick", "pat"), ("mood", "calm"), ("shoe", "nine")]
+                    .into_iter()
+                    .map(|(key, value)| (key.to_string(), value.to_string()))
+                    .collect(),
+            ),
+            ..capture_args("patana", "coming to the party")
+        },
+    )
+    .await;
+
+    let walked = json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                subject: Some("event:birthday-party".into()),
+                follow: Some(FollowArgs {
+                    shape: Some("attendance".into()),
+                    relation: None,
+                    direction: Some("in".into()),
+                    depth: None,
+                    keeping: None,
+                    fits_type: None,
+                }),
+                keys: Some(vec!["nick".into(), "absent".into()]),
+                ..of_nothing()
+            }))
+            .await
+            .expect("recall ok"),
+    );
+    let guest = &walked["objects"][0]["connected"][0];
+    assert_eq!(guest["id"], "person:patana", "{walked}");
+    // The asked-for key is there, and only it: the walked object is narrowed
+    // exactly as the root is.
+    assert_eq!(guest["fields"]["nick"], "pat", "{walked}");
+    assert!(guest["fields"].get("mood").is_none(), "{walked}");
+    assert!(guest["fields"].get("shoe").is_none(), "{walked}");
+    assert!(guest["fields"].get("absent").is_none(), "{walked}");
+    // What it left out is named, and the way to read it is the argument.
+    let left_out = guest["fields_left_out"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the guest names what it left out: {walked}"));
+    assert!(
+        left_out.contains("mood") && left_out.contains("shoe") && left_out.contains("keys"),
+        "{left_out}"
+    );
+    assert!(!left_out.contains("nick"), "{left_out}");
+    // The root held no other key, so there is nothing to say about it.
+    assert!(
+        walked["objects"][0].get("fields_left_out").is_none(),
+        "{walked}"
+    );
+
+    // And the same call without `keys` returns every key and no note.
+    let whole = json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                subject: Some("person:patana".into()),
+                ..of_nothing()
+            }))
+            .await
+            .expect("recall ok"),
+    );
+    assert_eq!(whole["objects"][0]["fields"]["mood"], "calm", "{whole}");
+    assert!(
+        whole["objects"][0].get("fields_left_out").is_none(),
+        "{whole}"
+    );
+}
+
 /// **A wide inbound fan-in is capped, and the cap says what it left out.**
 ///
 /// The paired positive is the case just above this one
@@ -4291,6 +4384,7 @@ fn of_nothing() -> RecallArgs {
         status: None,
         prose: None,
         charter: None,
+        keys: None,
         follow: None,
         overdue: None,
         near: None,

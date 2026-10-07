@@ -80,6 +80,12 @@ pub fn provisions() -> Vec<Provision> {
                 ("selects", "bot"),
                 ("follow_relation", "reports_to"),
                 ("follow_direction", "in"),
+                // **Only what the directory is for.** A bot holds keys that
+                // run it, and an answer carrying every one of them for every
+                // colleague buries the two a reader came for. The answer names
+                // what it left out, and an operator extends this by editing
+                // the record: a caller's own `keys` wins over it.
+                ("shows_keys", "one_liner, reports_to"),
             ],
         ),
     ]

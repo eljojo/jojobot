@@ -590,6 +590,7 @@ mod tests {
                     status: None,
                     prose: Some(true),
                     charter: None,
+                    keys: None,
                     follow: None,
                     overdue: None,
                     near: None,

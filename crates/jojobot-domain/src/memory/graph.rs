@@ -751,6 +751,10 @@ pub struct Asked {
     /// `None` when the view names no walk at all — distinct from a walk
     /// that names no shape or relation, which is "any edge".
     pub follow: Option<AskedFollow>,
+    /// **The keys of each object's fields the view shows**, from its
+    /// `shows_keys`. `None` when it names none, which means every key — a
+    /// different question from an empty list.
+    pub keys: Option<Vec<String>>,
 }
 
 /// **A view's own relation walk, read off its fields — the pieces
@@ -857,6 +861,18 @@ pub fn asked_by_view(held: &BTreeMap<String, String>, facts: &[Fact]) -> Asked {
         overdue: held.get("asks").map(String::as_str) == Some("overdue"),
         answers_type: held.get("answers_type").cloned(),
         follow,
+        // **A list of blanks names no key**, so it narrows nothing, the same
+        // as a view that names none.
+        keys: held
+            .get("shows_keys")
+            .map(|list| {
+                list.split(',')
+                    .map(str::trim)
+                    .filter(|key| !key.is_empty())
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .filter(|keys| !keys.is_empty()),
     }
 }
 

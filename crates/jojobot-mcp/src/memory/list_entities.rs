@@ -119,6 +119,7 @@ mod tests {
             status: None,
             prose: None,
             charter: None,
+            keys: None,
             history: None,
             history_record: None,
             history_most: None,

@@ -134,6 +134,45 @@ fn a_views_own_fields_name_a_type_and_a_walk() {
     );
 }
 
+/// **A view names the keys of each object it shows, as a list in one field.**
+/// `shows_keys` is read as the comma-separated list `shows` is, trimmed, and
+/// a view naming none — or only blanks — answers `None`: every key, which is the
+/// ordinary read and a different question from an empty list.
+#[test]
+fn a_views_own_fields_name_the_keys_to_show() {
+    let named: std::collections::BTreeMap<String, String> = [
+        ("selects".to_string(), "bot".to_string()),
+        (
+            "shows_keys".to_string(),
+            " one_liner , reports_to ,".to_string(),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(
+        asked_by_view(&named, &[]).keys,
+        Some(vec!["one_liner".to_string(), "reports_to".to_string()]),
+    );
+
+    let bare: std::collections::BTreeMap<String, String> =
+        [("selects".to_string(), "bot".to_string())]
+            .into_iter()
+            .collect();
+    assert_eq!(asked_by_view(&bare, &[]).keys, None);
+
+    let blank: std::collections::BTreeMap<String, String> = [
+        ("selects".to_string(), "bot".to_string()),
+        ("shows_keys".to_string(), " , ".to_string()),
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(
+        asked_by_view(&blank, &[]).keys,
+        None,
+        "a list of blanks names no key, so it narrows nothing",
+    );
+}
+
 fn entity(handle: &str, name: &str) -> Entity {
     // **The fixture stands a store up, because the set is setup here.**
     // Reading a handle asks the kinds this process loaded, and no case

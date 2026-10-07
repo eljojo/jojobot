@@ -248,6 +248,21 @@ pub struct RecallArgs {
     /// Objects that are not bots carry no charter at all.
     #[serde(default)]
     pub(crate) charter: Option<bool>,
+    /// **Which keys of each object's fields come back, and only those.** Name
+    /// the keys you want, and every object in the answer — the ones a walk
+    /// reaches included — carries just those of its fields.
+    ///
+    /// **Eliding is never silent.** An object that holds other keys says so in
+    /// `fields_left_out`, naming them, and asking again without `keys` reads
+    /// them all. A key an object does not hold is simply not there.
+    ///
+    /// Omit it and every key comes back, which is the normal read. This
+    /// narrows what each object says, never which objects come back, and it
+    /// leaves facts, prose and the charter as the arguments for those say.
+    /// **A view can carry it** as its `shows_keys`, and what you send beside
+    /// the view's name wins.
+    #[serde(default)]
+    pub(crate) keys: Option<Vec<String>>,
     /// **The writes behind one key, oldest first** — name the key, and each
     /// object comes back carrying every write of it, with the record each one
     /// arrived in and that record's date.
@@ -882,6 +897,7 @@ impl Jojobot {
                     .overdue
                     .or_else(|| asked.overdue.then_some(OverdueArgs { as_of: None })),
                 answers_type: args.answers_type.or(asked.answers_type),
+                keys: args.keys.or(asked.keys),
                 follow: args.follow.or_else(|| {
                     asked.follow.map(|f| FollowArgs {
                         shape: f.shape,
@@ -970,6 +986,7 @@ fn object_json(
     object: &graph::Object,
     include: graph::Include,
     as_of: jiff::civil::Date,
+    only: Option<&[String]>,
 ) -> serde_json::Value {
     // **A folded handle is not a thing, and it is never served as an empty
     // one.** It goes on answering because a handle somebody wrote down must
@@ -1004,15 +1021,41 @@ fn object_json(
     // one value per key, the newest write of that key winning. It is the answer
     // to the question a caller usually has, and it is a fraction of the size of
     // the records those writes arrived in.
+    //
+    // **Narrowed to the keys the call named, when it named any**, and the same
+    // narrowing reaches every object a walk brought, so a caller reading an org
+    // chart is not handed the operational keys of each node. **What it left out
+    // is named**, never dropped silently: a reader who had to infer
+    // narrowed-from-empty would infer wrong.
+    let wanted = |key: &str| only.is_none_or(|keys| keys.iter().any(|k| k == key));
     fields.insert(
         "fields".into(),
         object
             .fields
             .iter()
+            .filter(|(key, _)| wanted(key))
             .map(|(key, value)| (key.clone(), serde_json::Value::from(value.as_str())))
             .collect::<serde_json::Map<_, _>>()
             .into(),
     );
+    let left_out: Vec<&str> = object
+        .fields
+        .keys()
+        .map(String::as_str)
+        .filter(|key| !wanted(key))
+        .collect();
+    if !left_out.is_empty() {
+        fields.insert(
+            "fields_left_out".into(),
+            format!(
+                "{} of this object's keys are not here: {} — ask again without keys to read \
+                 them all",
+                left_out.len(),
+                left_out.join(", ")
+            )
+            .into(),
+        );
+    }
     // **Eliding is never silent.** Without the note an object carrying no
     // `facts` key says both "you did not ask for them" and "there is nothing
     // recorded here", and a reader who has to infer which will infer wrong.
@@ -1145,7 +1188,7 @@ fn object_json(
     let rendered: Vec<serde_json::Value> = object
         .connected
         .iter()
-        .map(|o| object_json(o, include, as_of))
+        .map(|o| object_json(o, include, as_of, only))
         .collect();
     let kept = text::CONNECTED_CONTEXT.head(&rendered, |item| item.to_string().chars().count());
     fields.insert("connected".into(), kept.kept().to_vec().into());
@@ -1224,7 +1267,12 @@ impl Jojobot {
                        fields as history. Those \
                        fields are what the thing HOLDS — its KIND is what it \
                        IS — and they answer most questions; the records behind them are bigger and say the same thing at \
-                       length. Ask for facts when you need a claim's own wording, its \
+                       length. To see only some of the keys, name them in keys: every object, \
+                       the ones a walk reaches included, then carries just those, an object \
+                       that held others names them in fields_left_out, and asking again \
+                       without keys reads them all. A view carries it as shows_keys, which is \
+                       how view colleagues shows each bot's one_liner and reports_to. Ask for \
+                       facts when you need a claim's own wording, its \
                        provenance, or the address that edits it, and the answer says how many \
                        records it left out when you did not. A RECORD MARKED stands_for ANOTHER \
                        (a synthesis, over update_fact) is served, and the records it stands for \
@@ -1515,6 +1563,9 @@ impl Jojobot {
         };
         let want_charter = args.charter.unwrap_or(false);
         let asked_prose = args.prose.unwrap_or(false);
+        // **Which keys of each object's fields come back**, when the call or
+        // the view it named said. Kept as sent: matching is by key name.
+        let only_keys = args.keys.clone();
         let include = graph::Include {
             facts: args.facts.unwrap_or(false),
             prose: asked_prose || want_charter,
@@ -2082,7 +2133,7 @@ impl Jojobot {
                 .zip(held)
                 .zip(backing.into_iter().chain(std::iter::repeat(None)))
                 .map(|(((idx, o), held), backing)| {
-                    let mut rendered = object_json(o, include, today);
+                    let mut rendered = object_json(o, include, today, only_keys.as_deref());
                     if let (Some(want), Some(removed)) =
                         (wanted_status, left_out_by_status.get(&o.entity.id))
                     {

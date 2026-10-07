@@ -1147,6 +1147,33 @@ fn the_colleagues_reports_to_key_is_named_where_the_one_liner_is() {
     );
 }
 
+/// **`recall`'s own description names the argument that narrows each object's
+/// keys, what an answer says when it left some out, and the view key that
+/// carries it.** A new argument the verb's description does not mention is the
+/// commonest way a capability goes unfound. The argument is pinned by the
+/// published schema, so a rename fails here, and the two words only the answer
+/// and a view record carry are pinned in the description.
+#[test]
+fn recall_names_the_keys_argument_and_what_an_answer_says_it_left_out() {
+    let tools = Jojobot::tool_router().list_all();
+    let recall = tools
+        .iter()
+        .find(|t| t.name == "recall")
+        .expect("recall is a tool");
+    let description = recall.description.as_deref().unwrap_or_default();
+    let schema = serde_json::Value::Object((*recall.input_schema).clone());
+    assert!(
+        schema["properties"].get("keys").is_some(),
+        "recall publishes no `keys`: {schema}"
+    );
+    for word in ["fields_left_out", "shows_keys"] {
+        assert!(
+            description.contains(word),
+            "recall's description does not name `{word}`: {description}"
+        );
+    }
+}
+
 /// **`retract` and `update_fact`'s `clear_edge` used to both claim the same
 /// case — a past event that turned out never to have happened.** `retract`
 /// names itself the move for it; `clear_edge`'s own worked example, until

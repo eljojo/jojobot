@@ -171,6 +171,95 @@ async fn the_colleagues_view_shows_who_each_bot_reports_to_and_who_reports_to_it
     story.finish().await;
 }
 
+/// **The colleagues view shows each bot's one-liner and who it reports to, and
+/// leaves the operational keys out, naming them.** A bot holds keys that run it
+/// and that nobody reading the directory asked for; the view says which it
+/// kept, says which it left out, and the caller's own `keys` and a plain recall
+/// both reach them.
+#[tokio::test]
+async fn the_colleagues_view_leaves_operational_keys_out_and_names_what_it_left_out() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    s.add("bot:omega", "Omega").await;
+    s.add("bot:sigma", "Sigma").await;
+    s.event_with(
+        "bot:omega",
+        "what omega is for",
+        json!({"one_liner": "runs the office", "probe/last": "2026-10-01"}),
+        &[],
+    )
+    .await;
+    s.event_with(
+        "bot:sigma",
+        "what sigma is for",
+        json!({
+            "one_liner": "keeps the books", "reports_to": "bot:omega",
+            "probe/last": "2026-10-02", "nudge/quiet": "on",
+        }),
+        &[],
+    )
+    .await;
+
+    let colleagues = s.call("recall", json!({"view": "colleagues"})).await.json();
+    let objects = colleagues["objects"].as_array().expect("a list of bots");
+    let bot = |handle: &str| {
+        objects
+            .iter()
+            .find(|object| object["id"] == handle)
+            .unwrap_or_else(|| panic!("the view lists {handle}: {colleagues}"))
+    };
+
+    // Up front: the one-liner and the manager, and nothing else.
+    assert_eq!(
+        bot("bot:sigma")["fields"],
+        json!({"one_liner": "keeps the books", "reports_to": "bot:omega"}),
+        "{colleagues}"
+    );
+    // What it left out is named, key by key.
+    let left_out = bot("bot:sigma")["fields_left_out"]
+        .as_str()
+        .unwrap_or_else(|| panic!("sigma names what it left out: {colleagues}"));
+    assert!(
+        left_out.contains("probe/last") && left_out.contains("nudge/quiet"),
+        "{left_out}"
+    );
+    // The walk narrows the objects it reaches the same way: omega lists sigma,
+    // and sigma arrives without its operational keys.
+    let reached = &bot("bot:omega")["connected"][0];
+    assert_eq!(reached["id"], "bot:sigma", "{colleagues}");
+    assert!(reached["fields"].get("nudge/quiet").is_none(), "{reached}");
+    assert_eq!(reached["fields"]["reports_to"], "bot:omega", "{reached}");
+    // The pairing: a bot that holds no operational key has nothing to name.
+    assert!(
+        bot("bot:gamma").get("fields_left_out").is_none(),
+        "{colleagues}"
+    );
+
+    // The caller's own `keys` wins over the view's, and reaches what it kept out.
+    let mine = s
+        .call(
+            "recall",
+            json!({"view": "colleagues", "keys": ["probe/last"]}),
+        )
+        .await
+        .json();
+    let sigma = mine["objects"]
+        .as_array()
+        .and_then(|list| list.iter().find(|object| object["id"] == "bot:sigma"))
+        .unwrap_or_else(|| panic!("the view lists sigma: {mine}"));
+    assert_eq!(
+        sigma["fields"],
+        json!({"probe/last": "2026-10-02"}),
+        "{mine}"
+    );
+
+    // And the call the note points at returns every key.
+    s.call("recall", json!({"subject": "bot:sigma"}))
+        .await
+        .says("nudge/quiet");
+    story.finish().await;
+}
+
 /// **A session that was told nothing finds the capability and uses it.**
 ///
 /// The bar a view has to clear is not that it exists — it is that an agent
