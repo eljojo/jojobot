@@ -219,6 +219,11 @@ async fn a_read_of_the_box_with_no_handle_is_told_the_whole_route_to_one() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
     s.add("bot:gamma", "Gamma").await;
+    // **Mail is waiting before the handle is lost.** A box that opens empty
+    // proves the box is there and nothing about the mail, so the recovery has
+    // to end in the message coming back.
+    let gamma = story.as_bot("bot:gamma").await;
+    gamma.post("otto", "a note", "the kiln is relined").await;
     // A run in flight, which is what turns the next boot into an offer.
     s.journal("started on something and stopped without telling its story")
         .await;
@@ -245,7 +250,13 @@ async fn a_read_of_the_box_with_no_handle_is_told_the_whole_route_to_one() {
         )
         .await;
     let fresh = booted.expect("answering the offer with new hands back a handle");
-    fresh.drain().await.says("\"mailbox\":\"otto\"");
+    // The refusal took nothing, so the mail it turned the caller away from is
+    // still waiting, and it is the recovery that delivers it.
+    fresh
+        .drain()
+        .await
+        .says("\"mailbox\":\"otto\"")
+        .says("the kiln is relined");
 
     fresh.wrap("followed the read's refusal to a handle").await;
     story.finish().await;
