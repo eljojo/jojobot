@@ -595,7 +595,12 @@ fn start_and_wait_for_the_mutation(
     state: &std::path::Path,
     path: &PathBuf,
 ) -> std::process::Child {
-    let mut running = Command::new(at)
+    // **Run through the interpreter, never by executing the copy.** A file this
+    // process has just written is "text file busy" to `exec` while a sibling
+    // test's fork still holds its write handle, which failed this case under
+    // load. The interpreter only reads it.
+    let mut running = Command::new("python3")
+        .arg(at)
         .env("SABOTAGE_STATE_DIR", state)
         .arg(path)
         .arg("41")
@@ -703,7 +708,8 @@ fn a_hard_kill_is_reported_in_its_own_checkout_and_in_no_other() {
 
     let run_in = |checkout: &std::path::Path, named: &str| {
         let bystander = a_file(named, "nothing to see here\n");
-        let ran = Command::new(checkout.join("scripts/sabotage"))
+        let ran = Command::new("python3")
+            .arg(checkout.join("scripts/sabotage"))
             .env("SABOTAGE_STATE_DIR", &state)
             .arg(&bystander)
             .arg("nothing")
