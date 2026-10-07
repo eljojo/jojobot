@@ -140,7 +140,7 @@ pub(crate) fn subject_declined(attempted: &str, said: &MailboxError) -> CallTool
 /// and that the message is unhandled.
 pub(crate) fn mailbox_quarantined(attempted: &str, reason: &str) -> CallToolResult {
     let how_to_proceed: WayForward = format!(
-        "Nothing was written, and retrying will not help — this is not a missing message. \
+        "{NOTHING_RAN}, and retrying will not help — this is not a missing message. \
              jojobot can see {attempted} but cannot read it as a message, so no verb will act \
              on it. Repairing it takes a person, and it is not something you can do from here: \
              tell the operator. Until then, treat whatever it was carrying as unhandled and say \
@@ -166,7 +166,7 @@ pub(crate) fn mailbox_quarantined_on_purpose(
     reason: &str,
 ) -> CallToolResult {
     let how_to_proceed: WayForward = format!(
-        "Nothing was written, and retrying will not help — this is not damage. '{by}' \
+        "{NOTHING_RAN}, and retrying will not help — this is not damage. '{by}' \
          quarantined {attempted} on purpose, saying \"{reason}\". That is a decision, not a \
          fault, and lifting it is not something this call can do."
     )
@@ -214,7 +214,7 @@ pub(crate) fn mailbox_declined(e: MailboxError) -> Result<CallToolResult, McpErr
             &attempted,
             None,
             format!(
-                "Nothing was written. No message jojobot holds has the id '{attempted}', in any \
+                "{NOTHING_RAN}. No message jojobot holds has the id '{attempted}', in any \
                  mailbox. Ids are minted by jojobot and handed back by search, read_mailbox and \
                  post_message — use an id from one of those rather than composing one."
             ),
@@ -249,7 +249,7 @@ pub(crate) fn mailbox_declined(e: MailboxError) -> Result<CallToolResult, McpErr
             "",
             None,
             format!(
-                "Nothing was written: {e}. The call is not what is wrong, and sending it again \
+                "{NOTHING_RAN}: {e}. The call is not what is wrong, and sending it again \
                  will not help: jojobot loaded no kinds when it started, and nothing a caller \
                  does re-reads them. This one needs the operator."
             ),

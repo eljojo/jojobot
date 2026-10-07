@@ -65,6 +65,8 @@ pub(crate) use caller::*;
 #[cfg(test)]
 mod harness;
 #[cfg(test)]
+mod read_refusals;
+#[cfg(test)]
 mod surface;
 
 use jojobot_domain::mailbox::{

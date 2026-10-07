@@ -350,7 +350,7 @@ impl Jojobot {
             .collect::<Vec<_>>()
             .join("; ");
         Some(misused(format!(
-            "Nothing was written. {} does not implement {named} — {takes}. An argument this \
+            "{NOTHING_RAN}. {} does not implement {named} — {takes}. An argument this \
              surface does not have is refused rather than dropped, because a call that quietly \
              ignored it would report success for work it did not do. Send the call again without \
              it, or use the argument above that means what you meant.",
@@ -393,7 +393,7 @@ impl Jojobot {
             .collect::<Vec<_>>()
             .join("; ");
         Some(misused(format!(
-            "Nothing ran. {} needs {named} — {takes}. A call without an argument the \
+            "{NOTHING_RAN}. {} needs {named} — {takes}. A call without an argument the \
              verb requires is refused rather than guessed at. Send the call again with it.",
             request.name,
         )))

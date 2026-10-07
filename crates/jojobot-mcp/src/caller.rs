@@ -59,21 +59,16 @@ impl Caller {
 /// A session verb reached on a connection that never booted. Not an error: the
 /// caller did nothing malformed, they just have no identity yet.
 pub(crate) fn session_unbound() -> CallToolResult {
-    let how_to_proceed: WayForward =
-        "Nothing was written. This call carried no `sid`, and jojobot will not \
-                           guess which session is writing. Call start_here with your bot name to \
-                           get one. A bot with a run in flight is handed a choice and no handle: \
-                           call start_here again with resume set to the sid of the run you are \
-                           picking up, or to \"new\" for a fresh session. Then pass the handle on \
-                           every call — reads included. It is the only \
-                           address, and it is what tells jojobot which bot is asking: most \
-                           clients open a fresh connection per tool call, so nothing about who \
-                           you are survives from your last one. IF START_HERE ALSO HANDS BACK NO \
-                           HANDLE, this is not a call you can fix: the session world is \
-                           unreachable, so no identity can be issued and no write can be \
-                           attributed until it is back. Tell the operator — nothing is lost and \
-                           nothing was written."
-            .into();
+    let how_to_proceed: WayForward = format!(
+        "{NOTHING_RAN}. This call carried no `sid`, and jojobot will not guess which session is \
+         asking. {ROUTE_TO_A_SID} Then pass the handle on every call — reads included. It is \
+         the only address, and it is what tells jojobot which bot is asking: most clients open \
+         a fresh connection per tool call, so nothing about who you are survives from your \
+         last one. IF START_HERE ALSO HANDS BACK NO HANDLE, this is not a call you can fix: \
+         the session world is unreachable, so no identity can be issued and no write can be \
+         attributed until it is back. Tell the operator — nothing is lost and nothing ran."
+    )
+    .into();
     let body = serde_json::json!({
         "status": "blocked",
         "wrote": false,
@@ -141,7 +136,7 @@ impl Jojobot {
             return Err(handle_declined(
                 raw,
                 format!(
-                    "Nothing was written. '{raw}' is not a handle jojobot mints — those are {} \
+                    "{NOTHING_RAN}. '{raw}' is not a handle jojobot mints — those are {} \
                  characters of 0-9 and a-z, with i, l, o and u left out because they read as \
                  one another. jojobot will not correct one, because correcting it means \
                  guessing whose session you meant.",
@@ -153,11 +148,9 @@ impl Jojobot {
             return Err(handle_declined(
                 raw,
                 format!(
-                    "Nothing was written. That session is gone: '{raw}' is not a handle jojobot \
-                 is holding. Call start_here with your bot name to boot again. If it hands \
-                 back a choice and no handle, call it again with resume set to the sid of the \
-                 run you are picking up, or to \"new\" for a fresh session. The work on the \
-                 board is untouched, and it will be offered back by what it was working on."
+                    "{NOTHING_RAN}. That session is gone: '{raw}' is not a handle jojobot is \
+                 holding. {ROUTE_TO_A_SID} The work on the board is untouched, and it will be \
+                 offered back by what it was working on."
                 ),
             ));
         };

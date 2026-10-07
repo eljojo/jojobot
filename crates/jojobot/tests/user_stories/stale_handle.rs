@@ -206,3 +206,47 @@ async fn a_write_with_no_handle_is_told_the_whole_route_to_one() {
     fresh.wrap("followed the refusal's route to a handle").await;
     story.finish().await;
 }
+
+/// "I read my box before I had a handle, and the refusal sent me to a door that
+/// answered with a choice and no handle."
+///
+/// The same dead end as the write's, reached from the other half of the
+/// surface: a boot naming only the bot hands back an offer when the bot has a
+/// run in flight. The refusal for a read of one's own box names the whole
+/// route, and the story follows it to a handle that opens the box.
+#[tokio::test]
+async fn a_read_of_the_box_with_no_handle_is_told_the_whole_route_to_one() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:gamma", "Gamma").await;
+    // A run in flight, which is what turns the next boot into an offer.
+    s.journal("started on something and stopped without telling its story")
+        .await;
+
+    let refusal = s.refused("read_mailbox", json!({"sid": null})).await;
+    refusal
+        .says("\"wrote\":false")
+        .says("start_here")
+        // The second step of the route, by its argument's name.
+        .says("resume");
+
+    let (offer, unanswered) = story
+        .call("start_here", json!({"bot": "otto", "brief": true}))
+        .await;
+    offer.says("choices");
+    assert!(
+        unanswered.is_none(),
+        "the boot the refusal names answers with an offer and no handle"
+    );
+    let (_, booted) = story
+        .call(
+            "start_here",
+            json!({"bot": "otto", "brief": true, "resume": "new"}),
+        )
+        .await;
+    let fresh = booted.expect("answering the offer with new hands back a handle");
+    fresh.drain().await.says("\"mailbox\":\"otto\"");
+
+    fresh.wrap("followed the read's refusal to a handle").await;
+    story.finish().await;
+}

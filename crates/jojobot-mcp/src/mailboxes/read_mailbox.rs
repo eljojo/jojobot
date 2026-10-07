@@ -58,12 +58,13 @@ enum NoBox {
 fn no_box_for(attempted: &str, why: NoBox) -> CallToolResult {
     let how_to_proceed = match why {
         NoBox::Anonymous => {
-            "Nothing was delivered. This call carried no `sid`, and a read opens the box of \
-             whoever is asking — so jojobot has nobody to open one for. Call start_here with \
-             your bot name to get a handle, then pass it on every call. To leave mail in \
-             somebody else's box you do not need one of your own: post_message leaves mail in a \
-             box without reading that box."
-                .to_string()
+            format!(
+                "Nothing was delivered. This call carried no `sid`, and a read opens the box of \
+                 whoever is asking — so jojobot has nobody to open one for. {ROUTE_TO_A_SID} \
+                 Then pass the handle on every call. To leave mail in somebody else's box you \
+                 do not need one of your own: post_message leaves mail in a box without reading \
+                 that box."
+            )
         }
         NoBox::Unknowable => {
             "Nothing was delivered, and nothing is wrong with your call. Which box you drain is \

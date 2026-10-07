@@ -136,14 +136,16 @@ pub(crate) fn blocked_result(
         // unrecognized handle, not only a near miss — so the advice must not
         // point at "the handles above" when there are none.
         Blocked::MustExist(verb) if candidates.is_empty() => format!(
-            "Nothing was written. '{attempted}' is not an entity jojobot knows, and nothing \
+            "{}. '{attempted}' is not an entity jojobot knows, and nothing \
              resembles it. {verb} cannot create an entity: call add_entity to create \
              '{attempted}' first, then re-call {verb}.",
+            nothing_for(verb),
         ),
         Blocked::MustExist(verb) => format!(
-            "Nothing was written. '{attempted}' is not an entity jojobot knows. If one of the \
+            "{}. '{attempted}' is not an entity jojobot knows. If one of the \
              handles above is what you meant, use that. Otherwise {verb} cannot create it for \
              you — call add_entity to create '{attempted}' first, then re-call {verb}.",
+            nothing_for(verb),
         ),
         Blocked::Renaming(_) if exact => format!(
             "Nothing was renamed. The handle '{attempted}' is already taken, and that cannot be \
@@ -316,9 +318,10 @@ pub(crate) fn memory_declined(
             &EntityId(String::new()),
             &[],
             format!(
-                "Nothing was written: {e}. Nothing is missing from the store and nothing here \
+                "{}: {e}. Nothing is missing from the store and nothing here \
                  needs the operator — the call itself is what jojobot cannot carry out. Send the \
-                 same {verb} call again with that fixed."
+                 same {verb} call again with that fixed.",
+                nothing_for(verb)
             ),
         )),
         // **A well-formed call against a name that is not the caller's.** Not

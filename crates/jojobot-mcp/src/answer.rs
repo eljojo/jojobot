@@ -39,6 +39,35 @@ impl From<String> for WayForward {
     }
 }
 
+/// **What a refusal says first when the call did not run.** It is true of
+/// every verb that reaches the gate or builder that says it, reads included: a
+/// refusal shared by a read and a write cannot open with a claim about
+/// writing. Where a refusal belongs to a write alone, it still says what was
+/// not written.
+pub(crate) const NOTHING_RAN: &str = "Nothing ran";
+
+/// What a refusal says first when the verb writes and the call did not.
+pub(crate) const NOTHING_WRITTEN: &str = "Nothing was written";
+
+/// **What a refusal opens with, for the verb it is answering.** A builder that
+/// serves a read and a write both says the true thing for each: the verbs that
+/// write nothing never claim a write was skipped, and the rest still say what
+/// was not written.
+pub(crate) fn nothing_for(verb: &str) -> &'static str {
+    match verb {
+        "recall" | "search" | "list_entities" | "list_runs" | "list_sent" | "read_mailbox"
+        | "read_message" | "start_here" => NOTHING_RAN,
+        _ => NOTHING_WRITTEN,
+    }
+}
+
+/// **The route from no handle to a handle**, in the door's own two steps. A
+/// boot naming only the bot hands back a choice and no handle when the bot has
+/// a run in flight, so naming the door alone sends a caller to a dead end.
+pub(crate) const ROUTE_TO_A_SID: &str = "Call start_here with your bot name. A bot with a run in \
+    flight is handed a choice and no handle: call start_here again with resume set to the sid \
+    of the run you are picking up, or to \"new\" for a fresh session.";
+
 impl From<&str> for WayForward {
     fn from(text: &str) -> Self {
         WayForward::from(text.to_string())
