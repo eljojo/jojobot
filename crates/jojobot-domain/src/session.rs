@@ -275,6 +275,29 @@ pub const OFFER_ABANDONED_WITHIN: jiff::SignedDuration = jiff::SignedDuration::f
 /// refused its own role again within minutes of picking the work back up.
 pub const LEASE_FRESHNESS: jiff::SignedDuration = jiff::SignedDuration::from_secs(45 * 60);
 
+/// **How long a lease has to be old before a write renews it**: a tenth of
+/// [`LEASE_FRESHNESS`], 4 minutes 30 seconds.
+///
+/// Every write by a holder used to rewrite the claim's moment, so the claim
+/// gained one stored write per write, for as long as the role was held. A
+/// renewal that moves the expiry by seconds buys nothing, so a write inside
+/// this age renews nothing.
+///
+/// **What it costs, and why it is safe:** the stored moment can trail the
+/// holder's last write by less than this. The lease then lapses no sooner than
+/// 40 minutes 30 seconds after the last write, instead of 45. A tenth keeps a
+/// holder writing every few minutes to about 11 renewals an hour at most, and
+/// leaves the lease within a tenth of the one decided for it.
+pub const LEASE_RENEWS_AFTER: jiff::SignedDuration = jiff::SignedDuration::from_secs(45 * 60 / 10);
+
+/// **Whether a write at `at` should renew a lease last stamped at
+/// `claimed_at`.** No stamp, or a stamp at least [`LEASE_RENEWS_AFTER`] old, is
+/// due. A stamp in the future of `at` is not: a clock that stepped back must
+/// not rewrite a lease that is still fresh.
+pub fn renewal_is_due(claimed_at: Option<Timestamp>, at: Timestamp) -> bool {
+    claimed_at.is_none_or(|stamped| at.duration_since(stamped) >= LEASE_RENEWS_AFTER)
+}
+
 /// A verdict on a claimed role, decided against a threshold — never handed to
 /// the caller as a timestamp to judge for itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1517,6 +1540,48 @@ mod tests {
             claim_role("delta", Some("gamma"), Some(claimed_at), now, threshold),
             LeaseClaim::Taken,
             "a stale lease is claimable by anyone"
+        );
+    }
+
+    /// **A renewal is due at the renewal age and not before it.** The edges
+    /// are the case: one second short is not due, the age itself is, and no
+    /// stamp at all is.
+    #[test]
+    fn a_renewal_is_due_at_the_renewal_age_and_not_before() {
+        let stamped = contract::epoch();
+        let short = LEASE_RENEWS_AFTER - jiff::SignedDuration::from_secs(1);
+        assert!(
+            !renewal_is_due(Some(stamped), stamped + short),
+            "a write one second short of the renewal age rewrote the lease"
+        );
+        assert!(
+            renewal_is_due(Some(stamped), stamped + LEASE_RENEWS_AFTER),
+            "a write at the renewal age left the lease alone"
+        );
+        assert!(
+            renewal_is_due(None, stamped),
+            "a lease with no stamp is always due"
+        );
+    }
+
+    /// **A stamp in the future of the write is never due**, so a clock that
+    /// stepped back does not rewrite a lease that is still fresh.
+    #[test]
+    fn a_stamp_in_the_future_of_the_write_is_not_due() {
+        let stamped = contract::epoch() + jiff::SignedDuration::from_secs(3600);
+        assert!(!renewal_is_due(Some(stamped), contract::epoch()));
+    }
+
+    /// **The renewal age is a fraction of the lease, so the lease keeps most
+    /// of its length after the last write.** Read off both constants, so a
+    /// change to the lease moves the age with it.
+    #[test]
+    fn the_renewal_age_leaves_most_of_the_lease_after_the_last_write() {
+        assert!(LEASE_RENEWS_AFTER.as_secs() > 0);
+        assert_eq!(
+            LEASE_RENEWS_AFTER.as_secs() * 10,
+            LEASE_FRESHNESS.as_secs(),
+            "the renewal age is a tenth of the lease"
         );
     }
 

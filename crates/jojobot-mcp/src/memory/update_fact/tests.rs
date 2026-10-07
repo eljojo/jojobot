@@ -2087,7 +2087,8 @@ async fn a_different_bot_can_raise_this_bots_thought_capacity_by_patch() {
 /// proven to stop only the ordinary surface.
 #[tokio::test]
 async fn update_fact_refuses_to_set_clear_or_archive_a_roles_own_fields() {
-    let jojobot = handler();
+    let memory = std::sync::Arc::new(jojobot_domain::memory::testing::InMemoryMemory::booted());
+    let jojobot = handler_over(memory.clone());
     make_bot(&jojobot, "gamma").await;
     let booted = json_of(
         &jojobot
@@ -2169,10 +2170,15 @@ async fn update_fact_refuses_to_set_clear_or_archive_a_roles_own_fields() {
 
     // The claim path itself, untouched: a renewal through the boot door
     // still moves the claim moment after every side door was refused.
-    let claimed_at_before = after
+    crate::session::testing::age_role_lease(&memory, "bot:gamma", "dev-dispatch", 10);
+    let claimed_at_before = jojobot
+        .memory
+        .fields(&bot)
+        .await
+        .expect("fields ok")
         .get("role/dev-dispatch/claimed_at")
         .cloned()
-        .expect("the claim's own field is present");
+        .expect("the aged moment is there");
     journal_entry(
         &jojobot,
         &sid,

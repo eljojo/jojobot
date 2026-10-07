@@ -614,3 +614,22 @@ impl Sessions for Yielding {
         self.0.reopen(id).await
     }
 }
+
+/// **A role's lease moment as it would stand `minutes` after its last
+/// renewal**, written the way time would have left it. A write inside the
+/// renewal age renews nothing, so a case about a renewal ages the lease first.
+pub(crate) fn age_role_lease(
+    memory: &jojobot_domain::memory::testing::InMemoryMemory,
+    bot: &str,
+    role: &str,
+    minutes: i64,
+) {
+    let moment = jiff::Timestamp::now() - jiff::SignedDuration::from_mins(minutes);
+    memory.fields_past_the_guard(
+        &jojobot_domain::memory::EntityId(bot.to_string()),
+        &[(
+            &jojobot_domain::session::role_claimed_at_key(role),
+            &moment.to_string(),
+        )],
+    );
+}

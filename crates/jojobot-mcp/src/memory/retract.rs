@@ -764,7 +764,8 @@ mod tests {
     /// moves the claim after the refusal.
     #[tokio::test]
     async fn retract_refuses_to_archive_a_roles_own_fields() {
-        let jojobot = handler();
+        let memory = std::sync::Arc::new(jojobot_domain::memory::testing::InMemoryMemory::booted());
+        let jojobot = handler_over(memory.clone());
         make_bot(&jojobot, "gamma").await;
         let booted = json_of(
             &jojobot
@@ -815,10 +816,15 @@ mod tests {
             "the claim's own holder must survive the refused retraction: {after:?}"
         );
 
-        let claimed_at_before = after
+        crate::session::testing::age_role_lease(&memory, "bot:gamma", "dev-dispatch", 10);
+        let claimed_at_before = jojobot
+            .memory
+            .fields(&bot)
+            .await
+            .expect("fields ok")
             .get("role/dev-dispatch/claimed_at")
             .cloned()
-            .expect("the claim's own field is present");
+            .expect("the aged moment is there");
         crate::session::testing::journal_entry(&jojobot, &sid, "kept working past the refusal")
             .await;
         let renewed = jojobot.memory.fields(&bot).await.expect("fields ok");

@@ -329,6 +329,20 @@ impl Jojobot {
         for role in held_roles {
             let holder_key = jojobot_domain::session::role_holder_key(&role);
             let claimed_at_key = jojobot_domain::session::role_claimed_at_key(&role);
+            // **A renewal that would barely move the expiry writes nothing.**
+            // The moment already read above is what decides it, so a write
+            // inside the renewal age costs no store write. A release is never
+            // skipped, and a moment that does not parse is due.
+            if verb == "renew"
+                && !jojobot_domain::session::renewal_is_due(
+                    fields
+                        .get(&claimed_at_key)
+                        .and_then(|moment| moment.parse().ok()),
+                    at,
+                )
+            {
+                continue;
+            }
             let Some(backing) = backing.get(&holder_key) else {
                 tracing::warn!(%bot, role, verb, "a held role's holder field has no backing");
                 continue;
@@ -413,7 +427,9 @@ impl Jojobot {
 mod tests {
     use super::*;
     use crate::harness::*;
+    use crate::memory::testing::*;
     use crate::session::testing::*;
+    use jojobot_domain::memory::testing::InMemoryMemory;
     use jojobot_domain::session::Sid;
 
     /// **A beat says what now stands and what it left alone.**
@@ -1067,15 +1083,13 @@ mod tests {
         );
     }
 
-    /// **A beat renews the session's own role claim — no second mechanism.**
-    /// The claim's own `claimed_at` field must actually move, not merely
-    /// survive: a claim that renewed only in name would still read `stale`
-    /// once its original threshold passed.
-    #[tokio::test]
-    async fn a_beat_renews_the_session_s_own_role_claim() {
-        let jojobot = handler();
+    /// **The role a case holds, claimed through the door, and the handler's
+    /// memory beside it** so the case can age the lease by writing its moment
+    /// the way time would have left it.
+    async fn holding_dev_dispatch() -> (Jojobot, Arc<InMemoryMemory>, String) {
+        let memory = Arc::new(InMemoryMemory::booted());
+        let jojobot = handler_over(memory.clone());
         make_bot(&jojobot, "gamma").await;
-
         let booted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
@@ -1092,8 +1106,20 @@ mod tests {
                 .await
                 .expect("start_here ok"),
         );
-        let sid = sid_of(&booted).expect("a handle");
         assert_eq!(booted["session"]["claim"]["status"], "taken", "{booted}");
+        let sid = sid_of(&booted).expect("a handle");
+        (jojobot, memory, sid)
+    }
+
+    /// **A beat renews the session's own role claim — no second mechanism.**
+    /// The claim's own `claimed_at` field must actually move, not merely
+    /// survive: a claim that renewed only in name would still read `stale`
+    /// once its original threshold passed. The lease is aged past the renewal
+    /// age first, because a write inside that age renews nothing.
+    #[tokio::test]
+    async fn a_beat_renews_the_session_s_own_role_claim() {
+        let (jojobot, memory, sid) = holding_dev_dispatch().await;
+        age_role_lease(&memory, "bot:gamma", "dev-dispatch", 10);
 
         let bot = EntityId("bot:gamma".into());
         let before = jojobot.memory.fields(&bot).await.expect("fields ok");
@@ -1118,6 +1144,95 @@ mod tests {
             after.get("role/dev-dispatch/holder"),
             Some(&holder_before),
             "…and the holder is unchanged by a renewal: {after:?}"
+        );
+    }
+
+    /// **A holder's many writes leave the lease record bounded.** Every write
+    /// by the holder used to rewrite the lease moment, so the record gained a
+    /// write per write for as long as the role was held. Twenty beats and
+    /// twenty captures inside the renewal age write the moment no more than
+    /// the claim itself did, the holder still holds, and the lease is still
+    /// fresh. Paired with the aged case above, where the same beat DOES write.
+    #[tokio::test]
+    async fn a_holders_many_writes_leave_the_lease_record_bounded() {
+        let (jojobot, _memory, sid) = holding_dev_dispatch().await;
+        let bot = EntityId("bot:gamma".into());
+        let key = "role/dev-dispatch/claimed_at";
+        let written_by_the_claim = jojobot.memory.history(&bot, key).await.expect("history ok");
+        assert_eq!(
+            written_by_the_claim.len(),
+            1,
+            "the case rests on the claim writing the moment once: {written_by_the_claim:?}"
+        );
+
+        for n in 0..20 {
+            journal_entry(&jojobot, &sid, &format!("beat number {n}")).await;
+            capture_ok(
+                &jojobot,
+                CaptureArgs {
+                    sid: Some(sid.clone()),
+                    ..capture_args("person:alpha", &format!("a claim number {n}"))
+                },
+            )
+            .await;
+        }
+
+        let writes = jojobot.memory.history(&bot, key).await.expect("history ok");
+        assert_eq!(
+            writes.len(),
+            1,
+            "forty writes inside the renewal age rewrote the lease moment: {writes:?}"
+        );
+        let fields = jojobot.memory.fields(&bot).await.expect("fields ok");
+        assert_eq!(
+            fields.get("role/dev-dispatch/holder"),
+            Some(&sid),
+            "the holder still holds: {fields:?}"
+        );
+    }
+
+    /// **A lease still lapses once it is old enough, and a write inside the
+    /// renewal age does not stretch it.** Forty-six minutes after the last
+    /// renewal a rival takes the role; forty-four minutes after, it is
+    /// refused. The write the holder made at the start did not move the moment.
+    #[tokio::test]
+    async fn a_lease_still_lapses_after_the_lease_window_without_a_renewal() {
+        let claim_as_rival = |jojobot: &Jojobot| {
+            let jojobot = jojobot.clone();
+            async move {
+                json_of(
+                    &jojobot
+                        .start_here(Parameters(OrientArgs {
+                            claim: Some("dev-dispatch".into()),
+                            timezone: None,
+                            bot: Some("gamma".into()),
+                            brief: None,
+                            skill: None,
+                            section: None,
+                            resume: Some("new".into()),
+                            sid: None,
+                            today: None,
+                        }))
+                        .await
+                        .expect("start_here ok"),
+                )
+            }
+        };
+
+        let (jojobot, memory, sid) = holding_dev_dispatch().await;
+        journal_entry(&jojobot, &sid, "a write inside the renewal age").await;
+        age_role_lease(&memory, "bot:gamma", "dev-dispatch", 44);
+        let inside = claim_as_rival(&jojobot).await;
+        assert_eq!(
+            inside["session"]["claim"]["status"], "refused",
+            "a lease 44 minutes old is still held: {inside}"
+        );
+
+        age_role_lease(&memory, "bot:gamma", "dev-dispatch", 46);
+        let past = claim_as_rival(&jojobot).await;
+        assert_eq!(
+            past["session"]["claim"]["status"], "taken",
+            "a lease 46 minutes old with no renewal has lapsed: {past}"
         );
     }
 
