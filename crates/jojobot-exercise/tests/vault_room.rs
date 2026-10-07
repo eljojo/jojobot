@@ -1017,7 +1017,7 @@ async fn the_overdue_count_lock_answers_as_december_left_the_room() {
         &surface,
         &later,
         "add_entity",
-        json!({"kind": "thing", "handle": "late-addition", "name": "Late Addition",
+        json!({"kind": "thing", "handle": "tau", "name": "Late Addition",
                "source": "the operator"}),
     )
     .await;
@@ -1025,7 +1025,7 @@ async fn the_overdue_count_lock_answers_as_december_left_the_room() {
         &surface,
         &later,
         "capture",
-        json!({"subject": "thing:late-addition", "content": "a window that runs out next summer",
+        json!({"subject": "thing:tau", "content": "a window that runs out next summer",
                "provenance": "testimony", "fields": {"runs_out": "2027-06-30"}}),
     )
     .await;

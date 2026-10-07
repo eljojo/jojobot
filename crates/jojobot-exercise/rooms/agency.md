@@ -128,7 +128,7 @@ entity  org:moes-tavern | Moe's Tavern
 #
 # **The same goes for a name the model may link instead of typing**: a handle
 # is stored in lower case, so `avern` is in "Tavern" and in `org:moes-tavern`,
-# and `amma` is in "Gamma" and in `place:gamma`.
+# and `amma` is in "Gamma" and in `thing:gamma`.
 
 recall {"fields": [{"value": "2026-10-12"}]}
 carries 2026-10-12

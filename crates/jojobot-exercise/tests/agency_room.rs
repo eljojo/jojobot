@@ -1066,10 +1066,10 @@ async fn may_a_market_written_as_a_handle_holds_the_markets_lock() {
         "2026-05-20",
         "Phase 2",
         3,
-        &[("place", "gamma", "Gamma")],
+        &[("thing", "gamma", "Gamma")],
         &[(
             CAMPAIGN,
-            "Krusty added two markets, Beta and @place:gamma, on the phone and nothing is written down.",
+            "Krusty added two markets, Beta and @thing:gamma, on the phone and nothing is written down.",
         )],
     )
     .await;
