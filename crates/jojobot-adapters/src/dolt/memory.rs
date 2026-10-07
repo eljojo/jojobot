@@ -1040,11 +1040,15 @@ impl DoltMemory {
         tx: &mut Transaction<'_, MySql>,
         address: &FactAddress,
     ) -> Result<Option<Fact>, MemoryError> {
+        // **The newest write is asked for by ordering, never by a correlated
+        // `MAX`.** The correlated form is evaluated once per write the claim
+        // has, so its cost grows with the square of that count: a claim
+        // rewritten on every write by a role holder renewing its lease took
+        // 2.5 s at 2,000 writes where this takes 3 ms.
         let rows = sqlx::query(&format!(
             "SELECT {FACT_WRITE_COLUMNS} FROM fact_write w
              WHERE w.entity = ? AND w.fact_id = ?
-               AND w.ordinal = (SELECT MAX(ordinal) FROM fact_write
-                                WHERE entity = w.entity AND fact_id = w.fact_id)"
+             ORDER BY w.ordinal DESC LIMIT 1"
         ))
         .bind(address.home.as_str())
         .bind(address.local.as_str())
@@ -1521,11 +1525,16 @@ impl DoltMemory {
             return Ok(touched);
         }
         let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        // **The newest write per claim comes from a grouped join, the shape
+        // `facts_projected` uses, and not from a correlated `MAX`**, which is
+        // evaluated once per write a claim has and so grows with the square of
+        // that count.
         let sql = format!(
             "SELECT w.fact_id, w.written_at FROM fact_write w
-             WHERE w.entity = ? AND w.fact_id IN ({placeholders})
-               AND w.ordinal = (SELECT MAX(ordinal) FROM fact_write
-                                 WHERE entity = w.entity AND fact_id = w.fact_id)"
+             JOIN (SELECT entity, fact_id, MAX(ordinal) AS newest FROM fact_write
+                   WHERE entity = ? AND fact_id IN ({placeholders})
+                   GROUP BY entity, fact_id) n
+               ON n.entity = w.entity AND n.fact_id = w.fact_id AND n.newest = w.ordinal"
         );
         let mut query = sqlx::query(&sql).bind(home.as_str());
         for id in ids {

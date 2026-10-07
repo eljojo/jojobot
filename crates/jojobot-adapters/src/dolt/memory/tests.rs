@@ -128,6 +128,126 @@ async fn the_projection_and_the_row_agree() {
     store.stop().await;
 }
 
+/// 🚨 **A claim written thousands of times is read by its address in time
+/// that follows its writes, not their square.**
+///
+/// A role holder renews its lease on every write, so one claim collects a write
+/// per call, and every renewal reads it back. The statements that picked a
+/// claim's newest write asked for it with a `MAX` correlated to each row, which
+/// the store evaluated once per write the claim has: 2.5 s at 2,000 writes. No
+/// case read a claim with more than a few writes, so nothing noticed.
+///
+/// The writes are seeded by one bulk insert, because making them through the
+/// verbs would take as long as the defect. The newest carries the only
+/// `written_at`, so a read that picked an older write also answers wrong, and
+/// the bound is two seconds against milliseconds, wide enough for a loaded
+/// machine and well under what the correlated statements take.
+#[tokio::test]
+async fn a_claim_written_thousands_of_times_is_read_by_its_address_in_linear_time() {
+    const WRITES: usize = 3000;
+    let scratch = Scratch::new("hot-claim");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("hotclaim")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    let memory = DoltMemory::open(pool.clone());
+    jojobot_domain::memory::kinds::seed(&memory)
+        .await
+        .expect("the kinds are seeded");
+
+    let subject = EntityId::person("person:milhouse");
+    memory
+        .add_entity(NewEntity::new(
+            subject.clone(),
+            "Milhouse",
+            "contract-fixture",
+        ))
+        .await
+        .expect("add_entity ok")
+        .written()
+        .expect("the guard waves it through");
+    let claim = memory
+        .capture(NewFact::about(
+            subject.clone(),
+            "write 1",
+            date(2026, 10, 7),
+        ))
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("the guard waves it through");
+
+    let mut tx = pool.begin().await.expect("a transaction");
+    let (key, _) = memory
+        .resolve(&mut tx, &subject)
+        .await
+        .expect("resolve ok")
+        .expect("the subject exists");
+    let mut batch: Vec<String> = Vec::new();
+    for ordinal in 2..=WRITES {
+        let written_at = if ordinal == WRITES {
+            "'2026-10-07T12:00:00Z'"
+        } else {
+            "NULL"
+        };
+        batch.push(format!(
+            "('{}','{}',{ordinal},'write {ordinal}','inference','active','2026-10-07',{written_at})",
+            key.as_str(),
+            claim.id.as_str()
+        ));
+        if batch.len() == 500 || ordinal == WRITES {
+            sqlx::query(&format!(
+                "INSERT INTO fact_write (entity, fact_id, ordinal, content, provenance, status, \
+                 recorded_at, written_at) VALUES {}",
+                batch.join(",")
+            ))
+            .execute(&mut *tx)
+            .await
+            .expect("the writes are seeded");
+            batch.clear();
+        }
+    }
+
+    let address = FactAddress::new(key.clone(), claim.id.clone());
+    let started = std::time::Instant::now();
+    let read = memory
+        .fact_projected(&mut tx, &address)
+        .await
+        .expect("the substrate projects one");
+    let one_read = started.elapsed();
+    assert_eq!(
+        read.as_ref().map(|f| f.content.as_str()),
+        Some(format!("write {WRITES}").as_str()),
+        "the read took a write that is not the newest",
+    );
+    assert!(
+        one_read < std::time::Duration::from_secs(2),
+        "reading one claim written {WRITES} times took {one_read:?}",
+    );
+
+    let started = std::time::Instant::now();
+    let touched = DoltMemory::touched_moments(&mut tx, &key, std::slice::from_ref(&claim.id))
+        .await
+        .expect("the moments read");
+    let touch_read = started.elapsed();
+    assert_eq!(
+        touched.get(&claim.id).map(ToString::to_string).as_deref(),
+        Some("2026-10-07T12:00:00Z"),
+        "the moment is not the newest write's",
+    );
+    assert!(
+        touch_read < std::time::Duration::from_secs(2),
+        "reading the moment of one claim written {WRITES} times took {touch_read:?}",
+    );
+    tx.commit().await.expect("the read commits");
+
+    store.stop().await;
+}
+
 /// **The collision path, actually watched.** `Draw` and `open_drawing`
 /// exist, by their own doc comments, so a test can supply a draw that
 /// collides on demand — entropy will not produce a collision on its own.
