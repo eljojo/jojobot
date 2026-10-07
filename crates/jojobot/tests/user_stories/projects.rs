@@ -182,6 +182,11 @@ async fn a_decision_is_kept_in_the_operators_words_with_the_option_turned_down()
     )
     .await;
 
+    // A guess of the assistant's own about the same menu: not the operator's
+    // word, so the testimony filter must leave it out.
+    s.guess("project:visa", "pagination will matter once the menu grows")
+        .await;
+
     // Backed as the operator's word, not as a guess.
     let backed = s
         .call(
@@ -189,9 +194,32 @@ async fn a_decision_is_kept_in_the_operators_words_with_the_option_turned_down()
             json!({"query": "menu", "provenance": "testimony", "limit": 20}),
         )
         .await;
-    backed.says("sync the menu first").says("hard-coded");
-    // And the option points at whose it was.
-    s.recall("person:martin").await;
+    backed
+        .says("sync the menu first")
+        .says("hard-coded")
+        .never_says("pagination");
+    // The same query without the filter finds the guess, so its absence above
+    // is the filter's doing and not an empty result.
+    s.call("search", json!({"query": "menu", "limit": 20}))
+        .await
+        .says("pagination");
+
+    // The option turned down is read back by its state, asked of the record: the
+    // answer carries the records that answered, and the operator's other words
+    // do not.
+    let turned_down = s
+        .call(
+            "recall",
+            json!({"fields": [{"key": "state", "value": "turned down", "scope": "record"}],
+                   "facts": true}),
+        )
+        .await;
+    // And the option names whose it was, in the handle the words were written
+    // with.
+    turned_down
+        .says("hard-coded")
+        .says("@person:martin")
+        .never_says("sync the menu first");
     story.finish().await;
 }
 
@@ -208,10 +236,22 @@ async fn a_conclusion_from_a_quote_is_an_inference_that_points_at_the_quote() {
             "the basement location has terrible reception",
         )
         .await;
+    let conclusion = s
+        .guess_from(
+            "project:visa",
+            "orders must work offline, because of the reception",
+            &quote,
+        )
+        .await;
+    // A conclusion worked out from a different quote: it must not come back as
+    // built on the first.
+    let other = s
+        .event("project:visa", "the staff want a printed receipt")
+        .await;
     s.guess_from(
         "project:visa",
-        "orders must work offline, because of the reception",
-        &quote,
+        "the till must print a slip, because of the staff",
+        &other,
     )
     .await;
 
@@ -220,6 +260,20 @@ async fn a_conclusion_from_a_quote_is_an_inference_that_points_at_the_quote() {
         .call("recall", json!({"built_on": quote, "facts": true}))
         .await;
     built.says("orders must work offline");
+    // The lineage block holds the one conclusion, not the other. The answer
+    // also lists the project's every claim further down, so the needle is read
+    // from the block alone.
+    built.number("/built_on/count", 1);
+    assert!(
+        !built.json()["built_on"].to_string().contains("slip"),
+        "a conclusion worked out from another quote came back as built on this one: {}",
+        built.raw()
+    );
+    // And from the conclusion, the quote it was worked out from.
+    s.call("recall", json!({"subject": "project:visa", "facts": true}))
+        .await
+        .claim(&conclusion)
+        .says(&quote);
     story.finish().await;
 }
 
@@ -272,6 +326,17 @@ async fn an_open_question_carries_its_state_and_what_it_blocks() {
         &[],
     )
     .await;
+    // A question already asked, on another project: not drafted, so a read of
+    // the drafted ones must leave it out. It sits on its own project because a
+    // key filter reads the thing's newest write of `state`.
+    s.add("project:atlas", "The Campaign").await;
+    s.event_with(
+        "project:atlas",
+        "which refund rule do we apply? asked, answer pending",
+        json!({"state": "asked", "blocks": "work:handcart"}),
+        &[],
+    )
+    .await;
 
     let drafted = s
         .call(
@@ -279,7 +344,19 @@ async fn an_open_question_carries_its_state_and_what_it_blocks() {
             json!({"fields": [{"key": "state", "value": "drafted"}], "facts": true}),
         )
         .await;
-    drafted.says("payment provider").says("work:handcart");
+    drafted
+        .says("payment provider")
+        .says("work:handcart")
+        .never_says("refund");
+    // The asked one is there to be found by its own state, so its absence
+    // above is the filter's doing.
+    let asked = s
+        .call(
+            "recall",
+            json!({"fields": [{"key": "state", "value": "asked"}], "facts": true}),
+        )
+        .await;
+    asked.says("refund").never_says("payment provider");
     story.finish().await;
 }
 
