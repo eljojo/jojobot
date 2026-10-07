@@ -828,6 +828,8 @@ const ROSTER: &[&str] = &[
     "work:upgrade-fixture-task",
     "work:contract-blocks-real",
     "work:contract-follows-was",
+    "thing:contract-forged-holder",
+    "thing:contract-forged-target",
     "project:contract-restore-board",
     "project:contract-restore-nobody",
     "work:contract-restore-card",

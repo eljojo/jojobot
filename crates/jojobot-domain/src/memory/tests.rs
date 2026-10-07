@@ -1322,3 +1322,37 @@ fn a_ceiling_that_does_not_read_as_a_whole_number_is_refused() {
     // Another key holding the same words is none of this validator's business.
     assert!(validate_fields(&one("note", "unlimited")).is_ok());
 }
+
+/// **The mark a stored link wears is jojobot's, and a caller cannot write it.**
+///
+/// A value whose item starts with the mark is read back as the id of whatever
+/// wears that badge, so a caller who could write one could draw a link to any
+/// thing without the guard that checks it exists. Every item of a list is held
+/// to it, and each refusal is paired with a value that reads.
+#[test]
+fn a_caller_cannot_write_the_stored_mark_into_a_field_value() {
+    let one = |value: &str| -> BTreeMap<String, String> {
+        [("blocks".to_string(), value.to_string())]
+            .into_iter()
+            .collect()
+    };
+    for bad in ["@#k7h2mn", "  @#k7h2mn", "work:sigma, @#k7h2mn"] {
+        let refused =
+            validate_fields(&one(bad)).expect_err("a value carrying the stored mark is refused");
+        assert!(
+            matches!(refused, MemoryError::InvalidFact(_)),
+            "{bad:?} is refused as an invalid fact: {refused:?}"
+        );
+    }
+    for fine in [
+        "work:sigma",
+        "mail me @ home",
+        "see @#",
+        "email a@#b.example",
+    ] {
+        assert!(
+            validate_fields(&one(fine)).is_ok(),
+            "{fine:?} does not start an item with the stored mark"
+        );
+    }
+}

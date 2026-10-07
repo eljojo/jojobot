@@ -26,6 +26,21 @@ use super::{
     Sessions,
 };
 
+/// **The refusal a session's text gets when it carries the stored mark** (see
+/// [`mention::forged_mark`]).
+fn refuse_forged(text: &[&str]) -> Result<(), SessionError> {
+    match text.iter().any(|part| mention::forged_mark(part)) {
+        false => Ok(()),
+        true => Err(SessionError::InvalidEntry(format!(
+            "the text carries '{}' followed by a badge, which is how jojobot stores a link to a \
+             thing, and only jojobot writes it. Write the handle (kind:slug) to link a thing, or \
+             leave the '{}' off.",
+            mention::MARK,
+            mention::MARK,
+        ))),
+    }
+}
+
 /// Wraps any [`Sessions`] so a handle written into a session's focus or its
 /// chronology is stored as the permanent id and served as the handle the
 /// thing wears today — **and so is `bot` itself**, the same rule applied to
@@ -192,6 +207,7 @@ impl Sessions for Mentioning {
     /// opening focus becomes the badge its row wears, so the card keeps a
     /// pointer rather than a spelling.
     async fn begin(&self, new: NewSession) -> Result<Session, SessionError> {
+        refuse_forged(&[new.focus.as_str()])?;
         let known = self.known().await?;
         let former = self.former().await?;
         let bot = Self::storage_key_for(&new.bot, &known, &former);
@@ -209,6 +225,7 @@ impl Sessions for Mentioning {
     }
 
     async fn append(&self, id: &SessionId, entry: NewEntry) -> Result<JournalEntry, SessionError> {
+        refuse_forged(&[entry.text.as_str()])?;
         let known = self.known().await?;
         let mut written = self
             .inner
@@ -226,6 +243,7 @@ impl Sessions for Mentioning {
     }
 
     async fn amend_last(&self, id: &SessionId, text: &str) -> Result<JournalEntry, SessionError> {
+        refuse_forged(&[text])?;
         let known = self.known().await?;
         let mut written = self
             .inner
@@ -245,6 +263,7 @@ impl Sessions for Mentioning {
         text: &str,
         at: jiff::Timestamp,
     ) -> Result<JournalEntry, SessionError> {
+        refuse_forged(&[text])?;
         let known = self.known().await?;
         let mut written = self
             .inner
@@ -261,6 +280,7 @@ impl Sessions for Mentioning {
 
     /// **Resolved on the way in, exactly as an entry's text is.**
     async fn set_focus(&self, id: &SessionId, focus: &str) -> Result<Session, SessionError> {
+        refuse_forged(&[focus])?;
         let known = self.known().await?;
         let mut session = self
             .inner
@@ -561,5 +581,66 @@ mod tests {
             .await
             .expect("read_session should succeed on the bare store");
         assert_eq!(raw.focus, format!("about @{never}"));
+    }
+
+    /// **The stored mark is jojobot's, so a session's text may not carry one.**
+    /// The focus a session opens with, a beat, an amended beat and a focus
+    /// change are all refused, and the same words without the mark are stored.
+    #[tokio::test]
+    async fn a_caller_cannot_write_the_stored_mark_into_a_session() {
+        let memory: Arc<dyn Memory> = Arc::new(InMemoryMemory::booted());
+        let sessions = Mentioning::new(Arc::new(InMemorySessions::new()), memory);
+        let bot = crate::memory::EntityId("bot:delta".into());
+        let begin = |sid: &str, focus: &str| NewSession {
+            bot: bot.clone(),
+            sid: super::super::Sid(sid.to_string()),
+            focus: focus.to_string(),
+            started_at: epoch(),
+            timezone: None,
+            started_on: None,
+        };
+        let refused = |what: &str, outcome: Result<(), SessionError>| {
+            assert!(
+                matches!(outcome, Err(SessionError::InvalidEntry(_))),
+                "{what} carrying the stored mark is refused: {outcome:?}",
+            );
+        };
+        refused(
+            "an opening focus",
+            sessions
+                .begin(begin("sd03", "about @#k7h2mn"))
+                .await
+                .map(|_| ()),
+        );
+        let session = sessions
+            .begin(begin("sd04", "about a bare @# mark"))
+            .await
+            .expect("a mark with no badge is ordinary text");
+        let entry = |text: &str| NewEntry::manual(text, epoch(), None);
+        refused(
+            "a beat",
+            sessions
+                .append(&session.id, entry("found @#k7h2mn"))
+                .await
+                .map(|_| ()),
+        );
+        sessions
+            .append(&session.id, entry("found nothing forged"))
+            .await
+            .expect("the same beat without the mark is stored");
+        refused(
+            "an amended beat",
+            sessions
+                .amend_last(&session.id, "found @#k7h2mn")
+                .await
+                .map(|_| ()),
+        );
+        refused(
+            "a focus change",
+            sessions
+                .set_focus(&session.id, "now @#k7h2mn")
+                .await
+                .map(|_| ()),
+        );
     }
 }

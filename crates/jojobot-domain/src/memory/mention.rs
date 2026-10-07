@@ -265,10 +265,35 @@ fn handle_at(text: &str, at: usize) -> Attempt {
     }
 }
 
+/// **Whether a caller's text carries the stored mark.** [`rendered`] reads an
+/// `@` and `#` followed by a badge as a link to whatever wears that badge, so
+/// text a caller wrote in that shape would be a link nothing checked. The mark
+/// is jojobot's to write, and this is the question every write of a caller's
+/// text asks first. A mark with no badge after it reads as ordinary text and is
+/// not one.
+pub fn forged_mark(text: &str) -> bool {
+    text.match_indices('@').any(|(at, _)| {
+        text[at..].starts_with(MARK) && !run_of(text, at + MARK.len(), is_badge_byte).is_empty()
+    })
+}
+
 /// The error a write reaches for when [`resolved`] refuses. A single spelling
 /// so every call site names the same failure the same way.
 fn unloaded(_: KindsUnloaded) -> super::MemoryError {
     super::MemoryError::KindsNeverLoaded { attempted: None }
+}
+
+/// **The refusal a caller's text gets when it carries the stored mark** (see
+/// [`forged_mark`]). One spelling for every write that takes text.
+fn refuse_forged(text: &[&str]) -> Result<(), super::MemoryError> {
+    match text.iter().any(|part| forged_mark(part)) {
+        false => Ok(()),
+        true => Err(super::MemoryError::InvalidFact(format!(
+            "the text carries '{MARK}' followed by a badge, which is how jojobot stores a link \
+             to a thing, and only jojobot writes it. Write the handle (kind:slug) to link a \
+             thing, or leave the '{MARK}' off."
+        ))),
+    }
 }
 
 /// Whether any of this text holds a mention-shaped substring this process
@@ -555,6 +580,7 @@ impl super::Memory for Mentioning {
         &self,
         fact: super::NewFact,
     ) -> Result<super::Guarded<super::Fact>, super::MemoryError> {
+        refuse_forged(&[fact.content.as_str(), fact.details.as_deref().unwrap_or("")])?;
         let known = self.known().await?;
         if let Some(blocked) = Self::screen(
             &[fact.content.as_str(), fact.details.as_deref().unwrap_or("")],
@@ -599,6 +625,10 @@ impl super::Memory for Mentioning {
         patch: super::FactPatch,
         caller: &super::EntityId,
     ) -> Result<super::Guarded<super::Fact>, super::MemoryError> {
+        refuse_forged(&[
+            patch.content.as_deref().unwrap_or(""),
+            patch.details.as_deref().unwrap_or(""),
+        ])?;
         let known = self.known().await?;
         if let Some(blocked) = Self::screen(
             &[
@@ -748,6 +778,7 @@ impl super::Memory for Mentioning {
         date: jiff::civil::Date,
         caller: &super::EntityId,
     ) -> Result<super::Retraction, super::MemoryError> {
+        refuse_forged(&[reason.unwrap_or("")])?;
         let known = self.known().await?;
         if let Some(err) = Self::screen_or_unknown(&[reason.unwrap_or("")], &known) {
             return Err(err);
@@ -776,6 +807,7 @@ impl super::Memory for Mentioning {
         date: jiff::civil::Date,
         caller: &EntityId,
     ) -> Result<super::Merge, super::MemoryError> {
+        refuse_forged(&[reason.unwrap_or("")])?;
         let known = self.known().await?;
         if let Some(err) = Self::screen_or_unknown(&[reason.unwrap_or("")], &known) {
             return Err(err);
@@ -801,6 +833,7 @@ impl super::Memory for Mentioning {
         entity: &EntityId,
         prose: &str,
     ) -> Result<String, super::MemoryError> {
+        refuse_forged(&[prose])?;
         let known = self.known().await?;
         let stored = self
             .inner
@@ -1031,5 +1064,74 @@ mod tests {
             vec![(4..20, EntityId("person:milhouse".into()))],
             "found: {spans:?}, in: {served:?}",
         );
+    }
+
+    /// **The stored mark is jojobot's, so a caller's text may not carry one.**
+    ///
+    /// A mark followed by a badge reads back as the handle of whatever wears
+    /// that badge, so text a caller wrote with one would be a link nothing
+    /// checked. Claim words, claim details and a thing's prose are all
+    /// refused, and the same sentence written as a handle is stored. A mark
+    /// with no badge after it is ordinary text.
+    #[tokio::test]
+    async fn a_caller_cannot_write_the_stored_mark_into_text() {
+        use crate::memory::{Memory, NewEntity, NewFact};
+        let store = Mentioning::new(std::sync::Arc::new(
+            crate::memory::testing::InMemoryMemory::booted(),
+        ));
+        let holder = EntityId("thing:contract-forged-holder".into());
+        let target = EntityId("thing:contract-forged-target".into());
+        for (id, name) in [(&holder, "Holder"), (&target, "Target")] {
+            store
+                .add_entity(NewEntity::new(id.clone(), name, "test"))
+                .await
+                .expect("add ok")
+                .written()
+                .expect("nothing collides");
+        }
+        let day = jiff::civil::date(2026, 8, 1);
+        let refused = |what: &str, outcome: Result<_, crate::memory::MemoryError>| {
+            assert!(
+                matches!(outcome, Err(crate::memory::MemoryError::InvalidFact(_))),
+                "{what} carrying the stored mark is refused: {:?}",
+                outcome.map(|_: ()| ()),
+            );
+        };
+        refused(
+            "claim words",
+            store
+                .capture(NewFact::about(holder.clone(), "waits on @#k7h2mn", day))
+                .await
+                .map(|_| ()),
+        );
+        refused(
+            "claim details",
+            store
+                .capture(NewFact {
+                    details: Some("because of @#k7h2mn".to_string()),
+                    ..NewFact::about(holder.clone(), "waits", day)
+                })
+                .await
+                .map(|_| ()),
+        );
+        refused(
+            "prose",
+            store.set_prose(&holder, "see @#k7h2mn").await.map(|_| ()),
+        );
+        // The positives the refusals are measured against.
+        store
+            .capture(NewFact::about(
+                holder.clone(),
+                format!("waits on @{target}, mail me @# today"),
+                day,
+            ))
+            .await
+            .expect("a handle is written as a handle")
+            .written()
+            .expect("the claim lands");
+        store
+            .set_prose(&holder, "a mark with no badge, @# , is text")
+            .await
+            .expect("prose with a bare mark is stored");
     }
 }

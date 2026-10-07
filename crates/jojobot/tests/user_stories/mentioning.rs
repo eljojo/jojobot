@@ -497,3 +497,66 @@ async fn a_link_under_a_key_nobody_declared_follows_its_target_through_a_rename(
 
     story.finish().await;
 }
+
+/// **"I wrote it the way it is stored." It is turned back.**
+///
+/// The way jojobot stores a link to a thing belongs to jojobot. A caller who
+/// writes it into a field, a claim, a journal beat or a message would draw a link
+/// to whatever wears that badge without the check that the thing exists, so each
+/// of those is refused with nothing written — and the same sentence written as a
+/// handle lands and reads back.
+#[tokio::test]
+async fn the_way_a_link_is_stored_is_refused_when_a_caller_writes_it() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+
+    s.add("work:sigma", "The First Job").await;
+    s.add("thing:handcart", "The Handcart").await;
+
+    s.refused(
+        "capture",
+        json!({
+            "subject": "thing:handcart",
+            "content": "waits on the work",
+            "provenance": "testimony",
+            "fields": { "blocks": "@#k7h2mn" },
+        }),
+    )
+    .await
+    .says("blocked");
+    s.refused(
+        "capture",
+        json!({
+            "subject": "thing:handcart",
+            "content": "waits on @#k7h2mn",
+            "provenance": "testimony",
+        }),
+    )
+    .await
+    .says("blocked");
+    s.refused("journal", json!({"entry": "found @#k7h2mn"}))
+        .await
+        .says("blocked");
+    s.refused(
+        "post_message",
+        json!({"to": "gamma", "subject": "a link", "body": "see @#k7h2mn"}),
+    )
+    .await
+    .says("blocked");
+
+    // The positive the refusals are measured against: as a handle it lands, and
+    // nothing of the refused writes did.
+    s.event_with(
+        "thing:handcart",
+        "waits on @work:sigma",
+        json!({ "blocks": "work:sigma" }),
+        &[],
+    )
+    .await;
+    s.recall("thing:handcart")
+        .await
+        .says("\"blocks\":\"work:sigma\"")
+        .never_says("k7h2mn");
+
+    story.finish().await;
+}

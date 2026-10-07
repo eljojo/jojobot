@@ -1615,6 +1615,22 @@ pub fn validate_fields(fields: &BTreeMap<String, String>) -> Result<(), MemoryEr
              taken back. Rename the key — anything else is yours to choose."
         )));
     }
+    // **The mark is jojobot's.** An item that starts with it reads back as the id
+    // of whatever wears that badge, so a caller's value that did would draw a link
+    // the existence guard never asked about.
+    if let Some((key, _)) = fields.iter().find(|(_, value)| {
+        value
+            .split(',')
+            .any(|item| item.trim().starts_with(mention::MARK))
+    }) {
+        return Err(MemoryError::InvalidFact(format!(
+            "a value under '{key}' starts with '{}', which is how jojobot stores a link to a \
+             thing, and only jojobot writes it. Write the handle (kind:slug) to link a thing, \
+             or leave the '{}' off.",
+            mention::MARK,
+            mention::MARK,
+        )));
+    }
     // **A ceiling is a whole number, or it is not written.** A room's capacity
     // and a thought's body cap are read as whole numbers, and a value that does
     // not read as one leaves the container with no ceiling at all, with

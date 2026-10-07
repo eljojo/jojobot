@@ -29,6 +29,21 @@ use super::{
     NewMessage, Quarantined, TakenBy,
 };
 
+/// **The refusal a message's text gets when it carries the stored mark** (see
+/// [`mention::forged_mark`]).
+fn refuse_forged(text: &[&str]) -> Result<(), MailboxError> {
+    match text.iter().any(|part| mention::forged_mark(part)) {
+        false => Ok(()),
+        true => Err(MailboxError::InvalidMessage(format!(
+            "the text carries '{}' followed by a badge, which is how jojobot stores a link to a \
+             thing, and only jojobot writes it. Write the handle (kind:slug) to link a thing, or \
+             leave the '{}' off.",
+            mention::MARK,
+            mention::MARK,
+        ))),
+    }
+}
+
 /// Wraps any [`Mailboxes`] so a handle written into a message's body,
 /// subject or notes is stored as the permanent id and served as the handle
 /// the thing wears today — **and so is `sender` itself**, the same rule
@@ -219,6 +234,10 @@ impl Mailboxes for Mentioning {
         &self,
         message: NewMessage,
     ) -> Result<super::Guarded<Message>, MailboxError> {
+        refuse_forged(&[
+            message.body.as_str(),
+            message.subject.as_deref().unwrap_or(""),
+        ])?;
         let known = self.known().await?;
         let former = self.former().await?;
         let sender = Self::storage_sender_for(&message.sender, &known, &former);
@@ -282,6 +301,7 @@ impl Mailboxes for Mentioning {
         id: &MessageId,
         notes: Option<&str>,
     ) -> Result<Message, MailboxError> {
+        refuse_forged(&[notes.unwrap_or("")])?;
         let known = self.known().await?;
         let resolved_notes = notes
             .map(|n| mention::resolved(n, &known))
@@ -310,6 +330,7 @@ impl Mailboxes for Mentioning {
         // `mark_processed`'s notes are.** The reason is free text a caller
         // writes, so a handle in it is a link and not a spelling. An
         // unresolvable mention is left as written, never refused.
+        refuse_forged(&[reason])?;
         let known = self.known().await?;
         let resolved =
             mention::resolved(reason, &known).map_err(|_| MailboxError::KindsNeverLoaded)?;
@@ -550,5 +571,68 @@ mod tests {
             .find(|m| m.id == posted.id)
             .expect("the message is still there");
         assert_eq!(raw.body, format!("about @{never}"));
+    }
+
+    /// **The stored mark is jojobot's, so a message's text may not carry one.**
+    /// A body, a subject, the notes a message is processed with and a
+    /// quarantine reason are refused, and the same words without the mark are
+    /// stored.
+    #[tokio::test]
+    async fn a_caller_cannot_write_the_stored_mark_into_mail() {
+        let memory: Arc<dyn Memory> = Arc::new(InMemoryMemory::booted());
+        let owner = crate::memory::EntityId("bot:delta".into());
+        let bare = Arc::new(InMemoryMailboxes::new());
+        bare.know_owner(&owner);
+        let mailboxes = Mentioning::new(bare, memory);
+        let mailbox_name = MailboxName("delta".to_string());
+        mailboxes
+            .create_mailbox(&mailbox_name, &owner, None)
+            .await
+            .expect("create_mailbox should succeed")
+            .written()
+            .expect("the guard must not block creating delta's box");
+        let message = |body: &str, subject: Option<&str>| NewMessage {
+            mailbox: mailbox_name.clone(),
+            body: body.to_string(),
+            subject: subject.map(str::to_string),
+            sender: "bot:epsilon".to_string(),
+            sent_at: epoch(),
+            in_reply_to: None,
+            sender_mail_waiting_at_send: None,
+            posted_by_session: None,
+        };
+        let refused = |what: &str, outcome: Result<(), MailboxError>| {
+            assert!(
+                matches!(outcome, Err(MailboxError::InvalidMessage(_))),
+                "{what} carrying the stored mark is refused: {outcome:?}",
+            );
+        };
+        refused(
+            "a body",
+            mailboxes
+                .post_message(message("about @#k7h2mn", None))
+                .await
+                .map(|_| ()),
+        );
+        refused(
+            "a subject",
+            mailboxes
+                .post_message(message("a body", Some("re @#k7h2mn")))
+                .await
+                .map(|_| ()),
+        );
+        let posted = mailboxes
+            .post_message(message("a body with a bare @# mark", Some("a subject")))
+            .await
+            .expect("post_message should succeed")
+            .written()
+            .expect("the same message without a forged mark is stored");
+        refused(
+            "processing notes",
+            mailboxes
+                .mark_processed(&posted.id, Some("done, see @#k7h2mn"))
+                .await
+                .map(|_| ()),
+        );
     }
 }
