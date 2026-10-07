@@ -130,7 +130,7 @@ fmt-check: ## Assert the workspace is formatted, rewriting nothing
 	$(CARGO) fmt --all --check
 
 build: ## Build the workspace
-	$(CARGO) build --workspace
+	$(CARGO) build --workspace --locked
 
 # **The real-dependency gate, and it needs no credentials any more.**
 #

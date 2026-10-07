@@ -286,3 +286,29 @@ fn the_year_room_is_gated_apart_from_the_other_rooms() {
         "`rooms` and `year` must be independent features: {manifest}",
     );
 }
+
+/// **The build the paid tier depends on is the locked workspace build.**
+///
+/// The deploy package builds from `Cargo.lock` and can neither rewrite it nor
+/// reach the network, and the bar asks the same question with `--locked`. A
+/// build step without the flag repairs a manifest that disagrees with the lock
+/// silently, so the binary a paid run drives is not the one the package makes.
+///
+/// **The positive is in the same case**: the line is the workspace build, so a
+/// recipe that gained the flag by building one crate does not pass.
+#[test]
+fn the_paid_tiers_build_is_the_locked_workspace_build() {
+    let planned = paid_dry_run(None);
+    let build = planned
+        .lines()
+        .find(|line| line.contains("build"))
+        .unwrap_or_else(|| panic!("the paid target plans no build step: {planned}"));
+    assert!(
+        build.contains("--locked"),
+        "the build the paid tier depends on can rewrite the lock: {build}",
+    );
+    assert!(
+        build.contains("--workspace"),
+        "the build the paid tier depends on is not the workspace build: {build}",
+    );
+}
