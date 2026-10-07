@@ -24,6 +24,9 @@ getrandom.workspace = true
 # A room's server is asked to die with the run that opened it, and the store
 # a dead run left behind is signalled by pid — both are kernel calls.
 libc.workspace = true
+# The one arbiter for loopback ports, shared with the store suites. It has no
+# dependencies of its own, so the harness still links nothing of jojobot.
+jojobot-ports.workspace = true
 # The MCP client the driver reaches the spawned server with — the same crate
 # and the same transport a real client uses, so what is under test is the
 # served surface rather than a shortcut into the process.

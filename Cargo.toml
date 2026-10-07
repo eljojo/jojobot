@@ -110,6 +110,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 jojobot-domain = { path = "crates/jojobot-domain" }
 jojobot-adapters = { path = "crates/jojobot-adapters" }
 jojobot-mcp = { path = "crates/jojobot-mcp" }
+jojobot-ports = { path = "crates/jojobot-ports" }
 
 [profile.release]
 lto = "thin"

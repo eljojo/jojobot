@@ -12,6 +12,9 @@ rust-version.workspace = true
 # to; the MCP-only rule is for the assistant-in-session, not the server).
 [dependencies]
 jojobot-domain.workspace = true
+# The one arbiter for the ports the suites hand out. Optional, and only the
+# `testing` feature pulls it in, so it never ships in a production build.
+jojobot-ports = { workspace = true, optional = true }
 async-trait = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -37,7 +40,7 @@ libc = { workspace = true }
 # The port helper these suites share lives behind this feature so it compiles
 # for tests and NEVER ships in a production binary.
 [features]
-testing = []
+testing = ["dep:jojobot-ports"]
 
 [dev-dependencies]
 tokio = { workspace = true }

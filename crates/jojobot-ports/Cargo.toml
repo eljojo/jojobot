@@ -1,0 +1,14 @@
+[package]
+name = "jojobot-ports"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+# **The one arbiter for loopback ports that the test harnesses hand out.**
+# The store suites and the rooms both start servers on ports they choose, and
+# two runs on one machine must never be given the same one. Both draw from
+# here. It depends on nothing but the operating system, so a harness can use
+# it without linking anything else of jojobot.
+[dependencies]
+libc.workspace = true
