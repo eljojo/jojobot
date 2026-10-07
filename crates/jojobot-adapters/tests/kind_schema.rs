@@ -632,6 +632,82 @@ async fn a_seed_over_a_callers_type_with_a_reference_key_still_finishes() {
     server.stop().await;
 }
 
+/// **A caller's type under the name of a kind that carries project-management
+/// keys is displaced by the build's keys, and what it held is remembered.**
+///
+/// `work` and `project` were kinds with no keys, so a caller could hold either
+/// name as a type of their own. A build that gives them keys has to boot over
+/// such a type: the kind's keys stand where the type stood, and the type's keys
+/// are kept as they were declared. The same displacement is pinned for
+/// `promise` above and was pinned for `project` by the boot case until that
+/// kind gained keys.
+async fn a_callers_type_under_a_keyed_kinds_name_is_displaced_and_remembered(
+    what: &str,
+    token: &str,
+) {
+    let (mut server, store, _turn) = a_store(what).await;
+
+    // The store is seeded, so the kind is shipped with its keys. Take it back
+    // to stand in for the build that did not carry them, and declare the
+    // caller's type under the same name.
+    store
+        .reclaim_kind(token)
+        .await
+        .expect("the shipped kind is taken back");
+    let theirs = DeclaredType::new(token, vec![Field::new("budget", ValueType::Text)]);
+    store
+        .declare_type(theirs.clone())
+        .await
+        .expect("a caller declares a type under the name of a keyless kind");
+
+    // A restart: the process starts with no kinds loaded.
+    kinds::load(Vec::<String>::new());
+    let seeded = kinds::seed(&store).await;
+    assert!(
+        seeded.is_ok(),
+        "the seed finishes over the caller's type: {seeded:?}"
+    );
+
+    let displaced = store
+        .displaced_type(token)
+        .await
+        .expect("the read answers")
+        .unwrap_or_else(|| panic!("what the caller's type held was not remembered"));
+    assert_eq!(
+        displaced.fields, theirs.fields,
+        "the keys the caller declared, exactly as declared"
+    );
+    let held = store
+        .declared_types()
+        .await
+        .expect("the roster reads")
+        .into_iter()
+        .find(|declared| declared.name == token)
+        .expect("the name is still declared");
+    let keys: Vec<&str> = held.fields.iter().map(|f| f.key.as_str()).collect();
+    assert!(
+        keys.contains(&"status") && !keys.contains(&"budget"),
+        "the build's keys stand where the caller's type stood: {keys:?}"
+    );
+
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn a_callers_type_named_project_is_displaced_by_the_kinds_keys() {
+    a_callers_type_under_a_keyed_kinds_name_is_displaced_and_remembered(
+        "displaces-project",
+        "project",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_callers_type_named_work_is_displaced_by_the_kinds_keys() {
+    a_callers_type_under_a_keyed_kinds_name_is_displaced_and_remembered("displaces-work", "work")
+        .await;
+}
+
 /// **Neither side may take the other's keys**, and the refusal says which
 /// thing already holds the name.
 #[tokio::test]

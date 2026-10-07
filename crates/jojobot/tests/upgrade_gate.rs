@@ -117,6 +117,16 @@ async fn the_current_binary_boots_on_a_store_an_older_binary_filled() {
         seen.join("\n")
     );
 
+    // **Keep reading.** The binary logs to the pipe for as long as it runs, and
+    // a pipe nobody reads fills, after which the binary blocks inside a write
+    // and every call to it hangs.
+    tokio::spawn(async move { while let Ok(Some(_)) = lines.next_line().await {} });
+    let stderr = child.stderr.take().expect("stderr was piped");
+    tokio::spawn(async move {
+        let mut lines = tokio::io::AsyncBufReadExt::lines(tokio::io::BufReader::new(stderr));
+        while let Ok(Some(_)) = lines.next_line().await {}
+    });
+
     // **The boot's own warnings fail the gate.** Each says a half of the boot
     // failed and carried on — the fold or the search index came up empty, or
     // the kind seed stopped part way — so the server serves and every read of
@@ -283,15 +293,6 @@ async fn assert_every_recorded_record_reads_back(
     if !read.contains("upgrade-fixture-type") {
         fail("the declared type", &read);
     }
-    // **A kind this build ships over a type the recording's caller had declared
-    // under the same name**: the kind is there, so the seed did not stop on it.
-    if !read.contains("\"kind\":\"promise\"") {
-        fail(
-            "the shipped kind over a caller's type of the same name",
-            &read,
-        );
-    }
-
     // The thought: an active, connection-edged claim on the bot's own
     // handle, still readable as one of its own thoughts.
     let read = surface
@@ -323,7 +324,7 @@ async fn assert_every_recorded_record_reads_back(
     // the dump** — a check that any non-empty value passes would pass on a
     // field the upgrade had rewritten to garbage.
     if role_holder.is_empty()
-        || parsed["objects"][0]["fields"]["role/upgrade-fixture-recorder/holder"] != role_holder
+        || parsed["objects"][0]["fields"]["role/upgrade-fixture-holder/holder"] != role_holder
     {
         fail("the role-claim fields", &read);
     }
@@ -350,7 +351,10 @@ async fn assert_every_recorded_record_reads_back(
     // The wrapped session — `list_runs` is the direct read on a bot's own
     // runs and their state, attributed to the caller's own sid.
     let booted = surface
-        .call("start_here", json!({"bot": "assistant", "brief": true}))
+        .call(
+            "start_here",
+            json!({"bot": "assistant", "brief": true, "resume": "new"}),
+        )
         .await;
     let booted: serde_json::Value =
         serde_json::from_str(&booted).unwrap_or_else(|_| fail("booting to verify", &booted));
@@ -365,12 +369,109 @@ async fn assert_every_recorded_record_reads_back(
     let runs = parsed["runs"]
         .as_array()
         .unwrap_or_else(|| fail("the wrapped session's own runs list", &read));
-    // The recording ran `assistant`'s only session in a fresh store, so
-    // this is that one run.
-    let Some(recording_run) = runs.first() else {
-        fail("the wrapped session", &read);
-    };
-    if recording_run["state"] != "wrapped" {
+    // The recording wrapped its own run and left a second one open, so the
+    // list holds both states.
+    if !runs.iter().any(|run| run["state"] == "wrapped") {
         fail("the wrapped session's own state", &read);
+    }
+    // **What this build newly interprets, read from records the older build
+    // wrote as free text, and held on the next write.**
+    assert_the_project_keys_and_the_due_day_read_back_and_bind(surface, git_ref, sid).await;
+}
+
+/// **A project, work filed under it, a hand-written due day and a caller's type
+/// named `project`, all written by the older build.**
+///
+/// Each is read back as written. Then two writes go through the served surface:
+/// a status the project lists lands, and a status it does not list is refused.
+/// The refusal is what shows the build's own `project` keys stand where the
+/// caller's type of that name stood, because a type holding only a `budget` key
+/// refuses no status.
+async fn assert_the_project_keys_and_the_due_day_read_back_and_bind(
+    surface: &Surface,
+    git_ref: &str,
+    sid: &str,
+) {
+    let fail = |what: &str, body: &str| -> ! {
+        panic!("recorded at {git_ref}: {what} did not read back correctly: {body}")
+    };
+    let fields_of = |read: &str, what: &str| -> serde_json::Value {
+        let parsed: serde_json::Value =
+            serde_json::from_str(read).unwrap_or_else(|_| fail(what, read));
+        if parsed["objects"][0]["id"].is_null() {
+            fail(what, read);
+        }
+        parsed["objects"][0]["fields"].clone()
+    };
+
+    let read = surface
+        .call(
+            "recall",
+            json!({"subject": "project:upgrade-fixture-project"}),
+        )
+        .await;
+    let project = fields_of(&read, "the recorded project");
+    if project["status"] != "now"
+        || !project["columns"]
+            .as_str()
+            .is_some_and(|columns| columns.contains("review") && columns.contains("someday"))
+    {
+        fail("the recorded project's status and columns", &read);
+    }
+
+    let read = surface
+        .call("recall", json!({"subject": "work:upgrade-fixture-task"}))
+        .await;
+    let task = fields_of(&read, "the recorded task");
+    if task["status"] != "review"
+        || task["owner"] != "person:upgrade-fixture-person"
+        || task["depends_on"] != "work:upgrade-fixture-prior"
+    {
+        fail("the recorded task's status, owner and dependency", &read);
+    }
+
+    let read = surface
+        .call("recall", json!({"subject": "thing:upgrade-fixture-thing"}))
+        .await;
+    let thing = fields_of(&read, "the thing with a hand-written due day");
+    if thing["due_on"] != "2026-12-01" {
+        fail("the hand-written due day", &read);
+    }
+
+    // The next write is held to the project's own list.
+    let landed = surface
+        .call(
+            "capture",
+            json!({"subject": "work:upgrade-fixture-task", "content": "waiting on a review",
+                   "provenance": "testimony", "fields": {"status": "waiting"}, "sid": sid}),
+        )
+        .await;
+    if landed.contains("\"status\":\"blocked\"") {
+        fail("a status the project lists", &landed);
+    }
+    let refused = surface
+        .call(
+            "capture",
+            json!({"subject": "work:upgrade-fixture-task", "content": "an unlisted status",
+                   "provenance": "testimony", "fields": {"status": "somewhere-else"},
+                   "sid": sid}),
+        )
+        .await;
+    if !refused.contains("\"status\":\"blocked\"") || !refused.contains("review") {
+        fail("a refusal naming the project's own columns", &refused);
+    }
+    let refused = surface
+        .call(
+            "capture",
+            json!({"subject": "project:upgrade-fixture-project", "content": "an unlisted status",
+                   "provenance": "testimony", "fields": {"status": "somewhere-else"},
+                   "sid": sid}),
+        )
+        .await;
+    if !refused.contains("\"status\":\"blocked\"") {
+        fail(
+            "the build's own keys where the caller's `project` type stood",
+            &refused,
+        );
     }
 }

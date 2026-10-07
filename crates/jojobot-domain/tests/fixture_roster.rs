@@ -682,6 +682,7 @@ const ROSTER: &[&str] = &[
     "place:contract-riverbnd",
     "place:contract-tavern",
     "place:upgrade-fixture-place",
+    "project:upgrade-fixture-project",
     "project:contract-atlas",
     "project:contract-away-project",
     "project:contract-bad-parent",
@@ -822,6 +823,8 @@ const ROSTER: &[&str] = &[
     "work:red-bike",
     "work:contract-first-mix",
     "work:contract-the-stay",
+    "work:upgrade-fixture-prior",
+    "work:upgrade-fixture-task",
 ];
 
 /// Every file in the workspace that can carry a handle.

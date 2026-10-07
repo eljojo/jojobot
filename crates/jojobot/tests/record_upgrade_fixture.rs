@@ -89,6 +89,10 @@ async fn record_the_upgrade_fixture() {
         served,
         "the old binary at {git_ref} did not reach its own serving line"
     );
+    // **Keep reading.** The binary logs to the pipe for as long as it runs, and
+    // a pipe nobody reads fills, after which the binary blocks inside a write
+    // and every call to it hangs.
+    tokio::spawn(async move { while let Ok(Some(_)) = lines.next_line().await {} });
 
     let surface = Surface::connect(&format!("http://127.0.0.1:{http_port}/mcp"))
         .await
@@ -153,8 +157,8 @@ async fn record_the_upgrade_fixture() {
 /// back**, never exhaustive — the gate is a boot-and-read-back proof, not a
 /// second copy of every other suite's coverage.
 ///
-/// **Returns the session id the recording's own boot was handed**, which is
-/// what the role claim below records as its holder.
+/// **Returns the session id of the run left holding a role**, which is what
+/// that role records as its holder.
 async fn seed_representative_records(surface: &Surface) -> String {
     // **The role is claimed at the boot door, the only door it opens
     // through.** The holder is the session that booted, so the claim is the
@@ -287,21 +291,106 @@ async fn seed_representative_records(surface: &Surface) -> String {
         .await
         .expect("the type is declared");
 
-    // **A caller's type under a name a later build ships as a kind.** Last night
-    // a model invented keys for a promise, and a caller can declare a type under
-    // any name the build does not hold. The build that ships the kind has to
-    // boot on a store that already holds a type of that name.
+    // **A project and its work, written before any build declared keys for
+    // either.** The deployed build holds `status`, `owner`, `depends_on` and
+    // `columns` as free text. A later build declares them, and has to read
+    // what was written under the old build and hold the next write to them.
     surface
         .must(
-            "declare_type",
+            "add_entity",
+            json!({"kind": "project", "handle": "upgrade-fixture-project",
+                   "name": "A Recorded Project", "source": "test", "sid": sid}),
+        )
+        .await
+        .expect("the project is added");
+    for (slug, name) in [
+        ("upgrade-fixture-prior", "A Recorded Prior Task"),
+        ("upgrade-fixture-task", "A Recorded Task"),
+    ] {
+        surface
+            .must(
+                "add_entity",
+                json!({"kind": "work", "handle": slug, "name": name, "source": "test",
+                       "parent": "project:upgrade-fixture-project", "sid": sid}),
+            )
+            .await
+            .unwrap_or_else(|e| panic!("add_entity work:{slug}: {e:#}"));
+    }
+    surface
+        .must(
+            "capture",
             json!({
-                "name": "promise",
-                "fields": [{"key": "promised_for", "holds": "date"}],
+                "subject": "project:upgrade-fixture-project",
+                "content": "the recorded project is under way",
+                "provenance": "testimony",
+                "fields": {"status": "now",
+                           "columns": "someday, next, now, waiting, done, review"},
                 "sid": sid,
             }),
         )
         .await
-        .expect("the caller's type under a later kind's name is declared");
+        .expect("the project's status and columns are captured");
+    surface
+        .must(
+            "capture",
+            json!({
+                "subject": "work:upgrade-fixture-prior",
+                "content": "the prior task is finished",
+                "provenance": "testimony",
+                "fields": {"status": "done"},
+                "sid": sid,
+            }),
+        )
+        .await
+        .expect("the prior task's status is captured");
+    surface
+        .must(
+            "capture",
+            json!({
+                "subject": "work:upgrade-fixture-task",
+                "content": "the recorded task is in review",
+                "provenance": "testimony",
+                "fields": {"status": "review",
+                           "owner": "person:upgrade-fixture-person",
+                           "depends_on": "work:upgrade-fixture-prior"},
+                "sid": sid,
+            }),
+        )
+        .await
+        .expect("the task's status, owner and dependency are captured");
+
+    // **A due day written by hand on a thing that carries none of the keys
+    // that make one.** The later build keeps the stored due day its own and
+    // refuses a caller who sends it. What an earlier caller wrote has to
+    // read back as written.
+    surface
+        .must(
+            "capture",
+            json!({
+                "subject": "thing:upgrade-fixture-thing",
+                "content": "a day written by hand",
+                "provenance": "testimony",
+                "fields": {"due_on": "2026-12-01"},
+                "sid": sid,
+            }),
+        )
+        .await
+        .expect("the hand-written due day is captured");
+
+    // **A caller's type under the name of a kind a later build gives keys.**
+    // `project` was a kind with no keys, so its name was a type's to hold
+    // only until this build ships the kind's keys over it.
+    surface
+        .must(
+            "declare_type",
+            json!({
+                "name": "project",
+                "fields": [{"key": "budget", "holds": "text"}],
+                "sid": sid,
+            }),
+        )
+        .await
+        .expect("the caller's type under the name of a keyless kind is declared");
 
     // A thought in a room: an active claim on the bot's own handle, drawing
     // a connection edge.
@@ -376,5 +465,24 @@ async fn seed_representative_records(surface: &Surface) -> String {
         )
         .await
         .expect("the session wraps");
-    sid
+
+    // **A second run that is never wrapped, and the role it holds.** Wrapping
+    // releases what a run held, so the claim of the run above reads back with
+    // no holder. This run is left open, so the gate reads a claim that is
+    // still held after the upgrade.
+    let held = surface
+        .must(
+            "start_here",
+            json!({"bot": "assistant", "brief": true, "claim": "upgrade-fixture-holder"}),
+        )
+        .await
+        .expect("the second run boots");
+    assert_eq!(
+        held["session"]["claim"]["status"], "taken",
+        "the second run did not get its role claim: {held}"
+    );
+    held["session"]["sid"]
+        .as_str()
+        .expect("a fresh boot carries a session id")
+        .to_string()
 }
