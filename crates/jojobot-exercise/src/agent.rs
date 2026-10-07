@@ -48,6 +48,13 @@ impl Conversation {
         Conversation::Start(uuid())
     }
 
+    /// The id the CLI knows this conversation by.
+    fn id(&self) -> &str {
+        match self {
+            Conversation::Start(id) | Conversation::Carry(id) => id,
+        }
+    }
+
     /// The same conversation, for the phase after this one.
     pub fn carried(&self) -> Conversation {
         match self {
@@ -70,7 +77,16 @@ pub struct Invocation {
     /// instructions name the verbs and the properties the suite measures — and
     /// a model coached that way produces a transcript that reads like a product
     /// which works.
+    ///
+    /// **And it is this sitting's own.** Phases of one conversation start in
+    /// the same directory, because the CLI keeps a conversation under the
+    /// directory it began in; a different conversation starts in a different
+    /// one, so nothing a sitting writes there reaches the next.
     pub(crate) cwd: std::path::PathBuf,
+    /// **What the process is started with beyond what it inherits.** The CLI
+    /// keeps notes of its own between sessions and reads them back, and a
+    /// switch that is not on the process turns nothing off.
+    pub(crate) env: Vec<(String, String)>,
 }
 
 impl Invocation {
@@ -85,6 +101,7 @@ impl Invocation {
     pub fn command(&self) -> tokio::process::Command {
         let mut command = tokio::process::Command::new(&self.program);
         command.args(&self.args).current_dir(&self.cwd);
+        command.envs(self.env.iter().map(|(key, value)| (key, value)));
         command
     }
 }
@@ -153,7 +170,9 @@ pub struct Agent {
     /// a stand-in with [`Agent::launching`]. The line it is given is built the
     /// same either way, so a stand-in is driven exactly as the CLI would be.
     program: String,
-    cwd: std::path::PathBuf,
+    /// The directory every sitting's own directory is made under, and the one
+    /// thing removed when the agent goes.
+    root: std::path::PathBuf,
 }
 
 /// **How long one delivery may take before the run stops waiting for it.**
@@ -249,7 +268,7 @@ impl Agent {
         Agent {
             model: model.to_string(),
             program: CLI.to_string(),
-            cwd: unbriefed_dir(),
+            root: unbriefed_dir(),
         }
     }
 
@@ -330,7 +349,10 @@ impl Agent {
         Invocation {
             program: self.program.clone(),
             args,
-            cwd: self.cwd.clone(),
+            cwd: self.root.join(conversation.id()),
+            // **Auto memory is the CLI's own channel between sessions**, so
+            // it is off for every sitting. The CLI documents this variable.
+            env: vec![("CLAUDE_CODE_DISABLE_AUTO_MEMORY".into(), "1".into())],
         }
     }
 
@@ -378,7 +400,7 @@ impl Agent {
 impl Drop for Agent {
     /// The directory exists only to be empty, so it goes when the agent does.
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.cwd);
+        let _ = std::fs::remove_dir_all(&self.root);
     }
 }
 
@@ -417,6 +439,7 @@ mod tests {
             program: program.to_string(),
             args: args.iter().map(|a| (*a).to_string()).collect(),
             cwd: std::env::temp_dir(),
+            env: Vec::new(),
         }
     }
 
@@ -723,5 +746,83 @@ mod tests {
             "an ordinary non-zero exit naming no limit must not read as one: {}",
             crashed.output,
         );
+    }
+
+    /// **A stand-in for the CLI that reports what a sitting can see.** It
+    /// prints the auto-memory switch it was started with and the directory
+    /// listing it was started in, and leaves a note there when the prompt says
+    /// so — which is all a sitting needs to do to reach a later one through a
+    /// file.
+    fn stand_in(into: &std::path::Path) -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let script = into.join("cli");
+        std::fs::write(
+            &script,
+            "#!/bin/sh\nfor prompt; do :; done\n[ \"$prompt\" = note ] && echo kept > note.txt\n\
+             echo \"MEMORY=$CLAUDE_CODE_DISABLE_AUTO_MEMORY\"\n\
+             echo \"SEES=[$(ls -A | tr '\\n' ' ')]\"\n",
+        )
+        .expect("the stand-in is written");
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+            .expect("the stand-in can run");
+        script
+    }
+
+    /// What a sitting printed, as the stand-in prints it.
+    async fn sitting(agent: &Agent, conversation: &Conversation, prompt: &str) -> String {
+        agent
+            .work("http://room", conversation, prompt)
+            .await
+            .expect("the stand-in runs")
+            .raw
+    }
+
+    /// **A file one sitting leaves is invisible to the next.** Every sitting
+    /// shares the harness and nothing else: a note written in one working
+    /// directory and read in the next is a channel that bypasses the product.
+    ///
+    /// **Paired with the same sitting carried on**, which does see its own
+    /// note: the CLI keeps a conversation under its working directory, so a
+    /// resumed phase has to start where its sitting started. A build that gave
+    /// every phase a directory of its own would pass the invisibility half
+    /// alone and break every resume.
+    #[tokio::test]
+    async fn a_file_one_sitting_leaves_is_invisible_to_the_next_and_visible_to_its_own() {
+        let home = std::env::temp_dir().join(format!("jojobot-sitting-{}", uuid()));
+        std::fs::create_dir_all(&home).expect("a place for the stand-in");
+        let agent = Agent::new("sonnet").launching(stand_in(&home).to_str().expect("a path"));
+
+        let first = Conversation::fresh();
+        let left = sitting(&agent, &first, "note").await;
+        assert!(
+            left.contains("SEES=[note.txt ]"),
+            "the sitting that wrote the note sees it: {left}",
+        );
+        let carried = sitting(&agent, &first.carried(), "again").await;
+        assert!(
+            carried.contains("note.txt"),
+            "a phase carried on from that sitting starts where it did: {carried}",
+        );
+        let next = sitting(&agent, &Conversation::fresh(), "look").await;
+        assert!(
+            next.contains("SEES=[]"),
+            "a different sitting started in a directory with nothing in it: {next}",
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// **Auto memory is off for every sitting.** The CLI keeps notes of its own
+    /// between sessions and reads them back at the next one, which is the same
+    /// channel by a second route. It is read off the process the stand-in is
+    /// started as, because a switch set on the line and never handed to the
+    /// process turns nothing off.
+    #[tokio::test]
+    async fn auto_memory_is_off_for_a_sitting() {
+        let home = std::env::temp_dir().join(format!("jojobot-sitting-{}", uuid()));
+        std::fs::create_dir_all(&home).expect("a place for the stand-in");
+        let agent = Agent::new("sonnet").launching(stand_in(&home).to_str().expect("a path"));
+        let said = sitting(&agent, &Conversation::fresh(), "look").await;
+        assert!(said.contains("MEMORY=1"), "{said}");
+        let _ = std::fs::remove_dir_all(&home);
     }
 }
