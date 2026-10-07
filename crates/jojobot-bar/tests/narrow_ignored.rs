@@ -18,7 +18,9 @@ fn write_listing_cargo(dir: &std::path::Path) -> std::path::PathBuf {
 case " $* " in
   *" --list "*)
     case " $* " in
-      *" --ignored "*) printf '%s\n' "$STUB_IGNORED" ;;
+      *" --ignored "*)
+        [ -n "$STUB_IGNORED_FAILS" ] && { echo 'error: the listing could not run'; exit 101; }
+        printf '%s\n' "$STUB_IGNORED" ;;
       *) printf '%s\n' "$STUB_ALL" ;;
     esac
     exit 0 ;;
@@ -52,16 +54,24 @@ fn scratch_dir(tag: &str) -> std::path::PathBuf {
 
 /// Runs `bar narrow` over the stub and returns its exit code and stdout.
 fn narrow(tag: &str, all: &str, ignored: &str) -> (Option<i32>, String) {
+    narrow_with(tag, all, ignored, false)
+}
+
+/// The same, with the `--ignored` listing failing when `ignored_fails`.
+fn narrow_with(tag: &str, all: &str, ignored: &str, ignored_fails: bool) -> (Option<i32>, String) {
     let dir = scratch_dir(tag);
     let fake_cargo = write_listing_cargo(&dir);
-    let output = Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_jojobot-bar"));
+    command
         .args(["narrow", "--crate", "jojobot-bar"])
         .current_dir(&dir)
         .env("CARGO", &fake_cargo)
         .env("STUB_ALL", all)
-        .env("STUB_IGNORED", ignored)
-        .output()
-        .expect("run bar narrow");
+        .env("STUB_IGNORED", ignored);
+    if ignored_fails {
+        command.env("STUB_IGNORED_FAILS", "1");
+    }
+    let output = command.output().expect("run bar narrow");
     let _ = fs::remove_dir_all(&dir);
     (
         output.status.code(),
@@ -113,5 +123,26 @@ fn a_selection_of_no_tests_is_still_refused_without_claiming_any_were_ignored() 
     assert!(
         !stdout.contains("ignored"),
         "an empty selection is not an ignored one: {stdout}"
+    );
+}
+
+/// **A listing that could not run is a failure, never a count of none ignored.**
+/// The `--ignored` listing prints nothing when it fails, which reads as every
+/// listed test being runnable, so a crate of ignored tests passed the guard
+/// and ran nothing. Paired with the same selection under a listing that runs,
+/// which the first case in this file refuses for the ignored tests.
+#[test]
+fn a_failing_ignored_listing_stops_the_run_instead_of_counting_every_test_as_runnable() {
+    let both = "alpha::first: test\nalpha::second: test";
+    let (code, stdout) = narrow_with("listing-fails", both, both, true);
+    assert_ne!(
+        code,
+        Some(0),
+        "a listing that could not run let the guard pass: {stdout}"
+    );
+    assert!(stdout.contains("verdict: RED"), "{stdout}");
+    assert!(
+        !stdout.contains("verdict: GREEN"),
+        "the run went on to a green verdict: {stdout}"
     );
 }

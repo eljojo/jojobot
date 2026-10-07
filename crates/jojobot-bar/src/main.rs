@@ -369,12 +369,23 @@ fn run_narrow(args: &[String]) -> std::io::Result<ExitCode> {
     let listed = count_listed_tests(&list_text);
     let mut ignored_args = list_args.clone();
     ignored_args.push("--ignored");
-    let (_, ignored_text) = run_phase(
+    let (listing_ran, ignored_text) = run_phase(
         &log_path,
         "cargo test -p <crate> [filter] -- --list --ignored",
         &cargo,
         &ignored_args,
     )?;
+    // **A listing that could not run prints no tests**, which would read as
+    // none of them ignored and count every listed test as runnable.
+    if !listing_ran {
+        summary.phase_failed(
+            "test",
+            "the listing of ignored tests failed, so what would run is unknown — see log",
+        );
+        summary.phase_skipped("lint");
+        finish(&mut summary, &log_path);
+        return Ok(ExitCode::FAILURE);
+    }
     let ignored = count_listed_tests(&ignored_text);
     let selected = listed.saturating_sub(ignored);
     if selected == 0 {
