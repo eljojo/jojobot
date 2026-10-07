@@ -44,6 +44,12 @@ passes a did-anything-move check, and reports a verdict about code nobody
 touched. The uniqueness check is that rule, held here rather than by whoever is
 driving.
 
+**It refuses a run in which no test executed, before any verdict.** A test
+filter that matches nothing makes the runner exit zero, which used to print
+GREEN for a sabotage that measured nothing. The count is read from the runner's
+`test result:` lines, summed over every target, and the probe run is held to it
+too: an empty probe is reported as EMPTY, never as BLIND.
+
 ⚠️ **It touches git not at all** — not to keep the file, not to put it back.
 A tool built to stop somebody reaching for a closed verb cannot reach for one.
 
@@ -60,6 +66,7 @@ a caller that ignores the notice is exactly as free to run as before.
 """
 
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -191,6 +198,10 @@ def refuse(why):
 # why only one of the two streams is teed.
 FAILED_CASE = "test result: FAILED"
 ANY_RESULT = "test result:"
+# **Every target's own count**, as the runner writes it: `test result: ok. 1
+# passed; 0 failed; ...`. A filter that matches nothing leaves every target at
+# `0 passed; 0 failed` and the exit code at zero.
+TESTS_RUN = re.compile(r"^test result: \w+\. (\d+) passed; (\d+) failed;", re.MULTILINE)
 
 
 def run_and_keep(command):
@@ -210,6 +221,20 @@ def run_and_keep(command):
         kept.append(line)
     running.wait()
     return running.returncode, "".join(kept)
+
+
+def ran_nothing(said):
+    """**Whether the output says the run executed no test at all.**
+
+    A filter that matches nothing makes the runner exit zero, so a run that
+    measured nothing read as GREEN — and the probe after it, which stays green
+    under a panic when no test runs, read as a site the case is BLIND to.
+    **The count is the sum over every target**, because most targets of a run
+    that did test something ran nothing. Silence when the output carries no
+    count at all: a runner this knows nothing about gets no opinion.
+    """
+    counts = [int(passed) + int(failed) for passed, failed in TESTS_RUN.findall(said)]
+    return bool(counts) and sum(counts) == 0
 
 
 def disagrees(code, said):
@@ -319,6 +344,12 @@ def main(argv):
         print(f"SABOTAGE APPLIED to the one site in {path}", flush=True)
 
         code, said = run_and_keep(command)
+        # **Before any verdict**: a run that tested nothing has none to give.
+        if ran_nothing(said):
+            return refuse(
+                f"no test ran under `{' '.join(command)}`, so there is no verdict. A test "
+                "filter that matches nothing does this: check the name it was given."
+            )
         verdict = "RED" if code != 0 else "GREEN"
         print(
             f"SABOTAGE VERDICT {verdict}: {' '.join(command)} exited {code}",
@@ -529,6 +560,13 @@ def probe(path, before, old, command):
     with open(path, "w", encoding="utf-8") as writing:
         writing.write(before.replace(old, text, 1))
     ran = subprocess.run(command, capture_output=True, text=True)
+    if ran_nothing(ran.stdout + ran.stderr):
+        print(
+            "SABOTAGE PROBE EMPTY: the probe run executed no test, so which kind of green "
+            "this is was not measured",
+            flush=True,
+        )
+        return
     verdict = classify(ran.stdout + ran.stderr, ran.returncode)
     if verdict == NOT_MEASURED:
         print(ran.stdout + ran.stderr, flush=True)
