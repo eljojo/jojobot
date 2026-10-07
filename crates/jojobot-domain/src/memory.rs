@@ -1947,121 +1947,308 @@ pub fn rule_seats_of(fields: &BTreeMap<String, String>) -> usize {
 /// itself a role, for the reason it cannot raise its own ceiling.
 pub const CLAIMS_ROLE: &str = "claims_role";
 
-/// **The keys a thing cannot set for itself** — its own room's capacity, its
-/// own thoughts' body cap, its own boot seats and the role its boot claims.
-/// Each binds the caller who owns the thing it is read off, so all of them
-/// face [`refuses_own_ceiling`] and [`refuses_own_ceiling_change`] the same
-/// way.
-const SELF_CEILING_KEYS: [&str; 4] = [THOUGHT_CAPACITY, THOUGHT_BODY_CAP, RULE_SEATS, CLAIMS_ROLE];
-
-/// **Whether a write's own fields name a ceiling key.** The cheap question a
-/// caller asks before it spends a read on resolving who the write is about.
-pub fn names_a_ceiling(fields: &BTreeMap<String, String>) -> bool {
-    !ceiling_keys_in(fields).is_empty()
+/// **Who may write a key, relative to the thing it is written about.** A key
+/// the build ships declares one of these, and one predicate
+/// ([`refuses_unlicensed_write`] and its two twins) judges every write against
+/// it. There is no second mechanism: a key that needs a new relation adds an
+/// arm here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MayWrite {
+    /// **Only the thing itself.** A bot's own account of itself.
+    Subject,
+    /// **Only a different identity.** The thing a key binds cannot write it: a
+    /// ceiling only holds if raising it costs something other than asking.
+    DifferentIdentity,
+    /// **Only a bot above the thing on its `reports_to` chain.** The operator
+    /// always may, and is named in the refusal; no session is the operator, so
+    /// the chain is the only part code can check.
+    Ancestor,
 }
 
-/// **The ceiling keys a bag of fields names**, in a fixed order.
-pub fn ceiling_keys_in(fields: &BTreeMap<String, String>) -> Vec<&'static str> {
-    SELF_CEILING_KEYS
-        .into_iter()
-        .filter(|key| fields.contains_key(*key))
+/// **A key the build guards, and who may write it.** The table is the build's
+/// own and nothing a caller can reach: a declaration an MCP call could make
+/// would let a bot lock the others out of a key (rule 360).
+#[derive(Debug, Clone, Copy)]
+pub struct GuardedKey {
+    /// The key, as it is spelled on a record.
+    pub key: &'static str,
+    /// Who may write it, relative to the thing it is written about.
+    pub may: MayWrite,
+}
+
+/// **The keys this build guards.** Its own room's capacity, its own thoughts'
+/// body cap, its own boot seats and the role its boot claims: each binds the
+/// thing it is read off, so each is a different-identity key, held to the same
+/// predicate every other relation is.
+pub const GUARDED_KEYS: [GuardedKey; 4] = [
+    GuardedKey {
+        key: THOUGHT_CAPACITY,
+        may: MayWrite::DifferentIdentity,
+    },
+    GuardedKey {
+        key: THOUGHT_BODY_CAP,
+        may: MayWrite::DifferentIdentity,
+    },
+    GuardedKey {
+        key: RULE_SEATS,
+        may: MayWrite::DifferentIdentity,
+    },
+    GuardedKey {
+        key: CLAIMS_ROLE,
+        may: MayWrite::DifferentIdentity,
+    },
+];
+
+/// **The bots above a thing on its `reports_to` chain, nearest first**, when a
+/// caller has read them. `None` is "not read", which an ancestor key treats as
+/// "nobody may": a write that forgot to read the lineage fails closed.
+pub type Managers<'a> = Option<&'a [EntityId]>;
+
+/// **Who may write, in words**, for a refusal to name them (rule 261). The
+/// operator always may, so every relation that leaves anybody out names them.
+fn who_may(may: MayWrite, subject: &str, managers: &[String]) -> String {
+    match may {
+        MayWrite::Subject => format!("only '{subject}' itself may write it"),
+        MayWrite::DifferentIdentity => {
+            "only a different identity may raise or lower it".to_string()
+        }
+        MayWrite::Ancestor => match managers.is_empty() {
+            true => format!(
+                "only a bot above '{subject}' on its reports_to chain, or the operator, may \
+                 write it, and no chain is recorded for it"
+            ),
+            false => format!(
+                "only a bot above '{subject}' on its reports_to chain ({}) or the operator may \
+                 write it",
+                managers.join(", ")
+            ),
+        },
+    }
+}
+
+/// The text of [`MemoryError::KeyNotYours`]. The different-identity relation
+/// keeps the words the four ceilings have always had.
+fn key_not_yours(subject: &str, key: &str, may: MayWrite, managers: &[String]) -> String {
+    match may {
+        MayWrite::DifferentIdentity => format!(
+            "'{subject}' cannot set its own {key}: only a different identity may raise or lower it"
+        ),
+        _ => format!(
+            "'{subject}' cannot write {key}: {}",
+            who_may(may, subject, managers)
+        ),
+    }
+}
+
+/// The text of [`MemoryError::MergeCarriesGuardedKeys`].
+fn merge_carries(
+    duplicate: &str,
+    survivor: &str,
+    keys: &str,
+    may: MayWrite,
+    managers: &[String],
+) -> String {
+    match may {
+        MayWrite::DifferentIdentity => format!(
+            "merging '{duplicate}' into '{survivor}', the caller's own bot, would carry {keys} \
+             onto it: only a different identity may raise or lower a ceiling"
+        ),
+        _ => format!(
+            "merging '{duplicate}' into '{survivor}' would carry {keys} onto it, and {}",
+            who_may(may, survivor, managers)
+        ),
+    }
+}
+
+/// **Whether `caller` may write a key declared as `may` about `subject`.**
+fn licensed(may: MayWrite, subject: &EntityId, caller: &EntityId, managers: Managers) -> bool {
+    match may {
+        MayWrite::Subject => caller == subject,
+        MayWrite::DifferentIdentity => caller != subject,
+        MayWrite::Ancestor => managers.is_some_and(|chain| chain.contains(caller)),
+    }
+}
+
+/// **The refusal for a key `caller` may not write about `subject`.** Carries
+/// the chain so the refusal can name who may.
+fn unlicensed(rule: &GuardedKey, subject: &EntityId, managers: Managers) -> MemoryError {
+    MemoryError::KeyNotYours {
+        subject: subject.to_string(),
+        key: rule.key.to_string(),
+        may: rule.may,
+        managers: managers
+            .unwrap_or_default()
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
+    }
+}
+
+/// **Whether a write's own fields name a guarded key.** The cheap question a
+/// caller asks before it spends a read on resolving who the write is about.
+pub fn names_a_guarded_key(fields: &BTreeMap<String, String>) -> bool {
+    !guarded_keys_in(fields).is_empty()
+}
+
+/// **The guarded keys a bag of fields names**, in the table's order.
+pub fn guarded_keys_in(fields: &BTreeMap<String, String>) -> Vec<&'static GuardedKey> {
+    GUARDED_KEYS
+        .iter()
+        .filter(|rule| fields.contains_key(rule.key))
         .collect()
 }
 
-/// **The thing a ceiling binds cannot write that ceiling.**
+/// **Whether a write naming `fields` needs the subject's `reports_to` chain
+/// read first**: some key it names is an ancestor key.
+pub fn needs_the_chain(fields: &BTreeMap<String, String>) -> bool {
+    guarded_keys_in(fields)
+        .iter()
+        .any(|rule| rule.may == MayWrite::Ancestor)
+}
+
+/// **A key may only be written by whom it declares.**
 ///
-/// `subject` is who the write is about; `caller` is who is making it. A
-/// write naming one of [`SELF_CEILING_KEYS`] in its own fields, about the
-/// caller's own handle, is refused — never a kind question, because the
-/// field is freeform on every subject already and the only fact that
-/// matters is whether the one setting the number is the one it would bind.
+/// `subject` is who the write is about; `caller` is who is making it. A write
+/// naming a guarded key in its own fields, from a caller its declaration does
+/// not license, is refused — never a kind question, because the field is
+/// freeform on every subject already and the only fact that matters is who is
+/// setting it.
 ///
 /// `None` is not "allowed" so much as "not this write's business": a write
-/// naming no ceiling key, or naming one about somebody else, has nothing
-/// here to refuse.
-pub fn refuses_own_ceiling(
+/// naming no guarded key, or one its declaration licenses, has nothing here to
+/// refuse.
+pub fn refuses_unlicensed_write(
     subject: &EntityId,
     caller: &EntityId,
     fields: &BTreeMap<String, String>,
+    managers: Managers,
 ) -> Option<MemoryError> {
-    if subject != caller {
-        return None;
-    }
-    SELF_CEILING_KEYS
-        .into_iter()
-        .find(|key| fields.contains_key(*key))
-        .map(|key| MemoryError::SelfCeiling {
-            subject: subject.to_string(),
-            key: key.to_string(),
-        })
+    refuses_unlicensed_write_by(&GUARDED_KEYS, subject, caller, fields, managers)
 }
 
-/// **The edit-and-retraction twin of [`refuses_own_ceiling`].**
+/// [`refuses_unlicensed_write`] against a table of the caller's choosing, so a
+/// case can hold every relation without the build declaring a key for each.
+pub fn refuses_unlicensed_write_by(
+    table: &[GuardedKey],
+    subject: &EntityId,
+    caller: &EntityId,
+    fields: &BTreeMap<String, String>,
+    managers: Managers,
+) -> Option<MemoryError> {
+    table
+        .iter()
+        .filter(|rule| fields.contains_key(rule.key))
+        .find(|rule| !licensed(rule.may, subject, caller, managers))
+        .map(|rule| unlicensed(rule, subject, managers))
+}
+
+/// **The edit-and-retraction twin of [`refuses_unlicensed_write`].**
 ///
-/// A fresh capture either names [`THOUGHT_CAPACITY`] in its own fields or it
-/// does not, so reading the raw write is enough to judge it. An edit or a
-/// retraction is different: what binds the caller is the FOLD — the newest
-/// write of the key among active records — and a write can change that
-/// without ever spelling the key in what it sends. Clearing the key, writing
-/// it with surrounding whitespace the fold trims away, or moving the record
-/// that carried the newest write out of the fold (archiving it, retracting
-/// it) all change the fold identically to a write that named the key
-/// outright, and a guard reading only the raw write cannot tell any of them
-/// apart from an edit that never touched the ceiling at all.
+/// A fresh capture either names a guarded key in its own fields or it does not,
+/// so reading the raw write is enough to judge it. An edit or a retraction is
+/// different: what binds is the FOLD — the newest write of the key among active
+/// records — and a write can change that without ever spelling the key in what
+/// it sends. Clearing the key, writing it with surrounding whitespace the fold
+/// trims away, or moving the record that carried the newest write out of the
+/// fold (archiving it, retracting it) all change the fold identically to a
+/// write that named the key outright, and a guard reading only the raw write
+/// cannot tell any of them apart from an edit that never touched the key.
 ///
-/// So this reads the fold on both sides of the write instead: `before` is
-/// what the caller's own handle folds to now, `after` is what it would fold
-/// to once this write lands — [`stood_after`] for an edit, the same shape
-/// built by hand for a retraction, since a retraction carries no
-/// [`FactPatch`] of its own. A write that leaves the two answers equal is not
-/// this guard's business, whatever it changed to get there.
-pub fn refuses_own_ceiling_change(
+/// So this reads the fold on both sides of the write instead: `before` is what
+/// `subject` folds to now, `after` is what it would fold to once this write
+/// lands — [`stood_after`] for an edit, the same shape built by hand for a
+/// retraction, since a retraction carries no [`FactPatch`] of its own. A write
+/// that leaves the two answers equal is not this guard's business, whatever it
+/// changed to get there.
+pub fn refuses_unlicensed_change(
     subject: &EntityId,
     caller: &EntityId,
     before: &BTreeMap<String, String>,
     after: &BTreeMap<String, String>,
+    managers: Managers,
 ) -> Option<MemoryError> {
-    if subject != caller {
-        return None;
-    }
-    SELF_CEILING_KEYS
-        .into_iter()
-        .find(|key| before.get(*key) != after.get(*key))
-        .map(|key| MemoryError::SelfCeiling {
-            subject: subject.to_string(),
-            key: key.to_string(),
-        })
+    refuses_unlicensed_change_by(&GUARDED_KEYS, subject, caller, before, after, managers)
 }
 
-/// **A merge into the caller's own bot cannot carry a ceiling onto it.**
+/// [`refuses_unlicensed_change`] against a table of the caller's choosing.
+pub fn refuses_unlicensed_change_by(
+    table: &[GuardedKey],
+    subject: &EntityId,
+    caller: &EntityId,
+    before: &BTreeMap<String, String>,
+    after: &BTreeMap<String, String>,
+    managers: Managers,
+) -> Option<MemoryError> {
+    table
+        .iter()
+        .filter(|rule| before.get(rule.key) != after.get(rule.key))
+        .find(|rule| !licensed(rule.may, subject, caller, managers))
+        .map(|rule| unlicensed(rule, subject, managers))
+}
+
+/// **A merge cannot carry a guarded key onto a thing the caller may not write
+/// it on.**
 ///
-/// A merge folds everything the duplicate holds onto the survivor, so merging
-/// a thing that carries a ceiling into the caller's own bot raises that bot's
-/// ceiling through a door [`refuses_own_ceiling`] does not watch. `survivor`
-/// and `duplicate` are both handles as they answer now, and `carried` is what
-/// the duplicate holds, read in the same act as the merge: a read taken before
-/// it leaves a gap a second session of the same bot can write a ceiling into.
+/// A merge folds everything the duplicate holds onto the survivor, so merging a
+/// thing that carries a guarded key into a survivor the caller is not licensed
+/// to write it on sets that key through a door [`refuses_unlicensed_write`]
+/// does not watch. `survivor` and `duplicate` are both handles as they answer
+/// now, and `carried` is what the duplicate holds, read in the same act as the
+/// merge: a read taken before it leaves a gap a second session of the same bot
+/// can write a key into.
 ///
-/// `None` is not "allowed" so much as "not this merge's business": a survivor
-/// that is somebody else, or a duplicate carrying no ceiling, has nothing here
-/// to refuse.
-pub fn refuses_merge_into_own_ceiling(
+/// `None` is not "allowed" so much as "not this merge's business": a duplicate
+/// carrying no guarded key, or a survivor the caller may write it on, has
+/// nothing here to refuse.
+pub fn refuses_merge_carrying(
     caller: &EntityId,
     survivor: &EntityId,
     duplicate: &EntityId,
     carried: &BTreeMap<String, String>,
+    managers: Managers,
 ) -> Option<MemoryError> {
-    if survivor != caller || duplicate == survivor {
+    refuses_merge_carrying_by(
+        &GUARDED_KEYS,
+        caller,
+        survivor,
+        duplicate,
+        carried,
+        managers,
+    )
+}
+
+/// [`refuses_merge_carrying`] against a table of the caller's choosing.
+pub fn refuses_merge_carrying_by(
+    table: &[GuardedKey],
+    caller: &EntityId,
+    survivor: &EntityId,
+    duplicate: &EntityId,
+    carried: &BTreeMap<String, String>,
+    managers: Managers,
+) -> Option<MemoryError> {
+    if duplicate == survivor {
         return None;
     }
-    let keys = ceiling_keys_in(carried);
-    if keys.is_empty() {
-        return None;
-    }
-    Some(MemoryError::MergeRaisesOwnCeiling {
+    let barred: Vec<&GuardedKey> = table
+        .iter()
+        .filter(|rule| carried.contains_key(rule.key))
+        .filter(|rule| !licensed(rule.may, survivor, caller, managers))
+        .collect();
+    let first = barred.first()?;
+    Some(MemoryError::MergeCarriesGuardedKeys {
         duplicate: duplicate.to_string(),
         survivor: survivor.to_string(),
-        keys: keys.join(", "),
+        keys: barred
+            .iter()
+            .map(|rule| rule.key)
+            .collect::<Vec<_>>()
+            .join(", "),
+        may: first.may,
+        managers: managers
+            .unwrap_or_default()
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
     })
 }
 
@@ -2180,7 +2367,7 @@ pub fn refuses_merge_into_room(
 /// Checked against a set of field KEYS rather than a `NewFact`/`FactPatch`,
 /// so the same call covers a write naming them (`fields`) and a write
 /// dropping them (`clear_fields`) alike — the two halves of the same
-/// mistake, and the reason a ceiling's own guard (`refuses_own_ceiling`)
+/// mistake, and the reason a ceiling's own guard (`refuses_unlicensed_write`)
 /// only ever checked the first is what makes a bot able to clear its own
 /// capacity by patch. Named by [`crate::session::role_from_field_key`]
 /// rather than a roster: a role's name is the caller's own choice, so the
@@ -2189,7 +2376,7 @@ pub fn refuses_merge_into_room(
 /// The claim path (`orientation::orient::decide_role_claim`) and the
 /// renewal path write these fields directly through the `Memory` trait,
 /// never through this call — it guards the ordinary, caller-facing surface
-/// only, the same split `refuses_own_ceiling` already draws between a
+/// only, the same split `refuses_unlicensed_write` already draws between a
 /// verb's own guard and what the trait itself allows.
 pub fn refuses_role_fields<'a>(keys: impl IntoIterator<Item = &'a String>) -> Option<MemoryError> {
     keys.into_iter().find_map(|key| {
@@ -4205,38 +4392,41 @@ pub enum MemoryError {
         /// there."
         aged_out: usize,
     },
-    /// **The thing a ceiling binds cannot write that ceiling.**
+    /// **A key written by somebody its declaration does not license.**
     ///
-    /// Never a kind question: the field is freeform on every subject
-    /// already, and what makes this write refused is that the identity
-    /// naming the number and the identity it would bind are the same one.
-    /// A ceiling only holds if raising it costs something other than
-    /// asking — see [`refuses_own_ceiling`].
-    #[error(
-        "'{subject}' cannot set its own {key}: only a different identity may raise or lower it"
-    )]
-    SelfCeiling {
-        /// The handle that tried to set its own ceiling.
+    /// Never a kind question: the field is freeform on every subject already,
+    /// and what makes this write refused is who is making it, relative to the
+    /// thing it is about. A ceiling only holds if raising it costs something
+    /// other than asking — see [`refuses_unlicensed_write`]. The refusal names
+    /// who may make the write (rule 261).
+    #[error("{}", key_not_yours(.subject, .key, *.may, .managers))]
+    KeyNotYours {
+        /// The handle the write was about.
         subject: String,
         /// The key it tried to set.
         key: String,
+        /// Who the key's declaration licenses.
+        may: MayWrite,
+        /// The bots above `subject`, nearest first, when the write needed them.
+        managers: Vec<String>,
     },
-    /// **A merge into the caller's own bot that would carry a ceiling onto
-    /// it.** Everything the duplicate holds moves to the survivor and folds
-    /// there, so a bot that wrote a ceiling on another thing, which is
-    /// allowed, could merge that thing into itself and raise its own. See
-    /// [`refuses_merge_into_own_ceiling`].
-    #[error(
-        "merging '{duplicate}' into '{survivor}', the caller's own bot, would carry {keys} onto \
-         it: only a different identity may raise or lower a ceiling"
-    )]
-    MergeRaisesOwnCeiling {
+    /// **A merge that would carry a guarded key onto a thing the caller may not
+    /// write it on.** Everything the duplicate holds moves to the survivor and
+    /// folds there, so a caller that wrote a key on another thing, which is
+    /// allowed, could merge that thing into one it may not write the key on.
+    /// See [`refuses_merge_carrying`].
+    #[error("{}", merge_carries(.duplicate, .survivor, .keys, *.may, .managers))]
+    MergeCarriesGuardedKeys {
         /// The handle that would be folded away, as it answers now.
         duplicate: String,
-        /// The caller's own bot, which would receive the ceiling.
+        /// The handle that would receive the keys.
         survivor: String,
-        /// The ceiling keys the duplicate carries, joined with a comma.
+        /// The guarded keys the duplicate carries, joined with a comma.
         keys: String,
+        /// Who the first of those keys' declarations licenses.
+        may: MayWrite,
+        /// The bots above `survivor`, nearest first, when the merge needed them.
+        managers: Vec<String>,
     },
     /// **A thought's body is over its container's cap.** See
     /// [`refuses_thought_over_cap`] — only ever raised on a write that
@@ -4984,7 +5174,7 @@ pub trait Memory: Send + Sync {
     /// would otherwise be an ordinary patch away.
     ///
     /// **`caller` is who is making the edit** — see
-    /// [`refuses_own_ceiling_change`] and [`refuses_room_overflow`], run
+    /// [`refuses_unlicensed_change`] and [`refuses_room_overflow`], run
     /// atomically with the write they gate: an edit that would change the
     /// caller's own folded ceiling, or leave its own room over capacity, is
     /// refused rather than landed and reported.
@@ -5134,7 +5324,7 @@ pub trait Memory: Send + Sync {
     /// [`MemoryError::UnknownFact`] exactly as an edit's would be.
     ///
     /// **`caller` is who is retracting it** — see
-    /// [`refuses_own_ceiling_change`], run atomically with the write: taking
+    /// [`refuses_unlicensed_change`], run atomically with the write: taking
     /// back the record that carries the newest write of the caller's own
     /// ceiling is refused for the same reason clearing the key would be.
     async fn retract(
@@ -5181,7 +5371,7 @@ pub trait Memory: Send + Sync {
     ///
     /// **`caller` is who is merging, and the store checks it in the same act as
     /// the merge**: a merge into the caller's own bot that would carry a
-    /// ceiling onto it is [`MemoryError::MergeRaisesOwnCeiling`], decided over
+    /// ceiling onto it is [`MemoryError::MergeCarriesGuardedKeys`], decided over
     /// what the duplicate holds inside the transaction, so no write can land
     /// between the question and the move.
     async fn merge(

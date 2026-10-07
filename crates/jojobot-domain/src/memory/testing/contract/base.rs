@@ -2053,12 +2053,12 @@ pub async fn a_merge_into_the_callers_own_bot_cannot_carry_a_ceiling_onto_it<M: 
     assert!(
         matches!(
             &refused,
-            MemoryError::MergeRaisesOwnCeiling { duplicate, survivor, keys }
+            MemoryError::MergeCarriesGuardedKeys { duplicate, survivor, keys, .. }
                 if duplicate == carrier.as_str()
                     && survivor == keeper.as_str()
                     && keys.contains(THOUGHT_CAPACITY)
         ),
-        "expected MergeRaisesOwnCeiling naming both bots and the key, got {refused:?}",
+        "expected MergeCarriesGuardedKeys naming both bots and the key, got {refused:?}",
     );
     assert!(
         !store
@@ -4227,8 +4227,8 @@ pub async fn a_bots_own_boot_seats_are_not_its_own_to_set<M: Memory>(store: &M) 
             .await
             .expect_err("a bot cannot set its own ceiling");
         assert!(
-            matches!(&refused, MemoryError::SelfCeiling { key: held, .. } if held == key),
-            "expected SelfCeiling naming {key}, got {refused:?}"
+            matches!(&refused, MemoryError::KeyNotYours { key: held, .. } if held == key),
+            "expected KeyNotYours naming {key}, got {refused:?}"
         );
         store
             .update_fact(&record.address(), patch, &other_caller())
@@ -4273,8 +4273,8 @@ pub async fn the_ceiling_guard_reads_the_fold_across_every_edit_and_retract_path
         .await
         .expect_err("a whitespace-padded ceiling key must still be refused for its own subject");
     assert!(
-        matches!(refused, MemoryError::SelfCeiling { .. }),
-        "expected SelfCeiling, got {refused:?}"
+        matches!(refused, MemoryError::KeyNotYours { .. }),
+        "expected KeyNotYours, got {refused:?}"
     );
     store
         .update_fact(
@@ -4308,8 +4308,8 @@ pub async fn the_ceiling_guard_reads_the_fold_across_every_edit_and_retract_path
         .await
         .expect_err("clearing its own ceiling key must be refused for its own subject");
     assert!(
-        matches!(refused, MemoryError::SelfCeiling { .. }),
-        "expected SelfCeiling, got {refused:?}"
+        matches!(refused, MemoryError::KeyNotYours { .. }),
+        "expected KeyNotYours, got {refused:?}"
     );
     store
         .update_fact(&cleared.address(), clear_patch, &other_caller())
@@ -4339,8 +4339,8 @@ pub async fn the_ceiling_guard_reads_the_fold_across_every_edit_and_retract_path
         .await
         .expect_err("archiving the record that carries its own ceiling must be refused");
     assert!(
-        matches!(refused, MemoryError::SelfCeiling { .. }),
-        "expected SelfCeiling, got {refused:?}"
+        matches!(refused, MemoryError::KeyNotYours { .. }),
+        "expected KeyNotYours, got {refused:?}"
     );
     store
         .update_fact(&archived_subject.address(), archive_patch, &other_caller())
@@ -4371,8 +4371,8 @@ pub async fn the_ceiling_guard_reads_the_fold_across_every_edit_and_retract_path
         .await
         .expect_err("retracting the record that carries its own ceiling must be refused");
     assert!(
-        matches!(refused, MemoryError::SelfCeiling { .. }),
-        "expected SelfCeiling, got {refused:?}"
+        matches!(refused, MemoryError::KeyNotYours { .. }),
+        "expected KeyNotYours, got {refused:?}"
     );
     store
         .retract(
@@ -4822,7 +4822,7 @@ pub async fn update_fact_over_the_body_cap_is_refused_on_content_and_on_the_edge
 /// proves for [`THOUGHT_CAPACITY`], proven here for [`THOUGHT_BODY_CAP`]:
 /// once set, the container it binds cannot change it through an edit that
 /// moves the fold, and another identity still can. (The raw check on a
-/// fresh capture's own fields is `refuses_own_ceiling`, which this suite
+/// fresh capture's own fields is `refuses_unlicensed_write`, which this suite
 /// does not reach — it runs at the MCP boundary, not inside the domain
 /// trait's `capture`, exactly as it already did for `THOUGHT_CAPACITY`
 /// before this change.)
@@ -4851,8 +4851,8 @@ pub async fn a_thing_cannot_set_its_own_thought_body_cap_either<M: Memory>(store
         .await
         .expect_err("clearing its own body cap must be refused for its own subject");
     assert!(
-        matches!(refused, MemoryError::SelfCeiling { .. }),
-        "expected SelfCeiling, got {refused:?}"
+        matches!(refused, MemoryError::KeyNotYours { .. }),
+        "expected KeyNotYours, got {refused:?}"
     );
     store
         .update_fact(&setter.address(), clear_patch, &other_caller())

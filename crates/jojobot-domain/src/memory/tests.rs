@@ -44,6 +44,142 @@ fn refuses_role_fields_catches_both_of_a_roles_fields_and_nothing_else() {
     assert!(refuses_role_fields(std::iter::empty::<&String>()).is_none());
 }
 
+/// A built-in key for each relation a key can declare, so the one predicate is
+/// held to all three at once. No MCP call can declare one of these: the table
+/// is the build's own.
+const WHO_MAY: [GuardedKey; 3] = [
+    GuardedKey {
+        key: "only_itself",
+        may: MayWrite::Subject,
+    },
+    GuardedKey {
+        key: "only_another",
+        may: MayWrite::DifferentIdentity,
+    },
+    GuardedKey {
+        key: "only_above",
+        may: MayWrite::Ancestor,
+    },
+];
+
+fn handle(text: &str) -> EntityId {
+    EntityId(text.into())
+}
+
+fn writing(key: &str) -> BTreeMap<String, String> {
+    [(key.to_string(), "x".to_string())].into()
+}
+
+/// **Who may write a key is the key's own declaration, relative to the thing
+/// it is written about.** The subject itself, a different identity, or an
+/// ancestor on the reports_to chain: one predicate, three relations, and a
+/// write from anyone else is refused. Every relation is asked of both of its
+/// answers, since a predicate that always refused, or never did, would pass the
+/// half that agrees with it.
+#[test]
+fn a_key_declares_who_may_write_it_relative_to_its_subject() {
+    let bot = handle("bot:sigma");
+    let other = handle("bot:delta");
+    let manager = handle("bot:gamma");
+    let above = [manager.clone()];
+    let refused = |key: &str, caller: &EntityId, managers: Option<&[EntityId]>| {
+        refuses_unlicensed_write_by(&WHO_MAY, &bot, caller, &writing(key), managers)
+    };
+
+    // The subject itself only.
+    assert!(refused("only_itself", &bot, None).is_none());
+    assert!(refused("only_itself", &other, None).is_some());
+    // A different identity only: the relation the existing ceilings have.
+    assert!(refused("only_another", &bot, None).is_some());
+    assert!(refused("only_another", &other, None).is_none());
+    // An ancestor on the chain only: the subject is not on its own chain, a
+    // stranger is not, and a manager is.
+    assert!(refused("only_above", &manager, Some(&above)).is_none());
+    assert!(refused("only_above", &bot, Some(&above)).is_some());
+    assert!(refused("only_above", &other, Some(&above)).is_some());
+    // **A chain nobody computed refuses**, so a caller that forgot to read the
+    // lineage fails closed rather than letting everybody write.
+    assert!(refused("only_above", &manager, None).is_some());
+    // A key nobody declared is nobody's business.
+    assert!(refused("anything_else", &bot, None).is_none());
+}
+
+/// **The refusal names who may make the write** (rule 261): the chain for an
+/// ancestor key, and the operator, who always may.
+#[test]
+fn a_refused_key_write_names_who_may_make_it() {
+    let bot = handle("bot:sigma");
+    let above = [handle("bot:gamma"), handle("bot:omega")];
+    let refused =
+        refuses_unlicensed_write_by(&WHO_MAY, &bot, &bot, &writing("only_above"), Some(&above))
+            .expect("the subject is not above itself");
+    let said = refused.to_string();
+    for who in ["bot:gamma", "bot:omega", "operator"] {
+        assert!(said.contains(who), "{who} may write it: {said}");
+    }
+    // No chain recorded is said, not left to read as an empty list of people.
+    let none = refuses_unlicensed_write_by(&WHO_MAY, &bot, &bot, &writing("only_above"), Some(&[]))
+        .expect("nobody above");
+    assert!(none.to_string().contains("operator"), "{none}");
+}
+
+/// **The same predicate judges an edit's fold and a merge**, so a key that
+/// rides on a record about one occasion, or arrives folded in from another
+/// thing, is held to the same relation as one written plainly.
+#[test]
+fn a_change_to_the_fold_and_a_merge_are_judged_by_the_same_relation() {
+    let bot = handle("bot:sigma");
+    let other = handle("bot:delta");
+    let before = BTreeMap::new();
+    let after = writing("only_another");
+    // The fold changed by a write from the subject itself: refused.
+    assert!(refuses_unlicensed_change_by(&WHO_MAY, &bot, &bot, &before, &after, None).is_some());
+    // …and from a different identity: not.
+    assert!(refuses_unlicensed_change_by(&WHO_MAY, &bot, &other, &before, &after, None).is_none());
+    // A fold the write leaves equal is not this guard's business.
+    assert!(refuses_unlicensed_change_by(&WHO_MAY, &bot, &bot, &after, &after, None).is_none());
+    // A merge that carries the key onto the caller's own bot is refused; onto
+    // somebody else's it is not.
+    let carried = writing("only_another");
+    assert!(
+        refuses_merge_carrying_by(
+            &WHO_MAY,
+            &bot,
+            &bot,
+            &handle("thing:kettle"),
+            &carried,
+            None
+        )
+        .is_some()
+    );
+    assert!(
+        refuses_merge_carrying_by(
+            &WHO_MAY,
+            &bot,
+            &other,
+            &handle("thing:kettle"),
+            &carried,
+            None
+        )
+        .is_none()
+    );
+}
+
+/// **The four keys a bot cannot write about itself are declarations in the
+/// one table**, each a different-identity key, so moving them changed nothing a
+/// caller sees.
+#[test]
+fn the_four_existing_keys_are_different_identity_keys() {
+    for key in [THOUGHT_CAPACITY, THOUGHT_BODY_CAP, RULE_SEATS, CLAIMS_ROLE] {
+        let rule = GUARDED_KEYS
+            .iter()
+            .find(|rule| rule.key == key)
+            .unwrap_or_else(|| panic!("{key} is declared"));
+        assert_eq!(rule.may, MayWrite::DifferentIdentity, "{key}");
+    }
+    assert_eq!(GUARDED_KEYS.len(), 4);
+}
+
 fn thought(id: &str, pointer: &str) -> Fact {
     Fact {
         id: FactId(id.into()),

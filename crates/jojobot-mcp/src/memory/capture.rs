@@ -767,17 +767,17 @@ impl Jojobot {
         // and a moved due moment both add keys below, and this is about what
         // the CALLER sent, never what jojobot added on its own.
         let sent_field_keys: Vec<String> = fields.keys().cloned().collect();
-        // **The thing a ceiling binds cannot write that ceiling.** Checked
-        // before anything else about this write, on the caller's own
+        // **A guarded key is written only by whom its declaration licenses.**
+        // Checked before anything else about this write, on the caller's own
         // identity against the subject it is about to write — never a kind
-        // question, see `refuses_own_ceiling`.
+        // question, see `refuses_unlicensed_write`.
         //
         // **Compared as the handle the subject answers to now.** A subject
         // typed as a handle the caller's own bot used to wear still names the
         // bot, and the session is bound to its current one. The resolving read
         // is spent only on a write that names a ceiling key, and a read that
         // fails refuses the write rather than waving it through.
-        let ceiling_subject = if jojobot_domain::memory::names_a_ceiling(&fields) {
+        let ceiling_subject = if jojobot_domain::memory::names_a_guarded_key(&fields) {
             match self.current_handle(&subject).await {
                 Ok(current) => current,
                 Err(e) => return memory_declined("capture", e),
@@ -786,7 +786,14 @@ impl Jojobot {
             subject.clone()
         };
         if let Some(refused) =
-            jojobot_domain::memory::refuses_own_ceiling(&ceiling_subject, &caller.bot, &fields)
+            // No key the build ships is an ancestor key yet, so no chain is
+            // read; one that is fails closed until this reads it.
+            jojobot_domain::memory::refuses_unlicensed_write(
+                &ceiling_subject,
+                &caller.bot,
+                &fields,
+                None,
+            )
         {
             return memory_declined("capture", refused);
         }

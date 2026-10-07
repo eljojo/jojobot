@@ -815,26 +815,45 @@ pub(crate) fn memory_declined(
         // real key, and jojobot is declining to let it raise or lower its
         // own bound rather than reporting anything wrong with the call's
         // shape.
-        MemoryError::SelfCeiling {
+        MemoryError::KeyNotYours {
             ref subject,
             ref key,
+            may,
+            ref managers,
         } => Ok(blocked_body(
             &EntityId(subject.clone()),
             &[],
-            format!(
-                "Nothing was written: {e}. A different identity has to set '{key}' on \
-                 '{subject}' — ask another bot, or the operator, to raise or lower it instead."
-            ),
+            // **Who may make the write is named** (rule 261): the operator
+            // always may, and the relation says who else.
+            match may {
+                jojobot_domain::memory::MayWrite::DifferentIdentity => format!(
+                    "Nothing was written: {e}. A different identity has to set '{key}' on \
+                     '{subject}' — ask another bot, or the operator, to raise or lower it \
+                     instead."
+                ),
+                jojobot_domain::memory::MayWrite::Subject => format!(
+                    "Nothing was written: {e}. '{subject}' has to write '{key}' itself — ask it, \
+                     or the operator."
+                ),
+                jojobot_domain::memory::MayWrite::Ancestor => format!(
+                    "Nothing was written: {e}. Ask {} to write '{key}' on '{subject}'.",
+                    match managers.is_empty() {
+                        true => "the operator".to_string(),
+                        false => format!("{}, or the operator,", managers.join(", ")),
+                    }
+                ),
+            },
         )),
         // **A merge into the caller's own bot that would carry a ceiling onto
         // it.** The refusal says the MERGE was refused and why, not that the
         // caller tried to set a key: it sent no fields. Both ways forward
         // exist: a different identity performs the merge, or the key comes off
         // the duplicate first.
-        MemoryError::MergeRaisesOwnCeiling {
+        MemoryError::MergeCarriesGuardedKeys {
             ref duplicate,
             ref survivor,
             ref keys,
+            ..
         } => Ok(blocked_body(
             &EntityId(duplicate.clone()),
             &[],
@@ -943,8 +962,8 @@ pub(crate) fn memory_error(e: MemoryError) -> McpError {
         | MemoryError::UnconfirmedPromotion
         | MemoryError::UnconfirmedSettling
         | MemoryError::RoomFull { .. }
-        | MemoryError::SelfCeiling { .. }
-        | MemoryError::MergeRaisesOwnCeiling { .. }
+        | MemoryError::KeyNotYours { .. }
+        | MemoryError::MergeCarriesGuardedKeys { .. }
         | MemoryError::ThoughtTooLong { .. }
         | MemoryError::MergeOverfillsRoom { .. }
         | MemoryError::MergeThoughtTooLong { .. }
@@ -1065,6 +1084,45 @@ mod tests {
                 "{what} came back with no way forward: {body}"
             );
         }
+    }
+
+    /// **A refused key write names who may make it** (rule 261), for every
+    /// relation a key can declare. No key the build ships is an ancestor key or
+    /// a subject-only key yet, so these two arms are reached here and nowhere
+    /// else: the case is what keeps them honest until one is.
+    #[test]
+    fn a_refused_key_write_names_who_may_make_it_for_every_relation() {
+        use jojobot_domain::memory::MayWrite;
+        let refused = |may, managers: &[&str]| {
+            let result = memory_declined(
+                "capture",
+                MemoryError::KeyNotYours {
+                    subject: "bot:sigma".into(),
+                    key: "a_key".into(),
+                    may,
+                    managers: managers.iter().map(|m| m.to_string()).collect(),
+                },
+            )
+            .expect("a refusal is an answer");
+            blocked(&result)["how_to_proceed"]
+                .as_str()
+                .expect("a way forward")
+                .to_string()
+        };
+        // Above the thing: the chain is named, and so is the operator.
+        let above = refused(MayWrite::Ancestor, &["bot:gamma", "bot:omega"]);
+        for who in ["bot:gamma", "bot:omega"] {
+            assert!(above.contains(who), "{who} may make it: {above}");
+        }
+        // The operator is named twice: by the reason, and by the way forward,
+        // which is its own sentence and not a copy of the reason.
+        assert_eq!(above.matches("operator").count(), 2, "{above}");
+        // No chain recorded: the operator is still named, and no empty list is.
+        let none = refused(MayWrite::Ancestor, &[]);
+        assert_eq!(none.matches("operator").count(), 2, "{none}");
+        // The thing itself, and a different identity.
+        assert!(refused(MayWrite::Subject, &[]).contains("bot:sigma"));
+        assert!(refused(MayWrite::DifferentIdentity, &[]).contains("different identity"));
     }
 
     /// **The store being down is a failure, not a blocked answer** — the other

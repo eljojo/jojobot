@@ -304,7 +304,7 @@ impl Jojobot {
         // below.** A raw check here on `fields` alone would miss a clear, a
         // status change to archived, or a key that differs from the ceiling's
         // only by whitespace, because none of those name the key in what
-        // THIS write sends — see `refuses_own_ceiling_change`.
+        // THIS write sends — see `refuses_unlicensed_change`.
         // **The stored due moment is jojobot's, so a caller's own copy of it, or
         // a clear of it, is refused before anything is written** — see
         // `refuses_a_hand_written_due_moment`. Checked on what the caller sent,

@@ -1959,7 +1959,7 @@ impl Memory for InMemoryMemory {
         // behind** — the same check the real store runs, atomically with the
         // write it gates.
         if let Some(err) =
-            super::super::refuses_own_ceiling_change(&handle, caller, &before, &after)
+            super::super::refuses_unlicensed_change(&handle, caller, &before, &after, None)
         {
             return Err(err);
         }
@@ -2148,11 +2148,12 @@ impl Memory for InMemoryMemory {
             &self.writes_on(&folded_key, &held_facts),
             &self.declarations(),
         );
-        if let Some(err) = super::super::refuses_merge_into_own_ceiling(
+        if let Some(err) = super::super::refuses_merge_carrying(
             caller,
             &survivor_handle,
             &folded_handle,
             &carried,
+            None,
         ) {
             return Err(err);
         }
@@ -2478,9 +2479,13 @@ impl Memory for InMemoryMemory {
             &Default::default(),
             &declared,
         );
-        if let Some(err) =
-            super::super::refuses_own_ceiling_change(&handle, caller, &before_fold, &after_fold)
-        {
+        if let Some(err) = super::super::refuses_unlicensed_change(
+            &handle,
+            caller,
+            &before_fold,
+            &after_fold,
+            None,
+        ) {
             return Err(err);
         }
         for fact in facts.iter_mut() {

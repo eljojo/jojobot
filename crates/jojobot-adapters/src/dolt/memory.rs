@@ -3442,14 +3442,17 @@ impl Memory for DoltMemory {
         )?;
         // **The ceiling and the room, both on the state this edit leaves
         // behind, atomically with the write that would leave it.** See
-        // `refuses_own_ceiling_change` and `refuses_room_overflow` in the
+        // `refuses_unlicensed_change` and `refuses_room_overflow` in the
         // domain crate for why the fold rather than the raw patch, and why
         // no ageing here.
-        if let Some(err) = jojobot_domain::memory::refuses_own_ceiling_change(
+        if let Some(err) = jojobot_domain::memory::refuses_unlicensed_change(
             &handle,
             caller,
             &before_fold,
             &after_fold,
+            // No key the build ships is an ancestor key yet, so no chain is
+            // read here; one that is fails closed until this reads it.
+            None,
         ) {
             return Err(err);
         }
@@ -3633,11 +3636,12 @@ impl Memory for DoltMemory {
         // it**, decided over what the duplicate holds, read inside this
         // transaction so no write can land between the question and the move.
         let carried = Self::held_by(&mut tx, &folded_key).await?;
-        if let Some(err) = jojobot_domain::memory::refuses_merge_into_own_ceiling(
+        if let Some(err) = jojobot_domain::memory::refuses_merge_carrying(
             caller,
             &survivor_handle,
             &folded_handle,
             &carried,
+            None,
         ) {
             return Err(err);
         }
@@ -3964,11 +3968,14 @@ impl Memory for DoltMemory {
             &Default::default(),
             &declared,
         );
-        if let Some(err) = jojobot_domain::memory::refuses_own_ceiling_change(
+        if let Some(err) = jojobot_domain::memory::refuses_unlicensed_change(
             &handle,
             caller,
             &before_fold,
             &after_fold,
+            // No key the build ships is an ancestor key yet, so no chain is
+            // read here; one that is fails closed until this reads it.
+            None,
         ) {
             return Err(err);
         }
