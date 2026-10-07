@@ -391,7 +391,10 @@ impl ServerHandler for Jojobot {
         let structured = context
             .protocol_version()
             .is_some_and(|revision| revision >= ProtocolVersion::V_2026_07_28);
-        if let Some(refused) = self.unimplemented_arguments(&request) {
+        if let Some(refused) = self
+            .unimplemented_arguments(&request)
+            .or_else(|| self.missing_arguments(&request))
+        {
             let mut answered: CallToolResponse = refused.into();
             self.finish(&mut answered, sid.as_deref(), structured).await;
             return Ok(answered);

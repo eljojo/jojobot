@@ -68,21 +68,33 @@ fn fields<'a>(
     root: &'a serde_json::Map<String, serde_json::Value>,
     depth: usize,
 ) -> Option<&'a serde_json::Map<String, serde_json::Value>> {
+    shape(node, root, depth)?.get("properties")?.as_object()
+}
+
+/// **The object schema a node describes**, the one that carries `properties`
+/// and, beside them, `required`. [`fields`] reads the first and the gate for a
+/// missing argument reads the second, by the same walk, so what a level
+/// publishes and what it requires cannot be read from two different nodes.
+fn shape<'a>(
+    node: &'a serde_json::Value,
+    root: &'a serde_json::Map<String, serde_json::Value>,
+    depth: usize,
+) -> Option<&'a serde_json::Map<String, serde_json::Value>> {
     if depth >= MAX_DEPTH {
         return None;
     }
-    if let Some(own) = node.get("properties").and_then(|p| p.as_object()) {
-        return Some(own);
+    if node.get("properties").and_then(|p| p.as_object()).is_some() {
+        return node.as_object();
     }
     if let Some(reference) = node.get("$ref").and_then(|r| r.as_str()) {
-        return definition(reference, root).and_then(|target| fields(target, root, depth + 1));
+        return definition(reference, root).and_then(|target| shape(target, root, depth + 1));
     }
     // **A list of objects publishes its names once, on the element.** Every
     // item of a list is the same shape, so the names a caller may send inside
     // one are the element's names — and a walk that stopped at the array would
     // leave every name inside it unchecked while every other test stayed green.
     if let Some(items) = node.get("items") {
-        return fields(items, root, depth + 1);
+        return shape(items, root, depth + 1);
     }
     // The null branch of an optional field publishes nothing, so the first
     // branch that does is the shape being described.
@@ -91,7 +103,7 @@ fn fields<'a>(
         .filter_map(|keyword| node.get(keyword))
         .filter_map(|branches| branches.as_array())
         .flatten()
-        .find_map(|branch| fields(branch, root, depth + 1))
+        .find_map(|branch| shape(branch, root, depth + 1))
 }
 
 /// One place a call can name an argument: the call itself, or a sub-object
@@ -189,6 +201,114 @@ fn unimplemented(
     }
 }
 
+/// One place a call left out an argument its schema requires.
+struct Gap {
+    /// The path a refusal names it by — empty at the top level.
+    path: String,
+    /// What this level requires, and what it takes at all, in schema order.
+    requires: Vec<String>,
+    takes: Vec<String>,
+    /// What the caller left out here.
+    missing: Vec<String>,
+}
+
+impl Gap {
+    fn naming(&self, argument: &str) -> String {
+        if self.path.is_empty() {
+            argument.to_string()
+        } else {
+            format!("{}.{argument}", self.path)
+        }
+    }
+
+    /// What this level requires and takes, said the way its own reader needs it.
+    fn offering(&self) -> String {
+        let at = if self.path.is_empty() {
+            "it".to_string()
+        } else {
+            self.path.clone()
+        };
+        format!(
+            "{at} requires: {}, and takes: {}",
+            self.requires.join(", "),
+            self.takes.join(", ")
+        )
+    }
+}
+
+/// Every level of the call that left out an argument its schema requires,
+/// outermost first. A level the caller got entirely right is left out.
+///
+/// **The same walk as [`unimplemented`], asked of `required` instead of
+/// `properties`**, so a sub-object or a list element is judged exactly where a
+/// name inside it would be.
+fn absent(
+    sent: &serde_json::Map<String, serde_json::Value>,
+    here: &serde_json::Map<String, serde_json::Value>,
+    root: &serde_json::Map<String, serde_json::Value>,
+    path: &str,
+    found: &mut Vec<Gap>,
+) {
+    let requires: Vec<String> = here
+        .get("required")
+        .and_then(|required| required.as_array())
+        .map(|names| {
+            names
+                .iter()
+                .filter_map(|name| name.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    let takes: Vec<String> = here
+        .get("properties")
+        .and_then(|properties| properties.as_object())
+        .map(|properties| properties.keys().cloned().collect())
+        .unwrap_or_default();
+    let missing: Vec<String> = requires
+        .iter()
+        .filter(|name| !sent.contains_key(name.as_str()))
+        .cloned()
+        .collect();
+    let mut deeper = Vec::new();
+    if let Some(properties) = here.get("properties").and_then(|p| p.as_object()) {
+        for (name, value) in sent {
+            let Some(node) = properties.get(name) else {
+                continue;
+            };
+            let Some(inner) = shape(node, root, 0) else {
+                continue;
+            };
+            let below = if path.is_empty() {
+                name.clone()
+            } else {
+                format!("{path}.{name}")
+            };
+            match value {
+                serde_json::Value::Object(object) => deeper.push((object, inner, below)),
+                serde_json::Value::Array(items) => {
+                    for (at, item) in items.iter().enumerate() {
+                        if let Some(object) = item.as_object() {
+                            deeper.push((object, inner, format!("{below}[{at}]")));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    if !missing.is_empty() {
+        found.push(Gap {
+            path: path.to_string(),
+            requires,
+            takes,
+            missing,
+        });
+    }
+    for (object, inner, below) in deeper {
+        absent(object, inner, root, &below, found);
+    }
+}
+
 impl Jojobot {
     /// The refusal a call earns by naming an argument its verb does not
     /// implement, or `None` when every argument is one the verb has.
@@ -234,6 +354,47 @@ impl Jojobot {
              surface does not have is refused rather than dropped, because a call that quietly \
              ignored it would report success for work it did not do. Send the call again without \
              it, or use the argument above that means what you meant.",
+            request.name,
+        )))
+    }
+}
+
+impl Jojobot {
+    /// **The refusal a call earns by leaving out an argument its verb
+    /// requires**, or `None` when every required argument is there.
+    ///
+    /// Without this the parameter layer turns the call back with its own words,
+    /// which name the missing field and nothing else — no way forward, and a
+    /// session that read them gave up on the verb. This answers the way the
+    /// gate above does: blocked, nothing written, what is missing and what the
+    /// verb takes. It runs after that gate, so an argument the verb does not
+    /// have is named first.
+    pub(crate) fn missing_arguments(
+        &self,
+        request: &CallToolRequestParams,
+    ) -> Option<CallToolResult> {
+        let tool = self.tool_router.get(&request.name)?;
+        let root = &tool.input_schema;
+        let empty = serde_json::Map::new();
+        let sent = request.arguments.as_ref().unwrap_or(&empty);
+        let mut levels = Vec::new();
+        absent(sent, root, root, "", &mut levels);
+        if levels.is_empty() {
+            return None;
+        }
+        let named = levels
+            .iter()
+            .flat_map(|level| level.missing.iter().map(|name| level.naming(name)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let takes = levels
+            .iter()
+            .map(Gap::offering)
+            .collect::<Vec<_>>()
+            .join("; ");
+        Some(misused(format!(
+            "Nothing was written. {} needs {named} — {takes}. A call without an argument the \
+             verb requires is refused rather than guessed at. Send the call again with it.",
             request.name,
         )))
     }
@@ -327,6 +488,55 @@ mod tests {
                 .unimplemented_arguments(&call("add_entity", implemented))
                 .is_none(),
             "a call naming only arguments the verb has passes straight through"
+        );
+    }
+
+    /// **A call that leaves out a required argument is refused by name**, with
+    /// what the verb requires and takes, and nothing has run. Paired with the
+    /// same call carrying it, which passes straight through — a gate that
+    /// refused every call would satisfy the first half alone.
+    #[tokio::test]
+    async fn a_call_missing_a_required_argument_is_refused_by_name() {
+        let jojobot = handler();
+        let said = advice(jojobot.missing_arguments(&call(
+            "capture",
+            serde_json::json!({
+                "content": "a note", "sid": "any",
+            }),
+        )));
+        assert!(said.contains("subject"), "{said}");
+        assert!(
+            said.contains("content"),
+            "what it takes is named too: {said}"
+        );
+        assert!(
+            jojobot
+                .missing_arguments(&call(
+                    "capture",
+                    serde_json::json!({"subject": "person:alpha", "content": "a note", "sid": "any"}),
+                ))
+                .is_none(),
+            "a call with everything it requires passes straight through"
+        );
+    }
+
+    /// **Inside a list the element is judged where its names would be**, and the
+    /// refusal names the element by its place in the list.
+    #[tokio::test]
+    async fn an_element_missing_a_required_argument_is_named_by_its_place_in_the_list() {
+        let jojobot = handler();
+        let said = advice(jojobot.missing_arguments(&call(
+            "declare_type",
+            serde_json::json!({
+                "name": "service",
+                "fields": [{"key": "cost"}, {"holds": "number"}],
+                "sid": "any",
+            }),
+        )));
+        assert!(said.contains("fields[1].key"), "{said}");
+        assert!(
+            !said.contains("fields[0]"),
+            "the element that was whole is not named: {said}"
         );
     }
 

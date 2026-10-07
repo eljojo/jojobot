@@ -369,8 +369,10 @@ pub(crate) fn memory_declined(
             format!(
                 "Nothing was written: {e}. A shipped type cannot be extended, shrunk or replaced \
                  from here, so sending this call again will not change the answer — changing one \
-                 is a change to the software. Declare a type of your own instead: call {verb} with \
-                 a different name, and that type is yours to declare and redeclare as you like.{}",
+                 is a change to the software. To see the keys '{name}' already has, call recall \
+                 with answers_type: '{name}'. To declare a type of your own instead, call {verb} \
+                 with a different name, and that type is yours to declare and redeclare as you \
+                 like.{}",
                 match displaced {
                     None => String::new(),
                     Some(d) => format!(

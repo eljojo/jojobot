@@ -59,6 +59,9 @@ mod duplicates;
 mod entitlements;
 #[path = "user_stories/first_post.rs"]
 mod first_post;
+/// A call that left a required argument off, and what it is told to send.
+#[path = "user_stories/forgotten_arguments.rs"]
+mod forgotten_arguments;
 #[path = "user_stories/gigs.rs"]
 mod gigs;
 #[path = "user_stories/handover.rs"]
