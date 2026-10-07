@@ -135,14 +135,18 @@ pub struct CaptureArgs {
     /// **The record's fields**, as a flat bag of key/value pairs — anything
     /// worth recording about this claim beyond the sentence.
     ///
-    /// Flat and free-form on purpose: jojobot stores what you put here and
-    /// interprets none of it, and a key it has never seen is kept exactly as
-    /// you wrote it. **Nothing has to be declared first**, and no name for the
-    /// class of thing is asked for: the fields ARE what the record says, and a
-    /// type is something the keys answer rather than something you announce.
+    /// Flat and free-form on purpose: jojobot stores what you put here, acts
+    /// only on the keys the build names, and keeps a key it has never seen
+    /// exactly as you wrote it. **A value that is a handle, or a comma list of
+    /// handles, is a link and must name something that exists**; a handle
+    /// inside a sentence is prose. **Nothing has to be declared first**, and no
+    /// name for the class of thing is asked for: the fields ARE what the record
+    /// says, and a type is something the keys answer rather than something you
+    /// announce.
     ///
     /// **`"starred": "true"` competes for one of the few seats a bot's own
-    /// boot spends on its rules.** Going home unmarked is normal, not a
+    /// boot spends on its rules, and it stays on the claim: it never folds onto
+    /// the thing.** Going home unmarked is normal, not a
     /// failure: an unstarred rule is fetched with `facts: true` when it is
     /// needed rather than shown by default. Seats are few on purpose —
     /// starring everything is the same as starring nothing. **How many seats

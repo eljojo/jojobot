@@ -83,6 +83,28 @@ pub(crate) fn what_makes_a_thing_fall_due(carriers: &[&dyn attention::Carrier]) 
     sentences.join(" ")
 }
 
+/// **The keys that describe their own claim, named for the model writing one.**
+/// They never fold onto the thing the claim is about, so the sentence also says
+/// how to read them back and how to find a claim by them. The names come from
+/// the shipped `record-labels` type, so a seventh is named with no edit.
+///
+/// Empty when there are none: a sentence about no keys would teach nothing.
+pub(crate) fn what_describes_its_claim(keys: &[String]) -> String {
+    let quoted: Vec<String> = keys.iter().map(|key| format!("`{key}`")).collect();
+    let Some((tail, rest)) = quoted.split_last() else {
+        return String::new();
+    };
+    let named = if rest.is_empty() {
+        tail.clone()
+    } else {
+        format!("{} and {tail}", rest.join(", "))
+    };
+    format!(
+        "{named} describe their own claim and never fold onto the thing: read them back with \
+         `facts: true`, and find by them with a `fields` filter with `scope: record`."
+    )
+}
+
 impl Jojobot {
     /// **What this write should do to the stored due moment.**
     /// [`attention::DueMove::Unchanged`] covers both "this write cannot move

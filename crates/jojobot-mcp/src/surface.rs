@@ -884,6 +884,72 @@ fn every_key_a_shipped_carrier_reads_is_named_where_a_write_is_described() {
     }
 }
 
+/// **The keys that describe their claim are taught where a write is described,
+/// and so is what a handle in a field does.** A model writing a rule or a
+/// check-in read that a key it invents is kept and folds onto the thing, and
+/// nothing told it six keys stay on the claim, how to read them back, or that a
+/// value that is a handle is a link refused when it names nothing.
+///
+/// The six names are read off the shipped `record-labels` type, never through
+/// the function that builds the text, so a seventh is named with no edit here.
+///
+/// ⚠️ **It fails when the corpus comes back empty**: the keys are counted
+/// before they are looked for.
+#[test]
+fn the_write_descriptions_teach_the_describing_keys_and_the_handle_link() {
+    let labels: Vec<String> = crate::seed::shipped_types()
+        .into_iter()
+        .find(|declared| declared.name == "record-labels")
+        .expect("the build ships the record-labels type")
+        .fields
+        .into_iter()
+        .map(|field| field.key)
+        .collect();
+    assert!(
+        labels.len() >= 6,
+        "the shipped record-labels type names {} keys, too few to be the six: {labels:?}",
+        labels.len(),
+    );
+    let tools = Jojobot::tool_router().list_all();
+    let mut places: Vec<(String, String)> = Vec::new();
+    for verb in ["capture", "update_fact"] {
+        let tool = tools
+            .iter()
+            .find(|t| t.name.as_ref() == verb)
+            .unwrap_or_else(|| panic!("the surface offers {verb}"));
+        let schema = serde_json::to_value(&tool.input_schema).expect("the schema serializes");
+        let described = schema["properties"]["fields"]["description"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{verb}'s fields argument carries a description"));
+        places.push((format!("{verb}'s fields argument"), described.to_string()));
+    }
+    assert_eq!(places.len(), 2, "two verbs write fields");
+    for (place, text) in &places {
+        for key in &labels {
+            assert!(
+                text.contains(&format!("`{key}`")),
+                "{place} does not name `{key}`, a key that describes its claim: {text}",
+            );
+        }
+        for word in ["facts", "scope"] {
+            assert!(text.contains(word), "{place} does not say `{word}`: {text}");
+        }
+    }
+    assert!(
+        places[0].1.contains("link"),
+        "capture's fields argument does not say a handle is a link: {}",
+        places[0].1
+    );
+    let instructions = crate::instructions();
+    for word in ["link", "counter"] {
+        assert!(
+            instructions.contains(word),
+            "the served instructions do not say `{word}` where fields are described: \
+             {instructions}"
+        );
+    }
+}
+
 /// **A work item or project at its finishing status is not owed, and every place
 /// a write is described says so.** The closing sentence of the description says
 /// no other key acts on what is owed, and `status` on those two kinds does.

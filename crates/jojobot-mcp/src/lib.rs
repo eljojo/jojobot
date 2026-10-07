@@ -205,7 +205,19 @@ impl Jojobot {
         let carriers = jojobot_domain::attention::shipped();
         let carriers: Vec<&dyn jojobot_domain::attention::Carrier> =
             carriers.iter().map(std::convert::AsRef::as_ref).collect();
-        let falls_due = memory::due::what_makes_a_thing_fall_due(&carriers);
+        let labels: Vec<String> = seed::shipped_types()
+            .into_iter()
+            .find(|declared| declared.name == "record-labels")
+            .map(|declared| declared.fields.into_iter().map(|field| field.key).collect())
+            .unwrap_or_default();
+        let falls_due = [
+            memory::due::what_makes_a_thing_fall_due(&carriers),
+            memory::due::what_describes_its_claim(&labels),
+        ]
+        .into_iter()
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n");
         if falls_due.is_empty() {
             return router;
         }
@@ -356,9 +368,12 @@ pub(crate) const INSTRUCTIONS: &str = "jojobot — a personal-assistant server. 
                  every hit arriving with its surroundings — and over mailbox messages too when \
                  you pass `include_mail: true`.\
                  \n\n**A record carries FIELDS** — a flat bag of key/value pairs beside the \
-                 claim, stored and never interpreted. Nothing has to be declared first, and a \
-                 key you invent is kept as you wrote it. **A thing's fields are every write on \
-                 it, folded, the newest write of each key winning** — a write that takes a key \
+                 claim, stored as you wrote it. Nothing has to be declared first, and a \
+                 key you invent is kept as you wrote it. **A value that is a handle, or a \
+                 comma list of handles, is a link and is refused when it names nothing**, and \
+                 six keys describe their own claim and never reach the thing. **A thing's \
+                 fields are every write on it, folded, the newest write of each key winning, \
+                 and a key declared a counter summing** — a write that takes a key \
                  off takes it off the thing — and **carrying keys is what makes a thing a \
                  type**: declare a type to say which keys it names, and a thing holding \
                  all of them fits it. Declaring admits nothing — a thing is found by the keys it \
