@@ -3379,9 +3379,17 @@ pub fn folded_fields(
             totals.remove(write.key.as_str());
             continue;
         };
-        if types::fold_of(&write.key, declared) == types::Fold::Newest {
-            folded.insert(write.key.clone(), value.clone());
-            continue;
+        match types::fold_of(&write.key, declared) {
+            types::Fold::Newest => {
+                folded.insert(write.key.clone(), value.clone());
+                continue;
+            }
+            // **A label on one record is not a property of the thing.** The
+            // record keeps the key, and a read of the record still sees it; the
+            // thing's fields never do. This is the one fold, so nothing else
+            // needs to know.
+            types::Fold::Describes => continue,
+            types::Fold::Sum => {}
         }
         match totals
             .get(write.key.as_str())

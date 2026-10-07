@@ -325,6 +325,34 @@ mod tests {
         }
     }
 
+    /// **A caller cannot declare a key that describes its record** (rule 360).
+    /// The word is a fold the build attaches to its own keys, and a type that
+    /// could carry it would stop a key folding for every other bot. Refused as
+    /// an answer with a way forward, and nothing is stored under the name.
+    #[tokio::test]
+    async fn a_caller_cannot_declare_a_key_that_describes_its_record() {
+        let jojobot = handler();
+        let mut args = declare_args("my-labels", &["my_label"]);
+        args.fields[0].folds = Some("describes".into());
+        let refused = jojobot
+            .declare_type(Parameters(args))
+            .await
+            .expect("a caller mistake is an answer, not a protocol failure");
+        let body = blocked(&refused);
+        assert_eq!(body["wrote"], false, "{body}");
+        // And a plain declaration of the same key lands, so the refusal is about
+        // the fold and not the type.
+        let mut plain = declare_args("my-labels", &["my_label"]);
+        plain.fields[0].folds = Some("newest".into());
+        let landed = json_of(
+            &jojobot
+                .declare_type(Parameters(plain))
+                .await
+                .expect("a plain declaration is taken"),
+        );
+        assert_ne!(landed["status"], "blocked", "{landed}");
+    }
+
     /// 🚨 **A trimmed set value is reported, named by the key it belongs to.**
     ///
     /// **Paired with a set that needed no trimming**, which carries no delta at

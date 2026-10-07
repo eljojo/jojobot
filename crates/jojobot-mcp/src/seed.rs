@@ -136,6 +136,31 @@ pub fn shipped_types() -> Vec<DeclaredType> {
                 ValueType::Date,
             )],
         ),
+        // **Six keys that describe the claim they ride on and never the thing
+        // it is about** (rule 360: only the build's own vocabulary attaches
+        // behaviour, and rule 106: declared on the key, not listed in the
+        // fold). A bot's rule carries `starred`, `subject` and `purpose`; a
+        // claim read out of a system of record carries `read_from` and
+        // `read_ref`; `recorded_by` says who wrote it. Folded onto the bot or
+        // the loop they read as the thing's own properties. The claim keeps
+        // every one and a read of the claim still sees it.
+        //
+        // **None of them is a key the due moment is computed from**, so the
+        // stored projection never read them and has nothing to stop reading.
+        DeclaredType::shipped(
+            "record-labels",
+            [
+                "read_from",
+                "read_ref",
+                "starred",
+                "subject",
+                "purpose",
+                "recorded_by",
+            ]
+            .into_iter()
+            .map(Field::describing)
+            .collect(),
+        ),
     ]
 }
 
@@ -279,7 +304,7 @@ mod tests {
             ensure_shipped_types(&memory)
                 .await
                 .expect("the store takes"),
-            4
+            5
         );
 
         // **`admits` holds a reference and names no kind**, so what a pass gets
@@ -329,6 +354,29 @@ mod tests {
             vec![(jojobot_domain::attention::RUNS_OUT, "date")],
         );
         assert_eq!(runs_out.origin, Origin::Shipped);
+
+        // **Six keys that describe their record**, each declared so by the
+        // build and by nothing a caller can send.
+        let labels = stored(&memory, "record-labels").await;
+        assert_eq!(labels.origin, Origin::Shipped);
+        assert_eq!(
+            labels
+                .fields
+                .iter()
+                .map(|f| (f.key.as_str(), f.folds))
+                .collect::<Vec<_>>(),
+            [
+                "read_from",
+                "read_ref",
+                "starred",
+                "subject",
+                "purpose",
+                "recorded_by"
+            ]
+            .into_iter()
+            .map(|key| (key, jojobot_domain::memory::types::Fold::Describes))
+            .collect::<Vec<_>>(),
+        );
 
         let decide_by = stored(&memory, "decide-by").await;
         assert_eq!(

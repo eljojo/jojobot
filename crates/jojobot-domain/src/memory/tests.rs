@@ -289,6 +289,97 @@ fn a_counter_sums_its_writes_and_every_other_key_takes_the_newest() {
     );
 }
 
+/// **A key declared to describe its record never folds onto the thing; every
+/// other key still takes the newest.** Both halves in one case: a fold that
+/// dropped every key would pass a check that only looked at the described one,
+/// and one that dropped none would pass a check that only looked at the other.
+///
+/// The last read is the negative the whole behaviour rests on: the same writes
+/// with nothing declared fold the way they always have, so the declaration is
+/// what changes them (rule 360: the build's vocabulary attaches behaviour, a
+/// key nobody declared does not).
+#[test]
+fn a_key_that_describes_its_record_never_folds_and_every_other_key_still_does() {
+    let writes = vec![
+        wrote("starred", 1, Some("true")),
+        wrote("subject", 1, Some("boot: claim and wake")),
+        wrote("mood", 1, Some("hungry")),
+        wrote("mood", 2, Some("content")),
+    ];
+    let labels = types::DeclaredType::shipped(
+        "record-labels",
+        vec![
+            types::Field::describing("starred"),
+            types::Field::describing("subject"),
+        ],
+    );
+
+    let folded = folded_fields(&writes, std::slice::from_ref(&labels));
+    assert!(
+        !folded.contains_key("starred") && !folded.contains_key("subject"),
+        "a label on one record is not a property of the thing: {folded:?}",
+    );
+    assert_eq!(
+        folded.get("mood").map(String::as_str),
+        Some("content"),
+        "a key nobody declared folds as it always did: {folded:?}",
+    );
+
+    let undeclared = folded_fields(&writes, &[]);
+    assert_eq!(
+        undeclared.get("starred").map(String::as_str),
+        Some("true"),
+        "with nothing declared the same writes fold, which is what the declaration \
+         changes: {undeclared:?}",
+    );
+
+    // Nothing wins a key that never folds, so there is no backing to name.
+    let backing = folded_backing(&writes, std::slice::from_ref(&labels));
+    assert!(!backing.contains_key("starred"), "{backing:?}");
+    assert!(backing.contains_key("mood"), "{backing:?}");
+}
+
+/// **Only the build declares a key that describes its record** (rule 360). A
+/// type a caller declares is refused over it, and the same field in a shipped
+/// type is taken: a bot that could declare it could make any key stop folding
+/// for everybody. A described key is optional by nature, so one declared
+/// required is refused too, since no thing could ever hold it.
+#[test]
+fn only_a_shipped_type_may_declare_a_key_that_describes_its_record() {
+    let fields = || vec![types::Field::describing("starred")];
+    assert!(types::validate_type(&types::DeclaredType::shipped("labels", fields())).is_ok());
+    let refused = types::validate_type(&types::DeclaredType::new("labels", fields()))
+        .expect_err("a caller does not attach behaviour to a key");
+    assert!(
+        matches!(refused, MemoryError::InvalidType(_)),
+        "{refused:?}"
+    );
+    let required =
+        types::DeclaredType::shipped("labels", vec![types::Field::describing("starred").needed()]);
+    assert!(
+        types::validate_type(&required).is_err(),
+        "a key no thing can hold is not one to require"
+    );
+}
+
+/// **The token round-trips**, because the store keeps a declaration's fold as
+/// text and reads it back.
+#[test]
+fn a_fold_that_describes_reads_back_from_its_token() {
+    assert_eq!(
+        types::Fold::of_token(types::Fold::Describes.as_token()),
+        Some(types::Fold::Describes)
+    );
+    // A counter declared beside it keeps its behaviour: the more specific one
+    // wins when two types name one key.
+    let both = [
+        types::DeclaredType::shipped("a", vec![types::Field::describing("k")]),
+        types::DeclaredType::new("b", vec![types::Field::summing("k")]),
+    ];
+    assert_eq!(types::fold_of("k", &both), types::Fold::Sum);
+    assert_eq!(types::fold_of("k", &both[..1]), types::Fold::Describes);
+}
+
 /// **A clear ends a total, and the writes after it start a new one.**
 ///
 /// A clear is a write and takes the key off the thing. On a counter that

@@ -86,8 +86,9 @@ pub enum ValueType {
 /// A key IS a counter or it is not.
 ///
 /// **This is not an aggregation language and must not become one.** There is
-/// one fold beyond the default because there is one case for one, and the next
-/// belongs here when a second real case arrives (rule 106).
+/// one aggregating fold beyond the default because there is one case for one,
+/// and the next belongs here when a second real case arrives (rule 106).
+/// [`Fold::Describes`] is not an aggregation: it is the absence of one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum Fold {
     /// The newest write wins. **The default, and it needs no declaration**
@@ -99,6 +100,17 @@ pub enum Fold {
     /// three, and how many times the key was written is still the substrate's
     /// own answer — the projection changes, what is stored does not.
     Sum,
+    /// **A label on one record, which never folds onto the thing.** The key
+    /// says something about the claim that carries it — where it was read, what
+    /// it is for, whether it is marked to ride a boot — and wearing it on the
+    /// thing the claim is about reads as the thing's own property. The claim
+    /// keeps the key and a read of the record still sees it; only the thing's
+    /// folded fields lose it.
+    ///
+    /// **Declared by the build, never by a caller** (rule 360): a bot that
+    /// could declare it could stop any key folding for everybody. See
+    /// [`validate_type`].
+    Describes,
 }
 
 impl Fold {
@@ -107,6 +119,7 @@ impl Fold {
         match self {
             Fold::Newest => "newest",
             Fold::Sum => "sum",
+            Fold::Describes => "describes",
         }
     }
 
@@ -115,6 +128,7 @@ impl Fold {
         match token.trim() {
             "newest" => Some(Fold::Newest),
             "sum" => Some(Fold::Sum),
+            "describes" => Some(Fold::Describes),
             _ => None,
         }
     }
@@ -129,11 +143,17 @@ impl Fold {
 /// type declares a counter sums.
 pub fn fold_of(key: &str, declared: &[DeclaredType]) -> Fold {
     let key = key.trim();
-    if declared
-        .iter()
-        .any(|d| d.field(key).is_some_and(|f| f.folds == Fold::Sum))
-    {
+    let declares = |fold: Fold| {
+        declared
+            .iter()
+            .any(|d| d.field(key).is_some_and(|f| f.folds == fold))
+    };
+    // **A counter wins over a description**, since a key somebody counts is not
+    // only a label.
+    if declares(Fold::Sum) {
         Fold::Sum
+    } else if declares(Fold::Describes) {
+        Fold::Describes
     } else {
         Fold::Newest
     }
@@ -468,6 +488,16 @@ impl Field {
             .map(str::trim)
             .filter(|item| !item.is_empty())
             .collect()
+    }
+
+    /// **A label on one record**, which never folds onto the thing. It holds
+    /// text, since a label is words about the claim, and it is optional by
+    /// nature: no thing holds it, so none could be required to.
+    pub fn describing(key: &str) -> Field {
+        Field {
+            folds: Fold::Describes,
+            ..Field::new(key, ValueType::Text)
+        }
     }
 
     /// **A counter.** It holds a number because a total of anything else is not
@@ -984,6 +1014,26 @@ pub fn validate_type(declared: &DeclaredType) -> Result<(), MemoryError> {
                 "type '{}' names the key '{}' twice",
                 declared.name, field.key
             )));
+        }
+        // **Only the build attaches this behaviour** (rule 360). A caller's type
+        // that could make a key stop folding would change every other bot's
+        // reads, and a described key no thing can hold is not one to require.
+        if field.folds == Fold::Describes {
+            if declared.origin != Origin::Shipped {
+                return Err(MemoryError::InvalidType(format!(
+                    "type '{}' declares '{}' as describing its record, and only the software's \
+                     own types attach that: a key a caller declares folds as the newest write, or \
+                     as a counter",
+                    declared.name, field.key
+                )));
+            }
+            if field.required {
+                return Err(MemoryError::InvalidType(format!(
+                    "type '{}' requires '{}', which describes its record and so is never held by \
+                     a thing: no thing could meet it",
+                    declared.name, field.key
+                )));
+            }
         }
         // **How a set is SPELLED**, which is a different question from whether
         // anything can satisfy the key: a repeated value and a value carrying a
