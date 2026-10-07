@@ -23,14 +23,17 @@ arithmetic and no lock expects jojobot to sum, count or subtract.
   owners, an ordering, four dated milestones, one market, a legal rule, what
   done means, and a contact report that is never answered. For the app: four
   phases that each depend on the one before, a decision in quotable words with
-  the rejected option beside it, and one question drafted and never asked.
+  the rejected option beside it, and one question drafted and never asked. Krusty also asks whether the
+  ordering screen can split one bill between guests, and nobody answers.
 * **May** — slips and a derived requirement. Two slips on the film, markets
   added by word of mouth, a requirement the employee worked out from a quote,
   and the first app phase landed as a named commit and verified by a named
-  suite.
+  suite. Martin answers the split-bill question: it needs the payments phase.
 * **September** — what was misread and what was never written. The budget is
   corrected, an approval is conditional, a decision made in a meeting was never
   recorded, a third slip, and the quote the requirement rested on was misread.
+  Krusty says staff split bills at the till, and the split-bill question is
+  closed as dropped.
 * **December** — the retrospective. Every question names the slot its answer
   goes in, and the lock reads that slot.
 
@@ -56,6 +59,8 @@ says which is possible before anyone has run it:
 | `rests_on_misread` | the key the entry names | PRODUCT if lineage could not be stored. OCCUPANT if the requirement points at no quote. May's lock reads the pointer to the quote under any backing, so a requirement filed as the operator's word still holds it; September's reads the requirement as taken back. |
 | `never_asked` | the key the entry names | OCCUPANT. The drafted question and the asked one are both stored. The lock reads that the provider question is there; whether the slot also names the offline question is a transcript read. |
 | `app_landed` | the key the entry names | OCCUPANT. A commit and a suite are plain values. |
+| the split-bill discussion on the ordering phase | five locks across three sittings, each asked at the end of its own: January, the question reached from a work item by kind and by any link; May, Martin's answer reached through Martin, and January's question still readable; September, Krusty's closing word reached through Krusty, and May's answer still readable | PRODUCT if there is no way to keep successive entries on one item without the later one replacing the earlier. OCCUPANT if the model overwrote the earlier entry or attributed an answer to the wrong person. |
+| `split_bill` | the key the entry names | OCCUPANT if the slot names the earlier state, the wrong closer or the wrong month. PRODUCT only if the closer and the month could not be kept at all. |
 | Radio | nobody | **Never mentioned, so there was none.** A transcript read and unlockable: no lock can ask about what nobody said. |
 
 Each sitting's own locks are floors. **They say what the sitting itself stored**,
@@ -107,7 +112,7 @@ entity  org:moes-tavern | Moe's Tavern
 >
 > Nobody will answer you, but your answer is being read. You must answer.
 >
-> start jojobot as assistant — it is 15 January 2026 and I am starting two things at the agency. The Krusty Burger launch campaign launches on 12 October and that date never moves. Krusty says Burns approved about 200k for it, but nothing is in writing. The deliverables: the TV spot, 30 seconds, owned by Milhouse with the copy by Nelson; print ads, Milhouse; social, Nelson; the launch event, Ralph. The order is copy, then design, then production, then the media buy, with copy due 1 March, design 15 April, production 1 July, and the media booked by 15 August. One market to start, Alpha. Lisa approves everything legal and needs six weeks for any product claim. The TV spot is done when Lisa has approved it, legal has cleared it, and it has gone to the stations in three formats. I will send Krusty a contact report tomorrow, 16 January. The second thing is our own ordering app for Krusty Burger, with Martin as the engineer: four phases, each depending on the one before, login, then menu sync, then ordering, then payments. Homer, who runs the agency, has decided menu sync goes before ordering, and said "we sync the menu first: an order for a menu we have not synced is an order for nothing". Martin wanted ordering first on a hard-coded menu and that is turned down. I have one question drafted that I am not asking yet: does ordering need an offline mode? It blocks ordering.
+> start jojobot as assistant — it is 15 January 2026 and I am starting two things at the agency. The Krusty Burger launch campaign launches on 12 October and that date never moves. Krusty says Burns approved about 200k for it, but nothing is in writing. The deliverables: the TV spot, 30 seconds, owned by Milhouse with the copy by Nelson; print ads, Milhouse; social, Nelson; the launch event, Ralph. The order is copy, then design, then production, then the media buy, with copy due 1 March, design 15 April, production 1 July, and the media booked by 15 August. One market to start, Alpha. Lisa approves everything legal and needs six weeks for any product claim. The TV spot is done when Lisa has approved it, legal has cleared it, and it has gone to the stations in three formats. I will send Krusty a contact report tomorrow, 16 January. The second thing is our own ordering app for Krusty Burger, with Martin as the engineer: four phases, each depending on the one before, login, then menu sync, then ordering, then payments. Homer, who runs the agency, has decided menu sync goes before ordering, and said "we sync the menu first: an order for a menu we have not synced is an order for nothing". Martin wanted ordering first on a hard-coded menu and that is turned down. I have one question drafted that I am not asking yet: does ordering need an offline mode? It blocks ordering. Krusty asked me whether the ordering screen can split one bill between guests, and nobody has answered him yet.
 
 ```locks
 # January's floors. Each asks, at the end of this sitting, what the sitting
@@ -210,6 +215,17 @@ carries ffline
 carries "status":"active"
 say     January: the drafted offline question is not on record, so December cannot say it was drafted and never asked
 window  phase-end
+
+# The question Krusty asked about the ordering screen. It is asked from the
+# work items by kind, with every link walked inward, so a question written on
+# the phase itself and one written elsewhere and linked to the phase both
+# count, and one written on the app with no link does not. No handle is named,
+# because the occupant chooses the phase's handle.
+recall  {"kind": "work", "facts": true, "follow": {"direction": "in"}}
+carries-any-case ordering screen
+carries "status":"active"
+say     January: Krusty's question about splitting a bill is not on record where a work item reaches it, so a later answer has nothing to attach to
+window  phase-end
 ```
 
 ## Phase 2 — May, slips and a quote
@@ -220,7 +236,7 @@ window  phase-end
 >
 > Nobody will answer you, but your answer is being read. You must answer.
 >
-> start jojobot as assistant — it is 20 May 2026. The copy for the film landed on 15 March, two weeks late. Milhouse was pulled over to Moe's Tavern from 6 to 26 April, so the design is now due 6 May. Krusty has added two markets, Beta and Gamma, on the phone and nothing is written down; Beta needs a local-language disclaimer that Lisa has to clear. On the app, login landed as commit a1b2c3d and the LoginFlowSuite verified it, and menu sync is in progress. I put the offline question to Krusty's contact plainly. Krusty said "the basement location has terrible reception", so I worked out that orders must work offline. Who owns what, and what is blocked on whom?
+> start jojobot as assistant — it is 20 May 2026. The copy for the film landed on 15 March, two weeks late. Milhouse was pulled over to Moe's Tavern from 6 to 26 April, so the design is now due 6 May. Krusty has added two markets, Beta and Gamma, on the phone and nothing is written down; Beta needs a local-language disclaimer that Lisa has to clear. On the app, login landed as commit a1b2c3d and the LoginFlowSuite verified it, and menu sync is in progress. I put the offline question to Krusty's contact plainly. Krusty said "the basement location has terrible reception", so I worked out that orders must work offline. Martin has answered Krusty's question about splitting one bill between guests: splitting a bill needs the payments phase, so it cannot ship with ordering and moves after payments. Who owns what, and what is blocked on whom?
 
 ```locks
 # May's floors. The same shape as January's: what this sitting itself stored,
@@ -283,6 +299,24 @@ carries "derived_from":"
 carries "status":"active"
 say     May: the offline requirement is not on record as the employee's own inference pointing at the quote it was worked out from
 window  phase-end
+
+# Martin's answer, reached through Martin. The walk is inward from his handle,
+# so a claim that links him by an edge, a mention or a key holding his handle
+# is reached, and a claim that only names him in a sentence is not. A claim
+# linking somebody else does not reach him.
+recall  {"subject": "person:martin", "facts": true, "follow": {"direction": "in"}}
+carries-any-case after payments
+carries "status":"active"
+say     May: Martin's answer about splitting a bill is not on record attributed to Martin, so who said it is a sentence and not a link
+window  phase-end
+
+# January's question, as January left it. An answer written over the question
+# leaves the answer where the question was, and the question's own words gone.
+recall  {"kind": "work", "facts": true, "follow": {"direction": "in"}}
+carries-any-case ordering screen
+carries "status":"active"
+say     May: January's question about splitting a bill is no longer readable as it was, so the answer replaced the question instead of following it
+window  phase-end
 ```
 
 ## Phase 3 — September, what was misread and what was never written
@@ -293,7 +327,7 @@ window  phase-end
 >
 > Nobody will answer you, but your answer is being read. You must answer.
 >
-> start jojobot as assistant — it is 8 September 2026. Burns told me directly that the 200k was never approved, the budget is 150k. Lisa approved draft 3 of the film on 28 August, on condition that the legal claim clears; draft 4 has existed since 2 September, Krusty prefers it, and nobody has approved it. We dropped the print ads at a meeting on 22 July and it was never written down; Ralph had booked print inventory with a cancellation deadline of 30 September, and Milhouse is still designing the print ads. Production on the film slipped from 1 July to 21 September, and the stations need the materials by 25 September; so far they have two formats and legal has not cleared the Beta disclaimer. Krusty has handed the account to a new contact. On the app, the quote was misread: Krusty meant the staff radios, not orders, so orders do not need to work offline after all, and the offline half of ordering rested on it. Menu sync landed as commit c0ffee1. I have drafted a second question that I am not asking yet: which payment provider. It blocks payments. Ordering now waits on Homer's sign-off. What is at risk, and what did we commit to and not do?
+> start jojobot as assistant — it is 8 September 2026. Burns told me directly that the 200k was never approved, the budget is 150k. Lisa approved draft 3 of the film on 28 August, on condition that the legal claim clears; draft 4 has existed since 2 September, Krusty prefers it, and nobody has approved it. We dropped the print ads at a meeting on 22 July and it was never written down; Ralph had booked print inventory with a cancellation deadline of 30 September, and Milhouse is still designing the print ads. Production on the film slipped from 1 July to 21 September, and the stations need the materials by 25 September; so far they have two formats and legal has not cleared the Beta disclaimer. Krusty has handed the account to a new contact. On the app, the quote was misread: Krusty meant the staff radios, not orders, so orders do not need to work offline after all, and the offline half of ordering rested on it. Menu sync landed as commit c0ffee1. I have drafted a second question that I am not asking yet: which payment provider. It blocks payments. Ordering now waits on Homer's sign-off. Krusty says the staff split bills at the till, so the app does not need to split bills, and that question is closed as dropped. What is at risk, and what did we commit to and not do?
 
 ```locks
 # September's floors.
@@ -364,6 +398,21 @@ carries ign-off
 carries "status":"active"
 say     September: what ordering is now waiting on is not on record
 window  phase-end
+
+# Krusty's closing word, reached through Krusty.
+recall  {"subject": "person:krusty", "facts": true, "follow": {"direction": "in"}}
+carries-any-case at the till
+carries-any-case dropped
+carries "status":"active"
+say     September: Krusty's closing word on splitting a bill is not on record attributed to Krusty, or does not say the question is dropped
+window  phase-end
+
+# May's answer, as May left it.
+recall  {"kind": "work", "facts": true, "follow": {"direction": "in"}}
+carries-any-case after payments
+carries "status":"active"
+say     September: May's answer about splitting a bill is no longer readable as it was, so the closing word replaced the answer instead of following it
+window  phase-end
 ```
 
 ## Phase 4 — December, the retrospective
@@ -374,7 +423,7 @@ window  phase-end
 >
 > Nobody will answer you, but your answer is being read. You must answer.
 >
-> start jojobot as assistant — it is 10 December 2026 and I need the retrospective on the Krusty Burger launch and the ordering app. Keep each answer where a later sitting of yours can find it, under the name I give it, on whatever it is about. budget_truth: what the real budget was, as a number in thousands. owners: who owned each part of the launch. approval: which draft of the film Lisa approved, as the draft number. spot_done: whether the 30 was done, yes or no. slips: how many times a milestone on the film's critical path slipped, as a number. undelivered: what we committed to and did not deliver. For the app, app_next: what is next and what it is waiting on. menu_first: who decided what goes first, in their words, and what was turned down. rests_on_misread: what we believed that rested on something misread. never_asked: which question we drafted and never asked. app_landed: what has landed, with the commits. And was there ever any radio?
+> start jojobot as assistant — it is 10 December 2026 and I need the retrospective on the Krusty Burger launch and the ordering app. Keep each answer where a later sitting of yours can find it, under the name I give it, on whatever it is about. budget_truth: what the real budget was, as a number in thousands. owners: who owned each part of the launch. approval: which draft of the film Lisa approved, as the draft number. spot_done: whether the 30 was done, yes or no. slips: how many times a milestone on the film's critical path slipped, as a number. undelivered: what we committed to and did not deliver. For the app, app_next: what is next and what it is waiting on. menu_first: who decided what goes first, in their words, and what was turned down. rests_on_misread: what we believed that rested on something misread. never_asked: which question we drafted and never asked. app_landed: what has landed, with the commits. split_bill: what the discussion about splitting one bill between guests concluded, who closed it, and in which month. And was there ever any radio?
 
 ```locks
 # December's slots. Each is the key the entry names. The answer lists only
@@ -494,5 +543,15 @@ carries a1b2c3d
 carries c0ffee1
 carries-any-case LoginFlowSuite
 say     December: app_landed does not carry both commits and the suite that verified the first
+window  phase-end
+
+# The split-bill discussion's conclusion, who closed it and when, in the slot
+# the entry names. The month is asked for in words, so a month written in
+# words is the answer.
+recall  {"fields": [{"key": "split_bill"}]}
+carries-any-case dropped
+carries-any-case krusty
+carries-any-case sept
+say     December: split_bill does not say the discussion was dropped, closed by Krusty in September
 window  phase-end
 ```

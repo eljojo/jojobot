@@ -113,6 +113,37 @@ impl Lab {
             .to_string()
     }
 
+    /// The address of the claim on `subject` whose words hold `needle`.
+    async fn address_of(&self, sid: &str, subject: &str, needle: &str) -> String {
+        let read = self
+            .call(sid, "recall", json!({"subject": subject, "facts": true}))
+            .await;
+        let parsed: Value = serde_json::from_str(&read).expect("json");
+        parsed["objects"][0]["facts"]
+            .as_array()
+            .and_then(|facts| {
+                facts
+                    .iter()
+                    .find(|f| f["content"].as_str().is_some_and(|c| c.contains(needle)))
+            })
+            .and_then(|f| f["address"].as_str())
+            .unwrap_or_else(|| panic!("no claim on {subject} holds {needle}: {read}"))
+            .to_string()
+    }
+
+    /// A claim rewritten in place: its words and its one link.
+    async fn rewrite(&self, sid: &str, address: &str, content: &str, about: &str) {
+        let said = self
+            .call(
+                sid,
+                "update_fact",
+                json!({"address": address, "content": content, "provenance": "testimony",
+                       "shape": "about", "object": about}),
+            )
+            .await;
+        assert!(!said.contains("blocked"), "{said}");
+    }
+
     async fn add(&self, sid: &str, kind: &str, handle: &str, name: &str, parent: Option<&str>) {
         let mut args =
             json!({"kind": kind, "handle": handle, "name": name, "source": "user-named"});
@@ -148,6 +179,8 @@ fn saying(outcomes: &[Outcome]) -> String {
 /// roster and the names say what each is.
 const CAMPAIGN: &str = "project:atlas";
 const APP: &str = "project:visa";
+/// The app's ordering phase, as the occupant files it. The handle is on the roster.
+const ORDERING: &str = "work:red-bike";
 
 /// **Which lock of a sitting a case writes the wrong way**, by its place in the
 /// sitting. `None` is the occupant that writes every fact where its reader looks.
@@ -258,10 +291,24 @@ async fn january(lab: &mut Lab, wrong: Wrong) {
         "Drafted and not asked yet: does ordering need an offline mode? It blocks ordering."
     };
     lab.say(&sid, APP, question, json!({})).await;
+    // The ordering phase is a thing of its own, and the question Krusty asked
+    // about it is kept where the phase reaches it. Written the wrong way, the
+    // question sits on the app with nothing joining it to the phase.
+    lab.add(&sid, "work", "red-bike", "The ordering phase", Some(APP))
+        .await;
+    let host = if is(wrong, 12) { APP } else { ORDERING };
+    lab.say(
+        &sid,
+        host,
+        "Krusty asked whether the ordering screen can split one bill between guests. Nobody has \
+         answered yet.",
+        json!({}),
+    )
+    .await;
     lab.ends("Phase 1", 1).await;
 }
 
-/// **May.** Ten locks.
+/// **May.** Eleven locks.
 async fn may(lab: &mut Lab, wrong: Wrong) {
     let sid = lab.sitting("2026-05-20").await;
     let mut fields = serde_json::Map::new();
@@ -325,10 +372,32 @@ async fn may(lab: &mut Lab, wrong: Wrong) {
         derived,
     )
     .await;
+    // Martin answers the question January left on the ordering phase. The wrong
+    // ways: the answer is filed against Krusty, or it is written over the
+    // question it answers.
+    let answer = "Martin answered that splitting a bill needs the payments phase, so it cannot ship \
+                  with ordering and moves after payments.";
+    let who = if is(wrong, 9) {
+        "person:krusty"
+    } else {
+        "person:martin"
+    };
+    if is(wrong, 10) {
+        let asked = lab.address_of(&sid, ORDERING, "ordering screen").await;
+        lab.rewrite(&sid, &asked, answer, who).await;
+    } else {
+        lab.say(
+            &sid,
+            ORDERING,
+            answer,
+            json!({"shape": "about", "object": who}),
+        )
+        .await;
+    }
     lab.ends("Phase 2", 2).await;
 }
 
-/// **September.** Eleven locks.
+/// **September.** Thirteen locks.
 async fn september(lab: &mut Lab, wrong: Wrong) {
     let sid = lab.sitting("2026-09-08").await;
     let budget = if is(wrong, 0) {
@@ -426,10 +495,31 @@ async fn september(lab: &mut Lab, wrong: Wrong) {
         "Ordering now waits on Homer's sign-off."
     };
     lab.say(&sid, APP, waiting, json!({})).await;
+    // Krusty closes the question. The wrong ways: the closing word is filed
+    // against Martin, or it is written over May's answer.
+    let closing = "Krusty said staff split bills at the till, so the app does not need to split \
+                   bills. The question is closed as dropped.";
+    let closer = if is(wrong, 11) {
+        "person:martin"
+    } else {
+        "person:krusty"
+    };
+    if is(wrong, 12) {
+        let answered = lab.address_of(&sid, ORDERING, "after payments").await;
+        lab.rewrite(&sid, &answered, closing, closer).await;
+    } else {
+        lab.say(
+            &sid,
+            ORDERING,
+            closing,
+            json!({"shape": "about", "object": closer}),
+        )
+        .await;
+    }
     lab.ends("Phase 3", 3).await;
 }
 
-/// **December.** Fifteen locks: the budget, five owner pairings, and nine slots.
+/// **December.** Sixteen locks: the budget, five owner pairings, and ten slots.
 async fn december(lab: &mut Lab, wrong: Wrong) {
     let sid = lab.sitting("2026-12-10").await;
     lab.say(
@@ -549,6 +639,20 @@ async fn december(lab: &mut Lab, wrong: Wrong) {
         )
         .await;
     }
+    // The discussion's conclusion, who closed it and in which month. The wrong
+    // way names the state it was in before it was closed.
+    let split = if is(wrong, 15) {
+        "moved after payments, as Martin answered in May"
+    } else {
+        "dropped, closed by Krusty in September"
+    };
+    lab.say(
+        &sid,
+        APP,
+        "The answer to split_bill.",
+        json!({"fields": {"split_bill": split}}),
+    )
+    .await;
     lab.ends("Phase 4", 4).await;
 }
 
@@ -563,7 +667,7 @@ fn of_sitting(outcomes: &[Outcome], phase: &str) -> Vec<(bool, String)> {
 }
 
 /// How many locks the room puts in each sitting.
-const LOCKS: [usize; 4] = [12, 9, 11, 15];
+const LOCKS: [usize; 4] = [13, 11, 13, 16];
 
 fn all_but(count: usize, red: Wrong) -> Vec<bool> {
     (0..count).map(|at| red != Some(at)).collect()
@@ -652,6 +756,8 @@ async fn the_entries_name_no_verb_and_no_place_to_look() {
             "charter",
             "work:",
             "project:",
+            "comment",
+            "thread",
         ] {
             assert!(!said.contains(coached), "{} says {coached}", phase.name);
         }
@@ -672,7 +778,7 @@ fn later_sittings_say_the_film_and_never_tv_spot() {
 
 /// **The sittings' locks are counted, so a lock added or dropped is seen.**
 #[test]
-fn the_room_has_forty_seven_locks_in_four_sittings() {
+fn the_room_has_fifty_three_locks_in_four_sittings() {
     let names: Vec<String> = expectations::for_playbook(AGENCY_ROOM)
         .expect("the room asserts")
         .iter()
@@ -1005,6 +1111,36 @@ async fn december_landed_without_the_second_commit_reds_only_that_slot() {
     discriminates(3, 14).await;
 }
 
+#[tokio::test]
+async fn january_the_question_filed_on_the_app_with_no_link_reds_only_the_phase_lock() {
+    discriminates(0, 12).await;
+}
+
+#[tokio::test]
+async fn may_the_answer_filed_against_krusty_reds_only_the_attribution_lock() {
+    discriminates(1, 9).await;
+}
+
+#[tokio::test]
+async fn may_the_question_written_over_by_its_answer_reds_only_the_readable_lock() {
+    discriminates(1, 10).await;
+}
+
+#[tokio::test]
+async fn september_the_closing_word_filed_against_martin_reds_only_the_attribution_lock() {
+    discriminates(2, 11).await;
+}
+
+#[tokio::test]
+async fn september_the_answer_written_over_by_the_closing_word_reds_only_the_readable_lock() {
+    discriminates(2, 12).await;
+}
+
+#[tokio::test]
+async fn december_the_split_bill_slot_naming_the_earlier_state_reds_only_that_slot() {
+    discriminates(3, 15).await;
+}
+
 // ── A right write in other capitals still holds ──────────────────────────────
 
 /// **One lock of a sitting, after the sittings before it were played right and
@@ -1221,6 +1357,72 @@ async fn may_the_requirement_filed_as_the_operators_word_still_points_at_the_quo
     let outcomes = lab.judge().await;
     assert!(
         of_sitting(&outcomes, "Phase 2")[8].0,
+        "{}",
+        saying(&outcomes)
+    );
+}
+
+/// **Martin's answer is attributed by a link, in any shape a link takes, and
+/// not by a name in a sentence.**
+async fn martin_answer_after_writing(content: &str, extra: Value) -> (bool, String) {
+    let mut lab = played(0, None).await;
+    let sid = lab.sitting("2026-05-20").await;
+    lab.say(&sid, ORDERING, content, extra).await;
+    lab.ends("Phase 2", 2).await;
+    let outcomes = lab.judge().await;
+    (of_sitting(&outcomes, "Phase 2")[9].0, saying(&outcomes))
+}
+
+#[tokio::test]
+async fn may_the_answer_linking_martin_by_a_mention_holds_the_attribution_lock() {
+    let (held, said) = martin_answer_after_writing(
+        "@person:martin says splitting a bill needs payments, so it moves after payments.",
+        json!({}),
+    )
+    .await;
+    assert!(held, "{said}");
+}
+
+#[tokio::test]
+async fn may_the_answer_holding_martin_in_a_key_holds_the_attribution_lock() {
+    let (held, said) = martin_answer_after_writing(
+        "Splitting a bill needs payments, so it moves after payments.",
+        json!({"fields": {"answered_by": "person:martin"}}),
+    )
+    .await;
+    assert!(held, "{said}");
+}
+
+#[tokio::test]
+async fn may_the_answer_naming_martin_only_in_a_sentence_reds_the_attribution_lock() {
+    let (held, said) = martin_answer_after_writing(
+        "Martin said splitting a bill needs payments, so it moves after payments.",
+        json!({}),
+    )
+    .await;
+    assert!(!held, "{said}");
+}
+
+/// **January's question may be filed on somebody and linked to the phase.**
+#[tokio::test]
+async fn january_the_question_filed_on_krusty_and_linked_to_the_phase_holds_the_phase_lock() {
+    let mut lab = lab().await;
+    let sid = lab.sitting("2026-01-15").await;
+    lab.add(&sid, "project", "visa", "The Ordering App", None)
+        .await;
+    lab.add(&sid, "work", "red-bike", "The ordering phase", Some(APP))
+        .await;
+    lab.say(
+        &sid,
+        "person:krusty",
+        "Krusty asked whether the ordering screen can split one bill between guests.",
+        json!({"shape": "about", "object": ORDERING}),
+    )
+    .await;
+    lab.ends("Phase 1", 1).await;
+    let outcomes = lab.judge().await;
+    assert!(
+        of_sitting(&outcomes, "Phase 1")[12].0,
         "{}",
         saying(&outcomes)
     );

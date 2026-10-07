@@ -110,7 +110,7 @@ pub enum Strength {
 
 /// **Every lock this build has actually proven failable, so far.**
 ///
-/// 161 entries, of five different shapes: 77 blanket and 84 discriminating.
+/// 169 entries, of five different shapes: 77 blanket and 92 discriminating.
 /// Quote the discriminating count as twelve, with one constructed positive
 /// — never as a bare twelve; see the note on `tests/fair_lock.rs` below for
 /// why.
@@ -1358,6 +1358,48 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
         lock: "Phase 4 — December: app_landed does not carry both commits and the suite that verified the first",
         file: "tests/agency_room.rs",
         function: "december_landed_without_the_second_commit_reds_only_that_slot",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::AGENCY_ROOM,
+        lock: "Phase 1 — January: Krusty's question about splitting a bill is not on record where a work item reaches it, so a later answer has nothing to attach to",
+        file: "tests/agency_room.rs",
+        function: "january_the_question_filed_on_the_app_with_no_link_reds_only_the_phase_lock",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::AGENCY_ROOM,
+        lock: "Phase 2 — May: Martin's answer about splitting a bill is not on record attributed to Martin, so who said it is a sentence and not a link",
+        file: "tests/agency_room.rs",
+        function: "may_the_answer_filed_against_krusty_reds_only_the_attribution_lock",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::AGENCY_ROOM,
+        lock: "Phase 2 — May: January's question about splitting a bill is no longer readable as it was, so the answer replaced the question instead of following it",
+        file: "tests/agency_room.rs",
+        function: "may_the_question_written_over_by_its_answer_reds_only_the_readable_lock",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::AGENCY_ROOM,
+        lock: "Phase 3 — September: Krusty's closing word on splitting a bill is not on record attributed to Krusty, or does not say the question is dropped",
+        file: "tests/agency_room.rs",
+        function: "september_the_closing_word_filed_against_martin_reds_only_the_attribution_lock",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::AGENCY_ROOM,
+        lock: "Phase 3 — September: May's answer about splitting a bill is no longer readable as it was, so the closing word replaced the answer instead of following it",
+        file: "tests/agency_room.rs",
+        function: "september_the_answer_written_over_by_the_closing_word_reds_only_the_readable_lock",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::AGENCY_ROOM,
+        lock: "Phase 4 — December: split_bill does not say the discussion was dropped, closed by Krusty in September",
+        file: "tests/agency_room.rs",
+        function: "december_the_split_bill_slot_naming_the_earlier_state_reds_only_that_slot",
         strength: Strength::Discriminating,
     },
 ];
