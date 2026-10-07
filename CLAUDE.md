@@ -141,7 +141,9 @@ Shipped and live:
   retracted claim instead of hiding it; a link two records draw stays
   unmarked while either of them stands. **A field whose value is another
   thing's handle is a link too, whatever its key**, and so is a comma-joined
-  list when every item in it is a handle; the key is the relation's name.
+  list when every item in it is a handle; the key is the relation's name. **So a
+  handle that names nothing is refused under any key**, with candidates, as an
+  edge's object is; a handle inside a sentence stays prose.
 - **The graph query** — `recall` is the precise lookup and `search` is the
   breadth. `recall` selects objects (a handle · a kind · a declared type · a key
   and its value, or **a value with no key, which asks whether ANY key holds it**
@@ -150,8 +152,11 @@ Shipped and live:
   selects on its own: the address names its subject, so the call fills the rest
   in from it, and a subject naming something ELSE is refused rather than
   reconciled**), says what of each comes back
-  (facts · prose · the history of one key OR one claim), and walks to a depth in
-  either direction.
+  (facts · prose · the history of one key OR one claim · **`keys`, which narrows
+  each object's fields to the keys named**, walked objects included, while the
+  object names what it left out in `fields_left_out` and how to read it), and
+  walks to a depth in either direction. **A view carries its own list as
+  `shows_keys`**, and a caller's `keys` wins over it.
   **A view is a record of kind `view`, so the one the operator declares and the
   one the build supplies are the same shape and nothing branches on which.**
   **The build supplies a charter and two views**, assembled in one place — a
@@ -218,7 +223,11 @@ Shipped and live:
   **A thing's fields are every write on it, folded together, and HOW they fold
   is the key's own declaration** — the newest write wins by default, while a key
   declared a counter comes back as the total of its writes, which is what makes
-  a running total a read rather than the caller's arithmetic. So a thing gains
+  a running total a read rather than the caller's arithmetic. **A third fold is
+  no fold: a key declared as DESCRIBING its record stays on the claim and never
+  reaches the thing**, so a rule's star stays on the rule rather than on its
+  bot. Only a shipped type may declare it, and a described key may not be
+  required. So a thing gains
   fields a piece at a time and an edit to any record reaches it. **Conformance is asked of the THING, across all its records,
   never of one record alone** — `answers_type` selects things carrying *some* of
   a type's keys and says which each one lacks, and `fits_type` keeps only the
@@ -242,8 +251,10 @@ Shipped and live:
   boot seats and the role it claims — so a different identity sets them. **What a key HOLDS is checked whenever it is set,
   required and optional alike** — so a value that is not what its key declared
   does not count as holding it. **Adding keys is never refused, and a
-  thing that answers no type is a first-class thing.** **The software ships two
-  types of its own — `entitlement` and `trip` — declared at every startup, and it
+  thing that answers no type is a first-class thing.** **The software ships five
+  types of its own — `entitlement`, `trip`, `runs-out`, `decide-by`, and
+  `record-labels`, which declares the six describing keys (`read_from`,
+  `read_ref`, `starred`, `subject`, `purpose`, `recorded_by`) — declared at every startup, and it
   ships KINDS the same way — RECONCILED at every startup, which is the stronger
   word: the build's set is authoritative, so a kind an older build shipped and
   this one dropped is taken back rather than left behind.** **A shipped name is
@@ -452,7 +463,7 @@ Shipped and live:
   write**, so a boot that does nothing leaves nothing behind. A session records
   what it is working on, so the offer can tell two of them apart — and a bot
   may have several running at once, because the `sid` is what tells them apart.
-  **A run may state the DAY it is working in, beside its zone, and everything day-grained defaults to it** — every write, every day-grained read, the staleness sweep and the offer window. A call naming its own date still wins, and a run that states no day is answered on the clock in its zone. **jojobot never derives the day and never advances it.**
+  **A run may state the DAY it is working in, beside its zone, and everything day-grained defaults to it** — every write, every day-grained read, the staleness sweep and the offer window. A call naming its own date still wins, and a run that states no day is answered on the clock in its zone. **jojobot never derives the day and never advances it.** **A run's zone is the one it sent, else the one a resumed run holds, else the instance's own** — the `timezone` key on `topic:instance`, written once by the operator — **else UTC**, and the boot answer names the zone and where it came from. Nothing in the software names a zone.
   **AND THE SERVER MAY BE ACTING OUT A DAY OF ITS OWN.** `JOJOBOT_TODAY` sets one
   day for a whole run and the server's `now` becomes it — the date an undated
   write gets, when a loop falls due, whether an earlier run has gone quiet, and
@@ -537,7 +548,9 @@ is whatever the tool schemas and `start_here` name.
   that moment, and keeps it current on every write. The read finds a carrier by
   the keys it holds rather than by its kind, so a thing that acquires them is
   answered without anybody declaring a new kind. Storing the moment is what
-  makes it findable without reading every row.
+  makes it findable without reading every row. **A `work` item or a `project`
+  at status `done` owes nothing**, and its date stays on the record; a status
+  key on any other kind finishes nothing.
 
 > **The engine ships the procedure; the operator's instance personalizes it.**
 > An override is an ordinary fact on the bot, read alongside the shipped text
