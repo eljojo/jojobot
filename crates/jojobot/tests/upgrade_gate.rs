@@ -443,6 +443,43 @@ async fn assert_the_project_keys_and_the_due_day_read_back_and_bind(
         fail("the hand-written due day", &read);
     }
 
+    // **An edit that sets another key leaves the hand-written due day where it
+    // was**, and is not refused because of it.
+    let read = surface
+        .call(
+            "recall",
+            json!({"subject": "thing:upgrade-fixture-thing", "facts": true}),
+        )
+        .await;
+    let parsed: serde_json::Value =
+        serde_json::from_str(&read).unwrap_or_else(|_| fail("the thing's own records", &read));
+    let address = parsed["objects"][0]["facts"]
+        .as_array()
+        .and_then(|facts| {
+            facts
+                .iter()
+                .find(|f| f["content"] == "a day written by hand")
+        })
+        .and_then(|fact| fact["address"].as_str())
+        .unwrap_or_else(|| fail("the record carrying the hand-written due day", &read))
+        .to_string();
+    let landed = surface
+        .call(
+            "update_fact",
+            json!({"address": address, "fields": {"colour": "red"}, "sid": sid}),
+        )
+        .await;
+    if landed.contains("\"status\":\"blocked\"") {
+        fail("an edit beside the hand-written due day", &landed);
+    }
+    let read = surface
+        .call("recall", json!({"subject": "thing:upgrade-fixture-thing"}))
+        .await;
+    let after = fields_of(&read, "the thing after an edit beside its due day");
+    if after["due_on"] != "2026-12-01" || after["colour"] != "red" {
+        fail("the due day beside an edit that set another key", &read);
+    }
+
     // The next write is held to the project's own list.
     let landed = surface
         .call(
