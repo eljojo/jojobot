@@ -659,20 +659,17 @@ say     October: either the usual road no longer carries its four timings, or on
 # says "drive"; the drive points at Omicron since April and nothing else does.
 # What is locked is the write: what goes with the server gained a note on this
 # sitting's day, and April's own record is still there under it. The two dates
-# are in one answer and the lock cannot say they sit on one thing; the walk
-# reaches only what points at the machine, which is what bounds it.
-recall {"subject": "machine:omicron", "follow": {"direction": "in", "depth": 1}, "facts": true}
-carries "recorded_at":"2026-10-11"
-carries "recorded_at":"2026-04-19"
+# are in one answer and the check cannot say they sit on one thing; it reads
+# the things the walk reached and never the machine's own claims, so a note
+# filed on the machine itself does not stand in for a note on the drive.
+check   what_goes_with_omicron_carries_octobers_note
 say     October: the thing that only works with Omicron carries no note from this sitting, so it goes wherever the boxes go
 
 # **The other half, and the operator asked for it by name: leave alone what
 # goes with the laptop.** June's record is the positive; a note dated today
 # on the dock is a sitting that put a note on everything that points at a
-# machine.
-recall {"subject": "machine:theta", "follow": {"direction": "in", "depth": 1}, "facts": true}
-carries "recorded_at":"2026-06-14"
-lacks   "recorded_at":"2026-10-11"
+# machine. The machine's own claims are not read here either.
+check   what_goes_with_theta_was_left_alone_in_october
 say     October: the thing that only works with Theta was either lost or given a note it was not supposed to get, so the selection was on the key rather than on the machine
 
 # ⚠️ **The LAST call with Gayle**, dated the day it happened. The course

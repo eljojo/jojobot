@@ -139,7 +139,7 @@ type Hatch = (&'static str, fn() -> Box<dyn Checks>);
 
 /// **Every named check this build ships.** A room adds one line here and one
 /// `check` line in its document, and both are visible in the count.
-pub const CHECKS: [Hatch; 42] = [
+pub const CHECKS: [Hatch; 44] = [
     ("question_one_rule_answer", || {
         rule_answer_check("work:pm-state", &[241, 275], &[129, 189, 284])
     }),
@@ -199,6 +199,12 @@ pub const CHECKS: [Hatch; 42] = [
     }),
     ("what_became_of_the_pile_is_on_the_record", || {
         checked(|seen| Box::pin(what_became_of_the_pile_is_on_the_record(seen)))
+    }),
+    ("what_goes_with_omicron_carries_octobers_note", || {
+        checked(|seen| Box::pin(what_goes_with_omicron_carries_octobers_note(seen)))
+    }),
+    ("what_goes_with_theta_was_left_alone_in_october", || {
+        checked(|seen| Box::pin(what_goes_with_theta_was_left_alone_in_october(seen)))
     }),
     ("the_club_was_given_a_claim_in_march", || {
         checked(|seen| Box::pin(the_club_was_given_a_claim_in_march(seen)))
@@ -845,6 +851,79 @@ fn collect_values(value: &Value, into: &mut Vec<String>) {
             }
         }
         _ => {}
+    }
+}
+
+/// **The days the claims on what POINTS AT a machine were made**, read off the
+/// inbound walk from it — the machine's own claims are not among them.
+///
+/// A walk answers with its root and the things it reached, and the root carries
+/// its own claims beside the others. A lock reading the whole answer as text
+/// cannot tell the two apart, so a note filed on the machine itself would be
+/// read as a note on what points at it. This reads the reached things only,
+/// which is the one thing the lock vocabulary cannot say.
+async fn days_on_what_points_at(seen: &Observed<'_>, machine: &str) -> Result<Vec<String>, String> {
+    let read = seen
+        .room
+        .call(
+            "recall",
+            json!({"subject": machine, "follow": {"direction": "in", "depth": 1}, "facts": true}),
+        )
+        .await;
+    let parsed = read_json(&read)?;
+    let Some(root) = parsed["objects"].as_array().and_then(|found| found.first()) else {
+        return Err(format!("{machine} did not come back at all: {read}"));
+    };
+    let days = root["connected"]
+        .as_array()
+        .map(|reached| {
+            reached
+                .iter()
+                .filter_map(|one| one["facts"].as_array())
+                .flatten()
+                .filter_map(|fact| fact["recorded_at"].as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(days)
+}
+
+/// October's day, and the days April and June filed what is for each machine.
+const OCTOBER_ELEVENTH: &str = "2026-10-11";
+const THE_DRIVE_WAS_FORMATTED: &str = "2026-04-19";
+const THE_DOCK_WAS_BOUGHT: &str = "2026-06-14";
+
+/// **What only works with Omicron carries a note from October's sitting**, and
+/// April's own record is still under it.
+async fn what_goes_with_omicron_carries_octobers_note(seen: &Observed<'_>) -> Result<(), String> {
+    let days = days_on_what_points_at(seen, "machine:omicron").await?;
+    for wanted in [THE_DRIVE_WAS_FORMATTED, OCTOBER_ELEVENTH] {
+        if !days.iter().any(|day| day == wanted) {
+            return Err(format!(
+                "nothing that points at machine:omicron carries a claim made on {wanted}; \
+                 the days on what does: {days:?}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// **What only works with Theta is still there and carries no note from
+/// October**, so the sitting selected on the machine and not on the key.
+async fn what_goes_with_theta_was_left_alone_in_october(seen: &Observed<'_>) -> Result<(), String> {
+    let days = days_on_what_points_at(seen, "machine:theta").await?;
+    // The positive the absence rests on: a lost link would pass the second.
+    if !days.iter().any(|day| day == THE_DOCK_WAS_BOUGHT) {
+        return Err(format!(
+            "nothing that points at machine:theta carries a claim made on {THE_DOCK_WAS_BOUGHT}; \
+             the days on what does: {days:?}"
+        ));
+    }
+    match days.iter().any(|day| day == OCTOBER_ELEVENTH) {
+        true => Err(format!(
+            "something that points at machine:theta carries a claim made on {OCTOBER_ELEVENTH}"
+        )),
+        false => Ok(()),
     }
 }
 

@@ -69,7 +69,17 @@ fn lock_named(fragment: &str) -> Lock {
         .filter(|l| l.name().contains(fragment))
         .collect();
     match found.len() {
-        1 => found.remove(0),
+        1 => {
+            let mut lock = found.remove(0);
+            // A lock that names a check is run the way a run runs it.
+            lock.resolve(&|named| {
+                jojobot_exercise::checks::CHECKS
+                    .iter()
+                    .find(|(known, _)| *known == named)
+                    .map(|(_, make)| make())
+            });
+            lock
+        }
         0 => panic!("no lock in vault.md carries {fragment:?}"),
         _ => panic!("more than one lock in vault.md carries {fragment:?}, name it more precisely"),
     }
@@ -431,15 +441,9 @@ async fn note_on(
     );
 }
 
-/// **April's drive, June's dock and October's note**, the way the year writes
-/// them, with the link written by `route`. `note_on_the_dock` is the wrong
-/// October: a note put on everything that is for a machine.
-async fn the_year_of_the_two_machines(
-    surface: &Surface,
-    sid: &str,
-    route: Route,
-    note_on_the_dock: bool,
-) {
+/// **The two things and what April and June wrote about them**, the link
+/// written by `route`: the drive for Omicron, the dock for Theta.
+async fn the_two_things_before_october(surface: &Surface, sid: &str, route: Route) {
     for (handle, name) in [
         ("backup-drive", "The Backup Drive"),
         ("laptop-dock", "The Laptop Dock"),
@@ -469,6 +473,18 @@ async fn the_year_of_the_two_machines(
         saying_for(route, "machine:theta", "only works with the laptop"),
     )
     .await;
+}
+
+/// **April's drive, June's dock and October's note**, the way the year writes
+/// them, with the link written by `route`. `note_on_the_dock` is the wrong
+/// October: a note put on everything that is for a machine.
+async fn the_year_of_the_two_machines(
+    surface: &Surface,
+    sid: &str,
+    route: Route,
+    note_on_the_dock: bool,
+) {
+    the_two_things_before_october(surface, sid, route).await;
     note_on(
         surface,
         sid,
@@ -557,5 +573,45 @@ async fn a_note_on_the_dock_too_reddens_only_the_theta_selection_lock() {
     assert_eq!(
         the_four_for_locks(&surface).await,
         vec![true, true, true, false]
+    );
+}
+
+/// **A note filed on the machine itself is not a note on what points at it.**
+/// Nothing points at either machine here, and each machine carries a note
+/// dated October's day on its own record. A lock that walks inbound from the
+/// machine must not read the machine's own claims as the walk's answer.
+async fn notes_filed_on_the_machines_themselves(surface: &Surface, sid: &str) {
+    for machine in ["machine:omicron", "machine:theta"] {
+        note_on(
+            surface,
+            sid,
+            machine,
+            "2026-10-11",
+            json!({"content": "retired at the end of the month", "provenance": "testimony"}),
+        )
+        .await;
+    }
+}
+
+#[tokio::test]
+async fn a_note_on_the_machine_itself_holds_none_of_the_for_locks() {
+    let (_room, surface, sid) = furnished().await;
+    the_two_things_before_october(&surface, &sid, Route::Prose).await;
+    notes_filed_on_the_machines_themselves(&surface, &sid).await;
+    assert_eq!(the_four_for_locks(&surface).await, vec![false; 4]);
+}
+
+/// The same notes on the machines, with April and June written correctly and
+/// October's note left off the drive. The Omicron note lock needs the drive's
+/// October note in the walk, and the Theta selection lock needs the dock's
+/// absence of one.
+#[tokio::test]
+async fn a_note_on_the_machine_itself_stands_in_for_neither_the_drive_nor_the_dock() {
+    let (_room, surface, sid) = furnished().await;
+    the_two_things_before_october(&surface, &sid, Route::Edge).await;
+    notes_filed_on_the_machines_themselves(&surface, &sid).await;
+    assert_eq!(
+        the_four_for_locks(&surface).await,
+        vec![true, true, false, true]
     );
 }
