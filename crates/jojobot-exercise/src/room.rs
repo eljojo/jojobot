@@ -53,6 +53,10 @@ pub struct Room {
     log: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
     dir: PathBuf,
     endpoint: String,
+    /// **The two ports this room's server was given, kept claimed for as long
+    /// as the room lives**, so another run of this harness is not offered them
+    /// between the listener's release and the server's own bind or afterwards.
+    _claims: Vec<PortClaim>,
 }
 
 impl Room {
@@ -349,8 +353,7 @@ impl Room {
         if let DeathSignal::Ask = signal {
             die_with_this_run(&mut spawning);
         }
-        drop(served_held);
-        drop(store_held);
+        let claims = vec![served_held.release(), store_held.release()];
         let mut server = crate::spawn_gate::guarded(|| spawning.spawn())
             .with_context(|| format!("spawning {}", binary.display()))?;
 
@@ -371,6 +374,7 @@ impl Room {
             log,
             dir,
             endpoint,
+            _claims: claims,
         };
         room.wait_until_answering().await?;
         Ok(room)
@@ -880,19 +884,86 @@ fn names_a_room(dir: &str) -> bool {
 /// matter, and two rooms on one port means one run reading another run's store.
 /// The store suite learned this and wrote it down; this is the same answer,
 /// because it is the same problem.
-fn free_port() -> Result<(u16, std::net::TcpListener)> {
+fn free_port() -> Result<(u16, PortHold)> {
     static NEXT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
+    free_port_with(&NEXT, starting_slot())
+}
+
+/// [`free_port`] over a cursor and a seed of the caller's choosing, so two
+/// processes that were seeded alike can be played in one.
+fn free_port_with(next: &std::sync::atomic::AtomicU16, seed: u16) -> Result<(u16, PortHold)> {
     for _ in 0..20_000 {
-        let slot = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let port = port_at(starting_slot(), slot);
+        let slot = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let port = port_at(seed, slot);
         // **The listener comes back with the number.** Releasing it here left
         // the port free for the whole time the caller spent getting ready to
         // spawn; the caller holds it until the last moment instead.
-        if let Ok(held) = std::net::TcpListener::bind(("127.0.0.1", port)) {
-            return Ok((port, held));
+        if let Ok(listener) = std::net::TcpListener::bind(("127.0.0.1", port)) {
+            let Some(claim) = PortClaim::take(port)? else {
+                continue;
+            };
+            return Ok((port, PortHold { listener, claim }));
         }
     }
     anyhow::bail!("no free loopback port in the range a room uses")
+}
+
+/// **A port held in both ways a room needs.** The listener keeps every other
+/// process from binding it until the caller spawns; the claim keeps every other
+/// run of this harness from picking it, and outlives the listener.
+struct PortHold {
+    listener: std::net::TcpListener,
+    claim: PortClaim,
+}
+
+impl PortHold {
+    /// **Let go of the listener so the child can bind**, and keep the claim.
+    fn release(self) -> PortClaim {
+        drop(self.listener);
+        self.claim
+    }
+}
+
+/// **A port no other run of this harness will pick while this is held.**
+///
+/// The claim is an advisory lock on a file named for the port, so it reaches
+/// across processes and goes when the holder does, however the holder ends.
+/// It binds only runs of this harness; a process that is not one still meets
+/// the listener while the caller holds it, and the room's own retry after it.
+struct PortClaim {
+    _file: std::fs::File,
+}
+
+impl PortClaim {
+    /// Where the claims live. **A fixed directory and not the temp directory**:
+    /// a shell that sets its own `TMPDIR` per invocation gives two runs two
+    /// directories, and a claim only one of them can see claims nothing.
+    const DIR: &'static str = "/tmp/jojobot-room-ports";
+
+    /// `Ok(None)` when another run holds the port, and an error when the claim
+    /// cannot be made at all, because a harness that could not claim would
+    /// otherwise go on picking ports it cannot protect.
+    fn take(port: u16) -> Result<Option<PortClaim>> {
+        std::fs::create_dir_all(Self::DIR)
+            .with_context(|| format!("creating the port claim directory {}", Self::DIR))?;
+        let path = Path::new(Self::DIR).join(port.to_string());
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)
+            .with_context(|| format!("opening the port claim {}", path.display()))?;
+        use std::os::fd::AsRawFd as _;
+        // SAFETY: `flock` takes a descriptor this function owns and no pointer.
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+            return Ok(Some(PortClaim { _file: file }));
+        }
+        let refused = std::io::Error::last_os_error();
+        if refused.raw_os_error() == Some(libc::EWOULDBLOCK) {
+            return Ok(None);
+        }
+        Err(refused).with_context(|| format!("claiming the port with {}", path.display()))
+    }
 }
 
 /// **Where in the range this process starts handing out ports.**
@@ -1239,8 +1310,7 @@ mod tests {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null());
         super::die_with_this_run(&mut spawning);
-        drop(served_held);
-        drop(store_held);
+        let _claims = [served_held.release(), store_held.release()];
         let mut server =
             crate::spawn_gate::guarded(|| spawning.spawn()).expect("the server starts");
         let log = server.stdout.take().expect("the server's own log");
@@ -1377,6 +1447,7 @@ mod tests {
             log: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             dir: super::scratch().expect("a room directory"),
             endpoint: format!("http://127.0.0.1:{port}/mcp"),
+            _claims: Vec::new(),
         };
         let waited = tokio::time::timeout(
             std::time::Duration::from_secs(5),
@@ -1706,5 +1777,122 @@ mod tests {
                 "a port left the range this suite reserves: {port}"
             );
         }
+    }
+
+    /// **Two runs seeded alike are never given the same port**, even after the
+    /// first has let go of its listener to spawn its server.
+    ///
+    /// The seed only narrows the chance that two processes walk the same
+    /// stretch of the range. Process ids that differ by a few put one process's
+    /// later slots on another's first ones, and between the listener's release
+    /// and the child's bind nothing in the second process can tell the number
+    /// is spoken for. Each cursor here stands for one process, started at the
+    /// same slot with the same seed — the worst case the seed cannot rule out.
+    ///
+    /// The second pick is the one that matters, and the first is its control:
+    /// it proves the number the second run skips is the one the first run was
+    /// given.
+    #[test]
+    fn runs_seeded_alike_are_not_given_the_same_port_after_the_listener_is_released() {
+        use std::sync::atomic::AtomicU16;
+        let one = AtomicU16::new(0);
+        let other = AtomicU16::new(0);
+        let (first, held) = super::free_port_with(&one, 3_000).expect("a first port");
+        let claim = held.release();
+        let (second, _held) = super::free_port_with(&other, 3_000).expect("a second port");
+        assert_eq!(
+            first,
+            port_at(3_000, 0),
+            "the first run did not take the first slot, so the second has nothing to collide with",
+        );
+        assert_ne!(
+            first, second,
+            "two runs seeded alike were given the same port while the first still owned it",
+        );
+        drop(claim);
+    }
+
+    /// The other process in the case below: when told which port, it reports
+    /// whether it could claim it. Run on its own, with no port named, it does
+    /// nothing.
+    #[test]
+    fn a_second_process_reports_whether_it_could_claim_the_port() {
+        let Ok(port) = std::env::var("JOJOBOT_CLAIM_PROBE_PORT") else {
+            return;
+        };
+        let port: u16 = port.parse().expect("a port number");
+        let said = match super::PortClaim::take(port).expect("the claim can be tried") {
+            Some(_) => "PROBE:claimed",
+            None => "PROBE:held-elsewhere",
+        };
+        println!("{said}");
+    }
+
+    /// **A claim reaches another PROCESS, and goes when its holder lets go.**
+    ///
+    /// The case above plays two runs in one process. This one starts a real
+    /// second process, which is the thing the claim exists for: it must be
+    /// refused the port while this process holds it and given it afterwards.
+    /// The second answer is the control — a probe that is always refused would
+    /// satisfy the first on its own.
+    #[test]
+    fn another_process_cannot_claim_a_held_port_and_can_once_it_is_released() {
+        let port = 39_999;
+        let probe = || {
+            let out = std::process::Command::new(std::env::current_exe().expect("this binary"))
+                .args([
+                    "--exact",
+                    "room::tests::a_second_process_reports_whether_it_could_claim_the_port",
+                    "--nocapture",
+                ])
+                .env("JOJOBOT_CLAIM_PROBE_PORT", port.to_string())
+                .output()
+                .expect("the second process runs");
+            String::from_utf8_lossy(&out.stdout).into_owned()
+        };
+        let held = super::PortClaim::take(port)
+            .expect("the claim can be tried")
+            .expect("nobody holds the port yet");
+        let while_held = probe();
+        assert!(
+            while_held.contains("PROBE:held-elsewhere"),
+            "a second process was given a port this one holds: {while_held}",
+        );
+        drop(held);
+        let after = probe();
+        assert!(
+            after.contains("PROBE:claimed"),
+            "the port stayed claimed after its holder let go: {after}",
+        );
+    }
+
+    /// **An open room keeps both its ports claimed**, so a neighbouring run is
+    /// not offered a port a live server holds, and gives them up when the room
+    /// is dropped. The release is the control: a claim nothing could take
+    /// would satisfy the first half on its own.
+    #[tokio::test]
+    async fn an_open_room_keeps_its_port_claimed_until_it_is_dropped() {
+        let binary = super::server_binary().expect("a jojobot binary");
+        let room = super::Room::open(&binary).await.expect("a room");
+        let port: u16 = room
+            .endpoint()
+            .rsplit(':')
+            .next()
+            .and_then(|tail| tail.strip_suffix("/mcp"))
+            .and_then(|port| port.parse().ok())
+            .unwrap_or_else(|| panic!("no port in {}", room.endpoint()));
+        assert!(
+            super::PortClaim::take(port)
+                .expect("the claim can be tried")
+                .is_none(),
+            "an open room's port was free for another run to claim",
+        );
+        drop(room);
+        assert!(
+            super::PortClaim::take(port)
+                .expect("the claim can be tried")
+                .is_some(),
+            "a dropped room kept its port claimed",
+        );
     }
 }
