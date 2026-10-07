@@ -2851,6 +2851,113 @@ async fn archiving_a_claim_does_not_list_every_entity_to_resolve_one_handle() {
     );
 }
 
+/// **A stored due moment no carrier key derives can be cleared.** The refusal
+/// tells a caller to clear the key the moment came from; a thing holding a
+/// `due_on` and no such key has nothing to clear, so refusing the clear would
+/// leave the stale value there for good. The clear lands. **Paired with the
+/// two refusals that must stay**: writing `due_on` on that same thing, and
+/// clearing it on a loop whose moment IS derived.
+#[tokio::test]
+async fn a_due_moment_no_carrier_derives_can_be_cleared_and_a_derived_one_cannot() {
+    let memory = std::sync::Arc::new(InMemoryMemory::booted());
+    let jojobot = handler_over(memory.clone());
+    ensure(&jojobot, "thing:the-couch").await;
+    memory.fields_past_the_guard(
+        &EntityId("thing:the-couch".into()),
+        &[("due_on", "2026-06-01")],
+    );
+    let stale = "thing:the-couch#f1".to_string();
+    assert_eq!(
+        fields_of(&jojobot, "thing:the-couch").await["due_on"],
+        "2026-06-01",
+        "the stale day this case clears has to be there first",
+    );
+
+    let refused_write = blocked(
+        &jojobot
+            .update_fact(Parameters(UpdateFactArgs {
+                fields: Some(
+                    [("due_on".to_string(), "2026-07-01".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..update_args(&stale)
+            }))
+            .await
+            .expect("answers"),
+    );
+    assert!(
+        refused_write.to_string().contains("promised_by"),
+        "a write of due_on is refused here too: {refused_write}",
+    );
+
+    update_ok(
+        &jojobot,
+        UpdateFactArgs {
+            clear_fields: Some(vec!["due_on".into()]),
+            ..update_args(&stale)
+        },
+    )
+    .await;
+    assert!(
+        fields_of(&jojobot, "thing:the-couch")
+            .await
+            .get("due_on")
+            .is_none(),
+        "the clear took the stale day off the thing",
+    );
+
+    ensure(&jojobot, "thing:kettle").await;
+    jojobot
+        .add_entity(Parameters(AddEntityArgs {
+            parent: Some("thing:kettle".into()),
+            ..add_args("rhythm", "descale", "descale")
+        }))
+        .await
+        .expect("add ok");
+    let captured = capture_ok(
+        &jojobot,
+        CaptureArgs {
+            provenance: Some("testimony".into()),
+            fields: Some(
+                [
+                    ("cadence_days".to_string(), "7".to_string()),
+                    ("advances_from".to_string(), "check_in_date".to_string()),
+                    ("counts_from".to_string(), "2026-08-01".to_string()),
+                ]
+                .into_iter()
+                .collect(),
+            ),
+            ..capture_args("rhythm:descale", "descale it weekly")
+        },
+    )
+    .await;
+    let rhythm = address_of(&captured);
+    assert_eq!(
+        fields_of(&jojobot, "rhythm:descale").await["due_on"],
+        "2026-08-08",
+        "the derived day this case tries to clear has to be stored first",
+    );
+    let refused_clear = blocked(
+        &jojobot
+            .update_fact(Parameters(UpdateFactArgs {
+                clear_fields: Some(vec!["due_on".into()]),
+                ..update_args(&rhythm)
+            }))
+            .await
+            .expect("answers"),
+    );
+    assert!(
+        refused_clear.to_string().contains("cadence_days"),
+        "a clear of a derived due_on is still refused: {refused_clear}",
+    );
+    assert_eq!(
+        fields_of(&jojobot, "rhythm:descale").await["due_on"],
+        "2026-08-08",
+        "a refused clear moves nothing",
+    );
+}
+
 /// **An edit cannot write or clear the stored due moment either.** It is
 /// jojobot's, set from the carrier keys. Sending it in `fields` or naming it in
 /// `clear_fields` is refused before anything is written, and the record keeps

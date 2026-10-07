@@ -122,7 +122,14 @@ impl Jojobot {
     ///
     /// `sent` and `cleared` are what the CALLER sent, taken before jojobot adds
     /// its own computed copy.
-    pub(crate) fn refuses_a_hand_written_due_moment(
+    ///
+    /// **A clear is let through when no carrier answers for the thing.** The
+    /// refusal tells the caller to clear the key the moment came from, and a
+    /// thing holding a `due_on` with no such key has none to clear: the stored
+    /// moment is a leftover of a write the deployed code once allowed, and the
+    /// advice would loop. A write of it is refused either way. A store that
+    /// cannot be read answers as before, with the refusal.
+    pub(crate) async fn refuses_a_hand_written_due_moment(
         &self,
         subject: &EntityId,
         sent: &std::collections::BTreeMap<String, String>,
@@ -131,6 +138,15 @@ impl Jojobot {
         let key = attention::DUE_ON;
         let writes = sent.contains_key(key);
         if !writes && !cleared.iter().any(|k| k == key) {
+            return None;
+        }
+        if !writes
+            && let Ok(held) = self.memory.fields(subject).await
+            && !self
+                .carriers()
+                .iter()
+                .any(|carrier| carrier.interface().matched_by(&held).is_some())
+        {
             return None;
         }
         let setting = attention::due_keys(&self.carriers());

@@ -788,7 +788,10 @@ impl Jojobot {
         // refused before anything is written** — see
         // `refuses_a_hand_written_due_moment`. Checked on what the caller sent,
         // ahead of the check-in and the mover, which add their own.
-        if let Some(refused) = self.refuses_a_hand_written_due_moment(&subject, &fields, &[]) {
+        if let Some(refused) = self
+            .refuses_a_hand_written_due_moment(&subject, &fields, &[])
+            .await
+        {
             return Ok(refused);
         }
         let mut opened_the_loop = false;

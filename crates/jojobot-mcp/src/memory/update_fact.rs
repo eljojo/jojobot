@@ -309,8 +309,9 @@ impl Jojobot {
         // a clear of it, is refused before anything is written** — see
         // `refuses_a_hand_written_due_moment`. Checked on what the caller sent,
         // ahead of the mover, which adds and clears its own.
-        if let Some(refused) =
-            self.refuses_a_hand_written_due_moment(&address.home, &fields, &cleared)
+        if let Some(refused) = self
+            .refuses_a_hand_written_due_moment(&address.home, &fields, &cleared)
+            .await
         {
             return Ok(refused);
         }
