@@ -427,3 +427,73 @@ async fn a_quarantine_reason_that_names_a_thing_follows_it_through_a_rename() {
     s.wrap("set a copy aside").await;
     story.finish().await;
 }
+
+/// **"This is waiting on that." Then that gets a better name.**
+///
+/// A link written as a field under a key nobody declared has to follow the
+/// thing it names. The first thing says what it waits on; the second is renamed
+/// and its old name is taken by another; the first still reads as waiting on it,
+/// under the new name, and the walk reaches it from either end.
+#[tokio::test]
+async fn a_link_under_a_key_nobody_declared_follows_its_target_through_a_rename() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+
+    s.add("work:sigma", "The First Job").await;
+    s.add("thing:handcart", "The Handcart").await;
+    s.event_with(
+        "thing:handcart",
+        "waits on the work before it moves",
+        json!({ "blocks": "work:sigma" }),
+        &[],
+    )
+    .await;
+
+    // The positive the rename is measured against: before it, the link reads.
+    s.recall("thing:handcart").await.says("work:sigma");
+
+    s.call(
+        "rename_entity",
+        json!({
+            "handle": "work:sigma",
+            "to": "work:phi",
+            "recorded_at": "2026-08-02",
+        }),
+    )
+    .await;
+
+    // **And the old name is taken by something new, before anybody reads the
+    // link back.** The link stays with the thing it was written about: it
+    // neither moves to the newcomer nor reads as its.
+    s.add("work:sigma", "Sigma, the second").await;
+
+    // Read back, the first thing names its target under the name it has now.
+    s.recall("thing:handcart")
+        .await
+        .says("\"blocks\":\"work:phi\"")
+        .never_says("\"blocks\":\"work:sigma\"");
+
+    // The walk reaches the renamed thing, out from the one that waits…
+    s.shape(
+        "what the cart waits on",
+        json!({"subject": "thing:handcart", "follow": {"direction": "out"}}),
+    )
+    .await
+    .says("work:phi");
+    // …and back from the renamed thing to the one that waits on it…
+    s.shape(
+        "what waits on the renamed work",
+        json!({"subject": "work:phi", "follow": {"direction": "in"}}),
+    )
+    .await
+    .says("thing:handcart");
+    // …while the newcomer has nothing waiting on it.
+    s.shape(
+        "what waits on the newcomer",
+        json!({"subject": "work:sigma", "follow": {"direction": "in"}}),
+    )
+    .await
+    .never_says("thing:handcart");
+
+    story.finish().await;
+}

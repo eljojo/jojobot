@@ -559,6 +559,21 @@ impl InMemoryMemory {
                 .collect();
             fields.insert(key, lowered.join(", "));
         }
+        // **A handle under a key nobody declared is lowered too**, behind the
+        // mark that tells a stored id from a word. Each item was already
+        // checked to exist.
+        for (key, items) in super::super::handle_field_values(fields, &declared) {
+            let lowered: Vec<String> = items
+                .iter()
+                .map(|item| {
+                    let stored = self
+                        .storage_key(&EntityId(item.clone()))
+                        .map_or_else(|| item.clone(), |id| id.to_string());
+                    super::super::marked_stored_handle(&stored)
+                })
+                .collect();
+            fields.insert(key, lowered.join(", "));
+        }
     }
 
     /// **The other direction**: every reference-typed field value, composed
@@ -567,12 +582,55 @@ impl InMemoryMemory {
     /// right before a fields map reaches whoever asked for it.
     fn compose_reference_fields(&self, fields: &mut std::collections::BTreeMap<String, String>) {
         let declared = self.declarations();
-        for (key, items) in super::super::reference_field_values(fields, &declared) {
+        let referenced = super::super::reference_field_values(fields, &declared);
+        for (key, items) in &referenced {
             let composed: Vec<String> = items
                 .iter()
-                .map(|item| self.current_handle(&EntityId(item.clone())).to_string())
+                .map(|item| {
+                    // A key declared a reference AFTER a handle was stored under
+                    // it as an undeclared one holds that value behind the mark.
+                    let stored = super::super::stored_handle_id(item).unwrap_or(item);
+                    self.current_handle(&EntityId(stored.to_string()))
+                        .to_string()
+                })
                 .collect();
-            fields.insert(key, composed.join(", "));
+            fields.insert(key.clone(), composed.join(", "));
+        }
+        // **Every other value, served as the handle it answers to now.** A
+        // value stored behind the mark is the thing's id. One stored as plain
+        // handle text, from before ids were kept, is resolved through the
+        // thing's rename history, so it keeps pointing at the thing it named.
+        let known = self.known();
+        let former = self.former();
+        for (key, value) in fields.clone() {
+            if referenced.iter().any(|(held, _)| held == &key) {
+                continue;
+            }
+            let items: Vec<&str> = value.split(',').collect();
+            if items
+                .iter()
+                .all(|item| super::super::stored_handle_id(item).is_some())
+            {
+                let composed: Vec<String> = items
+                    .iter()
+                    .filter_map(|item| super::super::stored_handle_id(item))
+                    .map(|id| self.current_handle(&EntityId(id.to_string())).to_string())
+                    .collect();
+                fields.insert(key, composed.join(", "));
+            } else {
+                let handles = super::super::handles_in_value(&value);
+                if handles.is_empty() {
+                    continue;
+                }
+                let composed: Vec<String> = handles
+                    .iter()
+                    .map(|id| {
+                        super::super::resolve_handle(id, &known, &former)
+                            .map_or_else(|| id.to_string(), |entity| entity.id.to_string())
+                    })
+                    .collect();
+                fields.insert(key, composed.join(", "));
+            }
         }
     }
 

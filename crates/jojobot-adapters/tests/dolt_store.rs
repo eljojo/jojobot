@@ -1731,6 +1731,137 @@ where
     store.stop().await;
 }
 
+/// **A handle under a key nobody declared is stored as the thing's permanent
+/// id behind the mark, and a value stored as plain handle text before that keeps
+/// resolving.**
+///
+/// The stored spelling is pinned here, off the raw column: nothing outside this
+/// process declares it, so a change to it is one every row already written
+/// disagrees with. A row written before ids were kept holds the handle it was
+/// typed with. It is not migrated. Reading it resolves the handle through the
+/// thing's rename history, so the link still points at the thing it named, and
+/// the next write to that key stores the id.
+#[tokio::test]
+async fn a_handle_under_an_undeclared_key_is_stored_as_an_id_and_old_text_keeps_resolving() {
+    let scratch = Scratch::new("undeclared-handle-storage");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("undeclaredhandlestorage")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool.clone());
+
+    let target = EntityId("work:contract-stored-target".into());
+    let other = EntityId("work:contract-stored-other".into());
+    let holder = EntityId("thing:contract-stored-holder".into());
+    for (id, name) in [(&target, "Target"), (&other, "Other"), (&holder, "Holder")] {
+        memory
+            .add_entity(NewEntity::new(id.clone(), name, "contract-fixture"))
+            .await
+            .expect("add_entity ok")
+            .written()
+            .expect("nothing collides with it");
+    }
+    let badge_of = async |handle: &EntityId| -> String {
+        sqlx::query_scalar("SELECT badge FROM entity WHERE id = ?")
+            .bind(handle.as_str())
+            .fetch_one(&pool)
+            .await
+            .expect("an entity wears a badge")
+    };
+    let held = memory
+        .capture(NewFact {
+            fields: [
+                ("blocks".to_string(), target.to_string()),
+                ("waits_on".to_string(), format!("{target}, {other}")),
+            ]
+            .into_iter()
+            .collect(),
+            ..NewFact::about(holder.clone(), "waits on two things", date(2026, 8, 1))
+        })
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("both name real things");
+    let stored = async |key: &str| -> String {
+        sqlx::query_scalar(
+            "SELECT value FROM field_write WHERE entity = ? AND `key` = ? AND fact_id = ? \
+             ORDER BY ordinal DESC LIMIT 1",
+        )
+        .bind(badge_of(&holder).await)
+        .bind(key)
+        .bind(held.id.as_str())
+        .fetch_one(&pool)
+        .await
+        .expect("the stored value reads")
+    };
+
+    // The stored spelling: the id behind the mark, item by item.
+    let (target_badge, other_badge) = (badge_of(&target).await, badge_of(&other).await);
+    assert_eq!(stored("blocks").await, format!("@#{target_badge}"));
+    assert_eq!(
+        stored("waits_on").await,
+        format!("@#{target_badge}, @#{other_badge}")
+    );
+
+    // A row from before: the handle as it was typed.
+    let renamed = EntityId("work:contract-stored-renamed".into());
+    memory
+        .rename_entity(&target, &renamed, None, date(2026, 8, 2), None)
+        .await
+        .expect("the rename lands")
+        .written()
+        .expect("nothing collides with the new handle");
+    sqlx::query(
+        "UPDATE field_write SET value = ? WHERE entity = ? AND `key` = 'blocks' AND fact_id = ?",
+    )
+    .bind(target.as_str())
+    .bind(badge_of(&holder).await)
+    .bind(held.id.as_str())
+    .execute(&pool)
+    .await
+    .expect("the pre-ids shape is written");
+
+    // Not migrated: the column holds what it held…
+    assert_eq!(stored("blocks").await, target.to_string());
+    // …and it still resolves, under the name the thing has now.
+    let fields = memory.fields(&holder).await.expect("fields reads");
+    assert_eq!(fields["blocks"], renamed.to_string(), "{fields:?}");
+    assert!(
+        memory
+            .referring_to(&renamed)
+            .await
+            .expect("referring_to reads")
+            .iter()
+            .any(|fact| fact.id == held.id),
+        "the old text still points at the renamed thing",
+    );
+
+    // The next write that changes that key stores the id.
+    memory
+        .update_fact(
+            &held.address(),
+            FactPatch {
+                fields: [("blocks".to_string(), other.to_string())]
+                    .into_iter()
+                    .collect(),
+                ..Default::default()
+            },
+            &EntityId("bot:assistant".into()),
+        )
+        .await
+        .expect("update ok")
+        .written()
+        .expect("it names a real thing");
+    assert_eq!(stored("blocks").await, format!("@#{other_badge}"));
+
+    store.stop().await;
+}
+
 /// **The memory contract, against the real store.** Run in parts; see
 /// [`the_contract_in_parts`] for what that holds.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

@@ -860,6 +860,20 @@ impl DoltMemory {
             }
             fields.insert(key, lowered.join(", "));
         }
+        // **A handle under a key nobody declared is lowered too**, behind the
+        // mark that tells a stored id from a word. Each item was already
+        // checked to exist by the caller of this function.
+        for (key, items) in jojobot_domain::memory::handle_field_values(fields, &declared) {
+            let mut lowered = Vec::with_capacity(items.len());
+            for item in items {
+                let id = EntityId(item);
+                let stored = self.resolve(tx, &id).await?.map_or(id, |(key, _)| key);
+                lowered.push(jojobot_domain::memory::marked_stored_handle(
+                    stored.as_str(),
+                ));
+            }
+            fields.insert(key, lowered.join(", "));
+        }
         Ok(())
     }
 
@@ -873,12 +887,60 @@ impl DoltMemory {
         fields: &mut std::collections::BTreeMap<String, String>,
     ) -> Result<(), MemoryError> {
         let declared = Self::types_in(tx).await?;
-        for (key, items) in jojobot_domain::memory::reference_field_values(fields, &declared) {
+        let referenced = jojobot_domain::memory::reference_field_values(fields, &declared);
+        for (key, items) in &referenced {
             let mut composed = Vec::with_capacity(items.len());
             for item in items {
-                composed.push(self.current_handle(tx, &EntityId(item)).await?.to_string());
+                // A key declared a reference AFTER a handle was stored under it
+                // as an undeclared one holds that value behind the mark.
+                let stored = jojobot_domain::memory::stored_handle_id(item).unwrap_or(item);
+                composed.push(
+                    self.current_handle(tx, &EntityId(stored.to_string()))
+                        .await?
+                        .to_string(),
+                );
             }
-            fields.insert(key, composed.join(", "));
+            fields.insert(key.clone(), composed.join(", "));
+        }
+        // **Every other value, served as the handle it answers to now.** A value
+        // stored behind the mark is the thing's id. One stored as plain handle
+        // text, from before ids were kept, is resolved through the thing's
+        // rename history, so it keeps pointing at the thing it named and is
+        // lowered the next time the key is written.
+        for (key, value) in fields.clone() {
+            if referenced.iter().any(|(held, _)| held == &key) {
+                continue;
+            }
+            let items: Vec<&str> = value.split(',').collect();
+            if items
+                .iter()
+                .all(|item| jojobot_domain::memory::stored_handle_id(item).is_some())
+            {
+                let mut composed = Vec::with_capacity(items.len());
+                for item in items {
+                    if let Some(id) = jojobot_domain::memory::stored_handle_id(item) {
+                        composed.push(
+                            self.current_handle(tx, &EntityId(id.to_string()))
+                                .await?
+                                .to_string(),
+                        );
+                    }
+                }
+                fields.insert(key, composed.join(", "));
+            } else {
+                let handles = jojobot_domain::memory::handles_in_value(&value);
+                if handles.is_empty() {
+                    continue;
+                }
+                let mut composed = Vec::with_capacity(handles.len());
+                for id in handles {
+                    composed.push(match self.resolve(tx, &id).await? {
+                        Some((_, current)) => current.to_string(),
+                        None => id.to_string(),
+                    });
+                }
+                fields.insert(key, composed.join(", "));
+            }
         }
         Ok(())
     }
@@ -3782,7 +3844,16 @@ impl Memory for DoltMemory {
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
             .collect();
-        let mut sql = String::from("SELECT DISTINCT entity FROM field_write WHERE value IN (?, ?)");
+        // **A handle under a key nobody declared is stored behind the mark**, and
+        // a list of them is several marked items in one value, so the rows are
+        // also asked for a value that merely CONTAINS the target in either
+        // form. Rows stored as plain handle text before ids were kept match on
+        // the handle itself, which is why that form is asked for as well.
+        let marked = jojobot_domain::memory::marked_stored_handle(key.as_str());
+        let mut sql = String::from(
+            "SELECT DISTINCT entity FROM field_write \
+             WHERE value IN (?, ?, ?) OR value LIKE ? OR value LIKE ?",
+        );
         if !list_keys.is_empty() {
             let marks = vec!["?"; list_keys.len()].join(", ");
             sql.push_str(&format!(
@@ -3796,7 +3867,12 @@ impl Memory for DoltMemory {
                 .replace('_', "\\_");
             format!("%{escaped}%")
         };
-        let mut query = sqlx::query(&sql).bind(target.as_str()).bind(key.as_str());
+        let mut query = sqlx::query(&sql)
+            .bind(target.as_str())
+            .bind(key.as_str())
+            .bind(marked.as_str())
+            .bind(contains(target.as_str()))
+            .bind(contains(marked.as_str()));
         for list_key in &list_keys {
             query = query.bind(list_key.as_str());
         }

@@ -2604,13 +2604,58 @@ pub fn reference_field_values(
         .collect()
 }
 
+/// **The handle-valued fields under keys no type calls a reference**, with the
+/// handles each value names (see [`handles_in_value`]) — what a store lowers to
+/// permanent ids on a write, beside [`reference_field_values`], which has the
+/// declared ones. A key a declaration calls a reference is left to that, so the
+/// two never touch one key.
+pub fn handle_field_values(
+    fields: &BTreeMap<String, String>,
+    declared: &[types::DeclaredType],
+) -> Vec<(String, Vec<String>)> {
+    let referenced: Vec<String> = reference_field_values(fields, declared)
+        .into_iter()
+        .map(|(key, _)| key)
+        .collect();
+    fields
+        .iter()
+        .filter(|(key, _)| !referenced.contains(key))
+        .filter_map(|(key, value)| {
+            let handles = handles_in_value(value);
+            (!handles.is_empty()).then(|| {
+                (
+                    key.clone(),
+                    handles.iter().map(|id| id.to_string()).collect(),
+                )
+            })
+        })
+        .collect()
+}
+
+/// **How a handle under an undeclared key is stored**: the permanent id the
+/// thing wears, behind the mark a stored mention wears.
+///
+/// An undeclared key says nothing about what it holds, so a stored id could not
+/// be told from a word that happens to spell one. The mark can: no handle starts
+/// with it. A declared reference key needs none, because the declaration says
+/// the value is a reference.
+pub fn marked_stored_handle(id: &str) -> String {
+    format!("{}{id}", mention::MARK)
+}
+
+/// **The id behind a stored handle**, when the item wears the mark.
+pub fn stored_handle_id(item: &str) -> Option<&str> {
+    item.trim().strip_prefix(mention::MARK)
+}
+
 /// **Whether any field of a record names `target`**, the question
 /// [`Memory::referring_to`] asks of every record.
 ///
 /// A key some type declared a reference holds its value as items, so a list
-/// names the target when ANY of its items is the handle. Every other key is
-/// compared whole, which is what keeps a handle inside a longer string, or
-/// under a key nobody declared a list, from counting as more than it is.
+/// names the target when ANY of its items is the handle. Every other key names
+/// the handles [`handles_in_value`] reads out of it, which is what keeps a
+/// handle inside a longer string, or in a list with an item that is no handle,
+/// from counting as more than it is.
 pub fn fields_name_target(
     fields: &BTreeMap<String, String>,
     declared: &[types::DeclaredType],
@@ -2623,7 +2668,7 @@ pub fn fields_name_target(
             .find(|(referenced_key, _)| referenced_key == key)
         {
             Some((_, items)) => items.iter().any(|item| item == target.as_str()),
-            None => value.trim() == target.as_str(),
+            None => handles_in_value(value).iter().any(|named| named == target),
         }
     })
 }

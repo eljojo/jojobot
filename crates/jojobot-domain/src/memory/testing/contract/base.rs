@@ -10844,6 +10844,114 @@ pub async fn a_field_naming_nothing_is_refused_under_any_key<M: Memory>(store: &
     );
 }
 
+/// **A handle under a key nobody declared follows the thing it names through a
+/// rename.**
+///
+/// A field whose value is a handle is a link whatever its key. A link that
+/// stored the spelling it was written in points at nothing after the target is
+/// renamed, and at somebody else once the old name is taken. So the store keeps
+/// the thing's permanent id and serves the handle it answers to now: the
+/// folded fields, the claim read back, and the question who points here all
+/// answer under the new handle, and they keep answering so when the old name is
+/// taken by another thing. A list is held the same way, item by item, and a
+/// value that only looks like a handle stays as it was written.
+pub async fn a_handle_under_an_undeclared_key_follows_a_rename<M: Memory>(store: &M) {
+    let was = EntityId("work:contract-follows-was".into());
+    let now = EntityId("work:contract-follows-relocated".into());
+    let other = EntityId("work:contract-follows-other".into());
+    let holder = EntityId("thing:contract-follows-holder".into());
+    for (id, name) in [
+        (&was, "Contract Follows Original Work"),
+        (&other, "Contract Follows Other"),
+        (&holder, "Contract Follows Holder"),
+    ] {
+        add(store, NewEntity::new(id.clone(), name, "contract-fixture")).await;
+    }
+    let held = capture(
+        store,
+        NewFact {
+            fields: [
+                ("blocks".to_string(), was.to_string()),
+                ("waits_on".to_string(), format!("{was}, {other}")),
+                ("note".to_string(), format!("held up by {was} today")),
+            ]
+            .into_iter()
+            .collect(),
+            ..NewFact::about(
+                holder.clone(),
+                "waits on the work before it moves",
+                date(2026, 8, 1),
+            )
+        },
+    )
+    .await;
+
+    store
+        .rename_entity(&was, &now, None, date(2026, 8, 2), None)
+        .await
+        .expect("the rename lands")
+        .written()
+        .expect("nothing collides with the new handle");
+
+    // **The freed name is taken by somebody else**, which is what a stored
+    // spelling cannot survive: it would point at the newcomer.
+    add(
+        store,
+        NewEntity::new(was.clone(), "Contract Follows Newcomer", "contract-fixture"),
+    )
+    .await;
+
+    let fields = store.fields(&holder).await.expect("the fields read");
+    assert_eq!(
+        fields["blocks"],
+        now.to_string(),
+        "the folded field is served under the current handle: {fields:?}",
+    );
+    assert_eq!(
+        fields["waits_on"],
+        format!("{now}, {other}"),
+        "and so is every item of a list: {fields:?}",
+    );
+    assert_eq!(
+        fields["note"],
+        format!("held up by {was} today"),
+        "a handle inside a sentence is prose and is served as written: {fields:?}",
+    );
+    let facts = store.recall(&holder).await.expect("recall holder");
+    let claim = facts
+        .iter()
+        .find(|fact| fact.address() == held.address())
+        .expect("the claim is still there");
+    assert_eq!(
+        claim.fields["blocks"],
+        now.to_string(),
+        "the claim read back says the current handle: {:?}",
+        claim.fields,
+    );
+    let pointing: Vec<String> = store
+        .referring_to(&now)
+        .await
+        .expect("a store answers who points here")
+        .iter()
+        .map(|fact| fact.address().to_string())
+        .collect();
+    assert!(
+        pointing.contains(&held.address().to_string()),
+        "the holder is found from the renamed target: {pointing:?}",
+    );
+    let at_the_newcomer: Vec<String> = store
+        .referring_to(&was)
+        .await
+        .expect("a store answers who points here")
+        .iter()
+        .map(|fact| fact.address().to_string())
+        .collect();
+    assert!(
+        !at_the_newcomer.contains(&held.address().to_string()),
+        "the holder does not follow the name to its new owner: {at_the_newcomer:?}",
+    );
+}
+
 /// **A kind the code learned today survives the store.**
 ///
 /// The store keeps a kind as a string and reads it back off the handle, so
@@ -13373,6 +13481,7 @@ macro_rules! all_cases {
         $m!(a_closed_set_refuses_a_write_outside_it($store));
         $m!(a_reference_must_name_an_entity_that_exists($store));
         $m!(a_field_naming_nothing_is_refused_under_any_key($store));
+        $m!(a_handle_under_an_undeclared_key_follows_a_rename($store));
         $m!(a_write_cannot_break_a_fit_that_already_exists($store));
         $m!(a_supersede_that_breaks_a_fit_is_refused_and_a_retraction_is_not($store));
         $m!(a_walk_flags_a_link_drawn_by_a_claim_archived_through_an_ordinary_edit($store));

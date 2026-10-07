@@ -509,6 +509,36 @@ async fn every_case_of_the_contract_holds_alone_on_a_store_of_its_own() {
     );
 }
 
+/// **A handle stored as plain text under a key nobody declared, from before ids
+/// were kept, still follows its target through a rename in the fake**, as the
+/// real store's reads do: the fake lies where the real store lies, and tells the
+/// truth where it tells it.
+#[tokio::test]
+async fn a_plain_text_handle_under_an_undeclared_key_resolves_through_a_rename_in_the_fake() {
+    let memory = InMemoryMemory::booted();
+    let was = EntityId("work:contract-follows-was".into());
+    let now = EntityId("work:contract-follows-relocated".into());
+    let holder = EntityId("thing:contract-follows-holder".into());
+    for (id, name) in [(&was, "Original"), (&holder, "Holder")] {
+        memory
+            .add_entity(NewEntity::new(id.clone(), name, "test"))
+            .await
+            .expect("add ok")
+            .written()
+            .expect("nothing collides");
+    }
+    memory.fields_past_the_guard(&holder, &[("blocks", was.as_str())]);
+    memory
+        .rename_entity(&was, &now, None, jiff::civil::date(2026, 8, 2), None)
+        .await
+        .expect("the rename lands")
+        .written()
+        .expect("nothing collides");
+
+    let fields = memory.fields(&holder).await.expect("fields reads");
+    assert_eq!(fields["blocks"], now.to_string(), "{fields:?}");
+}
+
 /// A role's exclusivity against the fake — the same suite the gated
 /// integration test runs against real Dolt.
 #[tokio::test]

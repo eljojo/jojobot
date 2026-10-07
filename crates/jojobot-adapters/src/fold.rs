@@ -179,7 +179,14 @@ impl Memory for Folded {
             .rename_entity(from, to, parent, date, override_token)
             .await?;
         if matches!(renamed, Guarded::Written(_)) {
-            self.cache.write().expect("fold lock").remove(from);
+            // **Every thing whose fields say the old handle is stale too.** A
+            // field naming the renamed thing is served under the handle it
+            // answers to now, so a copy cached before the rename still holds
+            // the old spelling.
+            let old = from.as_str();
+            let mut cache = self.cache.write().expect("fold lock");
+            cache.remove(from);
+            cache.retain(|_, (_, fields)| !fields.values().any(|value| value.contains(old)));
         }
         Ok(renamed)
     }
