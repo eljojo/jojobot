@@ -1288,6 +1288,49 @@ fn capture_provenance_says_what_a_bots_instruction_is_and_what_its_report_is_not
     }
 }
 
+/// **`recall` says what its three newest behaviours are, where a caller reads
+/// them.** A view's keys come back by asking without the view, a status filter
+/// narrows the claims an answer lists, and a comma list of handles is a field
+/// link beside a whole value.
+///
+/// Each is pinned on the identifier only that behaviour carries, within a short
+/// window after the sentence it corrects, because the same words appear
+/// elsewhere in the description and a search over the whole text would pass on
+/// the wrong sentence. The `keys` argument and the `follow` argument are read
+/// from the published schema, which is where a client reads them.
+#[test]
+fn the_recall_description_says_the_view_the_status_filter_and_the_handle_list() {
+    let tools = Jojobot::tool_router().list_all();
+    let recall = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "recall")
+        .expect("the surface offers recall");
+    let description = recall.description.as_deref().unwrap_or_default();
+    let schema = serde_json::to_string(&*recall.input_schema).expect("the schema serializes");
+    let keys_argument = serde_json::to_value(&*recall.input_schema).expect("the schema serializes")
+        ["properties"]["keys"]["description"]
+        .as_str()
+        .expect("recall's keys argument carries a description")
+        .to_string();
+    // The window starts at the anchor and is counted in characters, so a
+    // multi-byte character cannot split it.
+    let near = |text: &str, anchor: &str, width: usize, needle: &str| {
+        let at = text
+            .find(anchor)
+            .unwrap_or_else(|| panic!("`{anchor}` is not in: {text}"));
+        let window: String = text[at..].chars().take(width).collect();
+        assert!(
+            window.contains(needle),
+            "`{needle}` is not within {width} characters after `{anchor}`: {window}"
+        );
+    };
+    near(&keys_argument, "asking again without", 260, "its kind");
+    near(description, "asking again without keys", 260, "its kind");
+    near(description, "claims of EVERY status", 140, "`status`");
+    near(description, "FIELD LINK", 200, "comma");
+    near(&schema, "a field link (an entity", 200, "comma");
+}
+
 /// **The second call for who reports to a bot is named where `reports_to` is
 /// taught.** The colleagues view says only whom each bot reports to, so the
 /// surface that tells a bot to write the key also says how to read the other

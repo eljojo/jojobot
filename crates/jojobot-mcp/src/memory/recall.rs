@@ -66,7 +66,8 @@ pub struct KeyFilterArgs {
 /// Leave both `shape` and `relation` unset and a walk also reaches a
 /// mention (an entity named in a claim's own words), a ref (an entity a
 /// claim touches with no claim about how) and a field link (an entity whose
-/// handle a record holds as a whole field value, under any key) — each
+/// handle a record holds as a whole field value, or as every item of a comma
+/// list, under any key) — each
 /// labelled mention, ref or field, never as an edge. Naming a shape or a
 /// relation narrows to that alone: none has one.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -254,7 +255,9 @@ pub struct RecallArgs {
     ///
     /// **Eliding is never silent.** An object that holds other keys says so in
     /// `fields_left_out`, naming them, and asking again without `keys` reads
-    /// them all. A key an object does not hold is simply not there.
+    /// them all. When a view supplied the keys, ask again without the view,
+    /// sending its kind, or with `keys` naming the ones left out. A key an
+    /// object does not hold is simply not there.
     ///
     /// Omit it and every key comes back, which is the normal read. This
     /// narrows what each object says, never which objects come back, and it
@@ -1289,7 +1292,9 @@ impl Jojobot {
                        length. To see only some of the keys, name them in keys: every object, \
                        the ones a walk reaches included, then carries just those, an object \
                        that held others names them in fields_left_out, and asking again \
-                       without keys reads them all. A view carries it as shows_keys, which is \
+                       without keys reads them all, unless a view supplied the keys: then ask \
+                       again without the view, sending its kind, or with keys naming them. A \
+                       view carries it as shows_keys, which is \
                        how view colleagues shows each bot's one_liner and reports_to. Ask for \
                        facts when you need a claim's own wording, its \
                        provenance, or the address that edits it, and the answer says how many \
@@ -1382,7 +1387,7 @@ impl Jojobot {
                        and a walk also reaches a MENTION (an entity named in a claim's own \
                        words), a REF (an entity a claim touches with no claim about how) and a \
                        FIELD LINK (an entity whose handle a record holds as a whole field value, \
-                       under any key, declared or not), each labelled mention, ref or field \
+                       or as every item of a comma list, under any key, declared or not), each labelled mention, ref or field \
                        rather than as an edge — name a shape or a relation and none answers, \
                        because none has one. Name the key and \
                        use `direction` — \
@@ -1401,7 +1406,7 @@ impl Jojobot {
                        is still found by the keys it carries. That nesting is what a flat list cannot express: one call answers \
                        'these objects, and what each of them is connected to' instead of one call \
                        per object. Unlike search this returns claims of EVERY status, archived \
-                       included. A named subject always comes back, even when the filters keep \
+                       included, unless you pass `status`. A named subject always comes back, even when the filters keep \
                        none of its records — naming a handle asks for that object, a filter asks \
                        which objects — while a handle that names nothing comes back blocked with \
                        the nearest handles, never as an empty answer. An object that draws edges \
