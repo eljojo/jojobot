@@ -125,6 +125,10 @@ entity  org:moes-tavern | Moe's Tavern
 # a model that capitalised at the start of a claim a PRODUCT red, which is the
 # harness blaming the product. The fragment can match inside a longer word, and
 # every one below was read for that.
+#
+# **The same goes for a name the model may link instead of typing**: a handle
+# is stored in lower case, so `avern` is in "Tavern" and in `org:moes-tavern`,
+# and `amma` is in "Gamma" and in `place:gamma`.
 
 recall {"fields": [{"value": "2026-10-12"}]}
 carries 2026-10-12
@@ -170,7 +174,7 @@ window  phase-end
 
 # The head's decision in the head's own words, which are quoted in the entry.
 search  {"query": "menu we have not synced an order for nothing"}
-carries a menu we have not synced
+carries menu we have not synced
 carries "status":"active"
 say     January: the head's decision about the menu is not on record in the head's own words
 window  phase-end
@@ -229,13 +233,13 @@ say     May: no record holds the new design day as a value, so the second slip i
 window  phase-end
 
 search  {"query": "Milhouse Moe Tavern April design"}
-carries Tavern
+carries avern
 carries "status":"active"
 say     May: why the design slipped is not on record
 window  phase-end
 
 search  {"query": "markets Beta Gamma Krusty phone"}
-carries Gamma
+carries amma
 carries "status":"active"
 say     May: the markets added by phone are not on record, so a written brief and an unwritten one cannot be told apart
 window  phase-end
@@ -259,7 +263,7 @@ say     May: the suite that verified login is not on record by name
 window  phase-end
 
 search  {"query": "basement location terrible reception", "provenance": "testimony"}
-carries terrible reception
+carries errible reception
 carries "status":"active"
 say     May: Krusty's quote is not on record in his own words
 window  phase-end
@@ -364,7 +368,7 @@ window  phase-end
 >
 > Nobody will answer you, but your answer is being read. You must answer.
 >
-> start jojobot as assistant — it is 10 December 2026 and I need the retrospective on the Krusty Burger launch and the ordering app. Put each answer under the name I give it, on whatever it is about. budget_truth: what the real budget was, as a number in thousands. owners: who owned each part of the launch. approval: which draft of the film Lisa approved, as the draft number. spot_done: whether the 30 was done, yes or no. slips: how many times a milestone on the film's critical path slipped, as a number. undelivered: what we committed to and did not deliver. For the app, app_next: what is next and what it is waiting on. menu_first: who decided what goes first, in their words, and what was turned down. rests_on_misread: what we believed that rested on something misread. never_asked: which question we drafted and never asked. app_landed: what has landed, with the commits. And was there ever any radio?
+> start jojobot as assistant — it is 10 December 2026 and I need the retrospective on the Krusty Burger launch and the ordering app. Keep each answer where a later sitting of yours can find it, under the name I give it, on whatever it is about. budget_truth: what the real budget was, as a number in thousands. owners: who owned each part of the launch. approval: which draft of the film Lisa approved, as the draft number. spot_done: whether the 30 was done, yes or no. slips: how many times a milestone on the film's critical path slipped, as a number. undelivered: what we committed to and did not deliver. For the app, app_next: what is next and what it is waiting on. menu_first: who decided what goes first, in their words, and what was turned down. rests_on_misread: what we believed that rested on something misread. never_asked: which question we drafted and never asked. app_landed: what has landed, with the commits. And was there ever any radio?
 
 ```locks
 # December's slots. Each is the key the entry names. The answer lists only
@@ -464,7 +468,7 @@ say     December: app_next does not say ordering is next, waiting on the head, w
 window  phase-end
 
 recall {"fields": [{"key": "menu_first"}]}
-carries a menu we have not synced
+carries menu we have not synced
 carries ard-coded
 say     December: menu_first does not carry the head's words and the option that was turned down
 window  phase-end

@@ -1005,6 +1005,159 @@ async fn december_landed_without_the_second_commit_reds_only_that_slot() {
     discriminates(3, 14).await;
 }
 
+// ── A right write in other capitals still holds ──────────────────────────────
+
+/// **One lock of a sitting, after the sittings before it were played right and
+/// only `claims` were written in it.** Each claim is a subject, the words and
+/// the handles to stand up first, so a case can write a fact the way a right
+/// occupant might spell it without playing the whole sitting again.
+async fn held_after_writing(
+    prior: Option<usize>,
+    day: &str,
+    phase: &str,
+    at: usize,
+    stand_up: &[(&str, &str, &str)],
+    claims: &[(&str, &str)],
+) -> (bool, String) {
+    let mut lab = match prior {
+        Some(through) => played(through, None).await,
+        None => self::lab().await,
+    };
+    let sid = lab.sitting(day).await;
+    for (kind, handle, name) in stand_up {
+        lab.add(&sid, kind, handle, name, None).await;
+    }
+    for (subject, content) in claims {
+        lab.say(&sid, subject, content, json!({})).await;
+    }
+    let (key, boundary_at) = match phase {
+        "Phase 1" => ("Phase 1", 1),
+        _ => ("Phase 2", 2),
+    };
+    lab.ends(key, boundary_at).await;
+    let outcomes = lab.judge().await;
+    let ours = of_sitting(&outcomes, phase);
+    (ours[at].0, saying(&outcomes))
+}
+
+/// **A place stored as its handle reads in lower case**, so a needle that needs
+/// the capital reds a model that linked the thing instead of typing its name.
+#[tokio::test]
+async fn may_the_pull_written_as_a_handle_holds_the_pull_lock() {
+    let (held, said) = held_after_writing(
+        Some(0),
+        "2026-05-20",
+        "Phase 2",
+        2,
+        &[],
+        &[(
+            CAMPAIGN,
+            "Milhouse was pulled over to @org:moes-tavern from 6 to 26 April.",
+        )],
+    )
+    .await;
+    assert!(held, "{said}");
+}
+
+#[tokio::test]
+async fn may_a_market_written_as_a_handle_holds_the_markets_lock() {
+    let (held, said) = held_after_writing(
+        Some(0),
+        "2026-05-20",
+        "Phase 2",
+        3,
+        &[("place", "gamma", "Gamma")],
+        &[(
+            CAMPAIGN,
+            "Krusty added two markets, Beta and @place:gamma, on the phone and nothing is written down.",
+        )],
+    )
+    .await;
+    assert!(held, "{said}");
+}
+
+/// **A quote that opens the sentence is capitalised** and is still the quote.
+#[tokio::test]
+async fn may_the_quote_opening_a_sentence_holds_the_quote_lock() {
+    let (held, said) = held_after_writing(
+        Some(0),
+        "2026-05-20",
+        "Phase 2",
+        7,
+        &[],
+        &[(
+            APP,
+            "Krusty said \"Terrible reception at the basement location\".",
+        )],
+    )
+    .await;
+    assert!(held, "{said}");
+}
+
+#[tokio::test]
+async fn january_the_heads_words_opening_a_sentence_hold_the_decision_lock() {
+    let (held, said) = held_after_writing(
+        None,
+        "2026-01-15",
+        "Phase 1",
+        7,
+        &[("project", "visa", "The Ordering App")],
+        &[(
+            APP,
+            "Homer decided: \"A menu we have not synced is an order for nothing, so we sync it first\".",
+        )],
+    )
+    .await;
+    assert!(held, "{said}");
+}
+
+/// **December's decision slot holds when the quote opens the value.**
+#[tokio::test]
+async fn december_the_heads_words_opening_the_value_hold_the_decision_slot() {
+    let mut lab = played(2, None).await;
+    let sid = lab.sitting("2026-12-10").await;
+    lab.say(
+        &sid,
+        APP,
+        "The answer to menu_first.",
+        json!({"fields": {"menu_first": "A menu we have not synced is an order for nothing, said Homer; Martin's hard-coded menu was turned down"}}),
+    )
+    .await;
+    lab.ends("Phase 4", 4).await;
+    let outcomes = lab.judge().await;
+    let december = of_sitting(&outcomes, "Phase 4");
+    assert!(december[11].0, "{}", saying(&outcomes));
+}
+
+// ── December: an answer given in the reply and written nowhere ───────────────
+
+/// **A December that answers in the reply alone fails every slot.** The earlier
+/// sittings are played right and December writes nothing, which is what an
+/// occupant does that labels its reply with the names it was given. Every
+/// slot lock reds, and none holds on what the earlier sittings stored — the
+/// half an untouched room cannot say.
+#[tokio::test]
+async fn december_answered_in_the_reply_alone_reds_every_slot() {
+    let mut lab = played(2, None).await;
+    let _sid = lab.sitting("2026-12-10").await;
+    lab.ends("Phase 4", 4).await;
+    let outcomes = lab.judge().await;
+    let december = of_sitting(&outcomes, "Phase 4");
+    assert_eq!(december.len(), LOCKS[3], "{}", saying(&outcomes));
+    assert!(
+        december.iter().all(|(held, _)| !held),
+        "a December that wrote nothing held a slot: {}",
+        saying(&outcomes),
+    );
+    for earlier in ["Phase 1", "Phase 2", "Phase 3"] {
+        assert!(
+            of_sitting(&outcomes, earlier).iter().all(|(held, _)| *held),
+            "{earlier} did not hold, so the reds above are not December's: {}",
+            saying(&outcomes),
+        );
+    }
+}
+
 /// 🚨 **No lock here rests on a needle that matches somewhere else.**
 #[tokio::test]
 async fn no_lock_here_rests_on_a_needle_that_matches_somewhere_else() {
