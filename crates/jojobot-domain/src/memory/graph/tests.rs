@@ -2049,10 +2049,10 @@ fn field_holders() -> Vec<DocScan> {
             )],
         ),
         doc(
-            entity("person:patana", "Patana"),
+            entity("person:ned-flanders", "Ned Flanders"),
             "",
             vec![holding(
-                "person:patana",
+                "person:ned-flanders",
                 "favourites",
                 "topic:all-rules,topic:widgets",
             )],
@@ -2100,7 +2100,7 @@ fn an_unscoped_walk_in_reaches_a_handle_held_under_an_undeclared_key() {
 
     assert_eq!(
         handles(reached),
-        vec!["person:homer", "person:patana"],
+        vec!["person:homer", "person:ned-flanders"],
         "a value that is a handle, and a list that is only handles, are links: {reached:?}",
     );
     for one in reached {
@@ -2134,7 +2134,7 @@ fn an_unscoped_walk_in_reaches_a_handle_held_under_an_undeclared_key() {
     .expect("a subject with a walk");
     assert_eq!(
         handles(&widgets[0].connected),
-        vec!["person:patana"],
+        vec!["person:ned-flanders"],
         "{:?}",
         widgets[0].connected,
     );
@@ -2179,11 +2179,11 @@ fn an_unscoped_walk_out_reaches_a_handle_held_under_an_undeclared_key() {
         gayle.is_empty(),
         "a handle that resolves to nothing is not a link: {gayle:?}"
     );
-    let patana = out_of("person:patana");
+    let ned = out_of("person:ned-flanders");
     assert_eq!(
-        handles(&patana),
+        handles(&ned),
         vec!["topic:all-rules", "topic:widgets"],
-        "every handle in a list of handles is reached: {patana:?}"
+        "every handle in a list of handles is reached: {ned:?}"
     );
     let barney = out_of("person:barney-gumble");
     assert!(

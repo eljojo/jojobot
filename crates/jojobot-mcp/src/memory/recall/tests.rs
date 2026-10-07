@@ -3658,7 +3658,7 @@ async fn keys_narrow_every_objects_fields_and_the_answer_names_what_it_left_out(
     let jojobot = handler();
     for (kind, slug, name) in [
         ("event", "birthday-party", "Birthday Party"),
-        ("person", "patana", "Patana"),
+        ("person", "ned-flanders", "Ned Flanders"),
     ] {
         jojobot
             .add_entity(Parameters(add_args(kind, slug, name)))
@@ -3676,7 +3676,7 @@ async fn keys_narrow_every_objects_fields_and_the_answer_names_what_it_left_out(
                     .map(|(key, value)| (key.to_string(), value.to_string()))
                     .collect(),
             ),
-            ..capture_args("patana", "coming to the party")
+            ..capture_args("ned-flanders", "coming to the party")
         },
     )
     .await;
@@ -3700,7 +3700,7 @@ async fn keys_narrow_every_objects_fields_and_the_answer_names_what_it_left_out(
             .expect("recall ok"),
     );
     let guest = &walked["objects"][0]["connected"][0];
-    assert_eq!(guest["id"], "person:patana", "{walked}");
+    assert_eq!(guest["id"], "person:ned-flanders", "{walked}");
     // The asked-for key is there, and only it: the walked object is narrowed
     // exactly as the root is.
     assert_eq!(guest["fields"]["nick"], "pat", "{walked}");
@@ -3726,7 +3726,7 @@ async fn keys_narrow_every_objects_fields_and_the_answer_names_what_it_left_out(
     let whole = json_of(
         &jojobot
             .recall(Parameters(RecallArgs {
-                subject: Some("person:patana".into()),
+                subject: Some("person:ned-flanders".into()),
                 ..of_nothing()
             }))
             .await
