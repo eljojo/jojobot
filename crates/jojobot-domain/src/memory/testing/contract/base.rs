@@ -690,6 +690,81 @@ pub async fn a_backslash_in_content_round_trips<M: Memory>(store: &M) {
     assert_eq!(seen, captured);
 }
 
+/// **Details hold paragraph breaks, and every one of them survives storage.**
+///
+/// A contract case rather than a validation unit test, because it is a claim
+/// about STORAGE: a fake keeping bytes verbatim answers yes whatever the real
+/// store does to a line break. Three paragraphs, a blank line between each,
+/// one indented line and a Windows break — the shapes a writer's prose
+/// carries — captured, read back, then corrected to a different set of
+/// paragraphs and read back again. The chain keeps what each write said.
+pub async fn details_hold_paragraph_breaks_and_round_trip<M: Memory>(store: &M) {
+    let subject = EntityId::person("person:contract-paragraphs");
+    let first =
+        "Why the rule exists.\n\nWhat it forbids.\n    an indented line\n\nWhat to do instead.";
+    let captured = capture(
+        store,
+        NewFact {
+            details: Some(first.into()),
+            ..NewFact::about(
+                subject.clone(),
+                "keeps its reasoning in paragraphs",
+                date(2026, 10, 7),
+            )
+        },
+    )
+    .await;
+    assert_eq!(captured.details.as_deref(), Some(first));
+    assert_eq!(captured.content, "keeps its reasoning in paragraphs");
+    let seen = read_back(store, &subject, &captured.id).await;
+    assert_eq!(
+        seen.details.as_deref(),
+        Some(first),
+        "every break survives the store"
+    );
+
+    let second = "Edited.\r\n\r\nA windows break above, and a trailing break below.\n";
+    let edited = edit(
+        store,
+        &captured.address(),
+        FactPatch {
+            details: Some(second.into()),
+            ..Default::default()
+        },
+    )
+    .await;
+    // Edge whitespace is not significant (see `normalize_details`); what is
+    // between the first and last character is the writer's.
+    let stored = second.trim();
+    assert_eq!(edited.details.as_deref(), Some(stored));
+    let seen = read_back(store, &subject, &captured.id).await;
+    assert_eq!(seen.details.as_deref(), Some(stored));
+
+    let chain = store
+        .claim_history(&captured.address())
+        .await
+        .expect("the claim's history reads");
+    let said: Vec<Option<&str>> = chain.iter().map(|w| w.details.as_deref()).collect();
+    assert_eq!(
+        said,
+        vec![Some(first), Some(stored)],
+        "the substrate keeps the breaks each write carried"
+    );
+
+    // The claim above them is still one line.
+    let refused = store
+        .capture(NewFact::about(
+            subject.clone(),
+            "a headline\nin two lines",
+            date(2026, 10, 7),
+        ))
+        .await;
+    assert!(
+        matches!(refused, Err(MemoryError::InvalidFact(_))),
+        "content stays one line, got {refused:?}"
+    );
+}
+
 /// Both provenance values survive independently — the regression guard for
 /// the collision that dropped/corrupted facts when provenance was folded
 /// into content. Testimony must come back testimony, inference inference.
@@ -13030,6 +13105,7 @@ pub async fn run_all<M: Memory>(store: &M) {
     derived_from_on_an_edit_must_name_a_fact_that_exists(store).await;
     pipe_in_content_round_trips(store).await;
     a_backslash_in_content_round_trips(store).await;
+    details_hold_paragraph_breaks_and_round_trip(store).await;
     both_provenances_survive(store).await;
     a_content_replacement_without_provenance_is_refused(store).await;
     edge_whitespace_is_normalized(store).await;

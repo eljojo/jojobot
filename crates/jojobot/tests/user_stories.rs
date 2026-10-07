@@ -82,6 +82,8 @@ mod mentioning;
 mod moving;
 #[path = "user_stories/my_past_runs.rs"]
 mod my_past_runs;
+#[path = "user_stories/paragraphs.rs"]
+mod paragraphs;
 #[path = "user_stories/party.rs"]
 mod party;
 #[path = "user_stories/pets.rs"]

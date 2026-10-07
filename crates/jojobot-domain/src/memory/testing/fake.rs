@@ -1098,7 +1098,6 @@ impl Memory for InMemoryMemory {
         // Same guards the real adapter applies, so the fake can't drift.
         validate_write_subject(&fact.subject)?;
         validate_content(&fact.content)?;
-        validate_details(fact.details.as_deref())?;
         if let Some(edge) = &fact.edge {
             validate_edge(edge)?;
         }

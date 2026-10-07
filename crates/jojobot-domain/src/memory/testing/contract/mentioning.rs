@@ -148,6 +148,106 @@ pub async fn a_mention_is_stored_as_a_badge_and_read_back_as_a_handle<
     }
 }
 
+/// **A mention on any line of a multi-line details is a link**, resolved on
+/// the way in and rendered on the way out exactly as one in a single line is.
+///
+/// A mention ends where its slug does, so a line break after one must not
+/// swallow it and one that opens a line must still be found. One mention
+/// sits at the end of a line, one at the start of the next paragraph, one
+/// mid-line; and a mention naming nothing on a later line is refused with
+/// nothing written.
+pub async fn a_mention_inside_a_multi_line_details_is_a_link<
+    M: Memory + ?Sized,
+    B: Memory + ?Sized,
+>(
+    mentioning: &M,
+    bare: &B,
+) {
+    let author = EntityId::person("person:contract-mention-paragraphs");
+    ensure(mentioning, &author).await;
+    for (handle, name) in [
+        ("place:contract-mention-cellar", "The Cellar"),
+        ("thing:contract-mention-tractor", "The Tractor"),
+        ("pet:contract-mention-goat", "The Goat"),
+    ] {
+        mentioning
+            .add_entity(NewEntity::new(EntityId(handle.into()), name, "the roster"))
+            .await
+            .expect("the fixture is written")
+            .written()
+            .expect("nothing on this store collides with it");
+    }
+    let details = "Kept at @place:contract-mention-cellar\n\n@thing:contract-mention-tractor \
+                   sits beside it,\nand @pet:contract-mention-goat eats from it.";
+    let written = capture(
+        mentioning,
+        NewFact {
+            details: Some(details.into()),
+            ..NewFact::about(
+                author.clone(),
+                "keeps the farm in paragraphs",
+                date(2026, 10, 7),
+            )
+        },
+    )
+    .await;
+
+    let stored = bare
+        .recall(&author)
+        .await
+        .expect("the store answers")
+        .into_iter()
+        .find(|f| f.id == written.id)
+        .expect("the claim is there")
+        .details
+        .expect("the details are stored");
+    assert!(
+        !stored.contains("contract-mention-"),
+        "a handle written on some line stayed a spelling in storage: {stored}"
+    );
+    assert_eq!(
+        stored.matches(mention::MARK).count(),
+        3,
+        "every mention on every line was stored resolved: {stored}"
+    );
+    assert_eq!(
+        stored.matches('\n').count(),
+        details.matches('\n').count(),
+        "the breaks around the mentions survived: {stored:?}"
+    );
+
+    let read = mentioning
+        .recall(&author)
+        .await
+        .expect("the store answers")
+        .into_iter()
+        .find(|f| f.id == written.id)
+        .expect("the claim is there")
+        .details
+        .expect("the details are served");
+    assert_eq!(
+        read, details,
+        "the read gives back the words and the breaks as written"
+    );
+
+    let refused = mentioning
+        .capture(NewFact {
+            details: Some(
+                "first line is fine\n\nbut @person:contract-mention-nobody is not".into(),
+            ),
+            ..NewFact::about(
+                author.clone(),
+                "names nobody on a later line",
+                date(2026, 10, 7),
+            )
+        })
+        .await;
+    assert!(
+        !matches!(refused, Ok(Guarded::Written(_))),
+        "a mention naming nothing is refused on any line: {refused:?}"
+    );
+}
+
 /// 🚨 **A mention of a thing that moves renders as where it is now**, with
 /// nothing rewritten anywhere.
 ///
@@ -2259,6 +2359,7 @@ pub async fn run_all_mentioning<M: Memory + ?Sized, B: Memory + ?Sized>(
     rehandles: &dyn Rehandles,
 ) {
     a_mention_is_stored_as_a_badge_and_read_back_as_a_handle(mentioning, bare).await;
+    a_mention_inside_a_multi_line_details_is_a_link(mentioning, bare).await;
     a_mention_follows_a_thing_that_is_rehandled(mentioning, bare, rehandles).await;
     a_dead_link_and_text_that_was_never_a_link_read_differently(mentioning, bare).await;
     a_mention_naming_nothing_is_refused_and_writes_nothing(mentioning, bare).await;

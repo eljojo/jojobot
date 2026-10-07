@@ -42,9 +42,9 @@ use jojobot_domain::memory::{
     types::{
         DeclaredType, Displaced, Field, Fold, Origin, ValueType, guard_replacement, validate_type,
     },
-    validate_content, validate_details, validate_edge, validate_entity, validate_field,
-    validate_fields, validate_happened_span, validate_prose, validate_provenance_source,
-    validate_subject, validate_write_subject, writes_of,
+    validate_content, validate_edge, validate_entity, validate_field, validate_fields,
+    validate_happened_span, validate_prose, validate_provenance_source, validate_subject,
+    validate_write_subject, writes_of,
 };
 use sqlx::{MySql, MySqlPool, Row, Transaction};
 
@@ -2264,7 +2264,6 @@ impl Memory for DoltMemory {
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
         validate_write_subject(&fact.subject)?;
         validate_content(&fact.content)?;
-        validate_details(fact.details.as_deref())?;
         if let Some(edge) = &fact.edge {
             validate_edge(edge)?;
         }

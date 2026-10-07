@@ -32,8 +32,10 @@ pub struct CaptureArgs {
     /// `@person:milhouse` — stored as the name that does not move, served as the
     /// handle that thing wears today, even after a rename.
     pub(crate) content: String,
-    /// Nuance, the why, merge notes — the description under the claim.
-    /// Carries `@kind:slug` mentions exactly as `content` does.
+    /// Nuance, the why, merge notes — the description under the claim. It may
+    /// hold paragraph breaks and reads back with every one; the claim above
+    /// it stays one line. Carries `@kind:slug` mentions exactly as `content`
+    /// does.
     #[serde(default)]
     pub(crate) details: Option<String>,
     /// `testimony` (the user said it), `observation` (you read it in a system

@@ -726,7 +726,7 @@ fn facts_table(facts: &[Fact], by_id: &HashMap<&EntityId, &Entity>) -> String {
             Some(details) if !details.trim().is_empty() => format!(
                 "{}<br><small>{}</small>",
                 linkify(&fact.content, by_id),
-                linkify(details, by_id)
+                line_breaks(&linkify(details, by_id))
             ),
             _ => linkify(&fact.content, by_id),
         };
@@ -768,6 +768,13 @@ fn record_fields(fact: &Fact) -> String {
         "<tr class=\"fields\"><td colspan=\"7\"><small>{}</small></td></tr>\n",
         pairs.join(" · ")
     )
+}
+
+/// Details may hold paragraph breaks, and HTML collapses a newline to a space.
+/// Each break becomes a `<br>`, so a blank line between paragraphs reads as one;
+/// a `\r` is dropped so a Windows break is one break and not two.
+fn line_breaks(escaped: &str) -> String {
+    escaped.replace('\r', "").replace('\n', "<br>\n")
 }
 
 /// **A mention in served text becomes a link to that thing's own page.**

@@ -872,25 +872,17 @@ fn an_edge_object_must_be_the_kind_its_shape_requires() {
     assert!(matches!(err, MemoryError::InvalidSubject(_)), "got {err:?}");
 }
 
-/// A **bare `\r`** is refused exactly as `\n` is, in content and in details.
-/// It looks harmless — until a store normalizes line endings, which markdown
-/// pipelines routinely do. Then the row splits, the split ends the table's
-/// contiguous run of `|` lines, and every fact BELOW it stops being read too
-/// (the blast radius the codec's `bare_cr` tests demonstrate).
+/// A **bare `\r`** is refused exactly as `\n` is in content: a claim is the
+/// headline, and search, the boot and the receipts rely on it being one line.
 #[test]
-fn a_bare_carriage_return_is_refused_like_a_newline() {
-    for bad in ["hello\rworld", "trailing\r", "\rleading", "a\r\nb"] {
+fn a_bare_carriage_return_is_refused_like_a_newline_in_content() {
+    for bad in ["hello\rworld", "trailing\r", "\rleading", "a\r\nb", "a\nb"] {
         assert!(
             validate_content(bad).is_err(),
-            "content must refuse a bare CR: {bad:?}"
-        );
-        assert!(
-            validate_details(Some(bad)).is_err(),
-            "details ride in the same row, so they refuse it too: {bad:?}"
+            "content must refuse a line break: {bad:?}"
         );
     }
     assert!(validate_content("hello world").is_ok());
-    assert!(validate_details(Some("plain details")).is_ok());
 }
 
 /// **An entity answers to more than one name.** The display name is what it

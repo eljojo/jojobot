@@ -1743,17 +1743,6 @@ pub fn validate_happened_span(
     Ok(())
 }
 
-/// Details ride in the same table row, so they are one line too — but may be
-/// absent.
-pub fn validate_details(details: Option<&str>) -> Result<(), MemoryError> {
-    if details.is_some_and(breaks_the_row) {
-        return Err(MemoryError::InvalidFact(
-            "details span multiple lines; details are one line".into(),
-        ));
-    }
-    Ok(())
-}
-
 /// Apply an in-place edit to a fact — **the** definition of what an update
 /// means, called by every adapter so none can drift. Enforces the promotion gate
 /// before touching anything, so a rejected promotion leaves the fact untouched.
@@ -1775,7 +1764,6 @@ pub fn apply_fact_patch(fact: &mut Fact, patch: &FactPatch) -> Result<(), Memory
     if let Some(content) = &patch.content {
         validate_content(content)?;
     }
-    validate_details(patch.details.as_deref())?;
     if let Some(edge) = &patch.edge {
         validate_edge(edge)?;
     }
