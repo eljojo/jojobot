@@ -846,6 +846,7 @@ carries "runs_out":"2026-03-08"
 lacks   "runs_out":"2027-02-01"
 carries "overdue_excluded":4
 say     December: asking what is overdue across every runs_out thing, naming no kind, either misses the one window that has already passed or fails to say how many of the rest it correctly left out
+window  phase-end
 
 # 🚨 **THE SAME KEY, ON THE WRONG SUBJECT, IF A SITTING EVER WROTE IT THERE.**
 # August's mention of the fair's ticket deadline rode in on Louise's name.

@@ -12,7 +12,10 @@ use jojobot_exercise::expectations;
 use jojobot_exercise::lock;
 use jojobot_exercise::playbook::Playbook;
 use jojobot_exercise::room::{Room, server_binary};
-use jojobot_exercise::run::{Boundary, Expectation, Observed, Outcome, boundary, boundary_names};
+use jojobot_exercise::run::{
+    Boundary, Expectation, Observed, Outcome, boundary, boundary_asking, boundary_names,
+    phase_end_queries,
+};
 use jojobot_exercise::surface::Surface;
 use serde_json::json;
 
@@ -58,9 +61,11 @@ fn saying(outcomes: &[Outcome]) -> String {
 /// vault equivalent yet and would be a shape this file never asked for.
 async fn unworked_boundaries(room: &Surface, vault: &Playbook) -> Vec<Boundary> {
     let named = boundary_names(vault);
+    let locks = expectations::for_playbook(expectations::VAULT_ROOM).expect("the vault asserts");
     let mut boundaries = vec![boundary(room, &named[0]).await];
     for at in 0..vault.phases.len() {
-        boundaries.push(boundary(room, &named[at + 1]).await);
+        let asked = phase_end_queries(&locks, &format!("Phase {}", at + 1));
+        boundaries.push(boundary_asking(room, &named[at + 1], &asked).await);
     }
     boundaries
 }
@@ -129,6 +134,20 @@ fn the_hugo_reason_lock() -> lock::Lock {
                 .contains("still standing in the vault as if it belonged there")
         })
         .expect("the vault ships Hugo's own archived-reason lock")
+}
+
+/// **December's overdue-count lock, read straight off the shipped document.**
+/// Matched by its own sentence for the same reason `the_counted_listing_lock`
+/// is.
+fn the_overdue_count_lock() -> lock::Lock {
+    lock::locks_of(expectations::VAULT_ROOM)
+        .into_iter()
+        .find(|found| {
+            found
+                .name()
+                .contains("fails to say how many of the rest it correctly left out")
+        })
+        .expect("the vault ships the overdue-count lock")
 }
 
 /// **A session for one sitting, in the day that sitting is in** — the same
@@ -974,6 +993,60 @@ async fn later_december(room: &Surface, sid: &str) {
     archive(room, sid, "person:hugo", "not real to me").await;
 }
 
+/// **The overdue count is December's own answer, however the year goes on.**
+///
+/// `overdue_excluded` counts every carrier of the key in the whole room on the
+/// day asked, so a thing filed after December changes it and no record in the
+/// answer can pin it to December. The lock asks at the end of its own phase
+/// and reads that answer, so a later sitting that files one more dated thing
+/// does not move it.
+///
+/// **The control is read off the room.** The same question asked now says five,
+/// so a lock that held here for any reason but the kept answer would have to
+/// be reading something else.
+#[tokio::test]
+async fn the_overdue_count_lock_answers_as_december_left_the_room() {
+    let (_room, surface, _sid) = furnished().await;
+    let boundaries = worked_the_vault(&surface, &room_document()).await;
+    let asked = json!({"answers_type": "runs-out", "overdue": {"as_of": "2026-12-06"}});
+    let december = surface.call("recall", asked.clone()).await;
+    assert!(december.contains("\"overdue_excluded\":4"), "{december}");
+
+    let later = sitting(&surface, "2026-12-20").await;
+    did(
+        &surface,
+        &later,
+        "add_entity",
+        json!({"kind": "thing", "handle": "late-addition", "name": "Late Addition",
+               "source": "the operator"}),
+    )
+    .await;
+    did(
+        &surface,
+        &later,
+        "capture",
+        json!({"subject": "thing:late-addition", "content": "a window that runs out next summer",
+               "provenance": "testimony", "fields": {"runs_out": "2027-06-30"}}),
+    )
+    .await;
+    let now = surface.call("recall", asked).await;
+    assert!(
+        now.contains("\"overdue_excluded\":5"),
+        "the late carrier did not move the live count, so this case proves nothing: {now}",
+    );
+
+    let seen = Observed {
+        room: &surface,
+        boundaries: &boundaries,
+    };
+    let outcome = the_overdue_count_lock().check(&seen).await;
+    assert!(
+        outcome.held,
+        "the lock read the room as the year left it and not as December did: {}",
+        outcome.saying,
+    );
+}
+
 /// **The vault worked sitting by sitting, taking the readings a run takes.**
 ///
 /// One driver for the whole year, the same shape `year_room.rs`'s own
@@ -1006,11 +1079,13 @@ async fn worked_the_vault(room: &Surface, vault: &Playbook) -> Vec<Boundary> {
         ("2026-12-06", |r, s| Box::pin(december(r, s))),
         ("2026-12-13", |r, s| Box::pin(later_december(r, s))),
     ];
+    let locks = expectations::for_playbook(expectations::VAULT_ROOM).expect("the vault asserts");
     let mut boundaries = vec![boundary(room, &named[0]).await];
     for (at, (day, work)) in phases.iter().enumerate() {
         let sid = sitting(room, day).await;
         work(room, &sid).await;
-        boundaries.push(boundary(room, &named[at + 1]).await);
+        let asked = phase_end_queries(&locks, &format!("Phase {}", at + 1));
+        boundaries.push(boundary_asking(room, &named[at + 1], &asked).await);
     }
     boundaries
 }
