@@ -173,6 +173,9 @@ enum Donuts {
     AllDefault,
     /// The recap that restates the count filed as the operator's word.
     RecapAsTestimony,
+    /// The number of people filed as the operator's word and the three each
+    /// never recorded as theirs. A standing rule says "three" elsewhere.
+    EachNeverRecorded,
 }
 
 /// **Where the first standing rule goes.**
@@ -458,12 +461,14 @@ async fn played(room: &Surface, sid: &str, sitting: Sitting) {
         Donuts::Apart => ("testimony", "inference", "inference"),
         Donuts::AllDefault => ("inference", "inference", "inference"),
         Donuts::RecapAsTestimony => ("testimony", "inference", "testimony"),
+        Donuts::EachNeverRecorded => ("testimony", "inference", "inference"),
+    };
+    let operator_said = match sitting.donuts {
+        Donuts::EachNeverRecorded => "Twelve people are coming.",
+        _ => "Twelve people are coming and each of them eats three donuts.",
     };
     for (content, provenance) in [
-        (
-            "Twelve people are coming and each of them eats three donuts.",
-            said_by,
-        ),
+        (operator_said, said_by),
         ("36 donuts to buy.", worked_by),
         (
             "Recap: twelve people at three donuts each, so 36 donuts to buy.",
@@ -1090,6 +1095,20 @@ async fn solvable_the_window_is_owed_on_the_tickets_after_it_closes_and_the_pers
 async fn the_numbers_lock_reds_when_the_operators_words_are_left_on_the_default() {
     let (held, said) = held_after(Sitting {
         donuts: Donuts::AllDefault,
+        ..right()
+    })
+    .await;
+    assert_eq!(held, all_but(&[NUMBERS]), "{said}");
+}
+
+/// **A "three" that is not about the donuts is not the operator's number.**
+/// The standing rule "give me one option, not three" is the operator's word and
+/// carries the token. The lock asked for any such claim, so it held on a room
+/// where the donuts each were never written down as theirs.
+#[tokio::test]
+async fn the_numbers_lock_reds_when_only_a_rule_about_something_else_says_three() {
+    let (held, said) = held_after(Sitting {
+        donuts: Donuts::EachNeverRecorded,
         ..right()
     })
     .await;

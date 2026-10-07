@@ -2811,6 +2811,10 @@ fn says_any(claim: &Value, words: &[&str]) -> bool {
 /// The number of people the operator gives, and how many donuts each eats.
 const GUESTS: [&str; 2] = ["12", "twelve"];
 const EACH: [&str; 2] = ["3", "three"];
+/// **What makes a claim about the donuts.** "Three" alone is any claim that
+/// says three, such as a standing rule about options, so the figure for each
+/// guest is read only from a claim that names what each guest eats.
+const DONUTS: [&str; 3] = ["donut", "donuts", "doughnuts"];
 
 /// **Whether a claim states the figure the occupant works out.** Twelve people
 /// at three donuts each is thirty-six, and the operator never says so.
@@ -2826,12 +2830,14 @@ fn says_the_product(claim: &Value) -> bool {
 /// guess, so an operator's number filed the easy way fails here.
 async fn the_operators_numbers_read_back_as_theirs(seen: &Observed<'_>) -> Result<(), String> {
     let claims = active_claims(seen)?;
-    let given = |words: &[&str]| {
-        claims
-            .iter()
-            .any(|claim| claim["provenance"] == "testimony" && says_any(claim, words))
+    let given = |words: &[&str], about: Option<&[&str]>| {
+        claims.iter().any(|claim| {
+            claim["provenance"] == "testimony"
+                && says_any(claim, words)
+                && about.is_none_or(|topic| says_any(claim, topic))
+        })
     };
-    match (given(&GUESTS), given(&EACH)) {
+    match (given(&GUESTS, None), given(&EACH, Some(&DONUTS))) {
         (true, true) => Ok(()),
         (guests, each) => Err(format!(
             "no claim backed by the operator's word carries the number of people (found: {guests}) \
