@@ -233,7 +233,24 @@ async fn a_floor_the_boot_cannot_carry_is_refused_when_it_is_written() {
         .await;
     }
     let fits = fill_the_ceiling_with_a_charter(&s, "bot:sigma").await;
-    s.add("bot:psi", "Psi").await;
+    let grown = s
+        .call(
+            "add_entity",
+            json!({"kind": "bot", "handle": "psi", "name": "Psi", "source": "user-named"}),
+        )
+        .await
+        .json();
+    // The premise of what follows: the new colleague took sigma over the
+    // ceiling, so the two writes below are asked of a bot that is over.
+    assert_eq!(grown["id"], "bot:psi", "the creation stands: {grown}");
+    let pushed = grown["pushes_over"]
+        .as_array()
+        .expect("the bots it pushed over are named");
+    assert!(
+        pushed.iter().any(|over| over["bot"] == "bot:sigma"),
+        "sigma was not pushed over the ceiling, so it is not over when the writes below are \
+         asked: {grown}"
+    );
     // Over the ceiling by what the new colleague added, which is more than
     // one character. A charter one longer grows the floor and is refused; one
     // a character shorter lowers it and lands although the boot is still over.

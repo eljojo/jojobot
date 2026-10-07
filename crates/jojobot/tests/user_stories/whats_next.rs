@@ -111,6 +111,8 @@ async fn a_cold_session_finds_what_is_next_and_what_waits_on_whom_from_the_keys(
     outside.says("inbox");
     outside.says("this release");
     outside.says("columns");
+    // The refusal names the five and not the project's list, which the call
+    // could not echo: the caller sent `inbox`, so that word proves nothing.
     s.refused(
         "capture",
         json!({
@@ -119,7 +121,9 @@ async fn a_cold_session_finds_what_is_next_and_what_waits_on_whom_from_the_keys(
             "fields": {"status": "inbox"},
         }),
     )
-    .await;
+    .await
+    .says("someday")
+    .never_says("this release");
 
     // ── a cold session, told nothing, asks ──────────────────────────────────
     let cold = story.as_bot("bot:assistant").await;

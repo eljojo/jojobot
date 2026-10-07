@@ -201,17 +201,20 @@ async fn the_stored_due_moment_is_jojobots_and_a_promise_keeps_the_operators_wor
     for key in ["promised_by", "runs_out", "decide_by"] {
         refused.says(key);
     }
+    // The refusals name the key to write instead, which the call did not send.
     s.refused(
         "update_fact",
         json!({"address": address, "fields": {"due_on": "2026-01-16"}}),
     )
-    .await;
+    .await
+    .says("promised_by");
     // ── clearing it is refused too ───────────────────────────────────────────
     s.refused(
         "update_fact",
         json!({"address": address, "clear_fields": ["due_on"]}),
     )
-    .await;
+    .await
+    .says("promised_by");
 
     // ── the promise is as it was, and both reads say it is owed ──────────────
     let held = s.recall("promise:return-the-wrench").await;

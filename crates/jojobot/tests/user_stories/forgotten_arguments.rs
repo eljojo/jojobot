@@ -23,7 +23,9 @@ async fn a_call_missing_a_required_argument_names_it_and_what_the_verb_takes() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
 
-    let refusal = s.refused("declare_type", json!({"name": "service"})).await;
+    // Neither required argument is sent, so each one the refusal names is read
+    // off what the verb takes and not echoed from the call.
+    let refusal = s.refused("declare_type", json!({"label": "service"})).await;
     refusal
         .says("how_to_proceed")
         .says("fields")
@@ -33,7 +35,7 @@ async fn a_call_missing_a_required_argument_names_it_and_what_the_verb_takes() {
     // **Every verb, not the one a run met.** Another verb with another
     // required argument gets the same answer.
     let capture = s
-        .refused("capture", json!({"content": "a note with no subject"}))
+        .refused("capture", json!({"content": "a loose note"}))
         .await;
     capture
         .says("how_to_proceed")
@@ -62,7 +64,7 @@ async fn an_element_missing_its_required_argument_is_named_by_its_path() {
     refusal
         .says("how_to_proceed")
         .says("fields[1]")
-        .says("key")
+        .says("fields[1].key")
         .never_says("failed to deserialize");
 }
 
@@ -77,7 +79,11 @@ async fn declaring_a_shipped_type_says_it_exists_and_where_to_read_its_keys() {
             json!({"name": "runs-out", "fields": [{"key": "expires"}]}),
         )
         .await;
-    refusal.says("runs-out").says("answers_type");
+    // The caller sent the name `runs-out` and the refusal echoes it, so that
+    // spelling proves nothing. What only this refusal carries is where to read
+    // the shipped type's keys, and that nothing was written.
+    refusal.says("answers_type");
+    assert_eq!(refusal.json()["wrote"], false, "{}", refusal.raw());
 
     // The way forward it names works: the shipped type's keys are readable.
     s.call("recall", json!({"answers_type": "runs-out"}))
