@@ -507,6 +507,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             floor,
             budget,
             ref parts,
+            stamp_margin,
         } => {
             let largest = parts
                 .first()
@@ -552,6 +553,26 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                     .collect::<Vec<_>>(),
             });
             how_to_proceed.write_into(&mut body);
+            // **Said only when the write was measured with a stamp.** The check
+            // holds back room for the timestamp the store gives a new record, so
+            // a writer about this many characters short of the ceiling is refused
+            // for room the record may not use. A charter or an edit measures no
+            // new stamp, and a margin there would be untrue.
+            if stamp_margin > 0
+                && let Some(object) = body.as_object_mut()
+            {
+                object.insert("stamp_margin".into(), stamp_margin.into());
+                if let Some(how) = object.get_mut("how_to_proceed")
+                    && let Some(said) = how.as_str()
+                {
+                    *how = format!(
+                        "{said} Part of the margin is kept for the timestamp the store gives \
+                         the new record: the check holds back {stamp_margin} characters for \
+                         it, so a rule that short of the ceiling is refused."
+                    )
+                    .into();
+                }
+            }
             Ok(CallToolResult::success(vec![ContentBlock::text(
                 body.to_string(),
             )]))

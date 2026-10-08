@@ -66,6 +66,14 @@ fn widest_stamp(now: jiff::Timestamp) -> jiff::Timestamp {
     jiff::Timestamp::new(now.as_second(), 123_456_789).unwrap_or(now)
 }
 
+/// **The characters [`widest_stamp`] holds back** over the narrowest stamp: the
+/// fraction a whole-second stamp does not carry. A refusal for a new rule names
+/// it, so a writer that short of the ceiling knows why.
+fn stamp_margin() -> usize {
+    let whole_second = jiff::Timestamp::UNIX_EPOCH;
+    widest_stamp(whole_second).to_string().len() - whole_second.to_string().len()
+}
+
 fn json_len(value: &serde_json::Value) -> usize {
     value.to_string().chars().count()
 }
@@ -235,13 +243,19 @@ impl Jojobot {
     /// **The refusal for a floor of `after`**, when it is over the ceiling and
     /// larger than `before`, or `None`. A bot already over before the write
     /// must stay repairable by every write that does not grow it.
-    fn over_the_ceiling(bot: &EntityId, after: Floor, before: &Floor) -> Option<MemoryError> {
+    fn over_the_ceiling(
+        bot: &EntityId,
+        after: Floor,
+        before: &Floor,
+        stamp_margin: usize,
+    ) -> Option<MemoryError> {
         let budget = jojobot_domain::text::BOOT_ANSWER.budget;
         (after.total > budget && after.total > before.total).then(|| MemoryError::BootTooHeavy {
             subject: bot.to_string(),
             floor: after.total,
             budget,
             parts: after.parts,
+            stamp_margin,
         })
     }
 
@@ -258,6 +272,7 @@ impl Jojobot {
         would_be: &[Fact],
         seats_written: Option<&str>,
         creating: Option<&Entity>,
+        stamp_margin: usize,
     ) -> Option<MemoryError> {
         // **A bot being created holds nothing yet**: no claims, no fields, and a
         // floor of nothing before the write, so any floor over the ceiling is
@@ -299,7 +314,7 @@ impl Jojobot {
                     .await?
             }
         };
-        Self::over_the_ceiling(bot, after, &before)
+        Self::over_the_ceiling(bot, after, &before, stamp_margin)
     }
 
     /// **The floor check for a charter**, run before it is written. A charter
@@ -322,7 +337,7 @@ impl Jojobot {
         let before = self
             .boot_floor_if(bot, &in_force, seats, None, None)
             .await?;
-        Self::over_the_ceiling(bot, after, &before)
+        Self::over_the_ceiling(bot, after, &before, 0)
     }
 
     /// **Every bot's floor as things stand**, for a write that grows them all
@@ -410,8 +425,16 @@ impl Jojobot {
             held.len() + 1,
             Some(widest_stamp(self.clock().now())),
         ));
-        self.refuses_a_boot_floor_over(&new.subject, &held, seats.map(String::as_str), creating)
-            .await
+        // A new rule is measured with a stamp, and a refusal says how much room
+        // that held back.
+        self.refuses_a_boot_floor_over(
+            &new.subject,
+            &held,
+            seats.map(String::as_str),
+            creating,
+            stamp_margin(),
+        )
+        .await
     }
 
     /// **The floor check for an edit**, run before it lands. Asked of an edit
@@ -440,7 +463,8 @@ impl Jojobot {
             return None;
         }
         held[at] = edited;
-        self.refuses_a_boot_floor_over(&address.home, &held, seats.map(String::as_str), None)
+        // An edit keeps the stamp the record already has, so it holds none back.
+        self.refuses_a_boot_floor_over(&address.home, &held, seats.map(String::as_str), None, 0)
             .await
     }
 }
@@ -642,6 +666,83 @@ mod tests {
                 .is_none(),
             "a rule that fits with the widest stamp is accepted"
         );
+    }
+
+    /// **A refusal for a new rule says how much of the margin is kept for the
+    /// stamp.** The check measures a new rule with the widest stamp the store can
+    /// write, so a writer a few characters short of the ceiling is refused for
+    /// room the record may not use. The refusal carries `stamp_margin`, the
+    /// characters held back over the narrowest rendering, so that writer is not
+    /// left guessing.
+    ///
+    /// Asserted on the identifier and its number, never on the prose. The number
+    /// is worked out here from two renderings of a timestamp, not from the
+    /// check's own constants. Paired with the two refusals that measure no new
+    /// stamp, a charter and an edit, which carry no margin: a refusal that always
+    /// carried one would say something false about them.
+    #[tokio::test]
+    async fn a_refusal_for_a_new_rule_names_the_stamp_margin() {
+        let jojobot = mailbox_handler();
+        make_bot(&jojobot, "gamma").await;
+        let bot = EntityId("bot:gamma".into());
+        let budget = jojobot_domain::text::BOOT_ANSWER.budget;
+        let today = jojobot.clock().today_in(&jiff::tz::TimeZone::UTC);
+        let starred = |content: String| {
+            let mut new = NewFact::about(bot.clone(), content, today);
+            new.fields = [("starred".to_string(), "true".to_string())].into();
+            new
+        };
+        let margin = |what: &str, refused: &Option<MemoryError>| match refused {
+            Some(MemoryError::BootTooHeavy { stamp_margin, .. }) => *stamp_margin,
+            other => panic!("{what}: expected the boot too heavy, got {other:?}"),
+        };
+        let served = |refused: MemoryError| {
+            json_of(
+                &crate::memory::declined::memory_declined("capture", refused).expect("an answer"),
+            )
+        };
+        let with_fraction = jiff::Timestamp::new(0, 123_456_789).expect("a moment");
+        let whole_second = jiff::Timestamp::new(0, 0).expect("a moment");
+        let kept = with_fraction.to_string().len() - whole_second.to_string().len();
+
+        // A new rule: measured with a stamp, so it names the margin.
+        let refused = jojobot
+            .refuses_a_boot_floor_for_capture(&starred("x".repeat(budget)), &bot)
+            .await;
+        assert_eq!(margin("a new rule", &refused), kept);
+        let body = served(refused.expect("refused"));
+        assert_eq!(body["stamp_margin"], kept, "{body}");
+
+        // A charter: no new record, so no stamp and no margin.
+        let refused = jojobot
+            .refuses_a_boot_floor_for_charter(&bot, &"x".repeat(budget * 2))
+            .await;
+        assert_eq!(margin("a charter", &refused), 0);
+        let body = served(refused.expect("refused"));
+        assert!(body.get("stamp_margin").is_none(), "{body}");
+
+        // An edit of a rule already stored: it keeps its own stamp, so no margin.
+        let stored = jojobot
+            .memory
+            .capture(starred("a short rule".to_string()))
+            .await
+            .expect("capture ok")
+            .written()
+            .expect("not blocked");
+        let refused = jojobot
+            .refuses_a_boot_floor_for_edit(
+                &stored.address(),
+                &FactPatch {
+                    content: Some("x".repeat(budget)),
+                    provenance: Some(Provenance::Inference),
+                    ..FactPatch::default()
+                },
+                &bot,
+            )
+            .await;
+        assert_eq!(margin("an edit", &refused), 0);
+        let body = served(refused.expect("refused"));
+        assert!(body.get("stamp_margin").is_none(), "{body}");
     }
 
     /// **A claim near the ceiling is measured with the timestamp the store will

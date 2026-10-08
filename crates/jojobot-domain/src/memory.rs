@@ -4700,6 +4700,12 @@ pub enum MemoryError {
         /// What the floor is made of, each part with its size in characters,
         /// largest first, so a writer cuts where it helps.
         parts: Vec<(String, usize)>,
+        /// **The characters the check kept back for the timestamp the store
+        /// will give the new record**, over the narrowest it can render. Zero
+        /// when the write was measured with no new record, such as a charter.
+        /// A writer about this many characters short of the ceiling is
+        /// refused for it, and this is how the refusal says so.
+        stamp_margin: usize,
     },
     /// **The write would put a value in a key that the key does not hold, on a
     /// thing that already fits the type.**
