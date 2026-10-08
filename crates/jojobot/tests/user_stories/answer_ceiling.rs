@@ -37,11 +37,15 @@ const OCTOBER: &str = "2026-10-08";
 /// here, and a verb that starts passing the ceiling without being added fails
 /// the case that compares the two.
 ///
-/// `list_runs` has no fit yet: with runs enough to stretch it, its widest call
-/// passes the ceiling. Written down here until the slice that fits it.
+/// Listed in the order the table measures them, which is the order the case
+/// compares. A record stored over the ceiling before writes were bounded is
+/// still served whole, so recalling its subject passes the ceiling; no write can
+/// make such a record any more. `list_runs` has no fit yet: with runs enough to
+/// stretch it, its widest call passes the ceiling. Written down here until the
+/// slice that fits it.
 const STILL_OVER: &[&str] = &[
-    "list_runs",
     "recall the subject holding a record over the ceiling",
+    "list_runs",
 ];
 
 /// A slug of ten letters that depends on nothing but the index, spread far
