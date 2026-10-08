@@ -5,22 +5,58 @@
 
 use std::collections::BTreeSet;
 use std::net::TcpListener;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use jojobot_ports::{Allocator, END, FIRST, PortsError};
 
-/// A directory of this case's own, so a case holds no claim another run needs.
-fn scratch(tag: &str) -> PathBuf {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("clock")
-        .as_nanos();
-    let dir = std::env::temp_dir().join(format!(
-        "jojobot-ports-{tag}-{}-{nanos}",
-        std::process::id()
-    ));
-    std::fs::create_dir_all(&dir).expect("a scratch directory");
-    dir
+/// A directory of this case's own, so a case holds no claim another run needs,
+/// **removed when the case ends however it ends**: a return, a failed
+/// assertion and a panic all drop it. A case that made the directory
+/// unwritable gets it back before the removal, because a directory nobody may
+/// write cannot be emptied.
+struct Scratch(PathBuf);
+
+impl Scratch {
+    fn new(tag: &str) -> Self {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "jojobot-ports-{tag}-{}-{nanos}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("a scratch directory");
+        Scratch(dir)
+    }
+}
+
+impl std::ops::Deref for Scratch {
+    type Target = Path;
+
+    fn deref(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl AsRef<Path> for Scratch {
+    fn as_ref(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o755));
+        if let Err(e) = std::fs::remove_dir_all(&self.0) {
+            eprintln!("could not remove {}: {e}", self.0.display());
+        }
+    }
+}
+
+fn scratch(tag: &str) -> Scratch {
+    Scratch::new(tag)
 }
 
 /// **Concurrent claimers never share a port.** Eight threads each draw twelve
@@ -34,7 +70,7 @@ fn claimers_with_their_own_allocators_never_share_a_port() {
     let dir = scratch("share");
     let handles: Vec<_> = (0..8)
         .map(|_| {
-            let dir = dir.clone();
+            let dir = dir.to_path_buf();
             std::thread::spawn(move || {
                 let allocator = Allocator::within(31_000, 31_400, dir);
                 (0..12)
@@ -68,7 +104,7 @@ fn claimers_with_their_own_allocators_never_share_a_port() {
 #[test]
 fn an_exhausted_range_is_a_named_refusal_and_not_a_panic() {
     let dir = scratch("exhaust");
-    let allocator = Allocator::within(31_900, 31_908, dir);
+    let allocator = Allocator::within(31_900, 31_908, dir.to_path_buf());
     let mut held = Vec::new();
     let refusal = loop {
         match allocator.claim() {
@@ -152,13 +188,15 @@ fn a_port_an_outsider_listens_on_is_passed_over() {
         "the outsider is on a port from the outgoing range, so another process can take it \
          the moment it is freed",
     );
-    let over_the_outsider = Allocator::within(held, held + 1, scratch("outsider"));
+    let over_dir = scratch("outsider");
+    let over_the_outsider = Allocator::within(held, held + 1, over_dir.to_path_buf());
     assert!(
         matches!(over_the_outsider.claim(), Err(PortsError::Exhausted { .. })),
         "a port an outsider was already bound to was handed out, so the store would fail to take it",
     );
 
-    let around_the_outsider = Allocator::within(held, held + 64, scratch("outsider-around"));
+    let around_dir = scratch("outsider-around");
+    let around_the_outsider = Allocator::within(held, held + 64, around_dir.to_path_buf());
     let claimed = around_the_outsider
         .claim()
         .expect("a free port among the sixty-three the outsider is not on");
@@ -289,7 +327,8 @@ fn a_claim_is_released_at_once_while_a_forked_child_holds_its_descriptor() {
     let (ready_r, ready_w) = pipe();
     let (release_r, release_w) = pipe();
 
-    let allocator = Allocator::within(31_950, 31_960, scratch("forked"));
+    let forked_dir = scratch("forked");
+    let allocator = Allocator::within(31_950, 31_960, forked_dir.to_path_buf());
     let claim = allocator.claim().expect("a port is free");
     let port = claim.port();
 
@@ -360,7 +399,7 @@ fn a_claim_file_another_user_made_is_a_port_that_is_held() {
     }
 
     // The lock alone answers that the port is somebody's.
-    let alone = Allocator::within(first, first + 1, dir.clone());
+    let alone = Allocator::within(first, first + 1, dir.to_path_buf());
     assert!(
         alone.try_claim(first).expect("not an error").is_none(),
         "a claim file this claimer cannot open was treated as free or as a failure",
@@ -374,7 +413,7 @@ fn a_claim_file_another_user_made_is_a_port_that_is_held() {
     // it, wherever the search starts. The range is wide because a harness on
     // the same machine may be listening on any single port in it.
     for _ in 0..16 {
-        let wide = Allocator::within(first, first + 40, dir.clone());
+        let wide = Allocator::within(first, first + 40, dir.to_path_buf());
         let claim = wide.claim().expect("one of the other ports is free");
         assert_ne!(claim.port(), first, "the unwritable claim was handed out");
     }
@@ -406,7 +445,7 @@ fn a_claim_directory_nobody_may_write_is_an_io_error_naming_it() {
         return;
     }
 
-    let allocator = Allocator::within(first, first + 40, dir.clone());
+    let allocator = Allocator::within(first, first + 40, dir.to_path_buf());
     let one = allocator
         .try_claim(first)
         .err()
@@ -434,5 +473,31 @@ fn a_claim_directory_nobody_may_write_is_an_io_error_naming_it() {
             .expect("a writable directory is no error")
             .is_some(),
         "the port is free once the directory may be written",
+    );
+}
+
+/// **A case that panics leaves no directory behind**, including one that made
+/// its directory unwritable first. The directory is there while the case runs
+/// and a claim file is in it, so a guard that removed nothing would not pass.
+#[test]
+fn a_scratch_directory_is_gone_after_a_case_that_panics() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let seen: std::sync::Mutex<Option<(PathBuf, bool)>> = std::sync::Mutex::new(None);
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let dir = scratch("panics");
+        std::fs::write(dir.join("31900"), b"").expect("a claim file");
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555))
+            .expect("a directory nobody may write");
+        *seen.lock().expect("lock") = Some((dir.to_path_buf(), dir.exists()));
+        panic!("the case fails");
+    }));
+    assert!(outcome.is_err(), "the case was meant to panic");
+    let (path, existed) = seen.lock().expect("lock").take().expect("the case ran");
+    assert!(existed, "the directory was there while the case ran");
+    assert!(
+        !path.exists(),
+        "{} was left behind by a case that panicked",
+        path.display()
     );
 }
