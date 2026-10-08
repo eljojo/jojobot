@@ -172,6 +172,7 @@ async fn boots_on_a_store_filled_by(fixture_dir: &str, label: &str) {
         .trim()
         .to_string();
     assert_every_recorded_record_reads_back(&surface, &git_ref, &role_holder).await;
+    assert_what_a_real_store_holds_reads_back(&surface, &git_ref, &role_holder).await;
     assert_a_role_claimed_in_the_old_shape_is_held_and_moves(&surface, &git_ref, &role_holder)
         .await;
     surface.finish().await;
@@ -188,6 +189,12 @@ async fn boots_on_a_store_filled_by(fixture_dir: &str, label: &str) {
 /// with no issuer on purpose, so the boot says the endpoint is open. Any other
 /// warning is a degradation.
 const WARNING_THE_GATE_CAUSES: &str = "AUTH DISABLED";
+
+/// **The warning a boot logs for the handle two things have worn**, naming the
+/// field it sits under. The recording writes that handle on purpose.
+fn is_the_recorded_ambiguous_handle(line: &str) -> bool {
+    line.contains("FIELD VALUE LEFT AS TEXT") && line.contains("upgrade_fixture_points_at")
+}
 
 /// **A running copy of the current binary over a restored store.**
 struct Booted {
@@ -279,13 +286,28 @@ async fn boot_current(state_dir: &std::path::Path, store_port: u16, git_ref: &st
         .iter()
         .filter(|line| {
             line.contains("ERROR")
-                || (line.contains("WARN") && !line.contains(WARNING_THE_GATE_CAUSES))
+                || (line.contains("WARN")
+                    && !line.contains(WARNING_THE_GATE_CAUSES)
+                    && !is_the_recorded_ambiguous_handle(line))
         })
         .collect();
     assert!(
         warned.is_empty(),
         "the current binary booted on a store recorded at {git_ref} and said part of its own \
          boot failed: {warned:?}"
+    );
+    // **The one degradation the recording holds is reported, once, every boot.** A
+    // handle two things have worn cannot be lowered, so each boot says so by
+    // name. A boot that says nothing has stopped seeing the row, and the gate
+    // would then pass over a store it no longer exercises.
+    let reported = seen
+        .iter()
+        .filter(|line| is_the_recorded_ambiguous_handle(line))
+        .count();
+    assert_eq!(
+        reported, 1,
+        "the boot of a store recorded at {git_ref} must report the ambiguous handle it holds, \
+         once: {seen:?}"
     );
     Booted { child, http_port }
 }
@@ -501,6 +523,173 @@ async fn assert_a_role_claimed_in_the_old_shape_is_held_and_moves(
             "the moved claim did not still refuse a rival, naming its holder",
             &after.to_string(),
         );
+    }
+}
+
+/// **What a store that has run for a while holds beyond the plain records, read
+/// back through the served surface.** Each of these is a row the deployed build
+/// wrote: a type named for a shipped kind, a handle two things have worn, a list
+/// of handles under a key nobody declared, a message somebody decided is
+/// unreadable, an archived thing, and a bot filled to the deployed build's boot
+/// ceiling. The recording is the primary source; what each read answers here was
+/// read off the upgraded store, not written from what it ought to say.
+async fn assert_what_a_real_store_holds_reads_back(
+    surface: &Surface,
+    git_ref: &str,
+    role_holder: &str,
+) {
+    let fail = |what: &str, body: &str| -> ! {
+        panic!("recorded at {git_ref}: {what} did not read back correctly: {body}")
+    };
+    let json_of = |what: &str, read: &str| -> serde_json::Value {
+        serde_json::from_str(read).unwrap_or_else(|_| fail(what, read))
+    };
+
+    // A type a caller named `topic` sits beside the shipped kind of that name.
+    let read = surface.call("start_here", json!({"brief": true})).await;
+    let boot = json_of("the vocabulary", &read);
+    let vocabulary = &boot["snapshot"]["vocabulary"];
+    if !vocabulary["types"]
+        .as_array()
+        .is_some_and(|types| types.contains(&json!({"type": "topic"})))
+        || !vocabulary["kinds"]
+            .as_array()
+            .is_some_and(|kinds| kinds.contains(&json!({"kind": "topic"})))
+    {
+        fail("a type named topic beside the topic kind", &read);
+    }
+
+    // The handle two things have worn names the later one, and the thing it was
+    // taken from is found at the handle it was renamed to. The field that holds
+    // the handle reads back as the text it was written as: the boot could not
+    // lower it, and said so.
+    for (handle, name) in [
+        ("thing:upgrade-fixture-namesake", "A Later Heir"),
+        ("thing:upgrade-fixture-successor", "A Recorded Namesake"),
+    ] {
+        let read = surface.call("recall", json!({"subject": handle})).await;
+        let parsed = json_of(handle, &read);
+        if parsed["objects"][0]["id"] != handle || parsed["objects"][0]["name"] != name {
+            fail(handle, &read);
+        }
+    }
+    let read = surface
+        .call(
+            "recall",
+            json!({"subject": "thing:upgrade-fixture-thing", "facts": true}),
+        )
+        .await;
+    let fields = json_of("the thing's fields", &read)["objects"][0]["fields"].clone();
+    if fields["upgrade_fixture_points_at"] != "thing:upgrade-fixture-namesake" {
+        fail("the ambiguous handle left as the text written", &read);
+    }
+    // A list of handles under a key nobody declared reads back as written.
+    if fields["upgrade_fixture_company"]
+        != "person:upgrade-fixture-person, place:upgrade-fixture-place"
+    {
+        fail("the list of handles", &read);
+    }
+
+    // A quarantined message is counted apart and opens for nobody, and the
+    // refusal carries the reason it was set aside with.
+    let read = surface
+        .call(
+            "read_mailbox",
+            json!({"counts_only": true, "sid": role_holder}),
+        )
+        .await;
+    let counted = json_of("the mailbox counts", &read);
+    let quarantined = &counted["quarantined"];
+    let id = match (
+        quarantined["count"].as_u64(),
+        quarantined["ids"][0].as_str(),
+    ) {
+        (Some(1), Some(id)) => id.to_string(),
+        _ => fail("one quarantined message", &read),
+    };
+    let read = surface
+        .call(
+            "read_message",
+            json!({"message_id": id, "sid": role_holder}),
+        )
+        .await;
+    if json_of("the quarantined message", &read)["status"] != "blocked"
+        || !read.contains("recorded as unreadable")
+    {
+        fail("the quarantined message", &read);
+    }
+
+    // An archived thing is read by its handle, says why, and is left out of the
+    // default listing, which counts what it left out.
+    let read = surface
+        .call(
+            "recall",
+            json!({"subject": "thing:upgrade-fixture-archived"}),
+        )
+        .await;
+    if json_of("the archived thing", &read)["objects"][0]["archived"]["reason"]
+        != "recorded as no longer wanted"
+    {
+        fail("the archived thing", &read);
+    }
+    let read = surface.call("recall", json!({"kind": "thing"})).await;
+    let listed = json_of("the things", &read);
+    if listed["archived_excluded"].as_u64() != Some(1)
+        || listed["objects"].as_array().is_none_or(|all| {
+            all.iter()
+                .any(|o| o["id"] == "thing:upgrade-fixture-archived")
+        })
+    {
+        fail("the archived thing left out of the listing", &read);
+    }
+
+    // A bot filled to the deployed build's ceiling, whose rule the deployed
+    // build let in without the room for its timestamp, still boots and serves its
+    // whole charter and its rule.
+    let read = surface
+        .call(
+            "start_here",
+            json!({"bot": "upgrade-fixture-heavy", "brief": true}),
+        )
+        .await;
+    let heavy = json_of("the heavy bot's boot", &read);
+    let charter = heavy["identity"]["charter"].as_str().unwrap_or("");
+    if heavy["identity"]["bot"]["id"] != "bot:upgrade-fixture-heavy"
+        || heavy["identity"]["charter_elided"] != false
+        || charter.is_empty()
+        || !charter.chars().all(|c| c == 'x')
+        || !read.contains("the heavy bot keeps its one rule")
+        || heavy["session"]["sid"].as_str().is_none()
+    {
+        fail(
+            "the heavy bot's boot",
+            &read.chars().take(400).collect::<String>(),
+        );
+    }
+    // A new starred rule on it is refused, and the refusal says how much room it
+    // held back for the new record's timestamp.
+    let sid = heavy["session"]["sid"].as_str().unwrap_or_default();
+    let read = surface
+        .call(
+            "capture",
+            json!({
+                "subject": "bot:upgrade-fixture-heavy",
+                "content": "one more rule", "provenance": "testimony",
+                "fields": {"starred": "true"}, "sid": sid,
+            }),
+        )
+        .await;
+    let refused = json_of("a new rule on the heavy bot", &read);
+    let kept = jiff::Timestamp::new(0, 123_456_789)
+        .expect("a moment")
+        .to_string()
+        .len()
+        - jiff::Timestamp::new(0, 0)
+            .expect("a moment")
+            .to_string()
+            .len();
+    if refused["status"] != "blocked" || refused["stamp_margin"] != kept {
+        fail("a new rule refused naming the stamp margin", &read);
     }
 }
 
@@ -1048,9 +1237,22 @@ async fn field_link_holds_the_links_the_writes_imply_and_nothing_else() {
     let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
         .await
         .expect("connecting to the current binary");
-    let expected = links_the_served_fields_imply(&surface, &git_ref).await;
+    let mut expected = links_the_served_fields_imply(&surface, &git_ref).await;
     surface.finish().await;
     booted.stop().await;
+    // **The handle two things have worn is served as a field and links nothing.**
+    // The boot could not say which of the two it meant, so it left the value as
+    // text. The served fields imply the link, the table must not hold it, and
+    // taking it out of the expected set makes the comparison below fail if it does.
+    let ambiguous = (
+        "thing:upgrade-fixture-thing".to_string(),
+        "upgrade_fixture_points_at".to_string(),
+        "thing:upgrade-fixture-namesake".to_string(),
+    );
+    assert!(
+        expected.remove(&ambiguous),
+        "the recording's ambiguous handle is not served as a field: {expected:?}"
+    );
 
     let reading = Dolt::start(&state_dir.join("db"), free_port())
         .await

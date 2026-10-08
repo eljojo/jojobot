@@ -588,6 +588,8 @@ async fn seed_representative_records(surface: &Surface) -> String {
         .await
         .expect("the message is marked processed");
 
+    seed_what_a_real_store_holds_beyond_the_plain_records(surface, &sid).await;
+
     // A session, journalled and then wrapped — the one this recording ran
     // in, so the gate reads back a real wrapped run rather than a bare
     // fixture record nothing ever produced.
@@ -625,4 +627,186 @@ async fn seed_representative_records(surface: &Surface) -> String {
         .as_str()
         .expect("a fresh boot carries a session id")
         .to_string()
+}
+
+/// **What a store that has run for months holds and the plain records above do
+/// not**: a type a caller named after a shipped kind, a handle in a field that
+/// two things have worn, a list of handles under a key nobody declared, a message somebody decided is unreadable, an archived thing, and a
+/// bot filled to the deployed build's boot ceiling. Each is written through the
+/// deployed build's own surface, so each is a row that build really wrote.
+async fn seed_what_a_real_store_holds_beyond_the_plain_records(surface: &Surface, sid: &str) {
+    // **A type named for a shipped kind.** The deployed build lets a caller
+    // declare it; a later build ships a kind of the same name and has to boot.
+    surface
+        .must(
+            "declare_type",
+            json!({
+                "name": "topic",
+                "fields": [{"key": "upgrade_fixture_mood", "holds": "text"}],
+                "sid": sid,
+            }),
+        )
+        .await
+        .expect("a type named topic is declared");
+
+    // **A handle that two things have worn.** One thing is renamed, which frees
+    // its handle, and a new thing takes it: the handle now names the new thing
+    // and is also a former handle of the old one.
+    surface
+        .must(
+            "add_entity",
+            json!({"kind": "thing", "handle": "upgrade-fixture-namesake",
+                   "name": "A Recorded Namesake", "source": "test", "sid": sid}),
+        )
+        .await
+        .expect("the first namesake is added");
+    surface
+        .must(
+            "rename_entity",
+            json!({"handle": "thing:upgrade-fixture-namesake",
+                   "to": "thing:upgrade-fixture-successor", "sid": sid}),
+        )
+        .await
+        .expect("the first namesake is renamed");
+    surface
+        .must(
+            "add_entity",
+            json!({"kind": "thing", "handle": "upgrade-fixture-namesake",
+                   "name": "A Later Heir", "source": "test", "sid": sid}),
+        )
+        .await
+        .expect("a second thing takes the freed handle");
+    surface
+        .must(
+            "capture",
+            json!({
+                "subject": "thing:upgrade-fixture-thing",
+                "content": "points at a handle two things have worn",
+                "provenance": "testimony",
+                "fields": {"upgrade_fixture_points_at": "thing:upgrade-fixture-namesake"},
+                "sid": sid,
+            }),
+        )
+        .await
+        .expect("the ambiguous handle field is captured");
+
+    // **A list of handles under a key nothing declares.**
+    surface
+        .must(
+            "capture",
+            json!({
+                "subject": "thing:upgrade-fixture-thing",
+                "content": "keeps company with a person and a place",
+                "provenance": "testimony",
+                "fields": {"upgrade_fixture_company":
+                           "person:upgrade-fixture-person, place:upgrade-fixture-place"},
+                "sid": sid,
+            }),
+        )
+        .await
+        .expect("the handle list is captured");
+
+    // **A message somebody decided is unreadable.**
+    let unreadable = surface
+        .must(
+            "post_message",
+            json!({"to": "assistant", "body": "set aside as unreadable", "sid": sid}),
+        )
+        .await
+        .expect("a message is posted to be quarantined");
+    surface
+        .must(
+            "mark_processed",
+            json!({
+                "message_id": unreadable["id"].as_str().expect("a message id"),
+                "quarantine": "recorded as unreadable",
+                "sid": sid,
+            }),
+        )
+        .await
+        .expect("the message is quarantined");
+
+    // **An archived thing.**
+    surface
+        .must(
+            "add_entity",
+            json!({"kind": "thing", "handle": "upgrade-fixture-archived",
+                   "name": "A Recorded Archive", "source": "test", "sid": sid}),
+        )
+        .await
+        .expect("the archived thing is added");
+    surface
+        .must(
+            "archive_entity",
+            json!({"handle": "thing:upgrade-fixture-archived",
+                   "reason": "recorded as no longer wanted", "sid": sid}),
+        )
+        .await
+        .expect("the thing is archived");
+
+    // **A bot filled to the deployed build's boot ceiling, rule last.** A charter
+    // takes the boot exactly to the ceiling, the size read off the refusal of one
+    // too big. The starred rule is then refused for the room it needs, the
+    // charter is cut by that much, and the rule goes in. The deployed build
+    // measured the rule before it had a timestamp, so the stored rule carries one
+    // the check did not count.
+    surface
+        .must(
+            "add_entity",
+            json!({"kind": "bot", "handle": "upgrade-fixture-heavy",
+                   "name": "A Recorded Heavy Bot", "source": "test", "sid": sid}),
+        )
+        .await
+        .expect("the heavy bot is added");
+    let refusal = |what: &'static str, verb: &'static str, args: serde_json::Value| async move {
+        let body: serde_json::Value = serde_json::from_str(&surface.call(verb, args).await)
+            .unwrap_or_else(|e| panic!("{what}: the answer is not JSON: {e}"));
+        assert_eq!(body["status"], "blocked", "{what} was not refused: {body}");
+        body
+    };
+    let probe: usize = 40_000;
+    let too_big = refusal(
+        "a charter far past the ceiling",
+        "set_charter",
+        json!({"bot": "upgrade-fixture-heavy", "prose": "x".repeat(probe), "sid": sid}),
+    )
+    .await;
+    let floor = too_big["floor"]
+        .as_u64()
+        .expect("the refusal names the floor") as usize;
+    let budget = too_big["budget"]
+        .as_u64()
+        .expect("the refusal names the budget") as usize;
+    let at_the_ceiling = probe - (floor - budget);
+    surface
+        .must(
+            "set_charter",
+            json!({"bot": "upgrade-fixture-heavy", "prose": "x".repeat(at_the_ceiling),
+                   "sid": sid}),
+        )
+        .await
+        .expect("a charter that takes the boot exactly to the ceiling is accepted");
+    let rule = json!({
+        "subject": "bot:upgrade-fixture-heavy",
+        "content": "the heavy bot keeps its one rule",
+        "provenance": "testimony",
+        "fields": {"starred": "true"},
+        "sid": sid,
+    });
+    let no_room = refusal("a rule with no room left", "capture", rule.clone()).await;
+    let needs = no_room["over"]
+        .as_u64()
+        .expect("the refusal names the overage") as usize;
+    surface
+        .must(
+            "set_charter",
+            json!({"bot": "upgrade-fixture-heavy",
+                   "prose": "x".repeat(at_the_ceiling - needs), "sid": sid}),
+        )
+        .await
+        .expect("a charter cut by the rule's room is accepted");
+    surface
+        .must("capture", rule)
+        .await
+        .expect("the heavy bot's rule fits now");
 }
