@@ -1590,6 +1590,7 @@ mod tests {
                     floor: 30_000,
                     budget: 28_000,
                     parts: vec![(s("charter"), 20_000)],
+                    stamp_margin: 0,
                 },
                 Some("change"),
             ),
