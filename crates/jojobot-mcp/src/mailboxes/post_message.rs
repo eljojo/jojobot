@@ -503,6 +503,10 @@ impl Jojobot {
 ///
 /// **Named only when something came back**, so a post that collected nothing
 /// does not claim work that does not exist.
+/// **How many leftover ids a read may name beside the message and still hand it
+/// over whole.**
+const LEFTOVER_IDS_ROOM: usize = 25;
+
 /// **A moment written with every fractional digit a timestamp can carry.** A
 /// timestamp prints without its trailing zeros, so the same message prints a
 /// few characters longer or shorter from one moment to the next. The probe in
@@ -519,6 +523,13 @@ const WIDEST_TIMESTAMP: &str = "2026-10-08T15:30:12.123456789Z";
 /// widest id a message may have and the widest timestamp, which keeps the answer
 /// on the safe side: a body this lets through is delivered whole whatever id the
 /// store draws and whenever it is sent.
+///
+/// **What the guarantee covers**: a body this lets through is delivered whole
+/// while the addressee's box holds at most [`LEFTOVER_IDS_ROOM`] leftovers, a
+/// read naming each of them beside the message. Past that, and when other fresh
+/// mail arrives in the same read, the body can still be left out of the answer;
+/// `read_message` returns it whole by id. A read names every leftover and there
+/// is no bound on how many a box holds, so no probe can promise more.
 fn body_room_beyond(new: &NewMessage) -> Option<usize> {
     let whole = |body: String| -> bool {
         let message = Message {
@@ -535,6 +546,16 @@ fn body_room_beyond(new: &NewMessage) -> Option<usize> {
             sender_mail_waiting_at_send: new.sender_mail_waiting_at_send,
             posted_by_session: new.posted_by_session.clone(),
         };
+        // The leftovers a read names beside the message, at the widest id each.
+        let leftovers: Vec<Delivered> = (0..LEFTOVER_IDS_ROOM)
+            .map(|_| Delivered {
+                message: Message {
+                    body: String::new(),
+                    ..message.clone()
+                },
+                seen_before: true,
+            })
+            .collect();
         let delivery = Delivery {
             mailbox: new.mailbox.clone(),
             messages: vec![Delivered {
@@ -546,6 +567,7 @@ fn body_room_beyond(new: &NewMessage) -> Option<usize> {
         if let Some(run) = new.posted_by_session.as_deref() {
             note_written_by_other_run(&mut rendered["messages"][0], run, Some(false));
         }
+        note_leftovers(&mut rendered, &leftovers);
         fit_delivery(&mut rendered, &delivery, 0);
         rendered.get("not_shown").is_none() && rendered["messages"][0].get("body_elided").is_none()
     };
@@ -1039,6 +1061,81 @@ mod tests {
             counted["counts"]["total"], 0,
             "nothing was written: {counted}"
         );
+    }
+
+    /// **A box that already holds leftovers is handed the largest body whole.**
+    /// A read names every leftover by id beside the new message, and that block
+    /// shares the answer ceiling with it. The check once measured the message
+    /// alone, so in a box with leftovers the largest body it let through arrived
+    /// with its body left out.
+    #[tokio::test]
+    async fn the_largest_body_is_delivered_whole_to_a_box_that_holds_leftovers() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "otto").await;
+        make_box(&jojobot, "epsilon").await;
+        for n in 0..LEFTOVER_IDS_ROOM {
+            send(&jojobot, "otto", "epsilon", &format!("earlier {n}")).await;
+        }
+        let reader = as_bot(&jojobot, "otto");
+        let read = |sid: String| {
+            let jojobot = &jojobot;
+            async move {
+                json_of(
+                    &jojobot
+                        .read_mailbox(Parameters(ReadMailboxArgs {
+                            counts_only: None,
+                            new_only: None,
+                            sid: Some(sid),
+                        }))
+                        .await
+                        .expect("read_mailbox ok"),
+                )
+            }
+        };
+        // The first read hands the earlier mail over; it is owed from then on.
+        read(reader.clone()).await;
+
+        // The largest body is the one the refusal names, asked in the state the
+        // post will be made in: a sender that has posted before is not the
+        // sender of a first post, and the two differ in what the message carries.
+        let over = json_of(
+            &jojobot
+                .post_message(Parameters(PostMessageArgs {
+                    to: "otto".into(),
+                    sid: as_bot(&jojobot, "epsilon"),
+                    subject: None,
+                    body: "x".repeat(40_000),
+                    in_reply_to: None,
+                }))
+                .await
+                .expect("post_message call ok"),
+        );
+        let said = over["how_to_proceed"].as_str().expect("a way forward");
+        let room: usize = said
+            .split("about ")
+            .nth(1)
+            .and_then(|rest| {
+                rest.chars()
+                    .take_while(char::is_ascii_digit)
+                    .collect::<String>()
+                    .parse()
+                    .ok()
+            })
+            .unwrap_or_else(|| panic!("the refusal names its room: {over}"));
+        send(&jojobot, "otto", "epsilon", &"x".repeat(room)).await;
+        let delivery = read(reader).await;
+        assert_eq!(
+            delivery["leftovers"]["count"], LEFTOVER_IDS_ROOM,
+            "the box holds the leftovers this case is about: {delivery}"
+        );
+        let message = &delivery["messages"][0];
+        assert_eq!(
+            message["body"].as_str().map(str::len),
+            Some(room),
+            "the largest body that lands is handed over whole: {delivery}"
+        );
+        assert!(message.get("body_elided").is_none(), "{delivery}");
+        assert!(delivery.get("not_shown").is_none(), "{delivery}");
     }
 
     /// **What was genuinely waiting in the sender's own box at send time
