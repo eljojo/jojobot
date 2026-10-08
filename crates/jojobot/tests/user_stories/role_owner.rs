@@ -287,3 +287,100 @@ async fn a_claim_on_an_archived_role_object_is_refused_naming_the_restore() {
     s.wrap("archived and restored the role object").await;
     story.finish().await;
 }
+
+/// "Beta moved the role object under itself, then claimed the role."
+///
+/// **Moving a role object to another parent, or merging it into another thing, is
+/// the owner's or the chart head's, by the same rule as archiving it.** Either
+/// act hands the name to somebody else and walks around the owner check. A
+/// stranger is refused and told who may; the owner's and the head's own acts land
+/// beside them, so a build that refused every reparent and every merge of a role
+/// object would not pass.
+#[tokio::test]
+async fn only_the_owner_or_the_chart_head_may_move_or_merge_a_role_object() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    for (handle, name) in [
+        ("bot:alpha", "Alpha"),
+        ("bot:beta", "Beta"),
+        ("bot:omega", "Omega"),
+    ] {
+        s.add(handle, name).await;
+    }
+    s.add("thing:handcart", "Handcart").await;
+    let alpha = story.as_bot("bot:alpha").await;
+    let beta = story.as_bot("bot:beta").await;
+    let omega = story.as_bot("bot:omega").await;
+    omega
+        .call("capture", reporting_to("bot:alpha", "bot:omega"))
+        .await;
+
+    for role in ["gamma", "sigma", "theta"] {
+        let (claimed, _) = story
+            .call(
+                "start_here",
+                json!({"bot": "alpha", "brief": true, "claim": role, "resume": "new"}),
+            )
+            .await;
+        assert_eq!(
+            claim_of(&claimed.json())["status"],
+            "taken",
+            "{}",
+            claimed.json()
+        );
+    }
+
+    // ── a stranger's reparent is refused, and told who may ──────────────────
+    beta.refused(
+        "rename_entity",
+        json!({"handle": "role:gamma", "to": "role:gamma", "parent": "bot:beta"}),
+    )
+    .await
+    .says("\"wrote\":false")
+    .says("bot:alpha")
+    .says("bot:omega");
+    s.call("recall", json!({"subject": "role:gamma"}))
+        .await
+        .says("\"parent\":\"bot:alpha\"");
+
+    // ── a stranger's merge of a role object is refused, from either side ────
+    beta.refused(
+        "merge_entities",
+        json!({"duplicate": "role:sigma", "survivor": "thing:handcart", "reason": "tidy"}),
+    )
+    .await
+    .says("\"wrote\":false")
+    .says("bot:alpha");
+    beta.refused(
+        "merge_entities",
+        json!({"duplicate": "thing:handcart", "survivor": "role:gamma", "reason": "tidy"}),
+    )
+    .await
+    .says("bot:alpha");
+    s.call("recall", json!({"subject": "role:sigma"}))
+        .await
+        .never_says("merged_into");
+
+    // ── the owner's and the head's own acts land ────────────────────────────
+    alpha
+        .call(
+            "merge_entities",
+            json!({"duplicate": "role:sigma", "survivor": "role:gamma", "reason": "the same seat"}),
+        )
+        .await;
+    s.call("recall", json!({"subject": "role:sigma"}))
+        .await
+        .says("merged_into");
+    omega
+        .call(
+            "rename_entity",
+            json!({"handle": "role:theta", "to": "role:theta", "parent": "bot:omega"}),
+        )
+        .await;
+    s.call("recall", json!({"subject": "role:theta"}))
+        .await
+        .says("\"parent\":\"bot:omega\"");
+
+    s.wrap("kept the role objects with their owner").await;
+    story.finish().await;
+}

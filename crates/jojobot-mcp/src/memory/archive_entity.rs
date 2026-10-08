@@ -68,7 +68,7 @@ impl Jojobot {
         };
         let handle = EntityId::person(&args.handle);
         if let Some(refused) = self
-            .refuse_a_stranger_the_role_object(&caller.bot, &handle)
+            .refuse_a_stranger_the_role_object(&caller.bot, &handle, "archive or restore it")
             .await
         {
             return Ok(refused);

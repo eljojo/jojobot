@@ -254,10 +254,20 @@ impl Jojobot {
     ) -> Result<CallToolResult, McpError> {
         // Refused here, before anything is written — see
         // [`Jojobot::attributable`].
-        if let Err(refused) = self.identified_for_write(args.sid.as_deref()).await {
+        let caller = match self.identified_for_write(args.sid.as_deref()).await {
+            Ok(caller) => caller,
+            Err(refused) => return Ok(refused),
+        };
+        let from = EntityId::person(&args.handle);
+        // **Moving a role object to another bot hands the role over**, so it is
+        // judged as archiving it is.
+        if args.parent.is_some()
+            && let Some(refused) = self
+                .refuse_a_stranger_the_role_object(&caller.bot, &from, "move it to another bot")
+                .await
+        {
             return Ok(refused);
         }
-        let from = EntityId::person(&args.handle);
         // **Always fully qualified — no bare-slug convenience here.** A
         // capture's subject reads a bare slug as `person:` because that is
         // the ordinary case; a rename's destination has no ordinary case, so

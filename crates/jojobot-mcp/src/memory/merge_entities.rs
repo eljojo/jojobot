@@ -74,6 +74,16 @@ impl Jojobot {
         };
         let duplicate = EntityId(args.duplicate.trim().to_string());
         let survivor = EntityId(args.survivor.trim().to_string());
+        // **A merge of a role object folds its name into another thing**, from
+        // either side, so each side is judged as archiving it is.
+        for side in [&duplicate, &survivor] {
+            if let Some(refused) = self
+                .refuse_a_stranger_the_role_object(&caller.bot, side, "merge it")
+                .await
+            {
+                return Ok(refused);
+            }
+        }
         let date = self
             .dated(args.recorded_at.as_deref(), args.sid.as_deref())
             .await?;

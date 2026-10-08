@@ -255,11 +255,13 @@ impl Jojobot {
         Ok(unmanaged)
     }
 
-    /// **Refuse archiving or restoring a role object to a bot that may not.**
-    /// Only the bot the object is a child of, its owner, and the bots heading
-    /// the chart may. Without this, archiving frees the name and any bot could
-    /// archive another's role object and claim the role itself. `None` lets the
-    /// call go on: the handle is not a role object, or the caller may.
+    /// **Refuse an act on a role object to a bot that may not do it.** Only the
+    /// bot the object is a child of, its owner, and the bots heading the chart
+    /// may archive it, restore it, move it to another bot or merge it. Without
+    /// this, any of those hands the name to somebody else, and any bot could
+    /// take another's role object and claim the role itself. `act` is said back
+    /// in the refusal. `None` lets the call go on: the handle is not a role
+    /// object, or the caller may.
     ///
     /// **A read that fails refuses**, because a check that could not be made is
     /// not a licence.
@@ -267,6 +269,7 @@ impl Jojobot {
         &self,
         by: &EntityId,
         handle: &EntityId,
+        act: &str,
     ) -> Option<rmcp::model::CallToolResult> {
         if handle.kind() != Some(EntityKind::ROLE) {
             return None;
@@ -301,16 +304,16 @@ impl Jojobot {
                     handle.as_str(),
                     format!(
                         "Only the bot this role object belongs to or a bot heading the chart may \
-                         archive or restore it: {}. Nothing was written.",
+                         {act}: {}. Nothing was written.",
                         may.join(", ")
                     ),
                 ))
             }
             Err(e) => {
-                tracing::warn!(error = %e, %handle, "who may archive a role object could not be read");
+                tracing::warn!(error = %e, %handle, "who may act on a role object could not be read");
                 Some(crate::caller::handle_declined(
                     handle.as_str(),
-                    "Who may archive this role object could not be read just now, so nothing was \
+                    "Who may act on this role object could not be read just now, so nothing was \
                      written. Try again in a moment."
                         .to_string(),
                 ))
