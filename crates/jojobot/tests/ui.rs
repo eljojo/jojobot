@@ -1701,6 +1701,38 @@ async fn mark_processed_in_the_ui(
     request.send().await.unwrap()
 }
 
+/// The Open button's POST the way the page's own form sends it.
+async fn open_in_the_ui(
+    addr: SocketAddr,
+    cookie: &str,
+    id: &str,
+    origin: Option<&str>,
+) -> reqwest::Response {
+    let mut request = browser()
+        .post(format!("http://{addr}/ui/mail/open"))
+        .header(reqwest::header::COOKIE, cookie)
+        .form(&[("id", id)]);
+    if let Some(origin) = origin {
+        request = request.header(reqwest::header::ORIGIN, origin);
+    }
+    request.send().await.unwrap()
+}
+
+/// The state a message is in, read from the store rather than the page.
+async fn state_in_the_store(
+    mailboxes: &InMemoryMailboxes,
+    id: &jojobot_domain::mailbox::MessageId,
+) -> String {
+    mailboxes
+        .message_by_id(id)
+        .await
+        .expect("reads")
+        .expect("the message is there")
+        .state
+        .as_token()
+        .to_string()
+}
+
 /// **The operator's box is on the operator's page, to the operator, and on no
 /// other page.** A non-operator person's page, the instance's own page and a
 /// bot's page leave the message out. The bot's own box on its own page is the
@@ -1722,8 +1754,12 @@ async fn the_operators_mail_is_on_the_operators_page_and_no_other() {
         .unwrap();
     let box_section = section(&operator_page, "mailbox");
     assert!(
-        box_section.contains(OPERATOR_SUBJECT) && box_section.contains(OPERATOR_BODY),
+        box_section.contains(OPERATOR_SUBJECT),
         "the operator's page shows their box: {operator_page}"
+    );
+    assert!(
+        !operator_page.contains(OPERATOR_BODY),
+        "a new message's body is not shown by a GET: {operator_page}"
     );
     assert!(
         box_section.contains(mail.to_the_operator.as_str()),
@@ -1762,11 +1798,12 @@ async fn the_operators_mail_is_on_the_operators_page_and_no_other() {
     ct.cancel();
 }
 
-/// **Opening the operator's page takes delivery**, as `read_mailbox` does for a
-/// bot: the message moves new to read. A page that is not the operator's takes
-/// no delivery of it.
+/// **A GET of the operator's page moves no mail**, so a prefetch of it cannot
+/// mark anything seen. The message stays `new` after the operator's page, and
+/// after another person's, is opened; the page shows its row and an Open
+/// button, and none of its body.
 #[tokio::test]
-async fn opening_the_operators_page_takes_delivery_of_what_is_new() {
+async fn opening_the_operators_page_leaves_new_mail_new() {
     let idp = support::TestIdp::new();
     let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
     let board = seeded_board().await;
@@ -1775,41 +1812,227 @@ async fn opening_the_operators_page_takes_delivery_of_what_is_new() {
     let (addr, ct, _board) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
     let client = browser();
     let cookie = log_in(&client, addr, "/").await;
-    let state_of = |id: jojobot_domain::mailbox::MessageId| {
-        let mailboxes = mailboxes.clone();
-        async move {
-            mailboxes
-                .message_by_id(&id)
-                .await
-                .expect("reads")
-                .expect("the message is there")
-                .state
-        }
-    };
     assert_eq!(
-        state_of(mail.to_the_operator.clone()).await.as_token(),
+        state_in_the_store(&mailboxes, &mail.to_the_operator).await,
         "new"
     );
 
-    // Another person's page does not take it.
     read(&client, addr, "/person:milhouse/", &cookie).await;
-    assert_eq!(
-        state_of(mail.to_the_operator.clone()).await.as_token(),
-        "new"
-    );
-
+    let page = read(&client, addr, "/person:lisa/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
     read(&client, addr, "/person:lisa/", &cookie).await;
-    assert_eq!(
-        state_of(mail.to_the_operator.clone()).await.as_token(),
-        "read",
-        "opening the operator's page is reading their box"
+
+    assert!(
+        page.contains("action=\"/ui/mail/open\"") && page.contains(mail.to_the_operator.as_str()),
+        "a new message carries the button that opens it: {page}"
+    );
+    assert!(
+        !page.contains(OPERATOR_BODY),
+        "and its body is not on a GET: {page}"
     );
     assert_eq!(
-        state_of(mail.to_a_bot.clone()).await.as_token(),
+        state_in_the_store(&mailboxes, &mail.to_the_operator).await,
         "new",
-        "and a bot's mail is not taken by it"
+        "a GET of the operator's page took delivery"
+    );
+    assert_eq!(state_in_the_store(&mailboxes, &mail.to_a_bot).await, "new");
+    ct.cancel();
+}
+
+/// **The Open button takes delivery of that one message and no other.** The
+/// operator's box holds a second new message; opening the first moves only the
+/// first to `read`, lands the operator back on their page, and the page now
+/// shows the body it held back. A bot's message is not touched.
+#[tokio::test]
+async fn the_open_button_takes_delivery_of_one_message_only() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let board = seeded_board().await;
+    let mail = with_an_operators_mail(&board).await;
+    let mailboxes = board.mailboxes.clone();
+    let second = mailboxes
+        .post_message(NewMessage {
+            mailbox: MailboxName::named_for(&EntityId("person:lisa".into())),
+            body: "the second report is about the kiln".to_string(),
+            subject: Some("A second report".to_string()),
+            sender: "bot:otto".to_string(),
+            sent_at: FIXED_INSTANT,
+            in_reply_to: None,
+            sender_mail_waiting_at_send: None,
+            posted_by_session: None,
+        })
+        .await
+        .expect("posted")
+        .written()
+        .expect("the post landed")
+        .id;
+    let (addr, ct, _board) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+    let origin = format!("http://{addr}");
+
+    let opened = open_in_the_ui(addr, &cookie, mail.to_the_operator.as_str(), Some(&origin)).await;
+    assert!(
+        opened.status().is_redirection(),
+        "the button lands the operator back on the page: {}",
+        opened.status()
+    );
+    assert_eq!(location(&opened), "/person:lisa/");
+    assert_eq!(
+        state_in_the_store(&mailboxes, &mail.to_the_operator).await,
+        "read"
+    );
+    assert_eq!(
+        state_in_the_store(&mailboxes, &second).await,
+        "new",
+        "opening one message took delivery of another"
+    );
+    assert_eq!(state_in_the_store(&mailboxes, &mail.to_a_bot).await, "new");
+
+    let page = read(&client, addr, "/person:lisa/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        page.contains(OPERATOR_BODY),
+        "an opened message shows its body: {page}"
+    );
+    assert!(
+        !page.contains("the second report is about the kiln"),
+        "a message still new keeps its body back: {page}"
     );
     ct.cancel();
+}
+
+/// **The Open action checks where it came from and whose box the message is
+/// in**, exactly as the mark-processed action does. Another origin, no origin,
+/// no session and a bot's message each move nothing; the same POST from this
+/// origin lands in the case above.
+#[tokio::test]
+async fn the_open_action_refuses_another_origin_no_session_and_a_bots_message() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let board = seeded_board().await;
+    let mail = with_an_operators_mail(&board).await;
+    let mailboxes = board.mailboxes.clone();
+    let (addr, ct, _board) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+    let origin = format!("http://{addr}");
+    let id = mail.to_the_operator.as_str();
+
+    for (what, origin) in [
+        ("from another origin", Some("https://elsewhere.example")),
+        ("with no origin at all", None),
+    ] {
+        let refused = open_in_the_ui(addr, &cookie, id, origin).await;
+        assert_eq!(
+            refused.status(),
+            reqwest::StatusCode::FORBIDDEN,
+            "an Open {what} with a valid cookie was not refused"
+        );
+        assert_eq!(
+            state_in_the_store(&mailboxes, &mail.to_the_operator).await,
+            "new",
+            "an Open {what} moved the message"
+        );
+    }
+
+    let no_session = browser()
+        .post(format!("http://{addr}/ui/mail/open"))
+        .header(reqwest::header::ORIGIN, &origin)
+        .form(&[("id", id)])
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        !no_session.status().is_success() && !no_session.status().is_redirection(),
+        "an Open with no session was accepted: {}",
+        no_session.status()
+    );
+    assert_eq!(
+        state_in_the_store(&mailboxes, &mail.to_the_operator).await,
+        "new"
+    );
+
+    let bots = open_in_the_ui(addr, &cookie, mail.to_a_bot.as_str(), Some(&origin)).await;
+    assert!(
+        !bots.status().is_success() && !bots.status().is_redirection(),
+        "a bot's message was opened from the operator's action: {}",
+        bots.status()
+    );
+    assert_eq!(state_in_the_store(&mailboxes, &mail.to_a_bot).await, "new");
+    ct.cancel();
+}
+
+/// **The operator's mail is served only while the allowlist admits exactly one
+/// person.** A UI session carries no subject, so with two people admitted, or
+/// with the allowlist open (which admits every subject), the operator's page
+/// withholds the box and both actions refuse, and no message moves. One person
+/// is the positive: the same page shows the box and the same actions land.
+#[tokio::test]
+async fn the_operators_mail_is_withheld_unless_the_allowlist_is_one_person() {
+    for (what, allowed) in [
+        ("two people", vec![READER, "sub-of-a-second-person"]),
+        ("an open allowlist", vec![]),
+    ] {
+        let idp = support::TestIdp::new();
+        let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+        let board = seeded_board().await;
+        let mail = with_an_operators_mail(&board).await;
+        let mailboxes = board.mailboxes.clone();
+        let (addr, ct, _board) = spawn_jojobot_over(endpoints, &allowed, &idp, board).await;
+        let client = browser();
+        let cookie = log_in(&client, addr, "/").await;
+        let origin = format!("http://{addr}");
+
+        let page = read(&client, addr, "/person:lisa/", &cookie)
+            .await
+            .text()
+            .await
+            .unwrap();
+        assert!(
+            page.contains("id=\"mailbox-withheld\""),
+            "with {what} the page says the mail is not shown: {page}"
+        );
+        assert!(
+            !page.contains(OPERATOR_SUBJECT)
+                && !page.contains(mail.to_the_operator.as_str())
+                && !page.contains("/ui/mail/"),
+            "with {what} the page carries the box: {page}"
+        );
+
+        let opened =
+            open_in_the_ui(addr, &cookie, mail.to_the_operator.as_str(), Some(&origin)).await;
+        assert_eq!(
+            opened.status(),
+            reqwest::StatusCode::FORBIDDEN,
+            "with {what} the Open action was not refused"
+        );
+        let marked = mark_processed_in_the_ui(
+            addr,
+            &cookie,
+            mail.to_the_operator.as_str(),
+            "x",
+            Some(&origin),
+        )
+        .await;
+        assert_eq!(
+            marked.status(),
+            reqwest::StatusCode::FORBIDDEN,
+            "with {what} the mark-processed action was not refused"
+        );
+        assert_eq!(
+            state_in_the_store(&mailboxes, &mail.to_the_operator).await,
+            "new",
+            "with {what} an action moved the message"
+        );
+        ct.cancel();
+    }
 }
 
 /// **Mark-processed in the UI moves the message to processed with its note**,
@@ -1827,7 +2050,9 @@ async fn the_operator_marks_a_message_processed_with_a_note() {
     let cookie = log_in(&client, addr, "/").await;
     let origin = format!("http://{addr}");
 
-    // The page carries the action for the message it shows.
+    // A message the operator has opened carries the action for it; one still
+    // new carries the Open button instead.
+    open_in_the_ui(addr, &cookie, mail.to_the_operator.as_str(), Some(&origin)).await;
     let page = read(&client, addr, "/person:lisa/", &cookie)
         .await
         .text()

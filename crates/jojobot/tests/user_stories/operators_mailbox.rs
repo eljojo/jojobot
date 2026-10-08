@@ -272,6 +272,21 @@ async fn a_bot_leaves_the_operator_a_message_and_no_bot_can_read_it_back() {
         "no refusal moved the message"
     );
 
+    // ── the operator's page lists it and takes no delivery of it ────────────
+    //
+    // A page is a GET, so opening it must not mark mail seen: the row is there
+    // by its title and the text is held back until the operator opens it.
+    story
+        .page("person:lisa")
+        .await
+        .says("quarterly")
+        .never_says("4242");
+    assert_eq!(
+        story.mail_held_by("person:lisa").await,
+        (1, 0, 0),
+        "opening the operator's page took no delivery"
+    );
+
     // ── retired in the store, it is still private: the archive is not open ───
     //
     // The processed note in a bot's box is readable by any bot; the processed

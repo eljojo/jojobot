@@ -272,6 +272,14 @@ impl Ui {
         })
     }
 
+    /// **Whether the allowlist admits exactly one person.** A UI session carries
+    /// no subject, so the operator's private mail is served only when the one
+    /// person who can log in is the operator. An open allowlist admits every
+    /// subject and counts as none.
+    pub(crate) fn admits_exactly_one_person(&self) -> bool {
+        self.id_tokens.allowed_subject_count() == 1
+    }
+
     /// Whether the request carries a cookie that names a live session.
     fn has_live_session(&self, headers: &axum::http::HeaderMap) -> bool {
         headers

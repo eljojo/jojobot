@@ -228,7 +228,8 @@ pub async fn node(
         body.push_str(&mailbox_section(&state, &entity.id).await);
         body.push_str(&sessions_section(&state, &entity.id).await);
     } // **The operator's own box is on the operator's own page and nowhere else.**
-    // It is the one place this listing takes delivery: opening it is reading it.
+    // Opening the page moves no mail: the listing is a GET, and a prefetch of it
+    // must not mark anything seen.
     if entity.kind == EntityKind::PERSON
         && crate::ui::mail::operator_of(&state).await.as_ref() == Some(&entity.id)
     {
@@ -314,27 +315,30 @@ async fn mailbox_section(state: &AppState, bot: &EntityId) -> String {
     out
 }
 
-/// **The operator's mailbox, and the mail in it, with the one action.**
+/// **The operator's mailbox, and the mail in it, with the two actions.**
 ///
-/// **Unlike a bot's box this read takes delivery.** The operator opening their
-/// box is the operator reading it, as `read_mailbox` is for a bot: everything
-/// new becomes read. Nothing else here moves mail, and the action that
-/// finishes a message is a POST, never a link.
+/// **This read moves nothing.** It is a GET, so a prefetch of the page must not
+/// mark mail seen. A new message shows its row and an Open button and no body,
+/// because a body shown here would be a message read while it still says new.
+/// Opening is a POST that takes delivery of that one message; marking it
+/// processed is a POST too. A read or processed message shows its body.
+///
+/// **Only while the allowlist admits exactly one person.** A session carries no
+/// subject, so with any other number of people admitted, anyone who logs in
+/// would read the operator's mail; the section says so instead.
 async fn operators_mailbox_section(state: &AppState, operator: &EntityId) -> String {
+    if !state
+        .ui
+        .as_ref()
+        .is_some_and(|ui| ui.admits_exactly_one_person())
+    {
+        return format!(
+            "<h2>Mailbox</h2>\n<p id=\"mailbox-withheld\">{}</p>\n",
+            escape(crate::ui::mail::WITHHELD)
+        );
+    }
     let Some(held) = crate::ui::mail::operators_box(state, operator).await else {
         return "<h2>Mailbox</h2>\n<p>Nobody has written to this person yet.</p>\n".to_string();
-    };
-    if let Err(err) = state
-        .mailboxes
-        .read_mailbox(&held.name, jojobot_domain::mailbox::TakenBy::Reading)
-        .await
-    {
-        return blind("Mailbox", "the mail rail", &err.to_string());
-    }
-    // Counted after the delivery, so the numbers match the rows below.
-    let held = match crate::ui::mail::operators_box(state, operator).await {
-        Some(held) => held,
-        None => return blind("Mailbox", "the mail rail", "the box disappeared"),
     };
     let messages = match state.mailboxes.scan_messages().await {
         Ok(messages) => messages,
@@ -369,29 +373,39 @@ async fn operators_mailbox_section(state: &AppState, operator: &EntityId) -> Str
          <th>Sent</th><th>Outcome</th><th></th></tr>\n",
     );
     for message in mail {
-        let action = if message.state.as_token() == "processed" {
-            String::new()
-        } else {
-            format!(
+        let state_token = message.state.as_token();
+        let action = match state_token {
+            "new" => format!(
+                "<form method=\"post\" action=\"/ui/mail/open\">\
+                 <input type=\"hidden\" name=\"id\" value=\"{}\">\
+                 <button type=\"submit\">Open</button></form>",
+                escape(message.id.as_str()),
+            ),
+            "read" => format!(
                 "<form method=\"post\" action=\"/ui/mail/processed\">\
                  <input type=\"hidden\" name=\"id\" value=\"{}\">\
                  <input type=\"text\" name=\"note\" placeholder=\"note (optional)\">\
                  <button type=\"submit\">Mark processed</button></form>",
                 escape(message.id.as_str()),
-            )
+            ),
+            _ => String::new(),
         };
         out.push_str(&format!(
-            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>\n\
-             <tr><td colspan=\"7\">{}</td></tr>\n",
+            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>\n",
             escape(message.id.as_str()),
-            escape(message.state.as_token()),
+            escape(state_token),
             escape(&message.sender),
             escape(message.subject.as_deref().unwrap_or("")),
             escape(&message.sent_at.to_string()),
             escape(message.notes.as_deref().unwrap_or("")),
             action,
-            block(&message.body),
         ));
+        if state_token != "new" {
+            out.push_str(&format!(
+                "<tr><td colspan=\"7\">{}</td></tr>\n",
+                block(&message.body)
+            ));
+        }
     }
     out.push_str("</table>\n");
     out

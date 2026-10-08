@@ -116,6 +116,12 @@ impl Validator {
         self
     }
 
+    /// How many subjects the allowlist names: zero when none is configured,
+    /// which authorizes every authenticated principal.
+    pub fn allowed_subject_count(&self) -> usize {
+        self.allowed_subjects.as_ref().map_or(0, Vec::len)
+    }
+
     /// Authorize an authenticated principal against the subject allowlist. Returns
     /// `Ok(())` when no allowlist is configured, or the token's `sub` is on it.
     /// Otherwise fails closed with [`AuthError::Forbidden`]: authentication
@@ -558,6 +564,21 @@ mod tests {
             v.authorize(&claims).is_ok(),
             "an empty allowlist must stay open, not lock out"
         );
+    }
+
+    #[test]
+    fn allowed_subject_count_is_zero_for_an_open_list_and_counts_a_named_one() {
+        let kp = gen_keypair();
+        let open = validator(kp.decoding).with_allowed_subjects(std::iter::empty::<String>());
+        assert_eq!(open.allowed_subject_count(), 0, "an open list names nobody");
+        let kp = gen_keypair();
+        let one =
+            validator(kp.decoding).with_allowed_subjects(["sub-abc".to_string(), "  ".to_string()]);
+        assert_eq!(one.allowed_subject_count(), 1, "blanks are not subjects");
+        let kp = gen_keypair();
+        let two = validator(kp.decoding)
+            .with_allowed_subjects(["sub-abc".to_string(), "sub-def".to_string()]);
+        assert_eq!(two.allowed_subject_count(), 2);
     }
 
     #[test]
