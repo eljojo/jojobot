@@ -212,3 +212,93 @@ async fn the_head_of_a_chart_places_itself() {
     s.wrap("looked at who may place the head of a chart").await;
     story.finish().await;
 }
+
+/// "Can I get around it by editing the claim, taking it back, or folding in a
+/// duplicate that holds a manager?" No: the chart is guarded the same way through
+/// each door. A stranger's edit, retraction and merge are refused, naming the bot
+/// that may; the manager's own land. Each refusal is paired with the same act
+/// landing, so a build that refused every edit, retraction and merge would not
+/// pass.
+#[tokio::test]
+async fn the_chart_is_guarded_the_same_through_an_edit_a_retraction_and_a_merge() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    for (handle, name) in [
+        ("bot:omega", "Omega"),
+        ("bot:sigma", "Sigma"),
+        ("bot:epsilon", "Epsilon"),
+        ("bot:psi", "Psi"),
+    ] {
+        s.add(handle, name).await;
+    }
+    let omega = story.as_bot("bot:omega").await;
+
+    // Omega places sigma under itself, and again epsilon: epsilon is the
+    // duplicate that will carry a manager into a merge.
+    let placed = omega
+        .call("capture", reporting_to("bot:sigma", "bot:omega"))
+        .await;
+    let address = placed.field("address");
+    omega
+        .call("capture", reporting_to("bot:epsilon", "bot:omega"))
+        .await;
+
+    // ── an edit of the claim that names the manager ─────────────────────────
+    s.refused(
+        "update_fact",
+        json!({"address": address, "fields": {"reports_to": "bot:otto"}}),
+    )
+    .await
+    .says("\"wrote\":false")
+    .says("bot:omega");
+    s.call("recall", json!({"subject": "bot:sigma"}))
+        .await
+        .says("\"reports_to\":\"bot:omega\"");
+
+    // ── taking that claim back ──────────────────────────────────────────────
+    s.refused(
+        "retract",
+        json!({"address": address, "reason": "trying to take the chart apart"}),
+    )
+    .await
+    .says("bot:omega");
+    s.call("recall", json!({"subject": "bot:sigma"}))
+        .await
+        .says("\"reports_to\":\"bot:omega\"");
+
+    // ── folding in a duplicate that holds a manager ─────────────────────────
+    s.refused(
+        "merge_entities",
+        json!({"duplicate": "bot:epsilon", "survivor": "bot:psi",
+               "reason": "trying to place psi by merging"}),
+    )
+    .await
+    .says("bot:omega");
+    s.call("recall", json!({"subject": "bot:psi"}))
+        .await
+        .never_says("\"reports_to\":\"bot:omega\"");
+
+    // ── and each lands for the manager ──────────────────────────────────────
+    omega
+        .call(
+            "merge_entities",
+            json!({"duplicate": "bot:epsilon", "survivor": "bot:psi",
+                   "reason": "the same bot, filed twice"}),
+        )
+        .await;
+    s.call("recall", json!({"subject": "bot:psi"}))
+        .await
+        .says("\"reports_to\":\"bot:omega\"");
+    omega
+        .call(
+            "retract",
+            json!({"address": address, "reason": "sigma moves elsewhere"}),
+        )
+        .await;
+    s.call("recall", json!({"subject": "bot:sigma"}))
+        .await
+        .never_says("\"reports_to\":\"bot:omega\"");
+
+    s.wrap("tried the other doors to the chart").await;
+    story.finish().await;
+}
