@@ -65,6 +65,7 @@ fn narrow_with(tag: &str, all: &str, ignored: &str, ignored_fails: bool) -> (Opt
     command
         .args(["narrow", "--crate", "jojobot-bar"])
         .current_dir(&dir)
+        .env("TMPDIR", &dir)
         .env("CARGO", &fake_cargo)
         .env("STUB_ALL", all)
         .env("STUB_IGNORED", ignored);

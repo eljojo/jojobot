@@ -66,6 +66,7 @@ fn calls_of(tag: &str, args: &[&str], verb: &str) -> Vec<String> {
     let output = Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
         .args(args)
         .current_dir(&dir)
+        .env("TMPDIR", &dir)
         .env("CARGO", &fake_cargo)
         .output()
         .expect("run bar");

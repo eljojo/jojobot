@@ -49,6 +49,10 @@ case "$1" in
     # Only the first FAKE_MEET_JOBS jobs to start wait; the jobs after them
     # have nothing left to meet.
     echo started >> "$(dirname "$0")/started.log"
+    # Where this job was told to put its temp files, and a directory in it that
+    # nothing removes, as a fixture that leaks one leaves it.
+    echo "$TMPDIR" >> "$(dirname "$0")/tmpdir.log"
+    mkdir -p "$TMPDIR/leaked-by-job-$$"
     ordinal="$(wc -l < "$(dirname "$0")/started.log")"
     if [ -n "$FAKE_MEET" ] && [ "$ordinal" -le "${FAKE_MEET_JOBS:-2}" ]; then
       n=0
@@ -112,6 +116,7 @@ fn run_bar(args: &[&str], env: &[(&str, &str)]) -> Ran {
     let out = Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
         .args(args)
         .current_dir(&dir)
+        .env("TMPDIR", &dir)
         .env("CARGO", &cargo)
         // The caller's own limit must not decide what a case measures.
         .env_remove("BAR_JOBS")
@@ -433,4 +438,64 @@ fn bar_rooms_with_no_room_named_is_refused() {
         ran.stderr
     );
     assert!(ran.calls.is_empty(), "something ran: {:?}", ran.calls);
+}
+
+/// **Every job of a run is told to work in a temp directory of the run's own,
+/// and the run removes it.** The fake `cargo` writes a directory into the temp
+/// directory it is given and removes nothing, as a fixture that leaks does. The
+/// directory is named for the run, it is inside the scratch directory the case
+/// gave the bar as its own temp directory, and it is gone when the run ends with
+/// what the jobs left in it.
+#[test]
+fn the_jobs_of_a_run_work_in_a_directory_of_its_own_that_is_gone_when_it_ends() {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("run-root-case-{}-{nanos}", std::process::id()));
+    fs::create_dir_all(&dir).expect("scratch dir");
+    let cargo = write_cargo(&dir);
+    let out = Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+        .arg("check")
+        .current_dir(&dir)
+        .env("TMPDIR", &dir)
+        .env("CARGO", &cargo)
+        .env_remove("BAR_JOBS")
+        .output()
+        .expect("run bar");
+    let told: Vec<String> = fs::read_to_string(dir.join("tmpdir.log"))
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_string)
+        .collect();
+    let left: Vec<String> = fs::read_dir(&dir)
+        .expect("the scratch dir")
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with("jojobot-bar-"))
+        .collect();
+    let _ = fs::remove_dir_all(&dir);
+
+    assert!(
+        !told.is_empty(),
+        "no job reported its temp directory: {out:?}"
+    );
+    for place in &told {
+        let name = Path::new(place)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        assert!(
+            name.starts_with("jojobot-bar-"),
+            "a job was not told to use a directory of the run's own: {place}"
+        );
+        assert!(
+            Path::new(place).starts_with(&dir),
+            "the run's directory is not inside the temp directory the bar was given: {place}"
+        );
+    }
+    assert!(
+        left.is_empty(),
+        "the run's directory was left behind: {left:?}"
+    );
 }

@@ -80,6 +80,7 @@ fn an_oversized_tracked_file_is_named_and_the_exit_code_is_unchanged() {
     let output = Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
         .arg("check")
         .current_dir(&dir)
+        .env("TMPDIR", &dir)
         .env("CARGO", &fake_cargo)
         .output()
         .expect("run bar check");
@@ -112,6 +113,7 @@ fn a_tree_with_nothing_oversized_names_nothing_and_the_exit_code_is_unchanged() 
     let output = Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
         .arg("check")
         .current_dir(&dir)
+        .env("TMPDIR", &dir)
         .env("CARGO", &fake_cargo)
         .output()
         .expect("run bar check");
@@ -147,6 +149,7 @@ fn the_verdict_prints_before_the_size_report() {
     let output = Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
         .arg("check")
         .current_dir(&dir)
+        .env("TMPDIR", &dir)
         .env("CARGO", &fake_cargo)
         .output()
         .expect("run bar check");

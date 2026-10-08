@@ -68,6 +68,7 @@ fn a_crashed_sibling_suite_reds_the_whole_check_run() {
     let output = Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
         .arg("check")
         .current_dir(&dir)
+        .env("TMPDIR", &dir)
         .env("CARGO", &fake_cargo)
         .output()
         .expect("run bar check");
@@ -101,6 +102,7 @@ fn a_crashed_sibling_suite_reds_the_whole_narrow_run() {
     let output = Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
         .args(["narrow", "--crate", "jojobot-bar"])
         .current_dir(&dir)
+        .env("TMPDIR", &dir)
         .env("CARGO", &fake_cargo)
         .output()
         .expect("run bar narrow");

@@ -51,6 +51,14 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    // **Held until the run ends**, so the directory its children work in goes
+    // with it, whatever those children left.
+    let _run_root = if matches!(args.first().map(String::as_str), Some("check" | "rooms")) {
+        sweep_orphaned_scratch();
+        RunRoot::make()
+    } else {
+        None
+    };
     let result = match args.first().map(String::as_str) {
         Some("check") => run_check(&known),
         Some("narrow") => run_narrow(&args[1..], &known),
@@ -69,6 +77,74 @@ fn main() -> ExitCode {
             eprintln!("bar: {e}");
             ExitCode::FAILURE
         }
+    }
+}
+
+/// **Remove the scratch directories a killed run left behind**, before this
+/// run makes its own. The directories to look in are the temp directory the run
+/// was started with and, when that is a shell's own scratch directory, the one
+/// that holds it and so holds the earlier shells' too: a killed run's leftovers
+/// sit in whichever shell it started under. Said on stderr only when something
+/// was found.
+fn sweep_orphaned_scratch() {
+    let temp = std::env::temp_dir();
+    let parent = match temp.file_name() {
+        Some(name) if name.to_string_lossy().starts_with("nix-shell.") => {
+            temp.parent().map_or(temp.clone(), Path::to_path_buf)
+        }
+        _ => temp,
+    };
+    let swept = jojobot_bar::sweep::sweep_orphans(&parent, &jojobot_bar::sweep::process_is_gone);
+    if !(swept.removed.is_empty() && swept.in_use.is_empty() && swept.failed.is_empty()) {
+        eprintln!(
+            "bar: swept {} scratch directories whose owner is gone from {} ({} kept, a process works in them; {} could not be removed)",
+            swept.removed.len(),
+            parent.display(),
+            swept.in_use.len(),
+            swept.failed.len(),
+        );
+    }
+}
+
+/// The directory this run gives its children as their temp directory.
+static RUN_ROOT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// **A temp directory for everything this run starts, removed when the run
+/// ends.** The test processes make directories in their temp directory and do
+/// not all remove them, and a killed one removes none. Pointing them all at one
+/// directory of this run's own, and removing that, is what makes the cleanup
+/// the run's and not each fixture's. A run that is killed leaves the directory,
+/// and the sweep at the next start removes it by the process number in its name.
+struct RunRoot(PathBuf);
+
+impl RunRoot {
+    fn make() -> Option<RunRoot> {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(jojobot_bar::sweep::run_root_name(std::process::id(), nanos));
+        fs::create_dir_all(&root).ok()?;
+        RUN_ROOT.set(root.clone()).ok()?;
+        Some(RunRoot(root))
+    }
+}
+
+impl Drop for RunRoot {
+    fn drop(&mut self) {
+        use std::os::unix::fs::PermissionsExt;
+        // A fixture that left a directory nobody may write cannot be emptied.
+        let _ = fs::set_permissions(&self.0, fs::Permissions::from_mode(0o755));
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+/// **Point a child's temp directory at this run's own**, when it has one.
+fn in_the_run_root(command: &mut Command) -> &mut Command {
+    match RUN_ROOT.get() {
+        Some(root) => command.env("TMPDIR", root),
+        None => command,
     }
 }
 
@@ -91,7 +167,7 @@ fn run_phase(
     let start = fs::metadata(log_path)?.len();
     let out = OpenOptions::new().append(true).open(log_path)?;
     let err = out.try_clone()?;
-    let status = Command::new(program)
+    let status = in_the_run_root(&mut Command::new(program))
         .args(args)
         .stdout(Stdio::from(out))
         .stderr(Stdio::from(err))
@@ -136,7 +212,7 @@ fn run_test_jobs(
                     let result = (|| -> std::io::Result<(bool, String)> {
                         let out = File::create(&file)?;
                         let err = out.try_clone()?;
-                        let status = Command::new(cargo)
+                        let status = in_the_run_root(&mut Command::new(cargo))
                             .arg("test")
                             .args(prefix)
                             .args(job)

@@ -11,6 +11,7 @@
 //! that compiled and passed everything.
 
 mod known_reds;
+pub mod sweep;
 pub use known_reds::{KnownRed, KnownReds, load as load_known_reds};
 
 /// **What a `cargo test` run said about itself**, summed across every suite

@@ -73,6 +73,7 @@ fn bar(tag: &str, args: &[&str], known_reds: Option<&str>) -> (Output, String) {
     let output = Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
         .args(args)
         .current_dir(&dir)
+        .env("TMPDIR", &dir)
         .env("CARGO", &fake_cargo)
         .output()
         .expect("run bar");
