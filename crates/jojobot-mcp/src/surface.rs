@@ -725,6 +725,15 @@ fn the_search_description_names_not_shown_and_offset() {
     assert_description_names("search", &["not_shown", "offset"]);
 }
 
+/// **`read_mailbox` and `list_sent` name how an answer past the ceiling is cut.**
+/// `read_mailbox` still takes every message and says which bodies it left out;
+/// `list_sent` names the `offset` that reads the next page.
+#[test]
+fn the_mail_descriptions_name_how_an_answer_past_the_ceiling_is_cut() {
+    assert_description_names("read_mailbox", &["not_shown", "body_elided"]);
+    assert_description_names("list_sent", &["not_shown", "offset"]);
+}
+
 /// **`merge_entities` says its names become aliases of the survivor.**
 #[test]
 fn the_merge_description_names_the_aliases_it_carries() {

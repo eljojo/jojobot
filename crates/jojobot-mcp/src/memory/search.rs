@@ -3113,7 +3113,7 @@ mod tests {
         let whole = searched_over(ranked_hits(100, 1_000), 100, 0).await;
         let size = whole.to_string().chars().count();
         assert!(
-            size <= jojobot_domain::text::ANSWER_CEILING,
+            size + crate::answer::STATUS_BAR_ROOM <= jojobot_domain::text::ANSWER_CEILING,
             "the answer is {size} characters"
         );
         let ranks = ranks_of(&whole);

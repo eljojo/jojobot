@@ -10,7 +10,7 @@
 //! case asks through the served surface, so what is measured is the answer a
 //! client receives.
 
-use serde_json::json;
+use serde_json::{Value, json};
 
 use jojobot_domain::text::ANSWER_CEILING;
 
@@ -30,8 +30,6 @@ const MESSAGES: usize = 50;
 const STILL_OVER: &[&str] = &[
     "recall one subject with its facts",
     "recall every thing of a kind",
-    "list_sent with bodies",
-    "read_mailbox, everything waiting",
 ];
 
 /// A slug of ten letters that depends on nothing but the index, spread far
@@ -90,6 +88,9 @@ struct World {
     /// as each was written, so the walk of a search has an oracle that is not
     /// the search.
     marker_addresses: Vec<String>,
+    /// The id and body of every message sent to otto, as the store reported
+    /// them when each was posted.
+    messages: Vec<(String, String)>,
 }
 
 /// **A world too big to write through the served surface**, seeded in the
@@ -145,19 +146,26 @@ async fn hostile_world() -> World {
             .expect("a fact lands");
     }
     let mail = first.mail_store();
+    let mut messages = Vec::new();
     for i in 0..MESSAGES {
-        mail.post_message(NewMessage {
-            mailbox: MailboxName("otto".into()),
-            body: filler(700, i),
-            subject: Some(format!("report {i}")),
-            sender: "bot:sigma".into(),
-            sent_at: jiff::Timestamp::now(),
-            in_reply_to: None,
-            sender_mail_waiting_at_send: None,
-            posted_by_session: None,
-        })
-        .await
-        .expect("a message lands");
+        let body = filler(700, i);
+        let posted = mail
+            .post_message(NewMessage {
+                mailbox: MailboxName("otto".into()),
+                body: body.clone(),
+                subject: Some(format!("report {i}")),
+                sender: "bot:sigma".into(),
+                sent_at: jiff::Timestamp::now(),
+                in_reply_to: None,
+                sender_mail_waiting_at_send: None,
+                posted_by_session: None,
+            })
+            .await
+            .expect("a message lands");
+        let jojobot_domain::mailbox::Guarded::Written(message) = posted else {
+            panic!("a message to a box that exists lands");
+        };
+        messages.push((message.id.as_str().to_string(), body));
     }
 
     let story = first.restarted().await;
@@ -169,6 +177,7 @@ async fn hostile_world() -> World {
         sigma,
         heavy: heavy.as_str().to_string(),
         marker_addresses,
+        messages,
     }
 }
 
@@ -289,5 +298,164 @@ async fn search_at_its_widest_fits_and_walking_on_returns_every_hit_exactly_once
     assert_eq!(
         walked, written,
         "every fact that was written, and nothing else"
+    );
+}
+
+/// **A box far past the ceiling is still delivered whole in count and under the
+/// ceiling in size.** Every waiting message is taken, which the box counts
+/// confirm from the other side. The answer carries the oldest bodies whole and
+/// then leaves bodies out, each flagged, and names by id the messages that did
+/// not fit even as an envelope. Nothing is lost: every message is accounted for
+/// exactly once in the answer, and every body that was left out is whole when
+/// asked for by id.
+#[tokio::test]
+async fn a_box_past_the_ceiling_is_taken_whole_and_the_answer_stays_under_it() {
+    let world = hostile_world().await;
+    let delivery = world.otto.call("read_mailbox", json!({})).await;
+    assert!(delivery.size() <= ANSWER_CEILING, "{}", delivery.size());
+    let body = delivery.json();
+
+    let messages = body["messages"].as_array().expect("a list of messages");
+    let whole: Vec<&Value> = messages.iter().filter(|m| m["body"].is_string()).collect();
+    let flagged: Vec<&Value> = messages
+        .iter()
+        .filter(|m| m["body_elided"] == true)
+        .collect();
+    assert!(!whole.is_empty(), "the oldest bodies come whole");
+    assert_eq!(
+        whole.len() + flagged.len(),
+        messages.len(),
+        "a message is either whole or flagged, never both and never neither"
+    );
+    for left_out in &flagged {
+        assert!(left_out["body"].is_null(), "{left_out}");
+        assert!(left_out["body_bytes"].as_u64().is_some(), "{left_out}");
+    }
+    let named: Vec<String> = body["not_shown"]["ids"]
+        .as_array()
+        .map(|ids| {
+            ids.iter()
+                .map(|id| id.as_str().expect("an id").to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+    assert!(
+        flagged.len() + named.len() > 0,
+        "fifty messages of seven hundred characters do not fit whole"
+    );
+    assert_eq!(
+        body["not_shown"]["count"].as_u64().unwrap_or(0) as usize,
+        named.len(),
+        "{body}"
+    );
+
+    // Every message is in the answer exactly once, as itself or as an id.
+    let mut accounted: Vec<String> = messages
+        .iter()
+        .map(|m| m["id"].as_str().expect("an id").to_string())
+        .chain(named.iter().cloned())
+        .collect();
+    accounted.sort();
+    let mut posted: Vec<String> = world.messages.iter().map(|(id, _)| id.clone()).collect();
+    posted.sort();
+    assert_eq!(accounted, posted, "no message lost, none twice");
+
+    // Taken: the box counts say so from the other side.
+    let counted = world
+        .otto
+        .call("read_mailbox", json!({"counts_only": true}))
+        .await
+        .json();
+    assert_eq!(counted["counts"]["new"], 0, "{counted}");
+    assert_eq!(counted["counts"]["read"], MESSAGES, "{counted}");
+
+    // Reachable: each body that was left out is whole by id.
+    for (id, expected) in &world.messages {
+        let left_out = flagged.iter().any(|m| m["id"] == *id) || named.contains(id);
+        if !left_out {
+            continue;
+        }
+        let read = world
+            .otto
+            .call("read_message", json!({"message_id": id}))
+            .await
+            .json();
+        // The store keeps a body without the trailing space the fixture ends on.
+        assert_eq!(read["body"], expected.trim_end(), "{id}");
+    }
+}
+
+/// **The next read names what was taken and not shown.** The messages the first
+/// read left out are owed, so they come back named as leftovers, and none of
+/// them is delivered a second time.
+#[tokio::test]
+async fn a_second_read_names_every_message_the_first_took() {
+    let world = hostile_world().await;
+    world.otto.call("read_mailbox", json!({})).await;
+    let again = world.otto.call("read_mailbox", json!({})).await.json();
+    assert_eq!(again["count"], 0, "nothing is fresh: {again}");
+    assert_eq!(again["leftovers"]["count"], MESSAGES, "{again}");
+}
+
+/// **A walk of `list_sent` returns each message once.** Fifty messages with
+/// their bodies are far past the ceiling. Each part is under it, the offset
+/// each part names reads the next, and the parts together are exactly the
+/// messages that were sent.
+#[tokio::test]
+async fn a_walk_of_list_sent_returns_each_message_once_under_the_ceiling() {
+    let world = hostile_world().await;
+    let mut seen: Vec<String> = Vec::new();
+    let mut offset = 0u64;
+    let mut parts = 0;
+    let mut left_out_by_the_last: Option<u64> = None;
+    loop {
+        let part = world
+            .sigma
+            .call(
+                "list_sent",
+                json!({"include_bodies": true, "limit": 1000, "offset": offset}),
+            )
+            .await;
+        parts += 1;
+        assert!(parts < 100, "the walk never ends");
+        assert!(
+            part.size() <= ANSWER_CEILING,
+            "part {parts}: {}",
+            part.size()
+        );
+        let body = part.json();
+        let ids: Vec<String> = body["messages"]
+            .as_array()
+            .expect("a list")
+            .iter()
+            .map(|m| m["id"].as_str().expect("an id").to_string())
+            .collect();
+        assert!(!ids.is_empty(), "a part carries at least one message");
+        if let Some(promised) = left_out_by_the_last {
+            let from_here = ids.len() as u64 + body["not_shown"]["count"].as_u64().unwrap_or(0);
+            assert_eq!(
+                promised, from_here,
+                "what was left out is what the rest return"
+            );
+        }
+        seen.extend(ids);
+        match body["not_shown"]["offset"].as_u64() {
+            Some(next) => {
+                left_out_by_the_last = body["not_shown"]["count"].as_u64();
+                offset = next;
+            }
+            None => break,
+        }
+    }
+    assert!(parts > 1, "the messages took several parts: {parts}");
+    let mut walked = seen.clone();
+    walked.sort();
+    walked.dedup();
+    assert_eq!(walked.len(), seen.len(), "no message came back twice");
+    let mut sent: Vec<String> = world.messages.iter().map(|(id, _)| id.clone()).collect();
+    sent.sort();
+    assert_eq!(
+        walked, sent,
+        "every message that was sent, and nothing else"
     );
 }
