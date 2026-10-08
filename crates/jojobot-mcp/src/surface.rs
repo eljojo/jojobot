@@ -1408,13 +1408,82 @@ fn the_update_fact_description_carves_out_the_past_event_case() {
         .expect("update_fact is a tool");
     let description = update_fact.description.as_deref().unwrap_or_default();
     assert!(
-        description.contains("state the negative truth"),
-        "the ordinary case is still the rewrite instruction: {description}"
+        description.contains("capture the replacement"),
+        "the way to record that something is not so is archive and capture: {description}"
     );
     assert!(
         description.contains("NOT FOR A PAST EVENT"),
         "a past-event negation is never this rewrite, and the door that hands the rewrite \
          instruction to every caller never carves that case out: {description}"
+    );
+}
+
+/// **There is one correction route in the served text: archive, and capture
+/// the replacement.** Some texts told a caller to rewrite a claim's content to
+/// state the negative truth, against the essay and the brief, which say a
+/// negation is never the shape a correction takes. No description, essay,
+/// skill or refusal says it now, and `update_fact` and `retract` name the
+/// archive.
+#[test]
+fn no_served_text_teaches_a_rewrite_to_state_the_negative_truth() {
+    let tools = Jojobot::tool_router().list_all();
+    for tool in &tools {
+        let description = tool.description.as_deref().unwrap_or_default();
+        assert!(
+            !description.contains("negative truth"),
+            "{}'s description teaches a rewrite to state the negative truth: {description}",
+            tool.name
+        );
+    }
+    let essay = crate::orientation::essay::orientation();
+    assert!(!essay.contains("negative truth"), "the essay teaches it");
+    let refusal = crate::memory::parse::parse_status("negated")
+        .expect_err("negated is not a status")
+        .message
+        .to_string();
+    assert!(
+        !refusal.contains("negative truth") && refusal.contains("archive"),
+        "the refusal of `negated` teaches a rewrite, or leaves out the archive: {refusal}"
+    );
+    assert_description_names("update_fact", &["archive", "capture the replacement"]);
+    assert_description_names("retract", &["archive", "capture"]);
+}
+
+/// **`add_entity` does not say it "returns the stored entity" as if that were
+/// the receipt rule.** What it answers with is the entity as stored and what
+/// jojobot changed on the way in, and the sentence says that, with `first_claim`
+/// for the claim written beside it.
+#[test]
+fn add_entity_says_what_it_answers_with_in_the_receipts_terms() {
+    let tools = Jojobot::tool_router().list_all();
+    let add_entity = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "add_entity")
+        .expect("the surface offers add_entity");
+    let description = add_entity.description.as_deref().unwrap_or_default();
+    assert!(
+        !description.contains("Returns the stored entity"),
+        "add_entity still says it returns the stored entity: {description}"
+    );
+    assert!(
+        description.contains("what it changed on the way in"),
+        "add_entity does not say it names what it changed on the way in: {description}"
+    );
+}
+
+/// **The recipe for marking a synthesis says the shape is inference.** Nobody
+/// said it, something worked it out, so it reads as a hypothesis and is not
+/// testimony; the brief says so and the essay's recipe for `stands_for` did not.
+#[test]
+fn the_stands_for_recipe_says_the_shape_is_inference() {
+    let essay = crate::orientation::essay::orientation();
+    let recipe = essay
+        .lines()
+        .find(|line| line.contains("`stands_for` naming the older claims"))
+        .expect("the essay carries the stands_for recipe");
+    assert!(
+        recipe.contains("inference"),
+        "the stands_for recipe does not say the shape is inference: {recipe}"
     );
 }
 

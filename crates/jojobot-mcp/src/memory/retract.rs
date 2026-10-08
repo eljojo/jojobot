@@ -47,9 +47,9 @@ impl Jojobot {
                        every later edit, INCLUDING a status flip back — there is no un-retract, \
                        so if you are unsure, capture what is so now instead. THIS IS THE MOVE FOR \
                        SOMETHING THAT HAPPENED and turned out not to have. For a claim about what \
-                       is true NOW, rewrite its content with update_fact instead — that stays \
-                       active, because the negative truth is the truth, and it leaves one current \
-                       record where this leaves two. Retracting a retraction comes back status: \
+                       is true NOW, archive it with update_fact and capture the replacement \
+                       instead — the old words stay readable and the replacement stands \
+                       beside them, where a retraction leaves a companion record. Retracting a retraction comes back status: \
                        blocked: it is the last word on what it takes back. Retracting something \
                        ALREADY archived comes back blocked as well, and reads differently on \
                        purpose: it says the record is archived, because it is — that answer \

@@ -229,8 +229,9 @@ impl Jojobot {
                        refused refuses the whole call and creates nothing. The \
                        claim is inference: a field that needs the operator's own word \
                        (testimony), or one you read in a system of record (observation), is \
-                       written with capture. Returns the stored entity; with sets it also returns \
-                       first_claim, the claim written with it. If its handle or any of its names \
+                       written with capture. Answers with the entity as stored and says what it \
+                       changed on the way in; with sets it also returns first_claim, the claim \
+                       written with it. If its handle or any of its names \
                        resembles something jojobot already knows, NOTHING is written: the \
                        result says status: blocked with candidates and how_to_proceed. Use the \
                        candidate you meant, or re-call with the override_token that refusal \
@@ -654,7 +655,7 @@ mod tests {
             .expect("add_entity is served");
         let description = tool.description.as_deref().unwrap_or_default();
         let at = description
-            .find("Returns the stored entity")
+            .find("Answers with the entity as stored")
             .expect("the description says what is returned");
         let sentence = description[at..].split(". ").next().expect("a sentence");
         assert!(

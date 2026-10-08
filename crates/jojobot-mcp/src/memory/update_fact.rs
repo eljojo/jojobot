@@ -220,11 +220,11 @@ pub struct UpdateFactArgs {
 impl Jojobot {
     #[tool(description = "Edit an addressed fact in place \
                        (content/details/date/status/provenance/standing). To record that something \
-                       is NOT so, rewrite content to state the negative truth — that is an \
-                       ordinary edit and the fact stays active; there is no negated status. \
+                       is NOT so, or never was, archive the claim (status: archived, with a \
+                       note saying why) and capture the replacement; there is no negated status, \
+                       and a rewrite is for a mistyped or reworded claim. \
                        NOT FOR A PAST EVENT: turning a claim about one into its negation is \
-                       never this rewrite — archive it instead (status: archived, with a note \
-                       saying why), or retract it. \
+                       never this rewrite — archive it, or retract it. \
                        DATE REWRITES THE DAY THIS CLAIM WAS MADE — the day it was said, decided \
                        or worked out, YYYY-MM-DD — the same argument retract carries, and it is \
                        never the day the call happens to be made on. Omit it and the record \

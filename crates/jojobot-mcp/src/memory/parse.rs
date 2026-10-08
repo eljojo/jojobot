@@ -192,11 +192,11 @@ pub(crate) fn parse_status(raw: &str) -> Result<FactStatus, McpError> {
         "active" => Ok(FactStatus::Active),
         "archived" => Ok(FactStatus::Archived),
         "negated" => Err(McpError::invalid_params(
-            "there is no 'negated' status: to record that something is NOT so, rewrite the \
-             fact's content to state the negative truth — it stays 'active', because that is \
-             the current truth. Use 'archived' only for a claim that stopped being current. \
-             NOT FOR A PAST EVENT: turning a claim about one into its negation is never that \
-             rewrite — archive it instead, with a note saying why, or retract it."
+            "there is no 'negated' status: to record that something is NOT so, archive the \
+             claim (status: 'archived', with a note saying why) and capture the replacement. \
+             A rewrite of the content is for a mistyped or reworded claim. NOT FOR A PAST \
+             EVENT: turning a claim about one into its negation is never that rewrite — \
+             archive it, or retract it."
                 .to_string(),
             None,
         )),
