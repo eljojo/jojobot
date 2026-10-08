@@ -629,6 +629,24 @@ async fn seed_representative_records(surface: &Surface) -> String {
         .to_string()
 }
 
+/// **Whether a `declare_type` answer leaves the recording where it meant to be.**
+/// A declaration that landed does. A refusal does only when it is the one a
+/// build that already ships the type gives, which is the one outcome that means
+/// there is no row to record. Anything else does not: a refusal for another
+/// reason, a transport failure, or an answer that is not JSON at all.
+fn a_declaration_reached_its_starting_state(answer: &str) -> bool {
+    let Ok(body) = serde_json::from_str::<serde_json::Value>(answer) else {
+        return false;
+    };
+    if !body["transport_error"].is_null() {
+        return false;
+    }
+    body["status"] != "blocked"
+        || body["how_to_proceed"]
+            .as_str()
+            .is_some_and(|how| how.contains("is a type that ships with the software"))
+}
+
 /// **What a store that has run for months holds and the plain records above do
 /// not**: a type a caller named after a shipped kind, a handle in a field that
 /// two things have worn, a list of handles under a key nobody declared, a message somebody decided is unreadable, an archived thing, and a
@@ -654,8 +672,7 @@ async fn seed_what_a_real_store_holds_beyond_the_plain_records(surface: &Surface
         )
         .await;
     assert!(
-        !declared.contains("\"status\":\"blocked\"")
-            || declared.contains("is a type that ships with the software"),
+        a_declaration_reached_its_starting_state(&declared),
         "a type named topic is declared, or the build already ships it: {declared}"
     );
 
@@ -819,4 +836,30 @@ async fn seed_what_a_real_store_holds_beyond_the_plain_records(surface: &Surface
         .must("capture", rule)
         .await
         .expect("the heavy bot's rule fits now");
+}
+
+/// **The predicate takes a landed declaration and the shipped-type refusal, and
+/// nothing else.** Each of the others is a recording that did not reach its
+/// starting state, and each is paired with the two outcomes that do, so a
+/// predicate that refused everything would not pass either.
+#[test]
+fn only_a_landed_declaration_or_the_shipped_type_refusal_reaches_the_starting_state() {
+    let landed = json!({"name": "topic", "status": "declared"}).to_string();
+    let shipped = json!({
+        "status": "blocked",
+        "how_to_proceed": "'topic' is a type that ships with the software, so it is not declared again",
+    })
+    .to_string();
+    assert!(a_declaration_reached_its_starting_state(&landed));
+    assert!(a_declaration_reached_its_starting_state(&shipped));
+
+    let other_refusal = json!({
+        "status": "blocked",
+        "how_to_proceed": "the name is not a valid type name",
+    })
+    .to_string();
+    let transport = json!({"transport_error": "connection reset by peer"}).to_string();
+    assert!(!a_declaration_reached_its_starting_state(&other_refusal));
+    assert!(!a_declaration_reached_its_starting_state(&transport));
+    assert!(!a_declaration_reached_its_starting_state("not json at all"));
 }
