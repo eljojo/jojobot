@@ -415,7 +415,9 @@ sentence.
 `status` is where the work stands. It takes one of five words: `someday`,
 `next`, `now`, `waiting` or `done`. A word outside the five is refused, and the
 refusal names them. `owner` is the handle of the person who does the work.
-`waiting_on` is the handle of the person whose move it is. `depends_on` lists
+`waiting_on` is the handle of the person whose move it is. When that person is
+the operator, their handle is the one the boot names on its operator line.
+`depends_on` lists
 the handles of the work that must come first, separated by commas. A work item
 or a project at `done` is not owed, and its dates stay on it, so do not clear a
 date to quiet finished work.
@@ -1059,6 +1061,21 @@ mod tests {
             names(&section, "chronology") && names(&section, "outdates"),
             "the status section does not say a claim that says now or next is chronology that \
              the status key outdates: {section}"
+        );
+    }
+
+    /// **The status section says where the operator's handle is read.** `owner`
+    /// and `waiting_on` take a person's handle, and for the operator that handle
+    /// is the one the boot names on its operator line. Without the sentence a
+    /// session guesses a handle for the one person every project answers to.
+    /// Pinned on the two words only that sentence carries.
+    #[test]
+    fn the_projects_procedure_says_the_operators_handle_is_on_the_boots_operator_line() {
+        let section = projects_section("Where a piece of work stands");
+        assert!(
+            names(&section, "operator") && names(&section, "boot"),
+            "the status section does not say the operator's handle is the one the boot names: \
+             {section}"
         );
     }
 
