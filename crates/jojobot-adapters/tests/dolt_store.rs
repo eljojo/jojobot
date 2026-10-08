@@ -23,7 +23,7 @@ use jojobot_adapters::dolt::teaching::DoltTeachings;
 use jojobot_adapters::fold::Folded;
 use jojobot_adapters::provisioned::Provisioned;
 use jojobot_adapters::search::{IndexedMemory, Retrieval};
-use jojobot_adapters::testing::{free_port, start_unhurried};
+use jojobot_adapters::testing::{free_port, migrated_database, start_unhurried};
 use jojobot_domain::mailbox::testing::contract as mailboxes;
 use jojobot_domain::mailbox::{
     MailboxError, MailboxName, Mailboxes, NewMessage, OwnerIndex, OwnerLookup,
@@ -114,8 +114,7 @@ async fn dolt_satisfies_the_session_contract() {
     const ROOM: usize = 32;
     let mut prepared = Vec::with_capacity(ROOM);
     for n in 0..ROOM {
-        let pool = store
-            .database(&format!("case{n}"))
+        let pool = migrated_database(&store, &format!("case{n}"))
             .await
             .expect("a database of this case's own");
         migrate::run(&pool).await.expect("the schema");
@@ -164,8 +163,7 @@ async fn a_session_write_that_conflicts_with_another_is_told_apart_from_a_failed
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("session_conflict_not_a_failure")
+    let pool = migrated_database(&store, "session_conflict_not_a_failure")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -240,8 +238,7 @@ async fn an_entity_keeps_its_badge_through_every_rewrite() {
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("badge")
+    let pool = migrated_database(&store, "badge")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -372,8 +369,7 @@ async fn the_fill_badges_rows_written_before_the_column_and_repeats_nothing() {
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("badgefill")
+    let pool = migrated_database(&store, "badgefill")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -452,8 +448,7 @@ async fn the_backfill_rekeys_rows_a_badge_reached_after_they_were_written() {
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("rekey")
+    let pool = migrated_database(&store, "rekey")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -587,8 +582,7 @@ async fn resolve_stale_pointer_columns_rewrites_every_stale_value() {
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("pointer_migration_clean")
+    let pool = migrated_database(&store, "pointer_migration_clean")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -735,8 +729,7 @@ async fn resolve_stale_pointer_columns_refuses_to_guess_at_an_unresolvable_row()
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("pointer_migration_blocked")
+    let pool = migrated_database(&store, "pointer_migration_blocked")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -820,8 +813,7 @@ async fn migrate_reference_fields_rewrites_a_value_stored_as_plain_handle_text()
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("reference_field_migration_clean")
+    let pool = migrated_database(&store, "reference_field_migration_clean")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -960,8 +952,7 @@ async fn migrate_reference_fields_refuses_to_guess_at_an_unresolvable_value() {
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("reference_field_migration_blocked")
+    let pool = migrated_database(&store, "reference_field_migration_blocked")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -1066,8 +1057,7 @@ async fn the_batch_migrates_rows_a334e84_actually_wrote() {
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("batch_real_fixture")
+    let pool = migrated_database(&store, "batch_real_fixture")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -1297,8 +1287,7 @@ async fn an_alias_survives_a_rename_and_a_search_still_finds_it_by_nickname() {
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("aliasrename")
+    let pool = migrated_database(&store, "aliasrename")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -1376,8 +1365,7 @@ async fn a_journal_entry_written_before_the_closing_mark_reads_as_not_closing() 
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("journal_entry_before_the_closing_mark")
+    let pool = migrated_database(&store, "journal_entry_before_the_closing_mark")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -1427,8 +1415,7 @@ async fn a_refused_session_write_is_not_reported_as_an_unreachable_store() {
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("session_refused_write")
+    let pool = migrated_database(&store, "session_refused_write")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -1481,8 +1468,7 @@ async fn a_refused_mailbox_write_is_not_reported_as_an_unreachable_store() {
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("mailbox_refused_write")
+    let pool = migrated_database(&store, "mailbox_refused_write")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -1547,8 +1533,7 @@ async fn a_refused_teaching_write_is_not_reported_as_an_unreachable_store() {
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("teaching_refused_write")
+    let pool = migrated_database(&store, "teaching_refused_write")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -1626,8 +1611,7 @@ async fn a_merge_that_would_leave_a_bot_above_itself_is_refused_in_every_shape()
         let mut store = Dolt::start(&scratch.0, free_port())
             .await
             .expect("the store comes up");
-        let pool = store
-            .database("merge_chart_cycle")
+        let pool = migrated_database(&store, "merge_chart_cycle")
             .await
             .expect("a database of its own");
         migrate::run(&pool).await.expect("the schema");
@@ -1704,8 +1688,7 @@ async fn a_refused_write_is_not_reported_as_an_unreachable_store() {
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("refused_write")
+    let pool = migrated_database(&store, "refused_write")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -1778,8 +1761,7 @@ async fn renaming_a_row_with_no_badge_is_a_readable_error_not_a_panic() {
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("renamenobadge")
+    let pool = migrated_database(&store, "renamenobadge")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -1834,8 +1816,7 @@ async fn a_rename_near_the_handle_length_limit_still_lands() {
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("renamelonghandle")
+    let pool = migrated_database(&store, "renamelonghandle")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -1896,8 +1877,7 @@ async fn the_backfill_rekeys_an_alias_row_a_badge_reached_after_it_was_written()
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("aliasrekey")
+    let pool = migrated_database(&store, "aliasrekey")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -1991,8 +1971,7 @@ async fn the_substrate_keeps_what_a_correction_overwrote() {
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("factwrite")
+    let pool = migrated_database(&store, "factwrite")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -2112,8 +2091,7 @@ where
         .expect("the store comes up");
     let mut parts = Vec::new();
     for part in 0..memory::PARTS {
-        let pool = store
-            .database(&format!("{what}part{part}"))
+        let pool = migrated_database(&store, &format!("{what}part{part}"))
             .await
             .expect("a database of this part's own");
         migrate::run(&pool).await.expect("the schema");
@@ -2146,8 +2124,7 @@ async fn a_handle_under_an_undeclared_key_is_stored_as_an_id_and_old_text_keeps_
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("undeclaredhandlestorage")
+    let pool = migrated_database(&store, "undeclaredhandlestorage")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -2304,8 +2281,7 @@ async fn scan_entity_agrees_with_scan_for_every_document_the_real_store_holds() 
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("scanentity")
+    let pool = migrated_database(&store, "scanentity")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -2354,8 +2330,7 @@ async fn dolt_satisfies_the_stands_for_contract() {
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("standsfor")
+    let pool = migrated_database(&store, "standsfor")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -2378,8 +2353,7 @@ async fn what_sits_under_a_supplied_record_answers_over_the_real_store() {
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("suppliedchildren")
+    let pool = migrated_database(&store, "suppliedchildren")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -2442,8 +2416,7 @@ async fn the_dolt_store_keeps_a_mention_as_a_badge_and_serves_it_as_a_handle() {
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("mentions")
+    let pool = migrated_database(&store, "mentions")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -2506,8 +2479,7 @@ async fn dolt_satisfies_the_supplied_record_guard_contract() {
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("supplied-guard")
+    let pool = migrated_database(&store, "supplied-guard")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -2555,8 +2527,7 @@ async fn dolt_refuses_a_supplied_record_colliding_with_a_stored_row() {
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("provision-collision")
+    let pool = migrated_database(&store, "provision-collision")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -2578,8 +2549,7 @@ async fn dolt_answers_every_entity_read_for_a_supplied_record() {
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("suppliedreads")
+    let pool = migrated_database(&store, "suppliedreads")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -2620,8 +2590,7 @@ async fn dolt_answers_every_gated_read_alike_stored_and_supplied() {
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("gatedreadspaired")
+    let pool = migrated_database(&store, "gatedreadspaired")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -2662,8 +2631,7 @@ async fn dolt_lands_an_edit_alike_stored_and_supplied() {
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("editlandspaired")
+    let pool = migrated_database(&store, "editlandspaired")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -2703,8 +2671,7 @@ async fn dolt_lands_a_retraction_alike_stored_and_supplied() {
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("retractionlandspaired")
+    let pool = migrated_database(&store, "retractionlandspaired")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -2744,8 +2711,7 @@ async fn dolt_names_the_survivor_for_an_address_stale_after_a_fold() {
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("staleafterfold")
+    let pool = migrated_database(&store, "staleafterfold")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -2805,8 +2771,7 @@ async fn the_real_store_keeps_the_operators_half_and_not_the_builds() {
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("provisioned")
+    let pool = migrated_database(&store, "provisioned")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -2879,8 +2844,7 @@ async fn a_record_the_build_ships_is_in_no_table_of_the_real_store() {
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("supplied")
+    let pool = migrated_database(&store, "supplied")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -3040,8 +3004,7 @@ async fn dolt_satisfies_the_mailbox_contract() {
     const ROOM: usize = 48;
     let mut prepared = Vec::with_capacity(ROOM);
     for n in 0..ROOM {
-        let pool = store
-            .database(&format!("mail{n}"))
+        let pool = migrated_database(&store, &format!("mail{n}"))
             .await
             .expect("a database of this case's own");
         migrate::run(&pool).await.expect("the schema");
@@ -3089,8 +3052,7 @@ async fn a_mailbox_write_that_conflicts_with_another_is_told_apart_from_a_failed
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("mailbox_conflict_not_a_failure")
+    let pool = migrated_database(&store, "mailbox_conflict_not_a_failure")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -3164,8 +3126,7 @@ async fn dolt_satisfies_the_teaching_contract() {
     const ROOM: usize = 8;
     let mut prepared = Vec::with_capacity(ROOM);
     for n in 0..ROOM {
-        let pool = store
-            .database(&format!("teach{n}"))
+        let pool = migrated_database(&store, &format!("teach{n}"))
             .await
             .expect("a database of this case's own");
         migrate::run(&pool).await.expect("the schema");
@@ -3296,8 +3257,7 @@ async fn an_edit_does_not_re_stamp_the_claims_own_column() {
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("restamp")
+    let pool = migrated_database(&store, "restamp")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -3382,8 +3342,7 @@ async fn a_folded_values_backing_carries_the_note_its_record_carries() {
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("noted")
+    let pool = migrated_database(&store, "noted")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -3468,8 +3427,7 @@ async fn a_store_acting_out_a_day_stamps_that_day() {
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("acting")
+    let pool = migrated_database(&store, "acting")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -3556,8 +3514,7 @@ async fn the_backfill_is_what_makes_a_claim_older_than_the_substrate_readable() 
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("backfill")
+    let pool = migrated_database(&store, "backfill")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -3718,8 +3675,7 @@ async fn the_backfill_rewrites_every_retired_status_to_archived() {
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("statusarchived")
+    let pool = migrated_database(&store, "statusarchived")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -3826,8 +3782,7 @@ async fn a_fields_hit_answers_with_no_full_listing() {
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("memory")
+    let pool = migrated_database(&store, "memory")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -3880,8 +3835,7 @@ async fn a_fields_miss_still_answers_with_its_near_candidates() {
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("memory")
+    let pool = migrated_database(&store, "memory")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -3928,8 +3882,7 @@ async fn a_fields_versioned_hit_answers_with_no_full_listing_and_a_miss_still_ge
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("memory")
+    let pool = migrated_database(&store, "memory")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -4002,8 +3955,7 @@ async fn a_recall_hit_answers_with_no_full_listing_and_a_miss_still_gets_candida
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("memory")
+    let pool = migrated_database(&store, "memory")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -4062,8 +4014,7 @@ async fn a_history_hit_answers_with_no_full_listing_and_a_miss_still_gets_candid
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("memory")
+    let pool = migrated_database(&store, "memory")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -4128,8 +4079,7 @@ async fn a_backing_hit_answers_with_no_full_listing_and_a_miss_still_gets_candid
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("memory")
+    let pool = migrated_database(&store, "memory")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -4198,8 +4148,7 @@ async fn the_real_store_does_not_owe_a_person_for_a_deadline_on_one_claim() {
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("owedperson")
+    let pool = migrated_database(&store, "owedperson")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -4224,8 +4173,7 @@ async fn an_update_fact_hit_answers_with_no_full_listing_and_a_miss_still_gets_c
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("memory")
+    let pool = migrated_database(&store, "memory")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -4366,8 +4314,7 @@ async fn an_update_fact_naming_a_source_or_a_mark_builds_no_listing_until_a_name
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("memory")
+    let pool = migrated_database(&store, "memory")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -4511,8 +4458,7 @@ async fn a_claim_histories_hit_answers_with_no_full_listing_and_a_miss_still_get
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("memory")
+    let pool = migrated_database(&store, "memory")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -4577,8 +4523,7 @@ async fn a_claim_history_hit_answers_with_no_full_listing_and_both_misses_still_
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("memory")
+    let pool = migrated_database(&store, "memory")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -4664,8 +4609,7 @@ async fn a_retract_hit_answers_with_no_full_listing_and_both_misses_still_build_
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("memory")
+    let pool = migrated_database(&store, "memory")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -4765,8 +4709,7 @@ async fn write_summary_answers_the_real_store() {
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("write_summary")
+    let pool = migrated_database(&store, "write_summary")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -4994,8 +4937,7 @@ async fn an_entity_deleted_directly_against_the_store_stops_being_served() {
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("directdeleteentity")
+    let pool = migrated_database(&store, "directdeleteentity")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -5090,8 +5032,7 @@ async fn a_fact_edited_directly_against_the_store_stops_answering_its_old_conten
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("directeditfact")
+    let pool = migrated_database(&store, "directeditfact")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -5203,8 +5144,7 @@ async fn session_write_summary_answers_the_real_store() {
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("session_write_summary")
+    let pool = migrated_database(&store, "session_write_summary")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -5506,8 +5446,7 @@ async fn a_write_that_conflicts_with_another_is_told_apart_from_a_failed_store()
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("conflict_not_a_failure")
+    let pool = migrated_database(&store, "conflict_not_a_failure")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -5606,8 +5545,7 @@ async fn a_field_write_leaves_a_link_row_per_target_and_referring_to_reads_them(
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("field_link_write")
+    let pool = migrated_database(&store, "field_link_write")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -5740,8 +5678,7 @@ async fn a_merge_moves_the_link_rows_with_the_writes() {
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("field_link_merge")
+    let pool = migrated_database(&store, "field_link_merge")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -5811,8 +5748,7 @@ async fn a_merge_of_two_things_holding_the_same_key_keeps_both_writes() {
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("field_write_merge")
+    let pool = migrated_database(&store, "field_write_merge")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -5891,8 +5827,7 @@ async fn latest_write_wins(survivor_day: i8, duplicate_day: i8, holds: &str) {
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("field_write_merge_latest")
+    let pool = migrated_database(&store, "field_write_merge_latest")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -6020,8 +5955,7 @@ async fn a_merge_places_a_keys_writes_by_the_stamp_the_store_gave_them() {
         let mut store = Dolt::start(&scratch.0, free_port())
             .await
             .expect("the store comes up");
-        let pool = store
-            .database("field_write_merge_stamped")
+        let pool = migrated_database(&store, "field_write_merge_stamped")
             .await
             .expect("a database of its own");
         migrate::run(&pool).await.expect("the schema");
@@ -6104,8 +6038,7 @@ async fn a_merge_of_two_things_linking_the_same_target_under_one_key_keeps_both_
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("field_link_merge_same_key")
+    let pool = migrated_database(&store, "field_link_merge_same_key")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -6183,8 +6116,7 @@ async fn the_field_link_migration_lowers_old_plain_text_and_lists_what_it_cannot
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("field_link_migration")
+    let pool = migrated_database(&store, "field_link_migration")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -6388,8 +6320,7 @@ async fn dolt_keeps_the_session_that_wrote_a_claim_and_holds_a_rewrite_to_it() {
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("session_rewrite")
+    let pool = migrated_database(&store, "session_rewrite")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");

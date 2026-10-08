@@ -1,6 +1,7 @@
 use super::*;
 use crate::dolt::tests::{Scratch, free_port};
 use crate::dolt::{Dolt, migrate};
+use crate::testing::migrated_database;
 use jiff::civil::date;
 use jojobot_domain::memory::{FactPatch, NewEntity, NewFact};
 
@@ -24,8 +25,7 @@ async fn the_projection_and_the_row_agree() {
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("projection")
+    let pool = migrated_database(&store, "projection")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -149,8 +149,7 @@ async fn a_claim_written_thousands_of_times_is_read_by_its_address_in_linear_tim
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("hotclaim")
+    let pool = migrated_database(&store, "hotclaim")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -264,8 +263,7 @@ async fn a_drawn_badge_that_collides_retries_until_one_is_free() {
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("badgecollisionretry")
+    let pool = migrated_database(&store, "badgecollisionretry")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -345,8 +343,7 @@ async fn a_badge_draw_that_never_frees_gives_up_rather_than_duplicating() {
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("badgecollisiongiveup")
+    let pool = migrated_database(&store, "badgecollisiongiveup")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -414,8 +411,7 @@ async fn current_handle_agrees_with_entity_wearing_for_every_badge_the_real_stor
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("currenthandle")
+    let pool = migrated_database(&store, "currenthandle")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -529,8 +525,7 @@ async fn dolt_satisfies_the_role_claim_contract() {
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("roleclaims")
+    let pool = migrated_database(&store, "roleclaims")
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
