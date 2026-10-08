@@ -6903,6 +6903,42 @@ fn a_merge_that_loses_its_source_segment_logs_a_warning_and_loses_no_document() 
     );
 }
 
+/// **The version of tantivy the merge-warning filter was written against.**
+/// [`is_the_benign_merge_race`] drops every warning from tantivy's segment
+/// manager module, which is right only while that module raises just the two
+/// warnings of the merge race. That is a fact about this version, and nothing
+/// else would redden when the version moves.
+const TANTIVY_READ_AT: &str = "0.25.0";
+
+/// **A tantivy bump fails here until somebody has read the warnings again.**
+/// The filter hides every warning from `tantivy::indexer::segment_manager`. A
+/// newer tantivy may raise a warning there that is a fault, and the filter
+/// would hide it. So this case reads the locked version from `Cargo.lock` and
+/// fails on any other one. Before changing the expected version, re-read every
+/// `warn!` in that version's `src/indexer/segment_manager.rs`: if there is any
+/// besides the two about a merge that lost its source segments, narrow the
+/// filter first.
+#[test]
+fn the_merge_warning_filter_is_checked_again_when_tantivy_is_bumped() {
+    let lock = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../Cargo.lock"))
+        .expect("the workspace lockfile");
+    let lines: Vec<&str> = lock.lines().collect();
+    let version = lines
+        .windows(2)
+        .find(|pair| pair[0] == "name = \"tantivy\"")
+        .and_then(|pair| pair[1].strip_prefix("version = \""))
+        .and_then(|rest| rest.strip_suffix('"'))
+        .expect("the lockfile locks tantivy");
+    assert_eq!(
+        version, TANTIVY_READ_AT,
+        "tantivy is locked at {version}, and the filter for its merge warning was written \
+         against {TANTIVY_READ_AT}. Re-read the warn! calls in that version's \
+         src/indexer/segment_manager.rs. If there are more than the two about a merge that \
+         lost its source segments, narrow is_the_benign_merge_race before you change \
+         TANTIVY_READ_AT."
+    );
+}
+
 /// A board with two messages behind the `search` port, ready to lose one.
 /// Two rather than one so every negative below has a survivor to pair with.
 async fn a_board_of_two() -> (Arc<InMemoryMailboxes>, Arc<IndexedMailboxes>, Retrieval) {
