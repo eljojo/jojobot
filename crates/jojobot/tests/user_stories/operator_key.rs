@@ -1,9 +1,10 @@
-//! "Who may say who the operator is?"
+//! "Whose mail is it? Can one of my helper assistants quietly point it at
+//! somebody else?"
 //!
 //! The `operator` key on the instance's record decides whose box operator mail
-//! lands in. A bot that could point it at somebody else could misdirect that
-//! mail, so the key is guarded, but not closed: an instance needs one somehow,
-//! and a wrong first write needs a fix.
+//! lands in: the person the assistants work for. A bot that could point it at
+//! somebody else could misdirect that mail, so the key is guarded, but not
+//! closed: an instance needs one somehow, and a wrong first write needs a fix.
 //!
 //! **While nobody is named, any bot may name the operator. Once somebody is,
 //! only the bot that heads the chart may change it or take it off.** A bot heads
@@ -36,15 +37,15 @@ async fn the_operator_is_named_by_any_bot_and_changed_only_by_the_head_of_the_ch
     s.add("topic:widgets", "Widgets").await;
     s.add("person:lisa", "Lisa").await;
     s.add("person:milhouse", "Milhouse").await;
-    for bot in ["alpha", "beta", "omega", "sigma"] {
+    for bot in ["marge", "patty", "nelson", "ralph"] {
         s.add(&format!("bot:{bot}"), bot).await;
     }
-    let alpha = story.as_bot("bot:alpha").await;
-    let omega = story.as_bot("bot:omega").await;
-    let sigma = story.as_bot("bot:sigma").await;
+    let marge = story.as_bot("bot:marge").await;
+    let nelson = story.as_bot("bot:nelson").await;
+    let ralph = story.as_bot("bot:ralph").await;
 
     // ── nobody is named yet: any bot may name the operator ──────────────────
-    let address = sigma
+    let address = ralph
         .call("capture", naming("person:lisa"))
         .await
         .field("address");
@@ -55,7 +56,7 @@ async fn the_operator_is_named_by_any_bot_and_changed_only_by_the_head_of_the_ch
     // ── named, and nobody heads the chart: nobody changes it ────────────────
     //
     // The refusal says what makes a head, so the way forward is in it.
-    omega
+    nelson
         .refused("capture", naming("person:milhouse"))
         .await
         .says("\"wrote\":false")
@@ -65,50 +66,52 @@ async fn the_operator_is_named_by_any_bot_and_changed_only_by_the_head_of_the_ch
         .await
         .says("\"operator\":\"person:lisa\"");
 
-    // ── a head appears: alpha has a report and no manager ───────────────────
-    alpha
+    // ── a head appears: marge, the coordinator, has a report and no manager ─
+    marge
         .call(
             "capture",
             json!({
-                "subject": "bot:beta", "content": "beta reports to alpha",
-                "provenance": "testimony", "fields": {"reports_to": "bot:alpha"},
+                "subject": "bot:patty", "content": "patty reports to marge",
+                "provenance": "testimony", "fields": {"reports_to": "bot:marge"},
             }),
         )
         .await;
 
     // ── a bot with reports and a manager above it is not the head ───────────
     //
-    // Beta has a report of its own now, and still has alpha above it.
-    let beta = story.as_bot("bot:beta").await;
-    beta.call(
-        "capture",
-        json!({
-            "subject": "bot:sigma", "content": "sigma reports to beta",
-            "provenance": "testimony", "fields": {"reports_to": "bot:beta"},
-        }),
-    )
-    .await;
-    beta.refused("capture", naming("person:milhouse"))
+    // Patty has a report of its own now, and still has marge above it.
+    let patty = story.as_bot("bot:patty").await;
+    patty
+        .call(
+            "capture",
+            json!({
+                "subject": "bot:ralph", "content": "ralph reports to patty",
+                "provenance": "testimony", "fields": {"reports_to": "bot:patty"},
+            }),
+        )
+        .await;
+    patty
+        .refused("capture", naming("person:milhouse"))
         .await
         .says("operator")
-        .says("bot:alpha");
+        .says("bot:marge");
 
     // ── every route a bot that is not the head might take is refused ────────
-    omega
+    nelson
         .refused("capture", naming("person:milhouse"))
         .await
         .says("\"wrote\":false")
         .says("operator")
-        .says("bot:alpha");
-    omega
+        .says("bot:marge");
+    nelson
         .refused(
             "update_fact",
             json!({"address": address, "fields": {"operator": "person:milhouse"}}),
         )
         .await
         .says("operator")
-        .says("bot:alpha");
-    omega
+        .says("bot:marge");
+    nelson
         .refused(
             "update_entity",
             json!({"handle": "topic:instance", "sets": {"operator": "person:milhouse"}}),
@@ -116,32 +119,32 @@ async fn the_operator_is_named_by_any_bot_and_changed_only_by_the_head_of_the_ch
         .await
         .says("\"wrote\":false")
         .says("operator")
-        .says("bot:alpha");
-    omega
+        .says("bot:marge");
+    nelson
         .refused(
             "update_fact",
             json!({"address": address, "clear_fields": ["operator"]}),
         )
         .await
         .says("operator")
-        .says("bot:alpha");
+        .says("bot:marge");
     s.call("recall", json!({"subject": "topic:instance"}))
         .await
         .says("\"operator\":\"person:lisa\"");
 
     // ── the head changes it, and still names a person ───────────────────────
-    alpha
-        .refused("capture", naming("bot:omega"))
+    marge
+        .refused("capture", naming("bot:nelson"))
         .await
         .says("operator");
-    alpha.call("capture", naming("person:milhouse")).await;
+    marge.call("capture", naming("person:milhouse")).await;
     s.call("recall", json!({"subject": "topic:instance"}))
         .await
         .says("\"operator\":\"person:milhouse\"");
     // The settings of an update land for the head too, which the refusal above
     // is paired with. The head then names the operator again by a capture, so
     // the record taken off below is the newest write of the key.
-    alpha
+    marge
         .call(
             "update_entity",
             json!({"handle": "topic:instance", "sets": {"operator": "person:lisa"}}),
@@ -150,7 +153,7 @@ async fn the_operator_is_named_by_any_bot_and_changed_only_by_the_head_of_the_ch
     s.call("recall", json!({"subject": "topic:instance"}))
         .await
         .says("\"operator\":\"person:lisa\"");
-    let current = alpha
+    let current = marge
         .call("capture", naming("person:milhouse"))
         .await
         .field("address");
@@ -184,7 +187,7 @@ async fn the_operator_is_named_by_any_bot_and_changed_only_by_the_head_of_the_ch
         .says("\"operator\":\"person:milhouse\"");
 
     // ── the head takes it off, and then any bot may name it again ───────────
-    alpha
+    marge
         .call(
             "update_fact",
             json!({"address": current, "clear_fields": ["operator"]}),
@@ -193,13 +196,13 @@ async fn the_operator_is_named_by_any_bot_and_changed_only_by_the_head_of_the_ch
     s.call("recall", json!({"subject": "topic:instance"}))
         .await
         .never_says("\"operator\":");
-    omega.call("capture", naming("person:lisa")).await;
+    nelson.call("capture", naming("person:lisa")).await;
     s.call("recall", json!({"subject": "topic:instance"}))
         .await
         .says("\"operator\":\"person:lisa\"");
 
     // ── a merge cannot carry the key onto the record either ─────────────────
-    omega
+    nelson
         .call(
             "capture",
             json!({
@@ -208,14 +211,14 @@ async fn the_operator_is_named_by_any_bot_and_changed_only_by_the_head_of_the_ch
             }),
         )
         .await;
-    omega
+    nelson
         .refused(
             "merge_entities",
             json!({"duplicate": "topic:widgets", "survivor": "topic:instance"}),
         )
         .await
         .says("operator");
-    alpha
+    marge
         .call(
             "merge_entities",
             json!({"duplicate": "topic:widgets", "survivor": "topic:instance"}),
@@ -229,7 +232,7 @@ async fn the_operator_is_named_by_any_bot_and_changed_only_by_the_head_of_the_ch
     // instance that has a head. **Written as an inference**, because the edit is
     // another session's and a testimony claim is held to the session that wrote it.
     s.add("thing:handcart", "The Handcart").await;
-    let runs = omega
+    let runs = nelson
         .call(
             "capture",
             json!({
@@ -239,7 +242,7 @@ async fn the_operator_is_named_by_any_bot_and_changed_only_by_the_head_of_the_ch
         )
         .await
         .field("address");
-    sigma
+    ralph
         .call(
             "update_fact",
             json!({"address": runs, "fields": {"operator": "person:milhouse"}}),
@@ -251,10 +254,12 @@ async fn the_operator_is_named_by_any_bot_and_changed_only_by_the_head_of_the_ch
     story.finish().await;
 }
 
+/// "I retired one of the helpers. Is its manager still the coordinator?"
+///
 /// **A report held by an archived bot still makes its manager the head.** The
 /// guard in the write and the guard the stores run read the chart the same way:
-/// archiving a bot takes it out of the lists, not out of the chart. Omega's only
-/// report is archived, and omega still changes the operator; a bot with no report
+/// archiving a bot takes it out of the lists, not out of the chart. Nelson's only
+/// report is archived, and nelson still changes the operator; a bot with no report
 /// does not, beside it.
 #[tokio::test]
 async fn a_report_held_by_an_archived_bot_still_makes_its_manager_the_head() {
@@ -263,35 +268,35 @@ async fn a_report_held_by_an_archived_bot_still_makes_its_manager_the_head() {
     s.add("topic:instance", "This instance").await;
     s.add("person:lisa", "Lisa").await;
     s.add("person:milhouse", "Milhouse").await;
-    for bot in ["omega", "psi", "sigma"] {
+    for bot in ["nelson", "bart", "ralph"] {
         s.add(&format!("bot:{bot}"), bot).await;
     }
-    let omega = story.as_bot("bot:omega").await;
-    let sigma = story.as_bot("bot:sigma").await;
+    let nelson = story.as_bot("bot:nelson").await;
+    let ralph = story.as_bot("bot:ralph").await;
     s.call("capture", naming("person:lisa")).await;
 
-    omega
+    nelson
         .call(
             "capture",
             json!({
-                "subject": "bot:psi", "content": "psi reports to omega",
-                "provenance": "testimony", "fields": {"reports_to": "bot:omega"},
+                "subject": "bot:bart", "content": "bart reports to nelson",
+                "provenance": "testimony", "fields": {"reports_to": "bot:nelson"},
             }),
         )
         .await;
     s.call(
         "archive_entity",
-        json!({"handle": "bot:psi", "reason": "retired"}),
+        json!({"handle": "bot:bart", "reason": "retired"}),
     )
     .await;
 
     // The bot without a report is refused, and the one whose only report is
     // archived changes the operator.
-    sigma
+    ralph
         .refused("capture", naming("person:milhouse"))
         .await
         .says("\"wrote\":false");
-    omega.call("capture", naming("person:milhouse")).await;
+    nelson.call("capture", naming("person:milhouse")).await;
     s.call("recall", json!({"subject": "topic:instance"}))
         .await
         .says("\"operator\":\"person:milhouse\"");
