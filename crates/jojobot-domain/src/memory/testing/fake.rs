@@ -2336,6 +2336,15 @@ impl Memory for InMemoryMemory {
         ) {
             return Err(err);
         }
+        // **And not into a bot that sits below it**, which no key it carries
+        // shows: the loop is made by the forwarding alone.
+        if let Some(err) = super::super::refuses_merge_below_the_duplicate(
+            &survivor_handle,
+            &folded_handle,
+            &self.chain_above_among(&held_facts, &survivor_handle),
+        ) {
+            return Err(err);
+        }
         let room: Vec<Fact> = super::super::thought_room(
             &held_facts
                 .iter()

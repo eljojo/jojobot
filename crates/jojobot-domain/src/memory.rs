@@ -2494,6 +2494,31 @@ pub fn refuses_merge_carrying(
     refuses_merge_carrying_by(&GUARDED_KEYS, caller, survivor, duplicate, carried, lineage)
 }
 
+/// **A merge cannot fold a bot into one that sits below it in the chart.**
+///
+/// The fold re-points everything that named the duplicate at the survivor, a
+/// bot's manager included. A bot that reports to the duplicate then reports to
+/// the survivor, so when the survivor is itself that bot's report, directly or
+/// through the chain, the survivor becomes its own manager. No key the duplicate
+/// carries says so, which is why [`refuses_merge_carrying`] cannot see it: the
+/// loop is made by the forwarding alone. `above_survivor` is the chain above the
+/// survivor, read in the same act as the merge, and the merge is refused with
+/// the cycle refusal when the duplicate is on it. `None` is not "allowed" so much
+/// as "not this check's business": a duplicate on nobody's chain above the
+/// survivor makes no loop.
+pub fn refuses_merge_below_the_duplicate(
+    survivor: &EntityId,
+    duplicate: &EntityId,
+    above_survivor: &[EntityId],
+) -> Option<MemoryError> {
+    above_survivor
+        .contains(duplicate)
+        .then(|| MemoryError::ChartCycle {
+            subject: survivor.to_string(),
+            manager: duplicate.to_string(),
+        })
+}
+
 /// [`refuses_merge_carrying`] against a table of the caller's choosing.
 pub fn refuses_merge_carrying_by(
     table: &[GuardedKey],

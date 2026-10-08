@@ -4089,6 +4089,18 @@ impl Memory for DoltMemory {
         ) {
             return Err(err);
         }
+        // **And not into a bot that sits below it**, which no key it carries
+        // shows: the loop is made by the forwarding alone. The chain is read in
+        // this transaction, so no chart change can land between the question and
+        // the move.
+        let above_survivor = self.chain_above_in(&mut tx, &survivor_handle).await?;
+        if let Some(err) = jojobot_domain::memory::refuses_merge_below_the_duplicate(
+            &survivor_handle,
+            &folded_handle,
+            &above_survivor,
+        ) {
+            return Err(err);
+        }
         // **The duplicate's thoughts become the survivor's, so they meet the
         // survivor's room and body cap before anything moves** — the same
         // question `capture` asks of a thought, asked of every one that

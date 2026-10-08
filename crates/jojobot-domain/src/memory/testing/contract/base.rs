@@ -2279,6 +2279,84 @@ pub async fn restating_the_same_manager_is_not_a_change<M: Memory>(store: &M) {
     }
 }
 
+/// **A merge cannot make a bot its own manager through the forwarding alone.**
+///
+/// The survivor reports to a bot that reports to the duplicate. The duplicate
+/// carries no `reports_to` of its own, so nothing it holds says anything about
+/// the chart, and the fold would re-point the bot's report at the survivor and
+/// leave the survivor above itself. The merge is refused with the cycle refusal
+/// and nothing moves. The positive beside it: a merge of two bots on nobody's
+/// chain above each other lands.
+pub async fn a_merge_cannot_fold_a_bot_into_one_that_sits_below_it<M: Memory>(store: &M) {
+    let duplicate = EntityId("bot:contract-chart-fold-dupe".into());
+    let between = EntityId("bot:contract-chart-fold-between".into());
+    let survivor = EntityId("bot:contract-chart-fold-keeper".into());
+    let spare = EntityId("bot:contract-chart-fold-lone".into());
+    let spare_survivor = EntityId("bot:contract-chart-fold-other".into());
+    for (id, name) in [
+        (&duplicate, "Fold Dupe"),
+        (&between, "Fold Between"),
+        (&survivor, "Fold Keeper"),
+        (&spare, "Fold Lone"),
+        (&spare_survivor, "Fold Other"),
+    ] {
+        add(store, NewEntity::new(id.clone(), name, "contract-fixture")).await;
+    }
+    let reporting = |manager: &EntityId| -> std::collections::BTreeMap<String, String> {
+        [(crate::memory::REPORTS_TO.to_string(), manager.to_string())]
+            .into_iter()
+            .collect()
+    };
+    // The survivor reports to `between`, which reports to the duplicate.
+    for (bot, manager, what) in [
+        (&between, &duplicate, "basement reports to midway"),
+        (&survivor, &between, "apex reports to basement"),
+    ] {
+        capture(
+            store,
+            NewFact {
+                fields: reporting(manager),
+                ..NewFact::about(bot.clone(), what, date(2026, 10, 1))
+            },
+        )
+        .await;
+    }
+
+    let refused = store
+        .merge(&duplicate, &survivor, None, date(2026, 10, 2), &survivor)
+        .await;
+    assert!(
+        matches!(refused, Err(MemoryError::ChartCycle { .. })),
+        "a merge that leaves the survivor above itself must be the cycle refusal: {refused:?}"
+    );
+    let still = thing_fields(store, &survivor).await;
+    assert_eq!(
+        still.get(crate::memory::REPORTS_TO),
+        Some(&between.to_string()),
+        "the refused merge moved nothing: {still:?}"
+    );
+    assert!(
+        store
+            .list_entities(None)
+            .await
+            .expect("the roster reads")
+            .iter()
+            .any(|entity| entity.id == duplicate && entity.merged_into.is_none()),
+        "and the duplicate is still its own thing"
+    );
+
+    store
+        .merge(
+            &spare,
+            &spare_survivor,
+            None,
+            date(2026, 10, 2),
+            &spare_survivor,
+        )
+        .await
+        .expect("a merge of two bots on nobody's chain lands");
+}
+
 /// **The chart is judged against the chain read inside the write.** A bot
 /// changes who it reports to only through the bots above it; a bot with no
 /// manager takes the one named by that manager or a bot above it; and nobody is
@@ -14326,6 +14404,7 @@ macro_rules! all_cases {
         $m!(referring_to_finds_a_reference_to_a_renamed_target($store));
         $m!(a_merge_into_the_callers_own_bot_cannot_carry_a_ceiling_onto_it($store));
         $m!(the_chart_is_judged_against_the_chain_read_inside_the_write($store));
+        $m!(a_merge_cannot_fold_a_bot_into_one_that_sits_below_it($store));
         $m!(the_head_of_a_chart_is_placed_by_no_bot($store));
         $m!(undoing_the_newest_manager_cannot_close_a_loop($store));
         $m!(restating_the_same_manager_is_not_a_change($store));

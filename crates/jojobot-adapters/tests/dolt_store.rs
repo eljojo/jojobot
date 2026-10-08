@@ -1585,6 +1585,110 @@ async fn a_refused_teaching_write_is_not_reported_as_an_unreachable_store() {
     );
 }
 
+/// 🚨 **A merge cannot leave a bot above itself, whatever way the chart leads
+/// back to the survivor.** Three shapes, each on a store of its own, each
+/// merging `otto` into `sigma`: the duplicate reports to the survivor; the
+/// duplicate reports to a bot that reports to the survivor; and a third bot
+/// reports to the duplicate while the survivor reports to that bot, which makes
+/// the loop by forwarding alone and is the one nothing the duplicate carries can
+/// show. All three are refused with the cycle refusal and nothing moves. The
+/// positive beside them: a merge of a bot on nobody's chain lands.
+#[tokio::test]
+async fn a_merge_that_would_leave_a_bot_above_itself_is_refused_in_every_shape() {
+    let shapes: [(&str, &[(&str, &str)]); 3] = [
+        (
+            "the duplicate reports to the survivor",
+            &[("bot:otto", "bot:sigma")],
+        ),
+        (
+            "the duplicate reports to a bot that reports to the survivor",
+            &[("bot:otto", "bot:gamma"), ("bot:gamma", "bot:sigma")],
+        ),
+        (
+            "a third bot reports to the duplicate and the survivor reports to that bot",
+            &[("bot:gamma", "bot:otto"), ("bot:sigma", "bot:gamma")],
+        ),
+    ];
+    // The last shape is the only one with no key on the duplicate; the third
+    // entry of each row says whether the merge lands (a bot on nobody's chain).
+    type Row<'a> = (&'a str, &'a [(&'a str, &'a str)], bool);
+    let rows: Vec<Row> = shapes
+        .iter()
+        .map(|(what, reports)| (*what, *reports, false))
+        .chain(std::iter::once((
+            "the duplicate is on nobody's chain above the survivor",
+            &[("bot:gamma", "bot:sigma")] as &[(&str, &str)],
+            true,
+        )))
+        .collect();
+    for (what, reports, lands) in rows {
+        let scratch = Scratch::new("merge-chart-cycle");
+        let mut store = Dolt::start(&scratch.0, free_port())
+            .await
+            .expect("the store comes up");
+        let pool = store
+            .database("merge_chart_cycle")
+            .await
+            .expect("a database of its own");
+        migrate::run(&pool).await.expect("the schema");
+        booted(&pool).await;
+        let memory = DoltMemory::open(pool.clone());
+        for handle in ["bot:otto", "bot:sigma", "bot:gamma"] {
+            memory
+                .add_entity(NewEntity::new(
+                    EntityId(handle.into()),
+                    handle,
+                    "contract-fixture",
+                ))
+                .await
+                .expect("add_entity ok")
+                .written()
+                .expect("nothing collides with it");
+        }
+        for (bot, manager) in reports {
+            memory
+                .capture(NewFact {
+                    fields: [("reports_to".to_string(), (*manager).to_string())]
+                        .into_iter()
+                        .collect(),
+                    ..NewFact::about(EntityId((*bot).into()), "reports up", date(2026, 8, 1))
+                })
+                .await
+                .expect("capture ok")
+                .written()
+                .expect("the report lands");
+        }
+        let merged = memory
+            .merge(
+                &EntityId("bot:otto".into()),
+                &EntityId("bot:sigma".into()),
+                None,
+                date(2026, 8, 2),
+                &EntityId("bot:sigma".into()),
+            )
+            .await;
+        if lands {
+            assert!(merged.is_ok(), "when {what} the merge lands: {merged:?}");
+        } else {
+            assert!(
+                matches!(merged, Err(MemoryError::ChartCycle { .. })),
+                "when {what} the merge is the cycle refusal: {merged:?}"
+            );
+            let sigma = memory
+                .fields(&EntityId("bot:sigma".into()))
+                .await
+                .expect("the fields read");
+            assert!(
+                sigma
+                    .get("reports_to")
+                    .is_none_or(|manager| manager != "bot:otto"),
+                "when {what} nothing moved: {sigma:?}"
+            );
+        }
+        store.stop().await;
+    }
+}
+
 /// 🚨 **A write the store refuses is told apart from a store that cannot be
 /// reached.**
 ///
