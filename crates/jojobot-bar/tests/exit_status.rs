@@ -70,6 +70,7 @@ fn a_crashed_sibling_suite_reds_the_whole_check_run() {
         .current_dir(&dir)
         .env("TMPDIR", &dir)
         .env("CARGO", &fake_cargo)
+        .env("BAR_HISTORY_DIR", dir.join("history"))
         .output()
         .expect("run bar check");
 
@@ -104,6 +105,7 @@ fn a_crashed_sibling_suite_reds_the_whole_narrow_run() {
         .current_dir(&dir)
         .env("TMPDIR", &dir)
         .env("CARGO", &fake_cargo)
+        .env("BAR_HISTORY_DIR", dir.join("history"))
         .output()
         .expect("run bar narrow");
 

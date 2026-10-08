@@ -80,6 +80,7 @@ fn bar(tag: &str, args: &[&str], env: &[(&str, &str)]) -> Ran {
         .current_dir(&dir)
         .env("TMPDIR", &dir)
         .env("CARGO", &cargo)
+        .env("BAR_HISTORY_DIR", dir.join("history"))
         .env_remove("BAR_JOBS")
         .envs(env.iter().copied())
         .output()

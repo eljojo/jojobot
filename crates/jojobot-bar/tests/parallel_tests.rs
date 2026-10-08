@@ -145,6 +145,7 @@ fn run_bar(args: &[&str], env: &[(&str, &str)]) -> Ran {
         .current_dir(&dir)
         .env("TMPDIR", &dir)
         .env("CARGO", &cargo)
+        .env("BAR_HISTORY_DIR", dir.join("history"))
         // The caller's own limit must not decide what a case measures.
         .env_remove("BAR_JOBS")
         .envs(env.iter().copied())
@@ -487,6 +488,7 @@ fn the_jobs_of_a_run_work_in_a_directory_of_its_own_that_is_gone_when_it_ends() 
         .current_dir(&dir)
         .env("TMPDIR", &dir)
         .env("CARGO", &cargo)
+        .env("BAR_HISTORY_DIR", dir.join("history"))
         .env_remove("BAR_JOBS")
         .output()
         .expect("run bar");

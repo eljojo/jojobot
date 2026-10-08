@@ -68,6 +68,7 @@ fn calls_of(tag: &str, args: &[&str], verb: &str) -> Vec<String> {
         .current_dir(&dir)
         .env("TMPDIR", &dir)
         .env("CARGO", &fake_cargo)
+        .env("BAR_HISTORY_DIR", dir.join("history"))
         .output()
         .expect("run bar");
     let stdout = String::from_utf8_lossy(&output.stdout);

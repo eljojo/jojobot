@@ -82,6 +82,7 @@ fn an_oversized_tracked_file_is_named_and_the_exit_code_is_unchanged() {
         .current_dir(&dir)
         .env("TMPDIR", &dir)
         .env("CARGO", &fake_cargo)
+        .env("BAR_HISTORY_DIR", dir.join("history"))
         .output()
         .expect("run bar check");
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -115,6 +116,7 @@ fn a_tree_with_nothing_oversized_names_nothing_and_the_exit_code_is_unchanged() 
         .current_dir(&dir)
         .env("TMPDIR", &dir)
         .env("CARGO", &fake_cargo)
+        .env("BAR_HISTORY_DIR", dir.join("history"))
         .output()
         .expect("run bar check");
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -151,6 +153,7 @@ fn the_verdict_prints_before_the_size_report() {
         .current_dir(&dir)
         .env("TMPDIR", &dir)
         .env("CARGO", &fake_cargo)
+        .env("BAR_HISTORY_DIR", dir.join("history"))
         .output()
         .expect("run bar check");
     let stdout = String::from_utf8_lossy(&output.stdout);

@@ -93,6 +93,7 @@ fn bar_saying(tag: &str, args: &[&str], known_reds: Option<&str>, items: &str) -
         .current_dir(&dir)
         .env("TMPDIR", &dir)
         .env("CARGO", &fake_cargo)
+        .env("BAR_HISTORY_DIR", dir.join("history"))
         .env("FAKE_ITEMS", items)
         .output()
         .expect("run bar");

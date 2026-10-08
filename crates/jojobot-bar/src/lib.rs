@@ -12,9 +12,11 @@
 
 mod history;
 mod known_reds;
+mod recording;
 pub mod sweep;
 pub use history::{JobRecord, TestRecord, Verdict, parse_job};
 pub use known_reds::{KnownRed, KnownReds, load as load_known_reds};
+pub use recording::{HISTORY_DIR_VARIABLE, Run, RunHeader, history_root, iso_utc, run_id};
 
 /// **What a `cargo test` run said about itself**, summed across every suite
 /// it printed a `test result:` line for.

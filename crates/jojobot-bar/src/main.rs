@@ -23,8 +23,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 
 use jojobot_bar::{
-    FileGrowth, FileSize, KnownReds, Summary, TEST_JOBS_VARIABLE, grown_files, jobs_limit,
-    load_known_reds, oversized_files, render_size_report, summarize_test_output, test_healthy,
+    FileGrowth, FileSize, HISTORY_DIR_VARIABLE, KnownReds, Run, RunHeader, Summary,
+    TEST_JOBS_VARIABLE, grown_files, history_root, iso_utc, jobs_limit, load_known_reds,
+    oversized_files, parse_job, render_size_report, run_id, summarize_test_output, test_healthy,
     test_jobs,
 };
 
@@ -193,6 +194,7 @@ fn run_test_jobs(
     prefix: &[&str],
     jobs: &[Vec<String>],
     limit: usize,
+    history: Option<&Run>,
 ) -> std::io::Result<(bool, String)> {
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -223,6 +225,11 @@ fn run_test_jobs(
                         Ok((status.success(), fs::read_to_string(&file)?))
                     })()
                     .unwrap_or_else(|e| (false, format!("bar: could not run this job: {e}\n")));
+                    if let Some(run) = history
+                        && let Err(e) = run.record_job(job, result.0, &parse_job(&result.1))
+                    {
+                        eprintln!("bar: test history: this job was not written: {e}");
+                    }
                     done.lock().expect("no job panics while holding this")[i] = Some(result);
                 }
             });
@@ -301,13 +308,16 @@ fn run_rooms(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
     }
     summary.phase_ok("build", "compiled");
 
+    let history = begin_history("rooms", limit);
     let (ok, text) = run_test_jobs(
         &log_path,
         &cargo,
         &["-p", "jojobot-exercise", "--features", "rooms"],
         &jobs,
         limit,
+        history.as_ref(),
     )?;
+    finish_history(history.as_ref());
     let verdict = summarize_test_output(&text);
     summary.phase_ok(
         "jobs",
@@ -320,6 +330,66 @@ fn run_rooms(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
     } else {
         ExitCode::FAILURE
     })
+}
+
+/// **Open this run's history, or say why not.** A history that cannot be
+/// written is said on stderr and never changes the verdict: the bar's answer is
+/// the tests', and the record of them is a second thing.
+fn begin_history(level: &str, limit: usize) -> Option<Run> {
+    let variable = std::env::var(HISTORY_DIR_VARIABLE).ok();
+    let home = std::env::var("HOME").ok();
+    let Some(root) = history_root(variable.as_deref(), home.as_deref()) else {
+        eprintln!("bar: test history not written: {HISTORY_DIR_VARIABLE} and HOME are both unset");
+        return None;
+    };
+    let seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs());
+    let started_at = iso_utc(seconds);
+    let checkout = std::env::current_dir()
+        .ok()
+        .and_then(|dir| {
+            dir.file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        })
+        .unwrap_or_default();
+    let head =
+        Some(git_stdout(&["rev-parse", "HEAD"]).trim().to_string()).filter(|h| !h.is_empty());
+    let dirty = head
+        .as_ref()
+        .map(|_| !git_stdout(&["status", "--porcelain"]).trim().is_empty());
+    let load_average = fs::read_to_string("/proc/loadavg")
+        .ok()
+        .and_then(|text| text.split_whitespace().next().and_then(|n| n.parse().ok()));
+    let header = RunHeader {
+        run_id: run_id(&started_at, &checkout, std::process::id()),
+        level: level.to_string(),
+        checkout,
+        head,
+        dirty,
+        started_at,
+        bar_jobs: limit,
+        load_average,
+    };
+    match Run::begin(&root, header) {
+        Ok(run) => Some(run),
+        Err(e) => {
+            eprintln!("bar: test history not written: {e}");
+            None
+        }
+    }
+}
+
+/// **Say when the run ended.** A run killed before this leaves a header with no
+/// end, which is how a reader tells it from one that finished.
+fn finish_history(history: Option<&Run>) {
+    let Some(run) = history else { return };
+    let seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs());
+    if let Err(e) = run.finish(&iso_utc(seconds)) {
+        eprintln!("bar: test history: the end of the run was not written: {e}");
+    }
 }
 
 fn fresh_log(path: &Path) -> std::io::Result<()> {
@@ -484,13 +554,17 @@ fn run_check_phases(known: &KnownReds) -> std::io::Result<ExitCode> {
         &["test", "--workspace", "--no-run", "--locked"],
     )?;
     let (ok, text) = if listed {
-        run_test_jobs(
+        let history = begin_history("check", limit);
+        let ran = run_test_jobs(
             &log_path,
             &cargo,
             &["--workspace"],
             &test_jobs(&listing),
             limit,
-        )?
+            history.as_ref(),
+        )?;
+        finish_history(history.as_ref());
+        ran
     } else {
         // A listing that failed is a build that failed: the same text reads
         // as "did not compile", exactly as a failed plain run did.
