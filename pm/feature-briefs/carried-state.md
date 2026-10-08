@@ -16,7 +16,7 @@
 
 ⭐ **So the measure is TURNOVER, not size** — how old the oldest thought is, and how many left this period. **Every thought records when it was last touched, which is what makes that answerable.**
 
-**And turnover cannot depend on a ritual.** **Each run re-touches what it keeps; anything left untouched long enough ages toward the archive on its own.** ⭐ **The cap is a guard on that loop and never the mechanism — a cap without the loop is a static room.**
+**And turnover cannot depend on a ritual.** **Each run re-touches what it keeps; anything left untouched long enough ages out of the count on its own, still readable and marked `aged_out`; `keep: true` brings it back.** ⭐ **The cap is a guard on that loop and never the mechanism — a cap without the loop is a static room.**
 
 ## A thought
 
