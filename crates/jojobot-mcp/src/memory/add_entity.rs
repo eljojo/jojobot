@@ -101,6 +101,10 @@ pub struct AddEntityArgs {
     /// key the kind declares is held to what it declares, and a key that holds a
     /// handle must name a thing that exists.
     ///
+    /// A key that only labels a claim (`read_from`, `purpose`, `subject`) is never
+    /// a property of the thing and is refused by name: create the thing, then
+    /// write the label with `capture`.
+    ///
     /// **Whole or not at all.** A key that is refused refuses the whole call and
     /// nothing is created, so there is never a half-made thing. Leave it off and
     /// the call creates the thing alone, as before.
@@ -296,19 +300,25 @@ impl Jojobot {
                 {
                     return Ok(refused);
                 }
+                // **A key that only labels a claim is never a property of the new
+                // thing**, so a creation refuses it by name, as a capture does in
+                // `sets`. A creation has no claim fields of its own to hold it.
+                let describing = crate::seed::describing_keys();
+                if let Some(label) = fields.keys().find(|key| describing.contains(*key)) {
+                    return memory_declined(
+                        "add_entity",
+                        MemoryError::InvalidFact(format!(
+                            "'{label}' describes a claim and is never a property of a thing, so \
+                             a creation cannot set it. Create the thing without it, then write \
+                             the label with capture, in that claim's fields"
+                        )),
+                    );
+                }
                 // **The keys the caller sent are the settings.** The due moment worked
                 // out below is jojobot's own arithmetic beside them, kept as one of
                 // the claim's own fields, so a later edit that moves it keeps it in
                 // the bag it was written under.
-                // **A key that only labels the claim is not one of them**: `starred`
-                // on a rule made with its bot has always been the claim's own, and a
-                // label is never a property of the thing.
-                let describing = crate::seed::describing_keys();
-                let set_keys: std::collections::BTreeSet<String> = fields
-                    .keys()
-                    .filter(|key| !describing.contains(*key))
-                    .cloned()
-                    .collect();
+                let set_keys: std::collections::BTreeSet<String> = fields.keys().cloned().collect();
                 // **Worked out here too**: a loop made with its cadence is whole
                 // from the moment it is made, with the day it falls due beside
                 // the keys that set it.

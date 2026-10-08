@@ -1029,89 +1029,71 @@ async fn the_floor_a_write_measures_counts_the_unseated_listing() {
     story.finish().await;
 }
 
-/// **Creating a bot with fields is held to the ceiling a capture of the same
-/// fields is held to.** The first claim of a new bot is a rule when its fields
-/// star it, and the boot carries that rule whole. The check reads the bot as it
-/// will exist once the creation commits, so a creation that would leave the
-/// boot over the ceiling is refused and creates nothing, with the same answer a
-/// capture of the same fields on an existing bot gets. The creation that fits
-/// lands, so a build that refused every starred creation would not pass.
+/// **A bot is made first and starred after, and the star is held to the ceiling.**
+/// A creation cannot carry a star, because a star only labels its claim and a
+/// creation sets keys on the new thing. So the way to a starred rule on a new bot
+/// is to make the bot and capture the rule, and that capture is where the boot is
+/// measured. A rule that fits lands, so a build that refused every starred rule
+/// would not pass; a rule that would leave the boot over is refused and writes
+/// nothing; and a creation that tries to carry the star is turned back by name.
 #[tokio::test]
-async fn a_bot_created_with_fields_is_held_to_the_ceiling_a_capture_is() {
+async fn a_bot_made_then_starred_is_held_to_the_ceiling() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
-    let creation = |handle: &str, fields: serde_json::Value| {
-        json!({
-            "kind": "bot", "handle": handle, "name": handle, "source": "user-named",
-            "sets": fields,
-        })
-    };
     let heavy = "heavyrule ".repeat(4000);
 
-    // ── the creation that fits lands ────────────────────────────────────────
-    let made = s
-        .call(
-            "add_entity",
-            creation(
-                "sigma",
-                json!({"starred": "true", "subject": "a short rule"}),
-            ),
-        )
-        .await
-        .json();
-    assert_eq!(made["id"], "bot:sigma", "{made}");
+    // ── a creation cannot carry the star ────────────────────────────────────
+    s.refused(
+        "add_entity",
+        json!({
+            "kind": "bot", "handle": "omega", "name": "omega", "source": "user-named",
+            "sets": {"starred": "true", "subject": heavy},
+        }),
+    )
+    .await
+    .says("starred")
+    .says("capture");
 
-    // ── the creation that would leave the boot over is refused ──────────────
-    let refused = s
-        .refused(
-            "add_entity",
-            creation("omega", json!({"starred": "true", "subject": heavy})),
-        )
-        .await;
-    //
-    // The way down names what a creation can change, its own `sets`; it does not
-    // tell the caller to unstar a rule or lower seats on a bot that was never made.
-    refused
-        .says("sets")
-        .says("Nothing was created")
-        .never_says("rule_seats")
-        .never_says("set_charter")
-        .says("\"wrote\":false");
-    // Nothing was created: the handle is free and the bot is not listed, beside
-    // the one that was made, so an empty listing would not pass.
+    // ── the route: make the bot, then capture the rule ──────────────────────
+    s.add("bot:sigma", "sigma").await;
+    // Nothing was created for the refused creation: the handle is free and the
+    // bot is not listed, beside the one that was made, so an empty listing would
+    // not pass.
     s.list("bot")
         .await
         .never_says("bot:omega")
         .says("bot:sigma");
-
-    // ── a capture of the same fields on an existing bot refuses the same way ─
-    s.add("bot:psi", "Psi").await;
-    let captured = s
-        .refused(
+    let fits = s
+        .call(
             "capture",
             json!({
-                "subject": "bot:psi",
-                "content": "psi rule",
-                "fields": {"starred": "true", "subject": heavy},
+                "subject": "bot:sigma",
+                "content": "sigma rule",
+                "fields": {"starred": "true", "subject": "a short rule"},
             }),
         )
-        .await;
-    // The capture's way down is the bot's rules and seats, which exist.
-    captured.says("rule_seats").says("set_charter");
-    let keys = |answer: &super::dsl::Answer| -> Vec<String> {
-        answer
-            .json()
-            .as_object()
-            .expect("a refusal is an object")
-            .keys()
-            .cloned()
-            .collect()
-    };
-    assert_eq!(
-        keys(&refused),
-        keys(&captured),
-        "creation and capture refuse with one body"
+        .await
+        .json();
+    assert!(
+        fits["address"]
+            .as_str()
+            .is_some_and(|a| a.starts_with("bot:sigma#")),
+        "{fits}"
     );
+
+    // ── a rule that would leave the boot over is refused and writes nothing ─
+    s.refused(
+        "capture",
+        json!({
+            "subject": "bot:sigma",
+            "content": "sigma heavy rule",
+            "fields": {"starred": "true", "subject": heavy},
+        }),
+    )
+    .await
+    .says("rule_seats")
+    .says("set_charter")
+    .says("\"wrote\":false");
     story.finish().await;
 }
 

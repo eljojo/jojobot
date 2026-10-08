@@ -82,6 +82,59 @@ async fn a_refused_field_refuses_the_whole_call_and_creates_nothing() {
     story.finish().await;
 }
 
+/// **A key that only labels a claim is refused in a creation's settings, by
+/// name, and nothing is created.** A creation sets keys on the new thing, and a
+/// label is never a property of the thing. The refusal names the route: make the
+/// thing, then capture the label. That route lands, so a build that refused every
+/// creation would not pass.
+#[tokio::test]
+async fn a_label_in_a_creations_settings_is_refused_and_the_route_lands() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+
+    s.refused(
+        "add_entity",
+        json!({
+            "kind": "bot", "handle": "sigma", "name": "Sigma", "source": "user-named",
+            "sets": {"starred": "true"},
+        }),
+    )
+    .await
+    .says("blocked")
+    .says("starred")
+    .says("capture");
+    s.list("bot").await.never_says("bot:sigma");
+
+    // The route: make the thing, then capture the label.
+    let made = s
+        .call(
+            "add_entity",
+            json!({
+                "kind": "bot", "handle": "sigma", "name": "Sigma", "source": "user-named",
+            }),
+        )
+        .await
+        .json();
+    assert_eq!(made["id"], "bot:sigma", "{made}");
+    let captured = s
+        .call(
+            "capture",
+            json!({
+                "subject": "bot:sigma", "content": "keep the kettle descaled",
+                "fields": {"starred": "true"},
+            }),
+        )
+        .await
+        .json();
+    assert!(
+        captured["address"]
+            .as_str()
+            .is_some_and(|a| a.starts_with("bot:sigma#")),
+        "{captured}"
+    );
+    story.finish().await;
+}
+
 /// **A link to a handle nobody holds leaves nothing behind either.** It is
 /// blocked, and the answer says the field named it, not the parent.
 #[tokio::test]
