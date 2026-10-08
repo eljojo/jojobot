@@ -107,17 +107,20 @@ impl Validator {
     /// authorization stays open (any validated token passes). Additive: a
     /// validator built without this authorizes every authenticated principal.
     pub fn with_allowed_subjects(mut self, subjects: impl IntoIterator<Item = String>) -> Self {
-        let normalized: Vec<String> = subjects
-            .into_iter()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
+        // **A subject named twice is one subject**, so the count below is a
+        // count of people and not of entries.
+        let mut normalized: Vec<String> = Vec::new();
+        for subject in subjects.into_iter().map(|s| s.trim().to_string()) {
+            if !subject.is_empty() && !normalized.contains(&subject) {
+                normalized.push(subject);
+            }
+        }
         self.allowed_subjects = (!normalized.is_empty()).then_some(normalized);
         self
     }
 
-    /// How many subjects the allowlist names: zero when none is configured,
-    /// which authorizes every authenticated principal.
+    /// How many distinct subjects the allowlist names: zero when none is
+    /// configured, which authorizes every authenticated principal.
     pub fn allowed_subject_count(&self) -> usize {
         self.allowed_subjects.as_ref().map_or(0, Vec::len)
     }
@@ -579,6 +582,24 @@ mod tests {
         let two = validator(kp.decoding)
             .with_allowed_subjects(["sub-abc".to_string(), "sub-def".to_string()]);
         assert_eq!(two.allowed_subject_count(), 2);
+    }
+
+    /// **A subject named twice counts once**, however it was spelled around its
+    /// blanks, and is still authorized once. Beside it, two different subjects
+    /// count two, so a count that was always one would not pass.
+    #[test]
+    fn a_subject_named_twice_counts_once_and_is_still_authorized() {
+        let kp = gen_keypair();
+        let twice = validator(kp.decoding).with_allowed_subjects([
+            "sub-abc".to_string(),
+            " sub-abc ".to_string(),
+            "sub-abc".to_string(),
+        ]);
+        assert_eq!(twice.allowed_subject_count(), 1);
+        let kp = gen_keypair();
+        let different = validator(kp.decoding)
+            .with_allowed_subjects(["sub-abc".to_string(), "sub-abd".to_string()]);
+        assert_eq!(different.allowed_subject_count(), 2);
     }
 
     #[test]

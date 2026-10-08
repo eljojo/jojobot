@@ -2165,6 +2165,59 @@ async fn log_in_behind_a_path(client: &reqwest::Client, jojobot: SocketAddr, pat
     )
 }
 
+/// **One person listed twice is still one person.** The allowlist is a set of
+/// subjects, and a subject named twice (by a deployment that lists the same id
+/// under two names it knows it by, or by a stray repeat) admits the same one
+/// person. The operator's mail is served only while the allowlist admits exactly
+/// one person, so counting list entries would withhold the page from the one
+/// person it is for.
+///
+/// Paired with two different subjects, which still withhold it, in the case
+/// above.
+#[tokio::test]
+async fn one_person_listed_twice_still_gets_the_operators_mail() {
+    for (what, allowed) in [
+        ("listed twice", vec![READER, READER]),
+        (
+            "listed twice, once with a blank beside it",
+            vec![READER, " sub-reader ", ""],
+        ),
+    ] {
+        let idp = support::TestIdp::new();
+        let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+        let board = seeded_board().await;
+        let mail = with_an_operators_mail(&board).await;
+        let mailboxes = board.mailboxes.clone();
+        let (addr, ct, _board) = spawn_jojobot_over(endpoints, &allowed, &idp, board).await;
+        let client = browser();
+        let cookie = log_in(&client, addr, "/").await;
+        let origin = format!("http://{addr}");
+
+        let page = read(&client, addr, "/person:lisa/", &cookie)
+            .await
+            .text()
+            .await
+            .unwrap();
+        assert!(
+            !page.contains("id=\"mailbox-withheld\"") && page.contains(OPERATOR_SUBJECT),
+            "with one person {what} the page withheld the box: {page}"
+        );
+        let opened =
+            open_in_the_ui(addr, &cookie, mail.to_the_operator.as_str(), Some(&origin)).await;
+        assert!(
+            opened.status().is_redirection(),
+            "with one person {what} the Open action was refused: {}",
+            opened.status()
+        );
+        assert_eq!(
+            state_in_the_store(&mailboxes, &mail.to_the_operator).await,
+            "read",
+            "with one person {what} the Open did not land"
+        );
+        ct.cancel();
+    }
+}
+
 /// **Mark-processed in the UI moves the message to processed with its note**,
 /// read back from the store and from the page. A bot's message is not the
 /// operator's to process here.
