@@ -295,7 +295,7 @@ async fn a_bot_leaves_the_operator_a_message_and_no_bot_can_read_it_back() {
         .page("person:lisa")
         .await
         .says("quarterly")
-        .never_says("4242");
+        .never_says(NEEDLE);
     assert_eq!(
         story.mail_held_by("person:lisa").await,
         (1, 0, 0),
@@ -345,7 +345,7 @@ async fn a_bot_leaves_the_operator_a_message_and_no_bot_can_read_it_back() {
     story
         .page("person:lisa")
         .await
-        .says("4242")
+        .says(NEEDLE)
         .says("quarterly");
     for handle in ["person:milhouse", "topic:instance", "bot:otto", "bot:sigma"] {
         story
