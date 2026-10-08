@@ -381,9 +381,10 @@ impl Jojobot {
             .await
     }
 
-    /// **The same check for the first claim of a bot being created**, run
-    /// before the creation lands. `creating` is the bot as it will exist; there
-    /// is one check and a capture and a creation both reach it.
+    /// **The same check for a bot being created**, run before the creation
+    /// lands, on every creation of a bot. `first` is the first claim the call
+    /// writes, or a bare one when it writes none. `creating` is the bot as it will
+    /// exist; there is one check and a capture and a creation both reach it.
     pub(crate) async fn refuses_a_boot_floor_for_creation(
         &self,
         first: &NewFact,
@@ -405,7 +406,11 @@ impl Jojobot {
         }
         let starred = new.fields.get("starred").is_some_and(|v| v == "true");
         let seats = new.fields.get(RULE_SEATS);
-        if !starred && seats.is_none() {
+        // **A claim on a bot that already exists grows its floor only by a star or
+        // a seat count**, so any other claim is none of this check's business. A
+        // bot being created is different: its name, aliases and source are in the
+        // boot it will have, whatever its first claim says.
+        if creating.is_none() && !starred && seats.is_none() {
             return None;
         }
         if seats.is_some() && &new.subject == caller {

@@ -195,6 +195,24 @@ impl Jojobot {
     }
 }
 
+/// **The entity as it will exist once its creation commits**: the one a boot
+/// would name, which is what the boot-ceiling check measures.
+fn entity_as_it_will_be(new: &NewEntity) -> Entity {
+    Entity {
+        id: new.id.clone(),
+        merged_into: None,
+        kind: new.id.kind().unwrap_or(EntityKind::THING),
+        name: new.name.clone(),
+        aliases: new.aliases.clone(),
+        source: new.source.clone(),
+        crm: new.crm.clone(),
+        parent: new.parent.clone(),
+        boot: new.boot,
+        badge: None,
+        archived: None,
+    }
+}
+
 /// Create an entity of any kind. Screened by the write guard, so a handle
 /// or name that looks like one jojobot already knows comes back as
 /// candidates instead of a second record.
@@ -272,10 +290,33 @@ impl Jojobot {
         let first_fields = args.sets.clone().filter(|sets| !sets.is_empty());
         let mut fold_behind = None;
         let (added, first_claim) = match first_fields {
-            None => match self.memory.add_entity(new).await {
-                Ok(added) => (added, None),
-                Err(e) => return memory_declined("add_entity", e),
-            },
+            None => {
+                // **A bot is measured as the boot it will have, whatever the call
+                // sets.** Its name, aliases and source ride in that boot, and a
+                // creation that sets nothing can still take it over the ceiling.
+                if creating.kind() == Some(EntityKind::BOT) {
+                    let recorded_at = self.dated(None, args.sid.as_deref()).await?;
+                    let bare = jojobot_domain::memory::NewFact::about(
+                        creating.clone(),
+                        claim_words,
+                        recorded_at,
+                    );
+                    if let Some(refused) = self
+                        .refuses_a_boot_floor_for_creation(
+                            &bare,
+                            &entity_as_it_will_be(&new),
+                            &caller.bot,
+                        )
+                        .await
+                    {
+                        return memory_declined("add_entity", refused);
+                    }
+                }
+                match self.memory.add_entity(new).await {
+                    Ok(added) => (added, None),
+                    Err(e) => return memory_declined("add_entity", e),
+                }
+            }
             Some(mut fields) => {
                 // **The checks a capture makes before it writes**, on what the
                 // caller sent: a role's own two fields are the boot door's, and
@@ -352,19 +393,7 @@ impl Jojobot {
                 // **The bot does not exist yet, so it is measured as it will
                 // exist** once the creation commits: the same check a capture
                 // makes, with the entity the boot would name.
-                let creating = Entity {
-                    id: new.id.clone(),
-                    merged_into: None,
-                    kind: new.id.kind().unwrap_or(EntityKind::THING),
-                    name: new.name.clone(),
-                    aliases: new.aliases.clone(),
-                    source: new.source.clone(),
-                    crm: new.crm.clone(),
-                    parent: new.parent.clone(),
-                    boot: new.boot,
-                    badge: None,
-                    archived: None,
-                };
+                let creating = entity_as_it_will_be(&new);
                 if let Some(refused) = self
                     .refuses_a_boot_floor_for_creation(&first, &creating, &caller.bot)
                     .await

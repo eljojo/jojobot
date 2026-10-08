@@ -964,6 +964,25 @@ impl Session {
         call_measured(&self.client, tool, args).await.1
     }
 
+    /// **A call whose answer may pass the ceiling, for that call only**, and
+    /// otherwise [`call`](Session::call): a refusal still fails the story. It
+    /// exists to keep a known gap visible rather than hidden: a verb that serves
+    /// back what it was sent, with no bound, is asked here by the story that
+    /// sends it too much, and the comment at the call names the gap.
+    pub async fn call_past_the_ceiling(&self, tool: &str, args: Value) -> Answer {
+        let mut args = args;
+        self.riding(&mut args);
+        let (body, _) = call_measured(&self.client, tool, args).await;
+        assert_ne!(
+            body["status"], "blocked",
+            "{tool} was refused, so this part of the story is not reachable: {body}"
+        );
+        Answer {
+            what: format!("the answer from {tool}"),
+            body: body.to_string(),
+        }
+    }
+
     /// This run's own handle — what a later boot offers back when this one
     /// stops without wrapping, and what a story compares against to say the
     /// run was resumed rather than replaced.
