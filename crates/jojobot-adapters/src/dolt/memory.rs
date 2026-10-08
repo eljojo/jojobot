@@ -2150,7 +2150,8 @@ impl DoltMemory {
 
     /// **The bots that have written a thought into `thread`**, read inside the
     /// write's own transaction: the things holding a claim that draws a
-    /// `connection` edge at it, of any status, that are bots as they answer now.
+    /// `connection` edge at it, of any status, that are bots as they answer now
+    /// and are not archived.
     async fn thought_writers_in(
         &self,
         tx: &mut Transaction<'_, MySql>,
@@ -2172,11 +2173,32 @@ impl DoltMemory {
             let handle = self.current_handle(tx, &EntityId(holder)).await?;
             if handle.kind() == Some(jojobot_domain::memory::EntityKind::BOT)
                 && !writers.contains(&handle)
+                && !self.is_archived_in(tx, &handle).await?
             {
                 writers.push(handle);
             }
         }
         Ok(writers)
+    }
+
+    /// **Whether the entity answering to `handle` is archived**, read inside the
+    /// write's own transaction. Both halves of the archive must be there and the
+    /// stamp must read, exactly as [`entity_from`] reads them: a row carrying
+    /// one half is damage and reads as not archived.
+    async fn is_archived_in(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        handle: &EntityId,
+    ) -> Result<bool, MemoryError> {
+        let row: Option<(Option<String>, Option<String>)> =
+            sqlx::query_as("SELECT archived_reason, archived_at FROM entity WHERE id = ?")
+                .bind(handle.as_str())
+                .fetch_optional(&mut **tx)
+                .await
+                .map_err(store)?;
+        Ok(row.is_some_and(|(reason, at)| {
+            reason.is_some() && at.is_some_and(|stamp| stamp.parse::<jiff::Timestamp>().is_ok())
+        }))
     }
 
     /// **The bots that head the chart**, read inside the write's own transaction:

@@ -198,6 +198,7 @@ const ROSTER: &[&str] = &[
     "bot:contract-writers-bot",
     "bot:contract-writers-archivist",
     "bot:contract-writers-elsewhere",
+    "bot:contract-writers-retired",
     "bot:forwarded-writer",
     "bot:contract-ageing-writer",
     "bot:contract-ageing-boss",

@@ -5960,6 +5960,8 @@ pub trait Memory: Send + Sync {
     /// **The bots that have written a thought into a thread**, read for a write
     /// that sets the thread's ceiling. A thought is a claim on the bot drawing a
     /// `connection` edge at the thread; the claim counts whatever its status.
+    /// **A bot that is archived writes nothing, so it is not a writer**: its
+    /// thoughts stay where they are and it does not count.
     ///
     /// Defaulted off [`list_entities`](Memory::list_entities) and
     /// [`recall`](Memory::recall), like [`built_on`](Memory::built_on).

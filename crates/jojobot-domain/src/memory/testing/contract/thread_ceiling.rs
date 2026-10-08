@@ -278,7 +278,8 @@ async fn the_key_is_set_only_above_the_bots_that_write_into_the_thread<M: Memory
 
 /// **The bots that wrote into a thread are the ones the store names, whichever
 /// way it is asked.** A bot with a claim that draws a connection edge at the
-/// thread is a writer, and stays one when it archives the claim. A person with the
+/// thread is a writer, and stays one when it archives the claim. A bot that is
+/// itself archived is not one. A person with the
 /// same edge, and a bot whose edge points at another thread, are not, and a thread
 /// nobody wrote into has none. Beside each other, or a store that named every bot
 /// would pass.
@@ -290,8 +291,9 @@ pub async fn thought_writers_are_the_bots_whose_claims_point_at_the_thread<M: Me
     let archivist = EntityId("bot:contract-writers-archivist".into());
     let elsewhere = EntityId("bot:contract-writers-elsewhere".into());
     let person = EntityId("person:contract-writers-person".into());
+    let retired = EntityId("bot:contract-writers-retired".into());
     for id in [
-        &thread, &other, &quiet, &writer, &archivist, &elsewhere, &person,
+        &thread, &other, &quiet, &writer, &archivist, &elsewhere, &person, &retired,
     ] {
         ensure(store, id).await;
     }
@@ -307,6 +309,11 @@ pub async fn thought_writers_are_the_bots_whose_claims_point_at_the_thread<M: Me
     .await;
     capture(store, pointing(&elsewhere, &other, "another line")).await;
     capture(store, pointing(&person, &thread, "a person's own note")).await;
+    capture(
+        store,
+        pointing(&retired, &thread, "a thought, then the bot went"),
+    )
+    .await;
     store
         .update_fact(
             &kept.address(),
@@ -321,6 +328,21 @@ pub async fn thought_writers_are_the_bots_whose_claims_point_at_the_thread<M: Me
         .written()
         .expect("nothing blocks it");
 
+    // **The positive the archived bot's absence depends on**: while it stands,
+    // it is named, so its absence below is the archive's doing.
+    let mut standing = store
+        .thought_writers(&thread)
+        .await
+        .expect("the writers are readable");
+    standing.sort();
+    let mut with_retired = vec![writer.clone(), archivist.clone(), retired.clone()];
+    with_retired.sort();
+    assert_eq!(standing, with_retired, "a live bot is a writer");
+    store
+        .archive_entity(&retired, "no longer a seat")
+        .await
+        .expect("a bot can be archived");
+
     let mut named = store
         .thought_writers(&thread)
         .await
@@ -330,7 +352,8 @@ pub async fn thought_writers_are_the_bots_whose_claims_point_at_the_thread<M: Me
     expected.sort();
     assert_eq!(
         named, expected,
-        "the bots with a claim at the thread, archived or not, and no one else"
+        "the bots with a claim at the thread, its claim archived or not, and no one else: an \
+         archived bot writes nothing, so it is not a writer, and its thoughts stay where they are"
     );
     assert_eq!(
         store

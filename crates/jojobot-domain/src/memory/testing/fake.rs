@@ -1031,7 +1031,17 @@ impl InMemoryMemory {
             .filter(|claim| claim.edge.is_some())
             .map(|claim| self.served(claim.clone(), &self.current_handle(&claim.home)))
             .collect();
-        super::super::writers_in(thread, &claims)
+        // **An archived bot writes nothing**, so it is not one of the writers:
+        // its thoughts stay where they are and it does not count.
+        let known = self.known();
+        let mut writers = super::super::writers_in(thread, &claims);
+        writers.retain(|bot| {
+            known
+                .iter()
+                .find(|entity| &entity.id == bot)
+                .is_none_or(|entity| entity.archived.is_none())
+        });
+        writers
     }
 
     /// **Whether any other thing reports to `subject`**, read off each thing's
