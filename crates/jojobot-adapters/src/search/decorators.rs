@@ -575,18 +575,46 @@ impl IndexedMailboxes {
             .collect())
     }
 
-    /// Index one message a verb just wrote or changed, when its box is on the
-    /// board and no person owns it. **A board that cannot say whose box it is,
-    /// or does not list the box, leaves the message out**: the next refresh reads
-    /// the whole board and indexes it if it belongs there, while a message
-    /// wrongly indexed could not be taken back.
-    async fn reindex(&self, message: &Message) -> Result<(), MailboxError> {
-        match self.public_boxes().await {
-            Ok(public) if public.contains(&message.mailbox) => {
-                self.index.ingest_message(message).map_err(indexing)
-            }
-            _ => Ok(()),
+    /// Index the messages a verb just wrote or changed, each when its box is on
+    /// the board and no person owns it. **A board that does not list the box
+    /// leaves the message out**: the next refresh reads the whole board and
+    /// indexes it if it belongs there, while a message wrongly indexed could
+    /// not be taken back.
+    ///
+    /// **The boxes are listed once for the whole batch**, never once per
+    /// message: the listing is a tally of every box, so a delivery of many
+    /// messages would otherwise cost the boxes times the messages.
+    ///
+    /// **A board that cannot be listed leaves the messages out and says so.**
+    /// The index cannot tell whose box each one is, so it holds an older board
+    /// than the store does; the mail half is marked behind and the reason is
+    /// logged, the same way a board read that fails in a refresh is. The verb
+    /// itself succeeded and is not failed for it.
+    async fn reindex(&self, messages: &[&Message]) -> Result<(), MailboxError> {
+        if messages.is_empty() {
+            return Ok(());
         }
+        let public = match self.public_boxes().await {
+            Ok(public) => public,
+            Err(e) => {
+                self.index.mail_refresh_failed();
+                tracing::warn!(
+                    error = %e,
+                    mailbox = %messages[0].mailbox,
+                    "SEARCH INDEX BEHIND — a message was written and the boxes could not be \
+                     listed, so the index could not tell whether its box is a person's and \
+                     left it out. Mail search reports itself stale until a board read lands."
+                );
+                return Ok(());
+            }
+        };
+        for message in messages
+            .iter()
+            .filter(|message| public.contains(&message.mailbox))
+        {
+            self.index.ingest_message(message).map_err(indexing)?;
+        }
+        Ok(())
     }
 }
 
@@ -800,7 +828,7 @@ impl Mailboxes for IndexedMailboxes {
     ) -> Result<jojobot_domain::mailbox::Guarded<Message>, MailboxError> {
         let written = self.inner.post_message(message).await?;
         if let jojobot_domain::mailbox::Guarded::Written(message) = &written {
-            self.reindex(message).await?;
+            self.reindex(&[message]).await?;
         }
         Ok(written)
     }
@@ -813,9 +841,8 @@ impl Mailboxes for IndexedMailboxes {
     {
         let delivered = self.inner.read_mailbox(name, taken_by).await?;
         if let jojobot_domain::mailbox::Guarded::Written(delivery) = &delivered {
-            for message in &delivery.messages {
-                self.reindex(&message.message).await?;
-            }
+            let delivered: Vec<&Message> = delivery.messages.iter().map(|d| &d.message).collect();
+            self.reindex(&delivered).await?;
         }
         Ok(delivered)
     }
@@ -825,7 +852,7 @@ impl Mailboxes for IndexedMailboxes {
         id: &jojobot_domain::mailbox::MessageId,
     ) -> Result<jojobot_domain::mailbox::Delivered, MailboxError> {
         let delivered = self.inner.read_message(id).await?;
-        self.reindex(&delivered.message).await?;
+        self.reindex(&[&delivered.message]).await?;
         Ok(delivered)
     }
 
@@ -835,7 +862,7 @@ impl Mailboxes for IndexedMailboxes {
         notes: Option<&str>,
     ) -> Result<Message, MailboxError> {
         let processed = self.inner.mark_processed(id, notes).await?;
-        self.reindex(&processed).await?;
+        self.reindex(&[&processed]).await?;
         Ok(processed)
     }
 

@@ -6589,6 +6589,229 @@ async fn a_posted_message_is_findable_at_once_and_its_state_follows_it() {
     );
 }
 
+/// **A store that says how often the boxes were listed, and can stop listing
+/// them** while everything else works. `list_mailboxes` hands back every box
+/// with its counts, so how many times one verb reaches for it is the difference
+/// between one tally shared by the messages that verb touched and a tally per
+/// message. `scan_messages` is a separate read in the real store and fails on
+/// its own, so the listing fails on its own here too.
+struct Metered {
+    inner: InMemoryMailboxes,
+    listings: std::sync::atomic::AtomicUsize,
+    listing_down: std::sync::atomic::AtomicBool,
+}
+
+impl Metered {
+    fn new(inner: InMemoryMailboxes) -> Arc<Self> {
+        Arc::new(Metered {
+            inner,
+            listings: std::sync::atomic::AtomicUsize::new(0),
+            listing_down: std::sync::atomic::AtomicBool::new(false),
+        })
+    }
+
+    fn listings(&self) -> usize {
+        self.listings.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn stop_listing(&self) {
+        self.listing_down
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+#[async_trait]
+impl jojobot_domain::mailbox::Mailboxes for Metered {
+    async fn create_mailbox(
+        &self,
+        name: &MailboxName,
+        owner: &jojobot_domain::memory::EntityId,
+        token: Option<&str>,
+    ) -> Result<jojobot_domain::mailbox::Guarded<jojobot_domain::mailbox::Mailbox>, MailboxError>
+    {
+        self.inner.create_mailbox(name, owner, token).await
+    }
+    async fn repoint_owner(
+        &self,
+        from: &jojobot_domain::memory::EntityId,
+        to: &jojobot_domain::memory::EntityId,
+    ) -> Result<Option<jojobot_domain::mailbox::Mailbox>, MailboxError> {
+        self.inner.repoint_owner(from, to).await
+    }
+    async fn list_mailboxes(&self) -> Result<Vec<jojobot_domain::mailbox::Mailbox>, MailboxError> {
+        self.listings
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if self.listing_down.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(MailboxError::Store("the boxes cannot be listed".into()));
+        }
+        self.inner.list_mailboxes().await
+    }
+    async fn scan_messages(&self) -> Result<Vec<Message>, MailboxError> {
+        self.inner.scan_messages().await
+    }
+    async fn message_by_id(&self, id: &MessageId) -> Result<Option<Message>, MailboxError> {
+        self.inner.message_by_id(id).await
+    }
+    async fn sent_by(&self, senders: &[&str]) -> Result<Vec<Message>, MailboxError> {
+        self.inner.sent_by(senders).await
+    }
+    async fn post_message(
+        &self,
+        message: jojobot_domain::mailbox::NewMessage,
+    ) -> Result<jojobot_domain::mailbox::Guarded<Message>, MailboxError> {
+        self.inner.post_message(message).await
+    }
+    async fn read_mailbox(
+        &self,
+        name: &MailboxName,
+        taken_by: jojobot_domain::mailbox::TakenBy,
+    ) -> Result<jojobot_domain::mailbox::Guarded<jojobot_domain::mailbox::Delivery>, MailboxError>
+    {
+        self.inner.read_mailbox(name, taken_by).await
+    }
+    async fn read_message(
+        &self,
+        id: &MessageId,
+    ) -> Result<jojobot_domain::mailbox::Delivered, MailboxError> {
+        self.inner.read_message(id).await
+    }
+    async fn mark_processed(
+        &self,
+        id: &MessageId,
+        notes: Option<&str>,
+    ) -> Result<Message, MailboxError> {
+        self.inner.mark_processed(id, notes).await
+    }
+    async fn quarantine(
+        &self,
+        id: &MessageId,
+        by: &MailboxName,
+        reason: &str,
+        at: jiff::Timestamp,
+    ) -> Result<jojobot_domain::mailbox::Quarantined, MailboxError> {
+        self.inner.quarantine(id, by, reason, at).await
+    }
+}
+
+/// **A verb that touches several messages lists the boxes once.** The listing
+/// is a tally of every box, so a listing per message made one delivery cost the
+/// boxes times the messages. Paired with the positive it depends on: every
+/// delivered message is still indexed with its new state, and a single-message
+/// verb still pays one listing.
+#[tokio::test]
+async fn a_delivery_lists_the_boxes_once_however_many_messages_it_carries() {
+    jojobot_domain::memory::kinds::load_shipped();
+    let metered = Metered::new(InMemoryMailboxes::new());
+    mail_contract::create(metered.as_ref(), "pm").await;
+    let mut ids = Vec::new();
+    for (n, word) in ["kiln", "glaze", "anvil", "ledger", "orchard"]
+        .iter()
+        .enumerate()
+    {
+        let body = format!("the {word} is relined");
+        ids.push(
+            mail_contract::post(metered.as_ref(), "pm", "dev", &body, n as i64)
+                .await
+                .id,
+        );
+    }
+
+    let index = Arc::new(FullTextIndex::open().expect("index opens"));
+    let mail = IndexedMailboxes::new(metered.clone(), index.clone());
+    mail.rebuild().await.expect("rebuild");
+
+    let before = metered.listings();
+    let delivery = mail
+        .read_mailbox(
+            &MailboxName("pm".into()),
+            jojobot_domain::mailbox::TakenBy::Reading,
+        )
+        .await
+        .expect("delivery ok")
+        .written()
+        .expect("the box is there");
+    assert_eq!(delivery.messages.len(), 5, "five messages were delivered");
+    assert_eq!(
+        metered.listings() - before,
+        1,
+        "one listing for the whole delivery, not one per message"
+    );
+    for word in ["kiln", "glaze", "anvil", "ledger", "orchard"] {
+        let states: Vec<MessageState> = index
+            .search(&asking_for_mail(word))
+            .expect("search ok")
+            .iter()
+            .filter_map(|h| match h {
+                Hit::Message { message, .. } => Some(message.state),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            states,
+            vec![MessageState::Read],
+            "{word}: delivered and indexed as read"
+        );
+    }
+
+    let before = metered.listings();
+    mail.mark_processed(&ids[0], Some("filed"))
+        .await
+        .expect("retire ok");
+    assert_eq!(
+        metered.listings() - before,
+        1,
+        "a verb on one message still lists once"
+    );
+}
+
+/// **A reindex that cannot list the boxes says so and leaves the mail half
+/// stale.** The message is written and the verb succeeds, but the index could
+/// not learn whether its box is a person's, so it holds an older board than the
+/// store. Skipping it silently would leave coverage claiming `Loaded` over a
+/// board the index is behind.
+#[tokio::test]
+async fn a_reindex_that_cannot_list_the_boxes_logs_why_and_marks_the_mail_half_stale() {
+    jojobot_domain::memory::kinds::load_shipped();
+    let logged = log_sink();
+    let metered = Metered::new(InMemoryMailboxes::new());
+    mail_contract::create(metered.as_ref(), "ledger-down").await;
+
+    let index = Arc::new(FullTextIndex::open().expect("index opens"));
+    let mail = IndexedMailboxes::new(metered.clone(), index.clone());
+    mail.rebuild().await.expect("rebuild");
+    assert_eq!(
+        index.mail_coverage(),
+        Coverage::Loaded,
+        "the board was read, so coverage starts complete"
+    );
+
+    metered.stop_listing();
+    let posted =
+        mail_contract::post(&mail, "ledger-down", "dev", "the damper is hand-cut", 0).await;
+
+    assert_eq!(
+        index.mail_coverage(),
+        Coverage::Partial(Behind::Stale),
+        "the post landed and the index could not place it, so the half is behind"
+    );
+    let text = logged.text();
+    assert!(
+        text.contains("the boxes cannot be listed"),
+        "the log carries the reason the listing failed: {text}"
+    );
+    assert!(
+        text.contains(posted.mailbox.as_str()),
+        "…and names the box the message was filed in: {text}"
+    );
+    assert!(
+        index
+            .search(&asking_for_mail("damper"))
+            .expect("search ok")
+            .is_empty(),
+        "a message the index could not place stays out of it until a board read lands"
+    );
+}
+
 /// A board with two messages behind the `search` port, ready to lose one.
 /// Two rather than one so every negative below has a survivor to pair with.
 async fn a_board_of_two() -> (Arc<InMemoryMailboxes>, Arc<IndexedMailboxes>, Retrieval) {
