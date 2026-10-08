@@ -3991,6 +3991,108 @@ async fn a_lease_renewal_moves_the_version_the_cache_keys_on() {
     store.stop().await;
 }
 
+/// **A rename after lease renewals does not lower the version.** The signals a
+/// renewal leaves stay filed under the handle the role wore when it was renewed,
+/// and the fold refuses a read whose version is lower than the one it holds, so
+/// a count that only followed the current handle would drop at the rename and
+/// the next read of the role would not replace what the cache holds.
+#[tokio::test]
+async fn a_rename_after_lease_renewals_does_not_lower_the_version() {
+    use jojobot_domain::memory::{FactPatch, Guarded, NewEntity, NewFact};
+    use jojobot_domain::session::{ROLE_CLAIMED_AT, ROLE_HOLDER, RoleMove, RoleMoveKind};
+
+    let scratch = Scratch::new("lease_rename_version");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "memory")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = Arc::new(DoltMemory::open(pool));
+
+    let bot = EntityId("bot:contract-lease-renamer".into());
+    memory
+        .add_entity(NewEntity::new(
+            bot.clone(),
+            "Contract Lease Renamer",
+            "user-named",
+        ))
+        .await
+        .expect("add ok")
+        .written()
+        .expect("not blocked");
+    let role = EntityId("role:contract-lease-was".into());
+    memory
+        .add_entity(NewEntity {
+            parent: Some(bot.clone()),
+            ..NewEntity::new(role.clone(), "lease-was", "contract-fixture")
+        })
+        .await
+        .expect("add ok")
+        .written()
+        .expect("not blocked");
+    let t0 = jiff::Timestamp::now() - jiff::SignedDuration::from_mins(10);
+    let fields_at = |at: jiff::Timestamp| {
+        std::collections::BTreeMap::from([
+            (ROLE_HOLDER.to_string(), "delta".to_string()),
+            (ROLE_CLAIMED_AT.to_string(), at.to_string()),
+        ])
+    };
+    let claim = memory
+        .capture(NewFact {
+            fields: fields_at(t0),
+            ..NewFact::about(role.clone(), "delta claims the role", date(2026, 9, 1))
+        })
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("not blocked");
+    for minutes in [2, 4, 6] {
+        let renewed = memory
+            .update_fact(
+                &claim.address(),
+                FactPatch {
+                    fields: fields_at(t0 + jiff::SignedDuration::from_mins(minutes)),
+                    role_move: Some(RoleMove {
+                        kind: RoleMoveKind::Renew,
+                        role: "lease-was".into(),
+                        claimant: "delta".into(),
+                    }),
+                    ..FactPatch::default()
+                },
+                &bot,
+            )
+            .await
+            .expect("update ok");
+        assert!(matches!(renewed, Guarded::Written(_)), "{renewed:?}");
+    }
+    let (_, before) = memory
+        .fields_versioned(&role)
+        .await
+        .expect("a versioned read answers");
+
+    let now = EntityId("role:contract-lease-now".into());
+    memory
+        .rename_entity(&role, &now, None, date(2026, 9, 2), None)
+        .await
+        .expect("rename ok")
+        .written()
+        .expect("not blocked");
+    let (_, after) = memory
+        .fields_versioned(&now)
+        .await
+        .expect("a versioned read answers");
+    assert!(
+        after >= before,
+        "the version fell across a rename, so a cache holding {before} would refuse the read at \
+         {after}"
+    );
+
+    store.stop().await;
+}
+
 /// **A renewal stamps the row it overwrites.** The renewal replaces the value of
 /// the newest `claimed_at` write instead of appending one, and every write of a
 /// key carries the moment the store wrote it, which is how a merge tells the
@@ -4177,7 +4279,10 @@ async fn a_fields_versioned_hit_answers_with_no_full_listing_and_a_miss_still_ge
         Some(&"2026-09-14".to_string()),
         "the hit still answers correctly"
     );
-    assert_eq!(written, 1, "the count is the one write the entity holds");
+    assert_eq!(
+        written, 2,
+        "the count is the one claim write plus the signal row the entity's creation filed"
+    );
     assert_eq!(
         memory.index_listings(),
         before,

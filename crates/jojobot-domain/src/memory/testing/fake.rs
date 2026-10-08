@@ -2477,6 +2477,9 @@ impl Memory for InMemoryMemory {
             && let Some(moment) = patch.fields.get(crate::session::ROLE_CLAIMED_AT)
             && self.overwrite_lease_moment(&fact.home, moment)
         {
+            // The signal the real store files so that the thing reads as written
+            // although no claim write was added.
+            self.touched(entity);
             return Ok(Guarded::Written(self.served(self.projected(fact), &handle)));
         }
         // **The patch is applied to the record as it reads now**, so a set that

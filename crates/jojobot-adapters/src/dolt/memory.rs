@@ -3729,8 +3729,8 @@ impl Memory for DoltMemory {
     /// correction is a new row beside the one it corrects. The one exception is
     /// a role's lease moment, which a renewal overwrites and signals through
     /// `entity_write` instead ([`Self::overwrite_lease_moment`]), so the count
-    /// is the claim writes plus the signal rows filed under the entity's
-    /// storage key. It only grows, and it grows by at least one for every write that could have
+    /// is the claim writes plus the signal rows filed under the handles the
+    /// entity wears and wore. It only grows, and it grows by at least one for every write that could have
     /// changed what [`fields`](Self::fields) answers. Read in the SAME
     /// transaction as the fields it counts for, so the two halves of the answer
     /// describe the same instant rather than two reads a write could land
@@ -3740,7 +3740,7 @@ impl Memory for DoltMemory {
         entity: &EntityId,
     ) -> Result<(std::collections::BTreeMap<String, String>, u64), MemoryError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
-        let Some((key, _)) = self.resolve(&mut tx, entity).await? else {
+        let Some((key, handle)) = self.resolve(&mut tx, entity).await? else {
             let index = self.known(&mut tx).await?;
             return Err(MemoryError::UnknownEntity {
                 attempted: entity.to_string(),
@@ -3755,15 +3755,24 @@ impl Memory for DoltMemory {
             .await
             .map_err(store)?;
         // **A renewal of a lease adds no claim write**, only a signal row filed
-        // under the entity's storage key (see [`Self::overwrite_lease_moment`]),
-        // so the claim writes alone would leave the version where it was while the
-        // moment moved. Rows only ever join that table, so the sum only grows.
-        let signalled: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM entity_write WHERE entity = ?")
-                .bind(key.as_str())
-                .fetch_one(&mut *tx)
-                .await
-                .map_err(store)?;
+        // under the entity's handle (see [`Self::overwrite_lease_moment`]), so
+        // the claim writes alone would leave the version where it was while the
+        // moment moved. Rows only ever join that table, so the sum only grows
+        // — but a rename leaves the earlier signals under the handle the entity
+        // wore then, and a version that fell would be refused by the fold as a
+        // read of an earlier state. So the count covers every handle the entity
+        // has worn, and the storage key, under which older stores filed them.
+        let signalled: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM entity_write
+             WHERE entity = ? OR entity = ?
+                OR entity IN (SELECT former_handle FROM entity_former_handle WHERE badge = ?)",
+        )
+        .bind(handle.as_str())
+        .bind(key.as_str())
+        .bind(key.as_str())
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(store)?;
         tx.commit().await.map_err(store)?;
         Ok((held, (written + signalled) as u64))
     }
@@ -4132,8 +4141,9 @@ impl Memory for DoltMemory {
             && Self::overwrite_lease_moment(&mut tx, &key, moment, &self.clock).await?
         {
             // The signal `write_summary` reads, so the search index sees the new
-            // moment as a change although no claim write was added.
-            append_entity_write(&mut tx, &key, &self.clock).await?;
+            // moment as a change although no claim write was added. Filed under
+            // the handle, as every other `entity_write` row is.
+            append_entity_write(&mut tx, &handle, &self.clock).await?;
             tx.commit().await.map_err(store)?;
             let mut fields = fact.fields.clone();
             fields.insert(

@@ -1062,9 +1062,66 @@ pub async fn a_renewal_that_carries_more_than_the_lease_is_applied_whole<M: Memo
     );
 }
 
+/// **A renewal is a write on the thing, and a reader asking when the thing last
+/// changed hears it.** The renewal overwrites the lease moment and adds no
+/// claim write, so the only mark it leaves beyond the moment itself is the
+/// signal that the thing was written. A store that filed that signal where no
+/// reader of the thing looks would still answer the moment correctly and report
+/// the thing as last written when the moment was stamped, a beat before the
+/// renewal finished.
+pub async fn a_renewal_is_a_write_on_the_thing<M: Memory>(store: &M) {
+    let seat = a_seat(store, "bot:contract-role-signal", "role:contract-signal").await;
+    let t0 = crate::session::testing::contract::epoch() + jiff::SignedDuration::from_secs(60);
+    let claimed = capture(
+        store,
+        NewFact {
+            fields: role_fields("delta", t0),
+            ..NewFact::about(seat.role.clone(), "delta claims the role", date(2026, 7, 1))
+        },
+    )
+    .await;
+    // The stores stamp from their own clocks, so let one tick pass between the
+    // claim and its renewal.
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    let renewed = store
+        .update_fact(
+            &claimed.address(),
+            FactPatch {
+                fields: role_fields("delta", t0 + jiff::SignedDuration::from_mins(5)),
+                role_move: Some(crate::session::RoleMove {
+                    kind: crate::session::RoleMoveKind::Renew,
+                    role: seat.name.clone(),
+                    claimant: "delta".to_string(),
+                }),
+                ..FactPatch::default()
+            },
+            &seat.bot,
+        )
+        .await;
+    assert!(
+        matches!(renewed, Ok(Guarded::Written(_))),
+        "the renewal must land: {renewed:?}"
+    );
+    let ages = store
+        .field_ages(&seat.role)
+        .await
+        .expect("the role object has ages");
+    let moment = *ages
+        .keys
+        .get(crate::session::ROLE_CLAIMED_AT)
+        .expect("the lease moment was stamped");
+    let newest = ages.newest.expect("a written thing has a newest write");
+    assert!(
+        newest > moment,
+        "the renewal left no write on the thing after the moment it stamped: newest {newest}, \
+         lease moment {moment}"
+    );
+}
+
 pub async fn run_all_role_claims<M: Memory>(store: &M) {
     many_renewals_leave_the_lease_moment_at_one_write(store).await;
     a_renewal_restamps_the_lease_moment_it_overwrites(store).await;
+    a_renewal_is_a_write_on_the_thing(store).await;
     only_a_renewals_moment_is_overwritten(store).await;
     a_role_claimed_in_the_old_shape_is_still_held(store).await;
     a_released_role_object_is_not_read_past_to_the_old_keys(store).await;
