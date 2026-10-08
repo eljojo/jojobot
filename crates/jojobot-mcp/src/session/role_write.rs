@@ -414,6 +414,33 @@ impl Jojobot {
                 });
             }
         }
+        // **A role the bot carries by name, whose object sits under another
+        // bot.** The carrier outranks the parent of a stray object, so its claim
+        // is written where the object is, and that object is not among the
+        // bot's children. One read of the one object named, so a renewal still
+        // costs no listing; nothing is moved, because the object belongs to
+        // whoever made it.
+        let carried = bot_fields
+            .get(jojobot_domain::memory::CLAIMS_ROLE)
+            .map(|role| role.trim())
+            .filter(|role| !role.is_empty() && !seen.iter().any(|s| s == role));
+        if let Some(role) = carried {
+            let object = EntityId::new(EntityKind::ROLE, role);
+            match self.memory.fields(&object).await {
+                Ok(object_fields) => {
+                    seen.push(role.to_string());
+                    let state = role_state(role, Some(&object_fields), &bot_fields);
+                    if state.holder.as_deref() == Some(claimant) {
+                        held.push(HeldRole {
+                            role: role.to_string(),
+                            claimed_at: state.claimed_at,
+                        });
+                    }
+                }
+                Err(MemoryError::UnknownEntity { .. }) => {}
+                Err(e) => return Err(e),
+            }
+        }
         for key in bot_fields.keys() {
             let Some(role) = jojobot_domain::session::role_from_field_key(key) else {
                 continue;
@@ -921,5 +948,64 @@ mod tests {
             .expect("a stranger is refused");
         let stranger = blocked(&stranger);
         assert_eq!(stranger["fix_by"], "change", "{stranger}");
+    }
+
+    /// **A role held over an object that sits under another bot is renewed and
+    /// released like any other.** The claimant carries the role's name, the object
+    /// is a child of a different bot (the stray the carrier outranks), and a claim
+    /// writes it where it is. The renewal and the release look for the roles the
+    /// bot holds, and used to look only at the bot's own children, so this lease
+    /// was never renewed and never released. The lease moment moving on a renewal
+    /// is the positive for the renewal, a rival refused before and the holder
+    /// cleared after is the positive for the release.
+    #[tokio::test]
+    async fn a_carrier_over_a_stray_object_renews_and_releases_its_role() {
+        let jojobot = handler();
+        make_bot(&jojobot, "alpha").await;
+        make_bot(&jojobot, "beta").await;
+        make_bot(&jojobot, "gamma").await;
+        let alpha = EntityId("bot:alpha".into());
+        let beta = EntityId("bot:beta".into());
+        carries(&jojobot, "bot:alpha", "kappa").await;
+        jojobot
+            .ensure_role_object(&beta, &EntityId("role:kappa".into()), "kappa")
+            .await
+            .expect("the stray is made");
+
+        let first = booted(&jojobot, "alpha", Some("kappa")).await;
+        assert_eq!(first["session"]["claim"]["status"], "taken", "{first}");
+        let sid = sid_of(&first).expect("a handle");
+        assert!(
+            !jojobot
+                .memory
+                .children(&alpha)
+                .await
+                .expect("children")
+                .contains(&EntityId("role:kappa".into())),
+            "the case rests on the object sitting under another bot"
+        );
+
+        let object = EntityId("role:kappa".into());
+        let held = jojobot.roles_held_by(&alpha, &sid).await.expect("read");
+        assert_eq!(
+            held.iter().map(|h| h.role.as_str()).collect::<Vec<_>>(),
+            vec!["kappa"],
+            "the carrier holds the role over the stray object"
+        );
+        let before = jojobot.memory.fields(&object).await.expect("fields");
+        let later = jiff::Timestamp::now() + jiff::SignedDuration::from_mins(10);
+        jojobot.renew_role_claims(&alpha, &sid, later).await;
+        let after = jojobot.memory.fields(&object).await.expect("fields");
+        assert_ne!(
+            after.get("claimed_at"),
+            before.get("claimed_at"),
+            "the renewal did not reach the lease: {after:?}"
+        );
+
+        let rival = booted(&jojobot, "gamma", Some("kappa")).await;
+        assert_eq!(rival["session"]["claim"]["status"], "refused", "{rival}");
+        jojobot.release_role_claims(&alpha, &sid).await;
+        let released = jojobot.memory.fields(&object).await.expect("fields");
+        assert_eq!(released.get("holder"), None, "{released:?}");
     }
 }
