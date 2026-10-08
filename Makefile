@@ -252,7 +252,11 @@ paid: build ## Drive a REAL model through a playbook — reaches the network and
 # beside it. The upgrade gate itself (make check) reads that committed
 # fixture; this target is what a deploy runs to refresh it, never a test.
 #
-#     make refresh-upgrade-fixture [REF=<ref>]
+#     make refresh-upgrade-fixture [REF=<ref>] [DIR=<fixture directory>]
+#
+# DIR defaults to the gate's first fixture. The gate's second one, for the build
+# deploy 3 shipped, is recorded with DIR=tests/fixtures/upgrade_deploy3.
 REF ?= origin/main
+DIR ?=
 refresh-upgrade-fixture: ## Record the upgrade gate's fixture from a binary built at REF (default origin/main)
-	scripts/refresh-upgrade-fixture $(REF)
+	scripts/refresh-upgrade-fixture $(REF) $(DIR)

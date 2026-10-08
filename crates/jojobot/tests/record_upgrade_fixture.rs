@@ -16,7 +16,9 @@ use jojobot_adapters::testing::free_port;
 use jojobot_exercise::surface::Surface;
 use serde_json::json;
 
-/// Where the fixture the gate reads is kept.
+/// Where the fixture the gate reads is kept, unless the run names another with
+/// `UPGRADE_FIXTURE_DIR`: the gate keeps one fixture per build it proves an
+/// upgrade from.
 const FIXTURE_DIR: &str = "tests/fixtures/upgrade";
 
 /// A directory of this run's own, removed only on request — the caller
@@ -136,7 +138,10 @@ async fn record_the_upgrade_fixture() {
         String::from_utf8_lossy(&dump.stderr)
     );
 
-    let fixture_dir = std::path::Path::new(FIXTURE_DIR);
+    let named_dir = std::env::var("UPGRADE_FIXTURE_DIR")
+        .ok()
+        .filter(|dir| !dir.is_empty());
+    let fixture_dir = std::path::Path::new(named_dir.as_deref().unwrap_or(FIXTURE_DIR));
     std::fs::create_dir_all(fixture_dir).expect("the fixture directory exists");
     std::fs::copy(
         database_dir.join("doltdump.sql"),
@@ -282,6 +287,37 @@ async fn seed_representative_records(surface: &Surface) -> String {
         )
         .await
         .expect("the duplicate is merged into the survivor");
+
+    // **A pair written before a write had a moment of its own, left unmerged.**
+    // Each holds `status` once, so both own ordinal 1 of the key. The gate
+    // merges them with the current binary, over a store whose writes carry no
+    // stamp: the fold has to land and has to rank two unstamped writes.
+    for (slug, name, status) in [
+        ("red-kite", "A Recorded Kite", "now"),
+        ("blue-kite", "A Recorded Spare Kite", "done"),
+    ] {
+        surface
+            .must(
+                "add_entity",
+                json!({"kind": "thing", "handle": slug, "name": name,
+                       "source": "test", "sid": sid}),
+            )
+            .await
+            .unwrap_or_else(|e| panic!("add_entity thing:{slug}: {e:#}"));
+        surface
+            .must(
+                "capture",
+                json!({
+                    "subject": format!("thing:{slug}"),
+                    "content": "where it stands",
+                    "provenance": "testimony",
+                    "fields": {"status": status},
+                    "sid": sid,
+                }),
+            )
+            .await
+            .unwrap_or_else(|e| panic!("capture on thing:{slug}: {e:#}"));
+    }
 
     // A declared type.
     surface
@@ -442,6 +478,20 @@ async fn seed_representative_records(surface: &Surface) -> String {
         )
         .await
         .expect("the second bot is added");
+    // **Written by the lead.** A later build lets only the bot that would sit
+    // above the assistant in the chart write who the assistant reports to, and an
+    // earlier build lets anyone, so the lead writes it and both can be recorded.
+    let lead = surface
+        .must(
+            "start_here",
+            json!({"bot": "upgrade-fixture-lead", "brief": true}),
+        )
+        .await
+        .expect("the recorded lead boots");
+    let lead_sid = lead["session"]["sid"]
+        .as_str()
+        .expect("a fresh boot carries a session id")
+        .to_string();
     surface
         .must(
             "capture",
@@ -450,7 +500,7 @@ async fn seed_representative_records(surface: &Surface) -> String {
                 "content": "the assistant reports to the recorded lead",
                 "provenance": "testimony",
                 "fields": {"reports_to": "bot:upgrade-fixture-lead"},
-                "sid": sid,
+                "sid": lead_sid,
             }),
         )
         .await

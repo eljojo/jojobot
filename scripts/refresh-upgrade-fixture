@@ -2,14 +2,18 @@
 # Records the fixture crates/jojobot/tests/fixtures/upgrade/ carries, from a
 # binary built at a named ref — never from this checkout's own working tree.
 #
-#     scripts/refresh-upgrade-fixture [REF]
+#     scripts/refresh-upgrade-fixture [REF [DIR]]
 #
-# REF defaults to origin/main. The ref is built in a DETACHED worktree, so
+# REF defaults to origin/main. DIR is the fixture directory to record into,
+# relative to crates/jojobot, and defaults to the gate's first fixture; the gate
+# keeps a second one (tests/fixtures/upgrade_deploy3) for the build deploy 3
+# shipped. The ref is built in a DETACHED worktree, so
 # this script never moves this checkout's HEAD and never creates a branch.
 # The worktree is removed on exit, success or failure alike.
 set -euo pipefail
 
 REF="${1:-origin/main}"
+FIXTURE_DIR="${2:-}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RESOLVED="$(git -C "$REPO_ROOT" rev-parse --short "$REF")"
 WORKTREE_DIR="$(mktemp -d)"
@@ -40,4 +44,5 @@ fi
 echo "recording the fixture from $BINARY ($RESOLVED)"
 cd "$REPO_ROOT"
 UPGRADE_FIXTURE_BINARY="$BINARY" UPGRADE_FIXTURE_REF="$RESOLVED" \
+    UPGRADE_FIXTURE_DIR="$FIXTURE_DIR" \
     nix develop -c cargo test -p jojobot --test record_upgrade_fixture -- --ignored --nocapture

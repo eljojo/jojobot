@@ -22,11 +22,11 @@ use jojobot_adapters::testing::free_port;
 use jojobot_exercise::surface::Surface;
 use serde_json::json;
 
-const FIXTURE_DUMP: &str = "tests/fixtures/upgrade/doltdump.sql";
-const FIXTURE_REF: &str = "tests/fixtures/upgrade/ref.txt";
-/// The session id the recording's own boot was handed, which is who the
-/// recorded role claim names as its holder.
-const FIXTURE_ROLE_HOLDER: &str = "tests/fixtures/upgrade/role_holder.txt";
+const FIXTURE_DIR: &str = "tests/fixtures/upgrade";
+/// The fixture recorded from the build deploy 3 shipped, kept beside the first:
+/// a store that build filled is what a deployed instance holds when it takes
+/// this one.
+const DEPLOY_3_FIXTURE_DIR: &str = "tests/fixtures/upgrade_deploy3";
 
 /// A directory of this run's own, removed when it is done.
 struct Scratch(std::path::PathBuf);
@@ -49,8 +49,15 @@ struct Restored {
 }
 
 async fn restore_the_fixture(label: &str) -> Restored {
-    let git_ref = std::fs::read_to_string(FIXTURE_REF)
-        .unwrap_or_else(|e| panic!("reading {FIXTURE_REF}: {e}"))
+    restore_a_fixture(FIXTURE_DIR, label).await
+}
+
+/// **A fixture directory, restored into a store of this case's own.**
+async fn restore_a_fixture(fixture_dir: &str, label: &str) -> Restored {
+    let fixture_ref = format!("{fixture_dir}/ref.txt");
+    let fixture_dump = format!("{fixture_dir}/doltdump.sql");
+    let git_ref = std::fs::read_to_string(&fixture_ref)
+        .unwrap_or_else(|e| panic!("reading {fixture_ref}: {e}"))
         .trim()
         .to_string();
 
@@ -71,8 +78,8 @@ async fn restore_the_fixture(label: &str) -> Restored {
     let mut restoring = Dolt::start(&db_dir, store_port)
         .await
         .expect("a fresh store comes up to receive the fixture");
-    let dump = std::fs::read_to_string(FIXTURE_DUMP)
-        .unwrap_or_else(|e| panic!("reading {FIXTURE_DUMP}: {e}"));
+    let dump = std::fs::read_to_string(&fixture_dump)
+        .unwrap_or_else(|e| panic!("reading {fixture_dump}: {e}"));
     for statement in split_sql_statements(&dump) {
         sqlx::raw_sql(&statement)
             .execute(restoring.pool())
@@ -92,12 +99,22 @@ async fn restore_the_fixture(label: &str) -> Restored {
 
 #[tokio::test]
 async fn the_current_binary_boots_on_a_store_an_older_binary_filled() {
+    boots_on_a_store_filled_by(FIXTURE_DIR, "boots").await;
+}
+
+/// The same proof over the store the build deploy 3 shipped filled.
+#[tokio::test]
+async fn the_current_binary_boots_on_a_store_the_deploy_3_binary_filled() {
+    boots_on_a_store_filled_by(DEPLOY_3_FIXTURE_DIR, "boots-deploy3").await;
+}
+
+async fn boots_on_a_store_filled_by(fixture_dir: &str, label: &str) {
     let Restored {
         scratch,
         state_dir,
         store_port,
         git_ref,
-    } = restore_the_fixture("boots").await;
+    } = restore_a_fixture(fixture_dir, label).await;
 
     // **The current binary boots over the restored store TWICE, and the second
     // boot changes nothing.** The first boot runs every migration and every
@@ -135,8 +152,9 @@ async fn the_current_binary_boots_on_a_store_an_older_binary_filled() {
     let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", third.http_port))
         .await
         .expect("connecting to the current binary");
-    let role_holder = std::fs::read_to_string(FIXTURE_ROLE_HOLDER)
-        .unwrap_or_else(|e| panic!("reading {FIXTURE_ROLE_HOLDER}: {e}"))
+    let role_holder_file = format!("{fixture_dir}/role_holder.txt");
+    let role_holder = std::fs::read_to_string(&role_holder_file)
+        .unwrap_or_else(|e| panic!("reading {role_holder_file}: {e}"))
         .trim()
         .to_string();
     assert_every_recorded_record_reads_back(&surface, &git_ref, &role_holder).await;
@@ -718,6 +736,106 @@ async fn assert_the_newer_shapes_read_back(surface: &Surface, git_ref: &str) {
     let parsed = read_of(&read, "the finished work");
     if parsed["objects"][0]["fields"]["status"] != "done" {
         fail("the finished work's status", &read);
+    }
+}
+
+/// **A pair written before a write had a moment of its own merges after the
+/// upgrade, from each build the gate proves an upgrade from.**
+///
+/// Each fixture holds two things that each wrote `status` once, recorded unmerged
+/// by a build whose writes carry no stamp. The current binary boots over the
+/// store, which runs the migration that adds the stamp, and merges them through
+/// the served verb. Both writes own ordinal 1 of the key, so the fold lands only
+/// if the merge renumbers them, and with no stamp on either the survivor's write
+/// is placed last: it is the one the survivor holds, and the duplicate's comes
+/// first in the key's history. Each recording is checked to hold a `field_write`
+/// table that has no stamp column, so the case cannot pass over stamped rows.
+#[tokio::test]
+async fn a_pair_written_before_the_stamp_merges_after_the_upgrade() {
+    for (dir, label) in [
+        (FIXTURE_DIR, "merge-first"),
+        (DEPLOY_3_FIXTURE_DIR, "merge-deploy3"),
+    ] {
+        let Restored {
+            scratch,
+            state_dir,
+            store_port,
+            git_ref,
+        } = restore_a_fixture(dir, label).await;
+        let recorded = std::fs::read_to_string(format!("{dir}/doltdump.sql"))
+            .unwrap_or_else(|e| panic!("reading the recording in {dir}: {e}"));
+        let field_write_table = recorded
+            .split("CREATE TABLE `field_write`")
+            .nth(1)
+            .and_then(|rest| rest.split(");").next())
+            .unwrap_or_else(|| panic!("the recording at {git_ref} holds no field_write table"));
+        assert!(
+            !field_write_table.contains("written_at"),
+            "the recording at {git_ref} already stamps its field writes, so it proves nothing \
+             about rows that cannot be stamped: {field_write_table}"
+        );
+        let booted = boot_current(&state_dir, store_port, &git_ref).await;
+        let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
+            .await
+            .expect("connecting to the current binary");
+        let fail =
+            |what: &str, body: &str| -> ! { panic!("recorded at {git_ref}: {what}: {body}") };
+
+        let boot = surface
+            .call(
+                "start_here",
+                json!({"bot": "assistant", "brief": true, "resume": "new"}),
+            )
+            .await;
+        let boot: serde_json::Value =
+            serde_json::from_str(&boot).unwrap_or_else(|_| fail("booting to merge", &boot));
+        let sid = boot["session"]["sid"]
+            .as_str()
+            .unwrap_or_else(|| fail("booting to merge", &boot.to_string()))
+            .to_string();
+
+        let merged = surface
+            .call(
+                "merge_entities",
+                json!({"duplicate": "thing:blue-kite", "survivor": "thing:red-kite",
+                       "reason": "recorded as one kite", "sid": sid}),
+            )
+            .await;
+        let merged_answer: serde_json::Value = serde_json::from_str(&merged)
+            .unwrap_or_else(|_| fail("the merge answered something that is not json", &merged));
+        if merged_answer["merged"] != "thing:blue-kite"
+            || merged_answer["now_resolves_to"] != "thing:red-kite"
+        {
+            fail("the merge of the pair did not land", &merged);
+        }
+
+        let read = surface
+            .call(
+                "recall",
+                json!({"subject": "thing:red-kite", "history": "status"}),
+            )
+            .await;
+        let answered: serde_json::Value =
+            serde_json::from_str(&read).unwrap_or_else(|_| fail("reading the survivor", &read));
+        if answered["objects"][0]["fields"]["status"] != "now" {
+            fail("the survivor does not hold its own write of status", &read);
+        }
+        let each: Vec<&str> = answered["objects"][0]["history"]["writes"]
+            .as_array()
+            .unwrap_or_else(|| fail("the writes behind status", &read))
+            .iter()
+            .map(|write| write["value"].as_str().unwrap_or(""))
+            .collect();
+        if each != ["done", "now"] {
+            fail(
+                "the duplicate's write is not placed before the survivor's",
+                &read,
+            );
+        }
+
+        surface.finish().await;
+        booted.stop().await;
+        drop(scratch);
     }
 }
 
