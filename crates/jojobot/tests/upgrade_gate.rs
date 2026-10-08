@@ -184,6 +184,11 @@ async fn boots_on_a_store_filled_by(fixture_dir: &str, label: &str) {
     drop(scratch);
 }
 
+/// **The one warning a clean boot of the gate logs.** The gate starts the binary
+/// with no issuer on purpose, so the boot says the endpoint is open. Any other
+/// warning is a degradation.
+const WARNING_THE_GATE_CAUSES: &str = "AUTH DISABLED";
+
 /// **A running copy of the current binary over a restored store.**
 struct Booted {
     child: tokio::process::Child,
@@ -260,22 +265,21 @@ async fn boot_current(state_dir: &std::path::Path, store_port: u16, git_ref: &st
         while let Ok(Some(_)) = lines.next_line().await {}
     });
 
-    // **The boot's own warnings fail the gate.** Each says a half of the boot
-    // failed and carried on — the fold or the search index came up empty, or
-    // the kind seed stopped part way — so the server serves and every read of
-    // a store that was upgraded looks fine until somebody asks the half that
-    // is missing.
+    // **Every warning the boot logs fails the gate, except the one the gate
+    // causes.** Each says a half of the boot failed or degraded and carried on:
+    // the fold or the search index came up empty, a row was left as text or not
+    // rekeyed, a migration failed and will retry. The server serves and every
+    // read of a store that was upgraded looks fine until somebody asks the half
+    // that is missing. A filter that names each message lets a new one through
+    // unseen, so the filter is the level, with one named exception.
     //
     // **An error line fails it too, whatever it says.** The boot logs a pass it
-    // could not finish at the error level, and a filter that names each
-    // message lets a new one through unseen.
+    // could not finish at the error level.
     let warned: Vec<&String> = seen
         .iter()
         .filter(|line| {
-            line.contains("FOLD EMPTY")
-                || line.contains("SEARCH INDEX EMPTY")
-                || line.contains("KINDS NOT LOADED")
-                || line.contains("ERROR")
+            line.contains("ERROR")
+                || (line.contains("WARN") && !line.contains(WARNING_THE_GATE_CAUSES))
         })
         .collect();
     assert!(
