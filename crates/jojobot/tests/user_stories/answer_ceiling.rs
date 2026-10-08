@@ -1,12 +1,19 @@
-//! "How big is an answer allowed to get?"
+//! "I kept notes all year, hundreds on the same few subjects, and a long report
+//! comes in every day. When I ask my assistant for all of it, do I get it in
+//! parts I can follow, with nothing lost and nothing twice?"
+//!
+//! The answer to "how big is an answer allowed to get" is the rest of this note.
 //!
 //! The client renders about 30,000 characters of an answer inline and nothing
 //! past roughly 50,000. One ceiling, 28,000 characters, is the most any answer
 //! is meant to carry, and a list fills against it in its own order rather than
 //! being cut after the fact.
 //!
-//! The fixture here is hostile on purpose: a world big enough that the widest
-//! call of each read verb would pass the ceiling if nothing stopped it. Each
+//! The fixture here is hostile on purpose: a household's year of notes, big
+//! enough that the widest call of each read verb would pass the ceiling if
+//! nothing stopped it. A hundred and twenty crocks in the pantry, three hundred
+//! notes about the pantry, ten sheds with long visit records, an oven whose
+//! manual was pasted whole, fifty reports in the mailbox and ninety sittings. Each
 //! case asks through the served surface, so what is measured is the answer a
 //! client receives.
 
@@ -16,7 +23,7 @@ use jojobot_domain::text::ANSWER_CEILING;
 
 use super::dsl::{Session, Story};
 
-/// How many entities the world holds, how many facts mention the marker, how
+/// How many entities the world holds, how many facts mention the pantry, how
 /// many facts sit on one subject and how many messages wait in one box.
 const ENTITIES: usize = 120;
 const MARKER_FACTS: usize = 300;
@@ -99,10 +106,10 @@ struct World {
     /// than any answer. The write guard refuses such a record today, so this is
     /// what a store holds from before the guard, and a read serves it whole.
     oversized: String,
-    /// The address of every fact that mentions the marker, read off the store
+    /// The address of every fact that mentions the pantry, read off the store
     /// as each was written, so the walk of a search has an oracle that is not
     /// the search.
-    marker_addresses: Vec<String>,
+    pantry_addresses: Vec<String>,
     /// The address of every fact on the heavy place, and the handle of every
     /// place, as the store reported them.
     heavy_addresses: Vec<String>,
@@ -155,7 +162,7 @@ async fn world(aged: bool) -> World {
         memory
             .add_entity(NewEntity::new(
                 id.clone(),
-                format!("Gizmo {}", slug(i)),
+                format!("Crock {}", slug(i)),
                 // **Where the thing came from, at the longest a source may be.** The write guard screens
                 // names and aliases against every thing already held, which
                 // is what makes a thing costly to add, and it does not screen
@@ -167,12 +174,12 @@ async fn world(aged: bool) -> World {
             .expect("an entity lands");
         handles.push(id);
     }
-    let mut marker_addresses = Vec::new();
+    let mut pantry_addresses = Vec::new();
     for i in 0..MARKER_FACTS {
         let written = memory
             .capture(NewFact::about(
                 handles[i % 40].clone(),
-                format!("marker observation {i}: {}", filler(180, i)),
+                format!("pantry observation {i}: {}", filler(180, i)),
                 today,
             ))
             .await
@@ -180,7 +187,7 @@ async fn world(aged: bool) -> World {
         let jojobot_domain::memory::Guarded::Written(fact) = written else {
             panic!("a fact about a thing that exists lands");
         };
-        marker_addresses.push(fact.address().to_string());
+        pantry_addresses.push(fact.address().to_string());
     }
     // The places: a small kind with many facts apiece, one of them heavy. A kind
     // recall costs more than the answer grows, so the kind that carries the
@@ -193,7 +200,7 @@ async fn world(aged: bool) -> World {
         memory
             .add_entity(NewEntity::new(
                 id.clone(),
-                format!("Spot {}", slug(10_000 + p)),
+                format!("Shed {}", slug(10_000 + p)),
                 "user-named",
             ))
             .await
@@ -244,7 +251,7 @@ async fn world(aged: bool) -> World {
     memory
         .add_entity(NewEntity::new(
             oversized.clone(),
-            format!("Rig {}", slug(20_000)),
+            format!("Oven {}", slug(20_000)),
             "user-named",
         ))
         .await
@@ -312,7 +319,7 @@ async fn world(aged: bool) -> World {
         sigma,
         heavy: heavy.as_str().to_string(),
         oversized: oversized.as_str().to_string(),
-        marker_addresses,
+        pantry_addresses,
         heavy_addresses,
         place_ids,
         thing_ids: handles.iter().map(|id| id.as_str().to_string()).collect(),
@@ -328,7 +335,7 @@ async fn widest_calls(world: &World) -> Vec<(&'static str, usize)> {
     let mut measured = Vec::new();
     measured.push((
         "search at limit 1000",
-        o.answer_size("search", json!({"query": "marker", "limit": 1000}))
+        o.answer_size("search", json!({"query": "pantry", "limit": 1000}))
             .await,
     ));
     measured.push((
@@ -386,6 +393,8 @@ async fn widest_calls(world: &World) -> Vec<(&'static str, usize)> {
     measured
 }
 
+/// "Whatever I ask my assistant for, how big can the answer get?"
+///
 /// **The widest call of each read verb against the one ceiling.** Prints the
 /// table, so a run with `--nocapture` is the measurement, and asserts the two
 /// things a ceiling is: the verbs this slice has made fit do fit, and the set
@@ -416,9 +425,11 @@ async fn the_widest_call_of_each_read_verb_against_the_one_ceiling() {
     );
 }
 
+/// "Show me everything I noted about the pantry. Can I read all of it, in parts, with nothing twice?"
+///
 /// **Search at its widest fits under the ceiling, and walking on from where it
 /// stops returns every hit exactly once.** Three hundred facts mention the
-/// marker, far more than fit in one answer. Each part, status bar included,
+/// pantry, far more than fit in one answer. Each part, status bar included,
 /// is under the ceiling; the offset each names reads the next; and the parts
 /// together are exactly the facts that were written, which the store handed
 /// back as each was written and which search did not produce.
@@ -433,7 +444,7 @@ async fn search_at_its_widest_fits_and_walking_on_returns_every_hit_exactly_once
             .otto
             .call(
                 "search",
-                json!({"query": "marker", "limit": 1000, "offset": offset}),
+                json!({"query": "pantry", "limit": 1000, "offset": offset}),
             )
             .await;
         parts += 1;
@@ -445,7 +456,7 @@ async fn search_at_its_widest_fits_and_walking_on_returns_every_hit_exactly_once
         );
         let body = part.json();
         for hit in body["results"].as_array().expect("a list of results") {
-            assert_eq!(hit["hit"], "fact", "only facts mention the marker: {hit}");
+            assert_eq!(hit["hit"], "fact", "only facts mention the pantry: {hit}");
             seen.push(hit["address"].as_str().expect("an address").to_string());
         }
         match body["not_shown"]["offset"].as_u64() {
@@ -458,7 +469,7 @@ async fn search_at_its_widest_fits_and_walking_on_returns_every_hit_exactly_once
     walked.sort();
     walked.dedup();
     assert_eq!(walked.len(), seen.len(), "no hit came back twice");
-    let mut written = world.marker_addresses.clone();
+    let mut written = world.pantry_addresses.clone();
     written.sort();
     assert_eq!(
         walked, written,
@@ -466,6 +477,8 @@ async fn search_at_its_widest_fits_and_walking_on_returns_every_hit_exactly_once
     );
 }
 
+/// "I read my pantry notes forty at a time. Do the pages add up to all of them?"
+///
 /// **`limit` is a page and `offset` is where the next page starts.** Three
 /// hundred facts read forty at a time come back as pages of at most forty: fewer
 /// where forty would pass the ceiling, and a page cut short says so, naming how
@@ -483,7 +496,7 @@ async fn pages_of_forty_walk_the_whole_ranking_once() {
             .otto
             .call(
                 "search",
-                json!({"query": "marker", "limit": 40, "offset": offset}),
+                json!({"query": "pantry", "limit": 40, "offset": offset}),
             )
             .await;
         assert!(page.size() <= ANSWER_CEILING, "{}", page.size());
@@ -538,7 +551,7 @@ async fn pages_of_forty_walk_the_whole_ranking_once() {
     walked.sort();
     walked.dedup();
     assert_eq!(walked.len(), seen.len(), "no hit came back twice");
-    let mut written = world.marker_addresses.clone();
+    let mut written = world.pantry_addresses.clone();
     written.sort();
     assert_eq!(
         walked, written,
@@ -546,6 +559,8 @@ async fn pages_of_forty_walk_the_whole_ranking_once() {
     );
 }
 
+/// "Fifty reports are waiting for my assistant. Does it take all of them, and tell me which bodies I still have to ask for?"
+///
 /// **A box far past the ceiling is still delivered whole in count and under the
 /// ceiling in size.** Every waiting message is taken, which the box counts
 /// confirm from the other side. The answer carries the oldest bodies whole and
@@ -630,6 +645,8 @@ async fn a_box_past_the_ceiling_is_taken_whole_and_the_answer_stays_under_it() {
     }
 }
 
+/// "I send one short note while fifty reports wait. Does the reply bury my receipt?"
+///
 /// **A post that collects a box past the ceiling stays under it and takes
 /// every message.** The delivery that rides on a post is the same delivery a
 /// read makes, fitted in the room the post's own receipt leaves. Each message
@@ -703,6 +720,8 @@ async fn a_post_that_collects_a_box_past_the_ceiling_stays_under_it_and_takes_ev
     }
 }
 
+/// "Some bodies were left out of my last read. Does the next one tell me what I already took?"
+///
 /// **The next read names what was taken and not shown.** The messages the first
 /// read left out are owed, so they come back named as leftovers, and none of
 /// them is delivered a second time.
@@ -715,6 +734,8 @@ async fn a_second_read_names_every_message_the_first_took() {
     assert_eq!(again["leftovers"]["count"], MESSAGES, "{again}");
 }
 
+/// "Show me everything my assistant knows about. Do I see each thing once?"
+///
 /// **A walk of `list_entities` returns each entity once under the ceiling.**
 /// The things, each with a sentence of where it came from, and the people and
 /// bots beside them are past the ceiling whole. Each part, status bar included, is under it, the offset each
@@ -772,6 +793,8 @@ async fn a_walk_of_list_entities_returns_each_entity_once_under_the_ceiling() {
     );
 }
 
+/// "I asked for a page after the last one. Am I told, or shown an empty house?"
+///
 /// **An offset past the last entity says so** and carries nothing, so a caller
 /// that overshot is told rather than shown an empty inventory.
 #[tokio::test]
@@ -787,6 +810,8 @@ async fn an_offset_past_the_last_entity_says_it_is_past_the_end() {
     assert!(body.get("not_shown").is_none(), "{body}");
 }
 
+/// "I sent fifty reports. Can I see where every one of them got to?"
+///
 /// **A walk of `list_sent` returns each message once.** Fifty messages with
 /// their bodies are far past the ceiling. Each part is under it, the offset
 /// each part names reads the next, and the parts together are exactly the
@@ -850,6 +875,8 @@ async fn a_walk_of_list_sent_returns_each_message_once_under_the_ceiling() {
     );
 }
 
+/// "How many sittings has my assistant had, and can I read the whole history?"
+///
 /// **A walk of `list_runs` returns each run once, newest first, under the
 /// ceiling.** Otto has ninety runs, far more than one answer holds. Each part is
 /// under it, the offset each names reads the next, and the parts together are
@@ -896,6 +923,8 @@ async fn a_walk_of_list_runs_returns_each_run_once_under_the_ceiling() {
     assert_eq!(seen, opened, "every run that was opened, newest first");
 }
 
+/// "I wrote sixty long visit notes about the big shed. Do they all arrive?"
+///
 /// **One subject with far more facts than fit comes back in parts that each fit
 /// the ceiling, and walking on returns every fact once.** The heavy place holds
 /// sixty long records, far past the ceiling. The offset names how many of its
@@ -962,6 +991,8 @@ async fn a_subject_past_the_ceiling_is_read_in_parts_that_return_each_fact_once(
     );
 }
 
+/// "Show me all my sheds, with their notes. Does any shed go missing?"
+///
 /// **A kind past the ceiling is read in parts, and walking on returns every
 /// thing once.** The places carry facts and one of them alone is past the
 /// ceiling, so its facts are cut where it stands and the answer names the call
@@ -1051,6 +1082,8 @@ async fn a_kind_past_the_ceiling_is_read_in_parts_that_return_each_thing_once() 
     );
 }
 
+/// "Show me all my crocks. Does any crock go missing?"
+///
 /// **A kind whose objects carry no facts is filled the same way.** A hundred and
 /// twenty things are past the ceiling by their fields alone, so the parts are
 /// whole objects, the count each states is what the later parts return, and the
@@ -1110,6 +1143,8 @@ async fn a_kind_without_facts_past_the_ceiling_is_read_in_parts_too() {
     );
 }
 
+/// "How old is what I know about each shed?"
+///
 /// **A kind of places whose keys are different ages is read in parts that all
 /// fit, and every place says how old it is.** Ten places are written on two
 /// days: colour and size in August, colour again in October. Every object of
@@ -1160,6 +1195,8 @@ async fn a_kind_of_places_of_different_ages_says_each_ones_age_under_the_ceiling
     assert_eq!(seen, written, "every place that was written, once");
 }
 
+/// "I pasted the oven manual in whole. Do I get it whole, and does the pointer promise only what is true?"
+///
 /// **One fact larger than the ceiling is served whole, and the pointer that
 /// sends a caller to it does not promise otherwise.** A place whose one fact is
 /// past the ceiling cannot fit in a part of a kind recall, so its facts are cut
@@ -1182,7 +1219,7 @@ async fn a_fact_larger_than_the_ceiling_is_served_whole_and_the_pointer_says_so(
         let added = memory
             .add_entity(NewEntity::new(
                 id.clone(),
-                format!("Spot {}", slug(20_000 + p)),
+                format!("Shed {}", slug(20_000 + p)),
                 "user-named",
             ))
             .await;
