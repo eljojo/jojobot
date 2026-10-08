@@ -458,6 +458,9 @@ pub(crate) async fn a_role_and_an_ordinary_claim_under_a_former_handle(
         )
         .await,
     );
+    // **Renamed by the bot that owns the role**: renaming a role object is the
+    // owner's or the chart head's to do, whatever the rename changes.
+    let owner = crate::harness::as_bot(jojobot, "gamma");
     let renamed = json_of(
         &jojobot
             .rename_entity(Parameters(RenameEntityArgs {
@@ -466,7 +469,7 @@ pub(crate) async fn a_role_and_an_ordinary_claim_under_a_former_handle(
                 parent: None,
                 recorded_at: None,
                 override_token: None,
-                sid: Some(TEST_SID.into()),
+                sid: Some(owner),
             }))
             .await
             .expect("rename ok"),

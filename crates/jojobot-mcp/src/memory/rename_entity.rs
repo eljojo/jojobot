@@ -259,12 +259,18 @@ impl Jojobot {
             Err(refused) => return Ok(refused),
         };
         let from = EntityId::person(&args.handle);
-        // **Moving a role object to another bot hands the role over**, so it is
-        // judged as archiving it is.
-        if args.parent.is_some()
-            && let Some(refused) = self
-                .refuse_a_stranger_the_role_object(&caller.bot, &from, "move it to another bot")
-                .await
+        // **Any change to a role object hands its name to somebody else**: a new
+        // parent moves the role to another bot, and a new slug or a new kind
+        // frees the name for a claim. So it is judged as archiving it is
+        // whatever the call changes.
+        let act = if args.parent.is_some() {
+            "move it to another bot"
+        } else {
+            "rename or retype it"
+        };
+        if let Some(refused) = self
+            .refuse_a_stranger_the_role_object(&caller.bot, &from, act)
+            .await
         {
             return Ok(refused);
         }

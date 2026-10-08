@@ -384,3 +384,55 @@ async fn only_the_owner_or_the_chart_head_may_move_or_merge_a_role_object() {
     s.wrap("kept the role objects with their owner").await;
     story.finish().await;
 }
+
+/// "Beta renamed the role object out of the way, then claimed the role."
+///
+/// **Any change to a role object is judged as archiving it is**, whatever the
+/// call changes: a new parent, a new slug, a new kind. A slug or a kind that
+/// changes frees the old name, and the stranger who freed it could then claim
+/// it. A stranger's slug change and kind change are refused, naming who may; the
+/// owner's slug change lands, so a build that refused every rename of a role
+/// object would not pass.
+#[tokio::test]
+async fn a_stranger_may_not_rename_or_retype_a_role_object_and_the_owner_may() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:alpha", "Alpha").await;
+    s.add("bot:beta", "Beta").await;
+    let beta = story.as_bot("bot:beta").await;
+    let (claimed, _) = story
+        .call(
+            "start_here",
+            json!({"bot": "alpha", "brief": true, "claim": "gamma", "resume": "new"}),
+        )
+        .await;
+    assert_eq!(
+        claim_of(&claimed.json())["status"],
+        "taken",
+        "{}",
+        claimed.json()
+    );
+
+    // A slug change, then a kind change.
+    for to in ["role:omega", "thing:gamma"] {
+        let refused = beta
+            .refused("rename_entity", json!({"handle": "role:gamma", "to": to}))
+            .await;
+        refused.says("\"wrote\":false").says("bot:alpha");
+        s.call("recall", json!({"subject": "role:gamma"}))
+            .await
+            .says("\"parent\":\"bot:alpha\"");
+    }
+
+    let alpha = story.as_bot("bot:alpha").await;
+    alpha
+        .call(
+            "rename_entity",
+            json!({"handle": "role:gamma", "to": "role:omega"}),
+        )
+        .await;
+    s.call("recall", json!({"subject": "role:omega"}))
+        .await
+        .says("\"parent\":\"bot:alpha\"");
+    story.finish().await;
+}
