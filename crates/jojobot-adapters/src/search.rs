@@ -350,6 +350,26 @@ struct WriteFault {
     fail_reload: std::sync::atomic::AtomicBool,
 }
 
+/// **Whether a log event is tantivy's warning about a merge that lost its
+/// source segments, which is benign.** Tantivy merges small segments in the
+/// background. A commit that deletes every document of a segment the merge is
+/// reading removes that segment from the segment manager, so when the merge
+/// ends the manager cannot find what it merged. Tantivy then warns twice, with
+/// the ids it holds and with "couldn't find segment in SegmentManager", and
+/// drops the merged result; the segments it was made from are still there and
+/// no document is lost. A case in this module's tests reproduces the race and
+/// shows every written document found after it. Tantivy's own error text says
+/// the same: the merge case "is not necessarily a bug".
+///
+/// **Those two are the only warnings the segment manager raises** in the
+/// version this build locks (`segment_manager.rs`, in `segments_status` and in
+/// `end_merge`), so the module and the level name them. A warning from any
+/// other tantivy module, and an error from this one, is not matched.
+pub fn is_the_benign_merge_race(metadata: &tracing::Metadata<'_>) -> bool {
+    metadata.target() == "tantivy::indexer::segment_manager"
+        && *metadata.level() == tracing::Level::WARN
+}
+
 /// The in-RAM full-text index over entities, facts and prose.
 pub struct FullTextIndex {
     index: Index,
