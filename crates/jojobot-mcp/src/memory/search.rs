@@ -4,7 +4,6 @@
 //! and an entrypoint that chains the systems below it.
 
 use super::*;
-use crate::teaching::{CLAIMS_DOMAIN, CLAIMS_TEACHING};
 
 /// The `edge` filter of a `search` — a shape and the entity it points at.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -618,7 +617,10 @@ impl Jojobot {
                        `recorded_on` (the default — the day a claim was said) or \
                        happened_at (the day the thing itself did); a claim with no \
                        happened_at ranks by recorded_on, and `rank_fallbacks` counts them. No \
-                       pagination — raise `limit` or ask a better question. AN EMPTY ANSWER NAMES \
+                       pagination — raise `limit` or ask a better question. THE MATCHING AND \
+                       CORPUS NOTES (what the matcher can miss, and the earlier wordings it \
+                       never reaches) ride your first search of a session and every answer of \
+                       fewer than three hits, and are left out of the rest. AN EMPTY ANSWER NAMES \
                        WHAT IT LOOKED THROUGH: it carries `searched`, one line saying the \
                        population, what was left out and the call that widens it."
     )]
@@ -730,6 +732,17 @@ impl Jojobot {
                     .count(),
             ),
         };
+        // **The two standing caveats ride once a session, and on every thin
+        // answer.** What the matcher can miss and what search never reaches are
+        // learned once; a thin or empty answer is where the gap shows, so it
+        // carries them whenever it comes. The slot is spent whenever they are
+        // shown, so a session that met them on an empty answer is not told
+        // again on its next full one. A caller with no identity cannot be
+        // tracked, so it is always told. See [`THIN_ANSWER`].
+        let first_search = self
+            .first_contact(crate::teaching::SEARCH_CAVEATS_DOMAIN, asking.as_ref())
+            .await;
+        let caveats = hits.len() < THIN_ANSWER || asking.is_none() || first_search;
         let mut body = serde_json::json!({
             "count": hits.len(),
             "rank_clock": match query.rank_clock {
@@ -745,18 +758,20 @@ impl Jojobot {
             // ⛔️ Kept apart on purpose: a caller told the index is loaded and
             // nothing else would read an empty answer as *nobody ever said
             // this*, which is the one inference this field exists to stop.
-            "matching": matching_note(&query),
+            "matching": matching_note(&query, caveats),
             "memory": memory_coverage(self.search.memory_coverage()),
             "mail": mail_coverage(&query, self.search.mail_coverage()),
             "sessions": session_coverage(self.search.session_coverage()),
-            // **A third question, beside the two above and folded into
-            // neither.** See [`corpus_note`].
-            "corpus": corpus_note(),
             "results": hits
                 .iter()
                 .map(|hit| hit_json(hit, as_of))
                 .collect::<Vec<_>>(),
         });
+        if caveats {
+            // **A third question, beside the two above and folded into
+            // neither.** See [`corpus_note`].
+            body["corpus"] = corpus_note();
+        }
         // **An empty answer names what it looked through.** The matching note
         // says the wording may have missed; this says which population the call
         // narrowed to and what the default left out. Added only to an answer
@@ -805,14 +820,6 @@ impl Jojobot {
             )
             .into();
         }
-        // **A claim reached this session** — the trigger is a fact in the
-        // answer, not the call itself: a search that matched nothing never
-        // touched the domain.
-        if hits.iter().any(|hit| matches!(hit, Hit::Fact { .. }))
-            && self.first_contact(CLAIMS_DOMAIN, asking.as_ref()).await
-        {
-            crate::answer::note_teaching(&mut body, CLAIMS_TEACHING);
-        }
         for (wanted, displaced) in &type_displaced {
             crate::answer::note_type_displaced(&mut body, wanted, displaced.as_ref());
         }
@@ -840,10 +847,11 @@ impl Jojobot {
 /// never looks at at all* — true on a complete index, with a perfectly worded
 /// query, and neither of the other two says it.
 ///
-/// **Unconditional, because the corpus itself is.** Matching only ever
-/// reaches a claim's CURRENT wording — a claim written more than once may
-/// hold, in an earlier wording, content this search can never surface,
-/// whatever the coverage state or how the query was worded. `recall` with
+/// **True of the corpus however the query was worded, so it is said once a
+/// session and again on any thin answer** (see [`THIN_ANSWER`]), not on every
+/// answer. Matching only ever reaches a claim's CURRENT wording — a claim
+/// written more than once may hold, in an earlier wording, content this search
+/// can never surface, whatever the coverage state or how the query was worded. `recall` with
 /// `history_record` is the only door onto it; this note only says the door is
 /// worth trying, never that it holds something.
 fn corpus_note() -> serde_json::Value {
@@ -856,10 +864,18 @@ fn corpus_note() -> serde_json::Value {
     })
 }
 
-fn matching_note(query: &search::SearchQuery) -> serde_json::Value {
+/// **An answer with fewer hits than this is thin.** A thin or empty answer is
+/// where the wording may have missed, so the two standing caveats ride on it
+/// every time; a full answer carries them once a session. One number, here.
+pub(crate) const THIN_ANSWER: usize = 3;
+
+fn matching_note(query: &search::SearchQuery, with_note: bool) -> serde_json::Value {
     let exact = query
         .terms()
         .is_some_and(|text| EntityId(text.trim().to_string()).kind().is_some());
+    if !with_note {
+        return serde_json::json!({ "exact": exact });
+    }
     serde_json::json!({
         "exact": exact,
         "note": if exact {
@@ -1030,6 +1046,140 @@ mod tests {
             found.get("type_displaced").is_none(),
             "nothing was ever a caller's under this name, so nothing is named: {found}"
         );
+    }
+
+    /// One place hit, so a case can hand the spy as many results as it needs.
+    fn a_place_hit(slug: &str) -> Hit {
+        Hit::Entity {
+            entity: Entity {
+                id: EntityId(format!("place:{slug}")),
+                kind: EntityKind::PLACE,
+                name: format!("The {slug}"),
+                aliases: Vec::new(),
+                source: "user-named".into(),
+                crm: None,
+                parent: None,
+                boot: Boot::OnDemand,
+                merged_into: None,
+                badge: None,
+                archived: None,
+            },
+            doc_id: format!("doc-{slug}"),
+            edges: Vec::new(),
+            answers: None,
+        }
+    }
+
+    /// An answer of exactly `n` hits, from a session that is `sid`.
+    async fn searched_with(jojobot: &Jojobot, sid: &str) -> serde_json::Value {
+        json_of(
+            &jojobot
+                .search(Parameters(SearchArgs {
+                    query: Some("committee meets".into()),
+                    sid: Some(sid.into()),
+                    ..search_args()
+                }))
+                .await
+                .expect("search ok"),
+        )
+    }
+
+    fn carries_the_notes(body: &serde_json::Value) -> bool {
+        body["matching"]["note"].is_string() && body["corpus"]["note"].is_string()
+    }
+
+    /// 🚨 **The two standing caveats ride once a session and on a thin answer.**
+    /// What the matcher can miss and what search never reaches are things a
+    /// session learns once; saying them again on every full answer is 700
+    /// characters a search for a reader that has them. Without the floor a
+    /// session of full answers would never learn that a superseded wording is
+    /// not searched, so the first search carries them, and an answer thinner
+    /// than [`THIN_ANSWER`] always does, because that is where the gap shows.
+    /// The number is pinned here as 3.
+    #[tokio::test]
+    async fn the_search_caveats_ride_once_a_session_and_on_every_thin_answer() {
+        assert_eq!(
+            THIN_ANSWER, 3,
+            "the number a thin answer is measured against"
+        );
+        let full: Vec<Hit> = ["alpha", "beta", "gamma"].map(a_place_hit).into();
+        let thin: Vec<Hit> = ["alpha", "beta"].map(a_place_hit).into();
+
+        // ── a full answer: the first search of a session carries them, the
+        //    second does not ────────────────────────────────────────────────
+        let jojobot = handler_with(Arc::new(SpySearch::answering(full.clone())));
+        let sid = writing_as(&jojobot);
+        let first = searched_with(&jojobot, &sid).await;
+        assert_eq!(first["count"], 3, "{first}");
+        assert!(
+            carries_the_notes(&first),
+            "the first search teaches them: {first}"
+        );
+        let second = searched_with(&jojobot, &sid).await;
+        assert_eq!(second["count"], 3, "{second}");
+        assert!(
+            second["matching"]["note"].is_null() && second["corpus"].is_null(),
+            "the second full search does not repeat them: {second}"
+        );
+        assert!(
+            second["matching"]["exact"].is_boolean(),
+            "what the query was is still said: {second}"
+        );
+
+        // ── a fresh session is taught again ──────────────────────────────────
+        let other = as_bot(&jojobot, "delta");
+        let fresh = searched_with(&jojobot, &other).await;
+        assert!(
+            carries_the_notes(&fresh),
+            "a new session learns them: {fresh}"
+        );
+
+        // ── a thin answer always carries them, the slot spent or not ─────────
+        let thin_jojobot = handler_with(Arc::new(SpySearch::answering(thin)));
+        let thin_sid = writing_as(&thin_jojobot);
+        for which in ["first", "second"] {
+            let answer = searched_with(&thin_jojobot, &thin_sid).await;
+            assert_eq!(answer["count"], 2, "{answer}");
+            assert!(
+                carries_the_notes(&answer),
+                "the {which} thin answer: {answer}"
+            );
+        }
+
+        // ── and an empty one ─────────────────────────────────────────────────
+        let empty_jojobot = handler_with(Arc::new(SpySearch::answering(Vec::new())));
+        let empty_sid = writing_as(&empty_jojobot);
+        for which in ["first", "second"] {
+            let answer = searched_with(&empty_jojobot, &empty_sid).await;
+            assert_eq!(answer["count"], 0, "{answer}");
+            assert!(
+                carries_the_notes(&answer),
+                "the {which} empty answer: {answer}"
+            );
+        }
+    }
+
+    /// A caller with no identity cannot be tracked, so it is never told "once":
+    /// every full answer it gets carries the caveats.
+    #[tokio::test]
+    async fn an_anonymous_full_search_always_carries_the_caveats() {
+        let full: Vec<Hit> = ["alpha", "beta", "gamma"].map(a_place_hit).into();
+        let jojobot = handler_with(Arc::new(SpySearch::answering(full)));
+        for which in ["first", "second"] {
+            let answer = json_of(
+                &jojobot
+                    .search(Parameters(SearchArgs {
+                        query: Some("committee meets".into()),
+                        ..search_args()
+                    }))
+                    .await
+                    .expect("search ok"),
+            );
+            assert!(
+                carries_the_notes(&answer),
+                "the {which} anonymous search: {answer}"
+            );
+        }
     }
 
     /// 🚨 **A search over mail says whose mail it never reaches.** A person's

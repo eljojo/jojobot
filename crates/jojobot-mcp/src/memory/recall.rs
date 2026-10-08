@@ -11,7 +11,6 @@ use jojobot_domain::attention;
 
 use super::*;
 use crate::session::session_declined;
-use crate::teaching::{CLAIMS_DOMAIN, CLAIMS_TEACHING};
 use jojobot_domain::memory::{entitlement, graph};
 use jojobot_domain::text;
 
@@ -2109,7 +2108,6 @@ impl Jojobot {
                 left_out_by_status.insert(object.entity.id.clone(), removed);
             }
         }
-        let claims_reached = found.iter().any(|object| !object.facts.is_empty());
         // **A mark asked for by `keys` is not on the thing, and the answer says
         // where it is.** The six describing keys stay on their claim, so
         // narrowing a thing's fields to one of them hands back an object with
@@ -2378,9 +2376,6 @@ impl Jojobot {
                 "drop a filter, or call search with the words a record would use",
             )
             .into();
-        }
-        if claims_reached && self.first_contact(CLAIMS_DOMAIN, caller.as_ref()).await {
-            crate::answer::note_teaching(&mut body, CLAIMS_TEACHING);
         }
         for (wanted, displaced) in &type_displaced {
             crate::answer::note_type_displaced(&mut body, wanted, displaced.as_ref());

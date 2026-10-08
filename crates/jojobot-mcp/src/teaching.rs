@@ -44,6 +44,11 @@ pub(crate) const CLAIMS_TEACHING: &str = "A further claim does not destroy the o
     still an ordinary fact when it is not correcting anything: 'he did not attend' stands on its \
     own.";
 
+/// **The third domain — what a search can and cannot reach.** The matcher is
+/// loose and reaches only a claim's current wording; a session learns that once.
+/// A thin or empty answer carries it again, where the gap shows.
+pub(crate) const SEARCH_CAVEATS_DOMAIN: &str = "search-caveats";
+
 /// **The second domain — a convention, not a rule about claims themselves.**
 /// A different string from [`CLAIMS_DOMAIN`], so a session already taught one
 /// has not been taught the other: they are independent rows on the same
@@ -1098,10 +1103,14 @@ mod tests {
         );
     }
 
-    /// **A search that surfaces a claim teaches, once.** The same session's
-    /// next search — even one that surfaces the SAME claim again — does not.
+    /// **A search that surfaces a claim does not teach the claims, and does not
+    /// spend the slot.** The claims teaching is about writing a claim, so it
+    /// rides on the write verbs; a read that reached a claim first used to
+    /// spend the session's one slot and the capture it is about never got it.
+    /// Here the search surfaces a claim twice and teaches nothing, and the
+    /// capture that follows carries the teaching.
     #[tokio::test]
-    async fn a_search_that_surfaces_a_fact_teaches_once() {
+    async fn a_search_that_surfaces_a_fact_leaves_the_claims_teaching_for_a_write() {
         use jojobot_domain::memory::search::Hit;
         use jojobot_domain::memory::{Fact, FactId, FactStatus, Provenance, Standing};
 
@@ -1150,10 +1159,9 @@ mod tests {
                 .await
                 .expect("search ok"),
         );
-        assert_eq!(
-            first["teaching"],
-            serde_json::json!([CLAIMS_TEACHING]),
-            "the first search surfacing a claim carries the teaching: {first}"
+        assert!(
+            first.get("teaching").is_none(),
+            "a read does not carry the claims teaching: {first}"
         );
 
         let second = json_of(
@@ -1168,16 +1176,25 @@ mod tests {
         );
         assert!(
             second.get("teaching").is_none(),
-            "the same session surfacing a claim again is not taught twice: {second}"
+            "nor does the second read: {second}"
+        );
+
+        // The write the teaching is about still gets it: the reads spent nothing.
+        let written = capture_as(&jojobot, &sid, capture_args("alpha", "plays go too")).await;
+        assert!(
+            written["teaching"]
+                .as_array()
+                .expect("a list")
+                .contains(&serde_json::json!(CLAIMS_TEACHING)),
+            "the capture after the reads carries the claims teaching: {written}"
         );
     }
 
-    /// **`recall` teaches the same way `search` does**: the trigger is
-    /// facts coming back, not the call. Asking for a subject with no facts
-    /// requested does not teach; asking with `facts: true` and getting one
-    /// back does, once.
+    /// **`recall` does not teach the claims either, with or without facts**,
+    /// and it does not spend the slot: a session that reads first and captures
+    /// after gets the teaching on the capture, which is the verb it is about.
     #[tokio::test]
-    async fn recall_teaches_when_facts_come_back_and_only_once() {
+    async fn recall_leaves_the_claims_teaching_for_a_write() {
         // **A fact seeded straight through the store**, not through
         // `capture` — the MCP verb would consume the session's one teaching
         // itself, leaving nothing for this case to observe.
@@ -1226,10 +1243,9 @@ mod tests {
             .await
             .expect("recall ok");
         let with_facts = json_of(&with_facts);
-        assert_eq!(
-            with_facts["teaching"],
-            serde_json::json!([CLAIMS_TEACHING]),
-            "the first recall of a claim carries the teaching: {with_facts}"
+        assert!(
+            with_facts.get("teaching").is_none(),
+            "a recall that returns a claim does not carry the teaching: {with_facts}"
         );
 
         let again = jojobot
@@ -1242,7 +1258,17 @@ mod tests {
         let again = json_of(&again);
         assert!(
             again.get("teaching").is_none(),
-            "the same session recalling a claim again is not taught twice: {again}"
+            "nor does the second recall: {again}"
+        );
+
+        // The reads spent nothing: the capture after them is taught.
+        let written = capture_as(&jojobot, &sid, capture_args("alpha", "plays go too")).await;
+        assert!(
+            written["teaching"]
+                .as_array()
+                .expect("a list")
+                .contains(&serde_json::json!(CLAIMS_TEACHING)),
+            "the capture after the reads carries the claims teaching: {written}"
         );
     }
 
@@ -1425,76 +1451,43 @@ mod tests {
     }
 
     /// ⭐ **The case that makes this a domain rather than a longer paragraph.**
-    /// A session taught about claims through `search` has NOT been taught the
+    /// A session taught about claims through `retract` has NOT been taught the
     /// subject convention — the two are independent rows on the same ledger,
     /// not one teaching that happens to render in two places.
     #[tokio::test]
     async fn claims_and_the_subject_convention_are_independently_tracked() {
-        use jojobot_domain::memory::search::Hit;
-        use jojobot_domain::memory::{Fact, FactId, FactStatus, Provenance, Standing};
+        let (jojobot, sid) = a_seeded_fact_handler().await;
 
-        let fact = Fact {
-            id: FactId("f1".into()),
-            home: EntityId::person("person:alpha"),
-            subject: EntityId::person("person:alpha"),
-            content: "plays go".into(),
-            details: None,
-            provenance: Provenance::Testimony,
-            standing: Standing::Settled,
-            status: FactStatus::Active,
-            recorded_at: jiff::civil::date(2026, 7, 1),
-            happened_at: None,
-            happened_through: None,
-            edge: None,
-            fields: Default::default(),
-            refs: Vec::new(),
-            derived_from: None,
-            stands_for: Vec::new(),
-            inserted_at: None,
-            stale_after: None,
-        };
-        let hit = Hit::Fact {
-            fact: Box::new(fact),
-            subject: jojobot_domain::memory::search::EntityRef::unresolved(EntityId::person(
-                "person:alpha",
-            )),
-            home: jojobot_domain::memory::search::EntityRef::unresolved(EntityId::person(
-                "person:alpha",
-            )),
-            source: None,
-        };
-        let spy = Arc::new(SpySearch::answering(vec![hit]));
-        let jojobot = handler_with(spy);
-        make_bot(&jojobot, "gamma").await;
-        let sid = booted(&jojobot, "gamma").await;
-
-        // `search` touches only the claims domain — it never mentions a
+        // `retract` touches only the claims domain — it never mentions a
         // subject field — so this session is now taught claims and nothing
         // else.
-        let searched = json_of(
+        let retracted = json_of(
             &jojobot
-                .search(rmcp::handler::server::wrapper::Parameters(SearchArgs {
-                    query: Some("plays go".into()),
-                    sid: Some(sid.clone()),
-                    ..search_args()
-                }))
+                .retract(rmcp::handler::server::wrapper::Parameters(
+                    crate::memory::RetractArgs {
+                        address: "person:alpha#f1".into(),
+                        reason: Some("never happened".into()),
+                        recorded_at: None,
+                        sid: Some(sid.clone()),
+                    },
+                ))
                 .await
-                .expect("search ok"),
+                .expect("retract ok"),
         );
         assert_eq!(
-            searched["teaching"],
+            retracted["teaching"],
             serde_json::json!([CLAIMS_TEACHING]),
-            "search taught claims, and only claims: {searched}"
+            "retract taught claims, and only claims: {retracted}"
         );
 
         // The first capture this session ever makes still owes it the
         // subject-convention teaching, because that domain is untouched —
-        // and it must NOT re-teach claims, which search already covered.
+        // and it must NOT re-teach claims, which the retraction already covered.
         let captured = capture_as(&jojobot, &sid, capture_args("alpha", "plays go too")).await;
         assert_eq!(
             captured["teaching"],
             serde_json::json!([CLAIM_SUBJECT_TEACHING]),
-            "capture owes only the domain search never touched: {captured}"
+            "capture owes only the domain the retraction never touched: {captured}"
         );
     }
 
