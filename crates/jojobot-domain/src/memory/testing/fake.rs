@@ -19,6 +19,12 @@ pub struct InMemoryMemory {
     /// resolves a handle builds the whole list, so a read that does it once per
     /// entity costs the square of the store; this is how a case sees it.
     index_reads: std::sync::atomic::AtomicUsize,
+    /// **How many times the declared types have been cloned out**, and how many
+    /// times the whole list of writes has been passed over to project a claim.
+    /// Serving a claim does both, so a read that serves every claim pays them
+    /// once per claim unless it shares them; these are how a case sees it.
+    declaration_reads: std::sync::atomic::AtomicUsize,
+    write_scans: std::sync::atomic::AtomicUsize,
     /// The claims. **Their fields are not here**: a claim is stored with an
     /// empty bag and its fields are projected from [`InMemoryMemory::writes`]
     /// on every read, exactly as the real store projects them from its own
@@ -118,6 +124,18 @@ impl InMemoryMemory {
     /// measures a delta across the call it is checking.
     pub fn index_reads(&self) -> usize {
         self.index_reads.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// How many times the declared types have been cloned out, by any read.
+    pub fn declaration_reads(&self) -> usize {
+        self.declaration_reads
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// How many times the whole list of writes has been passed over, by any
+    /// read.
+    pub fn write_scans(&self) -> usize {
+        self.write_scans.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// **The store, told what the build supplies over it.** Only the existence
@@ -593,8 +611,17 @@ impl InMemoryMemory {
     /// today — the mirror of [`Self::lower_reference_fields`], run once,
     /// right before a fields map reaches whoever asked for it.
     fn compose_reference_fields(&self, fields: &mut std::collections::BTreeMap<String, String>) {
-        let declared = self.declarations();
-        let referenced = super::super::reference_field_values(fields, &declared);
+        self.compose_reference_fields_in(&self.resolution(), fields);
+    }
+
+    /// [`Self::compose_reference_fields`] over a resolution the caller shares
+    /// with every other claim it serves.
+    fn compose_reference_fields_in(
+        &self,
+        resolution: &Resolution<'_>,
+        fields: &mut std::collections::BTreeMap<String, String>,
+    ) {
+        let referenced = super::super::reference_field_values(fields, &resolution.declared);
         for (key, items) in &referenced {
             let composed: Vec<String> = items
                 .iter()
@@ -602,7 +629,8 @@ impl InMemoryMemory {
                     // A key declared a reference AFTER a handle was stored under
                     // it as an undeclared one holds that value behind the mark.
                     let stored = super::super::stored_handle_id(item).unwrap_or(item);
-                    self.current_handle(&EntityId(stored.to_string()))
+                    resolution
+                        .current_handle(&EntityId(stored.to_string()))
                         .to_string()
                 })
                 .collect();
@@ -612,12 +640,6 @@ impl InMemoryMemory {
         // value stored behind the mark is the thing's id. One stored as plain
         // handle text, from before ids were kept, is resolved through the
         // thing's rename history, so it keeps pointing at the thing it named.
-        //
-        // **Read the rows and the rename history only when a value needs
-        // them.** Both rebuild every entity the store holds, and a scan runs
-        // this once per document and once per claim, almost all of them with
-        // no handle in any value.
-        let mut resolution: Option<(Vec<Entity>, Vec<FormerHandle>)> = None;
         for (key, value) in fields.clone() {
             if referenced.iter().any(|(held, _)| held == &key) {
                 continue;
@@ -630,7 +652,11 @@ impl InMemoryMemory {
                 let composed: Vec<String> = items
                     .iter()
                     .filter_map(|item| super::super::stored_handle_id(item))
-                    .map(|id| self.current_handle(&EntityId(id.to_string())).to_string())
+                    .map(|id| {
+                        resolution
+                            .current_handle(&EntityId(id.to_string()))
+                            .to_string()
+                    })
                     .collect();
                 fields.insert(key, composed.join(", "));
             } else {
@@ -638,12 +664,10 @@ impl InMemoryMemory {
                 if handles.is_empty() {
                     continue;
                 }
-                let (known, former) =
-                    resolution.get_or_insert_with(|| (self.known(), self.former()));
                 let composed: Vec<String> = handles
                     .iter()
                     .map(|id| {
-                        super::super::resolve_handle(id, known, former)
+                        super::super::resolve_handle(id, resolution.known(), resolution.former())
                             .map_or_else(|| id.to_string(), |entity| entity.id.to_string())
                     })
                     .collect();
@@ -673,16 +697,38 @@ impl InMemoryMemory {
             .collect()
     }
 
+    /// **What serving claims needs to resolve a handle, read once.** The rows,
+    /// the rename history and the declared types are each a clone of the whole
+    /// of something, so a call that serves many claims builds one of these and
+    /// hands it to every one, rather than rebuilding them for each claim. The
+    /// rows and the rename history are read the first time a value needs them
+    /// and not before, as most claims name no handle at all.
+    fn resolution(&self) -> Resolution<'_> {
+        Resolution {
+            store: self,
+            declared: self.declarations(),
+            known: std::sync::OnceLock::new(),
+            former: std::sync::OnceLock::new(),
+        }
+    }
+
+    /// **Every stored key on a fact, served under the handle it answers to
+    /// today.** One claim, so one resolution; a call serving many builds its
+    /// own and uses [`Self::served_in`].
+    fn served(&self, f: Fact, handle: &EntityId) -> Fact {
+        self.served_in(&self.resolution(), f, handle)
+    }
+
     /// **Every stored key on a fact, served under the handle it answers to
     /// today** — `home`, `subject`, and a lineage pointer's own `home`, which
     /// is a `FactAddress` like any other and goes stale the same way. Applied
     /// once, right before a fact reaches whoever asked for it.
-    fn served(&self, mut f: Fact, handle: &EntityId) -> Fact {
+    fn served_in(&self, resolution: &Resolution<'_>, mut f: Fact, handle: &EntityId) -> Fact {
         f.home = handle.clone();
         f.subject = handle.clone();
         if let Some(source) = &f.derived_from {
             f.derived_from = Some(FactAddress::new(
-                self.current_handle(&source.home),
+                resolution.current_handle(&source.home),
                 source.local.clone(),
             ));
         }
@@ -690,17 +736,22 @@ impl InMemoryMemory {
         // 268), so they are resolved the same way, here, once, rather than a
         // reader chasing a handle's rename history on every use.
         if let Some(edge) = &f.edge {
-            f.edge = Some(Edge::new(edge.shape, self.current_handle(&edge.object)));
+            f.edge = Some(Edge::new(
+                edge.shape,
+                resolution.current_handle(&edge.object),
+            ));
         }
         f.refs = f
             .refs
             .iter()
-            .map(|object| self.current_handle(object))
+            .map(|object| resolution.current_handle(object))
             .collect();
         f.stands_for = f
             .stands_for
             .iter()
-            .map(|named| FactAddress::new(self.current_handle(&named.home), named.local.clone()))
+            .map(|named| {
+                FactAddress::new(resolution.current_handle(&named.home), named.local.clone())
+            })
             .collect();
         // **A reference-typed field value is a pointer like any other**, so
         // it is composed here too. Safe to run over the fields this
@@ -708,7 +759,7 @@ impl InMemoryMemory {
         // capture's own immediate return) or still badge form (a fields
         // map read back off the substrate): resolving an already-current
         // handle finds no badge wearing it and leaves the value as it was.
-        self.compose_reference_fields(&mut f.fields);
+        self.compose_reference_fields_in(resolution, &mut f.fields);
         f
     }
 
@@ -777,11 +828,47 @@ impl InMemoryMemory {
     /// One value per key — the newest write of that key made by THIS record —
     /// and a key whose newest write inside the record took it off is not there.
     fn projected(&self, fact: &Fact) -> Fact {
+        self.write_scans
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let writes = self.writes.lock().expect("fake mutex poisoned");
-        let mut mine: Vec<&StoredWrite> = writes
+        let mine: Vec<&StoredWrite> = writes
             .iter()
             .filter(|w| w.entity == fact.home && w.fact == fact.id)
             .collect();
+        Self::project(fact, mine)
+    }
+
+    /// **Every write, grouped by the record that carried it, in one pass.** A
+    /// read that projects every claim asks this once and then looks each claim
+    /// up, instead of passing over all the writes for each claim.
+    fn writes_by_record(&self) -> std::collections::HashMap<(EntityId, FactId), Vec<StoredWrite>> {
+        self.write_scans
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let mut grouped: std::collections::HashMap<(EntityId, FactId), Vec<StoredWrite>> =
+            std::collections::HashMap::new();
+        for write in self.writes.lock().expect("fake mutex poisoned").iter() {
+            grouped
+                .entry((write.entity.clone(), write.fact.clone()))
+                .or_default()
+                .push(write.clone());
+        }
+        grouped
+    }
+
+    /// [`Self::projected`] for a claim whose writes were grouped by
+    /// [`Self::writes_by_record`].
+    fn projected_from(
+        grouped: &std::collections::HashMap<(EntityId, FactId), Vec<StoredWrite>>,
+        fact: &Fact,
+    ) -> Fact {
+        let mine: Vec<&StoredWrite> = grouped
+            .get(&(fact.home.clone(), fact.id.clone()))
+            .map(|writes| writes.iter().collect())
+            .unwrap_or_default();
+        Self::project(fact, mine)
+    }
+
+    fn project(fact: &Fact, mut mine: Vec<&StoredWrite>) -> Fact {
         mine.sort_by_key(|w| w.ordinal);
         let mut fields = std::collections::BTreeMap::new();
         for write in mine {
@@ -889,6 +976,8 @@ impl InMemoryMemory {
 
     /// What has been declared — which is what says how each key folds.
     fn declarations(&self) -> Vec<crate::memory::types::DeclaredType> {
+        self.declaration_reads
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.types.lock().expect("fake mutex poisoned").clone()
     }
 
@@ -984,6 +1073,7 @@ impl InMemoryMemory {
 /// One row of the fake's field substrate — the shape the real store keeps in a
 /// table, kept here so the two cannot come to disagree about what a read
 /// projects.
+#[derive(Clone)]
 struct StoredWrite {
     /// The thing the key was written on. With [`StoredWrite::key`] it is the
     /// address a history is asked for.
@@ -995,6 +1085,36 @@ struct StoredWrite {
     value: Option<String>,
     /// The record that carried it.
     fact: FactId,
+}
+
+/// **What serving claims resolves handles through**, built once by a call that
+/// serves many. The declared types are cloned when it is built; the rows and
+/// the rename history are read the first time a value holds a handle, and then
+/// kept for the rest of the call.
+struct Resolution<'a> {
+    store: &'a InMemoryMemory,
+    declared: Vec<crate::memory::types::DeclaredType>,
+    known: std::sync::OnceLock<Vec<Entity>>,
+    former: std::sync::OnceLock<Vec<FormerHandle>>,
+}
+
+impl Resolution<'_> {
+    fn known(&self) -> &[Entity] {
+        self.known.get_or_init(|| self.store.known())
+    }
+
+    fn former(&self) -> &[FormerHandle] {
+        self.former.get_or_init(|| self.store.former())
+    }
+
+    /// The handle a stored value answers to today, as
+    /// [`InMemoryMemory::current_handle`] answers it, over the rows read once.
+    fn current_handle(&self, stored: &EntityId) -> EntityId {
+        match super::super::entity_wearing(stored.as_str(), self.known()) {
+            Some(entity) => entity.id.clone(),
+            None => stored.clone(),
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -1824,6 +1944,10 @@ impl Memory for InMemoryMemory {
         let declared = self.declared_types().await?;
         let entities = self.list_entities(None).await?;
         let stored: Vec<Fact> = self.facts.lock().expect("fake mutex poisoned").clone();
+        // **Shared by every claim this call serves**, so what it costs does not
+        // move with how many there are.
+        let resolution = self.resolution();
+        let grouped = self.writes_by_record();
         let mut pointing = Vec::new();
         for entity in &entities {
             let key = match &entity.badge {
@@ -1831,7 +1955,11 @@ impl Memory for InMemoryMemory {
                 None => entity.id.clone(),
             };
             for fact in stored.iter().filter(|f| f.subject == key || f.home == key) {
-                let served = self.served(self.projected(fact), &entity.id);
+                let served = self.served_in(
+                    &resolution,
+                    Self::projected_from(&grouped, fact),
+                    &entity.id,
+                );
                 if super::super::fields_name_target(&served.fields, &declared, target) {
                     pointing.push(served);
                 }

@@ -1177,22 +1177,27 @@ async fn the_fake_stores_a_mention_as_a_badge_and_serves_it_as_a_handle() {
     .await;
 }
 
-/// **Asking who points at a thing does not rebuild the entity rows once per
-/// entity.** The trait's default asks `recall` of every entity, and the fake's
-/// `recall` rebuilds the whole row list each time, so a recall of a whole kind,
-/// which asks this once per object, cost the cube of the store: 150 things took
-/// seconds and 400 took more than half a minute.
+/// **Asking who points at a thing costs the same however many entities and
+/// however many claims the store holds, in the reads it repeats.** The trait's
+/// default asks `recall` of every entity, and the fake's `recall` rebuilds the
+/// whole row list each time, so a recall of a whole kind, which asks this once
+/// per object, cost the cube of the store: 150 things took seconds and 400 took
+/// more than half a minute. Serving each claim then cloned every declared type
+/// and passed over every write, once per claim, so the cost still moved with
+/// the claims.
 ///
-/// **The property is that the number of rebuilds does not move with the number
-/// of entities.** It is asked of two stores that differ only in how many
-/// entities they hold, with the same two claims, so a rebuild per claim, which
-/// is a separate cost, does not fail it. The positive comes first: the one
-/// record that names the target is the one that comes back, and a claim naming
-/// something else does not, so a fake that read less because it answered
-/// nothing, or everything, does not pass.
+/// **The reads counted are the ones that rebuild or clone the whole of
+/// something**: the entity rows, the declared types and the list of writes.
+/// They are asked of stores that differ in one thing at a time, entities and
+/// then claims, so a repeat that moves with either fails. The positive comes
+/// first: the one record that names the target is the one that comes back, and
+/// a claim naming something else does not, so a fake that read less because it
+/// answered nothing, or everything, does not pass.
 #[tokio::test]
-async fn the_fake_answers_who_points_at_a_thing_without_rebuilding_the_rows_per_entity() {
-    async fn reads_for_one_question(fillers: usize) -> usize {
+async fn the_fake_answers_who_points_at_a_thing_without_repeating_whole_reads_per_entity_or_claim()
+{
+    /// What one question over a store of this size cost, as repeated whole reads.
+    async fn reads_for_one_question(fillers: usize, extra_claims: usize) -> (usize, usize, usize) {
         let store = InMemoryMemory::booted();
         let target = EntityId("event:contract-winter-fest".into());
         let holder = EntityId("person:contract-milhouse".into());
@@ -1249,43 +1254,60 @@ async fn the_fake_answers_who_points_at_a_thing_without_rebuilding_the_rows_per_
             .expect("a capture")
             .written()
             .expect("nothing blocks it");
-        // A claim naming something else, which must not come back.
-        store
-            .capture(NewFact {
-                fields: [("admits".to_string(), holder.to_string())]
-                    .into_iter()
-                    .collect(),
-                ..NewFact::about(
-                    holder.clone(),
-                    "holds a pass to itself",
-                    jiff::civil::date(2026, 8, 2),
-                )
-            })
-            .await
-            .expect("a capture")
-            .written()
-            .expect("nothing blocks it");
+        // Claims naming something else, which must not come back. Each names the
+        // holder itself, a handle, so serving one has a handle to resolve.
+        for n in 0..extra_claims {
+            store
+                .capture(NewFact {
+                    fields: [("admits".to_string(), holder.to_string())]
+                        .into_iter()
+                        .collect(),
+                    ..NewFact::about(
+                        holder.clone(),
+                        format!("holds pass number {n} to itself"),
+                        jiff::civil::date(2026, 8, 2),
+                    )
+                })
+                .await
+                .expect("a capture")
+                .written()
+                .expect("nothing blocks it");
+        }
 
-        let before = store.index_reads();
+        let (rows, declared, scans) = (
+            store.index_reads(),
+            store.declaration_reads(),
+            store.write_scans(),
+        );
         let pointing = store.referring_to(&target).await.expect("who points here");
-        let reads = store.index_reads() - before;
         assert_eq!(
             pointing
                 .iter()
                 .map(|f| f.address().to_string())
                 .collect::<Vec<_>>(),
             vec![held.address().to_string()],
-            "the record naming the target comes back, and the one naming something else does not"
+            "the record naming the target comes back, and the ones naming something else do not"
         );
-        reads
+        (
+            store.index_reads() - rows,
+            store.declaration_reads() - declared,
+            store.write_scans() - scans,
+        )
     }
 
-    let small = reads_for_one_question(20).await;
-    let large = reads_for_one_question(60).await;
+    let few_entities = reads_for_one_question(20, 2).await;
+    let many_entities = reads_for_one_question(60, 2).await;
     assert_eq!(
-        small, large,
-        "the entity rows were rebuilt {small} times over 22 entities and {large} times over 62: \
-         the cost of one question moves with the size of the store"
+        few_entities, many_entities,
+        "(rows rebuilt, declared types cloned, write passes) over 22 entities and over 62: the \
+         cost of one question moves with the entities"
+    );
+    let few_claims = reads_for_one_question(20, 2).await;
+    let many_claims = reads_for_one_question(20, 12).await;
+    assert_eq!(
+        few_claims, many_claims,
+        "(rows rebuilt, declared types cloned, write passes) over 3 claims and over 13: the cost \
+         of one question moves with the claims"
     );
 }
 
