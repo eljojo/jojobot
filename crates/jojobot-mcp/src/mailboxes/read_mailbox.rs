@@ -300,7 +300,7 @@ impl Jojobot {
                 if delivery.messages.is_empty() && leftovers.is_empty() {
                     let mut left_out = vec![format!("processed mail ({archived})")];
                     if unreadable > 0 {
-                        left_out.push(format!("{unreadable} unreadable cards"));
+                        left_out.push(format!("{unreadable} unreadable messages"));
                     }
                     rendered["searched"] = crate::answer::population_line(
                         &format!("the unprocessed mail in box {}", name.as_str()),
@@ -1399,6 +1399,51 @@ mod tests {
             full["searched"].is_null(),
             "a delivery needs no line: {full}"
         );
+    }
+
+    /// **An empty delivery that left out unreadable mail counts it in the
+    /// caller's words**, never the retired store's: the box holds messages,
+    /// and a line that calls them cards teaches a vocabulary an agent has no
+    /// use for (the same retired words the quarantine advice is held to).
+    #[tokio::test]
+    async fn an_empty_delivery_counts_unreadable_mail_as_messages() {
+        let jojobot = mailbox_handler();
+        let reader = owning(&jojobot, "dev").await;
+        let sent = send(&jojobot, "dev", "epsilon", "a count nobody can trust").await;
+        jojobot
+            .mark_processed(Parameters(MarkProcessedArgs {
+                message_id: sent["id"].as_str().expect("a message id").to_string(),
+                notes: None,
+                sid: Some(reader.clone()),
+                quarantine: Some("the count on this one cannot be trusted".into()),
+            }))
+            .await
+            .expect("quarantining is an answer");
+
+        let empty = json_of(
+            &jojobot
+                .read_mailbox(Parameters(ReadMailboxArgs {
+                    counts_only: None,
+                    new_only: None,
+                    sid: Some(reader),
+                }))
+                .await
+                .expect("read ok"),
+        );
+        assert_eq!(empty["count"], 0, "{empty}");
+        let line = empty["searched"]
+            .as_str()
+            .expect("an empty delivery names its population");
+        assert!(
+            line.contains("1 unreadable message"),
+            "counts the unreadable mail it left out: {line}"
+        );
+        for retired in ["card", "board", "column", "label"] {
+            assert!(
+                !line.to_lowercase().contains(retired),
+                "the line teaches the retired store ({retired:?}): {line}"
+            );
+        }
     }
     async fn ask_box(jojobot: &Jojobot, sid: Option<String>) -> Result<CallToolResult, McpError> {
         jojobot
