@@ -734,6 +734,12 @@ fn the_mail_descriptions_name_how_an_answer_past_the_ceiling_is_cut() {
     assert_description_names("list_sent", &["not_shown", "offset"]);
 }
 
+/// **`recall` names how an answer past the ceiling is cut and continued.**
+#[test]
+fn the_recall_description_names_not_shown_offset_and_facts_not_shown() {
+    assert_description_names("recall", &["not_shown", "offset", "facts_not_shown"]);
+}
+
 /// **`merge_entities` says its names become aliases of the survivor.**
 #[test]
 fn the_merge_description_names_the_aliases_it_carries() {

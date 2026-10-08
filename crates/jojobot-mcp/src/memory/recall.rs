@@ -323,6 +323,13 @@ pub struct RecallArgs {
     /// you reach the far end — deliberately, rather than by surprise.
     #[serde(default)]
     pub(crate) history_most: Option<u32>,
+    /// **How many you have already read, when an answer stopped at the answer
+    /// ceiling.** The answer names the `offset` that returns the next part;
+    /// repeat the same call with it. A call that selects ONE object counts its
+    /// facts (`facts: true` on a subject with more than fit); a call that
+    /// selects several, a kind or a walk, counts the objects. Defaults to 0.
+    #[serde(default)]
+    pub(crate) offset: Option<u32>,
     /// **Where each folded value came from**, and who backs it: the claim whose
     /// write won the key, its provenance and its standing.
     ///
@@ -994,6 +1001,149 @@ struct KeyNarrowing<'a> {
     by_view: bool,
 }
 
+/// **Fit a recall under the answer ceiling, filling in the answer's own order.**
+///
+/// Silent when everything fits and no `offset` was sent: the answer is untouched
+/// and carries no `not_shown`.
+///
+/// A call that selected ONE object fills that object's facts: `offset` is how
+/// many of them were already read, whole facts only. A call that selected
+/// several fills the objects: `offset` is how many were already read, whole
+/// objects only; an object that cannot fit even as the first of its part has its
+/// facts cut where it stands, `facts_not_shown` says so, and recalling it alone
+/// reads them in parts. What was left out is counted under `not_shown` with the
+/// `offset` that reads on.
+fn fit_recall(body: &mut serde_json::Value, offset: usize) {
+    use jojobot_domain::text::{ANSWER_CEILING, Capped};
+    let Some(objects) = body
+        .get_mut("objects")
+        .and_then(|o| o.as_array_mut())
+        .map(std::mem::take)
+    else {
+        return;
+    };
+    let size = |json: &serde_json::Value| json.to_string().chars().count() + 1;
+    let rest = body.to_string().chars().count() + crate::answer::STATUS_BAR_ROOM;
+    let widest = crate::answer::not_shown(usize::MAX, usize::MAX, "objects")
+        .to_string()
+        .chars()
+        .count();
+    let total = objects.len();
+
+    if total == 1 && objects[0]["facts"].is_array() {
+        let mut object = objects.into_iter().next().expect("one object");
+        let facts: Vec<serde_json::Value> = object["facts"]
+            .as_array_mut()
+            .map(std::mem::take)
+            .unwrap_or_default();
+        let held = facts.len();
+        object["facts"] = serde_json::json!([]);
+        let skeleton = size(&object);
+        let window: Vec<(serde_json::Value, usize)> = facts
+            .into_iter()
+            .skip(offset)
+            .map(|fact| {
+                let cost = size(&fact);
+                (fact, cost)
+            })
+            .collect();
+        let room = Capped::beside(rest + skeleton + widest);
+        let kept = room.head(&window, |(_, cost)| *cost);
+        object["facts"] = kept
+            .kept()
+            .iter()
+            .map(|(fact, _)| fact.clone())
+            .collect::<Vec<_>>()
+            .into();
+        body["objects"] = serde_json::json!([object]);
+        if kept.elided() {
+            body["not_shown"] =
+                crate::answer::not_shown(kept.omitted(), offset + kept.kept().len(), "facts");
+        } else if offset > 0 && window.is_empty() {
+            body["past_the_end"] = format!(
+                "offset {offset} is past the last of this object's {held} facts, so nothing is \
+                 left to read"
+            )
+            .into();
+        }
+        return;
+    }
+
+    let window: Vec<serde_json::Value> = objects.into_iter().skip(offset).collect();
+    let all_fit = offset == 0 && rest + window.iter().map(size).sum::<usize>() <= ANSWER_CEILING;
+    if all_fit {
+        body["objects"] = window.into();
+        return;
+    }
+    let mut room = ANSWER_CEILING.saturating_sub(rest + widest);
+    let mut shown: Vec<serde_json::Value> = Vec::new();
+    for mut object in window.iter().cloned() {
+        let cost = size(&object);
+        if cost <= room {
+            room -= cost;
+            shown.push(object);
+            continue;
+        }
+        if shown.is_empty() && !object["facts"].is_array() {
+            // Nothing of it can be cut: it is served whole, as the first of its
+            // part always is.
+            shown.push(object);
+        } else if shown.is_empty() {
+            // The first object of the part cannot fit whole: its facts are cut
+            // where it stands, and the rest of it is served as it is.
+            let facts: Vec<serde_json::Value> = object["facts"]
+                .as_array_mut()
+                .map(std::mem::take)
+                .unwrap_or_default();
+            let held = facts.len();
+            object["facts"] = serde_json::json!([]);
+            let id = object["id"].as_str().unwrap_or_default().to_string();
+            let pointer = serde_json::json!({
+                "count": held,
+                "how_to_proceed": format!(
+                    "recall {id} alone with facts: true reads its facts in parts that fit"
+                ),
+            });
+            object["facts_not_shown"] = pointer;
+            let skeleton = size(&object);
+            let costs: Vec<(serde_json::Value, usize)> = facts
+                .into_iter()
+                .map(|fact| {
+                    let cost = size(&fact);
+                    (fact, cost)
+                })
+                .collect();
+            let kept = Capped {
+                budget: room.saturating_sub(skeleton),
+            }
+            .head_or_none(&costs, |(_, cost)| *cost);
+            let kept_count = kept.kept().len();
+            object["facts"] = kept
+                .kept()
+                .iter()
+                .map(|(fact, _)| fact.clone())
+                .collect::<Vec<_>>()
+                .into();
+            object["facts_not_shown"]["count"] = (held - kept_count).into();
+            shown.push(object);
+        }
+        break;
+    }
+    body["count"] = shown.len().into();
+    let after = offset + shown.len();
+    let remaining = total.saturating_sub(after);
+    body["objects"] = shown.into();
+    if remaining > 0 {
+        body["not_shown"] = crate::answer::not_shown(remaining, after, "objects");
+    } else if offset > 0 && body["objects"].as_array().is_some_and(|o| o.is_empty()) {
+        body["past_the_end"] = format!(
+            "offset {offset} is past the last of the {total} objects this call selected, so \
+             nothing is left to read"
+        )
+        .into();
+    }
+}
+
 /// One object on the wire, and everything it reached.
 ///
 /// **Absence means "not asked for"** on both halves that can be turned off:
@@ -1423,7 +1573,13 @@ impl Jojobot {
                        name at least one of subject, kind, answers_type or fields. AN \
                        answers_type THAT SELECTS NOTHING STILL SAYS WHAT THE TYPE IS: the \
                        answer carries type_keys, the type's keys and what each holds, so the \
-                       spelling to write under it is in the empty answer. AN EMPTY ANSWER NAMES WHAT \
+                       spelling to write under it is in the empty answer. AN ANSWER STOPS AT THE \
+                       ANSWER CEILING, never mid-record: it carries the objects that fit in its \
+                       own order, and `not_shown` says how many it left out and the `offset` that \
+                       reads on — repeat the same call with it. One subject with more facts than \
+                       fit is read the same way, `offset` counting its facts, and an object that \
+                       cannot fit even first in its part carries `facts_not_shown` naming that \
+                       subject to recall alone. AN EMPTY ANSWER NAMES WHAT \
                        IT LOOKED THROUGH: it carries `searched`, one line saying the population, \
                        what was left out and the call that widens it."
     )]
@@ -2436,6 +2592,7 @@ impl Jojobot {
                     .join(", "),
             ));
         }
+        fit_recall(&mut body, args.offset.map_or(0, |o| o as usize));
         if let Some(sid) = args.sid.as_deref() {
             self.registry.note_shown(sid, &body);
         }

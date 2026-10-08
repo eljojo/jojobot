@@ -171,6 +171,7 @@ pub(crate) fn recall_args(subject: &str) -> RecallArgs {
         history: None,
         history_record: None,
         history_most: None,
+        offset: None,
         values: None,
         values_most: None,
         built_on: None,
