@@ -191,8 +191,10 @@ impl Jojobot {
                        restores it), \
                        `conflict` (the same call, retried, is the answer) or `unavailable` \
                        (the store could not decide the claim, nothing is held, and the answer \
-                       says what to do next). Any write renews the lease and wrapping \
-                       releases it."
+                       says what to do next). A boot that passes no `claim` takes the role the \
+                       bot carries in `claims_role`, if it carries one, and the holder of a \
+                       role is never refused its own seat. Any write renews the lease and \
+                       wrapping releases it."
     )]
     pub(crate) async fn start_here(
         &self,

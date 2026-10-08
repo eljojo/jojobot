@@ -808,6 +808,14 @@ fn the_recall_description_names_the_room_block_and_when_it_appears() {
     assert_description_names("recall", &["`room`", "aged_out"]);
 }
 
+/// **`start_here`'s description names `claims_role`**, since a boot that passes
+/// no `claim` still takes the role its bot carries, and a caller who was only
+/// taught the explicit claim never learns that.
+#[test]
+fn the_start_here_description_names_claims_role() {
+    assert_description_names("start_here", &["claims_role"]);
+}
+
 /// **`capture`'s own description names the entitlement keys**, since a pass a
 /// session wrote down under invented keys is a pass the `held` block never
 /// finds.
