@@ -1270,6 +1270,16 @@ fn the_colleagues_reports_to_key_is_named_where_the_one_liner_is() {
     );
 }
 
+/// **`set_charter` says who may write `reports_to`.** The key is guarded: the
+/// bot it is written about cannot set it, and a bot above it on the chart does.
+/// A description that teaches only "capture reports_to on this bot" sends a bot
+/// to write its own manager and be refused. Pinned on the two words only that
+/// sentence carries.
+#[test]
+fn the_set_charter_description_says_a_bot_above_writes_reports_to() {
+    assert_description_names("set_charter", &["above", "adopted"]);
+}
+
 /// **capture's `provenance` says what a bot's instruction is, and what a bot's
 /// report is not.** A claim that records what another bot instructed or decided
 /// within its own remit is an observation read from that bot, and a world fact
