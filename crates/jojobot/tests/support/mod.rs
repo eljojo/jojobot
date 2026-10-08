@@ -11,6 +11,7 @@
 #![allow(dead_code)]
 
 use std::collections::HashMap;
+use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
@@ -36,14 +37,27 @@ struct Claims {
 /// A throwaway RSA issuer. Holds the signing key and the public `n`/`e`
 /// components a JWKS would publish, so the validator it builds decodes from the
 /// same material production does.
+#[derive(Clone)]
 pub struct TestIdp {
     enc: EncodingKey,
     n: String,
     e: String,
 }
 
+/// **One key for every issuer a test binary makes.** Generating an RSA key
+/// searches for two large primes, and in an unoptimised build that costs
+/// seconds. A story makes an issuer of its own, so a binary of a hundred
+/// stories spent most of its processor time on keys. Every issuer here is
+/// built with the same name and key id, so a second key adds nothing: no case
+/// tells one issuer's key from another's.
+static SHARED_KEY: OnceLock<TestIdp> = OnceLock::new();
+
 impl TestIdp {
     pub fn new() -> Self {
+        SHARED_KEY.get_or_init(Self::generate).clone()
+    }
+
+    fn generate() -> Self {
         let mut rng = rand::thread_rng();
         let priv_key = RsaPrivateKey::new(&mut rng, 2048).expect("rsa keygen");
         let pub_key = RsaPublicKey::from(&priv_key);
