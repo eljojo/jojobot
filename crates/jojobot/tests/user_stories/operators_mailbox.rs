@@ -19,7 +19,13 @@ use serde_json::json;
 
 use super::dsl::{Session, Story};
 
-const FIGURE: &str = "the secret figure is 4242";
+/// **The token the private body carries, and every assertion looks for.** Letters
+/// only, because an answer here carries full-nanosecond timestamps, ids and counts:
+/// a run of digits can sit inside a fraction by chance, and a needle that can be
+/// found without the leak is a story that fails without one.
+const NEEDLE: &str = "wiggum";
+
+const FIGURE: &str = "the secret figure is wiggum";
 
 /// What the private-box refusal says, and the other refusal's own words. Two
 /// different answers: this one is about the person's box, that one about a box
@@ -77,7 +83,7 @@ async fn tries_every_way_to_read_it(
     let delivered = reader
         .call("read_mailbox", json!({"new_only": false}))
         .await;
-    delivered.says(own.word).never_says("4242");
+    delivered.says(own.word).never_says(NEEDLE);
 
     // Opening a message by id: the ordinary note opens, the operator's is the
     // private-box refusal, and a note in another bot's box is a different one.
@@ -90,7 +96,7 @@ async fn tries_every_way_to_read_it(
         .await
         .says(PRIVATE)
         .never_says(NOT_YOURS)
-        .never_says("4242");
+        .never_says(NEEDLE);
     reader
         .refused("read_message", json!({"message_id": other_box_note}))
         .await
@@ -142,18 +148,18 @@ async fn tries_every_way_to_read_it(
             .call("list_sent", args)
             .await
             .says(outbox_title)
-            .never_says("4242")
+            .never_says(NEEDLE)
             .never_says("secret");
     }
 
     // The front door, with mail, by a word from the body and one from the
     // title: nothing of the operator's message, and the ordinary note found by
     // its own word.
-    for word in ["secret", "4242", "quarterly"] {
+    for word in ["secret", NEEDLE, "quarterly"] {
         reader
             .find_including_mail(word)
             .await
-            .never_says("4242")
+            .never_says(NEEDLE)
             .never_says("secret");
     }
     reader.find_including_mail(own.word).await.says(&own.title);
@@ -224,7 +230,7 @@ async fn a_bot_leaves_the_operator_a_message_and_no_bot_can_read_it_back() {
     // Sigma's own posts took delivery of its box already, so the whole read is
     // the recovery read.
     let delivered = sigma.call("read_mailbox", json!({"new_only": false})).await;
-    delivered.says("kiln").never_says("4242");
+    delivered.says("kiln").never_says(NEEDLE);
     s.find_including_mail("kiln").await.says(&to_sigma);
 
     // ── nobody reads it back: the bot that wrote it, nor a colleague ────────
@@ -252,7 +258,7 @@ async fn a_bot_leaves_the_operator_a_message_and_no_bot_can_read_it_back() {
         .await
         .says("the quarterly figure")
         .says(id)
-        .never_says("4242");
+        .never_says(NEEDLE);
     s.call("list_sent", json!({"to": "bot:sigma"}))
         .await
         .says("an ordinary note")
@@ -269,7 +275,7 @@ async fn a_bot_leaves_the_operator_a_message_and_no_bot_can_read_it_back() {
             json!({"to": "bot:otto", "subject": "thanks", "body": "got it"}),
         )
         .await;
-    rides.says("sharpened").never_says("4242");
+    rides.says("sharpened").never_says(NEEDLE);
     assert_eq!(
         story.mail_held_by("person:lisa").await,
         (1, 0, 0),
@@ -306,11 +312,11 @@ async fn a_bot_leaves_the_operator_a_message_and_no_bot_can_read_it_back() {
             .refused("read_message", json!({"message_id": id}))
             .await
             .says(PRIVATE)
-            .never_says("4242");
+            .never_says(NEEDLE);
         reader
             .find_including_mail("secret")
             .await
-            .never_says("4242");
+            .never_says(NEEDLE);
         reader
             .find_including_mail(note.word)
             .await
@@ -340,7 +346,7 @@ async fn a_bot_leaves_the_operator_a_message_and_no_bot_can_read_it_back() {
         story
             .page(handle)
             .await
-            .never_says("4242")
+            .never_says(NEEDLE)
             .never_says("quarterly");
     }
     story.page("bot:sigma").await.says("an ordinary note");

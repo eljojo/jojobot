@@ -1223,7 +1223,7 @@ mod tests {
             &jojobot,
             "person:milhouse",
             "epsilon",
-            "the secret figure is 4242",
+            "the secret figure is wiggum",
         )
         .await;
         // A third bot writes both notes, so neither reader's own post takes
@@ -1261,7 +1261,7 @@ mod tests {
             );
             assert_eq!(delivered["count"], 1, "{delivered}");
             assert!(delivered.to_string().contains(own_note), "{delivered}");
-            assert!(!delivered.to_string().contains("4242"), "{delivered}");
+            assert!(!delivered.to_string().contains("wiggum"), "{delivered}");
         }
         assert_eq!(
             store_counts(&jojobot, &held).await,
@@ -1288,7 +1288,7 @@ mod tests {
             &jojobot,
             "person:milhouse",
             "epsilon",
-            "the secret figure is 4242",
+            "the secret figure is wiggum",
         )
         .await;
         assert_eq!(store_counts(&jojobot, &held).await, (1, 0, 0));
@@ -1314,7 +1314,7 @@ mod tests {
                     .expect("a refusal is an answer"),
             );
             assert_eq!(refused["status"], "blocked", "{refused}");
-            assert!(!refused.to_string().contains("4242"), "{refused}");
+            assert!(!refused.to_string().contains("wiggum"), "{refused}");
         }
 
         // ── a post that would hand over the sender's own box ────────────────
@@ -1330,7 +1330,7 @@ mod tests {
                 .await
                 .expect("an answer"),
         );
-        assert!(!posted.to_string().contains("4242"), "{posted}");
+        assert!(!posted.to_string().contains("wiggum"), "{posted}");
         assert!(
             posted.get("your_mail").is_none(),
             "a person's box is handed to nobody by a post: {posted}"

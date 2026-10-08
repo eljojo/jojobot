@@ -1210,7 +1210,7 @@ mod tests {
             &jojobot,
             "person:milhouse",
             "epsilon",
-            "the secret figure is 4242",
+            "the secret figure is wiggum",
         )
         .await;
         let id = posted["id"].as_str().expect("an id").to_string();
@@ -1246,7 +1246,7 @@ mod tests {
                 .expect("an answer"),
         );
         assert_eq!(after["status"], "blocked", "{after}");
-        assert!(!after.to_string().contains("4242"), "{after}");
+        assert!(!after.to_string().contains("wiggum"), "{after}");
 
         // ── the positive: a rename that keeps the kind goes through ─────────
         let renamed = json_of(
