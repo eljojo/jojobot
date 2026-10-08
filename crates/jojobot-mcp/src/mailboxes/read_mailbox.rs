@@ -319,7 +319,7 @@ impl Jojobot {
                     .await;
                 // Last, so the sizes it fits against include everything the
                 // answer carries.
-                fit_delivery(&mut rendered, &delivery);
+                fit_delivery(&mut rendered, &delivery, 0);
                 json_result(&rendered)
             }
             mailbox::Guarded::Blocked {
@@ -1516,6 +1516,41 @@ mod tests {
             recovery.to_string().contains("the first shipment"),
             "new_only false hands the bodies back: {recovery}"
         );
+    }
+
+    /// **A delivery counts every key it adds when it cuts, at every size of
+    /// box.** Cutting adds `not_shown` and `how_to_read` to the answer after
+    /// the messages are chosen. A fill that leaves room for the first and not
+    /// the second passes the ceiling by the second, but only when the bodies add
+    /// up inside that window, so the size of the body is swept in steps finer
+    /// than the window.
+    #[tokio::test]
+    async fn a_delivery_counts_the_keys_it_adds_when_it_cuts_at_every_size_of_box() {
+        for body_len in (800..=1_300).step_by(20) {
+            let jojobot = mailbox_handler();
+            let sid = owning(&jojobot, "dev").await;
+            for _ in 0..25 {
+                send(&jojobot, "dev", "epsilon", &"x".repeat(body_len)).await;
+            }
+            let delivery = json_of(
+                &jojobot
+                    .read_mailbox(Parameters(ReadMailboxArgs {
+                        counts_only: None,
+                        new_only: None,
+                        sid: Some(sid),
+                    }))
+                    .await
+                    .expect("read_mailbox ok"),
+            );
+            let size = delivery.to_string().chars().count();
+            assert!(
+                size + crate::answer::STATUS_BAR_ROOM <= jojobot_domain::text::ANSWER_CEILING,
+                "bodies of {body_len}: the delivery is {size} characters"
+            );
+            let carried = delivery["messages"].as_array().expect("messages").len();
+            let named = delivery["not_shown"]["count"].as_u64().unwrap_or(0) as usize;
+            assert_eq!(carried + named, 25, "bodies of {body_len}: {delivery}");
+        }
     }
 
     /// **A delivery counts its own envelope against the ceiling.** The messages

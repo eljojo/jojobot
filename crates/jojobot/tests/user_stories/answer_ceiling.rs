@@ -91,6 +91,8 @@ struct World {
     /// The id and body of every message sent to otto, as the store reported
     /// them when each was posted.
     messages: Vec<(String, String)>,
+    /// The same for the box sigma owns, which sigma's own post collects.
+    sigma_messages: Vec<(String, String)>,
 }
 
 /// **A world too big to write through the served surface**, seeded in the
@@ -147,25 +149,31 @@ async fn hostile_world() -> World {
     }
     let mail = first.mail_store();
     let mut messages = Vec::new();
-    for i in 0..MESSAGES {
-        let body = filler(700, i);
-        let posted = mail
-            .post_message(NewMessage {
-                mailbox: MailboxName("otto".into()),
-                body: body.clone(),
-                subject: Some(format!("report {i}")),
-                sender: "bot:sigma".into(),
-                sent_at: jiff::Timestamp::now(),
-                in_reply_to: None,
-                sender_mail_waiting_at_send: None,
-                posted_by_session: None,
-            })
-            .await
-            .expect("a message lands");
-        let jojobot_domain::mailbox::Guarded::Written(message) = posted else {
-            panic!("a message to a box that exists lands");
-        };
-        messages.push((message.id.as_str().to_string(), body));
+    let mut sigma_messages = Vec::new();
+    for (to, from, seed, kept) in [
+        ("otto", "bot:sigma", 0, &mut messages),
+        ("sigma", "bot:otto", 1000, &mut sigma_messages),
+    ] {
+        for i in 0..MESSAGES {
+            let body = filler(700, seed + i);
+            let posted = mail
+                .post_message(NewMessage {
+                    mailbox: MailboxName(to.into()),
+                    body: body.clone(),
+                    subject: Some(format!("report {i}")),
+                    sender: from.into(),
+                    sent_at: jiff::Timestamp::now(),
+                    in_reply_to: None,
+                    sender_mail_waiting_at_send: None,
+                    posted_by_session: None,
+                })
+                .await
+                .expect("a message lands");
+            let jojobot_domain::mailbox::Guarded::Written(message) = posted else {
+                panic!("a message to a box that exists lands");
+            };
+            kept.push((message.id.as_str().to_string(), body));
+        }
     }
 
     let story = first.restarted().await;
@@ -178,6 +186,7 @@ async fn hostile_world() -> World {
         heavy: heavy.as_str().to_string(),
         marker_addresses,
         messages,
+        sigma_messages,
     }
 }
 
@@ -208,6 +217,18 @@ async fn widest_calls(world: &World) -> Vec<(&'static str, usize)> {
         world
             .sigma
             .answer_size("list_sent", json!({"include_bodies": true, "limit": 1000}))
+            .await,
+    ));
+    // Sigma's post collects sigma's own full box, so otto's box stays whole for
+    // the read below.
+    measured.push((
+        "post_message collecting a full box",
+        world
+            .sigma
+            .answer_size(
+                "post_message",
+                json!({"to": "otto", "body": "reporting in", "subject": "done"}),
+            )
             .await,
     ));
     measured.push((
@@ -381,6 +402,79 @@ async fn a_box_past_the_ceiling_is_taken_whole_and_the_answer_stays_under_it() {
             .await
             .json();
         // The store keeps a body without the trailing space the fixture ends on.
+        assert_eq!(read["body"], expected.trim_end(), "{id}");
+    }
+}
+
+/// **A post that collects a box past the ceiling stays under it and takes
+/// every message.** The delivery that rides on a post is the same delivery a
+/// read makes, fitted in the room the post's own receipt leaves. Each message
+/// is carried or named exactly once, the box counts say all were taken, and
+/// every body left out is whole when asked for by id.
+#[tokio::test]
+async fn a_post_that_collects_a_box_past_the_ceiling_stays_under_it_and_takes_every_message() {
+    let world = hostile_world().await;
+    let posted = world
+        .sigma
+        .call(
+            "post_message",
+            json!({"to": "otto", "body": "reporting in", "subject": "done"}),
+        )
+        .await;
+    assert!(posted.size() <= ANSWER_CEILING, "{}", posted.size());
+    let body = posted.json();
+    let mail = &body["your_mail"];
+
+    let messages = mail["messages"].as_array().expect("a list of messages");
+    let flagged: Vec<&Value> = messages
+        .iter()
+        .filter(|m| m["body_elided"] == true)
+        .collect();
+    let named: Vec<String> = mail["not_shown"]["ids"]
+        .as_array()
+        .map(|ids| {
+            ids.iter()
+                .map(|id| id.as_str().expect("an id").to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+    assert!(
+        flagged.len() + named.len() > 0,
+        "fifty messages of seven hundred characters do not fit whole beside a receipt: {mail}"
+    );
+
+    let mut accounted: Vec<String> = messages
+        .iter()
+        .map(|m| m["id"].as_str().expect("an id").to_string())
+        .chain(named.iter().cloned())
+        .collect();
+    accounted.sort();
+    let mut waiting: Vec<String> = world
+        .sigma_messages
+        .iter()
+        .map(|(id, _)| id.clone())
+        .collect();
+    waiting.sort();
+    assert_eq!(accounted, waiting, "no message lost, none twice");
+
+    let counted = world
+        .sigma
+        .call("read_mailbox", json!({"counts_only": true}))
+        .await
+        .json();
+    assert_eq!(counted["counts"]["new"], 0, "{counted}");
+    assert_eq!(counted["counts"]["read"], MESSAGES, "{counted}");
+
+    for (id, expected) in &world.sigma_messages {
+        let left_out = flagged.iter().any(|m| m["id"] == *id) || named.contains(id);
+        if !left_out {
+            continue;
+        }
+        let read = world
+            .sigma
+            .call("read_message", json!({"message_id": id}))
+            .await
+            .json();
         assert_eq!(read["body"], expected.trim_end(), "{id}");
     }
 }

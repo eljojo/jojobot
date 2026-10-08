@@ -445,8 +445,13 @@ pub(crate) fn note_leftovers(rendered: &mut serde_json::Value, leftovers: &[Deli
 /// even so is named by id in `not_shown`. `read_message` returns any of them
 /// whole, and the next read names the ones this one took as leftovers.
 ///
+/// `beside` is the size of everything else the answer carries: a read's
+/// delivery is the whole answer and passes none, and the delivery that rides on
+/// a post passes the size of the post's own receipt, which it shares the
+/// ceiling with.
+///
 /// Silent when everything fits: the answer is untouched and carries neither key.
-pub(crate) fn fit_delivery(rendered: &mut serde_json::Value, delivery: &Delivery) {
+pub(crate) fn fit_delivery(rendered: &mut serde_json::Value, delivery: &Delivery, beside: usize) {
     use jojobot_domain::text::ANSWER_CEILING;
     let Some(messages) = rendered
         .get_mut("messages")
@@ -456,7 +461,7 @@ pub(crate) fn fit_delivery(rendered: &mut serde_json::Value, delivery: &Delivery
         return;
     };
     let size = |json: &serde_json::Value| json.to_string().chars().count() + 1;
-    let rest = rendered.to_string().chars().count() + crate::answer::STATUS_BAR_ROOM;
+    let rest = rendered.to_string().chars().count() + beside + crate::answer::STATUS_BAR_ROOM;
     if rest + messages.iter().map(size).sum::<usize>() <= ANSWER_CEILING {
         rendered["messages"] = messages.into();
         return;
@@ -466,9 +471,16 @@ pub(crate) fn fit_delivery(rendered: &mut serde_json::Value, delivery: &Delivery
         .iter()
         .map(|delivered| delivered.message.id.as_str())
         .collect();
-    // The block that names the messages left out is measured at its widest,
-    // which is naming every one of them.
-    let reserve = not_shown_ids(&ids).to_string().chars().count();
+    // **Everything a cut adds is measured at its widest**: the block that names
+    // the messages left out, naming every one of them, and the sentence that
+    // says why, each with the key it rides under.
+    let reserve = serde_json::json!({
+        "not_shown": not_shown_ids(&ids),
+        "how_to_read": HOW_TO_READ_A_CUT,
+    })
+    .to_string()
+    .chars()
+    .count();
     let mut room = ANSWER_CEILING.saturating_sub(rest + reserve);
     let mut shipped: Vec<serde_json::Value> = Vec::new();
     let mut named: Vec<&str> = Vec::new();
@@ -496,11 +508,13 @@ pub(crate) fn fit_delivery(rendered: &mut serde_json::Value, delivery: &Delivery
         rendered["not_shown"] = not_shown_ids(&named);
     }
     if elided || !named.is_empty() {
-        rendered["how_to_read"] = "every message was taken, and a body that did not fit under the \
-            answer ceiling is left out: read_message returns one whole by id"
-            .into();
+        rendered["how_to_read"] = HOW_TO_READ_A_CUT.into();
     }
 }
+
+/// What a delivery says when it was cut to fit the ceiling.
+const HOW_TO_READ_A_CUT: &str = "every message was taken, and a body that did not fit under the \
+    answer ceiling is left out: read_message returns one whole by id";
 
 /// What an answer says of the messages it took and did not carry: how many, and
 /// which. The same name and the same `count` as the block a list cut at the

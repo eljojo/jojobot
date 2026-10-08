@@ -210,7 +210,7 @@ impl Jojobot {
         bot: &EntityId,
         posted_into: &mailbox::MailboxName,
         viewer: Option<&SessionId>,
-    ) -> Option<serde_json::Value> {
+    ) -> Option<(serde_json::Value, Delivery)> {
         let OwnBox::The(own) = self.own_box(bot).await else {
             return None;
         };
@@ -251,7 +251,7 @@ impl Jojobot {
         let mut rendered = delivery_json(&delivery, true);
         self.mark_other_runs(&mut rendered, &delivery, viewer).await;
         note_leftovers(&mut rendered, &leftovers);
-        Some(rendered)
+        Some((rendered, delivery))
     }
 }
 
@@ -435,20 +435,29 @@ impl Jojobot {
                 // a piece of work — and two agents each holding an unread reply
                 // are two agents talking past each other, with nothing blocked
                 // and nothing to notice.
-                let mut collected = 0;
-                if let Some(delivered) = self
+                let delivered = self
                     .delivered_with_the_post(&caller.bot, &message.mailbox, caller.card.as_ref())
-                    .await
-                {
-                    collected = delivered["count"].as_u64().unwrap_or_default();
-                    if let Some(object) = body.as_object_mut() {
-                        object.insert("your_mail".into(), delivered);
-                    }
-                }
+                    .await;
+                // **The count of messages TAKEN, read before the delivery is
+                // fitted**: fitting changes how many are shown, and the line
+                // says how many became the caller's to finish.
+                let collected = delivered.as_ref().map_or(0, |(rendered, _)| {
+                    rendered["count"].as_u64().unwrap_or_default()
+                });
                 crate::answer::note_postcondition(
                     &mut body,
                     what_a_post_left_standing(&message, collected),
                 );
+                if let Some((mut delivered, delivery)) = delivered {
+                    // **The delivery shares the ceiling with the receipt.**
+                    // Fitted last, against everything else the answer holds,
+                    // and a key and its comma for the delivery to ride under.
+                    let beside = body.to_string().chars().count() + ",\"your_mail\":".len();
+                    fit_delivery(&mut delivered, &delivery, beside);
+                    if let Some(object) = body.as_object_mut() {
+                        object.insert("your_mail".into(), delivered);
+                    }
+                }
                 json_result(&body)
             }
             mailbox::Guarded::Blocked {
@@ -673,6 +682,167 @@ mod tests {
         );
         assert_eq!(drained["count"], 3, "{drained}");
         assert_eq!(drained["messages"][0]["seen_before"], true, "{drained}");
+    }
+
+    /// Twenty-five messages waiting for `otto`, each `body_len` characters, and
+    /// the answer to a post that collects them.
+    async fn a_post_collecting_a_box(body_len: usize) -> (Jojobot, serde_json::Value) {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "otto").await;
+        make_box(&jojobot, "epsilon").await;
+        let body = "x".repeat(body_len);
+        for _ in 0..25 {
+            send(&jojobot, "otto", "epsilon", &body).await;
+        }
+        let posted = send(&jojobot, "epsilon", "otto", "reporting in").await;
+        (jojobot, posted)
+    }
+
+    /// Every message in the delivery that rode on a post, carried or named, and
+    /// how many were named.
+    fn accounted_for(posted: &serde_json::Value) -> (Vec<String>, usize) {
+        let mail = &posted["your_mail"];
+        let named: Vec<String> = mail["not_shown"]["ids"]
+            .as_array()
+            .map(|ids| {
+                ids.iter()
+                    .map(|id| id.as_str().expect("an id").to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut all: Vec<String> = mail["messages"]
+            .as_array()
+            .expect("a list of messages")
+            .iter()
+            .map(|m| m["id"].as_str().expect("an id").to_string())
+            .chain(named.iter().cloned())
+            .collect();
+        all.sort();
+        (all, named.len())
+    }
+
+    /// **A post that collects a box past the ceiling stays under it and takes
+    /// every message.** The delivery that rides on a post is fitted in the room
+    /// the post's own receipt leaves, with the three tiers a read uses: whole,
+    /// flagged with the body left out, or named by id. Every message is carried
+    /// or named exactly once, all of them are taken, the line that says how
+    /// many the post took counts the taken and not the shown, and each body that
+    /// was left out is whole when asked for by id.
+    #[tokio::test]
+    async fn a_post_that_collects_a_hostile_box_fits_the_ceiling_and_takes_every_message() {
+        let (jojobot, posted) = a_post_collecting_a_box(1_500).await;
+
+        let size = posted.to_string().chars().count();
+        assert!(
+            size + crate::answer::STATUS_BAR_ROOM <= jojobot_domain::text::ANSWER_CEILING,
+            "the post's whole answer is {size} characters"
+        );
+        let (accounted, named) = accounted_for(&posted);
+        assert_eq!(accounted.len(), 25, "carried or named, once each: {posted}");
+        let mut unique = accounted.clone();
+        unique.dedup();
+        assert_eq!(unique.len(), 25, "none twice: {posted}");
+        let mail = &posted["your_mail"];
+        let flagged: Vec<&str> = mail["messages"]
+            .as_array()
+            .expect("a list of messages")
+            .iter()
+            .filter(|m| m["body_elided"] == true)
+            .filter_map(|m| m["id"].as_str())
+            .collect();
+        assert!(
+            !flagged.is_empty() || named > 0,
+            "twenty-five messages of this size cannot all come whole: {posted}"
+        );
+        assert_eq!(
+            mail["not_shown"]["count"].as_u64().unwrap_or(0) as usize,
+            named,
+            "{posted}"
+        );
+        assert!(
+            posted["postcondition"]
+                .as_str()
+                .is_some_and(|line| line.contains("25")),
+            "the line counts the messages taken, not the ones shown: {posted}"
+        );
+
+        let counted = counts(&jojobot, "otto").await;
+        assert_eq!(counted["counts"]["read"], 25, "all taken: {counted}");
+        assert_eq!(counted["counts"]["new"], 0, "{counted}");
+
+        let left_out: Vec<String> = flagged
+            .iter()
+            .map(|id| id.to_string())
+            .chain(
+                mail["not_shown"]["ids"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|id| id.as_str().map(str::to_string)),
+            )
+            .collect();
+        for id in left_out {
+            let read = json_of(
+                &jojobot
+                    .read_message(Parameters(ReadMessageArgs {
+                        message_id: id.clone(),
+                        sid: Some(as_bot(&jojobot, "otto")),
+                    }))
+                    .await
+                    .expect("read_message ok"),
+            );
+            assert_eq!(
+                read["body"].as_str().map(str::len),
+                Some(1_500),
+                "{id} is whole by id: {read}"
+            );
+        }
+    }
+
+    /// **The receipt is counted against the ceiling at every size of box.** A
+    /// fill that spends the whole ceiling on the delivery passes it by the
+    /// receipt and the postcondition, but only when the bodies happen to add up
+    /// inside that window. Sweeping the size of the body in steps finer than the
+    /// window is what lands in it, whatever the receipt weighs.
+    #[tokio::test]
+    async fn a_post_counts_its_own_receipt_against_the_ceiling_at_every_size_of_box() {
+        for body_len in (800..=1_300).step_by(20) {
+            let (jojobot, posted) = a_post_collecting_a_box(body_len).await;
+            let size = posted.to_string().chars().count();
+            assert!(
+                size + crate::answer::STATUS_BAR_ROOM <= jojobot_domain::text::ANSWER_CEILING,
+                "bodies of {body_len}: the post's whole answer is {size} characters"
+            );
+            let (accounted, _) = accounted_for(&posted);
+            assert_eq!(accounted.len(), 25, "bodies of {body_len}: {posted}");
+            let counted = counts(&jojobot, "otto").await;
+            assert_eq!(counted["counts"]["new"], 0, "bodies of {body_len}");
+        }
+    }
+
+    /// **A box that fits comes back whole and unmarked.** The control for the
+    /// two cases above: a fill that flagged or named everything would pass
+    /// them, and fails here.
+    #[tokio::test]
+    async fn a_post_that_collects_a_small_box_carries_every_message_whole() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "otto").await;
+        make_box(&jojobot, "epsilon").await;
+        for n in 0..3 {
+            send(&jojobot, "otto", "epsilon", &format!("small message {n}")).await;
+        }
+        let posted = send(&jojobot, "epsilon", "otto", "reporting in").await;
+        let mail = &posted["your_mail"];
+        assert_eq!(mail["count"], 3, "{posted}");
+        assert!(mail.get("not_shown").is_none(), "{posted}");
+        assert!(mail.get("how_to_read").is_none(), "{posted}");
+        let shown = mail["messages"].as_array().expect("a list of messages");
+        assert!(
+            shown
+                .iter()
+                .all(|m| m["body"].is_string() && m.get("body_elided").is_none()),
+            "every body comes whole: {posted}"
+        );
     }
 
     /// **What was genuinely waiting in the sender's own box at send time
