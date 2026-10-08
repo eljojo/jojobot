@@ -106,10 +106,18 @@ impl Jojobot {
         // a name left to check.
         let addressed_to = args.to.as_deref().map(str::trim).filter(|m| !m.is_empty());
         let mut only: Option<String> = None;
+        let mut operator_unopened = false;
         if let Some(named) = addressed_to {
             let addressee = crate::mailboxes::post_message::bot_handle(named);
             match self.own_box(&addressee).await {
                 OwnBox::The(name) => only = Some(name.as_str().to_string()),
+                // **The operator's box opens at the first post to them**, so
+                // until then nothing has been sent to it and the true answer is
+                // an empty list. A person who is not the operator has no box
+                // and never will, which is the refusal below.
+                OwnBox::None if self.instance_operator().await.as_ref() == Some(&addressee) => {
+                    operator_unopened = true;
+                }
                 // **The same refusal posting gives, and for the same reason.**
                 // This verb answers "did my report land", so a typo answered
                 // with a confident zero says "no, it did not" — and the sender
@@ -142,6 +150,9 @@ impl Jojobot {
             .collect();
         sent.sort_by(|(a_at, a), (b_at, b)| b.sent_at.cmp(&a.sent_at).then_with(|| b_at.cmp(a_at)));
         let mut sent: Vec<Message> = sent.into_iter().map(|(_, m)| m).collect();
+        if operator_unopened {
+            sent.clear();
+        }
 
         // **Something jojobot cannot read is not a message that was never
         // sent.** The scan leaves quarantined items out — it cannot parse them,
@@ -175,6 +186,7 @@ impl Jojobot {
             .collect();
         let unreadable: Vec<serde_json::Value> = board
             .iter()
+            .filter(|_| !operator_unopened)
             .filter(|b| only.is_none_or(|name| b.name.as_str() == name))
             // A person's box is not reported: naming it names whose it is, and
             // what is wrong with a card in it is that person's to be told.
@@ -218,6 +230,10 @@ impl Jojobot {
                     _ => format!("{BODIES_POINTER}; the messages marked private or withheld stay out of it"),
                 }
             }),
+            "note": operator_unopened.then_some(
+                "the operator's box opens at the first post to them, and nothing has been sent \
+                 yet",
+            ),
             "unreadable": unreadable,
             "unreadable_note": "Messages jojobot cannot read are not in the list above — \
                                 it cannot tell who sent them. If one of yours is missing, it may \
@@ -786,12 +802,13 @@ mod tests {
         }
     }
 
-    /// **Asking after mail to a person who has no box yet is not told to boot
-    /// them.** A person is not booted: their box opens at the first post to the
-    /// operator. The refusal says so, and the same question lists the message
-    /// once it has been sent.
+    /// **Asking after the operator before their box opens lists nothing sent,
+    /// and says why.** The operator's box opens at the first post to them, so
+    /// until then nothing has been sent and the true answer is an empty list,
+    /// not a refusal that reads as if they were not the operator. The same
+    /// question lists the message once it has been sent.
     #[tokio::test]
-    async fn asking_after_a_person_with_no_box_yet_does_not_say_to_boot_them() {
+    async fn asking_after_the_operator_before_their_box_opens_lists_nothing_sent() {
         let jojobot = mailbox_handler();
         let sender = owning(&jojobot, "epsilon").await;
         name_the_operator(&jojobot, "milhouse").await;
@@ -811,17 +828,52 @@ mod tests {
         };
 
         let before = ask().await;
-        assert_eq!(before["status"], "blocked", "{before}");
-        let way = before["how_to_proceed"].as_str().expect("a way forward");
-        assert!(!way.contains("start_here"), "a person is not booted: {way}");
+        assert_ne!(before["status"], "blocked", "{before}");
+        assert_eq!(before["count"], 0, "{before}");
+        assert_eq!(before["messages"], serde_json::json!([]), "{before}");
+        let note = before["note"]
+            .as_str()
+            .expect("the empty list is explained");
         assert!(
-            way.contains("post_message"),
-            "the way forward is a post: {way}"
+            !note.contains("  ") && !note.contains('\n'),
+            "the note reads as one line: {note:?}"
         );
 
         send(&jojobot, "person:milhouse", "epsilon", "for the operator").await;
         let after = ask().await;
         assert_eq!(after["count"], 1, "{after}");
+        assert!(after["note"].is_null(), "{after}");
+    }
+
+    /// **The pair: a person who is not the operator has no box and never will,
+    /// so asking after them is still refused**, with the way to reach the
+    /// operator instead and no suggestion to boot anybody.
+    #[tokio::test]
+    async fn asking_after_a_person_who_is_not_the_operator_is_still_refused() {
+        let jojobot = mailbox_handler();
+        let sender = owning(&jojobot, "epsilon").await;
+        name_the_operator(&jojobot, "milhouse").await;
+        crate::memory::testing::ensure(&jojobot, "person:lisa").await;
+        let refused = json_of(
+            &jojobot
+                .list_sent(Parameters(ListSentArgs {
+                    limit: None,
+                    sender: None,
+                    to: Some("person:lisa".into()),
+                    include_bodies: None,
+                    sid: Some(sender),
+                }))
+                .await
+                .expect("an answer"),
+        );
+        assert_eq!(refused["status"], "blocked", "{refused}");
+        assert_eq!(refused["fix_by"], "change", "{refused}");
+        let way = refused["how_to_proceed"].as_str().expect("a way forward");
+        assert!(!way.contains("start_here"), "a person is not booted: {way}");
+        assert!(
+            way.contains("post_message"),
+            "the way forward is a post: {way}"
+        );
     }
 
     /// **A person renamed while a sender's mail is listed does not put their
