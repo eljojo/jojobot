@@ -88,7 +88,17 @@ impl SpySearch {
 impl Search for SpySearch {
     async fn search(&self, query: &SearchQuery) -> Result<Vec<Hit>, MemoryError> {
         *self.seen.lock().unwrap() = Some(query.clone());
-        Ok(self.hits.lock().unwrap().clone())
+        // **No more than the query asks for.** A real index returns at most
+        // `limit` hits, so a double that handed back everything it was given
+        // would let a verb ask for the wrong depth and never be told.
+        Ok(self
+            .hits
+            .lock()
+            .unwrap()
+            .iter()
+            .take(query.limit)
+            .cloned()
+            .collect())
     }
 
     fn mail_coverage(&self) -> Coverage {

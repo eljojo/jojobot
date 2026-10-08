@@ -370,6 +370,59 @@ async fn search_at_its_widest_fits_and_walking_on_returns_every_hit_exactly_once
     );
 }
 
+/// **`limit` is a page and `offset` is where the next page starts.** Three
+/// hundred facts read forty at a time come back as pages that each hold forty
+/// (the last holds the rest), and together they are exactly the facts that were
+/// written, each once. The real index answers, not a double.
+#[tokio::test]
+async fn pages_of_forty_walk_the_whole_ranking_once() {
+    let world = hostile_world().await;
+    let mut seen: Vec<String> = Vec::new();
+    let mut sizes: Vec<usize> = Vec::new();
+    let mut offset = 0u64;
+    loop {
+        let page = world
+            .otto
+            .call(
+                "search",
+                json!({"query": "marker", "limit": 40, "offset": offset}),
+            )
+            .await;
+        assert!(page.size() <= ANSWER_CEILING, "{}", page.size());
+        let body = page.json();
+        let hits = body["results"].as_array().expect("a list of results");
+        if hits.is_empty() {
+            assert!(body["past_the_end"].is_string(), "{body}");
+            break;
+        }
+        sizes.push(hits.len());
+        offset += hits.len() as u64;
+        seen.extend(
+            hits.iter()
+                .map(|h| h["address"].as_str().expect("an address").to_string()),
+        );
+        assert!(sizes.len() < 50, "the walk never ends");
+    }
+    assert!(
+        sizes.iter().all(|n| *n <= 40),
+        "a page is at most forty: {sizes:?}"
+    );
+    assert!(
+        sizes.len() >= 8,
+        "three hundred facts need eight pages: {sizes:?}"
+    );
+    let mut walked = seen.clone();
+    walked.sort();
+    walked.dedup();
+    assert_eq!(walked.len(), seen.len(), "no hit came back twice");
+    let mut written = world.marker_addresses.clone();
+    written.sort();
+    assert_eq!(
+        walked, written,
+        "every fact that was written, and nothing else"
+    );
+}
+
 /// **A box far past the ceiling is still delivered whole in count and under the
 /// ceiling in size.** Every waiting message is taken, which the box counts
 /// confirm from the other side. The answer carries the oldest bodies whole and

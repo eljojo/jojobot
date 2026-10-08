@@ -106,16 +106,16 @@ pub struct SearchArgs {
     /// still recall with history_record.
     #[serde(default)]
     pub(crate) include_history: Option<bool>,
-    /// How many results, counted from the best; defaults to 20. An answer
-    /// carries the best of them that fit under the answer ceiling and says how
-    /// many it left out; `offset` reads the rest.
+    /// **The size of a page**: how many results come back at most; defaults to
+    /// 20. An answer carries the best of them that fit under the answer ceiling
+    /// and says how many it left out; `offset` reads on from there.
     #[serde(default)]
     pub(crate) limit: Option<u32>,
-    /// **How many of the ranked results you have already read.** The answer
-    /// stops at the ceiling and names the `offset` that returns the next part;
-    /// repeat the same call with it. `limit` still counts from the best hit, so
-    /// the same `limit` with a larger `offset` walks to the end of the same
-    /// ranking and returns every hit exactly once. Defaults to 0.
+    /// **How many of the ranked results you have already read**, which is where
+    /// the next page starts. The answer stops at the ceiling and names the
+    /// `offset` that returns the next part; repeat the same call with it. The
+    /// same `limit` with a larger `offset` walks to the end of the same ranking
+    /// and returns every hit exactly once. Defaults to 0.
     #[serde(default)]
     pub(crate) offset: Option<u32>,
     /// **Which day ranking reads: `recorded_on`** (the default — the day a
@@ -704,7 +704,15 @@ impl Jojobot {
             edge,
             include_mail: args.include_mail.unwrap_or(false),
             include_history: args.include_history.unwrap_or(false),
-            limit: args.limit.map_or(DEFAULT_LIMIT, |l| l as usize),
+            // **The index is asked for everything up to the end of the page.** A
+            // page that starts at `offset` and holds `limit` needs the best
+            // `offset + limit` from the ranking; the first `offset` of them are
+            // skipped below. A limit of nothing is passed on as nothing, so the
+            // query's own check refuses it.
+            limit: match args.limit.map_or(DEFAULT_LIMIT, |l| l as usize) {
+                0 => 0,
+                page => args.offset.map_or(0, |o| o as usize) + page,
+            },
             rank_clock: parse_rank_clock(args.clock.as_deref())?,
         };
         // Checked here as well as in the index: a malformed query is the caller's
@@ -721,13 +729,15 @@ impl Jojobot {
             Ok(hits) => hits,
             Err(e) => return memory_declined("search", e),
         };
-        // **`offset` is the part of the ranking the caller has already read.**
-        // `limit` is how deep the ranking goes, counted from the best, so a
-        // continuation repeats the call with a larger offset and the same limit
-        // and the parts it returns tile the ranking with no hit twice.
+        // **`offset` is the part of the ranking the caller has already read and
+        // `limit` is the size of a page.** A continuation repeats the call with
+        // a larger offset and the same limit, and the pages it returns tile the
+        // ranking with no hit twice. The index was asked for everything up to
+        // the end of the page, so the page is what lies after the first `offset`.
         let offset = args.offset.map_or(0, |o| o as usize);
+        let page = args.limit.map_or(DEFAULT_LIMIT, |l| l as usize);
         let ranked_len = ranked.len();
-        let hits: Vec<Hit> = ranked.into_iter().skip(offset).collect();
+        let hits: Vec<Hit> = ranked.into_iter().skip(offset).take(page).collect();
         // **The day this answer is read against**, in the zone of the run that
         // asked: whether a claim has passed the day it stays good is a question
         // about a day, and two runs in two zones answer it differently for one
@@ -792,8 +802,8 @@ impl Jojobot {
         // that returned nothing.
         if hits.is_empty() && offset > 0 {
             body["past_the_end"] = format!(
-                "offset {offset} is past the last of the {ranked_len} hits ranked under this \
-                 limit, so nothing is left to read"
+                "offset {offset} is past the last of the {ranked_len} hits this search \
+                 ranked, so nothing is left to read"
             )
             .into();
         } else if hits.is_empty() {
@@ -3174,6 +3184,50 @@ mod tests {
         assert_eq!(ranks_of(&oversized), vec![0], "the first, whole");
         assert_eq!(oversized["not_shown"]["count"], 2, "{oversized}");
         assert_eq!(oversized["not_shown"]["offset"], 1, "{oversized}");
+    }
+
+    /// **`limit` is the size of a page and `offset` is where the next one
+    /// starts.** Forty-five hits read twenty at a time come back as three pages
+    /// that tile the ranking: the second begins at the twenty-first hit, which
+    /// is the meaning `list_sent` gives the same two words, and the last is the
+    /// five that remain.
+    #[tokio::test]
+    async fn a_second_page_of_a_search_starts_where_the_first_ended() {
+        let mut seen: Vec<usize> = Vec::new();
+        let mut offset = 0u32;
+        let mut sizes: Vec<usize> = Vec::new();
+        loop {
+            let page = searched_over(ranked_hits(45, 100), 20, offset).await;
+            if page["count"] == 0 {
+                assert!(page["past_the_end"].is_string(), "{page}");
+                break;
+            }
+            let ranks = ranks_of(&page);
+            sizes.push(ranks.len());
+            offset += ranks.len() as u32;
+            seen.extend(ranks);
+            assert!(sizes.len() < 10, "the walk never ends");
+        }
+        assert_eq!(sizes, vec![20, 20, 5], "pages of twenty, then what remains");
+        assert_eq!(seen, (0..45).collect::<Vec<_>>(), "each hit once, in order");
+    }
+
+    /// **The index is asked for the whole window.** A page that starts at
+    /// twenty and holds twenty needs the best forty from the index, and the
+    /// verb skips the first twenty of them.
+    #[tokio::test]
+    async fn the_index_is_asked_for_everything_up_to_the_end_of_the_page() {
+        let spy = Arc::new(SpySearch::answering(ranked_hits(45, 100)));
+        handler_with(spy.clone())
+            .search(Parameters(SearchArgs {
+                query: Some("kiln".into()),
+                limit: Some(20),
+                offset: Some(20),
+                ..search_args()
+            }))
+            .await
+            .expect("search ok");
+        assert_eq!(spy.query().limit, 40);
     }
 
     /// **An offset past the last hit says so instead of describing an empty
