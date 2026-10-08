@@ -1068,9 +1068,14 @@ async fn a_bot_created_with_fields_is_held_to_the_ceiling_a_capture_is() {
             creation("omega", json!({"starred": "true", "subject": heavy})),
         )
         .await;
+    //
+    // The way down names what a creation can change, its own `sets`; it does not
+    // tell the caller to unstar a rule or lower seats on a bot that was never made.
     refused
-        .says("rule_seats")
-        .says("set_charter")
+        .says("sets")
+        .says("Nothing was created")
+        .never_says("rule_seats")
+        .never_says("set_charter")
         .says("\"wrote\":false");
     // Nothing was created: the handle is free and the bot is not listed.
     s.list("bot").await.never_says("bot:omega");
@@ -1087,6 +1092,8 @@ async fn a_bot_created_with_fields_is_held_to_the_ceiling_a_capture_is() {
             }),
         )
         .await;
+    // The capture's way down is the bot's rules and seats, which exist.
+    captured.says("rule_seats").says("set_charter");
     let keys = |answer: &super::dsl::Answer| -> Vec<String> {
         answer
             .json()

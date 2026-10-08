@@ -384,14 +384,16 @@ pub(crate) const INSTRUCTIONS: &str = "jojobot — a personal-assistant server. 
                  from left, to delivered, to acted on — a terminal archive, never deleted. \
                  **Messages are searchable, on request**: `search` with \
                  `include_mail: true` returns them beside \
-                 the memory hits, in every state including the processed archive, each hit \
+                 the memory hits, in every state including the processed archive (the \
+                 operator's box is the one exception: it is never searched), each hit \
                  carrying its box, its state, its sender and the id `read_message` takes — so a \
                  message left for one session is findable by any of them. `read_message` takes \
                  delivery of that one message; `read_mailbox` takes the whole box, and everything \
                  in it becomes yours to finish.\
                  \n\n**Three rules of engagement.** 1. **Everything a write NAMES must already \
                  exist.** jojobot never brings an entity or a box into being as a side effect — \
-                 not a capture's subject, not an edge's object, not the box you post into. \
+                 not a capture's subject, not an edge's object, not the box you post into \
+                 (the operator's own box is the one that opens at the first post to them). \
                  Something genuinely new is two deliberate steps: create it, then write. \
                  2. **Confirm, don't guess.** A creation, or a change to what something is \
                  CALLED, that resembles something jojobot already knows comes back as a \

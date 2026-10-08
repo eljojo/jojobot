@@ -8,8 +8,8 @@ use super::*;
 /// Arguments to `post_message`.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct PostMessageArgs {
-    /// **The bot to write to** — a colleague, not a container: a bare name
-    /// like `gamma`, or its full handle. You address the identity and jojobot
+    /// **The bot to write to, or the operator** — a colleague, not a container:
+    /// a bare name like `gamma`, or its full handle. You address the identity and jojobot
     /// finds its mail; a bot has exactly one box, and what that box is called
     /// is not something you should have to know.
     ///
@@ -135,8 +135,10 @@ impl Jojobot {
             // A person is not booted and has no creation to finish: the
             // operator's box opens at the first post to them.
             OwnBox::None if addressee.kind() == Some(EntityKind::PERSON) => format!(
-                "Nothing was found. '{addressee}' has no mailbox yet: the operator's box opens \
-                 at the first post_message to them, and nothing has been sent."
+                "Nothing was found. Only the operator has a mailbox among people, and \
+                 '{addressee}' has none, so nothing has been sent. To reach the operator, write \
+                 to the handle the boot names under operator: their box opens at the first \
+                 post_message to it."
             ),
             OwnBox::None => match named_by(addressee, &bots) {
                 Some((owner, via_alias)) => format!(

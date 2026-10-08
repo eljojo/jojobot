@@ -460,6 +460,14 @@ pub(crate) fn memory_declined(
                          the floor is {largest}; floor_parts lists every part. A rule that \
                          binds at one moment is better carried by a skill than by the charter."
                     ),
+                    // **A creation made nothing, so there is nothing to unstar.**
+                    // The ways down for an existing bot name rules and seats
+                    // that a bot not yet created does not have.
+                    "add_entity" => format!(
+                        "Nothing was created: {e}. The largest part of the floor is {largest}; \
+                         floor_parts lists every part. Send a smaller `sets` in the same call, or \
+                         create the bot without `sets` and capture the fields on it afterwards."
+                    ),
                     // **Three ways down, and the caller picks the one that
                     // costs least.** Which rules are starred and how many seats
                     // a bot has are data, so none of them is chosen for the

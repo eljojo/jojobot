@@ -18,8 +18,8 @@ pub struct ListSentArgs {
     /// that is, and your own mail is what this verb is for.
     #[serde(default)]
     pub(crate) sender: Option<String>,
-    /// **Only what you sent to this bot** — a bare name like `gamma`, or its
-    /// full handle. Omit for everyone you have written to. You addressed a
+    /// **Only what you sent to this bot, or the operator** — a bare name like
+    /// `gamma`, or its full handle. Omit for everyone you have written to. You addressed a
     /// colleague, so this is how you ask after them.
     #[serde(default)]
     pub(crate) to: Option<String>,

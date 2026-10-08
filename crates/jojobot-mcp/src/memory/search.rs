@@ -364,6 +364,12 @@ impl MailExcluded {
 /// from "jojobot has read no messages", and it is the one a caller acts on.
 fn mail_coverage(query: &SearchQuery, coverage: Coverage) -> serde_json::Value {
     let excluded = |note: &str| serde_json::json!({ "searched": false, "note": note });
+    // **Whose mail a search over mail never reaches.** A person's box is kept
+    // out of the index, so a hit list over mail is a list over every other box,
+    // and "searched: true" alone read as "no message says that" even for the
+    // operator's. Said on every answer that did search mail.
+    let never = "a person's box, the operator's, is never searched: no search finds mail left \
+                 for the operator";
     if let Some(left_out) = MailExcluded::of(query) {
         return excluded(left_out.note());
     }
@@ -389,8 +395,9 @@ fn mail_coverage(query: &SearchQuery, coverage: Coverage) -> serde_json::Value {
                      server started, so an older message may be missing. Any hit here is real — \
                      this is not a complete answer over mail. start_here's snapshot says whether \
                      the mailbox world is reachable at all.",
+            "not_searched": never,
         }),
-        Coverage::Loaded => serde_json::json!({ "searched": true }),
+        Coverage::Loaded => serde_json::json!({ "searched": true, "not_searched": never }),
     }
 }
 
@@ -561,7 +568,7 @@ impl Jojobot {
     #[tool(
         description = "The front door — use it first, and any time you do not already hold the \
                        exact handle or address. One ranked list over entities, facts, free \
-                       prose AND the messages in mailboxes at once. `query` is free text (ALL \
+                       prose AND the messages in bots' mailboxes at once. `query` is free text (ALL \
                        words must match) and is optional when a filter narrows it: kind · status \
                        (default active; archived is excluded unless named) · provenance · \
                        standing (`open` is how you ask which claims are still in doubt) · \
@@ -584,6 +591,7 @@ impl Jojobot {
                        carries its box, its state (new/read/processed — an archived report is \
                        findable, and the state is how you tell it from live work), its sender \
                        and the id read_message takes, plus a snippet rather than the whole body. \
+                       A person's box, the operator's, is never searched. \
                        Mail is OPT-IN: pass include_mail: true to search messages too, and \
                        reach for it when you want what a session knows — a report filed for \
                        another session is exactly the context you would not know to go looking \
@@ -972,6 +980,47 @@ mod tests {
             found.get("type_displaced").is_none(),
             "nothing was ever a caller's under this name, so nothing is named: {found}"
         );
+    }
+
+    /// 🚨 **A search over mail says whose mail it never reaches.** A person's
+    /// box, the operator's, is kept out of the index, so a hit list over mail is
+    /// a list over every OTHER box. An answer that said only `searched: true`
+    /// read as "no message says that", including a message to the operator. The
+    /// mail field names the exclusion beside the coverage, and a search that did
+    /// not ask for mail carries no such claim, since it searched none.
+    #[tokio::test]
+    async fn a_mail_search_says_the_operators_box_is_never_searched() {
+        let ask = |include_mail: bool| SearchArgs {
+            query: Some("kiln".into()),
+            include_mail: Some(include_mail),
+            ..search_args()
+        };
+        let with_mail = json_of(
+            &handler_with(Arc::new(SpySearch::answering(Vec::new())))
+                .search(Parameters(ask(true)))
+                .await
+                .expect("search ok"),
+        );
+        assert_eq!(with_mail["mail"]["searched"], true, "{with_mail}");
+        let note = with_mail["mail"]["not_searched"]
+            .as_str()
+            .unwrap_or_else(|| panic!("the exclusion is named: {with_mail}"));
+        assert!(note.contains("operator"), "names whose box: {note}");
+        assert!(
+            !note.contains('\n') && !note.contains("  "),
+            "one line: {note:?}"
+        );
+
+        // The other side: a search that did not ask for mail searched none, so
+        // it claims nothing about whose box it left out.
+        let without = json_of(
+            &handler_with(Arc::new(SpySearch::answering(Vec::new())))
+                .search(Parameters(ask(false)))
+                .await
+                .expect("search ok"),
+        );
+        assert_eq!(without["mail"]["searched"], false, "{without}");
+        assert!(without["mail"]["not_searched"].is_null(), "{without}");
     }
 
     /// **Mail is opt-in at the door, and the opt-in reaches the port.**

@@ -59,8 +59,8 @@ impl Jojobot {
                        parent — use `rename_entity` for that. THIS VERB \
                        DOES NOT TOUCH MAILBOXES: a box is not a property of an entity that can \
                        be edited or reassigned — it belongs to the bot it is named for and opens \
-                       with it, in add_entity, so there is nothing here to point at a different \
-                       one. Any change to what it is CALLED — name or aliases — faces the same \
+                       with it, in add_entity (the operator's opens at the first post to them), \
+                       so there is nothing here to point at a different one. Any change to what it is CALLED — name or aliases — faces the same \
                        check a creation does, because an alias is a name: it can come back \
                        status: blocked with candidates, and the override_token that refusal \
                        carries is how you confirm a genuinely shared name — a token lifts the one \

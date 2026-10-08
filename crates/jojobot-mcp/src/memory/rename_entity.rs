@@ -225,7 +225,10 @@ impl Jojobot {
                        resolving under the new handle — the path renders on the way out, and \
                        text stored before any of that was true was migrated once, so it is not \
                        an exception. Every entity naming this one as its parent is repointed in \
-                       the same write, and a bot's mailbox follows to its new name. What does \
+                       the same write, and a box follows its owner to the owner's new name. A \
+                       rename that moves an owner across the person line — a bot into a person, \
+                       a person into a bot, or the operator out of the person kind — is \
+                       refused, because a person's box is private. What does \
                        NOT follow, ever: a handle written as free prose that never used \
                        @kind:slug — nothing marked it as a link, so nothing resolves it. And a \
                        thing renamed and later folded into another resolves one hop short of \
