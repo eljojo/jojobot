@@ -130,7 +130,7 @@ async fn a_wrap_hands_back_a_code_that_lets_the_run_write_once_more_while_it_sta
     );
 
     // ── a third use is refused with the route, and the run is closed again ──
-    story_refuses_a_code(&story, &code).await;
+    story_refuses_a_code(&again, &code).await;
     again
         .refused("journal", json!({"entry": "too late"}))
         .await
@@ -139,9 +139,13 @@ async fn a_wrap_hands_back_a_code_that_lets_the_run_write_once_more_while_it_sta
 
 /// A `start_here` that carries `code` as its `resume` is turned away, and the
 /// refusal names `start_here` as the way to a fresh run.
-async fn story_refuses_a_code(story: &Story, code: &str) {
-    let someone = story.session().await;
-    someone
+///
+/// **It is asked of a run that already exists, never of a fresh boot.** A boot of
+/// the bot is a newer run starting, and that ends the window by itself (see
+/// `a_newer_run_ends_the_window_and_is_left_alone`), so a refusal after one would
+/// say nothing about what else spent the code.
+async fn story_refuses_a_code(asking: &Session, code: &str) {
+    asking
         .refused(
             "start_here",
             json!({"bot": "otto", "resume": code, "sid": null}),
@@ -359,6 +363,12 @@ async fn a_reopened_run_can_capture_and_post_and_the_second_wrap_ends_both() {
             json!({"to": "otto", "subject": "a last word", "body": "sent from the reopened run"}),
         )
         .await;
+    // The post landed, counted from the store: not only not refused.
+    assert_eq!(
+        story.mail_held_by("bot:otto").await,
+        (1, 0, 0),
+        "the reopened run's post is in the box"
+    );
     reopened
         .call(
             "recall",
@@ -385,6 +395,11 @@ async fn a_reopened_run_can_capture_and_post_and_the_second_wrap_ends_both() {
         )
         .await
         .says("\"wrote\":false");
+    assert_eq!(
+        story.mail_held_by("bot:otto").await,
+        (1, 0, 0),
+        "the refused post left nothing behind"
+    );
 }
 
 /// **The next boot's handover is the story the run closed on, not the last
