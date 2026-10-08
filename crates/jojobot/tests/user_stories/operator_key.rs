@@ -11,9 +11,6 @@
 //! at the head, a held value is changed by nobody, and the refusal says what
 //! makes a head.
 //!
-//! **The claims here are inferences**, so an edit of one is judged by this key's
-//! own rule and not by the session rule a testimony claim has.
-//!
 //! **Every refusal here sits beside the positive it depends on**, in the same
 //! story: the same call from the head lands, so a build that refused every write
 //! of the key would not pass. The routes that reach the key are each tried: a
@@ -27,7 +24,7 @@ use super::dsl::Story;
 fn naming(operator: &str) -> serde_json::Value {
     json!({
         "subject": "topic:instance", "content": "who the operator is",
-        "provenance": "inference", "fields": {"operator": operator},
+        "provenance": "testimony", "fields": {"operator": operator},
     })
 }
 
@@ -109,7 +106,8 @@ async fn the_operator_is_named_by_any_bot_and_changed_only_by_the_head_of_the_ch
             json!({"address": address, "fields": {"operator": "person:milhouse"}}),
         )
         .await
-        .says("operator");
+        .says("operator")
+        .says("bot:alpha");
     omega
         .refused(
             "update_entity",
@@ -123,7 +121,8 @@ async fn the_operator_is_named_by_any_bot_and_changed_only_by_the_head_of_the_ch
             json!({"address": address, "clear_fields": ["operator"]}),
         )
         .await
-        .says("operator");
+        .says("operator")
+        .says("bot:alpha");
     s.call("recall", json!({"subject": "topic:instance"}))
         .await
         .says("\"operator\":\"person:lisa\"");
@@ -184,7 +183,8 @@ async fn the_operator_is_named_by_any_bot_and_changed_only_by_the_head_of_the_ch
     //
     // The same word may mean something else on another thing, such as who runs a
     // machine. It is named, then changed by a bot that heads nothing, in an
-    // instance that has a head.
+    // instance that has a head. **Written as an inference**, because the edit is
+    // another session's and a testimony claim is held to the session that wrote it.
     s.add("thing:handcart", "The Handcart").await;
     let runs = omega
         .call(

@@ -17,20 +17,14 @@ async fn a_bot_that_carries_a_role_claims_it_at_every_boot() {
     s.add("bot:delta", "Delta").await;
 
     // ── another identity says which role Gamma claims ───────────────────────
-    //
-    // **Written as an inference, so an edit of it is judged by the ceiling's own
-    // rule.** A testimony claim is held by the session rule beside it, and a bot
-    // that edited one would meet that refusal first.
     let carried = s
-        .call(
-            "capture",
-            json!({
-                "subject": "bot:gamma", "content": "gamma runs the dispatch",
-                "fields": {"claims_role": "dispatch"},
-            }),
+        .event_with(
+            "bot:gamma",
+            "gamma runs the dispatch",
+            json!({"claims_role": "dispatch"}),
+            &[],
         )
-        .await
-        .field("address");
+        .await;
 
     // Booting as Gamma with no `claim` holds the role.
     let (first, _) = story

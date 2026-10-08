@@ -49,20 +49,14 @@ async fn a_bot_whose_floor_is_eight_rules_boots_with_eight_once_somebody_else_sa
     );
 
     // ── another identity gives Gamma eight seats ────────────────────────────
-    //
-    // **Written as an inference, so an edit of it is judged by the ceiling's own
-    // rule.** A testimony claim is held by the session rule beside it, and a bot
-    // that edited one would meet that refusal first.
     let seats = s
-        .call(
-            "capture",
-            json!({
-                "subject": "bot:gamma", "content": "gamma's floor is eight rules",
-                "fields": {"rule_seats": "8"},
-            }),
+        .event_with(
+            "bot:gamma",
+            "gamma's floor is eight rules",
+            json!({"rule_seats": "8"}),
+            &[],
         )
-        .await
-        .field("address");
+        .await;
     let (gamma, _) = story
         .call("start_here", json!({"bot": "gamma", "brief": true}))
         .await;
