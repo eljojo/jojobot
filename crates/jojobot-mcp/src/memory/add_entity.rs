@@ -86,9 +86,10 @@ pub struct AddEntityArgs {
     /// back blocked with candidates, and nothing is written. Nothing may be its
     /// own parent.
     ///
-    /// **Fixed here and nowhere else.** There is no reparenting verb: where a
-    /// thing sits is decided when it is created, so choose it as deliberately
-    /// as the handle.
+    /// **Chosen here, and changed by `rename_entity`.** That verb takes a
+    /// `parent` and reparents with it (naming the same handle in `to` when only
+    /// the parent is moving), so where a thing sits is not final, but choose it
+    /// as deliberately as the handle: a reparent is a write like any other.
     ///
     /// A `rhythm` requires one — it is a loop ON something, and the parent is
     /// what says on what.

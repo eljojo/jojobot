@@ -584,6 +584,26 @@ fn the_descriptions_say_what_the_role_object_gate_does() {
     }
 }
 
+/// **`add_entity` does not say a thing cannot be moved.** `rename_entity` takes
+/// a `parent`, and the argument that fixes a parent at creation used to say no
+/// verb could change it.
+#[test]
+fn add_entity_points_at_the_verb_that_reparents() {
+    let tools = Jojobot::tool_router().list_all();
+    let add_entity = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "add_entity")
+        .expect("the surface offers add_entity");
+    let schema = serde_json::to_value(&add_entity.input_schema).expect("the schema serializes");
+    let described = schema["properties"]["parent"]["description"]
+        .as_str()
+        .expect("the parent argument carries its own description");
+    assert!(
+        described.contains("rename_entity") && !described.contains("no reparenting verb"),
+        "the parent argument does not point at the verb that reparents: {described}"
+    );
+}
+
 /// **The orientation essay explains claiming a role**, in the Sessions
 /// section where it already explains what a session is — the same place a
 /// caller reads to understand `start_here`'s `claim` argument, so the
