@@ -300,6 +300,17 @@ impl Jojobot {
             Ok(Some((owner, heads))) => {
                 let mut may: Vec<String> = owner.iter().map(|o| o.to_string()).collect();
                 may.extend(heads.iter().map(|h| h.to_string()));
+                // With no owner and no chart head nobody can act, so no change
+                // to the call helps and the decision is a person's.
+                if may.is_empty() {
+                    return Some(crate::caller::handle_declined(
+                        handle.as_str(),
+                        crate::answer::WayForward::person(format!(
+                            "This role object has no parent and the chart has no head, so no \
+                             bot may {act}. A person has to decide. Nothing was written."
+                        )),
+                    ));
+                }
                 Some(crate::caller::handle_declined(
                     handle.as_str(),
                     format!(
@@ -1007,5 +1018,48 @@ mod tests {
         jojobot.release_role_claims(&alpha, &sid).await;
         let released = jojobot.memory.fields(&object).await.expect("fields");
         assert_eq!(released.get("holder"), None, "{released:?}");
+    }
+
+    /// **A refusal wears the word of whoever can fix it.** A role object with
+    /// an owner is refused to a stranger who changes the call by asking the
+    /// owner, so it says `change`. One with no parent, in a store with no chart
+    /// head, has nobody to ask: the list of bots that may act is empty, so no
+    /// change of the call helps and a person has to decide.
+    #[tokio::test]
+    async fn a_role_object_nobody_may_act_on_is_refused_to_a_person() {
+        let jojobot = handler();
+        make_bot(&jojobot, "alpha").await;
+        make_bot(&jojobot, "beta").await;
+        let beta = EntityId("bot:beta".into());
+        let stranger = EntityId("bot:alpha".into());
+
+        let owned = EntityId("role:omega".into());
+        jojobot
+            .ensure_role_object(&beta, &owned, "omega")
+            .await
+            .expect("the owned object is made");
+        let refused = jojobot
+            .refuse_a_stranger_the_role_object(&stranger, &owned, "archive or restore it")
+            .await
+            .expect("a stranger is refused");
+        assert_fix_by("a stranger to an owned role object", &refused, "change");
+
+        let orphan = EntityId("role:sigma".into());
+        jojobot
+            .memory
+            .add_entity(NewEntity::new(orphan.clone(), "sigma", "jojobot"))
+            .await
+            .expect("the parentless object is made");
+        let refused = jojobot
+            .refuse_a_stranger_the_role_object(&stranger, &orphan, "archive or restore it")
+            .await
+            .expect("nobody may act on it");
+        assert_fix_by("a role object nobody may act on", &refused, "person");
+        let body = json_of(&refused);
+        let advice = body["how_to_proceed"].as_str().expect("a way forward");
+        assert!(
+            !advice.contains(": ."),
+            "the refusal names nobody to ask: {body}"
+        );
     }
 }
