@@ -938,11 +938,25 @@ impl Session {
 
     /// **The entry a wrap closed this run with**: the newest entry marked
     /// closing. A run wrapped a second time holds two, and the second is the
-    /// story it ended on. `None` for a run that was never wrapped and for one
-    /// wrapped before the mark existed, which could not be reopened, so its last
-    /// entry is its story.
+    /// story it ended on.
+    ///
+    /// **A run wrapped before the mark existed is read by what the wrap did
+    /// leave.** It could already be reopened by its wrap code, and its closing
+    /// entry carries the focus the run had at the close, which no other entry
+    /// does. With no marked entry, the newest entry that carries one is the
+    /// closing entry. `None` for a run that was never wrapped, and for one wrapped
+    /// before the mark with no focus to carry, whose last entry is its story.
     pub fn closing_entry(&self) -> Option<&JournalEntry> {
-        self.entries.iter().rev().find(|entry| entry.closing)
+        self.entries
+            .iter()
+            .rev()
+            .find(|entry| entry.closing)
+            .or_else(|| {
+                self.entries
+                    .iter()
+                    .rev()
+                    .find(|entry| entry.closing_focus.is_some())
+            })
     }
 
     /// **When the run was wrapped**: the moment of its closing entry. A run

@@ -337,7 +337,9 @@ impl Jojobot {
             // the still-open focus into the chronology as one final beat and that
             // entry IS the story. A run reopened for one last change takes entries
             // after it, so the newest entry is not the story. A run from before the
-            // closing mark has no marked entry, and its last entry is its story.
+            // closing mark has no marked entry, but a wrap of it recorded the run's
+            // focus on its closing entry, and that entry is its story; with no focus
+            // to record, nothing marks it and its last entry is the story.
             "story": run
                 .closing_entry()
                 .or_else(|| run.entries.last())
@@ -1075,6 +1077,111 @@ mod tests {
             handover["wrapped_at"].as_str(),
             Some(hours(5).to_string().as_str()),
             "and it was wrapped at its own closing entry's moment: {handover}"
+        );
+    }
+
+    /// **A run reopened in the shape an older build stored it hands over its
+    /// closing entry, not its afterthought.** Before the closing mark existed a
+    /// wrap carried the run's focus on its closing entry and marked nothing, and a
+    /// run could already be reopened by its wrap code. Such a run holds entries
+    /// after its closing one, none of them marked. Its story is the newest entry
+    /// that carries the focus the wrap recorded, at that entry's moment; the pair
+    /// beside it is a run with no such entry, whose last entry is still its story.
+    #[tokio::test]
+    async fn the_handover_of_a_run_reopened_in_the_old_shape_is_its_closing_entry() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma").await;
+        let now = jiff::Timestamp::now();
+        let hours = |h: i64| now - jiff::SignedDuration::from_hours(h);
+
+        let begin = |sid: &str, started: i64| {
+            let store = store.clone();
+            let sid = sid.to_string();
+            async move {
+                store
+                    .begin(NewSession {
+                        timezone: None,
+                        started_on: None,
+                        bot: EntityId("bot:gamma".into()),
+                        sid: Sid(sid),
+                        focus: "a piece of work".into(),
+                        started_at: hours(started),
+                    })
+                    .await
+                    .expect("begin ok")
+            }
+        };
+        // The older run: wrapped in the old shape (a focus, no mark), then
+        // reopened and given an afterthought. Its story is the closing entry.
+        let reopened = begin("t001", 30).await;
+        store
+            .append(
+                &reopened.id,
+                NewEntry {
+                    closing_focus: Some("the piece of work, at the close".into()),
+                    ..NewEntry::manual("reopened story: the wrap", hours(20), None)
+                },
+            )
+            .await
+            .expect("append ok");
+        store
+            .close(&reopened.id, SessionState::Wrapped)
+            .await
+            .expect("close ok");
+        store
+            .set_wrap_window(
+                &reopened.id,
+                Some(jojobot_domain::session::WrapWindow::Open(
+                    "wc-testtesttest".into(),
+                )),
+            )
+            .await
+            .expect("window opens");
+        store
+            .append(
+                &reopened.id,
+                NewEntry::manual("an afterthought on the reopened run", hours(1), None),
+            )
+            .await
+            .expect("append ok");
+
+        let body = boot(&jojobot, "gamma").await;
+        let handover = &body["session"]["handover"];
+        assert!(
+            handover["story"]
+                .as_str()
+                .is_some_and(|story| story.contains("reopened story")),
+            "the handover is the closing entry and not the afterthought: {handover}"
+        );
+        assert_eq!(
+            handover["wrapped_at"].as_str(),
+            Some(hours(20).to_string().as_str()),
+            "and it was wrapped at that entry's moment, not at the last beat: {handover}"
+        );
+
+        // The pair: a newer run wrapped in the old shape with no focus to carry
+        // and never reopened. Nothing marks its closing entry, so its last entry
+        // is its story, as it always was.
+        let plain = begin("t002", 10).await;
+        store
+            .append(
+                &plain.id,
+                NewEntry::manual("plain story: the last entry", hours(5), None),
+            )
+            .await
+            .expect("append ok");
+        store
+            .close(&plain.id, SessionState::Wrapped)
+            .await
+            .expect("close ok");
+        let body = boot(&jojobot, "gamma").await;
+        let handover = &body["session"]["handover"];
+        assert!(
+            handover["story"]
+                .as_str()
+                .is_some_and(|story| story.contains("plain story")),
+            "a run that was never reopened hands over its last entry: {handover}"
         );
     }
 
