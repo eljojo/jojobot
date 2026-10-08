@@ -114,7 +114,9 @@ async fn the_operator_is_named_by_any_bot_and_changed_only_by_the_head_of_the_ch
             json!({"handle": "topic:instance", "sets": {"operator": "person:milhouse"}}),
         )
         .await
-        .says("operator");
+        .says("\"wrote\":false")
+        .says("operator")
+        .says("bot:alpha");
     omega
         .refused(
             "update_fact",
@@ -132,6 +134,22 @@ async fn the_operator_is_named_by_any_bot_and_changed_only_by_the_head_of_the_ch
         .refused("capture", naming("bot:omega"))
         .await
         .says("operator");
+    alpha.call("capture", naming("person:milhouse")).await;
+    s.call("recall", json!({"subject": "topic:instance"}))
+        .await
+        .says("\"operator\":\"person:milhouse\"");
+    // The settings of an update land for the head too, which the refusal above
+    // is paired with. The head then names the operator again by a capture, so
+    // the record taken off below is the newest write of the key.
+    alpha
+        .call(
+            "update_entity",
+            json!({"handle": "topic:instance", "sets": {"operator": "person:lisa"}}),
+        )
+        .await;
+    s.call("recall", json!({"subject": "topic:instance"}))
+        .await
+        .says("\"operator\":\"person:lisa\"");
     let current = alpha
         .call("capture", naming("person:milhouse"))
         .await
