@@ -279,6 +279,19 @@ async fn the_chart_is_guarded_the_same_through_an_edit_a_retraction_and_a_merge(
         .never_says("\"reports_to\":\"bot:omega\"");
 
     // ── and each lands for the manager ──────────────────────────────────────
+    //
+    // The edit first: omega moves sigma under otto, so the retraction below is
+    // otto's, the manager sigma has now.
+    omega
+        .call(
+            "update_fact",
+            json!({"address": address, "fields": {"reports_to": "bot:otto"}}),
+        )
+        .await;
+    s.call("recall", json!({"subject": "bot:sigma"}))
+        .await
+        .says("\"reports_to\":\"bot:otto\"")
+        .never_says("\"reports_to\":\"bot:omega\"");
     omega
         .call(
             "merge_entities",
@@ -289,15 +302,14 @@ async fn the_chart_is_guarded_the_same_through_an_edit_a_retraction_and_a_merge(
     s.call("recall", json!({"subject": "bot:psi"}))
         .await
         .says("\"reports_to\":\"bot:omega\"");
-    omega
-        .call(
-            "retract",
-            json!({"address": address, "reason": "sigma moves elsewhere"}),
-        )
-        .await;
+    s.call(
+        "retract",
+        json!({"address": address, "reason": "sigma moves elsewhere"}),
+    )
+    .await;
     s.call("recall", json!({"subject": "bot:sigma"}))
         .await
-        .never_says("\"reports_to\":\"bot:omega\"");
+        .never_says("\"reports_to\":");
 
     s.wrap("tried the other doors to the chart").await;
     story.finish().await;
