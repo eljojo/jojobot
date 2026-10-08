@@ -37,7 +37,7 @@ use jojobot_domain::handle::draw;
 
 use crate::AppState;
 use crate::auth::{IssuerEndpoints, Validator};
-use crate::config::UiConfig;
+use crate::config::{UiConfig, origin_of};
 
 /// The cookie naming a logged-in browser. Its value is a drawn handle and
 /// nothing else: the session itself lives in this process, so the cookie can be
@@ -108,8 +108,9 @@ struct Live {
 pub struct Ui {
     client_id: String,
     redirect_uri: String,
-    /// The origin this UI is served at, as the configuration states it. A
-    /// state-changing request has to come from it.
+    /// The origin this UI is served at: the scheme and the authority of the
+    /// configured base URL, without its path, because that is all a browser's
+    /// `Origin` header carries. A state-changing request has to come from it.
     origin: String,
     endpoints: IssuerEndpoints,
     /// Validates the ID token the issuer returns, and authorizes its subject
@@ -135,7 +136,7 @@ impl Ui {
         Self {
             client_id: cfg.client_id.clone(),
             redirect_uri: cfg.redirect_uri(),
-            origin: cfg.base_url.trim_end_matches('/').to_string(),
+            origin: origin_of(&cfg.base_url),
             endpoints,
             id_tokens,
             http,

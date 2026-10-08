@@ -398,6 +398,22 @@ async fn spawn_jojobot_guarding(
     scheme: &str,
     mcp: Option<Arc<jojobot::auth::Validator>>,
 ) -> (SocketAddr, CancellationToken, Board) {
+    spawn_jojobot_serving(endpoints, allowed, idp, board, scheme, mcp, "").await
+}
+
+/// The same, with **the path the configured base URL carries** as a knob. A
+/// real instance is configured with the URL its people reach it at, which may
+/// have a path, and a reverse proxy takes the path off before the request gets
+/// here; this process serves at its root either way.
+async fn spawn_jojobot_serving(
+    endpoints: IssuerEndpoints,
+    allowed: &[&str],
+    idp: &support::TestIdp,
+    board: Board,
+    scheme: &str,
+    mcp: Option<Arc<jojobot::auth::Validator>>,
+    base_path: &str,
+) -> (SocketAddr, CancellationToken, Board) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
@@ -407,7 +423,7 @@ async fn spawn_jojobot_guarding(
 
     let ui_cfg = UiConfig {
         client_id: CLIENT_ID.to_string(),
-        base_url: format!("{scheme}://{addr}"),
+        base_url: format!("{scheme}://{addr}{base_path}"),
     };
     let ui = Ui::new(
         &ui_cfg,
@@ -2044,6 +2060,109 @@ async fn the_operators_mail_is_withheld_unless_the_allowlist_is_one_person() {
         );
         ct.cancel();
     }
+}
+
+/// **A base URL that carries a path still matches the browser's own origin.**
+/// An instance is configured with the URL its people reach it at, which may
+/// have a path, and a browser's `Origin` header is the scheme and the authority
+/// and never the path. Both actions on the operator's mail are POSTs that check
+/// it, so a path in the configured URL must not make every one of them a 403.
+/// The proxy that serves the path takes it off before the request arrives, so
+/// the case logs in the way that proxy would deliver the callback.
+///
+/// Paired with the same actions from another origin, and from an `Origin` that
+/// carries the path (which no browser sends), both refused.
+#[tokio::test]
+async fn a_base_url_with_a_path_still_accepts_the_browsers_origin() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let board = seeded_board().await;
+    let mail = with_an_operators_mail(&board).await;
+    let mailboxes = board.mailboxes.clone();
+    let (addr, ct, _board) =
+        spawn_jojobot_serving(endpoints, &[READER], &idp, board, "http", None, "/jojobot").await;
+    let client = browser();
+    let cookie = log_in_behind_a_path(&client, addr, "/jojobot").await;
+    let origin = format!("http://{addr}");
+    let id = mail.to_the_operator.as_str();
+
+    for (what, sent) in [
+        (
+            "from another origin",
+            "https://elsewhere.example".to_string(),
+        ),
+        (
+            "with the path in the origin",
+            format!("http://{addr}/jojobot"),
+        ),
+    ] {
+        let refused = open_in_the_ui(addr, &cookie, id, Some(&sent)).await;
+        assert_eq!(
+            refused.status(),
+            reqwest::StatusCode::FORBIDDEN,
+            "an Open {what} was not refused"
+        );
+    }
+    assert_eq!(
+        state_in_the_store(&mailboxes, &mail.to_the_operator).await,
+        "new",
+        "a refused Open moved the message"
+    );
+
+    let opened = open_in_the_ui(addr, &cookie, id, Some(&origin)).await;
+    assert!(
+        opened.status().is_redirection(),
+        "an Open from the browser's own origin was refused behind a base path: {}",
+        opened.status()
+    );
+    assert_eq!(
+        state_in_the_store(&mailboxes, &mail.to_the_operator).await,
+        "read"
+    );
+    let marked = mark_processed_in_the_ui(addr, &cookie, id, "done", Some(&origin)).await;
+    assert!(
+        marked.status().is_redirection(),
+        "a mark-processed from the browser's own origin was refused behind a base path: {}",
+        marked.status()
+    );
+    assert_eq!(
+        state_in_the_store(&mailboxes, &mail.to_the_operator).await,
+        "processed"
+    );
+    ct.cancel();
+}
+
+/// Walk the login for an instance whose base URL has a path: the issuer sends
+/// the browser back to the callback under that path, and the proxy in front
+/// takes the path off, so the callback is delivered at the root.
+async fn log_in_behind_a_path(client: &reqwest::Client, jojobot: SocketAddr, path: &str) -> String {
+    let turned_away = client
+        .get(format!("http://{jojobot}/"))
+        .send()
+        .await
+        .unwrap();
+    let to_login = location(&turned_away);
+    let sent_out = client
+        .get(format!("http://{jojobot}{to_login}"))
+        .send()
+        .await
+        .unwrap();
+    let back = client.get(location(&sent_out)).send().await.unwrap();
+    let callback = location(&back).replacen(&format!("{path}/ui/callback"), "/ui/callback", 1);
+    let opened = client.get(&callback).send().await.unwrap();
+    assert!(
+        opened.status().is_redirection(),
+        "a completed login lands the browser back, got {}",
+        opened.status()
+    );
+    session_pair(
+        opened
+            .headers()
+            .get(reqwest::header::SET_COOKIE)
+            .expect("a completed login sets a session cookie")
+            .to_str()
+            .unwrap(),
+    )
 }
 
 /// **Mark-processed in the UI moves the message to processed with its note**,
