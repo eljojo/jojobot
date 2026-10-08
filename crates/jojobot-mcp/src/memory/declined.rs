@@ -1022,9 +1022,11 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             &EntityId(subject.clone()),
             &[],
             format!(
-                "Nothing was merged: {e}. Shorten {thought} with update_fact to a pointer at or \
-                 under {cap} characters (it is {len}), with the substance moved onto the thing it \
-                 points at, then re-call {verb}."
+                "Nothing was merged: {e}. Move the substance of {thought} onto the thing it \
+                 points at with capture, archive {thought} with update_fact (status: archived, \
+                 details saying where the substance went), and capture a pointer at or under \
+                 {cap} characters (it is {len}) with {thought} as its derived_from. Then \
+                 re-call {verb}."
             ),
         )),
         // **A thought earns its place by staying a pointer.** The way
@@ -1039,9 +1041,12 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             &EntityId(subject.clone()),
             &[],
             format!(
-                "Nothing was written: {e}. Re-call {verb} with the substance moved onto the \
-                 thing this thought points at, and the thought itself shortened to a pointer at \
-                 or under {cap} characters (this one was {len})."
+                "Nothing was written: {e}. Re-call {verb} with the substance captured onto the \
+                 thing this thought points at, and the thought as a pointer at or under {cap} \
+                 characters (this one was {len}). If you were editing a thought that already \
+                 stands, archive it with update_fact (status: archived) and capture the pointer \
+                 as a new claim with the old one as its derived_from; do not rewrite it shorter \
+                 in place."
             ),
         )),
         // **The thing a ceiling binds cannot write that ceiling.** A
@@ -2103,6 +2108,40 @@ mod tests {
         for (label, error, word) in memory_refusal_rows() {
             let raised = memory_error(error);
             assert_error_word(label, &raised, word);
+        }
+    }
+
+    /// **A thought too long is moved, never compressed.** Both refusals that
+    /// name a thought over its cap say how to relocate it: the substance goes
+    /// onto the thing the thought points at as a new claim, the original is
+    /// archived, and a short pointer is captured in its place. Rewriting the
+    /// same words shorter in place is the one repair they must not offer.
+    #[test]
+    fn a_thought_over_its_cap_is_told_to_relocate_and_archive() {
+        let refusals = [
+            MemoryError::ThoughtTooLong {
+                subject: "bot:gamma".into(),
+                len: 900,
+                cap: 500,
+            },
+            MemoryError::MergeThoughtTooLong {
+                subject: "bot:gamma".into(),
+                thought: "bot:gamma#f1".into(),
+                len: 900,
+                cap: 500,
+            },
+        ];
+        for error in refusals {
+            let answered = json_of(&memory_declined("capture", error).expect("a blocked answer"));
+            let how = answered["how_to_proceed"].as_str().expect("advice");
+            assert!(
+                how.contains("archived") && how.contains("capture"),
+                "the advice has to name archiving the thought and capturing its replacement: {how}"
+            );
+            assert!(
+                !how.contains("Shorten") && !how.contains("shortened"),
+                "the advice must not offer compressing the thought in place: {how}"
+            );
         }
     }
 
