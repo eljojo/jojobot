@@ -159,8 +159,22 @@ entities, facts and prose, and over mail too when you ask for it with
 ## 5. If you asked and got nothing
 
 Read the answer rather than re-sending it. A blocked answer says what to do
-next and names what exists; an empty result is a real answer and means nobody
-wrote that down. **They are different**, and neither is fixed by asking again.
+next and names what exists. An empty result is an answer, but it does not
+always mean nobody wrote it down: words are matched by stem and a query needs
+most of its terms, so the wording can be what missed. A `recall` that selected
+nothing carries a `searched` line saying what it looked through, what it left
+out and how to widen it; a `search` carries a `matching` note saying how loosely
+it matched. Read those before you conclude anything. **They are different from
+a blocked answer**, and neither is fixed by asking again unchanged.
+
+**A person with no entity of their own.** Somebody the operator mentions may
+have none, so there is no handle to recall. Their name can still be in what was
+written about other things: `search` for the name as words and read the
+surroundings of each hit. A `recall` of a guessed handle that names nothing
+comes back blocked with the nearest handles, which shows whether an entity exists
+under another spelling. If both come back empty and nothing was left out, jojobot
+holds no record of them: say so, and ask the operator rather than adding an entity
+on a guess.
 "#;
 
 const RECOMMEND: &str = r#"# recommend
@@ -573,6 +587,28 @@ mod tests {
             rhythms.when_to_use.contains("about to record a check-in"),
             "{}",
             rhythms.when_to_use
+        );
+    }
+
+    /// **The asking skill does not say an empty answer is final.** Search matches
+    /// by stem and needs most of a query's terms, so an empty answer can be the
+    /// wording and not the absence. The skill tells a caller to read the
+    /// `searched` line before concluding, and says how to ask for a person who
+    /// has no card of their own.
+    #[test]
+    fn the_asking_skill_does_not_call_an_empty_answer_final() {
+        let asking = body("asking");
+        assert!(
+            !asking.contains("means nobody wrote that down"),
+            "the asking skill still says an empty answer means nobody wrote it down"
+        );
+        assert!(
+            asking.contains("`searched`"),
+            "the asking skill does not send a caller to the searched line"
+        );
+        assert!(
+            asking.contains("no entity of their own"),
+            "the asking skill does not say how to ask for a person with no entity"
         );
     }
 

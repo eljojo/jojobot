@@ -21,8 +21,9 @@ pub struct EdgeFilterArgs {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct SearchArgs {
     /// Free text over entity handles/names, fact claims and details, and an
-    /// entity's prose. **All words must match.** Optional when at least one
-    /// filter below is given.
+    /// entity's prose. **Words are matched by stem, and a record needs most of
+    /// the query's terms, not all of them.** Optional when at least one filter
+    /// below is given.
     #[serde(default)]
     pub(crate) query: Option<String>,
     /// Narrow to one entity kind — an entity's own kind, a fact's subject's kind,
@@ -575,8 +576,9 @@ impl Jojobot {
     #[tool(
         description = "The front door — use it first, and any time you do not already hold the \
                        exact handle or address. One ranked list over entities, facts, free \
-                       prose AND the messages in bots' mailboxes at once. `query` is free text (ALL \
-                       words must match) and is optional when a filter narrows it: kind · status \
+                       prose AND the messages in bots' mailboxes at once. `query` is free text (words \
+                       are matched by stem and a record needs most of its terms, not all of \
+                       them) and is optional when a filter narrows it: kind · status \
                        (default active; archived is excluded unless named) · provenance · \
                        standing (`open` is how you ask which claims are still in doubt) · \
                        subject · edge {shape, object} · answers_type · fits_type; a call with \

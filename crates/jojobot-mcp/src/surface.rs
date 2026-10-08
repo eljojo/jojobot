@@ -724,6 +724,30 @@ fn recall_names_the_runs_day_as_the_day_overdue_is_asked_about() {
     );
 }
 
+/// **`search`'s description says how many of a query's words must match.** It
+/// said all of them, against the note every answer carries: words are matched by
+/// stem and a query needs most of its terms. The description names the rule the
+/// answer applies.
+#[test]
+fn the_search_description_says_most_of_the_terms_match_by_stem() {
+    assert_description_names("search", &["most of", "stem"]);
+    let tools = Jojobot::tool_router().list_all();
+    let search = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "search")
+        .expect("the surface offers search");
+    let description = search.description.as_deref().unwrap_or_default();
+    assert!(
+        !description.contains("ALL words must match"),
+        "search's description still says all words must match: {description}"
+    );
+    let schema = serde_json::to_string(&search.input_schema).expect("the schema serializes");
+    assert!(
+        !schema.contains("All words must match"),
+        "search's query argument still says all words must match"
+    );
+}
+
 /// **`search`'s description names the `clock` choice** and the two days it
 /// picks between.
 #[test]
