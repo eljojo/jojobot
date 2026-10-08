@@ -3544,3 +3544,80 @@ fn every_address_the_build_supplies_is_named_by_its_handle_in_the_source() {
          the roster gate to read — name each one by its handle instead:\n{unwritten:?}"
     );
 }
+
+/// **Every text a caller is served that describes how jojobot works**: the
+/// server instructions, every tool's description and input schema, the whole
+/// orientation essay, and every skill. Counted by what is in it, so a case that
+/// reads it fails when the corpus comes back empty.
+fn every_served_text() -> Vec<(String, String)> {
+    let mut texts = vec![
+        ("the served instructions".to_string(), crate::instructions()),
+        (
+            "the orientation essay".to_string(),
+            crate::orientation::essay::orientation(),
+        ),
+    ];
+    for tool in Jojobot::tool_router().list_all() {
+        let name = tool.name.to_string();
+        texts.push((
+            format!("{name}'s description"),
+            tool.description.as_deref().unwrap_or_default().to_string(),
+        ));
+        texts.push((
+            format!("{name}'s input schema"),
+            serde_json::to_string(&tool.input_schema).expect("the schema serializes"),
+        ));
+    }
+    for skill in crate::orientation::skills::SKILLS {
+        texts.push((
+            format!("the {} skill", skill.name),
+            format!("{} {}", skill.when_to_use, skill.body),
+        ));
+    }
+    texts
+}
+
+/// **No served text describes the provenance default as the weakest backing.**
+/// A claim nobody confirmed is labelled a hypothesis, and "weakest backing" read
+/// cold describes jojobot as a weak place to keep things: a model kept its
+/// rulings in a markdown file instead and cited that sentence. The needle is the
+/// word, over every text a caller is served, and the corpus is counted first so
+/// the case cannot pass over nothing.
+#[test]
+fn no_served_text_calls_the_provenance_default_the_weakest() {
+    let texts = every_served_text();
+    assert!(
+        texts.len() > 40,
+        "the corpus of served texts is too small to be the served surface: {}",
+        texts.len()
+    );
+    for (place, text) in &texts {
+        assert!(
+            !text.to_lowercase().contains("weakest"),
+            "{place} describes the provenance default as the weakest backing"
+        );
+    }
+}
+
+/// **The hypothesis labelling is still taught, and so is where durable things
+/// are kept.** The pair for the case above, which passes on an empty corpus of
+/// teaching: the instructions say a claim nobody confirmed is labelled a
+/// hypothesis until the user confirms it, the essay says the default reads back
+/// as one, and the instructions say jojobot is where a fact a later session has
+/// to find is kept.
+#[test]
+fn the_hypothesis_labelling_and_the_place_for_durable_things_are_still_taught() {
+    let instructions = crate::instructions();
+    assert!(
+        instructions.contains("hypothesis") && instructions.contains("confirms"),
+        "the instructions do not say what an unconfirmed claim is labelled: {instructions}"
+    );
+    assert!(
+        crate::orientation::essay::orientation().contains("hypothesis"),
+        "the essay does not teach the hypothesis labelling"
+    );
+    assert!(
+        instructions.contains("durable"),
+        "the instructions do not say jojobot is where durable things are kept"
+    );
+}

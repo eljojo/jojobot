@@ -355,9 +355,10 @@ pub(crate) const INSTRUCTIONS: &str = "jojobot — a personal-assistant server. 
                  `kind:slug` \
                  — the name it is addressed by, and the only name a caller ever sends — and **facts** about them: single dated claims, each carrying an \
                  **address** (`kind:slug#local-id`) it can be edited through and a \
-                 **provenance** saying how strongly it is backed. **The default is the weakest \
-                 backing and reads back as a hypothesis, never as truth**; only the user's \
-                 explicit confirmation promotes a claim. A fact may also draw one typed \
+                 **provenance** saying who backs it: a claim nobody confirmed is labelled a \
+                 hypothesis until the user confirms it. **jojobot is where durable things \
+                 are kept**, so a fact you want a later session to find goes here. A fact \
+                 may also draw one typed \
                  **edge** at another entity — and edges are what make cross-entity \
                  questions (\"which people are in X\") answerable without reading everything. \
                  **Start with `search`**: one ranked list over entities, facts and free prose, \
