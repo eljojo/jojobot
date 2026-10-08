@@ -6,7 +6,7 @@
 
 ## Events and facts
 
-**An event is the atom.** An event has a date. It hangs off one entity. It carries fields: keys and values. Its kind names which keys.
+**An event is the atom.** An event has a date. It hangs off one entity. It carries fields: keys and values. Its kind names which keys. **An event is stored in two layers: a permissive record that keeps every key as written, and a typed projection over it that the kind's declarations supply.**
 
 Events accumulate. jojobot never updates an event in place. jojobot never overwrites one.
 
@@ -62,7 +62,7 @@ One answer does not imply the other. The operator can say something while thinki
 
 **Retracting is a different move.** A correction says the world turned out otherwise. Retracting says nobody should have written this. It is one way. It is not a delete, and the record stays readable. Taking something back is itself something that happened, and a system that hid it would lie about its own past.
 
-**A claim carries two dates, and they answer different questions.** One says when the claim was made. The other says when the thing happened, and it is absent when nobody said — which is the honest record of *she came back over the summer*, rather than a day nobody chose. **A date meaning anything else gets its own key rather than its own column**, so a query still reaches it and no column carries two meanings.
+**A claim carries two dates, and they answer different questions.** One says when the claim was made. The other says when the thing happened, and it is absent when nobody said — which is the honest record of *she came back over the summer*, rather than a day nobody chose. **A date meaning anything else gets its own key rather than its own column**, so a query still reaches it and no column carries two meanings. **So does any other per-claim marker that does not earn a column:** it rides the same key-value bag an event already carries.
 
 **Something somebody intends is its own entity, not a date on a claim.** It accumulates its own events, and two of them can stand about one subject.
 
@@ -106,7 +106,7 @@ This prevents one failure: a claim put on the parent because that was easier. A 
 
 **A claim carries the address a caller edits it through.** Another claim links to that address when it says where a claim came from. A claim's local number is unique inside its home. The number says how many claims sit on one entity. It does not say how many jojobot holds.
 
-**A reference points at the thing, not at its name.** A person and an agent read a handle. Underneath, a link holds an opaque id. So somebody can rename or move a thing, and nothing that points at it breaks.
+**A reference points at the thing, not at its name.** A person and an agent read a handle. Underneath, a link holds an opaque id. So somebody can rename or move a thing, and nothing that points at it breaks. **A field that holds several pointers holds their permanent ids, never a text list.** The readable form is composed on the way out and is never what is stored, so a read cannot rewrite what the writer typed.
 
 **A caller chooses a link when jojobot captures the event.** jojobot never infers one later. This makes a question across the graph a walk: you name the relation once, and every later question follows it.
 
@@ -118,4 +118,4 @@ This prevents one failure: a claim put on the parent because that was easier. A 
 
 **Not the reader's question.** A reader asks for some of the keys or for all of them, and that decides what comes back. It never decides what a write may do. These are two questions, and collapsing them makes the design toothless.
 
-**Not a place anything is created by accident.** Everything a write names must already exist. jojobot brings nothing into being as a side effect. The one exception is the operator's mailbox, which opens inside the first post to them.
+**Not a place anything is created by accident.** Everything a write names must already exist. jojobot brings nothing into being as a side effect. **Before a write brings a new name in, the write guard checks it against the entities jojobot already knows, the way a phone's autocomplete checks the contacts book.** The one exception is the operator's mailbox, which opens inside the first post to them.

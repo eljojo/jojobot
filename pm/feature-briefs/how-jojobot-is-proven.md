@@ -52,7 +52,7 @@
 
 **Hardness comes from the goal, never from the brief.** A room that is hard because it hides something measures puzzle-solving, and that is a worse instrument than the script it replaced.
 
-* **A known starting state.** This is what makes assertion tractable. The check reads **the state the room is left in**, not the words the agent chose. A real run is non-deterministic, so a tight assertion on prose fails on wording and a loose one passes on nothing.
+* **A known starting state.** This is what makes assertion tractable. The check reads **the state the room is left in**, not the words the agent chose. A real run is non-deterministic, so a tight assertion on prose fails on wording and a loose one passes on nothing. **A paid run proves the agent READ, not only that the store ended up right:** the room plants an answer only the intended read yields, and the sitting must record it in the store, because an answer merely said leaves nothing to check.
 * **Entry through the instance's own surface**, so the agent under test meets jojobot the way any agent does.
 * **The shipped identity, with no charter installed.** The harness may furnish the room. It may not coach the occupant. **A run that falls short because the shipped charter falls short is a result, not a harness defect.** The batteries are the product, and this is the one test that measures them.
 * **Each run builds and destroys its own instance.** It reaches nothing of the operator's.
