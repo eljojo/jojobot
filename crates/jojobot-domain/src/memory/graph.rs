@@ -225,6 +225,11 @@ pub struct Selection {
     pub subject: Option<EntityId>,
     /// Every entity of one kind.
     pub kind: Option<EntityKind>,
+    /// **Only the direct children of this entity.** A property of the object
+    /// itself, like its kind, so it combines with `kind`: the roles of one bot
+    /// is a kind and a parent. One level, never a subtree, for the reason
+    /// `list_entities`' own parent argument is.
+    pub parent: Option<EntityId>,
     /// **Objects that answer this type**, matched structurally over the keys
     /// their records carry — never over what anybody declared them to be.
     ///
@@ -282,7 +287,10 @@ impl Selection {
     /// because a second could come to disagree about what counts as a
     /// question.
     pub fn narrows_nothing(&self) -> bool {
-        self.subject.is_none() && self.kind.is_none() && !self.filters_facts()
+        self.subject.is_none()
+            && self.kind.is_none()
+            && self.parent.is_none()
+            && !self.filters_facts()
     }
 
     /// Is there a filter here beyond the object's own properties? Kind and
@@ -1618,6 +1626,10 @@ impl<'a> Ctx<'a> {
     /// about what "everything else matched" means.
     fn admits_ignoring_archived(&self, entity: &Entity, select: &Selection) -> bool {
         select.kind.is_none_or(|k| entity.kind == k)
+            && select
+                .parent
+                .as_ref()
+                .is_none_or(|p| entity.parent.as_ref() == Some(p))
             // **An owned object is its owner's alone.** Objects declaring no
             // owner are the whole store as it stands, and they answer everyone.
             && self.readable_by(&entity.id, select)
@@ -1643,6 +1655,12 @@ impl<'a> Ctx<'a> {
         self.entities
             .values()
             .filter(|e| select.kind.is_none_or(|k| e.kind == k))
+            .filter(|e| {
+                select
+                    .parent
+                    .as_ref()
+                    .is_none_or(|p| e.parent.as_ref() == Some(p))
+            })
             .filter(|e| !self.readable_by(&e.id, select))
             .count()
     }
@@ -2314,7 +2332,12 @@ where
             None => {
                 everyones
                     || resolved_subject.as_ref() == Some(&e.id)
-                    || (resolved_subject.is_none() && select.kind.is_none_or(|k| e.kind == k))
+                    || (resolved_subject.is_none()
+                        && select.kind.is_none_or(|k| e.kind == k)
+                        && select
+                            .parent
+                            .as_ref()
+                            .is_none_or(|p| e.parent.as_ref() == Some(p)))
             }
         })
         .collect();

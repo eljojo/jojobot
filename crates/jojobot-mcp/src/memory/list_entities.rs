@@ -130,6 +130,7 @@ mod tests {
         RecallArgs {
             subject: Some(subject.into()),
             kind: None,
+            parent: None,
             answers_type: None,
             fields: None,
             facts: None,

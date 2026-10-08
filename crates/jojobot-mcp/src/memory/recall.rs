@@ -150,6 +150,12 @@ pub struct RecallArgs {
     /// Every entity of one kind. `session` reads your own past runs.
     #[serde(default)]
     pub(crate) kind: Option<String>,
+    /// **Only the direct children of this entity**, as `kind:slug` (a bare
+    /// handle is read as a person). One level, never a subtree. It combines with
+    /// `kind`: `kind: "role"` with a bot as `parent` is that bot's roles, each
+    /// with its holder, when it was last claimed and its agent, in one read.
+    #[serde(default)]
+    pub(crate) parent: Option<String>,
     /// **Objects that answer this type**, by name. Matching is STRUCTURAL — an
     /// object carrying the type's keys answers it whether or not anybody
     /// declared it one — and it is asked of the OBJECT: every write on it
@@ -1660,6 +1666,7 @@ impl Jojobot {
             select: graph::Selection {
                 subject: args.subject.as_deref().map(EntityId::person),
                 kind: args.kind.as_deref().map(parse_kind).transpose()?,
+                parent: args.parent.as_deref().map(EntityId::person),
                 answers_type,
                 candidates: None,
                 fields: match &args.fields {

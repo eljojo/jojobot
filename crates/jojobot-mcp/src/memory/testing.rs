@@ -155,6 +155,7 @@ pub(crate) fn recall_args(subject: &str) -> RecallArgs {
         view: None,
         subject: Some(subject.into()),
         kind: None,
+        parent: None,
         answers_type: None,
         fields: None,
         facts: Some(true),

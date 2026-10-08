@@ -53,6 +53,7 @@ fn of(subject: &str) -> RecallArgs {
         view: None,
         subject: Some(subject.into()),
         kind: None,
+        parent: None,
         answers_type: None,
         fields: None,
         facts: Some(true),
@@ -4377,6 +4378,7 @@ fn of_nothing() -> RecallArgs {
         view: None,
         subject: None,
         kind: None,
+        parent: None,
         answers_type: None,
         fields: None,
         facts: None,
@@ -5939,4 +5941,93 @@ async fn an_empty_selection_names_the_population_it_looked_through() {
         full["searched"].is_null(),
         "a non-empty read needs no line: {full}"
     );
+}
+
+/// **A recall can select the direct children of one entity, and the selector
+/// combines with a kind.** The positive is the parent's two children; the
+/// negatives are another parent's child, left out, and a kind none of the
+/// children has, which leaves nothing — so a selector that ignored either half
+/// would pass one of these and fail the other.
+#[tokio::test]
+async fn a_parent_selects_its_direct_children_and_combines_with_a_kind() {
+    let jojobot = handler();
+    for (kind, handle, name, parent) in [
+        ("project", "atlas", "Atlas", None),
+        ("project", "the-shed", "The Shed", None),
+        (
+            "work",
+            "atlas-x-donut-stand",
+            "Donut Stand",
+            Some("project:atlas"),
+        ),
+        (
+            "work",
+            "atlas-kwik-e-mart",
+            "Kwik E Mart",
+            Some("project:atlas"),
+        ),
+        ("work", "atlas-child", "Elsewhere", Some("project:the-shed")),
+    ] {
+        let added = json_of(
+            &jojobot
+                .add_entity(Parameters(crate::memory::add_entity::AddEntityArgs {
+                    parent: parent.map(str::to_string),
+                    ..add_args(kind, handle, name)
+                }))
+                .await
+                .expect("add_entity ok"),
+        );
+        assert_ne!(added["status"], "blocked", "{handle}: {added}");
+    }
+    let ids = |body: &serde_json::Value| -> Vec<String> {
+        let mut found: Vec<String> = body["objects"]
+            .as_array()
+            .map(|all| {
+                all.iter()
+                    .filter_map(|o| o["id"].as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        found.sort();
+        found
+    };
+
+    let children = json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                parent: Some("project:atlas".into()),
+                ..of_nothing()
+            }))
+            .await
+            .expect("recall ok"),
+    );
+    assert_eq!(
+        ids(&children),
+        vec!["work:atlas-kwik-e-mart", "work:atlas-x-donut-stand"],
+        "{children}",
+    );
+
+    let works = json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                parent: Some("project:atlas".into()),
+                kind: Some("work".into()),
+                ..of_nothing()
+            }))
+            .await
+            .expect("recall ok"),
+    );
+    assert_eq!(ids(&works).len(), 2, "{works}");
+
+    let none = json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                parent: Some("project:atlas".into()),
+                kind: Some("person".into()),
+                ..of_nothing()
+            }))
+            .await
+            .expect("recall ok"),
+    );
+    assert!(ids(&none).is_empty(), "no child is a person: {none}");
 }

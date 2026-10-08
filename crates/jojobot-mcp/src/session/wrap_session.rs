@@ -633,6 +633,7 @@ mod tests {
                     kind: None,
                     answers_type: None,
                     fields: None,
+                    parent: None,
                     facts: None,
                     stood_for: None,
                     status: None,
