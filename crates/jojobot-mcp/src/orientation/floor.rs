@@ -537,7 +537,12 @@ mod tests {
     /// rule would not pass.
     #[tokio::test]
     async fn a_rule_is_measured_with_the_timestamp_it_will_be_stored_with() {
-        let jojobot = mailbox_handler();
+        // A stated clock stamps whole seconds, so every stamp renders at one
+        // width. The wall clock's fraction drops trailing zeros, which made the
+        // rule miss the ceiling by a character on some runs.
+        let jojobot = mailbox_handler().on_clock(jojobot_domain::clock::Clock::stating(
+            "2026-06-01".parse().expect("a day"),
+        ));
         make_bot(&jojobot, "gamma").await;
         let bot = EntityId("bot:gamma".into());
         let budget = jojobot_domain::text::BOOT_ANSWER.budget;
@@ -550,7 +555,7 @@ mod tests {
             new.fields = [("starred".to_string(), "true".to_string())].into();
             new
         };
-        let stamp = jiff::Timestamp::now();
+        let stamp = jojobot.clock().now();
         let floor_of = |content: usize, stamped: bool| {
             let new = starred("x".repeat(content));
             let fact = prospective_fact(&new, 1, stamped.then_some(stamp));
