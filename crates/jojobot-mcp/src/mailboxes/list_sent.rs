@@ -210,10 +210,14 @@ impl Jojobot {
             // **Said once, beside the list.** It is the same sentence for every
             // message, so carrying it on each one is most of the answer and
             // teaches a reader nothing after the first.
-            "how_to_read": (!bodies).then_some(
-                "call list_sent again with include_bodies: true — these are your own messages, \
-                 so reading them takes no delivery from anybody",
-            ),
+            "how_to_read": (!bodies).then(|| {
+                let withheld = sent.iter().filter(|m| !open.contains(&m.mailbox)).count();
+                match (withheld, sent.len()) {
+                    (0, _) => BODIES_POINTER.to_string(),
+                    (all, total) if all == total => WITHHELD_POINTER.to_string(),
+                    _ => format!("{BODIES_POINTER}; the messages marked private or withheld stay out of it"),
+                }
+            }),
             "unreadable": unreadable,
             "unreadable_note": "Messages jojobot cannot read are not in the list above — \
                                 it cannot tell who sent them. If one of yours is missing, it may \
@@ -233,6 +237,17 @@ impl Jojobot {
         }))
     }
 }
+
+/// What the top of an answer says about reading bodies, for a list whose
+/// messages can show one.
+const BODIES_POINTER: &str = "call list_sent again with include_bodies: true — these are your \
+                              own messages, so reading them takes no delivery from anybody";
+
+/// What it says instead for a list in which no message can show one: every
+/// message is to a person's box, or its box was renamed while the list was
+/// built.
+const WITHHELD_POINTER: &str = "no text of these messages is shown, however it is asked for: \
+                                each is marked private or withheld";
 
 /// **A message to a person's box, as a sender is allowed to see it**: its id,
 /// when it was sent and its subject. No body, no opening line, no size, no
@@ -889,5 +904,92 @@ mod tests {
             .unwrap_or_else(|| panic!("the message to the person is listed: {again}"));
         assert_eq!(to_the_person["private"], true, "{to_the_person}");
         assert!(!to_the_person.to_string().contains("4242"));
+    }
+
+    /// **The pointer beside the list offers bodies only for messages that have
+    /// one to give.** A message to a person's box is never shown with its text,
+    /// whoever asks and whatever is passed, so a list of nothing else that says
+    /// to call again with `include_bodies` sends the reader down a route that
+    /// returns nothing. A list of only those says so instead, a list of both
+    /// offers the bodies and says the private ones stay out, and a list of bot
+    /// mail alone offers them as it always did.
+    #[tokio::test]
+    async fn the_pointer_beside_the_list_does_not_offer_bodies_a_persons_mail_never_has() {
+        let jojobot = mailbox_handler();
+        a_persons_box(&jojobot, "milhouse").await;
+        make_box(&jojobot, "pm").await;
+        let writer = owning(&jojobot, "epsilon").await;
+        let list = || async {
+            json_of(
+                &jojobot
+                    .list_sent(Parameters(ListSentArgs {
+                        limit: None,
+                        sender: None,
+                        to: None,
+                        include_bodies: None,
+                        sid: Some(writer.clone()),
+                    }))
+                    .await
+                    .expect("list_sent ok"),
+            )
+        };
+        let pointer = |listed: &serde_json::Value| {
+            let note = listed["how_to_read"]
+                .as_str()
+                .unwrap_or_else(|| panic!("a pointer beside the list: {listed}"))
+                .to_string();
+            assert!(
+                !note.contains("  ") && !note.contains('\n'),
+                "the pointer reads as one line: {note:?}"
+            );
+            note
+        };
+
+        send_titled(
+            &jojobot,
+            "person:milhouse",
+            "epsilon",
+            Some("the quarterly figure"),
+            "the secret figure is 4242",
+        )
+        .await;
+        let only_private = list().await;
+        assert_eq!(only_private["count"], 1, "{only_private}");
+        assert!(
+            !pointer(&only_private).contains("include_bodies"),
+            "{only_private}"
+        );
+
+        send(&jojobot, "pm", "epsilon", "an ordinary report").await;
+        let both = list().await;
+        assert_eq!(both["count"], 2, "{both}");
+        let note = pointer(&both);
+        assert!(note.contains("include_bodies"), "{both}");
+        assert!(note.contains("private"), "{both}");
+    }
+
+    /// **The pair: a list of bot mail alone offers bodies and mentions nothing
+    /// private**, so the note added for the others is theirs and not a blanket.
+    #[tokio::test]
+    async fn the_pointer_beside_a_list_of_bot_mail_offers_bodies_and_names_nothing_private() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "pm").await;
+        let writer = owning(&jojobot, "epsilon").await;
+        send(&jojobot, "pm", "epsilon", "an ordinary report").await;
+        let listed = json_of(
+            &jojobot
+                .list_sent(Parameters(ListSentArgs {
+                    limit: None,
+                    sender: None,
+                    to: None,
+                    include_bodies: None,
+                    sid: Some(writer),
+                }))
+                .await
+                .expect("list_sent ok"),
+        );
+        let note = listed["how_to_read"].as_str().expect("a pointer");
+        assert!(note.contains("include_bodies"), "{listed}");
+        assert!(!note.contains("private"), "{listed}");
     }
 }
