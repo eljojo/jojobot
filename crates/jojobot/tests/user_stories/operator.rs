@@ -62,6 +62,7 @@ async fn the_boot_names_the_operator_and_what_waits_on_them_is_one_read_away() {
     // A piece of work waits on a person, and the operator is that person.
     first.add("project:atlas", "Atlas").await;
     first.add("person:lisa", "Lisa").await;
+    first.add("person:milhouse", "Milhouse").await;
     let made = first
         .call(
             "add_entity",
@@ -74,6 +75,18 @@ async fn the_boot_names_the_operator_and_what_waits_on_them_is_one_read_away() {
         .await
         .json();
     assert_eq!(made["id"], "work:phi", "{made}");
+    // **A second piece of work waits on somebody else.** Without it the read
+    // below would find the only work item whatever it filtered by.
+    first
+        .call(
+            "add_entity",
+            json!({
+                "kind": "work", "handle": "sigma", "name": "Sigma", "source": "user-named",
+                "parent": "project:atlas",
+                "sets": {"status": "waiting", "waiting_on": "person:milhouse"},
+            }),
+        )
+        .await;
     first
         .event_with(
             "topic:instance",
@@ -97,6 +110,18 @@ async fn the_boot_names_the_operator_and_what_waits_on_them_is_one_read_away() {
             }),
         )
         .await;
-    waiting.says("work:phi");
+    waiting.says("work:phi").never_says("work:sigma");
+    // …and asked of the other person, the answer is the other piece of work.
+    later
+        .call(
+            "recall",
+            json!({
+                "kind": "work",
+                "fields": [{"key": "waiting_on", "value": "person:milhouse"}],
+            }),
+        )
+        .await
+        .says("work:sigma")
+        .never_says("work:phi");
     story.finish().await;
 }
