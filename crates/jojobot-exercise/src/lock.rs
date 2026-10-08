@@ -184,7 +184,7 @@ pub struct Lock {
     /// lock under a heading has said which phase it belongs to already, so the
     /// reader carries it rather than asking for it a second time in the
     /// sentence. A lock under no heading is its sentence alone.
-    pub name: String,
+    pub(crate) name: String,
     /// **The Rust behind a named check**, once somebody has resolved it.
     ///
     /// A lock read out of a document carries none: reading a document and

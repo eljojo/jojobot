@@ -26,7 +26,7 @@ pub struct RetractArgs {
     /// later reader most wants about a retraction**, and it is not always the
     /// day the call is made — a session catching up on last week says so here.
     #[serde(default)]
-    pub recorded_at: Option<String>,
+    pub(crate) recorded_at: Option<String>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
     /// every call — it is what tells jojobot which bot is asking. Reads are
     /// attributed, never journalled.
