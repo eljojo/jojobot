@@ -63,6 +63,18 @@ impl Jojobot {
         before: Option<&Fact>,
     ) -> Option<MemoryError> {
         let after = self.measured_claim(fact, creating).await?;
+        self.refusal_for(fact, creating, before, after).await
+    }
+
+    /// The decision over a record already measured: refused when it does not
+    /// fit, unless it is no bigger than the record it replaces.
+    async fn refusal_for(
+        &self,
+        fact: &Fact,
+        creating: Option<&Entity>,
+        before: Option<&Fact>,
+        after: Measured,
+    ) -> Option<MemoryError> {
         if after.size <= after.room {
             return None;
         }
@@ -121,6 +133,13 @@ impl Jojobot {
     }
 
     async fn measured_claim(&self, fact: &Fact, creating: Option<&Entity>) -> Option<Measured> {
+        let (entity, folded) = self.thing_as_read(&fact.home, creating).await?;
+        Some(self.measured_beside(fact, &entity, folded))
+    }
+
+    /// **The record measured beside a thing the caller supplies**, as the thing
+    /// will read once the write has landed.
+    fn measured_beside(&self, fact: &Fact, entity: &Entity, mut folded: Fold) -> Measured {
         // Stamped as the widest the store can stamp it, whatever the record
         // carries now: a stamp prints from 20 to 30 characters, and a record
         // that fits only with a short one would stop fitting on the next edit.
@@ -134,7 +153,6 @@ impl Jojobot {
         stamped.standing = Standing::Settled;
         stamped.provenance = Provenance::Observation;
         let fact = &stamped;
-        let (entity, mut folded) = self.thing_as_read(&fact.home, creating).await?;
         // The describing keys stay on their claim and never reach the thing.
         let describing = crate::seed::describing_keys();
         for (key, value) in &fact.fields {
@@ -143,13 +161,13 @@ impl Jojobot {
             }
         }
         let record = crate::memory::wire::fact_json(fact, last_day(), Some(WIDEST_REVISION_COUNT));
-        let (skeleton, rest, widest) = read_of_a_thing(&entity, &folded);
+        let (skeleton, rest, widest) = read_of_a_thing(entity, &folded);
         let row_room = record_room(rest, 0, widest);
-        Some(Measured {
+        Measured {
             size: record.to_string().chars().count() + 1,
             room: record_room(rest, skeleton, widest),
             row_over: (skeleton > row_room).then_some((skeleton, row_room)),
-        })
+        }
     }
 
     /// **The thing as a read serves it: its row and its folded fields**, in one
@@ -250,10 +268,14 @@ impl Jojobot {
         {
             return Some(refused);
         }
-        let account =
-            jojobot_domain::memory::merge_account(duplicate, survivor, reason, date).ok()?;
-        self.refuses_a_new_claim_too_big_to_read(&account, None)
-            .await
+        // **The account is read beside the merged thing**, with the duplicate's
+        // names and keys on it, because that is the thing a read finds once the
+        // merge has landed.
+        let new = jojobot_domain::memory::merge_account(duplicate, survivor, reason, date).ok()?;
+        let held = self.memory.recall(survivor).await.ok()?.len();
+        let account = prospective_fact(&new, held + 1, Some(widest_stamp(self.clock().now())));
+        let measured = self.measured_beside(&account, &after, now);
+        self.refusal_for(&account, None, None, measured).await
     }
 }
 

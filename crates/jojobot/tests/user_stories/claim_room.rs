@@ -680,3 +680,71 @@ async fn a_thing_whose_own_row_is_over_names_the_row_and_the_way_out_of_it() {
 
     story.finish().await;
 }
+
+/// **The account a merge writes is measured beside the MERGED thing.** The
+/// survivor takes the duplicate's names as aliases, so it is bigger once the
+/// merge lands, and the account is read beside that bigger thing. A reason that
+/// fits beside the survivor as it stands but not beside the merged one is
+/// refused, and nothing moves.
+#[tokio::test]
+async fn a_merge_account_that_fits_beside_the_survivor_but_not_beside_the_merged_one_is_refused() {
+    let story = Story::begin("bot:otto").await;
+    let otto = story.session().await;
+    let aliased = |seed: usize, count: usize, name: &str| {
+        let (otto, name) = (&otto, name.to_string());
+        async move {
+            let handle = format!("thing:{}", word(seed));
+            otto.call(
+                "add_entity",
+                json!({
+                    "kind": "thing", "handle": word(seed), "name": name,
+                    "source": "user-named", "aliases": aliases(seed, count),
+                }),
+            )
+            .await;
+            handle
+        }
+    };
+    let reason = text(6_000);
+
+    // The survivor as it stands has room for a record this big: a capture of the
+    // same size lands.
+    let survivor = aliased(130_000, 100, "Spot Keeper").await;
+    otto.call(
+        "capture",
+        json!({
+            "subject": survivor, "content": "a note", "details": reason,
+            "provenance": "testimony",
+        }),
+    )
+    .await;
+
+    // The duplicate's forty aliases make the merged thing bigger, and its room
+    // smaller than the account.
+    let duplicate = aliased(130_001, 40, "Spot Dupe").await;
+    let refusal = otto
+        .refused(
+            "merge_entities",
+            json!({"duplicate": duplicate, "survivor": survivor, "reason": reason}),
+        )
+        .await;
+    assert_eq!(refusal.json()["fix_by"], "change", "{}", refusal.raw());
+    let still = otto
+        .call("recall", json!({"subject": duplicate, "facts": true}))
+        .await;
+    assert_ne!(
+        still.json()["objects"][0]["status"],
+        "merged",
+        "nothing moved: {}",
+        still.raw()
+    );
+
+    // The same merge with a short reason lands, so the reason was what was over.
+    otto.call(
+        "merge_entities",
+        json!({"duplicate": duplicate, "survivor": survivor, "reason": "the same keeper"}),
+    )
+    .await;
+
+    story.finish().await;
+}
