@@ -149,6 +149,7 @@ const ROSTER: &[&str] = &[
     "bot:contract-ceiling-room-with-space",
     "bot:contract-edit-ages-room",
     "bot:marge",
+    "bot:moe",
     "bot:nelson",
     "bot:patty",
     "bot:ralph",

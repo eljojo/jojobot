@@ -1,4 +1,5 @@
-//! "Who may raise how much a thread holds?"
+//! "Ralph's assistant keeps adding thoughts to the moving thread, and the
+//! thread only holds three. Can it raise the limit itself?"
 //!
 //! A thread is bounded on purpose, and the bots that write thoughts into it are
 //! the ones the bound is for. **A bot that writes into a thread never changes its
@@ -15,14 +16,14 @@ async fn a_threads_ceiling_is_raised_by_a_bot_above_its_writers_and_never_by_the
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
     s.add("thread:milhouse-moves", "Milhouse moves").await;
-    for bot in ["alpha", "beta", "sigma", "epsilon", "omega"] {
+    for bot in ["marge", "patty", "nelson", "moe", "ralph"] {
         s.add(&format!("bot:{bot}"), bot).await;
     }
-    let alpha = story.as_bot("bot:alpha").await;
-    let beta = story.as_bot("bot:beta").await;
-    let sigma = story.as_bot("bot:sigma").await;
-    let epsilon = story.as_bot("bot:epsilon").await;
-    let omega = story.as_bot("bot:omega").await;
+    let marge = story.as_bot("bot:marge").await;
+    let patty = story.as_bot("bot:patty").await;
+    let nelson = story.as_bot("bot:nelson").await;
+    let moe = story.as_bot("bot:moe").await;
+    let ralph = story.as_bot("bot:ralph").await;
     let reports_to = |bot: &str, manager: &str| {
         json!({
             "subject": bot, "content": format!("{bot} reports up"),
@@ -30,18 +31,18 @@ async fn a_threads_ceiling_is_raised_by_a_bot_above_its_writers_and_never_by_the
         })
     };
 
-    // Two charts: omega reports to beta, beta to alpha; sigma to epsilon.
-    alpha
-        .call("capture", reports_to("bot:beta", "bot:alpha"))
+    // Two charts: ralph reports to patty, patty to marge; nelson to moe.
+    marge
+        .call("capture", reports_to("bot:patty", "bot:marge"))
         .await;
-    beta.call("capture", reports_to("bot:omega", "bot:beta"))
+    patty
+        .call("capture", reports_to("bot:ralph", "bot:patty"))
         .await;
-    epsilon
-        .call("capture", reports_to("bot:sigma", "bot:epsilon"))
+    moe.call("capture", reports_to("bot:nelson", "bot:moe"))
         .await;
 
     // ── nobody has written into the thread: any bot sets its first ceiling ──
-    let address = sigma
+    let address = nelson
         .call(
             "capture",
             json!({
@@ -55,27 +56,27 @@ async fn a_threads_ceiling_is_raised_by_a_bot_above_its_writers_and_never_by_the
         .await
         .says("\"thought_capacity\":\"3\"");
 
-    // ── omega writes a thought into the thread ──────────────────────────────
-    omega
+    // ── ralph writes a thought into the thread ──────────────────────────────
+    ralph
         .call(
             "capture",
             json!({
-                "subject": "bot:omega", "content": "the move is still on",
+                "subject": "bot:ralph", "content": "the move is still on",
                 "shape": "connection", "object": "thread:milhouse-moves",
             }),
         )
         .await;
     let raise = |value: &str| json!({"address": address, "fields": {"thought_capacity": value}});
 
-    // ── omega never raises it, and the refusal names the bots that may ──────
-    omega
+    // ── ralph never raises it, and the refusal names the bots that may ──────
+    ralph
         .refused("update_fact", raise("50"))
         .await
         .says("thought_capacity")
-        .says("bot:beta")
-        .says("bot:alpha")
+        .says("bot:patty")
+        .says("bot:marge")
         .says("\"wrote\":false");
-    omega
+    ralph
         .refused(
             "capture",
             json!({
@@ -84,41 +85,41 @@ async fn a_threads_ceiling_is_raised_by_a_bot_above_its_writers_and_never_by_the
             }),
         )
         .await
-        .says("bot:beta");
-    // ── nor does a bot on another chart, which the same write from beta shows
+        .says("bot:patty");
+    // ── nor does a bot on another chart, which the same write from patty shows
     //    is not about the write ───────────────────────────────────────────────
-    sigma
+    nelson
         .refused("update_fact", raise("50"))
         .await
-        .says("bot:beta")
+        .says("bot:patty")
         .says("\"wrote\":false");
     s.call("recall", json!({"subject": "thread:milhouse-moves"}))
         .await
         .says("\"thought_capacity\":\"3\"");
 
-    // ── beta, omega's manager, raises it, and the head above beta does too ──
-    beta.call("update_fact", raise("5")).await;
+    // ── patty, ralph's manager, raises it, and the head above patty does too ──
+    patty.call("update_fact", raise("5")).await;
     s.call("recall", json!({"subject": "thread:milhouse-moves"}))
         .await
         .says("\"thought_capacity\":\"5\"");
-    alpha.call("update_fact", raise("8")).await;
+    marge.call("update_fact", raise("8")).await;
     s.call("recall", json!({"subject": "thread:milhouse-moves"}))
         .await
         .says("\"thought_capacity\":\"8\"");
 
     // ── taking it off follows the same rule ─────────────────────────────────
     let off = json!({"address": address, "clear_fields": ["thought_capacity"]});
-    for outsider in [&omega, &sigma] {
+    for outsider in [&ralph, &nelson] {
         outsider
             .refused("update_fact", off.clone())
             .await
             .says("thought_capacity")
-            .says("bot:beta");
+            .says("bot:patty");
     }
     s.call("recall", json!({"subject": "thread:milhouse-moves"}))
         .await
         .says("\"thought_capacity\":\"8\"");
-    beta.call("update_fact", off).await;
+    patty.call("update_fact", off).await;
     s.call("recall", json!({"subject": "thread:milhouse-moves"}))
         .await
         .never_says("thought_capacity");
@@ -130,90 +131,90 @@ async fn a_threads_ceiling_is_raised_by_a_bot_above_its_writers_and_never_by_the
             "fields": {"thought_ages_after_runs": value},
         })
     };
-    omega
+    ralph
         .refused("capture", ages("9"))
         .await
         .says("thought_ages_after_runs")
-        .says("bot:beta")
+        .says("bot:patty")
         .says("\"wrote\":false");
-    sigma
+    nelson
         .refused("capture", ages("9"))
         .await
-        .says("bot:beta")
+        .says("bot:patty")
         .says("\"wrote\":false");
-    let ageing = beta.call("capture", ages("4")).await.field("address");
+    let ageing = patty.call("capture", ages("4")).await.field("address");
     s.call("recall", json!({"subject": "thread:milhouse-moves"}))
         .await
         .says("\"thought_ages_after_runs\":\"4\"");
     let age =
         |value: &str| json!({"address": ageing, "fields": {"thought_ages_after_runs": value}});
-    omega
+    ralph
         .refused("update_fact", age("9"))
         .await
-        .says("bot:beta");
-    sigma
+        .says("bot:patty");
+    nelson
         .refused("update_fact", age("9"))
         .await
-        .says("bot:beta");
-    alpha.call("update_fact", age("6")).await;
+        .says("bot:patty");
+    marge.call("update_fact", age("6")).await;
     s.call("recall", json!({"subject": "thread:milhouse-moves"}))
         .await
         .says("\"thought_ages_after_runs\":\"6\"");
     let off = json!({"address": ageing, "clear_fields": ["thought_ages_after_runs"]});
-    omega
+    ralph
         .refused("update_fact", off.clone())
         .await
-        .says("bot:beta");
-    beta.call("update_fact", off).await;
+        .says("bot:patty");
+    patty.call("update_fact", off).await;
     s.call("recall", json!({"subject": "thread:milhouse-moves"}))
         .await
         .never_says("thought_ages_after_runs");
 
     // ── a bot's own ceiling stays any different identity's to set ───────────
-    omega
+    ralph
         .refused(
             "capture",
             json!({
-                "subject": "bot:omega", "content": "its own room",
+                "subject": "bot:ralph", "content": "its own room",
                 "fields": {"thought_capacity": "9"},
             }),
         )
         .await
-        .says("bot:omega")
+        .says("bot:ralph")
         .says("\"wrote\":false");
-    sigma
+    nelson
         .call(
             "capture",
             json!({
-                "subject": "bot:omega", "content": "its room, set by another",
+                "subject": "bot:ralph", "content": "its room, set by another",
                 "fields": {"thought_capacity": "9"},
             }),
         )
         .await;
-    s.call("recall", json!({"subject": "bot:omega"}))
+    s.call("recall", json!({"subject": "bot:ralph"}))
         .await
         .says("\"thought_capacity\":\"9\"");
-    omega
+    ralph
         .refused(
             "capture",
             json!({
-                "subject": "bot:omega", "content": "its own ageing",
+                "subject": "bot:ralph", "content": "its own ageing",
                 "fields": {"thought_ages_after_runs": "7"},
             }),
         )
         .await
-        .says("bot:omega")
+        .says("bot:ralph")
         .says("\"wrote\":false");
-    sigma
+    nelson
         .call(
             "capture",
             json!({
-                "subject": "bot:omega", "content": "its ageing, set by another",
+                "subject": "bot:ralph", "content": "its ageing, set by another",
                 "fields": {"thought_ages_after_runs": "7"},
             }),
         )
         .await;
-    s.call("recall", json!({"subject": "bot:omega"}))
+    s.call("recall", json!({"subject": "bot:ralph"}))
         .await
         .says("\"thought_ages_after_runs\":\"7\"");
 
