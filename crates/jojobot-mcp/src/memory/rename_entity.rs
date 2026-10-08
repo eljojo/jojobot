@@ -493,6 +493,7 @@ mod tests {
                 .list_entities(Parameters(ListEntitiesArgs {
                     kind: Some("person".into()),
                     parent: None,
+                    offset: None,
                     sid: None,
                 }))
                 .await
@@ -802,6 +803,7 @@ mod tests {
                 .list_entities(Parameters(ListEntitiesArgs {
                     kind: Some("bot".into()),
                     parent: None,
+                    offset: None,
                     sid: None,
                 }))
                 .await

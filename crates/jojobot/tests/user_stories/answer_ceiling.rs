@@ -118,7 +118,12 @@ async fn hostile_world() -> World {
             .add_entity(NewEntity::new(
                 id.clone(),
                 format!("Gizmo {}", slug(i)),
-                "user-named",
+                // **Where the thing came from, at the longest a source may be.** The write guard screens
+                // names and aliases against every thing already held, which
+                // is what makes a thing costly to add, and it does not screen
+                // this. Entities that each carry a sentence reach the ceiling
+                // with the things the world already has.
+                filler(190, i),
             ))
             .await
             .expect("an entity lands");
@@ -532,6 +537,78 @@ async fn a_second_read_names_every_message_the_first_took() {
     let again = world.otto.call("read_mailbox", json!({})).await.json();
     assert_eq!(again["count"], 0, "nothing is fresh: {again}");
     assert_eq!(again["leftovers"]["count"], MESSAGES, "{again}");
+}
+
+/// **A walk of `list_entities` returns each entity once under the ceiling.**
+/// The things, each with a sentence of where it came from, and the people and
+/// bots beside them are past the ceiling whole. Each part, status bar included, is under it, the offset each
+/// part names reads the next, and the parts together are exactly the entities
+/// the store lists as browsable, which the store's own port answers and the
+/// verb did not produce.
+#[tokio::test]
+async fn a_walk_of_list_entities_returns_each_entity_once_under_the_ceiling() {
+    let world = hostile_world().await;
+    let mut seen: Vec<String> = Vec::new();
+    let mut offset = 0u64;
+    let mut parts = 0;
+    loop {
+        let part = world
+            .otto
+            .call("list_entities", json!({"offset": offset}))
+            .await;
+        parts += 1;
+        assert!(parts < 100, "the walk never ends");
+        assert!(
+            part.size() <= ANSWER_CEILING,
+            "part {parts} is {} characters",
+            part.size()
+        );
+        let body = part.json();
+        let listed = body["entities"].as_array().expect("a list of entities");
+        assert_eq!(body["count"], listed.len(), "{body}");
+        for entity in listed {
+            seen.push(entity["id"].as_str().expect("an id").to_string());
+        }
+        match body["not_shown"]["offset"].as_u64() {
+            Some(next) => offset = next,
+            None => break,
+        }
+    }
+    assert!(parts > 1, "the entities took several parts: {parts}");
+    let mut walked = seen.clone();
+    walked.sort();
+    walked.dedup();
+    assert_eq!(walked.len(), seen.len(), "no entity came back twice");
+    let mut stored: Vec<String> = world
+        ._story
+        .memory_store()
+        .list_entities(None)
+        .await
+        .expect("the store lists its entities")
+        .into_iter()
+        .filter(jojobot_domain::memory::Entity::browsable)
+        .map(|entity| entity.id.as_str().to_string())
+        .collect();
+    stored.sort();
+    assert_eq!(
+        walked, stored,
+        "every entity the store holds, and nothing else"
+    );
+}
+
+/// **An offset past the last entity says so** and carries nothing, so a caller
+/// that overshot is told rather than shown an empty inventory.
+#[tokio::test]
+async fn an_offset_past_the_last_entity_says_it_is_past_the_end() {
+    let world = hostile_world().await;
+    let body = world
+        .otto
+        .call("list_entities", json!({"offset": 100_000}))
+        .await
+        .json();
+    assert!(body["past_the_end"].is_string(), "{body}");
+    assert_eq!(body["entities"].as_array().map(Vec::len), Some(0), "{body}");
+    assert!(body.get("not_shown").is_none(), "{body}");
 }
 
 /// **A walk of `list_sent` returns each message once.** Fifty messages with

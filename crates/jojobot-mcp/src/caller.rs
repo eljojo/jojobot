@@ -1162,6 +1162,7 @@ mod tests {
                                 kind: None,
                                 parent: None,
                                 sid,
+                                offset: None,
                             }))
                             .await
                             .expect("call ok"),

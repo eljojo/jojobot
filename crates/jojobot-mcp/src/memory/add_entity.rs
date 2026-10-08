@@ -820,6 +820,7 @@ mod tests {
             .list_entities(Parameters(ListEntitiesArgs {
                 kind: Some("project".into()),
                 parent: None,
+                offset: None,
                 sid: None,
             }))
             .await
@@ -1061,6 +1062,7 @@ mod tests {
                 .list_entities(Parameters(ListEntitiesArgs {
                     kind: Some("person".into()),
                     parent: None,
+                    offset: None,
                     sid: None,
                 }))
                 .await
@@ -1282,6 +1284,7 @@ mod tests {
             .list_entities(Parameters(crate::memory::list_entities::ListEntitiesArgs {
                 kind: Some(kind.into()),
                 parent: None,
+                offset: None,
                 sid: Some(sid.into()),
             }))
             .await
@@ -1533,9 +1536,14 @@ mod tests {
             .await
             .expect("recall ok");
         let asked = created(&jojobot, &reader, "thing", "backup-drive", "Mill Weir Pond").await;
+        // **A live thing the reader was shown, and not one in particular.** The
+        // survivor carries the folded handle's name as an alias, so it shares as
+        // many words with the creation as the canoe does, and the one shown most
+        // recently wins the tie. Which that is depends on the order the listing
+        // came in, and this case is about the husk and not about that order.
         assert!(
-            teaches(&asked, "thing:canoe"),
-            "the unmerged thing the reader was shown is not asked about: {asked}",
+            teaches(&asked, "thing:canoe") || teaches(&asked, "thing:piano"),
+            "a live thing the reader was shown is not asked about: {asked}",
         );
         assert!(
             !teaches(&asked, "thing:teapot"),
@@ -1560,6 +1568,7 @@ mod tests {
                             kind: Some("place".into()),
                             parent: None,
                             sid,
+                            offset: None,
                         }))
                         .await
                         .expect("list_entities ok"),
@@ -1617,6 +1626,7 @@ mod tests {
                 .list_entities(Parameters(ListEntitiesArgs {
                     kind: Some("bot".into()),
                     parent: None,
+                    offset: None,
                     sid: None,
                 }))
                 .await
@@ -1762,6 +1772,7 @@ mod tests {
                 .list_entities(Parameters(ListEntitiesArgs {
                     kind: Some("bot".into()),
                     parent: None,
+                    offset: None,
                     sid: None,
                 }))
                 .await

@@ -1027,6 +1027,7 @@ mod tests {
                 .list_entities(Parameters(ListEntitiesArgs {
                     kind: Some("bot".into()),
                     parent: None,
+                    offset: None,
                     sid: Some(crate::harness::TEST_SID.into()),
                 }))
                 .await

@@ -3288,6 +3288,7 @@ mod a_write_needs_an_identity {
                 .list_entities(Parameters(ListEntitiesArgs {
                     kind: Some("place".into()),
                     parent: None,
+                    offset: None,
                     sid: Some(sid.clone()),
                 }))
                 .await
@@ -3351,6 +3352,7 @@ mod a_write_needs_an_identity {
                 .list_entities(Parameters(ListEntitiesArgs {
                     kind: Some("place".into()),
                     parent: None,
+                    offset: None,
                     sid: None,
                 }))
                 .await

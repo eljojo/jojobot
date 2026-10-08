@@ -377,6 +377,7 @@ mod tests {
                 .list_entities(Parameters(ListEntitiesArgs {
                     kind: Some("person".into()),
                     parent: None,
+                    offset: None,
                     sid: Some(crate::harness::TEST_SID.into()),
                 }))
                 .await
@@ -474,6 +475,7 @@ mod tests {
                 .list_entities(Parameters(ListEntitiesArgs {
                     kind: Some("person".into()),
                     parent: None,
+                    offset: None,
                     sid: Some(crate::harness::TEST_SID.into()),
                 }))
                 .await

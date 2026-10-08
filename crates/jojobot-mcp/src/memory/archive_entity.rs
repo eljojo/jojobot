@@ -195,6 +195,7 @@ mod tests {
                 .list_entities(Parameters(ListEntitiesArgs {
                     kind: None,
                     parent: None,
+                    offset: None,
                     sid: None,
                 }))
                 .await

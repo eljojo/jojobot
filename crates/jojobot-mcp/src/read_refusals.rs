@@ -85,6 +85,7 @@ async fn a_refusal_a_read_verb_earns_does_not_say_a_write_was_skipped() {
                 .list_entities(Parameters(ListEntitiesArgs {
                     kind: None,
                     parent: Some("person:milhouse".into()),
+                    offset: None,
                     sid: Some(sid.clone()),
                 }))
                 .await
