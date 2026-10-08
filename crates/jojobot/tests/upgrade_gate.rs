@@ -363,6 +363,17 @@ async fn boot_current(state_dir: &std::path::Path, store_port: u16, git_ref: &st
     Booted { child, http_port }
 }
 
+/// **Where the store's own tool keeps its configuration for a run.** The tool
+/// keeps its global configuration under a home directory and fails where the
+/// environment names none (a build sandbox). The run's own state directory holds
+/// it, as the adapter does for every store it spawns. Every call of the tool in
+/// this file names it.
+fn dolt_home_in(state_dir: &std::path::Path) -> std::path::PathBuf {
+    let home = state_dir.join("dolt-home");
+    std::fs::create_dir_all(&home).expect("a directory for the store tool's configuration");
+    home
+}
+
 /// **The whole store as text**, dumped by the store's own tool from the
 /// directory the binary keeps it in, with no binary running. The same dump the
 /// recording is made with, so two of them compare row for row.
@@ -373,14 +384,8 @@ async fn dump_store(state_dir: &std::path::Path) -> String {
         "the binary's database directory is not where boot_store puts it: {}",
         database_dir.display()
     );
-    // The store's tool keeps its global configuration under a home directory
-    // and fails where the environment names none (a build sandbox). The run's
-    // own state directory holds it, as the adapter does for every store it
-    // spawns.
-    let dolt_home = state_dir.join("dolt-dump-home");
-    std::fs::create_dir_all(&dolt_home).expect("a directory for the dump tool's configuration");
     let dump = tokio::process::Command::new("dolt")
-        .env("DOLT_ROOT_PATH", &dolt_home)
+        .env("DOLT_ROOT_PATH", dolt_home_in(state_dir))
         .arg("dump")
         .arg("-r")
         .arg("sql")
@@ -418,6 +423,7 @@ async fn assert_a_claim_shaped_lease_renews_in_place(
     let database_dir = state_dir.join("db").join("jojobot");
     let aged = (jiff::Timestamp::now() - jiff::SignedDuration::from_mins(10)).to_string();
     let aging = tokio::process::Command::new("dolt")
+        .env("DOLT_ROOT_PATH", dolt_home_in(state_dir))
         .arg("sql")
         .arg("-q")
         .arg(format!(
