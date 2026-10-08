@@ -750,7 +750,9 @@ impl Jojobot {
                        and it competes for one of the few seats your boot spends on rules. An \
                        unstarred rule is kept all the same and reads back with recall's facts; \
                        when a new star pushes the oldest starred rule off its seat, the receipt \
-                       names it."
+                       names it. A claim too big to be read back whole in one answer is refused with \
+                       nothing written: shorten it, split it into claims that each say one \
+                       thing, or keep the long text outside and write a pointer claim."
     )]
     pub(crate) async fn capture(
         &self,
@@ -962,6 +964,11 @@ impl Jojobot {
             .refuses_a_boot_floor_for_capture(&new, &caller.bot)
             .await
         {
+            return memory_declined("capture", refused);
+        }
+        // **A claim no reader could be handed whole is refused here**, before
+        // anything lands — see `refuses_a_claim_too_big_to_read`.
+        if let Some(refused) = self.refuses_a_new_claim_too_big_to_read(&new, None).await {
             return memory_declined("capture", refused);
         }
         // **Disagreement, not presence alone.** A check-in with no

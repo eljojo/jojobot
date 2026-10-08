@@ -44,6 +44,9 @@ mod chart;
 /// A rule settled by reading it at its address, not by taking somebody's word.
 #[path = "user_stories/citing.rs"]
 mod citing;
+/// A claim must fit one ordinary answer, or it is refused when written.
+#[path = "user_stories/claim_room.rs"]
+mod claim_room;
 #[path = "user_stories/colleagues.rs"]
 mod colleagues;
 #[path = "user_stories/contracts.rs"]

@@ -298,7 +298,10 @@ impl Jojobot {
                        PURPOSE — set keep: true and nothing else to keep this claim exactly as it \
                        stands while moving when it was last touched. keep IS REFUSED IF ANYTHING \
                        ELSE HERE WOULD ACTUALLY CHANGE THE CLAIM: there is no partial keep, only \
-                       this alone or an ordinary edit naming what changes.")]
+                       this alone or an ordinary edit naming what changes. An edit that would leave the claim too big to be read back whole in \
+                       one answer is refused with the claim unchanged: shorten it, split it \
+                       into claims that each say one thing, or keep the long text outside and \
+                       write a pointer claim.")]
     pub(crate) async fn update_fact(
         &self,
         Parameters(args): Parameters<UpdateFactArgs>,
@@ -531,6 +534,12 @@ impl Jojobot {
             .refuses_a_boot_floor_for_edit(&address, &patch, &caller.bot)
             .await
         {
+            return memory_declined("update_fact", refused);
+        }
+        // **An edit that leaves the record too big to be read back whole is
+        // refused here**, before anything lands — see
+        // `refuses_a_claim_too_big_to_read`.
+        if let Some(refused) = self.refuses_an_edit_too_big_to_read(&address, &patch).await {
             return memory_declined("update_fact", refused);
         }
         // **The ageing cutoff, computed here and never inside `Memory`**, for

@@ -39,7 +39,10 @@ const OCTOBER: &str = "2026-10-08";
 ///
 /// `list_runs` has no fit yet: with runs enough to stretch it, its widest call
 /// passes the ceiling. Written down here until the slice that fits it.
-const STILL_OVER: &[&str] = &["list_runs"];
+const STILL_OVER: &[&str] = &[
+    "list_runs",
+    "recall the subject holding a record over the ceiling",
+];
 
 /// A slug of ten letters that depends on nothing but the index, spread far
 /// enough apart that no two screen as near-misses of each other.
@@ -93,6 +96,10 @@ struct World {
     otto: Session,
     sigma: Session,
     heavy: String,
+    /// The machine holding one record written straight into the store, larger
+    /// than any answer. The write guard refuses such a record today, so this is
+    /// what a store holds from before the guard, and a read serves it whole.
+    oversized: String,
     /// The address of every fact that mentions the marker, read off the store
     /// as each was written, so the walk of a search has an oracle that is not
     /// the search.
@@ -230,6 +237,22 @@ async fn world(aged: bool) -> World {
             memory.capture(repainted).await.expect("a fact lands");
         }
     }
+    let oversized = EntityId::new(EntityKind::MACHINE, slug(20_000));
+    memory
+        .add_entity(NewEntity::new(
+            oversized.clone(),
+            format!("Rig {}", slug(20_000)),
+            "user-named",
+        ))
+        .await
+        .expect("a machine lands");
+    let mut huge = NewFact::about(
+        oversized.clone(),
+        "written before the guard".to_string(),
+        today,
+    );
+    huge.details = Some(filler(ANSWER_CEILING + 2_000, 7));
+    memory.capture(huge).await.expect("a record lands");
     let mail = first.mail_store();
     let mut messages = Vec::new();
     let mut sigma_messages = Vec::new();
@@ -282,6 +305,7 @@ async fn world(aged: bool) -> World {
         otto,
         sigma,
         heavy: heavy.as_str().to_string(),
+        oversized: oversized.as_str().to_string(),
         marker_addresses,
         heavy_addresses,
         place_ids,
@@ -303,6 +327,13 @@ async fn widest_calls(world: &World) -> Vec<(&'static str, usize)> {
     measured.push((
         "recall one subject with its facts",
         o.answer_size("recall", json!({"subject": world.heavy, "facts": true}))
+            .await,
+    ));
+    // A record already in the store that no answer could carry is served whole.
+    // The guard keeps new ones out; the upgrade gate lists the ones already held.
+    measured.push((
+        "recall the subject holding a record over the ceiling",
+        o.answer_size("recall", json!({"subject": world.oversized, "facts": true}))
             .await,
     ));
     measured.push((

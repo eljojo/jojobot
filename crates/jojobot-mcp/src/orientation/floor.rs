@@ -30,7 +30,11 @@ pub(crate) struct Floor {
 /// `inserted_at` is the moment the store stamps at the append; the boot serializes
 /// it beside the claim, so a claim measured without it is measured short by the
 /// width of a timestamp.
-fn prospective_fact(new: &NewFact, ordinal: usize, inserted_at: Option<jiff::Timestamp>) -> Fact {
+pub(crate) fn prospective_fact(
+    new: &NewFact,
+    ordinal: usize,
+    inserted_at: Option<jiff::Timestamp>,
+) -> Fact {
     Fact {
         id: jojobot_domain::memory::FactId(format!("f{ordinal}")),
         home: new.subject.clone(),
@@ -62,7 +66,7 @@ fn prospective_fact(new: &NewFact, ordinal: usize, inserted_at: Option<jiff::Tim
 /// does: the check cannot know which width it will get. A fraction with a
 /// nonzero last digit renders the most, so a rule that fits with this stamp fits
 /// with any stamp the store can give it.
-fn widest_stamp(now: jiff::Timestamp) -> jiff::Timestamp {
+pub(crate) fn widest_stamp(now: jiff::Timestamp) -> jiff::Timestamp {
     jiff::Timestamp::new(now.as_second(), 123_456_789).unwrap_or(now)
 }
 

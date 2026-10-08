@@ -182,6 +182,29 @@ pub(crate) fn blocked_body(
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])
 }
 
+/// **The refusal for something no reader could be handed whole**, with the
+/// numbers as keys: what it would measure as a read serves it, the most one
+/// answer can carry of it, and the overage, so a caller cuts by the amount that
+/// is needed instead of guessing.
+fn too_big_to_read(
+    subject: &str,
+    size: usize,
+    room: usize,
+    how_to_proceed: impl Into<WayForward>,
+) -> CallToolResult {
+    let mut body = serde_json::json!({
+        "status": "blocked",
+        "attempted": subject,
+        "wrote": false,
+        "candidates": [],
+        "size": size,
+        "room": room,
+        "over": size - room,
+    });
+    how_to_proceed.into().write_into(&mut body);
+    CallToolResult::success(vec![ContentBlock::text(body.to_string())])
+}
+
 /// **The word every memory refusal wears, in one exhaustive match.** There is
 /// no wildcard arm: a kind added to [`MemoryError`] without a word does not
 /// compile, so a refusal cannot ship without one. [`memory_declined`] and
@@ -205,6 +228,8 @@ pub(crate) fn memory_fix_by(e: &MemoryError) -> Option<FixBy> {
         | MemoryError::BreaksFit { .. }
         | MemoryError::BreaksSchedule { .. }
         | MemoryError::BootTooHeavy { .. }
+        | MemoryError::ClaimTooLarge { .. }
+        | MemoryError::ThingTooLarge { .. }
         | MemoryError::BreaksType { .. }
         | MemoryError::UnknownFact { .. }
         | MemoryError::NotYours { .. }
@@ -912,6 +937,42 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                 body.to_string(),
             )]))
         }
+        // **A record no reader could be handed whole.** The three ways to say it
+        // are all the caller's to choose between, so the refusal names them and
+        // picks none: shorter, several claims that each say one thing, or the long
+        // text kept outside the store behind a claim that points at it.
+        MemoryError::ClaimTooLarge {
+            ref subject,
+            size,
+            room,
+        } => Ok(too_big_to_read(
+            subject,
+            size,
+            room,
+            format!(
+                "Nothing was written: {e}. Shorten it ({} characters over); or split it into \
+                 claims that each say one thing, which {verb} can write one after another; or \
+                 keep the long text as a page outside the store and write a pointer claim that \
+                 names where it is.",
+                size - room
+            ),
+        )),
+        // **A thing whose own row cannot be read whole.** What grows a row is
+        // its aliases and the keys its claims set, so the refusal names both.
+        MemoryError::ThingTooLarge {
+            ref subject,
+            size,
+            room,
+        } => Ok(too_big_to_read(
+            subject,
+            size,
+            room,
+            format!(
+                "Nothing was written: {e}. Send fewer or shorter aliases, or set fewer and \
+                 shorter keys, so that {verb} leaves the thing {} characters smaller.",
+                size - room
+            ),
+        )),
         // **A merge that would bring a thought over the survivor's body cap.**
         // The way forward names where the thought is now, because the caller
         // never wrote it on the survivor.
@@ -1225,6 +1286,8 @@ fn memory_error_arms(e: MemoryError) -> McpError {
         | MemoryError::BreaksType { .. }
         | MemoryError::BreaksSchedule { .. }
         | MemoryError::BootTooHeavy { .. }
+        | MemoryError::ClaimTooLarge { .. }
+        | MemoryError::ThingTooLarge { .. }
         | MemoryError::RoleNotHeld { .. }
         | MemoryError::UnknownFact { .. }
         | MemoryError::UnknownEntity { .. }
@@ -1770,6 +1833,24 @@ mod tests {
                     key: s("starts"),
                     wanted: s("date"),
                     value: s("soon"),
+                },
+                Some("change"),
+            ),
+            (
+                "ThingTooLarge",
+                MemoryError::ThingTooLarge {
+                    subject: s("thing:gamma"),
+                    size: 29_000,
+                    room: 27_000,
+                },
+                Some("change"),
+            ),
+            (
+                "ClaimTooLarge",
+                MemoryError::ClaimTooLarge {
+                    subject: s("thing:gamma"),
+                    size: 30_000,
+                    room: 27_000,
                 },
                 Some("change"),
             ),

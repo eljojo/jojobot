@@ -16,6 +16,7 @@ use crate::*;
 pub mod add_entity;
 pub mod archive_entity;
 pub mod capture;
+pub mod claim_room;
 pub mod declare_type;
 pub mod declined;
 pub mod due;

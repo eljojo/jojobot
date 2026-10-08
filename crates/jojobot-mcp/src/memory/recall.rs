@@ -1001,6 +1001,15 @@ struct KeyNarrowing<'a> {
     by_view: bool,
 }
 
+/// **The characters of record one part of a read of a single thing can carry**,
+/// once the rest of the answer, the thing's own row and the pointer that names
+/// what follows are counted. A fact is served whole or not at all, so this is
+/// the most one fact may cost. The fill above and the write guard that refuses a
+/// record over it ask this one function, so they cannot disagree.
+pub(crate) fn record_room(rest: usize, skeleton: usize, widest_pointer: usize) -> usize {
+    jojobot_domain::text::ANSWER_CEILING.saturating_sub(rest + skeleton + widest_pointer)
+}
+
 /// **Fit a recall under the answer ceiling, filling in the answer's own order.**
 ///
 /// Silent when everything fits and no `offset` was sent: the answer is untouched
@@ -1048,7 +1057,9 @@ fn fit_recall(body: &mut serde_json::Value, offset: usize) {
                 (fact, cost)
             })
             .collect();
-        let room = Capped::beside(rest + skeleton + widest);
+        let room = Capped {
+            budget: record_room(rest, skeleton, widest),
+        };
         let kept = room.head(&window, |(_, cost)| *cost);
         object["facts"] = kept
             .kept()

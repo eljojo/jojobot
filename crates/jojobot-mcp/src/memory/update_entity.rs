@@ -82,7 +82,8 @@ impl Jojobot {
                        thing in the same call, through a claim of inference; a call that sends \
                        only `sets` leaves the entity itself alone, and a key that needs the \
                        operator's word is written with capture. A handle that names \
-                       nothing comes back blocked with the nearest handles — it never creates."
+                       nothing comes back blocked with the nearest handles — it never creates. Aliases or `sets` that would leave the thing, or its claim, too big to \
+                       be read back whole in one answer are refused with nothing written."
     )]
     pub(crate) async fn update_entity(
         &self,
@@ -109,6 +110,14 @@ impl Jojobot {
         // about the thing in the same act, through the store's own combined write:
         // the store runs the guards of a capture inside the transaction that edits
         // the entity, and a refusal takes the edit back with it.
+        // **A name or aliases that leave the thing's own row too big to be read
+        // back whole are refused before anything lands.**
+        if let Some(refused) = self
+            .refuses_a_relabelling_too_big_to_read(&handle, &patch)
+            .await
+        {
+            return memory_declined("update_entity", refused);
+        }
         let sets = args.sets.clone().filter(|sets| !sets.is_empty());
         let mut claim = None;
         let mut fold_behind = None;
@@ -166,6 +175,10 @@ impl Jojobot {
                         recorded_at,
                     )
                 };
+                if let Some(refused) = self.refuses_a_new_claim_too_big_to_read(&first, None).await
+                {
+                    return memory_declined("update_entity", refused);
+                }
                 match self
                     .memory
                     .update_entity_with_claim(&handle, patch, first)

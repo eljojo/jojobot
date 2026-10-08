@@ -235,7 +235,9 @@ impl Jojobot {
                        candidate you meant, or re-call with the override_token that refusal \
                        carries if this genuinely is a different thing sharing a name — a token \
                        lifts the one refusal that minted it and no other. An exact handle \
-                       collision can never be forced — a handle has exactly one owner."
+                       collision can never be forced — a handle has exactly one owner. A creation whose aliases, or whose `sets` as a first claim, could not \
+                       be read back whole in one answer is refused and nothing is made: send \
+                       fewer or shorter aliases, or move the long text onto a claim."
     )]
     pub(crate) async fn add_entity(
         &self,
@@ -311,6 +313,13 @@ impl Jojobot {
                     {
                         return memory_declined("add_entity", refused);
                     }
+                }
+                // **A thing whose own row could not be read back whole is not
+                // made**: its aliases are served on every read of it.
+                if let Some(refused) =
+                    Jojobot::refuses_a_new_thing_too_big_to_read(&entity_as_it_will_be(&new))
+                {
+                    return memory_declined("add_entity", refused);
                 }
                 match self.memory.add_entity(new).await {
                     Ok(added) => (added, None),
@@ -396,6 +405,15 @@ impl Jojobot {
                 let creating = entity_as_it_will_be(&new);
                 if let Some(refused) = self
                     .refuses_a_boot_floor_for_creation(&first, &creating, &caller.bot)
+                    .await
+                {
+                    return memory_declined("add_entity", refused);
+                }
+                // **A first claim no reader could be handed whole is refused
+                // with the creation**, so nothing is made: the claim is measured
+                // on the thing as it will exist, sets folded onto it.
+                if let Some(refused) = self
+                    .refuses_a_new_claim_too_big_to_read(&first, Some(&creating))
                     .await
                 {
                     return memory_declined("add_entity", refused);

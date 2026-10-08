@@ -49,6 +49,9 @@ struct Restored {
     /// What every thing held in the old store, as `(handle, key, value)`, read
     /// before the current binary touched it.
     held_before: Vec<(String, String, String)>,
+    /// Every entity handle the old store holds, archived and folded ones
+    /// included, read before the current binary touched it.
+    handles: Vec<String>,
 }
 
 async fn restore_the_fixture(label: &str) -> Restored {
@@ -114,6 +117,10 @@ async fn restore_a_fixture(fixture_dir: &str, label: &str) -> Restored {
         held_before.len() >= 5,
         "the fixture holds things with fields, or this compares nothing: {held_before:?}"
     );
+    let handles: Vec<String> = sqlx::query_scalar("SELECT id FROM entity ORDER BY id")
+        .fetch_all(restoring.pool())
+        .await
+        .expect("the old store's handles read");
     restoring.stop().await;
     Restored {
         scratch,
@@ -121,6 +128,7 @@ async fn restore_a_fixture(fixture_dir: &str, label: &str) -> Restored {
         store_port,
         git_ref,
         held_before,
+        handles,
     }
 }
 
@@ -142,6 +150,7 @@ async fn boots_on_a_store_filled_by(fixture_dir: &str, label: &str) {
         store_port,
         git_ref,
         held_before,
+        handles,
     } = restore_a_fixture(fixture_dir, label).await;
 
     // **The current binary boots over the restored store TWICE, and the second
@@ -190,6 +199,7 @@ async fn boots_on_a_store_filled_by(fixture_dir: &str, label: &str) {
     // first two boots wrote nothing of the gate's, and the dump above shows the
     // second changed nothing the first left.
     assert_every_thing_holds_what_it_held(&surface, &git_ref, &held_before).await;
+    assert_no_stored_record_is_over_the_ceiling(&surface, &git_ref, &handles).await;
     assert_every_recorded_record_reads_back(&surface, &git_ref, &role_holder).await;
     assert_what_a_real_store_holds_reads_back(&surface, &git_ref, &role_holder).await;
     assert_a_role_claimed_in_the_old_shape_is_held_and_moves(&surface, &git_ref, &role_holder)
@@ -202,6 +212,122 @@ async fn boots_on_a_store_filled_by(fixture_dir: &str, label: &str) {
     assert_a_claim_shaped_lease_renews_in_place(&state_dir, store_port, &git_ref, &role_holder)
         .await;
     drop(scratch);
+}
+
+/// **Every stored record that no answer could carry whole**, found by reading
+/// each thing's records back through the served surface the way a caller does,
+/// one part after another. A record is over when the answer that carries it is
+/// past the ceiling: a read serves a record whole or not at all, so the answer
+/// is what shows it. Each is `(handle, offset of the part, characters served)`.
+async fn records_over_the_ceiling(
+    surface: &Surface,
+    handles: &[String],
+) -> Vec<(String, usize, usize)> {
+    let mut over = Vec::new();
+    for handle in handles {
+        let mut offset = 0usize;
+        loop {
+            let raw = surface
+                .call(
+                    "recall",
+                    json!({"subject": handle, "facts": true, "offset": offset}),
+                )
+                .await;
+            let size = raw.chars().count();
+            if size > jojobot_domain::text::ANSWER_CEILING {
+                over.push((handle.clone(), offset, size));
+            }
+            let next = serde_json::from_str::<serde_json::Value>(&raw)
+                .ok()
+                .and_then(|body| body["not_shown"]["offset"].as_u64());
+            match next {
+                Some(next) if next as usize > offset => offset = next as usize,
+                _ => break,
+            }
+        }
+    }
+    over
+}
+
+/// **A store an older build filled holds no record over the ceiling.** The write
+/// guard keeps new ones out; this finds the ones already held. A non-empty list
+/// is not repaired here and not ignored: it goes to the PM before anything else,
+/// who decides between a pointer to a page and a bounded continuation for those
+/// records only.
+async fn assert_no_stored_record_is_over_the_ceiling(
+    surface: &Surface,
+    git_ref: &str,
+    handles: &[String],
+) {
+    assert!(
+        !handles.is_empty(),
+        "the recording at {git_ref} holds no entity, so this scan reads nothing"
+    );
+    let over = records_over_the_ceiling(surface, handles).await;
+    assert!(
+        over.is_empty(),
+        "the store recorded at {git_ref} holds records no answer can carry whole: {over:?}. \
+         Send this list to the PM before anything else; do not shorten them here"
+    );
+}
+
+/// **The scan finds a record stored over the ceiling, and names only that one.**
+/// One stored record is made larger than any answer straight in the store, which
+/// is the only way left to make one; the scan over the served surface lists it
+/// and nothing else. Without this the case above passes on a scan that reads
+/// nothing.
+#[tokio::test]
+async fn the_scan_for_oversized_records_finds_one_stored_over_the_ceiling() {
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        held_before: _,
+        handles,
+    } = restore_the_fixture("oversized").await;
+    let mut editing = Dolt::start(&state_dir.join("db"), free_port())
+        .await
+        .expect("the stopped store comes up to be made oversized");
+    let (badge, local, handle): (String, String, String) = sqlx::query_as(
+        "SELECT f.entity, f.id, e.id FROM fact f JOIN entity e ON e.badge = f.entity
+         WHERE f.status = 'active' ORDER BY e.id, f.id LIMIT 1",
+    )
+    .fetch_one(editing.pool())
+    .await
+    .expect("the recording holds an active record");
+    // **Both tables the record lives in**: reads project the newest write of a
+    // claim, and the claim's own row sits beside it.
+    let huge = "x".repeat(jojobot_domain::text::ANSWER_CEILING + 2_000);
+    for update in [
+        "UPDATE fact SET details = ? WHERE entity = ? AND id = ?",
+        "UPDATE fact_write SET details = ? WHERE entity = ? AND fact_id = ?",
+    ] {
+        sqlx::query(update)
+            .bind(&huge)
+            .bind(&badge)
+            .bind(&local)
+            .execute(editing.pool())
+            .await
+            .expect("one stored record is made larger than any answer");
+    }
+    editing.stop().await;
+
+    let booted = boot_current(&state_dir, store_port, &git_ref).await;
+    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
+        .await
+        .expect("connecting to the current binary");
+    let over = records_over_the_ceiling(&surface, &handles).await;
+    surface.finish().await;
+    booted.stop().await;
+    drop(scratch);
+
+    assert_eq!(
+        over.iter().map(|(h, ..)| h.as_str()).collect::<Vec<_>>(),
+        [handle.as_str()],
+        "the scan lists the one oversized record's thing and no other: {over:?}"
+    );
+    assert!(over[0].2 > jojobot_domain::text::ANSWER_CEILING, "{over:?}");
 }
 
 /// **The one warning a clean boot of the gate logs.** The gate starts the binary
@@ -1401,6 +1527,7 @@ async fn field_link_holds_the_links_the_writes_imply_and_nothing_else() {
         store_port,
         git_ref,
         held_before: _,
+        handles: _,
     } = restore_the_fixture("links").await;
     let booted = boot_current(&state_dir, store_port, &git_ref).await;
     let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))

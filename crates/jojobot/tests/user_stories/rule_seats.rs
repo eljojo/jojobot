@@ -1320,10 +1320,11 @@ async fn unstarring_three_rules_is_taught_stands_for_unless_the_summary_names_th
 /// and its source ride in it, and what the call sets does not. A name and a source
 /// are each capped at two hundred characters, so the aliases are what can make a
 /// valid creation heavy. They are refused with a seat count in the call or
-/// without one, and a shorter list is what lets the same call land. A set value as
-/// large lands beside it, which shows the size of `sets` is not what was refused,
-/// and so does a thing of another kind under the same aliases, because only a bot
-/// has a boot.
+/// without one, and a shorter list is what lets the same call land. A set value of
+/// ten thousand characters lands beside it, which shows the size of `sets` is not
+/// what the boot floor refused. A thing of another kind under the same aliases is
+/// refused for a different reason: it has no boot, but its own row could not be
+/// read back whole, and the refusal names that and not the floor.
 ///
 /// Every refusal sits beside the same creation under ordinary aliases, which
 /// lands: a build that refused every bot creation would not pass.
@@ -1380,45 +1381,41 @@ async fn a_bot_creation_with_oversized_aliases_is_refused_whatever_it_sets() {
             "add_entity",
             json!({
                 "kind": "bot", "handle": "omega", "name": "Omega", "source": "user-named",
-                "sets": {"note": "v".repeat(60_000)},
+                "sets": {"note": "v".repeat(10_000)},
             }),
         )
         .await
         .json();
     assert_eq!(made["id"], "bot:omega", "{made}");
 
-    // ── only a bot has a boot: a thing under the same aliases lands ─────────
-    // **KNOWN GAP, kept visible**: the receipt of a creation serves back the
-    // aliases it was sent, with no bound, and these are past the answer ceiling
-    // by themselves. So the two creations below are asked through a call that is
-    // exempt from the ceiling check, for these calls only; everything else in
-    // the story is measured against it.
-    let made = s
-        .call_past_the_ceiling(
+    // ── only a bot has a boot: a thing under the same aliases is refused by ──
+    // ── the size of its own row, which names no floor ───────────────────────
+    let refusal = s
+        .refused(
             "add_entity",
             json!({
                 "kind": "thing", "handle": "handcart", "name": "The Handcart",
                 "aliases": many, "source": "user-named",
             }),
         )
-        .await
-        .json();
-    assert_eq!(made["id"], "thing:handcart", "{made}");
+        .await;
+    assert_eq!(refusal.json()["fix_by"], "change", "{}", refusal.raw());
+    refusal.never_says("floor_parts");
     // …and the same with settings, which is the path that measures any kind it is
     // handed and leaves a kind without a boot to the check itself.
     let other_many: Vec<String> = (0..200)
         .map(|i| format!("pot {i} {}", "y".repeat(150)))
         .collect();
-    let made = s
-        .call_past_the_ceiling(
+    let refusal = s
+        .refused(
             "add_entity",
             json!({
                 "kind": "thing", "handle": "kettle", "name": "The Kettle",
                 "aliases": other_many, "source": "user-named", "sets": {"colour": "red"},
             }),
         )
-        .await
-        .json();
-    assert_eq!(made["id"], "thing:kettle", "{made}");
+        .await;
+    assert_eq!(refusal.json()["fix_by"], "change", "{}", refusal.raw());
+    refusal.never_says("floor_parts");
     story.finish().await;
 }

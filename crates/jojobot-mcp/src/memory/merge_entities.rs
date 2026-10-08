@@ -62,7 +62,9 @@ impl Jojobot {
                        nothing moved: archive thoughts, or shorten the one named, with \
                        update_fact, then merge again. Naming one handle as \
                        both sides comes back status: blocked. So does naming a handle that was already merged away, on \
-                       either side, and that refusal names the handle to use instead."
+                       either side, and that refusal names the handle to use instead. A merge whose result, the survivor with the duplicate's names and keys \
+                       or the record of the merge, could not be read back whole in one answer \
+                       is refused and nothing moves."
     )]
     pub(crate) async fn merge_entities(
         &self,
@@ -88,6 +90,14 @@ impl Jojobot {
             .dated(args.recorded_at.as_deref(), args.sid.as_deref())
             .await?;
 
+        // **A merge that would leave the survivor, or the account it writes, too
+        // big to be read back whole is refused before anything moves.**
+        if let Some(refused) = self
+            .refuses_a_merge_too_big_to_read(&duplicate, &survivor, args.reason.as_deref(), date)
+            .await
+        {
+            return memory_declined("merge_entities", refused);
+        }
         // **A merge into the caller's own bot carries the duplicate's ceiling
         // onto it, and the store decides that in the same act as the merge.**
         // A check made here, before the merge, left a gap a second session of

@@ -5126,6 +5126,38 @@ pub enum MemoryError {
         /// refused for it, and this is how the refusal says so.
         stamp_margin: usize,
     },
+    /// **A record the write would make cannot be read back whole in one
+    /// answer.** The record as a read serves it, beside the rest of that
+    /// answer, is over the answer ceiling. A read serves a record whole or not
+    /// at all, so the write is refused instead of storing what no reader could
+    /// receive.
+    #[error(
+        "this record would be {size} characters as a read serves it, and the most one answer \
+         can carry of a record on '{subject}' is {room}"
+    )]
+    ClaimTooLarge {
+        /// The thing the record is on.
+        subject: String,
+        /// The record as a read would serve it, in characters.
+        size: usize,
+        /// The most characters of one record the same read can carry.
+        room: usize,
+    },
+    /// **A thing's own row cannot be read back whole in one answer.** Its name,
+    /// aliases and folded fields, beside the rest of the answer, are over the
+    /// answer ceiling, so no record on it could be served either.
+    #[error(
+        "'{subject}' would be {size} characters as a read serves it before any record on it, \
+         and the most one answer can carry of it is {room}"
+    )]
+    ThingTooLarge {
+        /// The thing whose row is too big.
+        subject: String,
+        /// The row as a read would serve it, in characters.
+        size: usize,
+        /// The most characters of the row one answer can carry.
+        room: usize,
+    },
     /// **The write would put a value in a key that the key does not hold, on a
     /// thing that already fits the type.**
     ///
