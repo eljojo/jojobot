@@ -209,8 +209,9 @@ pub fn keys_of(token: &str) -> Vec<super::types::Field> {
         // and read by the boot. A reference to a person, so a handle written
         // there is a link and a piece of work that waits on the operator holds
         // the same handle under `waiting_on`. Optional: an instance is whole
-        // before anybody has made the operator an entity. Display only: no
-        // owner or permission model reads it.
+        // before anybody has made the operator an entity. It decides whose box
+        // operator mail lands in, so the build guards who may write it: see
+        // `GUARDED_KEYS`.
         "topic" => vec![Field::pointing_at("operator", super::EntityKind::PERSON)],
         // **A question asked by name.** The keys are what a view IS: what it
         // selects over, and what it keeps. They are required because a view
