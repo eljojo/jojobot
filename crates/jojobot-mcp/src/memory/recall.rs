@@ -1465,9 +1465,12 @@ impl Jojobot {
                        for what it did. THE FOCUS A RUN CLOSED ON IS NOT IN THAT PROSE: \
                        wrap_session's closing entry carries it as `closing_focus`. A selection \
                        that reaches another identity's runs counts \
-                       them as `withheld` and shows none of them, so an empty list with \
-                       withheld above zero means runs exist that are not yours, and an empty \
-                       list with withheld at zero means none exist. A call with no sid owns \
+                       them as `withheld` and shows none of them, so `withheld` counts only \
+                       runs that are not yours. A filter that leaves out runs of YOUR OWN says \
+                       how many as `own_runs_excluded`. A run carries its `sid` as a field, \
+                       which you can filter on and which start_here takes to resume that \
+                       run, and \
+                       `near` places a run on the day it started. A call with no sid owns \
                        no run: boot with start_here and pass the sid it returns to read your \
                        own. \
                        START WITH A VIEW IF ONE FITS: a view is a question somebody already \
@@ -2019,6 +2022,16 @@ impl Jojobot {
             );
         }
 
+        // **The frame an intake moment is read as a day in**: the server's clock
+        // and the asking run's zone, else the instance's, else UTC.
+        let day_zone = match caller.as_ref().and_then(Caller::zone) {
+            Some(zone) => zone,
+            None => self.unzoned_frame().await,
+        };
+        let day_frame = DayFrame {
+            clock: *self.clock(),
+            zone: &day_zone,
+        };
         // **A session joins the walk only when the query could reach one** —
         // kept off the ordinary path so a lookup that never mentions a
         // session does not pay for a `Sessions` read it did not ask for.
@@ -2043,7 +2056,18 @@ impl Jojobot {
             match self.sessions.all_summaries().await {
                 Ok(runs) if caller.is_some() => runs
                     .iter()
-                    .map(jojobot_domain::session::projected_summary)
+                    .map(|run| {
+                        let mut doc = jojobot_domain::session::projected_summary(run);
+                        // **The day the run started, in the asking run's frame**:
+                        // what `near` places a run by, since a run holds no claim
+                        // for any clock to read. Read here, where the zone is
+                        // known, and not in the walk, which has none.
+                        doc.fields.insert(
+                            jojobot_domain::session::STARTED_ON.to_string(),
+                            day_frame.day(run.started_at).to_string(),
+                        );
+                        doc
+                    })
                     .collect(),
                 // 🚨 **Counted, never fed to the walk.** A run's entity is named
                 // for its focus text and owned by a bot, and the walk's near-miss
@@ -2084,6 +2108,23 @@ impl Jojobot {
             withheld + runs_counted_for_nobody
         } else {
             withheld
+        };
+        // **An empty browse of runs says how many of the caller's OWN a filter
+        // left out**, apart from those withheld as another identity's. A filter no
+        // run carries the key of matches nothing, and a caller reading "owned by
+        // another identity" beside an empty list takes its own run for one that
+        // was taken from it. Counted over the runs this caller owns, which is
+        // every run the walk would have shown it without the filter.
+        let own_runs_excluded = match caller.as_ref() {
+            Some(caller)
+                if wants_sessions && query.select.subject.is_none() && found.is_empty() =>
+            {
+                session_docs
+                    .iter()
+                    .filter(|doc| doc.owner.as_ref() == Some(&caller.bot))
+                    .count()
+            }
+            _ => 0,
         };
         // **The chronology, read only for a run the walk actually kept.**
         // `session_docs` above is cheap on purpose — no beat's text left the
@@ -2342,16 +2383,6 @@ impl Jojobot {
                 .cloned()
                 .collect()
         };
-        // **The frame an intake moment is read as a day in**: the server's clock
-        // and the asking run's zone, else the instance's, else UTC.
-        let day_zone = match caller.as_ref().and_then(Caller::zone) {
-            Some(zone) => zone,
-            None => self.unzoned_frame().await,
-        };
-        let day_frame = DayFrame {
-            clock: *self.clock(),
-            zone: &day_zone,
-        };
         let mut body = serde_json::json!({
             "count": found.len(),
             "built_on": standing_on,
@@ -2608,12 +2639,20 @@ impl Jojobot {
             if withheld > 0 {
                 left_out.push(format!("{withheld} owned by another identity"));
             }
+            if own_runs_excluded > 0 {
+                left_out.push(format!(
+                    "{own_runs_excluded} of your own runs, which the filters do not match"
+                ));
+            }
             body["searched"] = crate::answer::population_line(
                 &looked,
                 &left_out,
                 "drop a filter, or call search with the words a record would use",
             )
             .into();
+        }
+        if own_runs_excluded > 0 {
+            body["own_runs_excluded"] = own_runs_excluded.into();
         }
         for (wanted, displaced) in &type_displaced {
             crate::answer::note_type_displaced(&mut body, wanted, displaced.as_ref());

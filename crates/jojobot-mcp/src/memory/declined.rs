@@ -132,6 +132,22 @@ pub(crate) fn blocked_result(
              worn, or re-call update_entity with override_token: \"{token}\" if this entity really \
              does share a name with one above: names are not unique, handles are.",
         ),
+        // **A run is never created by hand, and its handle is not the sid a
+        // caller holds.** A caller that names `session:<sid>` is sent to the
+        // read that does find a run by its sid, not to a verb that would make
+        // an entity of the wrong kind.
+        Blocked::MustExist(verb) if attempted.kind() == Some(EntityKind::SESSION) => format!(
+            "{}. '{attempted}' is not a run jojobot knows, and the handle of a run is not its \
+             sid. {}To find a run by the sid you hold, call {verb} with kind: session and \
+             fields: [{{\"key\": \"sid\", \"value\": \"<the sid>\"}}]; a run is made by \
+             booting, never by hand.",
+            nothing_for(verb),
+            if candidates.is_empty() {
+                ""
+            } else {
+                "If one of the handles above is the run you meant, use that. "
+            },
+        ),
         // The candidate list is often empty here — this gate fires on any
         // unrecognized handle, not only a near miss — so the advice must not
         // point at "the handles above" when there are none.

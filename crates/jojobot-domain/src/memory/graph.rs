@@ -419,6 +419,11 @@ impl Nearness {
         let Some(at) = self.placed(fact) else {
             return false;
         };
+        self.holds_day(at)
+    }
+
+    /// Is a day inside the window, either side of the day asked about.
+    fn holds_day(&self, at: jiff::civil::Date) -> bool {
         let span = self.day.since(at).map(|s| s.get_days().abs());
         span.is_ok_and(|days| days <= i64::from(self.within_days) as i32)
     }
@@ -1601,12 +1606,29 @@ impl<'a> Ctx<'a> {
             .values()
             .filter(|e| self.admits(&e.id, select))
             .filter(|e| {
-                !select.filters_records() || self.kept_facts(&e.id, select).next().is_some()
+                !select.filters_records()
+                    || self.kept_facts(&e.id, select).next().is_some()
+                    || self.run_started_near(e, select)
             })
             .map(|e| e.id.clone())
             .collect();
         found.sort_by(|a, b| a.as_str().cmp(b.as_str()));
         Ok(found)
+    }
+
+    /// **Is this a run that started inside the window of a neighbourhood read.**
+    /// A run holds no claim for a clock to place, so it is placed on the day it
+    /// started, whichever clock is asked. A read that also asks a question of a
+    /// record has nothing to put to a run, which holds none.
+    fn run_started_near(&self, entity: &Entity, select: &Selection) -> bool {
+        entity.kind == super::EntityKind::SESSION
+            && select.fields.iter().all(|f| f.scope != Scope::Record)
+            && select.near.is_some_and(|near| {
+                self.held(&entity.id)
+                    .and_then(|fields| fields.get(crate::session::STARTED_ON))
+                    .and_then(|day| day.parse::<jiff::civil::Date>().ok())
+                    .is_some_and(|day| near.holds_day(day))
+            })
     }
 
     /// **Does this selection choose this object**, on the object's own

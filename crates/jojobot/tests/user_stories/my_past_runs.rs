@@ -297,3 +297,295 @@ async fn a_colleagues_run_is_never_named_slugged_or_attributed_to_another_bot() 
     }
     story.finish().await;
 }
+
+/// "I wrapped up yesterday. Can I read what I did?" A run that was wrapped is a
+/// run like any other: the next sitting of the same bot finds it with one
+/// ordinary browse of kind `session`, reads its chronology whole, and a run of
+/// another bot is still counted and not shown. The negative sits beside the
+/// positive it depends on, in the same read.
+#[tokio::test]
+async fn a_wrapped_run_is_read_by_the_next_run_of_its_bot_and_not_by_another_bots() {
+    let story = Story::begin("bot:otto").await;
+    let first = story.session().await;
+    first.add("bot:epsilon", "Epsilon").await;
+    first
+        .journal("otto surveyed the east gorge and found the bridge closed")
+        .await;
+    first
+        .wrap("surveyed the east gorge; the bridge is closed")
+        .await;
+
+    let epsilon = story.as_bot("bot:epsilon").await;
+    epsilon
+        .journal("epsilon priced the replacement wheels, a private errand")
+        .await;
+    epsilon
+        .call("wrap_session", json!({"story": "priced the wheels"}))
+        .await;
+
+    // ── the next sitting of otto reads the wrapped one ──────────────────────
+    let next = story.session_on("2026-10-12", Some("new")).await;
+    let answered = my_past_runs(&next).await;
+    let runs = runs_found(&answered);
+    assert_eq!(
+        runs.len(),
+        1,
+        "the next sitting must find the run it wrapped, and only it: {answered}"
+    );
+    let prose = runs[0]["prose"].as_str().unwrap_or_default();
+    assert!(
+        prose.contains("east gorge") && prose.contains("bridge is closed"),
+        "the wrapped run reads back its chronology and its closing story: {answered}"
+    );
+    assert!(
+        answered["withheld"].as_u64().is_some_and(|n| n >= 1),
+        "the other bot's wrapped run is counted: {answered}"
+    );
+    assert!(
+        !answered.to_string().contains("replacement wheels"),
+        "another bot's words reached a sitting that does not own them: {answered}"
+    );
+    story.finish().await;
+}
+
+/// "My name changed. Are my old runs still mine?" A run belongs to the bot, not
+/// to the handle the bot wore when the run was written, so after the bot is
+/// renamed the next run under the new handle reads the old run, and a run of
+/// another bot is still counted and not shown.
+#[tokio::test]
+async fn a_runs_owner_follows_its_bot_through_a_rename() {
+    let story = Story::begin("bot:otto").await;
+    let first = story.session().await;
+    first.add("bot:epsilon", "Epsilon").await;
+    first
+        .journal("otto surveyed the east gorge and found the bridge closed")
+        .await;
+    let epsilon = story.as_bot("bot:epsilon").await;
+    epsilon
+        .journal("epsilon priced the replacement wheels, a private errand")
+        .await;
+    epsilon
+        .call(
+            "rename_entity",
+            json!({"handle": "bot:otto", "to": "bot:otto-prime"}),
+        )
+        .await;
+
+    let prime = story.as_bot("bot:otto-prime").await;
+    let answered = my_past_runs(&prime).await;
+    let runs = runs_found(&answered);
+    assert_eq!(
+        runs.len(),
+        1,
+        "the renamed bot must find the run it wrote under its old handle: {answered}"
+    );
+    assert!(
+        runs[0]["prose"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("east gorge"),
+        "the old run reads back whole: {answered}"
+    );
+    assert_eq!(
+        runs[0]["parent"], "bot:otto-prime",
+        "the run is filed under the handle the bot wears now: {answered}"
+    );
+    assert!(
+        answered["withheld"].as_u64().is_some_and(|n| n >= 1),
+        "the other bot's run is counted: {answered}"
+    );
+    assert!(
+        !answered.to_string().contains("replacement wheels"),
+        "another bot's words reached the renamed bot: {answered}"
+    );
+    story.finish().await;
+}
+
+/// "I filtered my runs and got nothing. Did somebody take them?" No: a filter no
+/// run of mine can match leaves my own runs out, and the answer says how many of
+/// mine it left out, apart from the runs withheld as another identity's. The
+/// count of runs withheld is the same with and without the filter, and a browse
+/// that left none of mine out carries no such count.
+#[tokio::test]
+async fn a_filter_that_leaves_out_my_own_runs_says_how_many_apart_from_those_withheld() {
+    let story = Story::begin("bot:otto").await;
+    let otto = story.session().await;
+    otto.journal("otto surveyed the east gorge and found the bridge closed")
+        .await;
+
+    // The positive: the plain browse finds my run, and excluded none of mine.
+    let plain = my_past_runs(&otto).await;
+    assert_eq!(runs_found(&plain).len(), 1, "my run is there: {plain}");
+    assert!(
+        plain.get("own_runs_excluded").is_none(),
+        "a browse that left none of mine out says nothing of it: {plain}"
+    );
+    let withheld = plain["withheld"].clone();
+
+    // The filter that matches no run of mine.
+    let narrowed = otto
+        .call(
+            "recall",
+            json!({"kind": "session", "fields": [{"key": "no_such_key"}]}),
+        )
+        .await
+        .json();
+    assert!(
+        runs_found(&narrowed).is_empty(),
+        "nothing carries that key: {narrowed}"
+    );
+    assert_eq!(
+        narrowed["own_runs_excluded"], 1,
+        "the answer counts my own run as left out by the filter: {narrowed}"
+    );
+    assert_eq!(
+        narrowed["withheld"], withheld,
+        "my run is not counted among those another identity owns: {narrowed}"
+    );
+    story.finish().await;
+}
+
+/// "Which of my runs was that one?" A run's sid is a field of the run, so its
+/// owner filters on it and reads it back, and the same value is what
+/// `start_here` takes as `resume`. Another bot filtering on the same value finds
+/// nothing and is never shown the value.
+#[tokio::test]
+async fn a_runs_sid_is_a_field_its_owner_can_filter_on_read_back_and_resume() {
+    let story = Story::begin("bot:otto").await;
+    let otto = story.session().await;
+    otto.add("bot:epsilon", "Epsilon").await;
+    otto.journal("otto surveyed the east gorge and found the bridge closed")
+        .await;
+    let sid = otto.sid().to_string();
+
+    // Read back: the run carries the sid it was written under.
+    let plain = my_past_runs(&otto).await;
+    assert_eq!(
+        runs_found(&plain)[0]["fields"]["sid"],
+        sid,
+        "the run carries its sid: {plain}"
+    );
+
+    // Filter on it: exactly that run.
+    let by_sid = otto
+        .call(
+            "recall",
+            json!({"kind": "session", "fields": [{"key": "sid", "value": sid}]}),
+        )
+        .await
+        .json();
+    assert_eq!(
+        runs_found(&by_sid).len(),
+        1,
+        "the run answers its sid: {by_sid}"
+    );
+    assert!(
+        by_sid.get("own_runs_excluded").is_none(),
+        "nothing of mine was left out: {by_sid}"
+    );
+    let other = otto
+        .call(
+            "recall",
+            json!({"kind": "session", "fields": [{"key": "sid", "value": "nosuchsid"}]}),
+        )
+        .await
+        .json();
+    assert!(
+        runs_found(&other).is_empty(),
+        "another value matches no run: {other}"
+    );
+
+    // Another bot filtering on the same value finds nothing, and the value is
+    // nowhere in what it is told.
+    let epsilon = story.as_bot("bot:epsilon").await;
+    let theirs = epsilon
+        .call(
+            "recall",
+            json!({"kind": "session", "fields": [{"key": "sid", "value": sid}]}),
+        )
+        .await
+        .json();
+    assert!(
+        runs_found(&theirs).is_empty(),
+        "a colleague's filter reached my run: {theirs}"
+    );
+    assert!(
+        !theirs.to_string().contains(&sid),
+        "my sid reached another bot: {theirs}"
+    );
+
+    // And the value answers which run to resume.
+    let resumed = story.session_on("2026-10-12", Some(&sid)).await;
+    assert_eq!(resumed.sid(), sid, "the sid resumes the run it names");
+    story.finish().await;
+}
+
+/// "What was I doing around the 8th?" A run is placed on the day it started, so
+/// `near` finds it inside the window and not outside it.
+#[tokio::test]
+async fn near_places_a_run_on_the_day_it_started() {
+    let story = Story::begin("bot:otto").await;
+    let otto = story.session().await;
+    otto.journal("otto surveyed the east gorge and found the bridge closed")
+        .await;
+    let today = jiff::Timestamp::now()
+        .to_zoned(jiff::tz::TimeZone::UTC)
+        .date();
+    let far = today
+        .checked_add(jiff::Span::new().days(60))
+        .expect("a day");
+
+    // The positive: my run is inside a window around the day it started.
+    let around = otto
+        .call(
+            "recall",
+            json!({"kind": "session", "near": {"day": today.to_string(), "within_days": 2}}),
+        )
+        .await
+        .json();
+    assert_eq!(
+        runs_found(&around).len(),
+        1,
+        "the run is near its day: {around}"
+    );
+
+    // The negative that depends on it: a window two months away does not hold it.
+    let away = otto
+        .call(
+            "recall",
+            json!({"kind": "session", "near": {"day": far.to_string(), "within_days": 2}}),
+        )
+        .await
+        .json();
+    assert!(
+        runs_found(&away).is_empty(),
+        "the run is not near a day two months on: {away}"
+    );
+    story.finish().await;
+}
+
+/// "I tried the sid as the run's handle." The handle of a run is not its sid, and
+/// the refusal says which read finds a run by the sid held, rather than sending
+/// the caller to create an entity.
+#[tokio::test]
+async fn naming_a_run_by_its_sid_is_refused_with_the_read_that_finds_it() {
+    let story = Story::begin("bot:otto").await;
+    let otto = story.session().await;
+    otto.journal("otto surveyed the east gorge").await;
+    let refused = otto
+        .refused(
+            "recall",
+            json!({"subject": format!("session:{}", otto.sid())}),
+        )
+        .await
+        .json();
+    let way = refused["how_to_proceed"].as_str().unwrap_or_default();
+    for named in ["kind", "session", "fields", "sid"] {
+        assert!(way.contains(named), "the way on names {named}: {refused}");
+    }
+    assert!(
+        !way.contains("add_entity"),
+        "a run is not created by hand: {refused}"
+    );
+    story.finish().await;
+}

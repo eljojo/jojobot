@@ -1536,6 +1536,11 @@ pub async fn sweep_and_find(
     })
 }
 
+/// **The key a run's start day rides under** on the projected run. The walk
+/// places a run by it when a read asks what was near a day, because a run holds
+/// no claim for any clock to read.
+pub const STARTED_ON: &str = "started_on";
+
 /// **A session, as an object the graph query can select.**
 ///
 /// ⭐ **The axis already existed; the handle is what a session lacked.** Give a
@@ -1569,6 +1574,7 @@ pub fn projected(session: &Session) -> crate::memory::search::DocScan {
             session.state,
             session.started_at,
             session.entries.len(),
+            session.sid.as_ref(),
         )
     }
 }
@@ -1592,6 +1598,7 @@ pub fn projected_summary(summary: &SessionSummary) -> crate::memory::search::Doc
             summary.state,
             summary.started_at,
             summary.entry_count,
+            summary.sid.as_ref(),
         )
     }
 }
@@ -1607,6 +1614,7 @@ fn projected_shell(
     state: SessionState,
     started_at: Timestamp,
     entry_count: usize,
+    sid: Option<&Sid>,
 ) -> crate::memory::search::DocScan {
     let entity_id = EntityId::new(crate::memory::EntityKind::SESSION, id.as_str());
     crate::memory::search::DocScan {
@@ -1637,7 +1645,14 @@ fn projected_shell(
             ("state".to_string(), state.as_token().to_string()),
             ("started_at".to_string(), started_at.to_string()),
             ("beats".to_string(), entry_count.to_string()),
-        ]),
+        ])
+        .into_iter()
+        // **The run's sid is a field of the run**, so its owner can filter on
+        // it and read it back, and the same value is what `start_here` takes
+        // as `resume`. Absent on a run written before it was kept. Only the
+        // owner ever reads this document, so it reaches nobody else.
+        .chain(sid.map(|sid| ("sid".to_string(), sid.as_str().to_string())))
+        .collect(),
         owner: Some(bot.clone()),
     }
 }
