@@ -57,8 +57,8 @@ impl Jojobot {
                        the bot reports to goes the same way: capture fields.reports_to on \
                        this bot, holding its manager's handle, and the colleagues view \
                        shows whom each bot reports to. The bot itself does not write it, \
-                       except a bot that heads a chart, which has no manager and reports of \
-                       its own and places itself: otherwise a bot above it on the chart \
+                       except a bot that heads a chart, which has reports and no manager \
+                       above it, and places itself: otherwise a bot above it on the chart \
                        does, and a bot with no manager is adopted by the manager named or by \
                        a bot above that manager. The refusal names who may. Who reports to a bot is the other \
                        direction, a second call: recall that bot with follow, relation \
