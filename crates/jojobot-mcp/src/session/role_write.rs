@@ -209,8 +209,9 @@ impl Jojobot {
     }
 
     /// **The bots that head a chart**: a bot with no manager that something
-    /// reports to. Read in one pass over the folded fields, never one pass per
-    /// bot.
+    /// reports to. One listing of every entity and one folded-fields read per
+    /// entity, so the cost grows with the entities in the store rather than
+    /// with its bots. Only a stranger's archive of a role object reaches it.
     pub(crate) async fn chart_heads(&self) -> Result<Vec<EntityId>, MemoryError> {
         let mut managers: std::collections::BTreeSet<String> = Default::default();
         let mut unmanaged: Vec<EntityId> = Vec::new();
