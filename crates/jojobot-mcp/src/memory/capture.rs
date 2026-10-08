@@ -1186,6 +1186,22 @@ impl Jojobot {
         } else {
             subject.clone()
         };
+        // **A resend of the value a key holds is not a change**, so it is not
+        // asked of the key's licence: the edit of a claim is judged on what the
+        // fold would become, and a new claim is judged the same way. Only the
+        // guarded keys that would move are judged.
+        let changing = if exists && jojobot_domain::memory::names_a_guarded_key(fields) {
+            match self
+                .fields_that_would_change(&ceiling_subject, fields)
+                .await
+            {
+                Ok(changing) => changing,
+                Err(e) => return memory_declined(verb, e).map(Some),
+            }
+        } else {
+            fields.clone()
+        };
+        let fields = &changing;
         let lineage = match jojobot_domain::memory::needs_the_chart(fields) {
             Some(named) => {
                 let read = if exists {
@@ -1209,6 +1225,43 @@ impl Jojobot {
             Some(refused) => memory_declined(verb, refused).map(Some),
             None => Ok(None),
         }
+    }
+
+    /// **The fields a write names that would not leave the thing as it is.** A
+    /// guarded key sent at the value the thing holds is dropped from the answer; a
+    /// key it does not hold, and a key at another value, stay. The held value is
+    /// read through the store's folded fields and compared as the handle it names,
+    /// since a store keeps the permanent id of what a key points at.
+    async fn fields_that_would_change(
+        &self,
+        subject: &EntityId,
+        written: &std::collections::BTreeMap<String, String>,
+    ) -> Result<std::collections::BTreeMap<String, String>, MemoryError> {
+        let held = self.memory.fields(subject).await?;
+        let mut changing = std::collections::BTreeMap::new();
+        for (key, value) in written {
+            let guarded = jojobot_domain::memory::GUARDED_KEYS
+                .iter()
+                .any(|rule| rule.key == key.trim());
+            let same = match held.get(key.trim()) {
+                Some(now) if guarded => {
+                    let now = now.trim();
+                    let served = match now.strip_prefix(jojobot_domain::memory::mention::MARK) {
+                        Some(id) => self
+                            .current_handle(&EntityId(id.to_string()))
+                            .await?
+                            .to_string(),
+                        None => now.to_string(),
+                    };
+                    served == value.trim()
+                }
+                _ => false,
+            };
+            if !same {
+                changing.insert(key.clone(), value.clone());
+            }
+        }
+        Ok(changing)
     }
 
     /// **The chart around a write**: the bots above `subject`, the manager the

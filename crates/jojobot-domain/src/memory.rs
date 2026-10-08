@@ -2455,20 +2455,55 @@ pub fn stored_manager(fold: &BTreeMap<String, String>) -> Option<EntityId> {
     })
 }
 
-/// **A fold served with its manager as the handle that manager answers to
-/// today.** A store keeps the permanent id of the entity a field names, and the
-/// chart is judged in handles, so every fold handed to a chart question passes
+/// **The keys a fold is served with the handle they name**: the manager a bot
+/// reports to, and who the operator is. Each holds the permanent id of an entity,
+/// and a licence is judged on handles, so two folds are only comparable once both
+/// are served. Without it a resend of the value a key holds reads as a change,
+/// because the stored fold names an id and the patch names the handle.
+pub const SERVED_KEYS: [&str; 2] = [REPORTS_TO, OPERATOR];
+
+/// **The id a served key stores**, with the mention mark taken off, for each of
+/// [`SERVED_KEYS`] a fold holds.
+pub fn stored_served_ids(fold: &BTreeMap<String, String>) -> Vec<EntityId> {
+    SERVED_KEYS
+        .iter()
+        .filter_map(|key| fold.get(*key))
+        .map(|stored| {
+            let stored = stored.trim();
+            EntityId(
+                stored
+                    .strip_prefix(mention::MARK)
+                    .unwrap_or(stored)
+                    .to_string(),
+            )
+        })
+        .collect()
+}
+
+/// **A fold served with its manager and its operator as the handles they answer
+/// to today.** A store keeps the permanent id of the entity a field names, and
+/// the chart is judged in handles, so every fold handed to a chart question passes
 /// through here first, in every store. The lookup is the store's own, since only
-/// it holds the table of ids; `handle_of` is asked once, with [`stored_manager`],
-/// and only when the fold names a manager. A fold that names none comes back as
-/// it was. An id that nothing wears is the lookup's to keep as written.
+/// it holds the table of ids; `handle_of` is asked once for each of
+/// [`SERVED_KEYS`] the fold holds, with [`stored_served_ids`]. A fold that holds
+/// none comes back as it was. An id that nothing wears is the lookup's to keep as
+/// written.
 pub fn with_manager_served(
     fold: &BTreeMap<String, String>,
-    handle_of: impl FnOnce(&EntityId) -> EntityId,
+    mut handle_of: impl FnMut(&EntityId) -> EntityId,
 ) -> BTreeMap<String, String> {
     let mut served = fold.clone();
-    if let Some(stored) = stored_manager(fold) {
-        served.insert(REPORTS_TO.to_string(), handle_of(&stored).to_string());
+    for key in SERVED_KEYS {
+        if let Some(stored) = fold.get(key) {
+            let stored = stored.trim();
+            let id = EntityId(
+                stored
+                    .strip_prefix(mention::MARK)
+                    .unwrap_or(stored)
+                    .to_string(),
+            );
+            served.insert(key.to_string(), handle_of(&id).to_string());
+        }
     }
     served
 }

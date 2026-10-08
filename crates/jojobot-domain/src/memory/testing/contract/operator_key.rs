@@ -145,6 +145,19 @@ pub async fn the_operator_is_named_by_any_bot_and_changed_only_by_the_head_of_th
         .expect("nothing blocks the head");
     assert_eq!(held_on(record.clone()).await, Some(two.to_string()));
 
+    // ── a resend of the value it holds is not a change ──────────────────────
+    //
+    // A bot that heads nothing sends the operator the record already names. The
+    // fold does not move, so the chart is not asked. Beside the refusal of a
+    // different value above, or a store that let every edit through would pass.
+    store
+        .update_fact(&claim.address(), edit(&two), &other)
+        .await
+        .expect("a resend of the operator the record holds is not a change")
+        .written()
+        .expect("nothing blocks an unchanged resend");
+    assert_eq!(held_on(record.clone()).await, Some(two.to_string()));
+
     // ── nor take it off, now that the record's own claim wrote it ───────────
     let err = store
         .update_fact(&claim.address(), off.clone(), &other)

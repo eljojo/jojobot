@@ -138,6 +138,31 @@ fn a_fold_is_served_with_its_manager_as_the_handle_it_answers_to() {
     assert_eq!(served, unmanaged);
 }
 
+/// **The operator is served as the handle it answers to, like the manager.** A
+/// store keeps the id behind the mention mark, and a resend names the handle, so
+/// two folds are only comparable once both are served.
+#[test]
+fn a_fold_is_served_with_its_operator_as_the_handle_it_answers_to() {
+    let fold: BTreeMap<String, String> = [
+        (
+            OPERATOR.to_string(),
+            format!("{}kqde3z", crate::memory::mention::MARK),
+        ),
+        ("one_liner".to_string(), "keeps the books".to_string()),
+    ]
+    .into_iter()
+    .collect();
+    let served = with_manager_served(&fold, |stored| {
+        assert_eq!(stored.as_str(), "kqde3z", "the mark is taken off first");
+        EntityId("person:milhouse".into())
+    });
+    assert_eq!(
+        served.get(OPERATOR).map(String::as_str),
+        Some("person:milhouse")
+    );
+    assert_eq!(served.get("one_liner"), fold.get("one_liner"));
+}
+
 /// **A folded bot is followed to the one it became, and a forwarding that loops
 /// ends.** A row that forwards nowhere is its own survivor; one that forwards on
 /// is followed to the end; and two rows forwarding to each other end the walk at
