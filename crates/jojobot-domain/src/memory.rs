@@ -816,6 +816,30 @@ pub fn role_named_by(subject: &EntityId) -> Option<String> {
     (kind == EntityKind::ROLE.as_token()).then(|| slug.to_string())
 }
 
+/// **Whether a patch is the plain renewal of a lease and nothing else**: the
+/// renewal move, the holder and the moment, and no other member. This is the one
+/// patch a store may answer by overwriting the lease moment and appending
+/// nothing. A patch that also carries the claim's words, another key, an edge or
+/// any other member is an ordinary edit with a renewal inside it, and a store
+/// that overwrote only the moment would answer `Written` for an edit it dropped.
+pub fn is_a_plain_renewal(patch: &FactPatch) -> bool {
+    use crate::session::{ROLE_CLAIMED_AT, ROLE_HOLDER, RoleMoveKind};
+    patch
+        .role_move
+        .as_ref()
+        .is_some_and(|m| m.kind == RoleMoveKind::Renew)
+        && patch.fields.contains_key(ROLE_CLAIMED_AT)
+        && patch
+            .fields
+            .keys()
+            .all(|key| key == ROLE_CLAIMED_AT || key == ROLE_HOLDER)
+        && FactPatch {
+            fields: BTreeMap::new(),
+            role_move: None,
+            ..patch.clone()
+        } == FactPatch::default()
+}
+
 /// **The store's atomic decision on a write to a role object**, taken against
 /// the role's state as read in the same act as the write: `None` lets it land.
 ///

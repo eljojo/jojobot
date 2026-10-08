@@ -2442,10 +2442,7 @@ impl Memory for InMemoryMemory {
         // [`Self::overwrite_lease_moment`] for the one exception this is, and
         // the real store's identical step.
         if role_state.is_some()
-            && patch
-                .role_move
-                .as_ref()
-                .is_some_and(|m| m.kind == crate::session::RoleMoveKind::Renew)
+            && super::super::is_a_plain_renewal(&patch)
             && let Some(moment) = patch.fields.get(crate::session::ROLE_CLAIMED_AT)
             && self.overwrite_lease_moment(&fact.home, moment)
         {

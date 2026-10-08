@@ -863,6 +863,137 @@ pub async fn only_a_renewals_moment_is_overwritten<M: Memory>(store: &M) {
     );
 }
 
+/// **A renewal that carries more than the lease is applied whole.** The renewal
+/// that overwrites the lease moment and appends nothing is the plain one: the
+/// holder, the moment, and the move. A patch that also rewrites the claim's
+/// words, or sets another key, is an ordinary edit with a renewal inside it, and
+/// answering `Written` after dropping those members would tell the caller its
+/// edit landed when it did not. Each member is read back.
+///
+/// **Paired with the plain renewal**, or a store that took every renewal the
+/// ordinary way would pass: after the two edits the lease moment holds the
+/// edits' writes, and the plain renewal that follows still adds none.
+pub async fn a_renewal_that_carries_more_than_the_lease_is_applied_whole<M: Memory>(store: &M) {
+    let seat = a_seat(
+        store,
+        "bot:contract-role-renew-whole",
+        "role:contract-renew-whole",
+    )
+    .await;
+    let t0 = crate::session::testing::contract::epoch() + jiff::SignedDuration::from_secs(60);
+    let claimed = capture(
+        store,
+        NewFact {
+            fields: role_fields("delta", t0),
+            ..NewFact::about(seat.role.clone(), "delta claims the role", date(2026, 7, 1))
+        },
+    )
+    .await;
+    let renewing = |at, extra: FactPatch| FactPatch {
+        fields: role_fields("delta", at)
+            .into_iter()
+            .chain(extra.fields.clone())
+            .collect(),
+        role_move: Some(crate::session::RoleMove {
+            kind: crate::session::RoleMoveKind::Renew,
+            role: seat.name.clone(),
+            claimant: "delta".to_string(),
+        }),
+        ..extra
+    };
+    let plain = FactPatch::default();
+
+    // The claim's own words ride in the renewal.
+    let at = t0 + jiff::SignedDuration::from_mins(5);
+    let worded = store
+        .update_fact(
+            &claimed.address(),
+            renewing(
+                at,
+                FactPatch {
+                    details: Some("renewed with a note".to_string()),
+                    ..plain.clone()
+                },
+            ),
+            &seat.bot,
+        )
+        .await;
+    assert!(
+        matches!(worded, Ok(Guarded::Written(_))),
+        "a renewal with a note must land: {worded:?}"
+    );
+    let recalled = store.recall(&seat.role).await.expect("recall");
+    let record = recalled
+        .iter()
+        .find(|f| f.id == claimed.id)
+        .expect("the claim is still there");
+    assert_eq!(
+        record.details.as_deref(),
+        Some("renewed with a note"),
+        "the note the renewal carried was dropped: {record:?}"
+    );
+
+    // Another key rides in the renewal.
+    let at = t0 + jiff::SignedDuration::from_mins(10);
+    let keyed = store
+        .update_fact(
+            &claimed.address(),
+            renewing(
+                at,
+                FactPatch {
+                    fields: [("agent".to_string(), "an-agent-id".to_string())]
+                        .into_iter()
+                        .collect(),
+                    ..plain.clone()
+                },
+            ),
+            &seat.bot,
+        )
+        .await;
+    assert!(
+        matches!(keyed, Ok(Guarded::Written(_))),
+        "a renewal with another key must land: {keyed:?}"
+    );
+    let fields = folded_fields_of(store, &seat.role).await;
+    assert_eq!(
+        fields.get("agent"),
+        Some(&"an-agent-id".to_string()),
+        "the key the renewal carried was dropped: {fields:?}"
+    );
+    assert_eq!(
+        fields.get(crate::session::ROLE_CLAIMED_AT),
+        Some(&at.to_string()),
+        "and the lease moved with it: {fields:?}"
+    );
+
+    // The plain renewal still adds no write to the claim.
+    let before = store
+        .claim_history(&claimed.address())
+        .await
+        .expect("the claim's writes are readable")
+        .len();
+    let renewed = store
+        .update_fact(
+            &claimed.address(),
+            renewing(t0 + jiff::SignedDuration::from_mins(15), plain),
+            &seat.bot,
+        )
+        .await;
+    assert!(
+        matches!(renewed, Ok(Guarded::Written(_))),
+        "the plain renewal must land: {renewed:?}"
+    );
+    let after = store
+        .claim_history(&claimed.address())
+        .await
+        .expect("the claim's writes are readable")
+        .len();
+    assert_eq!(
+        before, after,
+        "a plain renewal adds no write to the claim: {before} then {after}"
+    );
+}
+
 pub async fn run_all_role_claims<M: Memory>(store: &M) {
     many_renewals_leave_the_lease_moment_at_one_write(store).await;
     only_a_renewals_moment_is_overwritten(store).await;
@@ -874,4 +1005,5 @@ pub async fn run_all_role_claims<M: Memory>(store: &M) {
     two_concurrent_captures_race_and_exactly_one_wins(store).await;
     a_stale_holders_own_write_is_refused_once_a_rival_has_taken_over(store).await;
     a_renewal_after_a_release_is_refused_and_the_role_stays_free(store).await;
+    a_renewal_that_carries_more_than_the_lease_is_applied_whole(store).await;
 }

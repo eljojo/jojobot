@@ -4096,10 +4096,7 @@ impl Memory for DoltMemory {
         // ordinary way, below, so this answers only for the plain claim a role
         // is made of.
         if role_state.is_some()
-            && patch
-                .role_move
-                .as_ref()
-                .is_some_and(|m| m.kind == jojobot_domain::session::RoleMoveKind::Renew)
+            && jojobot_domain::memory::is_a_plain_renewal(&patch)
             && fact.edge.is_none()
             && fact.derived_from.is_none()
             && fact.refs.is_empty()
