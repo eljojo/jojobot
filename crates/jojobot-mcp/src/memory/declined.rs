@@ -1075,14 +1075,24 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             match may {
                 // **The chart, not a ceiling.** The merge would change who the
                 // survivor reports to, which only the bots that may place it
-                // may do, so they are the ones named. With nobody recorded
-                // above, it says to ask whoever is at the top of the chart.
+                // may do, so they are the ones named. With nobody who may, the
+                // manager the duplicate carries names no bot and the survivor
+                // has none to change: no bot is sent for, and the way on is
+                // the one that always exists, taking the key off the duplicate.
+                jojobot_domain::memory::MayWrite::Ancestor
+                | jojobot_domain::memory::MayWrite::Superior
+                    if allowed.is_empty() =>
+                {
+                    format!(
+                        "Nothing was written. '{duplicate}' carries {keys}, which names no bot, \
+                         and '{survivor}' has no manager recorded to change, so no bot may make \
+                         this merge. Take {keys} off '{duplicate}' first: update_fact the record \
+                         that sets it with clear_fields, then merge again."
+                    )
+                }
                 jojobot_domain::memory::MayWrite::Ancestor
                 | jojobot_domain::memory::MayWrite::Superior => {
-                    let who = match allowed.is_empty() {
-                        true => "whoever is at the top of the chart".to_string(),
-                        false => allowed.join(" or "),
-                    };
+                    let who = allowed.join(" or ");
                     format!(
                         "Nothing was written. '{duplicate}' carries {keys}, and merging it into \
                          '{survivor}' would change who '{survivor}' reports to, which only \
@@ -1432,6 +1442,20 @@ mod tests {
             !chart.contains("your own ceiling"),
             "the chart is not a ceiling: {chart}"
         );
+        // Nobody may make the merge: it carries no manager that names a bot,
+        // and the survivor has none to change. The way on is the one that
+        // always exists, taking the key off the duplicate, and no unnamed
+        // somebody is sent for.
+        let none = refused(MayWrite::Superior, &[]);
+        for named in ["bot:epsilon", "bot:psi", "reports_to", "clear_fields"] {
+            assert!(none.contains(named), "{named}: {none}");
+        }
+        assert!(!none.contains("whoever"), "no unnamed somebody: {none}");
+        assert!(!none.contains("operator"), "{none}");
+        assert!(!none.contains('\n'), "one line: {none}");
+        // A list of nobody rendered as a gap reads like a sentence with a word
+        // missing, so a double space is the tell.
+        assert!(!none.contains("  "), "no empty list of bots: {none}");
         let ceiling = refused(MayWrite::DifferentIdentity, &[]);
         assert!(ceiling.contains("different identity"), "{ceiling}");
     }
