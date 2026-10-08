@@ -1961,6 +1961,76 @@ async fn the_action_refuses_a_post_from_another_origin_and_one_with_no_session()
     ct.cancel();
 }
 
+/// **With no `Origin`, the `Referer` stands in, and it has to sit UNDER this
+/// origin.** A Referer that only starts like the origin, on a longer port or a
+/// longer host, is another origin and is refused; one under ours lands. The
+/// refusals come first so the positive is the one that moves the message.
+#[tokio::test]
+async fn the_action_takes_a_referer_under_our_origin_when_there_is_no_origin() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let board = seeded_board().await;
+    let mail = with_an_operators_mail(&board).await;
+    let mailboxes = board.mailboxes.clone();
+    let (addr, ct, _board) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+    let id = mail.to_the_operator.as_str();
+    let post_with_referer = |referer: String| {
+        let cookie = cookie.clone();
+        async move {
+            browser()
+                .post(format!("http://{addr}/ui/mail/processed"))
+                .header(reqwest::header::COOKIE, cookie)
+                .header(reqwest::header::REFERER, referer)
+                .form(&[("id", id), ("note", "x")])
+                .send()
+                .await
+                .unwrap()
+        }
+    };
+
+    for (what, referer) in [
+        ("a longer port", format!("http://{addr}5/person:lisa/")),
+        (
+            "a longer host",
+            format!("http://{addr}.elsewhere.example/person:lisa/"),
+        ),
+        ("another site", "https://elsewhere.example/".to_string()),
+    ] {
+        let refused = post_with_referer(referer).await;
+        assert_eq!(
+            refused.status(),
+            reqwest::StatusCode::FORBIDDEN,
+            "a Referer with {what} was not refused"
+        );
+        let held = mailboxes
+            .message_by_id(&mail.to_the_operator)
+            .await
+            .expect("reads")
+            .expect("there");
+        assert_ne!(
+            held.state.as_token(),
+            "processed",
+            "a Referer with {what} moved the message"
+        );
+    }
+
+    let landed = post_with_referer(format!("http://{addr}/person:lisa/")).await;
+    assert!(
+        landed.status().is_redirection(),
+        "a same-origin Referer with no Origin was refused: {}",
+        landed.status()
+    );
+    let held = mailboxes
+        .message_by_id(&mail.to_the_operator)
+        .await
+        .expect("reads")
+        .expect("there");
+    assert_eq!(held.state.as_token(), "processed");
+    ct.cancel();
+}
+
 #[tokio::test]
 async fn a_bot_page_shows_its_runs_and_what_each_one_recorded() {
     let idp = support::TestIdp::new();
