@@ -244,6 +244,28 @@ fn another_process_cannot_claim_a_held_port_and_can_once_it_is_released() {
     );
 }
 
+/// **Whether to skip a case that needs a write to be denied**, and the skip said
+/// out loud. A process that is root, or that otherwise may write what has no
+/// write bit, is never denied, so a case that sets a path read-only and expects
+/// a refusal cannot run there. The probe tries the write the case's own claimer
+/// would make: a file is opened for writing, and a directory gets a file made in
+/// it. One helper, so the file case and the directory case cannot come to
+/// disagree about what "denied" means.
+fn skipping_because_a_write_is_never_denied(path: &std::path::Path, what: &str) -> bool {
+    let attempt = if path.is_dir() {
+        std::fs::write(path.join("probe"), b"")
+    } else {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(path)
+            .map(|_| ())
+    };
+    if attempt.is_ok() {
+        eprintln!("skipped: this process may write {what} with no write bit, as root may");
+    }
+    attempt.is_ok()
+}
+
 /// **A claim file the caller cannot open is a port held by somebody else.**
 /// Another user's run leaves a claim file this one may not write, and that is
 /// the same answer as a held lock: the port is not this claimer's, and the next
@@ -258,6 +280,9 @@ fn a_claim_file_another_user_made_is_a_port_that_is_held() {
     std::fs::write(&file, b"").expect("a claim file");
     std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o444))
         .expect("a file nobody may write");
+    if skipping_because_a_write_is_never_denied(&file, "a file") {
+        return;
+    }
 
     // The lock alone answers that the port is somebody's.
     let alone = Allocator::within(first, first + 1, dir.clone());
@@ -301,8 +326,7 @@ fn a_claim_directory_nobody_may_write_is_an_io_error_naming_it() {
     let first = 32_100;
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555))
         .expect("a directory nobody may write");
-    if std::fs::write(dir.join("probe"), b"").is_ok() {
-        eprintln!("skipped: this process may write a directory with no write bit, as root may");
+    if skipping_because_a_write_is_never_denied(&dir, "a directory") {
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).expect("restore");
         return;
     }
