@@ -355,6 +355,32 @@ pub(crate) async fn boot_on(jojobot: &Jojobot, name: &str, today: &str) -> serde
     )
 }
 
+/// A boot that names its own zone, and a day when it has one: the call a client
+/// that knows where it is makes.
+pub(crate) async fn boot_in_zone(
+    jojobot: &Jojobot,
+    name: &str,
+    timezone: &str,
+    today: Option<&str>,
+) -> serde_json::Value {
+    json_of(
+        &jojobot
+            .start_here(Parameters(OrientArgs {
+                claim: None,
+                timezone: Some(timezone.into()),
+                today: today.map(str::to_string),
+                bot: Some(name.into()),
+                brief: None,
+                skill: None,
+                section: None,
+                resume: None,
+                sid: None,
+            }))
+            .await
+            .expect("the boot call is ok"),
+    )
+}
+
 pub(crate) async fn boot(jojobot: &Jojobot, name: &str) -> serde_json::Value {
     json_of(
         &jojobot

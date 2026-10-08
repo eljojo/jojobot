@@ -271,6 +271,16 @@ impl Jojobot {
                 })
             }
         };
+        // **The frame is said only to a run that may be in another one.** A
+        // boot on the real clock that sent its own zone and swept nothing has
+        // judged every run in the frame it is itself in, so there is nothing to
+        // tell it. A stated day, a swept run, a server acting out a day and a
+        // zone the caller did not send (the instance's decided the day) each
+        // keep the answer.
+        let frame_is_news = today.is_some()
+            || self.clock().stated().is_some()
+            || !swept.is_empty()
+            || timezone.is_none();
         if let Some(obj) = block.as_object_mut() {
             obj.insert("swept".into(), swept.into());
             // 🚨 **A sweep that closed nothing is not a sweep that could not
@@ -286,7 +296,9 @@ impl Jojobot {
                     .collect::<Vec<_>>()
                     .into(),
             );
-            obj.insert("swept_in".into(), Self::frame(today, self.clock().stated()));
+            if frame_is_news {
+                obj.insert("swept_in".into(), Self::frame(today, self.clock().stated()));
+            }
             // **On every branch**, because the sitting that most needs a
             // handover is the one with nothing to resume.
             obj.insert("handover".into(), Self::handover(handover.as_ref()));
@@ -2348,6 +2360,74 @@ mod tests {
         assert!(
             !told.contains("today"),
             "a caller that already sent the argument is being told to send it: {told}",
+        );
+    }
+
+    /// **A plain boot carries no `swept_in`; every boot that needs the frame
+    /// still does.** The note exists for a run that may be in a different frame
+    /// than the one the sweep judged by. A boot on the real clock that sent its
+    /// own zone and swept nothing has no such run, so it is not told. A boot that
+    /// stated a day, one that swept a run, one on a server acting out a day and
+    /// one that sent no zone of its own (the day then came from the instance's
+    /// zone, not from the caller) each keep it.
+    #[tokio::test]
+    async fn a_plain_boot_carries_no_swept_in_and_each_boot_that_needs_it_does() {
+        let zone = "America/Toronto";
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma").await;
+
+        let plain = boot_in_zone(&jojobot, "gamma", zone, None).await;
+        assert!(
+            plain["session"]["sid"].is_string(),
+            "the plain boot began a run, so the absence below is about the note: {plain}"
+        );
+        assert!(plain["session"].get("swept_in").is_none(), "{plain}");
+
+        // A day was stated: the answer says which day the sweep used.
+        let stated = boot_in_zone(&jojobot, "gamma", zone, Some("2026-09-13")).await;
+        assert_eq!(
+            stated["session"]["swept_in"]["day"], "2026-09-13",
+            "{stated}"
+        );
+
+        // The caller sent no zone: the instance's own decided the day.
+        let no_zone = boot(&jojobot, "gamma").await;
+        assert!(
+            no_zone["session"]["swept_in"]["note"].is_string(),
+            "{no_zone}"
+        );
+
+        // A run was swept.
+        make_bot(&jojobot, "delta").await;
+        let stale = store
+            .begin(NewSession {
+                timezone: None,
+                bot: EntityId("bot:delta".into()),
+                sid: Sid("t002".into()),
+                focus: "something from the day before yesterday".into(),
+                started_at: jiff::Timestamp::now() - jiff::SignedDuration::from_hours(48),
+                started_on: None,
+            })
+            .await
+            .expect("begin ok");
+        let swept = boot_in_zone(&jojobot, "delta", zone, None).await;
+        assert_eq!(
+            swept["session"]["swept"],
+            serde_json::json!([stale.id.as_str()]),
+            "{swept}"
+        );
+        assert!(swept["session"]["swept_in"]["note"].is_string(), "{swept}");
+
+        // A server acting out a day.
+        let day: jiff::civil::Date = "2026-06-01".parse().expect("a day");
+        let acting = with_sessions(Arc::new(InMemorySessions::new()))
+            .on_clock(jojobot_domain::clock::Clock::stating(day));
+        make_bot(&acting, "gamma").await;
+        let booted = boot_in_zone(&acting, "gamma", zone, None).await;
+        assert_eq!(
+            booted["session"]["swept_in"]["day"], "2026-06-01",
+            "{booted}"
         );
     }
 
