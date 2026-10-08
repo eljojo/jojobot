@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# What a carry would move, read from this repository alone.
+#
+#     scripts/carried            (or: make carried)
+#
+# Three sections about the checkout it is run in:
+#
+#   [1] the commits this checkout holds that main does not, oldest first;
+#   [2] the commits main holds that origin/main does not, oldest first, which
+#       is what the next push would carry;
+#   [3] whether main has moved on since this checkout left it.
+#
+# It reads and nothing else: it runs no fetch and no network command, and uses
+# whatever origin/main the repository already has. MAIN and ORIGIN_MAIN name
+# the two references, for a repository that calls them something else.
+set -euo pipefail
+
+MAIN="${CARRIED_MAIN:-main}"
+ORIGIN_MAIN="${CARRIED_ORIGIN_MAIN:-origin/main}"
+
+has() { git rev-parse --verify --quiet "$1^{commit}" >/dev/null; }
+log() { git --no-pager log --reverse --no-decorate --format='  %h %s' "$1"; }
+plural() { if [ "$1" = 1 ]; then echo "1 commit"; else echo "$1 commits"; fi; }
+
+if ! has "$MAIN"; then
+    echo "no $MAIN in this repository, so there is nothing to compare against"
+    exit 1
+fi
+
+here="$(git symbolic-ref --short -q HEAD || echo "HEAD (detached)")"
+
+# [1] what this checkout holds that main does not
+ahead="$(git rev-list --count "$MAIN..HEAD")"
+if [ "$ahead" = 0 ]; then
+    echo "[1] $here holds nothing that $MAIN does not"
+else
+    echo "[1] $here holds $(plural "$ahead") that $MAIN does not, oldest first:"
+    log "$MAIN..HEAD"
+fi
+
+# [2] what main holds that origin/main does not
+if has "$ORIGIN_MAIN"; then
+    unpushed="$(git rev-list --count "$ORIGIN_MAIN..$MAIN")"
+    if [ "$unpushed" = 0 ]; then
+        echo "[2] $MAIN is at $ORIGIN_MAIN: the next push carries nothing"
+    else
+        echo "[2] $MAIN holds $(plural "$unpushed") that $ORIGIN_MAIN does not, oldest first (the next push):"
+        log "$ORIGIN_MAIN..$MAIN"
+    fi
+else
+    echo "[2] this repository has no $ORIGIN_MAIN, so what the next push carries is not known from here"
+fi
+
+# [3] whether main has moved on since this checkout left it
+if ! base="$(git merge-base "$MAIN" HEAD 2>/dev/null)"; then
+    echo "[3] $here and $MAIN share no history"
+elif [ "$base" = "$(git rev-parse "$MAIN")" ]; then
+    echo "[3] $here is based on $MAIN's head ($(git rev-parse --short "$MAIN")): $MAIN can take it as it stands"
+else
+    moved="$(git rev-list --count "$base..$MAIN")"
+    echo "[3] $MAIN has moved on by $(plural "$moved") since $here left it (merge-base $(git rev-parse --short "$base"), $MAIN at $(git rev-parse --short "$MAIN")): rebase onto $MAIN before the carry"
+fi

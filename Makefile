@@ -11,7 +11,7 @@
 CARGO ?= cargo
 
 .DEFAULT_GOAL := help
-.PHONY: help check narrow test lint fmt fmt-check build integration rooms room prepush argument-coverage paid refresh-upgrade-fixture
+.PHONY: help check narrow test lint fmt fmt-check build integration rooms room prepush argument-coverage paid refresh-upgrade-fixture carried
 
 help: ## List the targets
 	@grep -hE '^[a-z-]+:.*##' $(MAKEFILE_LIST) \
@@ -260,3 +260,12 @@ REF ?= origin/main
 DIR ?=
 refresh-upgrade-fixture: ## Record the upgrade gate's fixture from a binary built at REF (default origin/main)
 	scripts/refresh-upgrade-fixture $(REF) $(DIR)
+
+# **What a carry would move**, read from the repository and nothing else: this
+# checkout's commits that main lacks, main's commits that origin/main lacks (the
+# next push), and whether main has moved on since this checkout left it. It runs
+# no fetch, so origin/main is whatever the repository already holds.
+#
+#     make carried
+carried: ## What this branch holds past main, what main holds past origin/main, and whether main moved on
+	@scripts/carried
