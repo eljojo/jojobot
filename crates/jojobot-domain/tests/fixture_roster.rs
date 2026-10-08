@@ -724,6 +724,8 @@ const ROSTER: &[&str] = &[
     "person:contract-settle-gate",
     "person:contract-sigma",
     "person:contract-operator-one",
+    "person:contract-resent-link",
+    "person:contract-resent-target",
     "person:contract-operator-two",
     "person:contract-supplied-pointer",
     "person:contract-superseded-wording",

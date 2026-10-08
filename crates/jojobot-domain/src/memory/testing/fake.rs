@@ -2551,9 +2551,14 @@ impl Memory for InMemoryMemory {
             }
         }
         let first_session = self.first_write_session(&key, &address.local);
+        // **The claim as a caller reads it**, so a value that points at a thing is
+        // compared to a resend as the handle it answers to and not as the id the
+        // store keeps, as the real store reads it.
+        let mut as_read = edited.clone();
+        self.compose_reference_fields(&mut as_read.fields);
         let patch = match super::super::settle_rewrite(
             address,
-            &edited,
+            &as_read,
             patch.clone(),
             first_session.as_deref(),
             &self.declarations(),

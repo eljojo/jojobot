@@ -14419,6 +14419,51 @@ pub async fn a_rewrite_of_testimony_belongs_to_the_session_that_wrote_it<M: Memo
     );
 }
 
+/// **A resend of a field that holds a handle is a resend too.** A store keeps the
+/// permanent id of what a field points at, and a session sends the handle. The
+/// rule that another session's resend of unchanged values is not a rewrite has to
+/// compare the two as the same value, or it holds for text and fails for every
+/// field that links to a thing.
+pub async fn a_resend_of_a_handle_valued_field_on_another_sessions_testimony_is_not_a_rewrite<
+    M: Memory,
+>(
+    store: &M,
+) {
+    let subject = EntityId::person("person:contract-resent-link");
+    let target = EntityId::person("person:contract-resent-target");
+    for (id, name) in [(&subject, "Resent Link"), (&target, "Resent Target")] {
+        add(store, NewEntity::new(id.clone(), name, "contract-fixture")).await;
+    }
+    let said = capture(
+        store,
+        NewFact {
+            provenance: Provenance::Testimony,
+            session: Some("session-a".to_string()),
+            fields: [("keeps_with".to_string(), target.to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(subject.clone(), "keeps with a friend", date(2026, 7, 1))
+        },
+    )
+    .await;
+    store
+        .update_fact(
+            &said.address(),
+            FactPatch {
+                fields: [("keeps_with".to_string(), target.to_string())]
+                    .into_iter()
+                    .collect(),
+                session: Some("session-b".to_string()),
+                ..Default::default()
+            },
+            &other_caller(),
+        )
+        .await
+        .expect("a resend of the handle a field holds is not a rewrite")
+        .written()
+        .expect("nothing blocks it");
+}
+
 /// **A testimony claim's value fields are the session's that wrote it, as its
 /// words are.**
 ///
@@ -15123,6 +15168,7 @@ macro_rules! all_cases {
         $m!(a_content_replacement_without_provenance_is_refused($store));
         $m!(a_rewrite_of_testimony_belongs_to_the_session_that_wrote_it($store));
         $m!(a_testimony_claims_value_fields_belong_to_the_session_that_wrote_it($store));
+        $m!(a_resend_of_a_handle_valued_field_on_another_sessions_testimony_is_not_a_rewrite($store));
         $m!(a_ceiling_key_on_another_sessions_testimony_gets_the_key_refusal($store));
         $m!(a_setting_bag_reaches_the_thing_and_a_key_stays_in_its_bag($store));
         $m!(an_entity_edited_with_a_claim_is_made_whole_or_not_at_all($store));
