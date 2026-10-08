@@ -43,6 +43,10 @@ pub struct InMemoryMemory {
     /// row it holds could only ever answer with one write, and every case about
     /// a correction leaving a trace would pass against a store that keeps none.
     claim_writes: Mutex<Vec<(EntityId, FactId, ClaimWrite)>>,
+    /// **When each thing's own row was written**, keyed by its storage key as
+    /// the real store keeps `entity_write`: creation, an edit, a rename, an
+    /// archive or restore, a merge and a prose write each leave a moment.
+    entity_writes: Mutex<Vec<(EntityId, jiff::Timestamp)>>,
     /// The human half of each entity's doc, keyed by handle — replaced whole by
     /// `set_prose`, exactly as the real store replaces the region.
     prose: Mutex<std::collections::HashMap<EntityId, String>>,
@@ -83,7 +87,7 @@ pub struct InMemoryMemory {
     /// fake has to: a story about an instance acting out a day would otherwise
     /// read *when jojobot took this in* off the wall clock, and pass on a build
     /// where the stated day never reaches the store at all.
-    clock: crate::clock::Clock,
+    clock: std::sync::Arc<Mutex<crate::clock::Clock>>,
     /// **Rename history.** `rename_entity` appends here on every real rename;
     /// [`InMemoryMemory::former_handle_past_the_guard`] is the separate seam
     /// for staging a row directly, the same way `past_the_guard` stages an
@@ -144,9 +148,35 @@ impl InMemoryMemory {
     /// **The store, told which clock it stamps with** — the real store's own
     /// builder, so a fixture wires a day the way the binary does.
     #[must_use]
-    pub fn on_clock(mut self, clock: crate::clock::Clock) -> Self {
-        self.clock = clock;
+    pub fn on_clock(self, clock: crate::clock::Clock) -> Self {
+        *self.clock.lock().expect("fake mutex poisoned") = clock;
         self
+    }
+
+    /// **A hand on the clock this store stamps with**, taken before the store
+    /// is wrapped and handed to a server, so a fixture can let days pass between
+    /// two writes the way a deployment does.
+    pub fn clock_handle(&self) -> ClockHandle {
+        ClockHandle(self.clock.clone())
+    }
+
+    /// The clock as it stands now.
+    fn clock(&self) -> crate::clock::Clock {
+        *self.clock.lock().expect("fake mutex poisoned")
+    }
+
+    /// **Leave the moment a thing's own row was written**, under the key the
+    /// real store keeps it: the badge the row wears, else its handle.
+    fn touched(&self, entity: &Entity) {
+        let key = match &entity.badge {
+            Some(badge) => EntityId(badge.clone()),
+            None => entity.id.clone(),
+        };
+        let now = self.clock().now();
+        self.entity_writes
+            .lock()
+            .expect("fake mutex poisoned")
+            .push((key, now));
     }
 
     pub fn knowing(self, supplied: crate::memory::owned::Provisions) -> Self {
@@ -260,7 +290,7 @@ impl InMemoryMemory {
                     .push(crate::memory::types::Displaced {
                         name: token.to_string(),
                         fields: prior.fields.clone(),
-                        replaced_on: self.clock.today_in(&jiff::tz::TimeZone::UTC),
+                        replaced_on: self.clock().today_in(&jiff::tz::TimeZone::UTC),
                     });
             } else {
                 return Err(MemoryError::InvalidEntity(format!(
@@ -398,7 +428,7 @@ impl InMemoryMemory {
             refs: Vec::new(),
             derived_from: None,
             stands_for: Vec::new(),
-            inserted_at: Some(self.clock.now()),
+            inserted_at: Some(self.clock().now()),
             stale_after: None,
         };
         self.append_claim_write(&stored, None);
@@ -785,7 +815,7 @@ impl InMemoryMemory {
             // chain of corrections pass on a build that records none.
             ClaimWrite {
                 session,
-                ..ClaimWrite::of(fact, ordinal, Some(self.clock.now()))
+                ..ClaimWrite::of(fact, ordinal, Some(self.clock().now()))
             },
         ));
     }
@@ -833,6 +863,7 @@ impl InMemoryMemory {
                 value,
                 fact: fact.clone(),
                 class,
+                written_at: Some(self.clock().now()),
             });
         }
     }
@@ -1167,9 +1198,22 @@ impl InMemoryMemory {
                     // it empty would pass every case about a caveat riding a
                     // folded value on a build where none does.
                     note: carried.details.clone(),
+                    written_at: w.written_at,
                 })
             })
             .collect()
+    }
+}
+
+/// A hand on the clock a fake store stamps with. See
+/// [`InMemoryMemory::clock_handle`].
+#[derive(Clone)]
+pub struct ClockHandle(std::sync::Arc<Mutex<crate::clock::Clock>>);
+
+impl ClockHandle {
+    /// From now on the store stamps on this day.
+    pub fn stating(&self, day: jiff::civil::Date) {
+        *self.0.lock().expect("fake mutex poisoned") = crate::clock::Clock::stating(day);
     }
 }
 
@@ -1191,6 +1235,9 @@ struct StoredWrite {
     /// **The bag this write was made under**, kept as the real store keeps it
     /// in a column.
     class: super::super::WriteClass,
+    /// When the store took the write in, stamped at the append as the real
+    /// store does.
+    written_at: Option<jiff::Timestamp>,
 }
 
 /// **What serving claims resolves handles through**, built once by a call that
@@ -1292,6 +1339,7 @@ impl Memory for InMemoryMemory {
             entity.id.clone(),
             entity.badge.clone().expect("a row minted here wears one"),
         );
+        self.touched(&entity);
         Ok(Guarded::Written(entity))
     }
 
@@ -1470,6 +1518,7 @@ impl Memory for InMemoryMemory {
             });
         }
         apply_entity_patch(entity, &patch)?;
+        self.touched(entity);
         // **Served under the handle, stored under the badge** — `parent`
         // names a different row and never moved under this edit, so what it
         // carries here is whatever was stored, resolved for the reader.
@@ -1520,8 +1569,9 @@ impl Memory for InMemoryMemory {
         }
         entity.archived = Some(Archived {
             reason: reason.trim().to_string(),
-            at: self.clock.now(),
+            at: self.clock().now(),
         });
+        self.touched(entity);
         Ok(entity.clone())
     }
 
@@ -1556,6 +1606,7 @@ impl Memory for InMemoryMemory {
                 attempted: id.to_string(),
             });
         };
+        self.touched(entity);
         Ok((entity.clone(), was))
     }
 
@@ -1706,6 +1757,7 @@ impl Memory for InMemoryMemory {
             }
         }
         drop(entities);
+        self.touched(&entity);
         // **A same-handle reparent is not a former handle of itself.** The
         // handle never moved, so there is nothing here for a later resolve
         // to walk back through.
@@ -2028,7 +2080,7 @@ impl Memory for InMemoryMemory {
             // **A store stamps this, so the double does too.** A fake that left
             // it empty would let every case above it pass on a build where the
             // real store's stamp never happens.
-            inserted_at: Some(self.clock.now()),
+            inserted_at: Some(self.clock().now()),
             stale_after: fact.stale_after,
         };
         // **A new record's keys land on the thing too** — the same guard the
@@ -2159,6 +2211,41 @@ impl Memory for InMemoryMemory {
         let mut held = self.held(&key);
         self.compose_reference_fields(&mut held);
         Ok(held)
+    }
+
+    async fn field_ages(&self, entity: &EntityId) -> Result<super::super::FieldAges, MemoryError> {
+        let index = self.known();
+        let Some(key) = self.resolve(entity).map(|(key, _)| key) else {
+            return Err(MemoryError::UnknownEntity {
+                attempted: entity.to_string(),
+                nearest: guard::screen(entity, &[], &index),
+            });
+        };
+        let facts = self.facts.lock().expect("fake mutex poisoned");
+        let writes = self.writes_on(&key, &facts);
+        let keys = super::super::folded_ages(&writes, &self.declarations());
+        // The newest write of any kind: field writes of any status, and the
+        // writes of the thing's records.
+        let claims = self.claim_writes.lock().expect("fake mutex poisoned");
+        let newest = writes
+            .iter()
+            .filter_map(|w| w.written_at)
+            .chain(
+                claims
+                    .iter()
+                    .filter(|(home, _, _)| home == &key)
+                    .filter_map(|(_, _, w)| w.written_at),
+            )
+            .chain(
+                self.entity_writes
+                    .lock()
+                    .expect("fake mutex poisoned")
+                    .iter()
+                    .filter(|(held, _)| held == &key)
+                    .map(|(_, at)| *at),
+            )
+            .max();
+        Ok(super::super::FieldAges { newest, keys })
     }
 
     async fn claim_history(&self, address: &FactAddress) -> Result<Vec<ClaimWrite>, MemoryError> {
@@ -2985,7 +3072,7 @@ impl Memory for InMemoryMemory {
             refs: account.refs,
             derived_from: account.derived_from,
             stands_for: Vec::new(),
-            inserted_at: Some(self.clock.now()),
+            inserted_at: Some(self.clock().now()),
             stale_after: None,
         };
         facts.push(Fact {
@@ -3097,7 +3184,7 @@ impl Memory for InMemoryMemory {
             refs: account.refs,
             derived_from: account.derived_from,
             stands_for: Vec::new(),
-            inserted_at: Some(self.clock.now()),
+            inserted_at: Some(self.clock().now()),
             stale_after: None,
         };
         let retracted = Fact {
@@ -3187,6 +3274,9 @@ impl Memory for InMemoryMemory {
             .lock()
             .expect("fake mutex poisoned")
             .insert(entity.clone(), stored.clone());
+        if let Some(row) = index.iter().find(|e| &e.id == entity) {
+            self.touched(row);
+        }
         Ok(stored)
     }
 
@@ -3287,7 +3377,7 @@ impl Memory for InMemoryMemory {
                 .push(crate::memory::types::Displaced {
                     name: declared.name.clone(),
                     fields: prior.fields.clone(),
-                    replaced_on: self.clock.today_in(&jiff::tz::TimeZone::UTC),
+                    replaced_on: self.clock().today_in(&jiff::tz::TimeZone::UTC),
                 });
         }
         // Replaced whole, the way the real store replaces the rows sharing the

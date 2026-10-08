@@ -310,6 +310,16 @@ impl Memory for IndexedMemory {
         self.inner.fields(entity).await
     }
 
+    /// **Straight through, and it does not touch the index.** A decorator that
+    /// leaves this to the trait default serves "no age" in production over a
+    /// store that keeps them.
+    async fn field_ages(
+        &self,
+        entity: &EntityId,
+    ) -> Result<jojobot_domain::memory::FieldAges, MemoryError> {
+        self.inner.field_ages(entity).await
+    }
+
     /// **Straight through, and it does not touch the index.** Which claim
     /// backs each folded value is read off the writes, which the store keeps
     /// and the projection does not.

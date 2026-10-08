@@ -1137,6 +1137,12 @@ pub struct Object {
     /// `None` when the query named no record, and `None` on the other objects
     /// of a walk that did.
     pub record_history: Option<ClaimHistory>,
+    /// **When the store took in what this object holds** — the moment of its
+    /// newest write of any kind, and for each key the moment of the write
+    /// holding its value. Filled by the store, not by this pure walk, for every
+    /// object in the answer; `None` where the store could not say (a thing the
+    /// memory store does not hold, such as a session). See [`FieldAges`].
+    pub ages: Option<super::FieldAges>,
 }
 
 /// Every write of one key on one object, capped, and how many there are.
@@ -1901,6 +1907,7 @@ impl<'a> Ctx<'a> {
             history: None,
             record_history: None,
             fact_revisions: std::collections::HashMap::new(),
+            ages: None,
         }
     }
 
@@ -2437,7 +2444,30 @@ where
     for object in &mut found.objects {
         fill_revision_counts(store, object).await?;
     }
+    // **How old what each object holds is**, read for every object in the
+    // answer. A store that cannot say, or does not hold the object, leaves it
+    // without an age; the answer is never refused over one.
+    for object in &mut found.objects {
+        fill_ages(store, object).await;
+    }
     Ok(found)
+}
+
+/// Attach, to an object and everything it reached, when the store took in what
+/// it holds. See [`Object::ages`].
+fn fill_ages<'a, M>(
+    store: &'a M,
+    object: &'a mut Object,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>>
+where
+    M: super::Memory + ?Sized,
+{
+    Box::pin(async move {
+        object.ages = store.field_ages(&object.entity.id).await.ok();
+        for reached in &mut object.connected {
+            fill_ages(store, reached).await;
+        }
+    })
 }
 
 /// Attach, to every fact on an object and everything it reached, how many

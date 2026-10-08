@@ -24,6 +24,11 @@ const FACTS_ON_ONE_SUBJECT: usize = 60;
 const MESSAGES: usize = 50;
 const PLACES: usize = 10;
 
+/// The two days an aged world is written on: every place is described whole in
+/// the first, and one of its keys is rewritten in the second.
+const AUGUST: &str = "2026-08-03";
+const OCTOBER: &str = "2026-10-08";
+
 /// The verbs whose widest call still passes the ceiling, each named for the
 /// call that was measured. A later slice that makes one fit removes its line
 /// here, and a verb that starts passing the ceiling without being added fails
@@ -103,10 +108,27 @@ struct World {
 /// built from them in one pass. What is measured afterwards is still the answer
 /// a client receives from the served surface.
 async fn hostile_world() -> World {
+    world(false).await
+}
+
+/// **The same world with the ten places written on two days.** Each place holds
+/// a colour and a size from August, and in October its colour is rewritten, so
+/// every place has one key older than the thing. The server is served on the
+/// October day, which is the frame the stamps are read as days in.
+async fn aged_hostile_world() -> World {
+    world(true).await
+}
+
+async fn world(aged: bool) -> World {
     use jojobot_domain::mailbox::{MailboxName, Mailboxes, NewMessage};
     use jojobot_domain::memory::{EntityId, EntityKind, NewEntity, NewFact};
 
-    let first = Story::begin("bot:otto").await;
+    let (first, clock) = if aged {
+        let (story, hand) = Story::begin_on_a_store_clock_that_moves("bot:otto", AUGUST).await;
+        (story, Some(hand))
+    } else {
+        (Story::begin("bot:otto").await, None)
+    };
     first.session().await.add("bot:sigma", "Sigma").await;
 
     let memory = first.memory_store();
@@ -166,14 +188,18 @@ async fn hostile_world() -> World {
             (8, 500)
         };
         for i in 0..facts {
-            let written = memory
-                .capture(NewFact::about(
-                    id.clone(),
-                    format!("long record {i}: {}", filler(length, i + p)),
-                    today,
-                ))
-                .await
-                .expect("a fact lands");
+            let mut record = NewFact::about(
+                id.clone(),
+                format!("long record {i}: {}", filler(length, i + p)),
+                today,
+            );
+            if aged && i == 0 {
+                record.fields = [("colour", "green"), ("size", "large")]
+                    .into_iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .collect();
+            }
+            let written = memory.capture(record).await.expect("a fact lands");
             let jojobot_domain::memory::Guarded::Written(fact) = written else {
                 panic!("a fact about a place that exists lands");
             };
@@ -187,6 +213,17 @@ async fn hostile_world() -> World {
         place_ids.push(id.as_str().to_string());
     }
     let heavy = heavy.expect("a heavy place");
+    if let Some(hand) = &clock {
+        hand.stating(OCTOBER.parse().expect("a day"));
+        for id in &place_ids {
+            let mut repainted =
+                NewFact::about(EntityId(id.clone()), "repainted".to_string(), today);
+            repainted.fields = [("colour".to_string(), "blue".to_string())]
+                .into_iter()
+                .collect();
+            memory.capture(repainted).await.expect("a fact lands");
+        }
+    }
     let mail = first.mail_store();
     let mut messages = Vec::new();
     let mut sigma_messages = Vec::new();
@@ -216,7 +253,11 @@ async fn hostile_world() -> World {
         }
     }
 
-    let story = first.restarted().await;
+    let story = if aged {
+        first.restarted_pretending_it_is(OCTOBER).await
+    } else {
+        first.restarted().await
+    };
     let otto = story.as_bot("bot:otto").await;
     let sigma = story.as_bot("bot:sigma").await;
     World {
@@ -939,4 +980,54 @@ async fn a_kind_without_facts_past_the_ceiling_is_read_in_parts_too() {
         walked, written,
         "every thing that was written, and nothing else"
     );
+}
+
+/// **A kind of places whose keys are different ages is read in parts that all
+/// fit, and every place says how old it is.** Ten places are written on two
+/// days: colour and size in August, colour again in October. Every object of
+/// every part carries the October day it was last learned about and the August
+/// day of its size, which is the one key older than the thing, and every part,
+/// those fields included, is under the ceiling. The places walked are exactly
+/// the places written, so the days were not bought by dropping an object.
+#[tokio::test]
+async fn a_kind_of_places_of_different_ages_says_each_ones_age_under_the_ceiling() {
+    let world = aged_hostile_world().await;
+    let mut seen: Vec<String> = Vec::new();
+    let mut offset = 0u64;
+    let mut parts = 0;
+    loop {
+        let part = world
+            .otto
+            .call(
+                "recall",
+                json!({"kind": "place", "facts": true, "offset": offset}),
+            )
+            .await;
+        parts += 1;
+        assert!(parts < 100, "the walk never ends");
+        assert!(
+            part.size() <= ANSWER_CEILING,
+            "part {parts}: {}",
+            part.size()
+        );
+        let body = part.json();
+        for object in body["objects"].as_array().expect("objects") {
+            assert_eq!(object["as_of"], OCTOBER, "{object}");
+            assert_eq!(
+                object["fields_as_of"],
+                json!({"size": AUGUST}),
+                "only the size is older than the place: {object}"
+            );
+            seen.push(object["id"].as_str().expect("an id").to_string());
+        }
+        match body["not_shown"]["offset"].as_u64() {
+            Some(next) => offset = next,
+            None => break,
+        }
+    }
+    assert!(parts > 1, "the places took several parts: {parts}");
+    seen.sort();
+    let mut written = world.place_ids.clone();
+    written.sort();
+    assert_eq!(seen, written, "every place that was written, once");
 }

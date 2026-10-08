@@ -1150,11 +1150,26 @@ fn fit_recall(body: &mut serde_json::Value, offset: usize) {
 /// `facts` and `prose` are missing when the caller declined them, rather than
 /// rendered empty, so nothing has to tell an empty page from a page nobody
 /// wanted.
+/// **The frame a moment is read as a day in**: the server's clock and the zone
+/// of the run asking, the same pair every other day-grained read uses.
+#[derive(Clone, Copy)]
+struct DayFrame<'a> {
+    clock: jojobot_domain::clock::Clock,
+    zone: &'a jiff::tz::TimeZone,
+}
+
+impl DayFrame<'_> {
+    fn day(&self, at: jiff::Timestamp) -> jiff::civil::Date {
+        self.clock.day_of(at, self.zone)
+    }
+}
+
 fn object_json(
     object: &graph::Object,
     include: graph::Include,
     as_of: jiff::civil::Date,
     only: Option<KeyNarrowing<'_>>,
+    frame: DayFrame<'_>,
 ) -> serde_json::Value {
     // **A folded handle is not a thing, and it is never served as an empty
     // one.** It goes on answering because a handle somebody wrote down must
@@ -1232,6 +1247,31 @@ fn object_json(
             )
             .into(),
         );
+    }
+    // **The day the store last learned anything about this object, and a day of
+    // a key's own only where it differs.** A value written in August reads
+    // exactly like one written this morning, and a date printed on every value
+    // becomes wallpaper nobody reads. One day says how fresh the thing is; a key
+    // is dated only when it is older than the thing, so the day that is printed
+    // is the one that means something. Absent where the store took in no moment
+    // it could vouch for, never a made-up day.
+    if let Some(ages) = &object.ages
+        && let Some(newest) = ages.newest
+    {
+        let day = frame.day(newest);
+        fields.insert("as_of".into(), day.to_string().into());
+        let older: serde_json::Map<String, serde_json::Value> = ages
+            .keys
+            .iter()
+            .filter(|(key, _)| wanted(key))
+            .filter_map(|(key, at)| {
+                let own = frame.day(*at);
+                (own != day).then(|| (key.clone(), own.to_string().into()))
+            })
+            .collect();
+        if !older.is_empty() {
+            fields.insert("fields_as_of".into(), older.into());
+        }
     }
     // **Eliding is never silent.** Without the note an object carrying no
     // `facts` key says both "you did not ask for them" and "there is nothing
@@ -1365,7 +1405,7 @@ fn object_json(
     let rendered: Vec<serde_json::Value> = object
         .connected
         .iter()
-        .map(|o| object_json(o, include, as_of, only))
+        .map(|o| object_json(o, include, as_of, only, frame))
         .collect();
     let kept = text::CONNECTED_CONTEXT.head(&rendered, |item| item.to_string().chars().count());
     fields.insert("connected".into(), kept.kept().to_vec().into());
@@ -2286,6 +2326,16 @@ impl Jojobot {
                 .cloned()
                 .collect()
         };
+        // **The frame an intake moment is read as a day in**: the server's clock
+        // and the asking run's zone, else the instance's, else UTC.
+        let day_zone = match caller.as_ref().and_then(Caller::zone) {
+            Some(zone) => zone,
+            None => self.unzoned_frame().await,
+        };
+        let day_frame = DayFrame {
+            clock: *self.clock(),
+            zone: &day_zone,
+        };
         let mut body = serde_json::json!({
             "count": found.len(),
             "built_on": standing_on,
@@ -2364,6 +2414,7 @@ impl Jojobot {
                             keys,
                             by_view: keys_from_view,
                         }),
+                        day_frame,
                     );
                     if let (Some(want), Some(removed)) =
                         (wanted_status, left_out_by_status.get(&o.entity.id))

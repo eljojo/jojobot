@@ -844,6 +844,11 @@ impl super::Memory for Mentioning {
     /// compares this map, and a record-scope filter compares a resolved
     /// fact's — both need to see today's handle under a reference-typed key,
     /// or the two scopes disagree about the same key on the same thing.
+    /// **Straight through**: an age says nothing a mention could be inside.
+    async fn field_ages(&self, entity: &EntityId) -> Result<super::FieldAges, super::MemoryError> {
+        self.inner.field_ages(entity).await
+    }
+
     async fn fields(
         &self,
         entity: &EntityId,

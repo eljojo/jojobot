@@ -305,6 +305,15 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
         Ok(folded)
     }
 
+    /// **Straight through.** A supplied default is not a write, so it has no
+    /// moment and no age: what the store took in is all there is to date.
+    async fn field_ages(
+        &self,
+        entity: &EntityId,
+    ) -> Result<jojobot_domain::memory::FieldAges, MemoryError> {
+        self.inner.field_ages(entity).await
+    }
+
     /// **The same fold as [`fields`](Self::fields), under the store's own
     /// marker.** `Folded` caches what this answers, so the shipped defaults
     /// have to be in it, and its stale-read guard compares the marker, so it

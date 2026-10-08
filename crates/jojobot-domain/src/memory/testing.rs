@@ -24,7 +24,7 @@ use super::{
 };
 
 mod fake;
-pub use fake::InMemoryMemory;
+pub use fake::{ClockHandle, InMemoryMemory};
 
 /// The behavioural contract every [`Memory`] adapter must satisfy. Each function
 /// is a self-contained spec run against a live store. Assertions are

@@ -15,6 +15,10 @@ mod support;
 
 // A test target's root file does not get the `foo.rs` + `foo/` convention, so
 // the folder is named explicitly.
+/// "Is this value still good?" — the day the store learned a thing, and the day
+/// of a value older than the thing.
+#[path = "user_stories/age_of_a_value.rs"]
+mod age_of_a_value;
 /// How big an answer is allowed to get, and what a list does at the edge.
 #[path = "user_stories/answer_ceiling.rs"]
 mod answer_ceiling;

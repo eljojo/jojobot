@@ -6303,6 +6303,121 @@ pub async fn update_fact_sets_and_clears_a_field<M: Memory>(store: &M) {
     );
 }
 
+/// **A thing says when the store took in what it holds.** Each held key carries
+/// the moment of the write holding its value, and the thing carries the newest
+/// moment of any write on it.
+///
+/// A key rewritten later carries the later moment; a key left alone keeps the
+/// first. A claim with no fields, a claim moved past, and an edit to the thing's
+/// own row each move the newest moment and move no key's. A thing nobody wrote
+/// a key on has no key ages, and a thing that does not exist is a miss and not
+/// an empty answer.
+pub async fn field_ages_say_when_each_key_was_taken_in_and_when_anything_was<M: Memory>(store: &M) {
+    let subject = EntityId::person("person:contract-ages");
+    let first = capture(
+        store,
+        NewFact {
+            fields: [
+                ("colour".to_string(), "red".to_string()),
+                ("size".to_string(), "big".to_string()),
+            ]
+            .into_iter()
+            .collect(),
+            ..NewFact::about(subject.clone(), "the first look", date(2026, 7, 1))
+        },
+    )
+    .await;
+    let before = store
+        .field_ages(&subject)
+        .await
+        .expect("a thing that exists has ages");
+    let colour_then = *before.keys.get("colour").expect("colour was stamped");
+    let size_then = *before.keys.get("size").expect("size was stamped");
+
+    // A key rewritten later: the later moment. The other keeps the first.
+    capture(
+        store,
+        NewFact {
+            fields: [("colour".to_string(), "blue".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(subject.clone(), "repainted", date(2026, 7, 2))
+        },
+    )
+    .await;
+    let after = store.field_ages(&subject).await.expect("ages read");
+    assert!(
+        after.keys["colour"] > colour_then,
+        "the rewritten key kept its first moment: {after:?}"
+    );
+    assert_eq!(
+        after.keys["size"], size_then,
+        "a key nobody touched changed its moment: {after:?}"
+    );
+    let newest = after.newest.expect("the thing was written");
+    assert!(newest >= after.keys["colour"], "{after:?}");
+
+    // A claim with no fields moves the newest moment and no key's.
+    capture(
+        store,
+        NewFact::about(
+            subject.clone(),
+            "nothing to do with the keys",
+            date(2026, 7, 3),
+        ),
+    )
+    .await;
+    let plain = store.field_ages(&subject).await.expect("ages read");
+    assert!(plain.newest > after.newest, "{plain:?}");
+    assert_eq!(plain.keys, after.keys, "a plain claim moved a key");
+
+    // A claim moved past still counts: the store learned something.
+    edit(
+        store,
+        &first.address(),
+        FactPatch {
+            status: Some(FactStatus::Archived),
+            ..Default::default()
+        },
+    )
+    .await;
+    let archived = store.field_ages(&subject).await.expect("ages read");
+    assert!(archived.newest > plain.newest, "{archived:?}");
+
+    // An edit to the thing's own row counts too.
+    store
+        .update_entity(
+            &subject,
+            EntityPatch {
+                crm: Some("kanban:ages".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("the row is edited");
+    let edited = store.field_ages(&subject).await.expect("ages read");
+    assert!(edited.newest > archived.newest, "{edited:?}");
+
+    // A thing with no keys has no key ages, and a thing that is not there is a
+    // miss.
+    let bare = EntityId::person("person:contract-blank-slate");
+    add(
+        store,
+        NewEntity::new(bare.clone(), "Blank Slate", "user-named"),
+    )
+    .await;
+    let none = store.field_ages(&bare).await.expect("a bare thing reads");
+    assert!(none.keys.is_empty(), "{none:?}");
+    let missing = store
+        .field_ages(&EntityId::person("person:contract-never-made"))
+        .await
+        .expect_err("a thing nobody made is a miss");
+    assert!(
+        matches!(missing, MemoryError::UnknownEntity { .. }),
+        "{missing:?}"
+    );
+}
+
 /// **A key written a hundred times holds one value and counts a hundred.**
 ///
 /// The two questions the substrate exists to answer with one body of data.
@@ -15043,6 +15158,7 @@ macro_rules! all_cases {
 
         $m!(capture_writes_an_edge_that_reads_back($store));
         $m!(reading_a_bots_thoughts_never_touches_their_history($store));
+        $m!(field_ages_say_when_each_key_was_taken_in_and_when_anything_was($store));
         $m!(a_thought_pointing_at_a_thread_is_in_the_room($store));
         $m!(a_room_fulls_subject_is_never_a_bare_badge($store));
         $m!(a_bots_room_enforces_its_capacity($store));

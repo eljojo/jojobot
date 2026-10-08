@@ -3368,6 +3368,9 @@ pub fn stood_after(
             provenance: edited.provenance,
             standing: edited.standing,
             note: edited.details.clone(),
+            // A write that has not happened has no moment, and the guard that
+            // reads this judges values, not ages.
+            written_at: None,
         });
     }
     folded_fields(&next, declared)
@@ -3412,6 +3415,7 @@ pub fn stood_after_capture(
             note: captured.details.clone(),
             provenance: captured.provenance,
             standing: captured.standing,
+            written_at: None,
         });
     }
     folded_fields(&next, declared)
@@ -4291,6 +4295,14 @@ pub struct KeyWrite {
     /// away with nothing pointing at it** — and the read a person looks at is
     /// the one that would be missing it.
     pub note: Option<String>,
+    /// **When the store took this write in.** Stamped by the store at the
+    /// append, never by a caller, and the one moment no caller can set or
+    /// backdate: what the fold reads to say how old a held value is.
+    ///
+    /// **`None` is a write from before the store stamped its writes, and it
+    /// stays `None`**: filling it in would claim jojobot learned something at a
+    /// moment nobody observed. A value held by such a write has no age.
+    pub written_at: Option<jiff::Timestamp>,
 }
 
 /// **Where a folded value came from, and who stands behind it.**
@@ -4363,6 +4375,24 @@ pub fn folded_backing(
     backing
 }
 
+/// **How old what a thing holds is.** The moment the store took in its newest
+/// write of any kind, and for each key the moment of the write holding its value
+/// now. A recall reads the first as the day the object was last learned about
+/// and prints a key's own day only where it differs.
+///
+/// **Absence is the answer where no moment was observed.** A store that stamps
+/// nothing, a write from before writes were stamped and a thing nobody has
+/// written all give nothing here, and a reader must not turn that into a day.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FieldAges {
+    /// The newest moment any write on the thing was taken in: its fields, its
+    /// records of any status, and its own row.
+    pub newest: Option<jiff::Timestamp>,
+    /// For each held key, the moment of the write holding its value. A key
+    /// whose holding write carries no moment is absent.
+    pub keys: BTreeMap<String, jiff::Timestamp>,
+}
+
 /// **A thing's fields: the newest write of each key on it.**
 ///
 /// What a thing IS gets written down a piece at a time — one sitting records
@@ -4403,6 +4433,35 @@ pub fn folded_fields(
     writes: &[KeyWrite],
     declared: &[types::DeclaredType],
 ) -> BTreeMap<String, String> {
+    fold(writes, declared).0
+}
+
+/// **When the store took in the write that holds each key's value now.**
+///
+/// The same fold as [`folded_fields`], read for its other output, so what a key
+/// holds and how old it is cannot come from two passes that disagree. A counter
+/// is held by its newest write. **A key whose holding write was never stamped
+/// is not here**, and neither is a key the fold does not hold: absence is the
+/// honest answer where no moment was observed.
+pub fn folded_ages(
+    writes: &[KeyWrite],
+    declared: &[types::DeclaredType],
+) -> BTreeMap<String, jiff::Timestamp> {
+    fold(writes, declared)
+        .1
+        .into_iter()
+        .filter_map(|(key, moment)| moment.map(|moment| (key, moment)))
+        .collect()
+}
+
+/// The one fold: each held key's value, and the moment of the write holding it.
+fn fold(
+    writes: &[KeyWrite],
+    declared: &[types::DeclaredType],
+) -> (
+    BTreeMap<String, String>,
+    BTreeMap<String, Option<jiff::Timestamp>>,
+) {
     let mut standing: Vec<&KeyWrite> = writes
         .iter()
         .filter(|w| w.status == FactStatus::Active && !reserved_key(&w.key))
@@ -4412,6 +4471,7 @@ pub fn folded_fields(
     // deciding the fold with its query plan.
     standing.sort_by(|a, b| a.key.cmp(&b.key).then(a.ordinal.cmp(&b.ordinal)));
     let mut folded = BTreeMap::new();
+    let mut moments: BTreeMap<String, Option<jiff::Timestamp>> = BTreeMap::new();
     // A counter's running total, kept beside the row because the row holds text
     // and a total has to keep adding. It is dropped with the key, so a clear
     // ends the total the same way it ends the value.
@@ -4419,12 +4479,14 @@ pub fn folded_fields(
     for write in standing {
         let Some(value) = &write.value else {
             folded.remove(&write.key);
+            moments.remove(&write.key);
             totals.remove(write.key.as_str());
             continue;
         };
         match types::fold_of(&write.key, declared) {
             types::Fold::Newest => {
                 folded.insert(write.key.clone(), value.clone());
+                moments.insert(write.key.clone(), write.written_at);
                 continue;
             }
             // **A label on one record is not a property of the thing.** The
@@ -4443,6 +4505,7 @@ pub fn folded_fields(
             Some(total) => {
                 totals.insert(&write.key, total);
                 folded.insert(write.key.clone(), total.render());
+                moments.insert(write.key.clone(), write.written_at);
             }
             // **A write that is no number adds nothing, and the key still
             // arrives.** The messy record is the truth and the typed path
@@ -4451,13 +4514,14 @@ pub fn folded_fields(
             // compare a value that will not parse. Hiding the key instead would
             // read as one nobody ever wrote.
             None => {
-                folded
-                    .entry(write.key.clone())
-                    .or_insert_with(|| value.clone());
+                if !folded.contains_key(&write.key) {
+                    folded.insert(write.key.clone(), value.clone());
+                    moments.insert(write.key.clone(), write.written_at);
+                }
             }
         }
     }
-    folded
+    (folded, moments)
 }
 
 /// **A counter's running total.**
@@ -6123,6 +6187,19 @@ pub trait Memory: Send + Sync {
     /// "nothing is recorded here" and "there is no such thing" are different
     /// answers with different repairs.
     async fn fields(&self, entity: &EntityId) -> Result<BTreeMap<String, String>, MemoryError>;
+
+    /// **When the store took in what the thing holds** — see [`FieldAges`]. The
+    /// other output of the fold [`fields`](Memory::fields) reads, so a value and
+    /// its age cannot come from two readings that disagree.
+    ///
+    /// Defaulted to nothing: a store that keeps no moments, and a layer over one
+    /// that forgot to forward this, answer "no age" and never a made-up one. An
+    /// entity that does not exist is [`MemoryError::UnknownEntity`], as
+    /// [`fields`](Memory::fields) answers it.
+    async fn field_ages(&self, entity: &EntityId) -> Result<FieldAges, MemoryError> {
+        let _ = entity;
+        Ok(FieldAges::default())
+    }
 
     /// **Which of these field keys, for this entity, would exactly echo what
     /// this build ships as their default today** — never a refusal and never

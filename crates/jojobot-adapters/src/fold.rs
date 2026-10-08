@@ -28,8 +28,8 @@ use jiff::civil::Date;
 
 use jojobot_domain::memory::{
     Archived, ClaimWrite, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactId,
-    FactPatch, FieldBacking, FieldWrite, FormerHandle, Guarded, Landed, Memory, MemoryError, Merge,
-    NewEntity, NewFact, Retraction, WriteSummary,
+    FactPatch, FieldAges, FieldBacking, FieldWrite, FormerHandle, Guarded, Landed, Memory,
+    MemoryError, Merge, NewEntity, NewFact, Retraction, WriteSummary,
     search::{self, DocScan},
     types::{self, DeclaredType},
 };
@@ -53,6 +53,24 @@ pub struct Folded {
     /// slower one — carrying an earlier version — land after the faster one
     /// and overwrite what it correctly installed.
     cache: RwLock<HashMap<EntityId, VersionedFields>>,
+    /// **When the store took in what each thing holds**, read from the store the
+    /// first time it is asked for and dropped whole when any write passes
+    /// through. The fold's version marker advances on a claim write only, and a
+    /// thing's own row is written without one, so there is no marker to hold an
+    /// age against; a cache that outlived a write would date a value by a write
+    /// that is no longer the newest.
+    ages: RwLock<HashMap<EntityId, FieldAges>>,
+}
+
+/// **Drops the cached ages when a write verb is finished**, on whichever path it
+/// leaves by: dropped after the verb's own work, so a read that cached an age
+/// while the write was landing is cleared too.
+struct ForgetAges<'a>(&'a Folded);
+
+impl Drop for ForgetAges<'_> {
+    fn drop(&mut self) {
+        self.0.ages.write().expect("fold lock").clear();
+    }
 }
 
 impl Folded {
@@ -65,7 +83,13 @@ impl Folded {
         Folded {
             inner,
             cache: RwLock::new(HashMap::new()),
+            ages: RwLock::new(HashMap::new()),
         }
+    }
+
+    /// Held by a write verb for as long as it runs; see [`ForgetAges`].
+    fn forgetting_ages(&self) -> ForgetAges<'_> {
+        ForgetAges(self)
     }
 
     /// Fill the fold from a full read of the store — the boot path. Returns
@@ -137,6 +161,7 @@ fn fold_behind(landed: Landed, source: MemoryError) -> MemoryError {
 #[async_trait]
 impl Memory for Folded {
     async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
+        let _forget = self.forgetting_ages();
         self.inner.add_entity(new).await
     }
 
@@ -148,6 +173,7 @@ impl Memory for Folded {
         new: NewEntity,
         first: NewFact,
     ) -> Result<Guarded<(Entity, Fact)>, MemoryError> {
+        let _forget = self.forgetting_ages();
         match self.inner.add_entity_with_first_claim(new, first).await? {
             Guarded::Written((entity, fact)) => match self.refresh(&fact.home).await {
                 Ok(()) => Ok(Guarded::Written((entity, fact))),
@@ -198,6 +224,7 @@ impl Memory for Folded {
         handle: &EntityId,
         patch: EntityPatch,
     ) -> Result<Guarded<Entity>, MemoryError> {
+        let _forget = self.forgetting_ages();
         self.inner.update_entity(handle, patch).await
     }
 
@@ -219,6 +246,7 @@ impl Memory for Folded {
         date: Date,
         override_token: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
+        let _forget = self.forgetting_ages();
         let renamed = self
             .inner
             .rename_entity(from, to, parent, date, override_token)
@@ -237,14 +265,17 @@ impl Memory for Folded {
     }
 
     async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
+        let _forget = self.forgetting_ages();
         self.inner.archive_entity(id, reason).await
     }
 
     async fn restore_entity(&self, id: &EntityId) -> Result<(Entity, Archived), MemoryError> {
+        let _forget = self.forgetting_ages();
         self.inner.restore_entity(id).await
     }
 
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
+        let _forget = self.forgetting_ages();
         match self.inner.capture(fact).await? {
             Guarded::Written(fact) => match self.refresh(&fact.home).await {
                 Ok(()) => Ok(Guarded::Written(fact)),
@@ -282,6 +313,7 @@ impl Memory for Folded {
         patch: FactPatch,
         caller: &EntityId,
     ) -> Result<Guarded<Fact>, MemoryError> {
+        let _forget = self.forgetting_ages();
         match self.inner.update_fact(address, patch, caller).await? {
             Guarded::Written(fact) => match self.refresh(&fact.home).await {
                 Ok(()) => Ok(Guarded::Written(fact)),
@@ -303,6 +335,21 @@ impl Memory for Folded {
         self.inner.fields(entity).await
     }
 
+    /// **Served from RAM once read, and dropped by any write.** See
+    /// [`Folded::ages`]. A miss reads the store, which answers a thing that does
+    /// not exist as the miss it is.
+    async fn field_ages(&self, entity: &EntityId) -> Result<FieldAges, MemoryError> {
+        if let Some(ages) = self.ages.read().expect("fold lock").get(entity) {
+            return Ok(ages.clone());
+        }
+        let ages = self.inner.field_ages(entity).await?;
+        self.ages
+            .write()
+            .expect("fold lock")
+            .insert(entity.clone(), ages.clone());
+        Ok(ages)
+    }
+
     async fn retract(
         &self,
         address: &FactAddress,
@@ -310,6 +357,7 @@ impl Memory for Folded {
         date: Date,
         caller: &EntityId,
     ) -> Result<Retraction, MemoryError> {
+        let _forget = self.forgetting_ages();
         let taken_back = self.inner.retract(address, reason, date, caller).await?;
         match self.refresh(&taken_back.retracted.home).await {
             Ok(()) => Ok(taken_back),
@@ -332,6 +380,7 @@ impl Memory for Folded {
         date: Date,
         caller: &EntityId,
     ) -> Result<Merge, MemoryError> {
+        let _forget = self.forgetting_ages();
         let done = self
             .inner
             .merge(folded, survivor, reason, date, caller)
@@ -351,6 +400,7 @@ impl Memory for Folded {
     }
 
     async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
+        let _forget = self.forgetting_ages();
         self.inner.set_prose(entity, prose).await
     }
 
@@ -417,6 +467,7 @@ impl Memory for Folded {
     /// runs at boot. The write already landed; only the rebuild is what
     /// this can fail to report.
     async fn declare_type(&self, declared: DeclaredType) -> Result<DeclaredType, MemoryError> {
+        let _forget = self.forgetting_ages();
         let written = self.inner.declare_type(declared).await?;
         self.rebuild_or_explain("declare_type").await?;
         Ok(written)
@@ -439,6 +490,7 @@ impl Memory for Folded {
         origin: types::Origin,
         fields: Vec<types::Field>,
     ) -> Result<(), MemoryError> {
+        let _forget = self.forgetting_ages();
         self.inner.declare_kind(token, origin, fields).await?;
         self.rebuild_or_explain("declare_kind").await
     }
@@ -451,6 +503,7 @@ impl Memory for Folded {
     /// the kind held it falls back to newest-write-wins once reclaimed, for
     /// every entity that answered to it.
     async fn reclaim_kind(&self, token: &str) -> Result<(), MemoryError> {
+        let _forget = self.forgetting_ages();
         self.inner.reclaim_kind(token).await?;
         self.rebuild_or_explain("reclaim_kind").await
     }

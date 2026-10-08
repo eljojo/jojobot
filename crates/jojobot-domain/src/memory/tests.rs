@@ -912,6 +912,74 @@ fn wrote(key: &str, ordinal: u64, value: Option<&str>) -> KeyWrite {
         value: value.map(str::to_string),
         fact: FactId("f1".into()),
         status: FactStatus::Active,
+        written_at: None,
+    }
+}
+
+/// One write of a key that the store took in at `at`.
+fn wrote_at(key: &str, ordinal: u64, value: Option<&str>, at: &str) -> KeyWrite {
+    KeyWrite {
+        written_at: Some(at.parse().expect("a moment")),
+        ..wrote(key, ordinal, value)
+    }
+}
+
+/// **A key's age is the moment of the write that holds its value now.**
+///
+/// A key rewritten later carries the later moment and a key left alone carries
+/// the first. A key taken off carries none, a counter is held by its newest
+/// write, a key held by a write nobody stamped carries none rather than an older
+/// moment, and a write inside a record that is no longer active is passed over
+/// exactly as the value fold passes it over.
+#[test]
+fn a_keys_age_is_the_moment_of_the_write_that_holds_its_value() {
+    let counter = types::DeclaredType::new("tally", vec![types::Field::summing("visits")]);
+    let mut retracted = wrote_at("weight", 2, Some("12"), "2026-10-05T09:00:00Z");
+    retracted.status = FactStatus::Archived;
+    let writes = vec![
+        wrote_at("colour", 1, Some("red"), "2026-08-03T12:00:00Z"),
+        wrote_at("weight", 1, Some("10"), "2026-08-03T12:00:00Z"),
+        retracted,
+        wrote_at("size", 1, Some("big"), "2026-08-03T12:00:00Z"),
+        wrote_at("size", 2, Some("small"), "2026-10-05T09:00:00Z"),
+        wrote_at("gone", 1, Some("x"), "2026-08-03T12:00:00Z"),
+        wrote_at("gone", 2, None, "2026-10-05T09:00:00Z"),
+        wrote("unstamped", 1, Some("old")),
+        wrote_at("visits", 1, Some("2"), "2026-08-03T12:00:00Z"),
+        wrote_at("visits", 2, Some("3"), "2026-10-05T09:00:00Z"),
+        wrote_at("restamped", 1, Some("first"), "2026-08-03T12:00:00Z"),
+        wrote("restamped", 2, Some("second")),
+    ];
+    let declared = [counter];
+    let ages = folded_ages(&writes, &declared);
+    let at = |text: &str| -> jiff::Timestamp { text.parse().expect("a moment") };
+
+    assert_eq!(ages["colour"], at("2026-08-03T12:00:00Z"), "left alone");
+    assert_eq!(ages["size"], at("2026-10-05T09:00:00Z"), "rewritten later");
+    assert_eq!(
+        ages["weight"],
+        at("2026-08-03T12:00:00Z"),
+        "the retracted write is passed over, so the first holds it"
+    );
+    assert_eq!(
+        ages["visits"],
+        at("2026-10-05T09:00:00Z"),
+        "a counter's newest"
+    );
+    assert!(!ages.contains_key("gone"), "a key taken off has no age");
+    assert!(
+        !ages.contains_key("unstamped"),
+        "a write nobody stamped gives no day"
+    );
+    assert!(
+        !ages.contains_key("restamped"),
+        "the holding write is unstamped, so an older stamp is not borrowed: {ages:?}"
+    );
+    // The keys with an age are held keys, no more and no fewer than the ones
+    // whose holding write was stamped.
+    let held = folded_fields(&writes, &declared);
+    for key in ages.keys() {
+        assert!(held.contains_key(key), "{key} has an age and no value");
     }
 }
 

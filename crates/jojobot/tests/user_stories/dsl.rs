@@ -378,6 +378,19 @@ impl Story {
         .await
     }
 
+    /// **Serve a jojobot whose STORE stamps on a day a story can move.** The
+    /// hand on the clock is handed back beside the story, so a story can let
+    /// weeks pass between two writes and read how old what it holds is.
+    pub async fn begin_on_a_store_clock_that_moves(
+        bot: &str,
+        day: &str,
+    ) -> (Self, jojobot_domain::memory::testing::ClockHandle) {
+        let clock = jojobot_domain::clock::Clock::stating(day.parse().expect("a story's day"));
+        let memory = InMemoryMemory::booted().on_clock(clock);
+        let hand = memory.clock_handle();
+        (Self::serve(bot, Self::wired(memory)).await, hand)
+    }
+
     /// **The memory store under this story's server**, for a fixture too big
     /// to write through the served surface: each served write costs a commit
     /// of the index, so a world of thousands of records is seeded here and a

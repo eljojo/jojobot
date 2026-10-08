@@ -130,6 +130,7 @@ fn scan(doc_id: &str, entity: Option<Entity>, prose: &str, facts: Vec<Fact>) -> 
                 note: fact.details.clone(),
                 provenance: fact.provenance,
                 standing: fact.standing,
+                written_at: None,
             });
         }
     }

@@ -539,6 +539,86 @@ async fn dolt_satisfies_the_role_claim_contract() {
     store.stop().await;
 }
 
+/// 🚨 **A value held by a write nobody stamped has no age, and the stores say
+/// so the same way.** Writes appended before `field_write.written_at` existed
+/// carry NULL there and always will: dating them would claim jojobot learned
+/// something at a moment nobody observed. The key arrives without an age while
+/// the thing's newest moment is still known from its stamped claim writes, and
+/// a later stamped rewrite of the key gives it one.
+#[tokio::test]
+async fn a_key_held_by_an_unstamped_write_has_no_age() {
+    let scratch = Scratch::new("unstamped-key");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("unstamped")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    let memory = DoltMemory::open(pool.clone());
+    jojobot_domain::memory::kinds::seed(&memory)
+        .await
+        .expect("the kinds are seeded");
+
+    let subject = EntityId::person("person:milhouse");
+    memory
+        .add_entity(NewEntity::new(
+            subject.clone(),
+            "Milhouse",
+            "contract-fixture",
+        ))
+        .await
+        .expect("add_entity ok")
+        .written()
+        .expect("the guard waves it through");
+    let write = |value: &str| NewFact {
+        fields: [("colour".to_string(), value.to_string())]
+            .into_iter()
+            .collect(),
+        ..NewFact::about(subject.clone(), "painted", date(2026, 10, 7))
+    };
+    memory
+        .capture(write("red"))
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("the guard waves it through");
+    let stamped = memory.field_ages(&subject).await.expect("ages read");
+    assert!(
+        stamped.keys.contains_key("colour"),
+        "the positive: a stamped write gives the key an age: {stamped:?}"
+    );
+
+    sqlx::query("UPDATE field_write SET written_at = NULL")
+        .execute(&pool)
+        .await
+        .expect("the stamps are taken off");
+    let unstamped = memory.field_ages(&subject).await.expect("ages read");
+    assert!(
+        !unstamped.keys.contains_key("colour"),
+        "a write nobody stamped was given an age: {unstamped:?}"
+    );
+    assert!(
+        unstamped.newest.is_some(),
+        "the claim write beside it is still stamped: {unstamped:?}"
+    );
+
+    memory
+        .capture(write("blue"))
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("the guard waves it through");
+    let again = memory.field_ages(&subject).await.expect("ages read");
+    assert!(
+        again.keys.contains_key("colour"),
+        "a later stamped write gives the key an age again: {again:?}"
+    );
+
+    store.stop().await;
+}
+
 /// One write of `status` as a merge sees it: its place in its own thing's
 /// history and the moment the store stamped it (`None` for a write an older
 /// build appended).

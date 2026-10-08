@@ -33,9 +33,10 @@ use jojobot_domain::clock::Clock;
 use jojobot_domain::memory::owned::Provisions;
 use jojobot_domain::memory::{
     Archived, ClaimWrite, Edge, EdgeShape, Entity, EntityId, EntityKind, EntityPatch, Fact,
-    FactAddress, FactId, FactPatch, FactStatus, FieldWrite, FormerHandle, Guarded, KeyWrite,
-    Memory, MemoryError, Merge, NewEntity, NewFact, Provenance, Retraction, Standing, WriteSummary,
-    apply_entity_patch, apply_fact_patch, folded_fields, guard, guard_fit_in,
+    FactAddress, FactId, FactPatch, FactStatus, FieldAges, FieldWrite, FormerHandle, Guarded,
+    KeyWrite, Memory, MemoryError, Merge, NewEntity, NewFact, Provenance, Retraction, Standing,
+    WriteSummary, apply_entity_patch, apply_fact_patch, folded_ages, folded_fields, guard,
+    guard_fit_in,
     kinds::{self, NotAKind},
     merge_account, normalize_content, normalize_details, normalize_prose, referenced_by,
     retraction_of, screen_entity_patch, search, standing_of, stood_after, stood_after_capture,
@@ -1961,8 +1962,8 @@ impl DoltMemory {
         entity: &EntityId,
     ) -> Result<Vec<KeyWrite>, MemoryError> {
         let rows = sqlx::query(
-            "SELECT w.`key`, w.ordinal, w.value, w.fact_id, w.write_class, f.status,
-                     f.provenance, f.standing, f.details
+            "SELECT w.`key`, w.ordinal, w.value, w.fact_id, w.write_class, w.written_at,
+                     f.status, f.provenance, f.standing, f.details
              FROM field_write w
              JOIN fact f ON f.entity = w.entity AND f.id = w.fact_id
              WHERE w.entity = ?",
@@ -2009,6 +2010,14 @@ impl DoltMemory {
                 // sentence saying it is an estimate stays on a record nothing
                 // points at.
                 note: row.try_get::<Option<String>, _>("details").map_err(store)?,
+                // **The moment the store took this write in**, or nothing for a
+                // write from before the column existed. A stamp that does not
+                // parse reads as no stamp, as it does everywhere else here.
+                written_at: parse_stamp(
+                    row.try_get::<Option<String>, _>("written_at")
+                        .map_err(store)?,
+                    entity.as_str(),
+                ),
             });
         }
         Ok(writes)
@@ -3730,6 +3739,47 @@ impl Memory for DoltMemory {
                 .map_err(store)?;
         tx.commit().await.map_err(store)?;
         Ok((held, (written + signalled) as u64))
+    }
+
+    async fn field_ages(&self, entity: &EntityId) -> Result<FieldAges, MemoryError> {
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        let Some((key, handle)) = self.resolve(&mut tx, entity).await? else {
+            let index = self.known(&mut tx).await?;
+            return Err(MemoryError::UnknownEntity {
+                attempted: entity.to_string(),
+                nearest: guard::screen(entity, &[], &index),
+            });
+        };
+        // The keys come off the same fold the values do, in the same
+        // transaction, so a value and its age describe one instant.
+        let writes = Self::writes_on(&mut tx, &key).await?;
+        let declared = Self::types_in(&mut tx).await?;
+        let keys = folded_ages(&writes, &declared);
+        // **The newest write of any kind**: a thing's fields, its records of
+        // any status and its own row. Compared as moments rather than as text,
+        // because a stamp's fractional digits vary in length and text order is
+        // not time order.
+        let mut newest: Option<jiff::Timestamp> = None;
+        // **`entity_write` is kept under the handle the row was written under**,
+        // where the other two tables key on the badge, so each is asked by the
+        // name it holds.
+        for (table, name) in [
+            ("field_write", key.as_str()),
+            ("fact_write", key.as_str()),
+            ("entity_write", handle.as_str()),
+        ] {
+            let stamps: Vec<Option<String>> =
+                sqlx::query_scalar(&format!("SELECT written_at FROM {table} WHERE entity = ?"))
+                    .bind(name)
+                    .fetch_all(&mut *tx)
+                    .await
+                    .map_err(store)?;
+            for stamp in stamps {
+                newest = newest.max(parse_stamp(stamp, key.as_str()));
+            }
+        }
+        tx.commit().await.map_err(store)?;
+        Ok(FieldAges { newest, keys })
     }
 
     async fn claim_history(&self, address: &FactAddress) -> Result<Vec<ClaimWrite>, MemoryError> {
@@ -5751,6 +5801,20 @@ async fn write_entity(
             .map_err(store)?;
     }
     Ok(badge)
+}
+
+/// **A stored stamp as a moment**, or nothing when there is none or it does not
+/// parse. A write nobody stamped and a stamp nobody can read are the same answer
+/// to the question "when was this taken in".
+fn parse_stamp(stamp: Option<String>, entity: &str) -> Option<jiff::Timestamp> {
+    let text = stamp?;
+    match text.parse::<jiff::Timestamp>() {
+        Ok(at) => Some(at),
+        Err(e) => {
+            tracing::warn!(error = %e, entity, "a write's stamp does not parse; it reads as unstamped");
+            None
+        }
+    }
 }
 
 /// **Keep that this entity was written, and when** — the cheap signal
