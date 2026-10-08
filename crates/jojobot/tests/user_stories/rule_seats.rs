@@ -1313,3 +1313,56 @@ async fn unstarring_three_rules_is_taught_stands_for_unless_the_summary_names_th
     s.wrap("unstarred rules and summarised them").await;
     story.finish().await;
 }
+
+/// **A creation whose own arguments take the new bot's boot over the ceiling is
+/// refused, and the way forward the refusal names is the real one.** The floor a
+/// creation is measured on is the new bot's boot: its name, its aliases and its
+/// source ride in it, and what the call sets does not. So an oversized name is
+/// what the refusal is about, and a shorter one is what lets the same call land.
+/// A set value of the same size lands beside it, which shows the size of `sets`
+/// is not what was refused.
+///
+/// Paired with the same creation under a short name, which lands: a build that
+/// refused every creation naming a seat count would not pass.
+#[tokio::test]
+async fn a_creation_with_an_oversized_name_is_refused_and_a_shorter_one_lands() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    let creation = |handle: &str, name: &str| {
+        json!({
+            "kind": "bot", "handle": handle, "name": name, "source": "user-named",
+            "sets": {"rule_seats": "3"},
+        })
+    };
+
+    // ── the oversized name is what is refused, and the answer says which ────
+    let refused = s
+        .refused("add_entity", creation("sigma", &"n".repeat(60_000)))
+        .await;
+    refused
+        .says("floor_parts")
+        .says("aliases")
+        .says("\"wrote\":false");
+    s.list("bot").await.never_says("bot:sigma");
+
+    // ── the way forward it names: the same call under a shorter name lands ──
+    let made = s
+        .call("add_entity", creation("sigma", "Sigma"))
+        .await
+        .json();
+    assert_eq!(made["id"], "bot:sigma", "{made}");
+
+    // ── a set value as large as that name lands, so `sets` was not the cause ─
+    let made = s
+        .call(
+            "add_entity",
+            json!({
+                "kind": "bot", "handle": "psi", "name": "Psi", "source": "user-named",
+                "sets": {"rule_seats": "3", "note": "v".repeat(60_000)},
+            }),
+        )
+        .await
+        .json();
+    assert_eq!(made["id"], "bot:psi", "{made}");
+    story.finish().await;
+}

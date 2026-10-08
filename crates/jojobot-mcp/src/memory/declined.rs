@@ -530,12 +530,14 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                          binds at one moment is better carried by a skill than by the charter."
                 ),
                 // **A creation made nothing, so there is nothing to unstar.**
-                // The ways down for an existing bot name rules and seats
-                // that a bot not yet created does not have.
+                // What a new bot's boot carries from the call is its name, its
+                // aliases and its source; what the call sets does not ride in
+                // it. So those are the three to shorten.
                 "add_entity" => format!(
                     "Nothing was created: {e}. The largest part of the floor is {largest}; \
-                         floor_parts lists every part. Send a smaller `sets` in the same call, or \
-                         create the bot without `sets` and capture the fields on it afterwards."
+                         floor_parts lists every part. Send a shorter name, shorter aliases or a \
+                         shorter source in the same call: they are what the new bot's boot \
+                         carries."
                 ),
                 // **Three ways down, and the caller picks the one that
                 // costs least.** Which rules are starred and how many seats
