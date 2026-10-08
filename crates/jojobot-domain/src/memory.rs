@@ -1865,10 +1865,15 @@ pub fn settle_rewrite(
     Ok(patch)
 }
 
-/// **The fold a thing would hold once a patch's field edits land**, read off the
-/// fold it holds now: each key the patch sets takes the patch's value, and each
-/// key it clears goes. It is the cheap answer to "would this patch change a
-/// guarded key", asked before the patch has been applied to its record.
+/// **This patch's field edits laid over the fold a thing holds now**: each key the
+/// patch sets takes the patch's value, and each key it clears goes. It is the
+/// cheap answer to "would this patch change a guarded key", asked before the patch
+/// has been applied to its record, and it picks which refusal is worded.
+///
+/// **It is not the fold the thing will hold.** A clear here removes a key even
+/// when another record still holds it, and a set wins even when a newer record
+/// writes the same key. Nothing that writes may read it as the next fold; that is
+/// what [`stood_after`] answers.
 pub fn fold_after_field_edits(
     before: &BTreeMap<String, String>,
     patch: &FactPatch,
