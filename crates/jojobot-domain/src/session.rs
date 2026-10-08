@@ -860,6 +860,13 @@ pub struct Session {
     /// run whose window ended, and on every card written before this existed.
     #[serde(default)]
     pub wrap_window: Option<WrapWindow>,
+    /// **When this run was last handed its bot's charter**, if the store has
+    /// been told. A charter another identity rewrote after this moment has not
+    /// been read by the run. `None` on a run that was handed it at its start
+    /// and has not read it since, and on every card written before this existed:
+    /// the run's start is then the moment to compare from.
+    #[serde(default)]
+    pub charter_told_at: Option<Timestamp>,
 }
 
 impl Session {
@@ -1317,6 +1324,49 @@ pub trait Sessions: Send + Sync {
     /// nothing, and leaves no mark saying the session was ever away. What it
     /// changes is what the store will accept next.
     async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError>;
+
+    /// **Keep when this run was handed its bot's charter.** Set at a read of
+    /// the charter, so the notice that it changed ends and stays ended across a
+    /// restart.
+    ///
+    /// **Never refused on a closed session**, for the reason
+    /// [`add_served`](Sessions::add_served) is not: it changes nothing the run
+    /// said. [`SessionError::UnknownSession`] on a card that does not exist.
+    async fn set_charter_told(&self, id: &SessionId, at: Timestamp) -> Result<(), SessionError>;
+
+    /// **Keep that another identity rewrote `bot`'s charter**, and when. One
+    /// record per bot, rewritten in place by the next change: the question it
+    /// answers is whether the charter changed since a session was last handed
+    /// it, and only the newest change can answer that.
+    ///
+    /// Kept by the store and not by the process: a session outlives a restart,
+    /// so a change recorded only in memory would be lost on the deploy that
+    /// follows it, and the session would work to the old text with nothing to
+    /// say so.
+    ///
+    /// A change by the bot's own identity is never written here: its own
+    /// rewrite needs no notice.
+    async fn note_charter_change(
+        &self,
+        bot: &EntityId,
+        change: CharterChange,
+    ) -> Result<(), SessionError>;
+
+    /// The newest charter change another identity made to `bot`, or `None` when
+    /// none has been recorded.
+    async fn charter_change_of(
+        &self,
+        bot: &EntityId,
+    ) -> Result<Option<CharterChange>, SessionError>;
+}
+
+/// **A charter rewritten by another identity**: who, and when.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CharterChange {
+    /// The identity that rewrote the charter.
+    pub by: EntityId,
+    /// The moment of the rewrite, on the server's clock.
+    pub at: Timestamp,
 }
 
 /// A running tally of one verb class, as one chronology entry.
@@ -1688,6 +1738,7 @@ mod projection_tests {
             served_chars: 0,
             stated_day: None,
             wrap_window: None,
+            charter_told_at: None,
             entries: vec![
                 JournalEntry {
                     id: EntryId("e1".into()),
@@ -2147,6 +2198,7 @@ mod tests {
             served_chars: 0,
             stated_day: None,
             wrap_window: None,
+            charter_told_at: None,
             id: SessionId("1".into()),
             sid: Some(Sid("s001".into())),
             bot: EntityId("bot:gamma".into()),
@@ -2328,6 +2380,26 @@ mod tests {
             async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
                 self.0.reopen(id).await
             }
+            async fn set_charter_told(
+                &self,
+                id: &SessionId,
+                at: Timestamp,
+            ) -> Result<(), SessionError> {
+                self.0.set_charter_told(id, at).await
+            }
+            async fn note_charter_change(
+                &self,
+                bot: &EntityId,
+                change: CharterChange,
+            ) -> Result<(), SessionError> {
+                self.0.note_charter_change(bot, change).await
+            }
+            async fn charter_change_of(
+                &self,
+                bot: &EntityId,
+            ) -> Result<Option<CharterChange>, SessionError> {
+                self.0.charter_change_of(bot).await
+            }
         }
 
         let store = RefusesToClose(InMemorySessions::new());
@@ -2446,6 +2518,7 @@ mod tests {
             served_chars: 0,
             stated_day: None,
             wrap_window: None,
+            charter_told_at: None,
             id: SessionId("1".into()),
             sid: Some(Sid("s001".into())),
             bot: EntityId("bot:gamma".into()),
@@ -2505,6 +2578,7 @@ mod tests {
             served_chars: 0,
             stated_day: None,
             wrap_window: None,
+            charter_told_at: None,
             id: SessionId("1".into()),
             sid: Some(Sid("s001".into())),
             bot: EntityId("bot:gamma".into()),
@@ -2604,6 +2678,7 @@ mod tests {
             served_chars: 0,
             stated_day: None,
             wrap_window: None,
+            charter_told_at: None,
             id: SessionId("1".into()),
             sid: Some(Sid("s001".into())),
             bot: EntityId("bot:gamma".into()),

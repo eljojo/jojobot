@@ -2727,6 +2727,26 @@ impl Jojobot {
                     .join(", "),
             ));
         }
+        // **Reading its own charter is what ends the notice that it changed.** A
+        // session of the bot that was handed the charter in this answer has it.
+        if want_charter
+            && let Some(asking) = &caller
+            && body["objects"].as_array().is_some_and(|objects| {
+                objects.iter().any(|object| {
+                    object["id"] == asking.bot.as_str() && object["charter_elided"] == false
+                })
+            })
+        {
+            let now = self.clock().now();
+            self.registry.note_charter_told(asking.sid.as_str(), now);
+            // Kept on the card too, so the notice stays ended across a restart.
+            // A run with no card yet has it set when its card is made.
+            if let Some(card) = &asking.card
+                && let Err(e) = self.sessions.set_charter_told(card, now).await
+            {
+                tracing::warn!(error = %e, "the moment a charter was read could not be kept");
+            }
+        }
         fit_recall(&mut body, args.offset.map_or(0, |o| o as usize));
         if let Some(sid) = args.sid.as_deref() {
             self.registry.note_shown(sid, &body);

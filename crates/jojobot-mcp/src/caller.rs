@@ -369,7 +369,12 @@ impl Jojobot {
         bot: &EntityId,
         card: Option<SessionId>,
     ) -> Result<sid::Sid, CallToolResult> {
-        self.registry.mint(bot, card).map_err(|_| {
+        let minted = self.registry.mint(bot, card).inspect(|sid| {
+            // A session is handed its bot's charter by the boot that mints it.
+            self.registry
+                .note_charter_told(sid.as_str(), self.clock().now());
+        });
+        minted.map_err(|_| {
             handle_declined(
                 "",
                 "No session was started. jojobot could not mint a free session handle, which \
@@ -445,6 +450,13 @@ impl Jojobot {
             .map_err(session_error)?;
         // The registry learns the card here — this is the moment one exists.
         self.registry.attach_card(&caller.sid, begun.id.clone());
+        // The charter this run was handed before it had a card is kept on the
+        // card, so that a restart does not forget it.
+        if let Some(told) = self.registry.charter_told_at(caller.sid.as_str())
+            && let Err(e) = self.sessions.set_charter_told(&begun.id, told).await
+        {
+            tracing::warn!(error = %e, "the moment a charter was handed over could not be kept");
+        }
         // **A newer run of the bot has started**, which ends the wrap window of
         // every run of it that wrapped before.
         self.end_wrap_windows(&caller.bot).await;

@@ -70,9 +70,10 @@ impl Jojobot {
     ) -> Result<CallToolResult, McpError> {
         // Refused here, before anything is written — see
         // [`Jojobot::attributable`].
-        if let Err(refused) = self.identified_for_write(args.sid.as_deref()).await {
-            return Ok(refused);
-        }
+        let caller = match self.identified_for_write(args.sid.as_deref()).await {
+            Ok(caller) => caller,
+            Err(refused) => return Ok(refused),
+        };
         let bot = bot_id(&args.bot)?;
         // **A charter is part of what a boot cannot cut**, so it is held to
         // the ceiling where it is written, as a star is — see
@@ -87,6 +88,24 @@ impl Jojobot {
             Ok(stored) => stored,
             Err(e) => return memory_declined("set_charter", e),
         };
+        // **Another identity's rewrite is kept, so the bot's running sessions can
+        // be told.** A bot rewriting its own charter needs no notice and writes
+        // nothing. A write that cannot be kept is logged and does not undo the
+        // charter, which has landed.
+        if caller.bot != bot
+            && let Err(e) = self
+                .sessions
+                .note_charter_change(
+                    &bot,
+                    jojobot_domain::session::CharterChange {
+                        by: caller.bot.clone(),
+                        at: self.clock().now(),
+                    },
+                )
+                .await
+        {
+            tracing::warn!(error = %e, bot = %bot, "a charter change could not be kept");
+        }
         self.beat("set_charter", bot.as_str(), args.sid.as_deref())
             .await;
         // **A receipt, not the charter.** The caller wrote this prose in the

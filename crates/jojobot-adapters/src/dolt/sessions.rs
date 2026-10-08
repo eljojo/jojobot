@@ -21,9 +21,9 @@ use async_trait::async_trait;
 use jiff::Timestamp;
 use jojobot_domain::memory::{Entity, EntityId, mention};
 use jojobot_domain::session::{
-    EntryId, JournalEntry, NewEntry, NewSession, Session, SessionError, SessionId, SessionState,
-    Sessions, Sid, WrapWindow, is_readable_sid, normalize_entry, validate_entry, validate_focus,
-    validate_session_id,
+    CharterChange, EntryId, JournalEntry, NewEntry, NewSession, Session, SessionError, SessionId,
+    SessionState, Sessions, Sid, WrapWindow, is_readable_sid, normalize_entry, validate_entry,
+    validate_focus, validate_session_id,
 };
 use sqlx::{MySql, MySqlPool, Row, Transaction};
 
@@ -244,7 +244,7 @@ impl DoltSessions {
     ) -> Result<Session, SessionError> {
         let row = sqlx::query(
             "SELECT id, sid, bot, focus, started_at, state, timezone, started_on, served_chars,
-                    stated_day, wrap_window
+                    stated_day, wrap_window, charter_told_at
              FROM session WHERE id = ?",
         )
         .bind(id.as_str())
@@ -446,6 +446,12 @@ fn session_from(
             .try_get::<Option<String>, _>("stated_day")
             .map_err(store)?)?,
         served_chars: row.try_get::<i64, _>("served_chars").map_err(store)? as u64,
+        charter_told_at: row
+            .try_get::<Option<String>, _>("charter_told_at")
+            .map_err(store)?
+            .as_deref()
+            .map(instant)
+            .transpose()?,
         wrap_window: row
             .try_get::<Option<String>, _>("wrap_window")
             .map_err(store)?
@@ -993,6 +999,61 @@ impl Sessions for DoltSessions {
         };
         tx.commit().await.map_err(store)?;
         Ok(session)
+    }
+
+    async fn set_charter_told(&self, id: &SessionId, at: Timestamp) -> Result<(), SessionError> {
+        validate_session_id(id)?;
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        // Existence only, never refused on a closed session: see the trait.
+        self.exists(&mut tx, id).await?;
+        sqlx::query("UPDATE session SET charter_told_at = ? WHERE id = ?")
+            .bind(stamp(at))
+            .bind(id.as_str())
+            .execute(&mut *tx)
+            .await
+            .map_err(store)?;
+        // No `append_session_write`: the moment is never indexed, as with
+        // `served_chars`.
+        tx.commit().await.map_err(store)?;
+        Ok(())
+    }
+
+    async fn note_charter_change(
+        &self,
+        bot: &EntityId,
+        change: CharterChange,
+    ) -> Result<(), SessionError> {
+        sqlx::query(
+            "INSERT INTO charter_change (bot, changed_by, changed_at) VALUES (?, ?, ?) \
+             ON DUPLICATE KEY UPDATE changed_by = VALUES(changed_by), \
+             changed_at = VALUES(changed_at)",
+        )
+        .bind(bot.as_str())
+        .bind(change.by.as_str())
+        .bind(stamp(change.at))
+        .execute(&self.pool)
+        .await
+        .map_err(store)?;
+        Ok(())
+    }
+
+    async fn charter_change_of(
+        &self,
+        bot: &EntityId,
+    ) -> Result<Option<CharterChange>, SessionError> {
+        let row: Option<(String, String)> =
+            sqlx::query_as("SELECT changed_by, changed_at FROM charter_change WHERE bot = ?")
+                .bind(bot.as_str())
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(store)?;
+        row.map(|(by, at)| {
+            Ok(CharterChange {
+                by: EntityId(by),
+                at: instant(&at)?,
+            })
+        })
+        .transpose()
     }
 }
 

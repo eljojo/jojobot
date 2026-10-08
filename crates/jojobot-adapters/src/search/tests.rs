@@ -2462,6 +2462,7 @@ fn run(id: &str, bot: &str, focus: &str, beat: &str) -> jojobot_domain::session:
         served_chars: 0,
         stated_day: None,
         wrap_window: None,
+        charter_told_at: None,
         id: SessionId(id.into()),
         sid: None,
         bot: EntityId(bot.into()),
@@ -2635,6 +2636,27 @@ impl jojobot_domain::session::Sessions for SummarizedSessions {
         &self,
         _: &jojobot_domain::session::SessionId,
     ) -> Result<jojobot_domain::session::Session, jojobot_domain::session::SessionError> {
+        unimplemented!("this double only answers all_sessions and write_summary")
+    }
+    async fn set_charter_told(
+        &self,
+        _: &jojobot_domain::session::SessionId,
+        _: jiff::Timestamp,
+    ) -> Result<(), jojobot_domain::session::SessionError> {
+        unimplemented!("this double only answers all_sessions and write_summary")
+    }
+    async fn note_charter_change(
+        &self,
+        _: &EntityId,
+        _: jojobot_domain::session::CharterChange,
+    ) -> Result<(), jojobot_domain::session::SessionError> {
+        unimplemented!("this double only answers all_sessions and write_summary")
+    }
+    async fn charter_change_of(
+        &self,
+        _: &EntityId,
+    ) -> Result<Option<jojobot_domain::session::CharterChange>, jojobot_domain::session::SessionError>
+    {
         unimplemented!("this double only answers all_sessions and write_summary")
     }
 }
@@ -3070,6 +3092,7 @@ fn run_of(id: &str, bot: &str, beats: &[(&str, &str)]) -> jojobot_domain::sessio
         served_chars: 0,
         stated_day: None,
         wrap_window: None,
+        charter_told_at: None,
         id: SessionId(id.into()),
         sid: None,
         bot: EntityId(bot.into()),

@@ -12,7 +12,7 @@ use crate::memory::testing::SpySearch;
 use async_trait::async_trait;
 use jojobot_domain::mailbox::testing::InMemoryMailboxes;
 use jojobot_domain::memory::testing::InMemoryMemory;
-use jojobot_domain::session::{Sid, WrapWindow};
+use jojobot_domain::session::{CharterChange, Sid, WrapWindow};
 use std::sync::Mutex;
 
 /// A distinct, well-shaped handle for a fixture, from any number a call site
@@ -261,6 +261,29 @@ impl Sessions for CommitsThenFails {
     async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
         self.inner.reopen(id).await
     }
+
+    async fn set_charter_told(
+        &self,
+        id: &SessionId,
+        at: jiff::Timestamp,
+    ) -> Result<(), SessionError> {
+        self.inner.set_charter_told(id, at).await
+    }
+
+    async fn note_charter_change(
+        &self,
+        bot: &EntityId,
+        change: CharterChange,
+    ) -> Result<(), SessionError> {
+        self.inner.note_charter_change(bot, change).await
+    }
+
+    async fn charter_change_of(
+        &self,
+        bot: &EntityId,
+    ) -> Result<Option<CharterChange>, SessionError> {
+        self.inner.charter_change_of(bot).await
+    }
 }
 
 /// A session store whose `close` refuses until it is told not to — the
@@ -358,6 +381,29 @@ impl Sessions for RefusingFocus {
     async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
         self.0.reopen(id).await
     }
+
+    async fn set_charter_told(
+        &self,
+        id: &SessionId,
+        at: jiff::Timestamp,
+    ) -> Result<(), SessionError> {
+        self.0.set_charter_told(id, at).await
+    }
+
+    async fn note_charter_change(
+        &self,
+        bot: &EntityId,
+        change: CharterChange,
+    ) -> Result<(), SessionError> {
+        self.0.note_charter_change(bot, change).await
+    }
+
+    async fn charter_change_of(
+        &self,
+        bot: &EntityId,
+    ) -> Result<Option<CharterChange>, SessionError> {
+        self.0.charter_change_of(bot).await
+    }
 }
 
 /// **A session store that cannot clear a wrap window** while everything else
@@ -431,6 +477,29 @@ impl Sessions for RefusingWindowClear {
     }
     async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
         self.0.reopen(id).await
+    }
+
+    async fn set_charter_told(
+        &self,
+        id: &SessionId,
+        at: jiff::Timestamp,
+    ) -> Result<(), SessionError> {
+        self.0.set_charter_told(id, at).await
+    }
+
+    async fn note_charter_change(
+        &self,
+        bot: &EntityId,
+        change: CharterChange,
+    ) -> Result<(), SessionError> {
+        self.0.note_charter_change(bot, change).await
+    }
+
+    async fn charter_change_of(
+        &self,
+        bot: &EntityId,
+    ) -> Result<Option<CharterChange>, SessionError> {
+        self.0.charter_change_of(bot).await
     }
 }
 
@@ -530,6 +599,29 @@ impl Sessions for CountingSessions {
     async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
         self.inner.reopen(id).await
     }
+
+    async fn set_charter_told(
+        &self,
+        id: &SessionId,
+        at: jiff::Timestamp,
+    ) -> Result<(), SessionError> {
+        self.inner.set_charter_told(id, at).await
+    }
+
+    async fn note_charter_change(
+        &self,
+        bot: &EntityId,
+        change: CharterChange,
+    ) -> Result<(), SessionError> {
+        self.inner.note_charter_change(bot, change).await
+    }
+
+    async fn charter_change_of(
+        &self,
+        bot: &EntityId,
+    ) -> Result<Option<CharterChange>, SessionError> {
+        self.inner.charter_change_of(bot).await
+    }
 }
 
 /// **A session store whose `append` fails** — the earlier half of a journal
@@ -600,6 +692,29 @@ impl Sessions for RefusingAppend {
     }
     async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
         self.0.reopen(id).await
+    }
+
+    async fn set_charter_told(
+        &self,
+        id: &SessionId,
+        at: jiff::Timestamp,
+    ) -> Result<(), SessionError> {
+        self.0.set_charter_told(id, at).await
+    }
+
+    async fn note_charter_change(
+        &self,
+        bot: &EntityId,
+        change: CharterChange,
+    ) -> Result<(), SessionError> {
+        self.0.note_charter_change(bot, change).await
+    }
+
+    async fn charter_change_of(
+        &self,
+        bot: &EntityId,
+    ) -> Result<Option<CharterChange>, SessionError> {
+        self.0.charter_change_of(bot).await
     }
 }
 
@@ -734,6 +849,29 @@ impl Sessions for RefusingClose {
     async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
         self.inner.reopen(id).await
     }
+
+    async fn set_charter_told(
+        &self,
+        id: &SessionId,
+        at: jiff::Timestamp,
+    ) -> Result<(), SessionError> {
+        self.inner.set_charter_told(id, at).await
+    }
+
+    async fn note_charter_change(
+        &self,
+        bot: &EntityId,
+        change: CharterChange,
+    ) -> Result<(), SessionError> {
+        self.inner.note_charter_change(bot, change).await
+    }
+
+    async fn charter_change_of(
+        &self,
+        bot: &EntityId,
+    ) -> Result<Option<CharterChange>, SessionError> {
+        self.inner.charter_change_of(bot).await
+    }
 }
 
 impl Yielding {
@@ -824,6 +962,29 @@ impl Sessions for Yielding {
     async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
         self.pause().await;
         self.0.reopen(id).await
+    }
+
+    async fn set_charter_told(
+        &self,
+        id: &SessionId,
+        at: jiff::Timestamp,
+    ) -> Result<(), SessionError> {
+        self.0.set_charter_told(id, at).await
+    }
+
+    async fn note_charter_change(
+        &self,
+        bot: &EntityId,
+        change: CharterChange,
+    ) -> Result<(), SessionError> {
+        self.0.note_charter_change(bot, change).await
+    }
+
+    async fn charter_change_of(
+        &self,
+        bot: &EntityId,
+    ) -> Result<Option<CharterChange>, SessionError> {
+        self.0.charter_change_of(bot).await
     }
 }
 

@@ -57,9 +57,16 @@ impl Jojobot {
     /// answer carrying zeroes is a block a reader learns to skip, and the one
     /// time it matters is the time it gets skipped.
     pub(crate) async fn add_status_bar(&self, answered: &mut CallToolResponse, sid: Option<&str>) {
-        let Some(waiting) = self.mail_waiting(sid).await else {
+        let mut bar = serde_json::Map::new();
+        if let Some(waiting) = self.mail_waiting(sid).await {
+            bar.insert("mail_waiting".into(), waiting.into());
+        }
+        if let Some(changed) = self.charter_changed(sid).await {
+            bar.insert("charter_changed".into(), changed);
+        }
+        if bar.is_empty() {
             return;
-        };
+        }
         // Only a completed call has an answer to ride on. The other responses
         // are the protocol asking the client for something, and this surface
         // does not produce them — a block added there would be attached to a
@@ -67,7 +74,7 @@ impl Jojobot {
         let CallToolResponse::Complete(result) = answered else {
             return;
         };
-        let bar = serde_json::json!({ "mail_waiting": waiting });
+        let bar = serde_json::Value::Object(bar);
         for block in &mut result.content {
             let Some(text) = block.as_text() else {
                 continue;
@@ -84,6 +91,42 @@ impl Jojobot {
             *block = ContentBlock::text(serde_json::Value::Object(body).to_string());
             return;
         }
+    }
+
+    /// **That the caller's charter was rewritten by another identity since the
+    /// session was last handed it**, with who, when and the call that reads it.
+    /// `None` is every case with nothing to report, and a caller cannot act
+    /// differently on them: no session, no change, a change the session has
+    /// read, and a store this could not read.
+    ///
+    /// Reading the charter is what ends it and nothing else does.
+    async fn charter_changed(&self, sid: Option<&str>) -> Option<serde_json::Value> {
+        let asking = self.caller(sid).ok()??;
+        let change = self.sessions.charter_change_of(&asking.bot).await.ok()??;
+        if change.by == asking.bot {
+            return None;
+        }
+        let told = match self.registry.charter_told_at(asking.sid.as_str()) {
+            Some(told) => told,
+            // A session this process did not mint is compared from the moment
+            // its card says it was last handed the charter, else from the
+            // moment its run began.
+            None => {
+                let card = asking.card.as_ref()?;
+                let card = self.sessions.read_session(card).await.ok()?;
+                card.charter_told_at.unwrap_or(card.started_at)
+            }
+        };
+        (change.at > told).then(|| {
+            serde_json::json!({
+                "by": change.by.as_str(),
+                "at": change.at.to_string(),
+                "read_with": {
+                    "verb": "recall",
+                    "arguments": { "subject": asking.bot.as_str(), "charter": true },
+                },
+            })
+        })
     }
 
     /// **The box a bot owns**, found by its owner rather than by its name.

@@ -22,8 +22,8 @@ use crate::memory::{
 use jiff::civil::Date;
 
 use super::{
-    EntryId, JournalEntry, NewEntry, NewSession, Session, SessionError, SessionId, SessionSummary,
-    Sessions,
+    CharterChange, EntryId, JournalEntry, NewEntry, NewSession, Session, SessionError, SessionId,
+    SessionSummary, Sessions,
 };
 
 /// **The refusal a session's text gets when it carries the stored mark** (see
@@ -344,6 +344,46 @@ impl Sessions for Mentioning {
     // resolve or render.
     async fn add_served(&self, id: &SessionId, chars: u64) -> Result<(), SessionError> {
         self.inner.add_served(id, chars).await
+    }
+
+    // **A plain forward, no rendering**: a moment on a card, no text and no `bot`.
+    async fn set_charter_told(
+        &self,
+        id: &SessionId,
+        at: jiff::Timestamp,
+    ) -> Result<(), SessionError> {
+        self.inner.set_charter_told(id, at).await
+    }
+
+    /// **Both handles are stored as the badges they wear**, as a run's `bot`
+    /// is, so a rename of the bot or of the identity that rewrote its charter
+    /// moves what a read says without rewriting this record.
+    async fn note_charter_change(
+        &self,
+        bot: &EntityId,
+        change: CharterChange,
+    ) -> Result<(), SessionError> {
+        let known = self.known().await?;
+        let former = self.former().await?;
+        let key = Self::storage_key_for(bot, &known, &former);
+        let by = Self::storage_key_for(&change.by, &known, &former);
+        self.inner
+            .note_charter_change(&key, CharterChange { by, at: change.at })
+            .await
+    }
+
+    async fn charter_change_of(
+        &self,
+        bot: &EntityId,
+    ) -> Result<Option<CharterChange>, SessionError> {
+        let known = self.known().await?;
+        let former = self.former().await?;
+        let key = Self::storage_key_for(bot, &known, &former);
+        let mut found = self.inner.charter_change_of(&key).await?;
+        if let Some(change) = &mut found {
+            change.by = Self::current_handle_for(&change.by, &known);
+        }
+        Ok(found)
     }
 }
 

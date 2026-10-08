@@ -135,6 +135,14 @@ pub struct SessionRegistry {
     /// gone when the process is. Nothing in it is stored. See
     /// [`SessionRegistry::note_unstar`].
     unstars: std::sync::Mutex<HashMap<(String, String), usize>>,
+    /// **When each session was last handed its bot's charter**, on the server's
+    /// clock: at the boot that minted it and at every read of the charter. It is
+    /// what a charter change is compared against, so the notice ends when the
+    /// session has read the text. Process-local: a restart empties it, and a
+    /// session this process did not mint is compared from its card's start. A
+    /// session that already read the change is then told once more, which is a
+    /// repeat and never a miss.
+    charter_told: std::sync::Mutex<HashMap<String, jiff::Timestamp>>,
 }
 
 impl SessionRegistry {
@@ -150,6 +158,23 @@ impl SessionRegistry {
             .lock()
             .expect("the seen ledger is poisoned")
             .tick(sid);
+    }
+
+    /// Record that this session was handed its charter at `at`.
+    pub(crate) fn note_charter_told(&self, sid: &str, at: jiff::Timestamp) {
+        self.charter_told
+            .lock()
+            .expect("the charter ledger is poisoned")
+            .insert(sid.to_string(), at);
+    }
+
+    /// When this process last handed the session its charter, if it did.
+    pub(crate) fn charter_told_at(&self, sid: &str) -> Option<jiff::Timestamp> {
+        self.charter_told
+            .lock()
+            .expect("the charter ledger is poisoned")
+            .get(sid)
+            .copied()
     }
 
     /// Count one starred rule of `bot` that this session unstarred.
@@ -574,6 +599,7 @@ mod tests {
             served_chars: 0,
             stated_day,
             wrap_window: None,
+            charter_told_at: None,
         }
     }
 

@@ -15,9 +15,9 @@ use jiff::Timestamp;
 use jiff::civil::Date;
 
 use super::{
-    EntryId, JournalEntry, NewEntry, NewSession, Session, SessionError, SessionId, SessionState,
-    Sessions, Sid, WRAP_CODE_PREFIX, WrapWindow, is_readable_sid, normalize_entry, validate_entry,
-    validate_focus, validate_session_id,
+    CharterChange, EntryId, JournalEntry, NewEntry, NewSession, Session, SessionError, SessionId,
+    SessionState, Sessions, Sid, WRAP_CODE_PREFIX, WrapWindow, is_readable_sid, normalize_entry,
+    validate_entry, validate_focus, validate_session_id,
 };
 use crate::memory::EntityId;
 
@@ -27,6 +27,7 @@ use crate::memory::EntityId;
 pub struct InMemorySessions {
     sessions: Mutex<Vec<Session>>,
     next_id: Mutex<u64>,
+    charter_changes: Mutex<std::collections::BTreeMap<EntityId, CharterChange>>,
 }
 
 impl InMemorySessions {
@@ -155,6 +156,7 @@ impl Sessions for InMemorySessions {
             served_chars: 0,
             stated_day: None,
             wrap_window: None,
+            charter_told_at: None,
         };
         self.sessions
             .lock()
@@ -316,6 +318,43 @@ impl Sessions for InMemorySessions {
         })?;
         sessions[at].served_chars += chars;
         Ok(())
+    }
+
+    async fn set_charter_told(&self, id: &SessionId, at: Timestamp) -> Result<(), SessionError> {
+        validate_session_id(id)?;
+        let mut sessions = self.sessions.lock().expect("session lock");
+        // Existence only, never refused on a closed session: see the trait.
+        let at_index = sessions.iter().position(|s| &s.id == id).ok_or_else(|| {
+            SessionError::UnknownSession {
+                attempted: id.to_string(),
+            }
+        })?;
+        sessions[at_index].charter_told_at = Some(at);
+        Ok(())
+    }
+
+    async fn note_charter_change(
+        &self,
+        bot: &EntityId,
+        change: CharterChange,
+    ) -> Result<(), SessionError> {
+        self.charter_changes
+            .lock()
+            .expect("charter change lock")
+            .insert(bot.clone(), change);
+        Ok(())
+    }
+
+    async fn charter_change_of(
+        &self,
+        bot: &EntityId,
+    ) -> Result<Option<CharterChange>, SessionError> {
+        Ok(self
+            .charter_changes
+            .lock()
+            .expect("charter change lock")
+            .get(bot)
+            .cloned())
     }
 
     async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
@@ -1610,6 +1649,126 @@ pub mod contract {
         assert_eq!(read.wrap_window, None);
     }
 
+    /// **A charter change is kept per bot, rewritten in place by the next one,
+    /// and a bot with none reads as none.** Who and when survive the round trip;
+    /// another bot's change is not this bot's.
+    pub async fn a_charter_change_is_kept_per_bot_and_the_newest_replaces_it(store: &dyn Sessions) {
+        let gamma = EntityId("bot:gamma".into());
+        let sigma = EntityId("bot:sigma".into());
+        let delta = EntityId("bot:delta".into());
+        assert_eq!(
+            store.charter_change_of(&gamma).await.expect("read ok"),
+            None,
+            "a bot nobody rewrote has no change"
+        );
+
+        store
+            .note_charter_change(
+                &gamma,
+                CharterChange {
+                    by: delta.clone(),
+                    at: at(100),
+                },
+            )
+            .await
+            .expect("a change is kept");
+        let first = store.charter_change_of(&gamma).await.expect("read ok");
+        assert_eq!(
+            first,
+            Some(CharterChange {
+                by: delta.clone(),
+                at: at(100)
+            }),
+            "who and when survive the round trip"
+        );
+        assert_eq!(
+            store.charter_change_of(&sigma).await.expect("read ok"),
+            None,
+            "another bot's charter is not this one's"
+        );
+
+        store
+            .note_charter_change(
+                &gamma,
+                CharterChange {
+                    by: sigma.clone(),
+                    at: at(200),
+                },
+            )
+            .await
+            .expect("the next change replaces it");
+        assert_eq!(
+            store.charter_change_of(&gamma).await.expect("read ok"),
+            Some(CharterChange {
+                by: sigma,
+                at: at(200)
+            }),
+            "only the newest change is kept"
+        );
+    }
+
+    /// **The moment a run was handed its charter is stored, can be moved, and a
+    /// run nobody told reads as none.** It is set on a closed run too, because it
+    /// changes nothing the run said.
+    pub async fn the_moment_a_charter_was_handed_over_is_stored_and_can_be_moved(
+        store: &dyn Sessions,
+    ) {
+        let told = begin(store, "gamma", "reading things", 5).await;
+        let untold = begin(store, "sigma", "not asked yet", 6).await;
+        assert_eq!(told.charter_told_at, None, "a new run holds none");
+
+        store
+            .set_charter_told(&told.id, at(100))
+            .await
+            .expect("set ok");
+        assert_eq!(
+            store
+                .read_session(&told.id)
+                .await
+                .expect("read ok")
+                .charter_told_at,
+            Some(at(100)),
+            "the moment survives the round trip"
+        );
+        store
+            .set_charter_told(&told.id, at(200))
+            .await
+            .expect("moved ok");
+        store
+            .close(&told.id, SessionState::Wrapped)
+            .await
+            .expect("wrap ok");
+        store
+            .set_charter_told(&told.id, at(300))
+            .await
+            .expect("a closed run still takes it");
+        assert_eq!(
+            store
+                .read_session(&told.id)
+                .await
+                .expect("read ok")
+                .charter_told_at,
+            Some(at(300))
+        );
+        assert_eq!(
+            store
+                .read_session(&untold.id)
+                .await
+                .expect("read ok")
+                .charter_told_at,
+            None,
+            "another run is not told by it"
+        );
+        let miss = store
+            .set_charter_told(&SessionId("999999".into()), at(1))
+            .await
+            .expect_err("no such run");
+        assert!(
+            matches!(miss, SessionError::UnknownSession { .. }),
+            "{miss:?}"
+        );
+    }
+
     pub async fn run_all<S: Sessions, F: Fn() -> S>(fresh: F) {
         a_begun_session_is_active_and_empty(&fresh()).await;
         beginning_twice_under_one_handle_yields_one_run(&fresh()).await;
@@ -1639,5 +1798,7 @@ pub mod contract {
         a_moved_day_is_stored_and_can_be_moved_again(&fresh()).await;
         a_wrapped_runs_window_is_stored_read_back_and_cleared(&fresh()).await;
         an_open_window_lets_a_wrapped_run_write_and_the_second_close_ends_it(&fresh()).await;
+        a_charter_change_is_kept_per_bot_and_the_newest_replaces_it(&fresh()).await;
+        the_moment_a_charter_was_handed_over_is_stored_and_can_be_moved(&fresh()).await;
     }
 }
