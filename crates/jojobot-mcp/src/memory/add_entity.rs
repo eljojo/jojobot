@@ -1654,4 +1654,63 @@ mod tests {
         );
         assert_eq!(own["wrote"], false, "{own}");
     }
+
+    /// 🚨 **A bot another bot already reports to, as text, is the head of a
+    /// chart when it is made, and its creator cannot name itself its manager.**
+    /// A manager written before the store checked it can sit as plain text
+    /// naming a handle nothing wore yet. The creation reads the chart with that
+    /// text in it, so the bot made under that handle already has a report, and
+    /// the same bot made under a handle nothing names lands, which the
+    /// neighbouring case holds.
+    #[tokio::test]
+    async fn a_creation_under_a_handle_a_stored_report_names_is_refused_as_a_chart_head() {
+        let memory = std::sync::Arc::new(jojobot_domain::memory::testing::InMemoryMemory::booted());
+        let jojobot = crate::harness::handler_over(memory.clone());
+        ensure(&jojobot, "bot:omega").await;
+        ensure(&jojobot, "bot:alpha").await;
+        // The legacy row: alpha's manager is text naming `bot:sigma`, which does
+        // not exist. The guard refuses this write, so it is staged past it.
+        memory.fields_past_the_guard(
+            &EntityId("bot:alpha".into()),
+            &[("reports_to", "bot:sigma")],
+        );
+        let placing = |sid: String| AddEntityArgs {
+            sid: Some(sid),
+            sets: Some(
+                [("reports_to".to_string(), "bot:omega".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+            ..add_args("bot", "sigma", "Sigma")
+        };
+
+        let omega = as_bot(&jojobot, "omega");
+        let refused = blocked(
+            &jojobot
+                .add_entity(Parameters(placing(omega)))
+                .await
+                .expect("a refusal is an answer, not a failure"),
+        );
+        assert_eq!(refused["wrote"], false, "{refused}");
+        assert!(
+            refused["how_to_proceed"]
+                .as_str()
+                .is_some_and(|how| how.contains("bot:sigma")),
+            "the refusal names the head as the one who may place it: {refused}"
+        );
+        let after = json_of(
+            &jojobot
+                .list_entities(Parameters(ListEntitiesArgs {
+                    kind: Some("bot".into()),
+                    parent: None,
+                    sid: None,
+                }))
+                .await
+                .expect("list ok"),
+        );
+        assert!(
+            !after.to_string().contains("bot:sigma"),
+            "a refused creation leaves nothing behind: {after}"
+        );
+    }
 }

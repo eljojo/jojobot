@@ -1152,7 +1152,7 @@ impl Jojobot {
                 let read = if exists {
                     self.chart_around(&ceiling_subject, named).await
                 } else {
-                    self.chart_around_new(named).await
+                    self.chart_around_new(&ceiling_subject, named).await
                 };
                 match read {
                     Ok(lineage) => Some(lineage),
@@ -1202,20 +1202,29 @@ impl Jojobot {
 
     /// **The chart around a thing being created**: nothing above it, because it
     /// holds no manager yet, and the bots above the manager the write names.
+    ///
+    /// **Whether anything reports to it is still asked.** A manager written
+    /// before the store checked it can sit as text naming a handle nothing wore
+    /// yet, and the thing made under that handle already has a report.
     async fn chart_around_new(
         &self,
+        subject: &EntityId,
         named: Option<EntityId>,
     ) -> Result<jojobot_domain::memory::Lineage, MemoryError> {
         let above_named = match &named {
             Some(manager) => self.chain_above(manager).await?,
             None => Vec::new(),
         };
+        let has_reports = if named.is_some() {
+            self.has_reports(subject).await?
+        } else {
+            false
+        };
         Ok(jojobot_domain::memory::Lineage {
             above: Vec::new(),
             named,
             above_named,
-            // A thing being created has nobody reporting to it yet.
-            has_reports: false,
+            has_reports,
         })
     }
 
