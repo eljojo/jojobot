@@ -56,6 +56,16 @@ fn prospective_fact(new: &NewFact, ordinal: usize, inserted_at: Option<jiff::Tim
     }
 }
 
+/// **The widest moment the store can stamp a record with**, on the second of
+/// `now`. A timestamp drops its trailing zeros, so a stamp renders anywhere from
+/// 20 to 30 characters, and the store takes its moment later than any check
+/// does: the check cannot know which width it will get. A fraction with a
+/// nonzero last digit renders the most, so a rule that fits with this stamp fits
+/// with any stamp the store can give it.
+fn widest_stamp(now: jiff::Timestamp) -> jiff::Timestamp {
+    jiff::Timestamp::new(now.as_second(), 123_456_789).unwrap_or(now)
+}
+
 fn json_len(value: &serde_json::Value) -> usize {
     value.to_string().chars().count()
 }
@@ -390,13 +400,15 @@ impl Jojobot {
             Some(_) => Vec::new(),
             None => self.memory.recall(&new.subject).await.ok()?,
         };
-        // **Stamped as the store will stamp it**: the boot serializes the moment
-        // beside the rule, and a rule measured without it fits by the width of a
-        // timestamp it will not have room for.
+        // **Stamped as the widest the store can stamp it**: the boot serializes
+        // the moment beside the rule, and a rule measured without it fits by the
+        // width of a timestamp it will not have room for. The store takes its own
+        // moment later, so the check measures the widest rendering instead of a
+        // moment of its own.
         held.push(prospective_fact(
             new,
             held.len() + 1,
-            Some(self.clock().now()),
+            Some(widest_stamp(self.clock().now())),
         ));
         self.refuses_a_boot_floor_over(&new.subject, &held, seats.map(String::as_str), creating)
             .await
@@ -526,6 +538,112 @@ mod tests {
         );
     }
 
+    /// **A rule is measured with the widest stamp the store can write.** The
+    /// store stamps a record at its own moment, later than the check's, and a
+    /// timestamp drops its trailing zeros, so the two renderings can differ by up
+    /// to ten characters. A check that measured with its own moment let a rule
+    /// pass by that difference and then land over the ceiling.
+    ///
+    /// The check's clock here states a day, which stamps whole seconds: the
+    /// narrowest rendering. The store stamps with the wall clock, which renders a
+    /// full fraction, and the case reads that width off a record the store
+    /// stamped. It finds the length at which a starred rule fits the ceiling with
+    /// the check's own stamp and is over with the store's, and asks the check
+    /// about that rule: it must refuse. A rule shorter by the whole difference in
+    /// width is accepted, so a check that refused every rule would not pass.
+    #[tokio::test]
+    async fn a_rule_is_measured_with_the_widest_stamp_the_store_can_write() {
+        let jojobot = mailbox_handler().on_clock(jojobot_domain::clock::Clock::stating(
+            "2026-06-01".parse().expect("a day"),
+        ));
+        make_bot(&jojobot, "gamma").await;
+        let bot = EntityId("bot:gamma".into());
+        let budget = jojobot_domain::text::BOOT_ANSWER.budget;
+        let starred = |content: String| {
+            let mut new = NewFact::about(
+                bot.clone(),
+                content,
+                jojobot.clock().today_in(&jiff::tz::TimeZone::UTC),
+            );
+            new.fields = [("starred".to_string(), "true".to_string())].into();
+            new
+        };
+        let checks = jojobot.clock().now();
+        assert_eq!(
+            checks.to_string().len(),
+            "2026-06-01T00:00:00Z".len(),
+            "a stated clock stamps whole seconds: {checks}"
+        );
+        // **Stamped on another bot**, so the bot being measured holds no record
+        // the floor would also list.
+        make_bot(&jojobot, "delta").await;
+        let stored = jojobot
+            .memory
+            .capture(NewFact::about(
+                EntityId("bot:delta".into()),
+                "a record the store stamps".to_string(),
+                jojobot.clock().today_in(&jiff::tz::TimeZone::UTC),
+            ))
+            .await
+            .expect("capture ok")
+            .written()
+            .expect("not blocked")
+            .inserted_at
+            .expect("the store stamps it");
+        assert!(
+            stored.to_string().len() > checks.to_string().len(),
+            "the store's stamp renders wider than the check's: {stored} against {checks}"
+        );
+        let floor_of = |content: usize, stamp: jiff::Timestamp| {
+            let new = starred("x".repeat(content));
+            let fact = prospective_fact(&new, 1, Some(stamp));
+            let jojobot = &jojobot;
+            let bot = &bot;
+            async move {
+                jojobot
+                    .boot_floor_if(bot, &[fact], 5, None, None)
+                    .await
+                    .expect("the floor")
+                    .total
+            }
+        };
+        assert!(
+            widest_stamp(checks).to_string().len() >= stored.to_string().len(),
+            "the widest stamp is at least as wide as one the store wrote"
+        );
+        let narrow_at_one = floor_of(1, checks).await;
+        let fits_with_the_checks_stamp = 1 + (budget - narrow_at_one);
+        assert_eq!(floor_of(fits_with_the_checks_stamp, checks).await, budget);
+        assert!(
+            floor_of(fits_with_the_checks_stamp, stored).await > budget,
+            "stored with its own, wider stamp, the rule is over the ceiling"
+        );
+
+        let refused = jojobot
+            .refuses_a_boot_floor_for_capture(
+                &starred("x".repeat(fits_with_the_checks_stamp)),
+                &bot,
+            )
+            .await;
+        assert!(
+            refused.is_some(),
+            "a rule that fits only with the check's own, narrower stamp is refused"
+        );
+        // The positive: a rule short enough to fit with the widest stamp is not.
+        let widest = widest_stamp(checks);
+        let difference = floor_of(1, widest).await - narrow_at_one;
+        assert!(
+            jojobot
+                .refuses_a_boot_floor_for_capture(
+                    &starred("x".repeat(fits_with_the_checks_stamp - difference)),
+                    &bot,
+                )
+                .await
+                .is_none(),
+            "a rule that fits with the widest stamp is accepted"
+        );
+    }
+
     /// **A claim near the ceiling is measured with the timestamp the store will
     /// give it.** The boot serializes a rule's `inserted_at` beside the rule, and
     /// a rule about to be written has none yet, so it was measured with `null`
@@ -557,7 +675,7 @@ mod tests {
             new.fields = [("starred".to_string(), "true".to_string())].into();
             new
         };
-        let stamp = jojobot.clock().now();
+        let stamp = widest_stamp(jojobot.clock().now());
         let floor_of = |content: usize, stamped: bool| {
             let new = starred("x".repeat(content));
             let fact = prospective_fact(&new, 1, stamped.then_some(stamp));
