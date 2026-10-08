@@ -41,11 +41,15 @@ libc = { workspace = true }
 # log lines, and "it gets logged" is not a claim a test can make by reading the
 # code — this subscribes to the events and asserts on what actually came out.
 tracing-subscriber = { workspace = true, optional = true }
+# Test support only: forwards records from the `log` crate, which tantivy logs
+# through, into the same sink. A production binary does this when it starts its
+# subscriber, so a test that does not would never see what production logs.
+tracing-log = { workspace = true, optional = true }
 
 # The port helper these suites share lives behind this feature so it compiles
 # for tests and NEVER ships in a production binary.
 [features]
-testing = ["dep:jojobot-ports", "dep:tracing-subscriber"]
+testing = ["dep:jojobot-ports", "dep:tracing-subscriber", "dep:tracing-log"]
 
 [dev-dependencies]
 tokio = { workspace = true }

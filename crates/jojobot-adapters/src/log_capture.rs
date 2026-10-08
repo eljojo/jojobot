@@ -88,6 +88,10 @@ pub(crate) fn log_sink() -> &'static Captured {
             .finish();
         tracing::subscriber::set_global_default(subscriber)
             .expect("only this sink installs a global subscriber");
+        // **Records from the `log` crate reach the sink too**, as they do in a
+        // served binary: tantivy logs through `log`, and without this bridge a
+        // test would see none of what the index warns about.
+        tracing_log::LogTracer::init().expect("only this sink installs the log bridge");
         captured
     })
 }

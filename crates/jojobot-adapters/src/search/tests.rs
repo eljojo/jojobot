@@ -6812,6 +6812,97 @@ async fn a_reindex_that_cannot_list_the_boxes_logs_why_and_marks_the_mail_half_s
     );
 }
 
+/// **A merge that loses its source segment to a commit logs tantivy's warning
+/// and loses no document.** Tantivy merges small segments in the background. A
+/// commit that deletes every document of a segment a merge is reading removes
+/// that segment from the segment manager, so when the merge ends, the manager
+/// cannot find the segments it merged. Tantivy then logs two warnings — the
+/// segment ids it holds, then "couldn't find segment in SegmentManager" — and
+/// drops the merged result. The segments it was made from are still there.
+///
+/// **This case is both halves of the question.** The warning has to appear, or
+/// nothing was reproduced; and afterwards every document written is found, and
+/// every document deleted is not, so the race is shown to cost no document. It
+/// writes through the index's own mail path, which commits the way every write
+/// here commits. The race is a matter of timing, so it writes rounds until the
+/// warning shows, up to a bound.
+#[test]
+fn a_merge_that_loses_its_source_segment_logs_a_warning_and_loses_no_document() {
+    use tantivy::collector::Count;
+    use tantivy::query::TermQuery;
+    use tantivy::schema::IndexRecordOption;
+
+    const RACE: &str = "couldn't find segment in SegmentManager";
+    const BATCH: usize = 1000;
+    let logged = log_sink();
+    let before = logged.text().matches(RACE).count();
+    let index = FullTextIndex::open().expect("index opens");
+
+    let mut live: Vec<Message> = Vec::new();
+    let mut deleted: Vec<Message> = Vec::new();
+    let mut rounds = 0;
+    while logged.text().matches(RACE).count() == before {
+        assert!(
+            rounds < 30,
+            "no merge lost its source segment in {rounds} rounds, so nothing was reproduced"
+        );
+        live.clear();
+        for batch in 0..8 {
+            for n in 0..BATCH {
+                live.push(message(
+                    &format!("{rounds}-{batch}-{n}"),
+                    "pm",
+                    "dev",
+                    None,
+                    "the kiln is relined and the damper is hand cut",
+                    MessageState::New,
+                ));
+            }
+            index
+                .ingest_mail_changes(&live, index.reading_begins())
+                .expect("ingest");
+        }
+        // The first batch goes, so its segment has no live document left.
+        deleted = live.drain(0..BATCH).collect();
+        index
+            .ingest_mail_changes(&live, index.reading_begins())
+            .expect("ingest");
+        rounds += 1;
+    }
+
+    let text = logged.text();
+    assert!(
+        text.contains("segment_ids:"),
+        "the warning comes after the list of segment ids tantivy holds: {text}"
+    );
+    let searcher = index.reader.searcher();
+    let found = |message: &Message| {
+        let term = Term::from_field_text(index.fields.message_id, message.id.as_str());
+        searcher
+            .search(&TermQuery::new(term, IndexRecordOption::Basic), &Count)
+            .expect("search ok")
+    };
+    let missing: Vec<&str> = live
+        .iter()
+        .filter(|message| found(message) != 1)
+        .map(|message| message.id.as_str())
+        .take(5)
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "documents written and not found after the race, first five: {missing:?}"
+    );
+    assert_eq!(
+        searcher.num_docs(),
+        live.len() as u64,
+        "the index holds exactly the live documents"
+    );
+    assert!(
+        deleted.iter().all(|message| found(message) == 0),
+        "a document deleted before the race is not found after it"
+    );
+}
+
 /// A board with two messages behind the `search` port, ready to lose one.
 /// Two rather than one so every negative below has a survivor to pair with.
 async fn a_board_of_two() -> (Arc<InMemoryMailboxes>, Arc<IndexedMailboxes>, Retrieval) {
