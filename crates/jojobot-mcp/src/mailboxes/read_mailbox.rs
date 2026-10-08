@@ -229,7 +229,9 @@ impl Jojobot {
                        ended (`null` when that could not be read); a message your own run posted \
                        does not carry the key. A POLL ALSO KEEPS YOUR ROLE: reading your own box \
                        with your own sid renews the role claim your session holds, the same as a \
-                       write does, so a session that only polls does not go stale."
+                       write does, so a session that only polls does not go stale. AN EMPTY DELIVERY NAMES WHAT IT \
+                       LOOKED THROUGH: it carries `searched`, one line naming the box, what was \
+                       left out and the call that reads it."
     )]
     pub(crate) async fn read_mailbox(
         &self,
@@ -258,6 +260,8 @@ impl Jojobot {
             return json_result(&counted_json(&mine));
         }
         let name = mine.name;
+        let archived = mine.counts.processed;
+        let unreadable = mine.quarantined.len();
         // **The safe branch is the default.** The cheap, common read is a poll
         // for news; re-shipping a body its reader already has is the expensive
         // case, and a caller that follows defaults rather than prose must land
@@ -273,6 +277,22 @@ impl Jojobot {
         {
             mailbox::Guarded::Written(delivery) => {
                 let mut rendered = delivery_json(&delivery, new_only);
+                // **An empty delivery names what it looked through.** Nothing
+                // waiting and nothing there are the same empty list without it.
+                // Added only to a delivery that came back empty.
+                if delivery.messages.is_empty() {
+                    let mut left_out = vec![format!("processed mail ({archived})")];
+                    if unreadable > 0 {
+                        left_out.push(format!("{unreadable} unreadable cards"));
+                    }
+                    rendered["searched"] = crate::answer::population_line(
+                        &format!("the unprocessed mail in box {}", name.as_str()),
+                        &left_out,
+                        "read_message takes one message by id, processed ones included; \
+                         search with include_mail finds it by its words",
+                    )
+                    .into();
+                }
                 let viewer = self
                     .caller(args.sid.as_deref())
                     .ok()
@@ -1282,6 +1302,65 @@ mod tests {
             store_counts(&jojobot, &held).await,
             (1, 0, 0),
             "neither the read nor the post moved the message"
+        );
+    }
+    /// 🚨 **An empty delivery names what it looked through.** "Nothing waiting"
+    /// and "nothing here at all" are the same empty list without it. The line
+    /// names the box, says the processed archive was left out, and names the
+    /// call that reads it. Added only to a delivery that came back empty.
+    #[tokio::test]
+    async fn an_empty_delivery_names_the_box_and_the_archive_it_left_out() {
+        let jojobot = mailbox_handler();
+        let reader = owning(&jojobot, "dev").await;
+        let sent = send(&jojobot, "dev", "epsilon", "the shipment landed").await;
+        jojobot
+            .mark_processed(Parameters(MarkProcessedArgs {
+                message_id: sent["id"].as_str().expect("a message id").to_string(),
+                notes: None,
+                sid: None,
+                quarantine: None,
+            }))
+            .await
+            .expect("mark_processed ok");
+        let deliver = || ReadMailboxArgs {
+            counts_only: None,
+            new_only: None,
+            sid: Some(reader.clone()),
+        };
+
+        let empty = json_of(
+            &jojobot
+                .read_mailbox(Parameters(deliver()))
+                .await
+                .expect("read ok"),
+        );
+        assert_eq!(empty["count"], 0, "{empty}");
+        let line = empty["searched"]
+            .as_str()
+            .expect("an empty delivery names its population");
+        assert!(!line.contains('\n'), "one line: {line}");
+        assert!(line.contains("dev"), "names the box: {line}");
+        assert!(
+            line.contains("processed"),
+            "names the archive it left out: {line}"
+        );
+        assert!(
+            line.contains("read_message"),
+            "names the call that reads it: {line}"
+        );
+
+        // The positive: fresh mail is delivered and the answer carries no line.
+        send(&jojobot, "dev", "epsilon", "a second shipment").await;
+        let full = json_of(
+            &jojobot
+                .read_mailbox(Parameters(deliver()))
+                .await
+                .expect("read ok"),
+        );
+        assert_eq!(full["count"], 1, "{full}");
+        assert!(
+            full["searched"].is_null(),
+            "a delivery needs no line: {full}"
         );
     }
 }

@@ -5849,3 +5849,80 @@ async fn a_thing_a_recall_returned_is_a_thing_a_later_creation_is_asked_about() 
         "a thing the recall returned was not asked about: {asked}",
     );
 }
+
+/// 🚨 **A selection that comes back empty names what it looked through.** An
+/// empty answer from a filter and an empty answer from an empty store look
+/// the same to a caller, and a caller acts on "nothing among these" as if it
+/// were "nothing". The line names the kind and the key filter the call asked
+/// about, says archived entities were left out, and names the way to widen.
+///
+/// The positive is the same call once a matching record exists: it returns
+/// the record and carries no line.
+#[tokio::test]
+async fn an_empty_selection_names_the_population_it_looked_through() {
+    let jojobot = crate::harness::handler();
+    ensure(&jojobot, "thing:jukebox").await;
+    jojobot
+        .memory
+        .archive_entity(&EntityId("thing:jukebox".into()), "a mistaken write")
+        .await
+        .expect("archive_entity ok");
+    let asked = || RecallArgs {
+        kind: Some("thing".into()),
+        fields: Some(vec![KeyFilterArgs {
+            key: Some("volume".into()),
+            value: Some("eleven".into()),
+            compare: None,
+            scope: None,
+        }]),
+        facts: None,
+        ..of("thing:jukebox")
+    };
+    let asked_of_kind = || RecallArgs {
+        subject: None,
+        ..asked()
+    };
+
+    let empty = json_of(
+        &jojobot
+            .recall(Parameters(asked_of_kind()))
+            .await
+            .expect("recall ok"),
+    );
+    assert_eq!(empty["count"], 0, "{empty}");
+    let line = empty["searched"]
+        .as_str()
+        .expect("an empty selection names its population");
+    assert!(!line.contains('\n'), "one line: {line}");
+    assert!(line.contains("thing"), "names the kind: {line}");
+    assert!(line.contains("volume"), "names the key filter: {line}");
+    assert!(line.contains("archived"), "names what it left out: {line}");
+    assert!(
+        line.contains("search"),
+        "names the call that widens it: {line}"
+    );
+
+    // The positive: one live entity holding the key comes back, with no line.
+    let sid = writing_as(&jojobot);
+    ensure(&jojobot, "thing:teapot").await;
+    capture_ok(
+        &jojobot,
+        CaptureArgs {
+            sid: Some(sid),
+            fields: Some([("volume".to_string(), "eleven".to_string())].into()),
+            ..capture_args("thing:teapot", "the dial goes to eleven")
+        },
+    )
+    .await;
+    let full = json_of(
+        &jojobot
+            .recall(Parameters(asked_of_kind()))
+            .await
+            .expect("recall ok"),
+    );
+    assert_eq!(full["count"], 1, "{full}");
+    assert!(
+        full["searched"].is_null(),
+        "a non-empty read needs no line: {full}"
+    );
+}

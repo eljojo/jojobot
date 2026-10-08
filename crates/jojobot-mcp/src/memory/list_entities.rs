@@ -39,7 +39,8 @@ impl Jojobot {
                        a child's own handle to go deeper. A `parent` naming nothing comes back \
                        blocked with candidates, never an empty list. Metadata only — no facts, \
                        no ordering guarantee. An archived entity is excluded — recall it by its \
-                       own handle to read it whole, including why and when it was archived."
+                       own handle to read it whole, including why and when it was archived. An empty answer carries `searched`: \
+                       one line naming what it looked through and what it left out."
     )]
     pub(crate) async fn list_entities(
         &self,
@@ -86,7 +87,7 @@ impl Jojobot {
         // archived state already has.
         let before = entities.len();
         let entities: Vec<_> = entities.into_iter().filter(Entity::browsable).collect();
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "count": entities.len(),
             // 🚨 **How many this read excluded as archived** — a total, the
             // same shape `recall`'s `withheld` uses: an empty inventory and a
@@ -94,6 +95,22 @@ impl Jojobot {
             "archived_excluded": before - entities.len(),
             "entities": entities.iter().map(entity_json).collect::<Vec<_>>(),
         });
+        if entities.is_empty() {
+            let looked = match (args.kind.as_deref(), args.parent.as_deref()) {
+                (Some(kind), Some(parent)) => {
+                    format!("the direct children of {parent} of kind {kind}")
+                }
+                (Some(kind), None) => format!("every entity of kind {kind}"),
+                (None, Some(parent)) => format!("the direct children of {parent}"),
+                (None, None) => "every kind of entity".to_string(),
+            };
+            body["searched"] = answer::population_line(
+                &looked,
+                &["archived entities".to_string()],
+                "drop `kind` or `parent`; recall a handle to read an archived entity",
+            )
+            .into();
+        }
         if let Some(sid) = args.sid.as_deref() {
             self.registry.note_shown(sid, &body);
         }
@@ -222,6 +239,85 @@ mod tests {
             clean["archived_excluded"], 0,
             "nothing was archived and the count says zero, not nothing: {clean}",
         );
+    }
+
+    /// 🚨 **An empty inventory names what it looked through.** "Nothing of that
+    /// kind" and "nothing at all, because they are archived" are the same empty
+    /// list without it. The line names the kind asked for, says archived
+    /// entities were left out, and names the call that widens the read.
+    #[tokio::test]
+    async fn an_empty_listing_names_the_kind_it_looked_through_and_what_it_left_out() {
+        let jojobot = handler();
+        ensure(&jojobot, "thing:jukebox").await;
+        jojobot
+            .memory
+            .archive_entity(&EntityId("thing:jukebox".into()), "a mistaken write")
+            .await
+            .expect("archive_entity ok");
+        let asked = |kind: &str| ListEntitiesArgs {
+            kind: Some(kind.into()),
+            parent: None,
+            sid: None,
+        };
+
+        let empty = json_of(
+            &jojobot
+                .list_entities(Parameters(asked("thing")))
+                .await
+                .expect("list_entities ok"),
+        );
+        assert_eq!(empty["count"], 0, "{empty}");
+        let line = empty["searched"]
+            .as_str()
+            .expect("an empty read names its population");
+        assert!(!line.contains('\n'), "one line: {line}");
+        assert!(
+            line.contains("thing"),
+            "names the kind it looked through: {line}"
+        );
+        assert!(line.contains("archived"), "names what it left out: {line}");
+        assert!(
+            line.contains("recall"),
+            "names the call that widens it: {line}"
+        );
+
+        // The positive: the same call with one live matching entity returns it,
+        // and an answer that holds something carries no such line.
+        ensure(&jojobot, "thing:teapot").await;
+        let full = json_of(
+            &jojobot
+                .list_entities(Parameters(asked("thing")))
+                .await
+                .expect("list_entities ok"),
+        );
+        assert_eq!(full["count"], 1, "{full}");
+        assert!(
+            full["searched"].is_null(),
+            "a non-empty read needs no line: {full}"
+        );
+    }
+
+    /// **A `parent` that has no children is named in the line**, so an empty
+    /// answer under a parent is not read as an empty inventory.
+    #[tokio::test]
+    async fn an_empty_listing_under_a_parent_names_the_parent() {
+        let jojobot = handler();
+        ensure(&jojobot, "person:alpha").await;
+        let body = json_of(
+            &jojobot
+                .list_entities(Parameters(ListEntitiesArgs {
+                    kind: None,
+                    parent: Some("person:alpha".into()),
+                    sid: None,
+                }))
+                .await
+                .expect("list_entities ok"),
+        );
+        assert_eq!(body["count"], 0, "{body}");
+        let line = body["searched"]
+            .as_str()
+            .expect("an empty read names its population");
+        assert!(line.contains("person:alpha"), "names the parent: {line}");
     }
 
     /// **The dig-for-it case.** Naming the handle directly, through `recall`,

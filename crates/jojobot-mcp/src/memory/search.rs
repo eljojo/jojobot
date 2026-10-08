@@ -618,7 +618,9 @@ impl Jojobot {
                        `recorded_on` (the default — the day a claim was said) or \
                        happened_at (the day the thing itself did); a claim with no \
                        happened_at ranks by recorded_on, and `rank_fallbacks` counts them. No \
-                       pagination — raise `limit` or ask a better question."
+                       pagination — raise `limit` or ask a better question. AN EMPTY ANSWER NAMES \
+                       WHAT IT LOOKED THROUGH: it carries `searched`, one line saying the \
+                       population, what was left out and the call that widens it."
     )]
     pub(crate) async fn search(
         &self,
@@ -755,6 +757,54 @@ impl Jojobot {
                 .map(|hit| hit_json(hit, as_of))
                 .collect::<Vec<_>>(),
         });
+        // **An empty answer names what it looked through.** The matching note
+        // says the wording may have missed; this says which population the call
+        // narrowed to and what the default left out. Added only to an answer
+        // that returned nothing.
+        if hits.is_empty() {
+            let mut looked: Vec<String> = Vec::new();
+            for (name, value) in [
+                ("kind", args.kind.as_deref()),
+                ("status", args.status.as_deref()),
+                ("provenance", args.provenance.as_deref()),
+                ("standing", args.standing.as_deref()),
+                ("subject", args.subject.as_deref()),
+                ("answers_type", args.answers_type.as_deref()),
+                ("fits_type", args.fits_type.as_deref()),
+            ] {
+                if let Some(value) = value {
+                    looked.push(format!("{name} {value}"));
+                }
+            }
+            if let Some(edge) = args.edge.as_ref() {
+                looked.push(format!("an edge at {}", edge.object));
+            }
+            let looked = format!(
+                "entities, claims and prose{}, narrowed by {}",
+                if query.include_mail { ", and mail" } else { "" },
+                if looked.is_empty() {
+                    "nothing but the words".to_string()
+                } else {
+                    looked.join(", ")
+                },
+            );
+            let mut left_out = Vec::new();
+            if args.status.is_none() {
+                left_out.push("archived claims (status archived reads them)".to_string());
+            }
+            if !query.include_history {
+                left_out.push("earlier wordings (include_history reads them)".to_string());
+            }
+            if !query.include_mail {
+                left_out.push("mailbox messages (include_mail reads them)".to_string());
+            }
+            body["searched"] = crate::answer::population_line(
+                &looked,
+                &left_out,
+                "use fewer words, drop a filter, or name the left-out population above",
+            )
+            .into();
+        }
         // **A claim reached this session** — the trigger is a fact in the
         // answer, not the call itself: a search that matched nothing never
         // touched the domain.
@@ -2713,5 +2763,77 @@ mod tests {
             asked.to_string().contains("place:wonder-wharf"),
             "a thing the search returned was not asked about: {asked}",
         );
+    }
+    /// 🚨 **An empty search names the population it looked through.** The
+    /// matching note says the wording may have missed; this says what was
+    /// searched at all: the kind and the status the call narrowed to, that
+    /// earlier wordings and mail were left out, and the way to widen. Added
+    /// only to an answer that returned nothing.
+    #[tokio::test]
+    async fn an_empty_search_names_what_it_looked_through_and_a_hit_carries_no_such_line() {
+        let empty = json_of(
+            &handler_with(Arc::new(SpySearch::answering(Vec::new())))
+                .search(Parameters(SearchArgs {
+                    query: Some("committee meets".into()),
+                    kind: Some("place".into()),
+                    ..search_args()
+                }))
+                .await
+                .expect("search ok"),
+        );
+        assert_eq!(empty["count"], 0, "{empty}");
+        let line = empty["searched"]
+            .as_str()
+            .expect("an empty search names its population");
+        assert!(!line.contains('\n'), "one line: {line}");
+        assert!(line.contains("place"), "names the kind: {line}");
+        assert!(
+            !line.contains("committee"),
+            "the line does not echo the caller's own words back: {line}"
+        );
+        assert!(
+            line.contains("archived"),
+            "names the status it left out: {line}"
+        );
+        assert!(
+            line.contains("include_mail"),
+            "names the mail it left out: {line}"
+        );
+        assert!(
+            line.contains("include_history"),
+            "names the earlier wordings it left out: {line}"
+        );
+
+        // The positive: the same call with one hit returns it and no line.
+        let place = Entity {
+            id: EntityId("place:wonder-wharf".into()),
+            kind: EntityKind::PLACE,
+            name: "Wonder Wharf".into(),
+            aliases: Vec::new(),
+            source: "user-named".into(),
+            crm: None,
+            parent: None,
+            boot: Boot::OnDemand,
+            merged_into: None,
+            badge: None,
+            archived: None,
+        };
+        let full = json_of(
+            &handler_with(Arc::new(SpySearch::answering(vec![Hit::Entity {
+                entity: place,
+                doc_id: "doc-1".into(),
+                edges: Vec::new(),
+                answers: None,
+            }])))
+            .search(Parameters(SearchArgs {
+                query: Some("committee meets".into()),
+                kind: Some("place".into()),
+                ..search_args()
+            }))
+            .await
+            .expect("search ok"),
+        );
+        assert_eq!(full["count"], 1, "{full}");
+        assert!(full["searched"].is_null(), "a hit needs no line: {full}");
     }
 }

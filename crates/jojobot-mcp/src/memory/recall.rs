@@ -1418,7 +1418,9 @@ impl Jojobot {
                        name at least one of subject, kind, answers_type or fields. AN \
                        answers_type THAT SELECTS NOTHING STILL SAYS WHAT THE TYPE IS: the \
                        answer carries type_keys, the type's keys and what each holds, so the \
-                       spelling to write under it is in the empty answer."
+                       spelling to write under it is in the empty answer. AN EMPTY ANSWER NAMES WHAT \
+                       IT LOOKED THROUGH: it carries `searched`, one line saying the population, \
+                       what was left out and the call that widens it."
     )]
     pub(crate) async fn recall(
         &self,
@@ -2324,6 +2326,54 @@ impl Jojobot {
                 })
                 .collect::<Vec<_>>(),
         });
+        // **An empty selection names what it looked through.** A filter that
+        // matched nothing and a store with nothing look the same to a caller,
+        // and a caller acts on "nothing among these" as if it were "nothing".
+        // Added only to an answer that returned nothing; one that holds
+        // something carries no extra bytes.
+        if found.is_empty() {
+            let mut looked: Vec<String> = Vec::new();
+            if let Some(view) = args.view.as_deref() {
+                looked.push(format!("the view {view}"));
+            }
+            if let Some(kind) = args.kind.as_deref() {
+                looked.push(format!("kind {kind}"));
+            }
+            if let Some(declared) = args.answers_type.as_deref() {
+                looked.push(format!("things answering type {declared}"));
+            }
+            for filter in args.fields.iter().flatten() {
+                let key = filter.key.as_deref().unwrap_or("any key");
+                looked.push(match filter.value.as_deref() {
+                    Some(value) => format!("{key} = {value}"),
+                    None => format!("{key} present"),
+                });
+            }
+            if let Some(day) = as_of {
+                looked.push(format!("owed as of {day}"));
+            }
+            if let Some(near) = near {
+                looked.push(format!("near {}", near.day));
+            }
+            if let Some(subject) = args.subject.as_deref() {
+                looked.push(format!("subject {subject}"));
+            }
+            let looked = if looked.is_empty() {
+                "every entity".to_string()
+            } else {
+                format!("entities matching {}", looked.join(", "))
+            };
+            let mut left_out = vec![format!("archived entities ({archived_excluded})")];
+            if withheld > 0 {
+                left_out.push(format!("{withheld} owned by another identity"));
+            }
+            body["searched"] = crate::answer::population_line(
+                &looked,
+                &left_out,
+                "drop a filter, or call search with the words a record would use",
+            )
+            .into();
+        }
         if claims_reached && self.first_contact(CLAIMS_DOMAIN, caller.as_ref()).await {
             crate::answer::note_teaching(&mut body, CLAIMS_TEACHING);
         }

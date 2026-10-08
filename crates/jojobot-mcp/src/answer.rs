@@ -123,6 +123,22 @@ pub(crate) fn elide_prose(body: &mut serde_json::Value, key: &str, prose: &str, 
     fields.insert("how_to_read".into(), how_to_read.into());
 }
 
+/// **The one line an empty answer carries: what it looked through.**
+///
+/// An empty answer and a narrowed or withheld one look identical to a caller,
+/// and a caller acts on "nothing among these" as if it were "nothing". The
+/// line names the population searched, what the read left out and why, and the
+/// call that widens it. A verb adds it only when it returns nothing, so an
+/// answer that holds something carries no extra bytes.
+pub(crate) fn population_line(looked_through: &str, left_out: &[String], widen: &str) -> String {
+    let left_out = if left_out.is_empty() {
+        "nothing".to_string()
+    } else {
+        left_out.join("; ")
+    };
+    format!("Looked through {looked_through}. Left out: {left_out}. To widen: {widen}")
+}
+
 /// Render a JSON body as a successful tool result.
 pub(crate) fn json_result(body: &serde_json::Value) -> Result<CallToolResult, McpError> {
     Ok(CallToolResult::success(vec![ContentBlock::text(

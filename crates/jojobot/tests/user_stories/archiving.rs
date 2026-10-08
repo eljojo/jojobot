@@ -133,3 +133,38 @@ async fn an_archived_thing_is_put_back_with_its_records_and_the_history_of_both_
 
     story.finish().await;
 }
+
+/// "I browsed for people and got nothing back. Is nobody on file, or did the
+/// list hide them?"
+///
+/// An empty answer names what it looked through, and what it left out: the
+/// archived entities. The same browse once somebody live is on file returns
+/// them and carries no such line.
+#[tokio::test]
+async fn an_empty_browse_says_what_it_looked_through_and_a_full_one_does_not() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+
+    s.add("person:apu", "Apu").await;
+    s.call(
+        "archive_entity",
+        json!({ "handle": "person:apu", "reason": "never belonged" }),
+    )
+    .await;
+
+    // ── the empty browse names its population and the archive it left out ────
+    let empty = s.list("person").await;
+    empty.never_says("person:apu");
+    empty.says("searched").says("archived");
+
+    // ── the same browse with one live entity returns it, and no line ─────────
+    s.add("person:skinner", "Skinner").await;
+    let full = s.list("person").await;
+    full.says("person:skinner");
+    full.never_says("searched");
+
+    s.wrap("browsed an empty list and read what it had looked through")
+        .await;
+
+    story.finish().await;
+}
