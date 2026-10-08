@@ -2073,7 +2073,8 @@ impl DoltMemory {
     /// writes back. So a renewal replaces the value of the newest `claimed_at`
     /// write on the role and adds nothing. A claim and a release still append, and
     /// so does every other key, which is what the contract's second role case
-    /// holds.
+    /// holds. The row it changes is stamped with the store's clock, as an appended
+    /// write is.
     ///
     /// `false` when the role has no live moment to overwrite (a role claimed in
     /// the old shape, whose first renewal on the object is an append): the caller
@@ -2082,6 +2083,7 @@ impl DoltMemory {
         tx: &mut Transaction<'_, MySql>,
         role: &EntityId,
         moment: &str,
+        clock: &Clock,
     ) -> Result<bool, MemoryError> {
         let newest: Option<(i64, Option<String>)> = sqlx::query_as(
             "SELECT ordinal, value FROM field_write
@@ -2095,10 +2097,16 @@ impl DoltMemory {
         let Some((ordinal, Some(_))) = newest else {
             return Ok(false);
         };
+        // **The row is stamped as the write it now is.** Every write of a key
+        // carries the moment the store wrote it, and a merge places two writes
+        // of one key by that stamp; a row that took the new value and kept the
+        // old stamp would read as the older write it replaced.
         sqlx::query(
-            "UPDATE field_write SET value = ? WHERE entity = ? AND `key` = ? AND ordinal = ?",
+            "UPDATE field_write SET value = ?, written_at = ?
+             WHERE entity = ? AND `key` = ? AND ordinal = ?",
         )
         .bind(moment)
+        .bind(clock.now().to_string())
         .bind(role.as_str())
         .bind(jojobot_domain::session::ROLE_CLAIMED_AT)
         .bind(ordinal)
@@ -3798,7 +3806,7 @@ impl Memory for DoltMemory {
             && fact.refs.is_empty()
             && fact.stands_for.is_empty()
             && let Some(moment) = patch.fields.get(jojobot_domain::session::ROLE_CLAIMED_AT)
-            && Self::overwrite_lease_moment(&mut tx, &key, moment).await?
+            && Self::overwrite_lease_moment(&mut tx, &key, moment, &self.clock).await?
         {
             // The signal `write_summary` reads, so the search index sees the new
             // moment as a change although no claim write was added.

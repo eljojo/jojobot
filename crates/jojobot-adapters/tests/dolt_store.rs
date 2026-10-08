@@ -3991,6 +3991,123 @@ async fn a_lease_renewal_moves_the_version_the_cache_keys_on() {
     store.stop().await;
 }
 
+/// **A renewal stamps the row it overwrites.** The renewal replaces the value of
+/// the newest `claimed_at` write instead of appending one, and every write of a
+/// key carries the moment the store wrote it, which is how a merge tells the
+/// newer of two writes of one key. A row whose value changed and whose stamp did
+/// not would read as the older write it replaced, so the stamp has to move with
+/// the value. The case reads the stamp off the row, before and after.
+#[tokio::test]
+async fn a_lease_renewal_stamps_the_row_it_overwrites() {
+    use jojobot_domain::memory::{FactPatch, Guarded, NewEntity, NewFact};
+    use jojobot_domain::session::{ROLE_CLAIMED_AT, ROLE_HOLDER, RoleMove, RoleMoveKind};
+
+    let scratch = Scratch::new("lease_renewal_stamp");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("memory")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = Arc::new(DoltMemory::open(pool.clone()));
+
+    let bot = EntityId("bot:contract-lease-holder".into());
+    memory
+        .add_entity(NewEntity::new(
+            bot.clone(),
+            "Contract Lease Holder",
+            "user-named",
+        ))
+        .await
+        .expect("add ok")
+        .written()
+        .expect("not blocked");
+    let role = EntityId("role:contract-lease-stamp".into());
+    memory
+        .add_entity(NewEntity {
+            parent: Some(bot.clone()),
+            ..NewEntity::new(role.clone(), "lease-stamp", "contract-fixture")
+        })
+        .await
+        .expect("add ok")
+        .written()
+        .expect("not blocked");
+    let t0 = jiff::Timestamp::now() - jiff::SignedDuration::from_mins(10);
+    let fields_at = |at: jiff::Timestamp| {
+        std::collections::BTreeMap::from([
+            (ROLE_HOLDER.to_string(), "delta".to_string()),
+            (ROLE_CLAIMED_AT.to_string(), at.to_string()),
+        ])
+    };
+    let claim = memory
+        .capture(NewFact {
+            fields: fields_at(t0),
+            ..NewFact::about(role.clone(), "delta claims the role", date(2026, 9, 1))
+        })
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("not blocked");
+
+    let stamp_of_the_newest_moment = || async {
+        let row: (Option<String>,) = sqlx::query_as(
+            "SELECT written_at FROM field_write
+             WHERE entity = (SELECT COALESCE(badge, id) FROM entity WHERE id = ?)
+               AND `key` = ? ORDER BY ordinal DESC LIMIT 1",
+        )
+        .bind(role.as_str())
+        .bind(ROLE_CLAIMED_AT)
+        .fetch_one(&pool)
+        .await
+        .expect("the moment has a row");
+        row.0
+            .expect("the claim stamped its moment")
+            .parse::<jiff::Timestamp>()
+            .expect("a stamp")
+    };
+    let before = stamp_of_the_newest_moment().await;
+
+    let renewed = memory
+        .update_fact(
+            &claim.address(),
+            FactPatch {
+                fields: fields_at(t0 + jiff::SignedDuration::from_mins(6)),
+                role_move: Some(RoleMove {
+                    kind: RoleMoveKind::Renew,
+                    role: "lease-stamp".into(),
+                    claimant: "delta".into(),
+                }),
+                ..FactPatch::default()
+            },
+            &bot,
+        )
+        .await
+        .expect("update ok");
+    assert!(matches!(renewed, Guarded::Written(_)), "{renewed:?}");
+
+    let rows: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM field_write
+         WHERE entity = (SELECT COALESCE(badge, id) FROM entity WHERE id = ?)
+           AND `key` = ?",
+    )
+    .bind(role.as_str())
+    .bind(ROLE_CLAIMED_AT)
+    .fetch_one(&pool)
+    .await
+    .expect("a count");
+    assert_eq!(rows.0, 1, "the renewal overwrote the row and added none");
+    let after = stamp_of_the_newest_moment().await;
+    assert!(
+        after > before,
+        "the overwritten row kept the stamp of the write it replaced: {before} then {after}"
+    );
+
+    store.stop().await;
+}
+
 /// **`fields_versioned` defers the listing the same way.** It is the read
 /// every write refresh makes, so a listing built on its hit path is paid on
 /// every write.
