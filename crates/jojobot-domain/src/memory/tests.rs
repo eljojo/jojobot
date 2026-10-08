@@ -1423,10 +1423,10 @@ async fn the_fake_answers_who_points_at_a_thing_without_repeating_whole_reads_pe
     /// What one question over a store of this size cost, as repeated whole reads.
     async fn reads_for_one_question(fillers: usize, extra_claims: usize) -> (usize, usize, usize) {
         let store = InMemoryMemory::booted();
-        let target = EntityId("event:contract-winter-fest".into());
+        let target = EntityId("event:contract-krusty-fest".into());
         let holder = EntityId("person:contract-milhouse".into());
         for (id, name) in [
-            (&target, "Contract Winter Fest"),
+            (&target, "Contract Krusty Fest"),
             (&holder, "Contract Milhouse"),
         ] {
             store

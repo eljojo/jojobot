@@ -562,7 +562,6 @@ const ROSTER: &[&str] = &[
     "event:contract-the-sketch",
     "event:contract-unlinked-fair",
     "event:contract-unheard-of-fest",
-    "event:contract-winter-fest",
     "event:contract-withdrawn-gathering",
     "org:contract-fitting-thing",
     "org:contract-mention-guild",
