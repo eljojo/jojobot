@@ -1986,11 +1986,51 @@ impl DoltMemory {
             Some(manager) => self.chain_above_in(tx, manager).await?,
             None => Vec::new(),
         };
+        // Asked only by the write that names a manager for a thing with none.
+        let has_reports = if above.is_empty() && named.is_some() {
+            self.has_reports_in(tx, subject).await?
+        } else {
+            false
+        };
         Ok(jojobot_domain::memory::Lineage {
             above,
             named,
             above_named,
+            has_reports,
         })
+    }
+
+    /// **Whether any other thing reports to `subject`**, read inside the write's
+    /// own transaction. The candidates are the things that ever wrote a manager;
+    /// each is then folded and served as handles, as the chain is, so a manager
+    /// that was taken back or moved does not count.
+    async fn has_reports_in(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        subject: &EntityId,
+    ) -> Result<bool, MemoryError> {
+        let Some((subject_key, subject_handle)) = self.resolve(tx, subject).await? else {
+            return Ok(false);
+        };
+        let candidates: Vec<String> = sqlx::query_scalar(
+            "SELECT DISTINCT entity FROM field_write WHERE `key` = ? AND value IS NOT NULL",
+        )
+        .bind(jojobot_domain::memory::REPORTS_TO)
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(store)?;
+        for candidate in candidates {
+            let candidate = EntityId(candidate);
+            if candidate == subject_key {
+                continue;
+            }
+            let held = Self::held_by(tx, &candidate).await?;
+            let served = self.with_manager_rendered(tx, &held).await?;
+            if jojobot_domain::memory::reports_to(&served, &subject_handle) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// The bots above `start` on its `reports_to` chain, nearest first.

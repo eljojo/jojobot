@@ -14326,6 +14326,7 @@ macro_rules! all_cases {
         $m!(referring_to_finds_a_reference_to_a_renamed_target($store));
         $m!(a_merge_into_the_callers_own_bot_cannot_carry_a_ceiling_onto_it($store));
         $m!(the_chart_is_judged_against_the_chain_read_inside_the_write($store));
+        $m!(the_head_of_a_chart_is_placed_by_no_bot($store));
         $m!(undoing_the_newest_manager_cannot_close_a_loop($store));
         $m!(restating_the_same_manager_is_not_a_change($store));
         $m!(a_thought_carrying_a_guarded_key_cannot_be_dropped_to_make_room($store));

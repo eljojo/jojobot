@@ -804,11 +804,33 @@ impl InMemoryMemory {
             Some(manager) => self.chain_above_among(facts, manager),
             None => Vec::new(),
         };
+        // Asked only by the write that names a manager for a thing with none.
+        let has_reports =
+            above.is_empty() && named.is_some() && self.has_reports_among(facts, subject);
         super::super::Lineage {
             above,
             named,
             above_named,
+            has_reports,
         }
+    }
+
+    /// **Whether any other thing reports to `subject`**, read off each thing's
+    /// fold served as handles, the way the chain is.
+    fn has_reports_among(&self, facts: &[Fact], subject: &EntityId) -> bool {
+        let declared = self.declarations();
+        self.known()
+            .iter()
+            .filter(|other| &other.id != subject)
+            .any(|other| {
+                let held = match self.storage_key(&other.id) {
+                    Some(key) => {
+                        super::super::folded_fields(&self.writes_on(&key, facts), &declared)
+                    }
+                    None => Default::default(),
+                };
+                super::super::reports_to(&self.with_manager_served(&held), subject)
+            })
     }
 
     /// The bots above `start` on its `reports_to` chain, nearest first.

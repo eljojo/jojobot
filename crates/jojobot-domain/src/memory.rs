@@ -2056,6 +2056,14 @@ pub const GUARDED_KEYS: [GuardedKey; 5] = [
     },
 ];
 
+/// **Whether a fold, served as handles, names `subject` as its manager.** The
+/// one comparison every store's question "does anything report to this" makes,
+/// so the stores cannot come to disagree about what a report is.
+pub fn reports_to(fold: &BTreeMap<String, String>, subject: &EntityId) -> bool {
+    fold.get(REPORTS_TO)
+        .is_some_and(|manager| manager.trim() == subject.as_str())
+}
+
 /// **How far up a chain is read.** A chart deeper than this is a loop or a
 /// mistake, and a read that ran on would never return.
 pub const MAX_CHAIN: usize = 32;
@@ -2071,6 +2079,11 @@ pub struct Lineage {
     pub named: Option<EntityId>,
     /// The bots above `named` on its chain, nearest first.
     pub above_named: Vec<EntityId>,
+    /// **Whether any thing reports to the subject.** A thing with no manager
+    /// and reports of its own is the head of a chart. Read only for a write
+    /// that names a manager for a thing with none, because that is the one write
+    /// that asks.
+    pub has_reports: bool,
 }
 
 /// What a write is judged against when its key's relation needs the chart.
@@ -2218,6 +2231,8 @@ enum Why {
     NotLicensed,
     /// The write would put `subject` under one of its own reports.
     Cycle(String),
+    /// `subject` heads a chart, and no bot places the head of a chart.
+    ChartHead,
 }
 
 /// **Whether `caller` may write a key declared as `may` about `subject`.**
@@ -2246,8 +2261,17 @@ fn licensed(
                 // A thing with a manager: only the bots above it change that.
                 (false, _) => l.above.contains(caller),
                 // A thing with none adopts the manager named: by that manager,
-                // or by a bot above it.
-                (true, Some(named)) => caller == named || l.above_named.contains(caller),
+                // or by a bot above it. **Unless it heads a chart**: with
+                // reports of its own and a manager from nobody, it is the top,
+                // and a bot that named itself the manager would take the chart
+                // over without the cycle check seeing it, since neither side has
+                // a chain. No bot places the head.
+                (true, Some(named)) => {
+                    if l.has_reports {
+                        return Err(Why::ChartHead);
+                    }
+                    caller == named || l.above_named.contains(caller)
+                }
                 // Nothing to change: no manager, and none named.
                 (true, None) => false,
             }
@@ -2333,6 +2357,9 @@ fn refusal(why: Why, rule: &GuardedKey, subject: &EntityId, lineage: Managers) -
         Why::Cycle(manager) => MemoryError::ChartCycle {
             subject: subject.to_string(),
             manager,
+        },
+        Why::ChartHead => MemoryError::ChartHead {
+            subject: subject.to_string(),
         },
         Why::NotLicensed => MemoryError::KeyNotYours {
             subject: subject.to_string(),
@@ -2484,7 +2511,9 @@ pub fn refuses_merge_carrying_by(
         match licensed(rule.may, survivor, caller, lineage) {
             Ok(()) => {}
             // A merge that would invert the chart is the chart's own refusal.
-            Err(why @ Why::Cycle(_)) => return Some(refusal(why, rule, survivor, lineage)),
+            Err(why @ (Why::Cycle(_) | Why::ChartHead)) => {
+                return Some(refusal(why, rule, survivor, lineage));
+            }
             Err(Why::NotLicensed) => barred.push(rule),
         }
     }
@@ -4688,6 +4717,18 @@ pub enum MemoryError {
         subject: String,
         /// The manager the write named.
         manager: String,
+    },
+    /// **A chart write that would give the head of a chart a manager.** A thing
+    /// with no manager that has reports of its own heads the chart, and a bot
+    /// that named itself its manager would take the chart over. Refused whoever
+    /// asks, because only the operator places the head.
+    #[error(
+        "'{subject}' heads a chart: things report to it and it reports to none, so no bot can \
+         name its manager"
+    )]
+    ChartHead {
+        /// The head of the chart.
+        subject: String,
     },
     /// **A merge that would carry a guarded key onto a thing the caller may not
     /// write it on.** Everything the duplicate holds moves to the survivor and

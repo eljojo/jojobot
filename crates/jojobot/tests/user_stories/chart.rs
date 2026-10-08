@@ -132,3 +132,72 @@ async fn a_new_bot_is_placed_under_a_manager_only_by_whom_may_place_it() {
     s.wrap("placed a new bot under its manager").await;
     story.finish().await;
 }
+
+#[tokio::test]
+async fn the_head_of_a_chart_is_placed_by_no_bot() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    for (handle, name) in [
+        ("bot:alpha", "Alpha"),
+        ("bot:beta", "Beta"),
+        ("bot:gamma", "Gamma"),
+        ("bot:omega", "Omega"),
+    ] {
+        s.add(handle, name).await;
+    }
+    let alpha = story.as_bot("bot:alpha").await;
+    let omega = story.as_bot("bot:omega").await;
+
+    // ── alpha heads a chart: beta reports to it, and alpha reports to none ──
+    alpha
+        .call("capture", reporting_to("bot:beta", "bot:alpha"))
+        .await;
+    s.call("recall", json!({"subject": "bot:beta"}))
+        .await
+        .says("\"reports_to\":\"bot:alpha\"");
+
+    // ── a bot with no manager cannot name itself the head's manager ─────────
+    //
+    // Omega is the bot named, so adoption alone would allow it, and neither
+    // side has a chain for the cycle check to read.
+    omega
+        .refused("capture", reporting_to("bot:alpha", "bot:omega"))
+        .await
+        .says("\"wrote\":false")
+        .says("operator");
+    s.call("recall", json!({"subject": "bot:alpha"}))
+        .await
+        .never_says("\"reports_to\":\"bot:omega\"");
+
+    // ── the same through an edit of a record alpha already has ──────────────
+    let first = s
+        .call(
+            "capture",
+            json!({"subject": "bot:alpha", "content": "alpha heads the chart",
+                   "provenance": "testimony"}),
+        )
+        .await;
+    let address = first.field("address");
+    omega
+        .refused(
+            "update_fact",
+            json!({"address": address, "fields": {"reports_to": "bot:omega"}}),
+        )
+        .await
+        .says("\"wrote\":false")
+        .says("operator");
+    s.call("recall", json!({"subject": "bot:alpha"}))
+        .await
+        .never_says("\"reports_to\":\"bot:omega\"");
+
+    // ── a thing with no reports is still adopted by the manager it names ────
+    omega
+        .call("capture", reporting_to("bot:gamma", "bot:omega"))
+        .await;
+    s.call("recall", json!({"subject": "bot:gamma"}))
+        .await
+        .says("\"reports_to\":\"bot:omega\"");
+
+    s.wrap("looked at who may place the head of a chart").await;
+    story.finish().await;
+}

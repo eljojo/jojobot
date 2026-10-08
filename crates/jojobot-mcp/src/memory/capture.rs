@@ -1175,10 +1175,17 @@ impl Jojobot {
             Some(manager) => self.chain_above(manager).await?,
             None => Vec::new(),
         };
+        // Asked only by the write that names a manager for a thing with none.
+        let has_reports = if above.is_empty() && named.is_some() {
+            self.has_reports(subject).await?
+        } else {
+            false
+        };
         Ok(jojobot_domain::memory::Lineage {
             above,
             named,
             above_named,
+            has_reports,
         })
     }
 
@@ -1196,7 +1203,24 @@ impl Jojobot {
             above: Vec::new(),
             named,
             above_named,
+            // A thing being created has nobody reporting to it yet.
+            has_reports: false,
         })
+    }
+
+    /// **Whether any other thing reports to `subject`**, read through the
+    /// store's folded fields one thing at a time, as the chain is.
+    async fn has_reports(&self, subject: &EntityId) -> Result<bool, MemoryError> {
+        for other in self.memory.list_entities(None).await? {
+            if &other.id == subject {
+                continue;
+            }
+            let held = self.memory.fields(&other.id).await?;
+            if jojobot_domain::memory::reports_to(&held, subject) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// The bots above `start` on its `reports_to` chain, nearest first.

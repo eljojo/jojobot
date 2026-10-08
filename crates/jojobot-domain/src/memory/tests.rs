@@ -285,6 +285,7 @@ fn lineage(above: &[&str], named: Option<&str>, above_named: &[&str]) -> Lineage
         above: above.iter().map(|h| handle(h)).collect(),
         named: named.map(handle),
         above_named: above_named.iter().map(|h| handle(h)).collect(),
+        has_reports: false,
     }
 }
 
@@ -320,6 +321,41 @@ fn a_write_that_puts_a_bot_under_its_own_report_is_refused_whoever_asks() {
         refuses_unlicensed_write(&line, &line, &reporting_to("bot:sigma"), Some(&itself)),
         Some(MemoryError::ChartCycle { .. })
     ));
+}
+
+/// **The head of a chart is placed by no bot.** A thing with no manager and
+/// reports of its own gets a manager from nobody: not the bot named, not a bot
+/// above it. The cycle check cannot see this, because neither side has a chain.
+/// Paired with the leaf, or a rule that refused every adoption would pass: a
+/// thing with no manager and no reports is still adopted by the bot named.
+#[test]
+fn the_head_of_a_chart_is_placed_by_no_bot() {
+    let omega = handle("bot:omega");
+    let alpha = handle("bot:alpha");
+    let head = Lineage {
+        has_reports: true,
+        ..lineage(&[], Some("bot:omega"), &[])
+    };
+    for caller in [&omega, &handle("bot:beta")] {
+        let refused =
+            refuses_unlicensed_write(&alpha, caller, &reporting_to("bot:omega"), Some(&head))
+                .expect("nobody places the head of a chart");
+        assert!(
+            matches!(refused, MemoryError::ChartHead { .. }),
+            "{caller}: {refused:?}"
+        );
+    }
+    let leaf = lineage(&[], Some("bot:omega"), &[]);
+    assert!(
+        refuses_unlicensed_write(
+            &handle("bot:gamma"),
+            &omega,
+            &reporting_to("bot:omega"),
+            Some(&leaf)
+        )
+        .is_none(),
+        "a thing with no reports is adopted by the manager it names"
+    );
 }
 
 /// **Adoption: a bot with no manager takes the one named by that bot or by one
