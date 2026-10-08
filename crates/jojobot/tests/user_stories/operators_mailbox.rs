@@ -151,16 +151,17 @@ async fn tries_every_way_to_read_it(
             .never_says(NEEDLE)
             .never_says("secret");
     }
-
-    // The front door, with mail, by a word from the body and one from the
-    // title: nothing of the operator's message, and the ordinary note found by
-    // its own word.
+    // The front door, with mail, by a word from the body and one from the title.
+    // **The title is as private as the body**, so a search answer carries neither.
+    // (The outbox listing above does say the title, by design: that is the
+    // sender's own view, and it is not in this loop.)
     for word in ["secret", NEEDLE, "quarterly"] {
         reader
             .find_including_mail(word)
             .await
             .never_says(NEEDLE)
-            .never_says("secret");
+            .never_says("secret")
+            .never_says("quarterly");
     }
     reader.find_including_mail(own.word).await.says(&own.title);
 }
@@ -232,6 +233,10 @@ async fn a_bot_leaves_the_operator_a_message_and_no_bot_can_read_it_back() {
     let delivered = sigma.call("read_mailbox", json!({"new_only": false})).await;
     delivered.says("kiln").never_says(NEEDLE);
     s.find_including_mail("kiln").await.says(&to_sigma);
+    // **And a word from the title finds it too**, so the title searches are
+    // not empty because titles are not searched: the same front door, the same
+    // flag, a word only the ordinary note's title carries.
+    s.find_including_mail("ordinary").await.says(&to_sigma);
 
     // ── nobody reads it back: the bot that wrote it, nor a colleague ────────
     tries_every_way_to_read_it(&s, id, &ottos, &to_sigma, "an ordinary note", None).await;
