@@ -124,7 +124,10 @@ Shipped and live:
   record, or an agent worked it out, and a machine read is **refused unless it
   names the system**. **Every write records the session that made it, and
   testimony is rewritten in place only by the session of its first write**; a
-  claim with no recorded session counts as written by none. The refusal names
+  claim with no recorded session counts as written by none, and its value
+  fields are held to the same rule; sending the claim's own words and values
+  back unchanged is not a rewrite, and a key the caller may not write is
+  refused for that first. The refusal names
   the route — archive the claim, then capture the correction with
   `derived_from` — and says the original stays readable. Inference and
   observation are still rewritten in place. A claim carries **three dates**: the day it is true of,
@@ -137,6 +140,13 @@ Shipped and live:
   every write, taken server-side — a write that did not survive storage is an
   error rather than a success with mangled bytes, and the caller gets the
   receipt rather than the evidence.
+- **A refusal says who fixes it in one word**, `fix_by`, before the prose:
+  `retry` (send the same call again), `change` (the call itself must change,
+  and the refusal names what) or `person` (stored damage, or a decision only a
+  person can make). **A write the store refused and a store that cannot be
+  reached are told apart**, on the memory, session, mailbox and teaching rails
+  alike: a write the store's constraints refused wears `change`, and a store
+  that could not be reached is an outage and wears `retry`.
 - **M2/M2.5/M2.8** — `search` across facts, entities and prose; structured
   edges (location · membership · attendance · about · connection); aliases;
   orienteering retrieval (every hit arrives with its surroundings).
@@ -157,8 +167,11 @@ Shipped and live:
   rest of the call in from that view's own keys** · **a RECORD'S ADDRESS, which
   selects on its own: the address names its subject, so the call fills the rest
   in from it, and a subject naming something ELSE is refused rather than
-  reconciled**), says what of each comes back
-  (facts · prose · the history of one key OR one claim · **`keys`, which narrows
+  reconciled** · **a `parent`, which selects that thing's direct children**),
+  says what of each comes back
+  (facts · prose · the history of one key OR one claim · **`as_of`, the day of
+  the newest write behind what each object holds, with `fields_as_of` for any
+  key whose day differs** · **`keys`, which narrows
   each object's fields to the keys named**, walked objects included, while the
   object names what it left out in `fields_left_out` and how to read it), and
   walks to a depth in either direction. **A view carries its own list as
@@ -207,7 +220,9 @@ Shipped and live:
   the id underneath does not move**, so everything above is what makes the verb
   safe rather than a promise waiting on one. **An archive is reversible:**
   `archive_entity` with `restore: true` brings the thing back and writes one
-  claim saying when and why it was archived, and why it returned. 🚨 **EVERY surface that holds a
+  claim saying when and why it was archived, and why it returned. **A thing
+  folded into another by `merge_entities` keeps answering at its handle, says
+  where it went, and leaves every default browse.** 🚨 **EVERY surface that holds a
   handle in text is a link, not only a claim's** — **a journal beat and a mailbox
   message included** — **and text written before that was true is MIGRATED once
   onto permanent ids, so a rename reaches it.** ⛔️ **A surface that keeps naming
@@ -242,7 +257,14 @@ Shipped and live:
   required. So a thing gains
   fields a piece at a time and an edit to any record reaches it. **A new thing
   may take its first fields in the call that creates it** — `add_entity`'s
-  `sets`, written as its first claim and held to every guard a capture faces. **Conformance is asked of the THING, across all its records,
+  `sets`, written as its first claim and held to every guard a capture faces.
+  **A record carries two bags**: its own fields, and what it `sets` on its
+  thing — `capture`, `update_fact` and `update_entity` take `sets` too, so one
+  call records a claim and sets the thing, and a key stays in the bag it was
+  first written under. Every write still reaches its thing today; the receipt
+  names which keys reached the thing and which stayed on the record, and hints
+  once when a claim's own field is one the kind declares, because own fields
+  will stop reaching the thing. **Conformance is asked of the THING, across all its records,
   never of one record alone** — `answers_type` selects things carrying *some* of
   a type's keys and says which each one lacks, and `fits_type` keeps only the
   things with no gaps. **Which of the two you want is the reader's question**,
@@ -261,8 +283,11 @@ Shipped and live:
   together, and a rhythm does: a write that leaves a cadence without the key
   saying when the next cycle counts from, or the reverse, is refused, so a
   loop is whole from the moment it is made.** **Some keys on a bot are
-  ceilings or grants it cannot write about itself** — its thought room, its
-  boot seats and the role it claims — so a different identity sets them. **Who a
+  ceilings or grants it cannot write about itself** — its thought room, how
+  many runs an untouched thought counts against it (`thought_ages_after_runs`),
+  its boot seats and the role it claims — so a different identity sets them.
+  **On a thread, the room and its ageing bind the bots that write into it**, so
+  only a bot above one of those writers sets them, and a writer never does. **Who a
   bot reports to is changed only by a bot above it on the chart**, a bot with no
   manager is adopted only by the manager named or a bot above that manager, and **the head of a chart is
   given a manager by no bot**. One table of the build's own says who may write
@@ -340,15 +365,19 @@ Shipped and live:
 > A half that is neither complete nor blind says which way it is behind:
 > `unscanned` when no read has filled it yet, which the first read reaching the
 > store ends, and `stale` when the index holds an older version than the store —
-> a refresh that could not reach it, or, on the memory half alone, a committed
-> write whose re-read failed.
+> a refresh that could not reach it, or a committed write whose re-read
+> failed — on the memory half, the record's own re-read; on the mail half, a
+> verb's listing of the boxes.
 > The token is what a caller branches on; the note beside it is what a reader
 > reads. Being honest to the caller who wrote is not enough on its own — the
 > sessions that read later are the ones with no other way to tell.
 - **M3** — Mailboxes: message boxes (`new → read → processed`;
   read ≠ processed; processed is a terminal archive; no delete verbs — the
   tool surface is pinned by test). A message may carry a one-line `subject`
-  and an `in_reply_to` link to the message it answers, and **`read_message`
+  and an `in_reply_to` link to the message it answers. **A body no reader could
+  be handed whole under the answer ceiling is refused at post**, naming the ways
+  to send it: several messages, or the long text on a record and its address.
+  **`read_message`
   takes delivery of one by id** — draining a whole box makes every message in
   it owed work, which is the wrong price for wanting the single one a search
   hit named — **from its own box only**, the read side having no box argument
@@ -357,7 +386,10 @@ Shipped and live:
   readable from anywhere: reading history moves nothing. **The operator's box
   is the exception: a person owns it, and no bot reads it in any state** —
   `read_message` and `mark_processed` refuse it, `list_sent` shows mail to it
-  by id, time and subject only, and search leaves it out and says so. **`list_sent` is the sender's own
+  by id, time and subject only, and search leaves it out and says so. **The
+  operator reads it on their own page of the web UI**, served only to a
+  one-person login, and marks a message processed there, opened or not; a page
+  view moves nothing. **`list_sent` is the sender's own
   view**: where your mail got to and whether anyone has read it, read-only and
   moving nothing. **`read_mailbox` with `counts_only` is how you poll**:
   per-state counts and anything jojobot cannot read, taking delivery of none of
@@ -390,7 +422,12 @@ Shipped and live:
 > *withheld* cannot be read as *absent*, and the answer names the call that
 > returns it rather than claiming anything about what its reader already holds,
 > which is not something the engine checks. **One ceiling bounds the WHOLE
-> serialized boot answer rather than any single block inside it.** What must
+> serialized answer of every verb, the boot included, rather than any single
+> block inside it.** A list fills against it in its own ranked order, after the
+> rest of the answer is counted, and is never cut once finished: `search`,
+> `recall` and `list_sent` name the `offset` that returns the next part, and a
+> delivery takes every message while it ships the bodies that fit, then
+> envelopes flagged `body_elided`, then ids under `not_shown`. What must
 > ship is measured first, and everything else is ranked against what is left,
 > so an identity too heavy to serve whole gets its core and is told what did
 > not fit. **A named boot whose floor is over the ceiling says so**
@@ -411,6 +448,11 @@ Shipped and live:
 > with their per-state counts, every other box by name only, so existence stays
 > visible (a writer needs it) while somebody else's queue stops posing "is that
 > one mine?".
+> **Quiet answers.** A key holding no value is left out of every answer rather
+> than sent as null, except the few whose null means something. **A teaching
+> rides once per session, on the verb it is about** — the claims teaching on
+> the write verbs, a search's matching caveats on the first search and on any
+> answer of fewer than three hits.
 > **Eliding is never silent**: whenever less comes back, a marker says what was
 > left out and how to get it — or, where no verb serves it, that none does —
 > because a reader who has to infer withheld-vs-empty
@@ -479,7 +521,9 @@ Shipped and live:
   since a run nobody wrapped up left nothing to fold**; **the one way back into
   a wrapped run is its `wrap_code`**: the first wrap hands one back, and booting
   with it as `resume` reopens the run for one last change while it stays
-  wrapped — a second wrap, or a newer run of the bot, ends that window) and the
+  wrapped — a second wrap, or a newer run of the bot, ends that window; the
+  handover a later boot reads is the run's closing entry, marked as such, never
+  merely its newest) and the
   **focus as current truth**, rewritten in place; the **chronology hangs off
   it**, one entry per beat (append-only, oldest first; only the newest
   entry amendable).
@@ -492,6 +536,18 @@ Shipped and live:
   write**, so a boot that does nothing leaves nothing behind. A session records
   what it is working on, so the offer can tell two of them apart — and a bot
   may have several running at once, because the `sid` is what tells them apart.
+  **A role is claimed at the door** (`claim`) and held on a lease every write
+  renews. **A role is its own object, `role:<name>`, a child of the bot that
+  first claims it**, with the keys `holder`, `claimed_at` and `agent`; while
+  older stores still hold the flat `role/<name>/…` keys on the bot, every
+  reader reads both shapes, the object winning once it carries `claimed_at`.
+  Every role write goes through one function. **A claim for a role that belongs
+  to another bot is refused at the door, naming the owner**, with no lease
+  involved. **Only the owner or the chart head archives or restores a role
+  object**, and a rename to a new parent or a merge touching one is judged the
+  same way; while it stands archived, every claim on it is refused, the
+  owner's too, naming the restore. `recall` with a `parent` lists a bot's
+  roles.
   **A run may state the DAY it is working in, beside its zone, and everything day-grained defaults to it** — every write, every day-grained read, the staleness sweep and the offer window. A call naming its own date still wins, and a run that states no day is answered on the clock in its zone. **jojobot never derives the day and never advances it.** **A run's zone is the one it sent, else the one a resumed run holds, else the instance's own** — the `timezone` key on `topic:instance`, written once by the operator — **else UTC**, and the boot answer names the zone and where it came from. Nothing in the software names a zone.
   **AND THE SERVER MAY BE ACTING OUT A DAY OF ITS OWN.** `JOJOBOT_TODAY` sets one
   day for a whole run and the server's `now` becomes it — the date an undated
@@ -804,8 +860,13 @@ roles and never an operator.
 - **An upgrade is proven by a test, never by a rehearsal on a copy of
   production.** The upgrade gate restores a store the deployed build filled,
   boots the current binary on it, reads it back through the served surface,
-  and fails on any error line at boot. `make refresh-upgrade-fixture` records
-  the fixture again from the deployed ref whenever the deployed build moves.
+  and fails on any warning or error line at boot. **It keeps two fixtures**, one
+  from each of the last two deployed builds, and every boot case runs over
+  both. `make refresh-upgrade-fixture` records a fixture again from a ref
+  (default the deployed one) whenever the deployed build moves. An empty
+  `RUST_LOG` counts as unset. **`make carried` says what a carry would move**:
+  this checkout's commits that main lacks, main's commits past origin/main, and
+  whether main moved on.
 - **`make paid` is a third tier and `make check` never runs it.** It reaches the
   network, drives a real model through a playbook against an instance it spawns
   and throws away, and it costs money. **It must never run by accident**, which
