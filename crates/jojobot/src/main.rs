@@ -157,10 +157,18 @@ async fn main() -> anyhow::Result<()> {
 }
 
 fn init_tracing() {
+    // **An empty `RUST_LOG` is no filter, and no filter logs at info.** A filter
+    // parsed from an empty string has no directives and drops every event, the
+    // serving line included. A build sandbox exports exactly that, and nobody
+    // sets an empty filter on purpose. A non-empty value is a real filter.
+    let set = std::env::var("RUST_LOG").is_ok_and(|raw| !raw.trim().is_empty());
+    let filter = if set {
+        tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into())
+    } else {
+        "info".into()
+    };
     tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
-        )
+        .with(filter)
         .with(tracing_subscriber::fmt::layer())
         .init();
 }
