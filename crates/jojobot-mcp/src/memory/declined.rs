@@ -1000,9 +1000,13 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                 },
                 jojobot_domain::memory::MayWrite::Ancestor
                 | jojobot_domain::memory::MayWrite::Superior => match allowed.is_empty() {
+                    // **Nobody may make this write**: it names no bot as the
+                    // manager, and the thing has none to change, so no bot is
+                    // above it and none is named. The way on is the handle.
                     true => format!(
-                        "Nothing was written: {e}. No bot is recorded above '{subject}', so \
-                         '{key}' on it has to be set through whoever is at the top of the chart."
+                        "Nothing was written: {e}. The value sent for '{key}' on '{subject}' \
+                         names no bot and '{subject}' has no manager recorded to change, so no \
+                         bot may write it: send the handle of the bot it reports to."
                     ),
                     // **A creation that would head a chart.** Existing records
                     // already name the new bot as their manager, so it heads a
@@ -1376,10 +1380,17 @@ mod tests {
                 assert!(said.contains(who), "{who} may make it: {said}");
             }
             assert!(!said.contains("operator"), "{said}");
-            // Nobody recorded above: said, and not an empty list of people.
+            // Nobody may make the write: said in one line, with the reason and
+            // the way on, and never an unnamed somebody to go and find.
             let none = refused(may, &[]);
-            assert!(none.contains("top of the chart"), "{none}");
+            assert!(
+                none.contains("a_key") && none.contains("bot:sigma"),
+                "{none}"
+            );
+            assert!(none.contains("handle"), "the way on is a handle: {none}");
+            assert!(!none.contains("whoever"), "no unnamed somebody: {none}");
             assert!(!none.contains("operator"), "{none}");
+            assert!(!none.contains('\n'), "one line: {none}");
         }
         // The thing itself, and a different identity (whose words are the four
         // ceilings' own and are unchanged).

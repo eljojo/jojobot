@@ -372,3 +372,65 @@ async fn a_ceiling_key_sent_as_a_setting_is_refused_as_a_capture_of_it_is() {
     s.list("bot").await.says("bot:psi");
     story.finish().await;
 }
+
+/// "I wrote a manager that is no bot. Who do I ask?" Nobody: the value names no
+/// bot, so there is no write for any bot to be licensed to make, and the head of
+/// a chart is refused as much as a bot standing alone. The refusal says to send a
+/// handle and sends nobody looking for a person, and the operator is never named.
+/// Paired with the same two bots naming a bot, which land, so a build that refused
+/// every write of the key would not pass.
+#[tokio::test]
+async fn a_write_that_names_no_manager_is_told_to_name_one_and_sends_nobody_looking() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    for (handle, name) in [
+        ("bot:alpha", "Alpha"),
+        ("bot:beta", "Beta"),
+        ("bot:omega", "Omega"),
+        ("bot:sigma", "Sigma"),
+    ] {
+        s.add(handle, name).await;
+    }
+    let alpha = story.as_bot("bot:alpha").await;
+    let omega = story.as_bot("bot:omega").await;
+    let sigma = story.as_bot("bot:sigma").await;
+
+    // Alpha heads a chart, and sigma stands alone.
+    alpha
+        .call("capture", reporting_to("bot:beta", "bot:alpha"))
+        .await;
+
+    // ── a value that is no bot, from a bot standing alone and from the head ──
+    for (who, subject, value) in [(&sigma, "bot:sigma", "nobody"), (&alpha, "bot:alpha", "")] {
+        who.refused(
+            "capture",
+            json!({"subject": subject, "content": "who I report to",
+                   "provenance": "testimony", "fields": {"reports_to": value}}),
+        )
+        .await
+        .says("\"wrote\":false")
+        .says("handle")
+        .never_says("whoever")
+        .never_says("operator");
+        s.call("recall", json!({"subject": subject}))
+            .await
+            .never_says("\"reports_to\":");
+    }
+
+    // ── the same two bots naming a bot: sigma is adopted, the head places itself
+    omega
+        .call("capture", reporting_to("bot:sigma", "bot:omega"))
+        .await;
+    s.call("recall", json!({"subject": "bot:sigma"}))
+        .await
+        .says("\"reports_to\":\"bot:omega\"");
+    alpha
+        .call("capture", reporting_to("bot:alpha", "bot:omega"))
+        .await;
+    s.call("recall", json!({"subject": "bot:alpha"}))
+        .await
+        .says("\"reports_to\":\"bot:omega\"");
+
+    s.wrap("looked at a write that names no manager").await;
+    story.finish().await;
+}
