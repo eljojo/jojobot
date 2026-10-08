@@ -2440,13 +2440,39 @@ impl Memory for InMemoryMemory {
             }
         }
         let first_session = self.first_write_session(&key, &address.local);
-        let patch = super::super::settle_rewrite(
+        let patch = match super::super::settle_rewrite(
             address,
             &edited,
-            patch,
+            patch.clone(),
             first_session.as_deref(),
             &self.declarations(),
-        )?;
+        ) {
+            Ok(settled) => settled,
+            // **A ceiling key answers first.** The refusal of a rewrite of
+            // testimony names the route of archiving and capturing a correction,
+            // and for a key this caller may not write that route meets the key's
+            // own refusal at its end. So the key is asked now, and its refusal
+            // is the one the caller gets.
+            Err(refusal @ MemoryError::TestimonyRewritten { .. }) => {
+                let writes = self.writes_on(&fact.home, &facts);
+                let before = self.with_manager_served(&super::super::folded_fields(
+                    &writes,
+                    &self.declarations(),
+                ));
+                let after = super::super::fold_after_field_edits(&before, &patch);
+                let lineage = super::super::chart_wanted_by_change(&before, &after)
+                    .map(|named| self.lineage_among(&facts, &handle, named));
+                return Err(super::super::refuses_unlicensed_change(
+                    &handle,
+                    caller,
+                    &before,
+                    &after,
+                    lineage.as_ref(),
+                )
+                .unwrap_or(refusal));
+            }
+            Err(other) => return Err(other),
+        };
         // **Which bag each key is written under**, read off what this record holds
         // now: a key stays in the bag it was first written under.
         let held_classes = self.held_classes(&key, &address.local);

@@ -14507,6 +14507,68 @@ pub async fn a_testimony_claims_value_fields_belong_to_the_session_that_wrote_it
         .expect("nothing blocks it");
 }
 
+/// **A caller who may not write a ceiling key is told so before it is told to
+/// archive and capture.** The route a testimony refusal names ends at the key's
+/// own refusal for such a caller, so the key answers first. A caller who may
+/// write the key still meets the testimony refusal, and so does a caller who
+/// edits a value key: each refusal sits beside the one it is not.
+pub async fn a_ceiling_key_on_another_sessions_testimony_gets_the_key_refusal<M: Memory>(
+    store: &M,
+) {
+    let subject = EntityId("bot:contract-ceiling-order".into());
+    add(
+        store,
+        NewEntity::new(subject.clone(), "Order Of Refusals", "contract-fixture"),
+    )
+    .await;
+    let said = capture(
+        store,
+        NewFact {
+            provenance: Provenance::Testimony,
+            session: Some("session-a".to_string()),
+            fields: [("mug".to_string(), "blue".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(subject.clone(), "keeps a mug", date(2026, 7, 1))
+        },
+    )
+    .await;
+    let edit = |key: &str, value: &str| FactPatch {
+        fields: [(key.to_string(), value.to_string())].into_iter().collect(),
+        session: Some("session-b".to_string()),
+        ..Default::default()
+    };
+
+    // The bot a ceiling binds writes it on another session's testimony: the
+    // key's refusal, which says who may write it.
+    let outcome = store
+        .update_fact(&said.address(), edit(RULE_SEATS, "9"), &subject)
+        .await;
+    assert!(
+        matches!(&outcome, Err(MemoryError::KeyNotYours { key, .. }) if key == RULE_SEATS),
+        "the key's refusal answers first: {:?}",
+        outcome.map(|_| ()),
+    );
+    // A different identity may write the key, so the testimony rule is what is left.
+    let outcome = store
+        .update_fact(&said.address(), edit(RULE_SEATS, "9"), &other_caller())
+        .await;
+    assert!(
+        matches!(&outcome, Err(MemoryError::TestimonyRewritten { .. })),
+        "a caller the key licenses meets the testimony refusal: {:?}",
+        outcome.map(|_| ()),
+    );
+    // A value key is no ceiling, so it is the testimony refusal for anybody.
+    let outcome = store
+        .update_fact(&said.address(), edit("mug", "red"), &subject)
+        .await;
+    assert!(
+        matches!(&outcome, Err(MemoryError::TestimonyRewritten { .. })),
+        "a value key meets the testimony refusal: {:?}",
+        outcome.map(|_| ()),
+    );
+}
+
 /// **A thing created with its first claim is made whole or not at all.**
 ///
 /// Three halves, each against the others. The call that is allowed makes the
@@ -14921,6 +14983,7 @@ macro_rules! all_cases {
         $m!(a_content_replacement_without_provenance_is_refused($store));
         $m!(a_rewrite_of_testimony_belongs_to_the_session_that_wrote_it($store));
         $m!(a_testimony_claims_value_fields_belong_to_the_session_that_wrote_it($store));
+        $m!(a_ceiling_key_on_another_sessions_testimony_gets_the_key_refusal($store));
         $m!(a_setting_bag_reaches_the_thing_and_a_key_stays_in_its_bag($store));
         $m!(an_entity_edited_with_a_claim_is_made_whole_or_not_at_all($store));
         $m!(edge_whitespace_is_normalized($store));

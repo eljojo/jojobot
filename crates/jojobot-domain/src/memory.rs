@@ -1865,6 +1865,24 @@ pub fn settle_rewrite(
     Ok(patch)
 }
 
+/// **The fold a thing would hold once a patch's field edits land**, read off the
+/// fold it holds now: each key the patch sets takes the patch's value, and each
+/// key it clears goes. It is the cheap answer to "would this patch change a
+/// guarded key", asked before the patch has been applied to its record.
+pub fn fold_after_field_edits(
+    before: &BTreeMap<String, String>,
+    patch: &FactPatch,
+) -> BTreeMap<String, String> {
+    let mut after = before.clone();
+    for (key, value) in &patch.fields {
+        after.insert(key.trim().to_string(), value.clone());
+    }
+    for key in &patch.clear_fields {
+        after.remove(key.trim());
+    }
+    after
+}
+
 /// Apply an in-place edit to a fact — **the** definition of what an update
 /// means, called by every adapter so none can drift. Enforces the promotion gate
 /// before touching anything, so a rejected promotion leaves the fact untouched.

@@ -426,3 +426,48 @@ async fn a_resend_of_the_operators_words_and_fields_is_not_a_rewrite() {
     }
     story.finish().await;
 }
+
+/// **A bot told it may not write its own ceiling is told so before it is told to
+/// archive and capture.** A seat count the operator's session wrote is edited by
+/// the bot it binds: the refusal is the ceiling's, which says a different identity
+/// has to raise it, and not the testimony rule's route, which would end at the same
+/// ceiling. A value key on the same claim is the testimony rule's refusal, in the
+/// same read.
+#[tokio::test]
+async fn a_bot_editing_its_own_ceiling_on_the_operators_claim_meets_the_ceiling_first() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:gamma", "Gamma").await;
+    let claim = s
+        .call(
+            "capture",
+            json!({
+                "subject": "bot:gamma", "content": "gamma has eight seats",
+                "provenance": "testimony",
+                "fields": {"rule_seats": "8", "colour": "green"},
+            }),
+        )
+        .await
+        .field("address");
+    s.wrap("wrote down what the operator said").await;
+
+    let gamma = story.as_bot("bot:gamma").await;
+    gamma
+        .refused(
+            "update_fact",
+            json!({"address": claim, "fields": {"rule_seats": "20"}}),
+        )
+        .await
+        .says("rule_seats")
+        .says("\"wrote\":false")
+        .never_says("derived_from");
+    gamma
+        .refused(
+            "update_fact",
+            json!({"address": claim, "fields": {"colour": "blue"}}),
+        )
+        .await
+        .says("derived_from")
+        .says("archived");
+    story.finish().await;
+}

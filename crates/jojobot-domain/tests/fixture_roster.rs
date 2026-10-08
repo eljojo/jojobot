@@ -124,6 +124,7 @@ const ROSTER: &[&str] = &[
     "bot:contract-head-omega",
     "bot:contract-head-second",
     "bot:contract-head-twin",
+    "bot:contract-ceiling-order",
     "bot:contract-operator-head",
     "bot:contract-operator-report",
     "bot:contract-operator-other",

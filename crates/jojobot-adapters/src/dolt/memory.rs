@@ -4127,13 +4127,42 @@ impl Memory for DoltMemory {
         .await
         .map_err(store)?
         .flatten();
-        let patch = jojobot_domain::memory::settle_rewrite(
+        let patch = match jojobot_domain::memory::settle_rewrite(
             address,
             &fact,
-            patch,
+            patch.clone(),
             first_session.as_deref(),
             &Self::types_in(&mut tx).await?,
-        )?;
+        ) {
+            Ok(settled) => settled,
+            // **A ceiling key answers first.** The refusal of a rewrite of
+            // testimony names the route of archiving and capturing a correction,
+            // and for a key this caller may not write that route meets the key's
+            // own refusal at its end. So the key is asked now, and its refusal
+            // is the one the caller gets.
+            Err(refusal @ MemoryError::TestimonyRewritten { .. }) => {
+                let held = Self::writes_on(&mut tx, &fact.home).await?;
+                let declared = Self::types_in(&mut tx).await?;
+                let before = self
+                    .with_manager_rendered(&mut tx, &folded_fields(&held, &declared))
+                    .await?;
+                let after = jojobot_domain::memory::fold_after_field_edits(&before, &patch);
+                let lineage = match jojobot_domain::memory::chart_wanted_by_change(&before, &after)
+                {
+                    Some(named) => Some(self.lineage_in(&mut tx, &handle, named).await?),
+                    None => None,
+                };
+                return Err(jojobot_domain::memory::refuses_unlicensed_change(
+                    &handle,
+                    caller,
+                    &before,
+                    &after,
+                    lineage.as_ref(),
+                )
+                .unwrap_or(refusal));
+            }
+            Err(other) => return Err(other),
+        };
         // **Which bag each key is written under**, read off what this record holds
         // now: a key stays in the bag it was first written under.
         let held_classes = Self::held_classes(&mut tx, &key, &address.local).await?;
