@@ -211,6 +211,7 @@ pub(crate) fn memory_fix_by(e: &MemoryError) -> Option<FixBy> {
         | MemoryError::RoomFull { .. }
         | MemoryError::KeyNotYours { .. }
         | MemoryError::ChartCycle { .. }
+        | MemoryError::ChartHead { .. }
         | MemoryError::MergeCarriesGuardedKeys { .. }
         | MemoryError::ThoughtTooLong { .. }
         | MemoryError::MergeOverfillsRoom { .. }
@@ -1596,6 +1597,13 @@ mod tests {
                 MemoryError::ChartCycle {
                     subject: s("bot:gamma"),
                     manager: s("bot:delta"),
+                },
+                Some("change"),
+            ),
+            (
+                "ChartHead",
+                MemoryError::ChartHead {
+                    subject: s("bot:gamma"),
                 },
                 Some("change"),
             ),
