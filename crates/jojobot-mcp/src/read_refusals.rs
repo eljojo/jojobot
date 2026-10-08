@@ -99,6 +99,7 @@ async fn a_refusal_a_read_verb_earns_does_not_say_a_write_was_skipped() {
                     sender: None,
                     to: None,
                     limit: None,
+                    offset: None,
                     include_bodies: None,
                     sid: None,
                 }))

@@ -1143,6 +1143,7 @@ mod tests {
             &jojobot
                 .list_sent(Parameters(ListSentArgs {
                     limit: None,
+                    offset: None,
                     sender: None,
                     to: None,
                     include_bodies: None,
@@ -1177,6 +1178,7 @@ mod tests {
             &jojobot
                 .list_sent(Parameters(ListSentArgs {
                     limit: None,
+                    offset: None,
                     sender: None,
                     to: None,
                     include_bodies: None,

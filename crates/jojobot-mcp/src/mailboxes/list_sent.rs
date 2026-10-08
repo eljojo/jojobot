@@ -4,6 +4,8 @@
 //! and an entrypoint that chains the systems below it.
 
 use super::*;
+use crate::answer::STATUS_BAR_ROOM;
+use jojobot_domain::text::{ANSWER_CEILING, Capped};
 
 /// How many messages come back when the caller does not say — the same twenty
 /// `search` answers with, and for the same reason: an answer nobody sized is an
@@ -23,13 +25,16 @@ pub struct ListSentArgs {
     /// colleague, so this is how you ask after them.
     #[serde(default)]
     pub(crate) to: Option<String>,
-    /// How many messages to return, newest first. Defaults to twenty.
-    ///
-    /// **No pagination and no cursor yet**: a second page is a narrower
-    /// question — one box, or one sender. What is left out is counted and said,
-    /// never silently dropped.
+    /// How many messages to return, newest first. Defaults to twenty. This is
+    /// the size of a page: an answer that would pass the answer ceiling carries
+    /// fewer and says so, and `offset` reads on.
     #[serde(default)]
     pub(crate) limit: Option<u32>,
+    /// **How many of the newest messages you have already read.** The answer
+    /// names the `offset` that returns the next page whenever it left messages
+    /// out; repeat the same call with it. Defaults to 0.
+    #[serde(default)]
+    pub(crate) offset: Option<u32>,
     /// Ship the bodies back too. Off by default: you wrote them, so the useful
     /// answer is where they got to, not what they say.
     #[serde(default)]
@@ -61,9 +66,10 @@ impl Jojobot {
                        wrote them — so each carries body_bytes and the opening line instead, and \
                        says body_elided: true rather than leaving you to guess, with the one \
                        instruction for getting them said once beside the list rather than on \
-                       every message. Twenty newest by default: raise `limit` for more, and \
-                       whatever a cut leaves out is counted under not_shown rather than \
-                       silently dropped. OMIT `sender` for \
+                       every message. Twenty newest by default: `limit` is the size of a \
+                       page. An answer stops at the answer ceiling, never mid-message, and \
+                       whatever it leaves out is counted under not_shown with the `offset` that \
+                       reads the next page: repeat the same call with it. OMIT `sender` for \
                        your own mail — your `sid` already says who that is. Pass one to ask after \
                        somebody else's outgoing mail: it is matched exactly against the bot \
                        handle recorded on each message (`bot:gamma`), which is allowed, because \
@@ -202,45 +208,22 @@ impl Jojobot {
 
         // **The cut is the last thing that happens**, after the ordering, so
         // what comes back is the newest rather than whatever the store handed
-        // over first.
+        // over first. `limit` is the size of a page and `offset` is how many
+        // messages the caller has already read, so a page is a window of the
+        // ordered list and the ceiling can make it shorter.
         let held = sent.len();
         let limit = args.limit.map_or(DEFAULT_LIMIT, |l| l as usize);
-        sent.truncate(limit);
+        let offset = args.offset.map_or(0, |o| o as usize);
+        let page: Vec<Message> = sent.into_iter().skip(offset).take(limit).collect();
 
-        json_result(&serde_json::json!({
-            "sender": sender,
-            "mailbox": only,
-            "count": sent.len(),
-            "sent_total": held,
-            // **Eliding is never silent.** The count above is what came back;
-            // this says how many there are and what to do about it, and it is
-            // absent when nothing was cut rather than saying "0 left out".
-            "not_shown": (held > sent.len()).then(|| serde_json::json!({
-                "count": held - sent.len(),
-                "how_to_proceed": "these are the newest; raise limit, or narrow to one mailbox",
-            })),
-            // **Said once, beside the list.** It is the same sentence for every
-            // message, so carrying it on each one is most of the answer and
-            // teaches a reader nothing after the first.
-            "how_to_read": (!bodies).then(|| {
-                let withheld = sent.iter().filter(|m| !open.contains(&m.mailbox)).count();
-                match (withheld, sent.len()) {
-                    (0, _) => BODIES_POINTER.to_string(),
-                    (all, total) if all == total => WITHHELD_POINTER.to_string(),
-                    _ => format!("{BODIES_POINTER}; the messages marked private or withheld stay out of it"),
-                }
-            }),
-            "note": operator_unopened.then_some(
-                "the operator's box opens at the first post to them, and nothing has been sent \
-                 yet",
-            ),
-            "unreadable": unreadable,
-            "unreadable_note": "Messages jojobot cannot read are not in the list above — \
-                                it cannot tell who sent them. If one of yours is missing, it may \
-                                be here, and a person has to repair it before any verb can act on it.",
-            "messages": sent
-                .iter()
-                .map(|m| if private.contains(&m.mailbox) {
+        // **Rendered first, so the page can be filled against the ceiling.** A
+        // message with its body that cannot fit under the ceiling even alone is
+        // shown with the body left out and flagged, as a write's receipt is.
+        let full_room = ANSWER_CEILING.saturating_sub(STATUS_BAR_ROOM);
+        let rendered: Vec<(serde_json::Value, usize)> = page
+            .iter()
+            .map(|m| {
+                let mut json = if private.contains(&m.mailbox) {
                     private_listing_json(m)
                 } else if !open.contains(&m.mailbox) {
                     unlisted_listing_json(m)
@@ -248,9 +231,85 @@ impl Jojobot {
                     message_json(m)
                 } else {
                     message_receipt_json(m, None)
-                })
-                .collect::<Vec<_>>(),
-        }))
+                };
+                if json.to_string().chars().count() + 1 > full_room && json["body"].is_string() {
+                    elide_body(&mut json, m);
+                }
+                let size = json.to_string().chars().count() + 1;
+                (json, size)
+            })
+            .collect();
+
+        // The envelope, with the pointer at its longest and the block that names
+        // what was left out at its widest, so what ships is under the ceiling.
+        let envelope = |count: usize, shown: &[Message]| {
+            serde_json::json!({
+                "sender": sender,
+                "mailbox": only,
+                "count": count,
+                "sent_total": held,
+                "how_to_read": (!bodies).then(|| how_to_read_bodies(shown, &open)),
+                "note": operator_unopened.then_some(
+                    "the operator's box opens at the first post to them, and nothing has been \
+                     sent yet",
+                ),
+                "unreadable": unreadable,
+                "unreadable_note": "Messages jojobot cannot read are not in the list above — \
+                                    it cannot tell who sent them. If one of yours is missing, it \
+                                    may be here, and a person has to repair it before any verb \
+                                    can act on it.",
+                "messages": [],
+            })
+        };
+        let rest = envelope(page.len(), &[]).to_string().chars().count()
+            + BODIES_POINTER.chars().count()
+            + not_shown_page(held, held).to_string().chars().count()
+            + STATUS_BAR_ROOM;
+        let kept = Capped::beside(rest).head(&rendered, |(_, size)| *size);
+        let shown = &page[..kept.kept().len()];
+        let mut answer = envelope(shown.len(), shown);
+        answer["messages"] = kept
+            .kept()
+            .iter()
+            .map(|(json, _)| json.clone())
+            .collect::<Vec<_>>()
+            .into();
+        // **Eliding is never silent.** The count above is what came back; this
+        // says how many there are after it and which call reads them, and it is
+        // absent when nothing was cut rather than saying "0 left out".
+        if held > offset + shown.len() {
+            answer["not_shown"] = not_shown_page(held - offset - shown.len(), offset + shown.len());
+        }
+        json_result(&answer)
+    }
+}
+
+/// **What an answer says of the messages after the ones it carries**: how many,
+/// and the one argument that reads them. The same name and the same `count` and
+/// `offset` as the block `search` carries for the hits it left out.
+fn not_shown_page(count: usize, offset: usize) -> serde_json::Value {
+    serde_json::json!({
+        "count": count,
+        "offset": offset,
+        "how_to_proceed": format!(
+            "these are older than the ones above, or did not fit under the answer ceiling: \
+             repeat this call with offset: {offset} to read them, or narrow to one mailbox"
+        ),
+    })
+}
+
+/// **What the top of an answer says about reading bodies**, for the messages it
+/// carries. Said once, beside the list: it is the same sentence for every
+/// message, so carrying it on each one is most of the answer.
+fn how_to_read_bodies(
+    shown: &[Message],
+    open: &std::collections::BTreeSet<&mailbox::MailboxName>,
+) -> String {
+    let withheld = shown.iter().filter(|m| !open.contains(&m.mailbox)).count();
+    match (withheld, shown.len()) {
+        (0, _) => BODIES_POINTER.to_string(),
+        (all, total) if all == total => WITHHELD_POINTER.to_string(),
+        _ => format!("{BODIES_POINTER}; the messages marked private or withheld stay out of it"),
     }
 }
 
@@ -320,6 +379,7 @@ mod tests {
             &jojobot
                 .list_sent(Parameters(ListSentArgs {
                     limit: None,
+                    offset: None,
                     sender: Some("bot:otto".into()),
                     to: None,
                     include_bodies: None,
@@ -409,6 +469,7 @@ mod tests {
             &jojobot
                 .list_sent(Parameters(ListSentArgs {
                     limit: None,
+                    offset: None,
                     sender: Some("bot:otto".into()),
                     to: Some("epsilo".into()),
                     include_bodies: None,
@@ -447,6 +508,7 @@ mod tests {
         send(&jojobot, "epsilon", "otto", "the kiln slice is done").await;
         let asking = |to: Option<String>| ListSentArgs {
             limit: None,
+            offset: None,
             sender: Some("bot:otto".into()),
             to,
             include_bodies: None,
@@ -503,6 +565,7 @@ mod tests {
             &jojobot
                 .list_sent(Parameters(ListSentArgs {
                     limit: None,
+                    offset: None,
                     sender: Some("dev (implementer)".into()),
                     to: None,
                     include_bodies: None,
@@ -557,6 +620,7 @@ mod tests {
             &jojobot
                 .list_sent(Parameters(ListSentArgs {
                     limit: None,
+                    offset: None,
                     sender: Some("dev (implementer)".into()),
                     to: None,
                     include_bodies: None,
@@ -592,6 +656,7 @@ mod tests {
             &jojobot
                 .list_sent(Parameters(ListSentArgs {
                     limit: Some(2),
+                    offset: None,
                     sender: None,
                     to: None,
                     include_bodies: None,
@@ -603,12 +668,16 @@ mod tests {
         assert_eq!(sent["count"], 2, "the caller got what it asked for: {sent}");
         assert_eq!(sent["sent_total"], 4, "…out of what there is: {sent}");
         assert_eq!(sent["not_shown"]["count"], 2);
+        assert_eq!(
+            sent["not_shown"]["offset"], 2,
+            "a cut list names the offset that reads the rest: {sent}"
+        );
         assert!(
             sent["not_shown"]["how_to_proceed"]
                 .as_str()
                 .expect("a way on")
-                .contains("limit"),
-            "a cut list says how to see the rest: {sent}"
+                .contains("offset"),
+            "…and says to send it: {sent}"
         );
 
         // **The newest, not the first two the store handed over.** A cut that
@@ -631,6 +700,7 @@ mod tests {
             &jojobot
                 .list_sent(Parameters(ListSentArgs {
                     limit: None,
+                    offset: None,
                     sender: None,
                     to: None,
                     include_bodies: None,
@@ -656,6 +726,7 @@ mod tests {
             &jojobot
                 .list_sent(Parameters(ListSentArgs {
                     limit: None,
+                    offset: None,
                     sender: Some("bot:otto".into()),
                     to: None,
                     include_bodies: Some(true),
@@ -690,6 +761,7 @@ mod tests {
             &jojobot
                 .list_sent(Parameters(ListSentArgs {
                     limit: None,
+                    offset: None,
                     sender: Some("bot:otto".into()),
                     to: Some("dev-two".into()),
                     include_bodies: None,
@@ -744,6 +816,7 @@ mod tests {
                     &jojobot
                         .list_sent(Parameters(ListSentArgs {
                             limit: None,
+                            offset: None,
                             sender: sender.map(str::to_string),
                             to: None,
                             include_bodies,
@@ -817,6 +890,7 @@ mod tests {
                 &jojobot
                     .list_sent(Parameters(ListSentArgs {
                         limit: None,
+                        offset: None,
                         sender: None,
                         to: Some("person:milhouse".into()),
                         include_bodies: None,
@@ -858,6 +932,7 @@ mod tests {
             &jojobot
                 .list_sent(Parameters(ListSentArgs {
                     limit: None,
+                    offset: None,
                     sender: None,
                     to: Some("person:lisa".into()),
                     include_bodies: None,
@@ -903,6 +978,7 @@ mod tests {
                 &jojobot
                     .list_sent(Parameters(ListSentArgs {
                         limit: None,
+                        offset: None,
                         sender: None,
                         to: None,
                         include_bodies: Some(true),
@@ -976,6 +1052,7 @@ mod tests {
                 &jojobot
                     .list_sent(Parameters(ListSentArgs {
                         limit: None,
+                        offset: None,
                         sender: None,
                         to: None,
                         include_bodies: None,
@@ -1032,6 +1109,7 @@ mod tests {
             &jojobot
                 .list_sent(Parameters(ListSentArgs {
                     limit: None,
+                    offset: None,
                     sender: None,
                     to: None,
                     include_bodies: None,
@@ -1043,5 +1121,61 @@ mod tests {
         let note = listed["how_to_read"].as_str().expect("a pointer");
         assert!(note.contains("include_bodies"), "{listed}");
         assert!(!note.contains("private"), "{listed}");
+    }
+
+    /// **A page counts its own envelope against the ceiling.** The messages are
+    /// sized so that twenty of them come to just under the ceiling and nineteen
+    /// leave room for everything else the answer carries: a page that spent the
+    /// whole ceiling on messages would pass it by the envelope.
+    #[tokio::test]
+    async fn a_page_counts_its_own_envelope_against_the_ceiling() {
+        let bodies = |jojobot: &Jojobot, sid: &str| {
+            let sid = sid.to_string();
+            let jojobot = jojobot.clone();
+            async move {
+                json_of(
+                    &jojobot
+                        .list_sent(Parameters(ListSentArgs {
+                            limit: Some(1000),
+                            offset: None,
+                            sender: None,
+                            to: None,
+                            include_bodies: Some(true),
+                            sid: Some(sid),
+                        }))
+                        .await
+                        .expect("list_sent ok"),
+                )
+            }
+        };
+        // How much one message of a known body costs in a list.
+        let probe = mailbox_handler();
+        make_box(&probe, "pm").await;
+        let sid = owning(&probe, "otto").await;
+        send(&probe, "pm", "otto", &"x".repeat(500)).await;
+        let listed = bodies(&probe, &sid).await;
+        let probed = listed["messages"][0].to_string().chars().count() + 1;
+
+        let one = 1_395usize;
+        let body = "x".repeat(500 + one - probed);
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "pm").await;
+        let sid = owning(&jojobot, "otto").await;
+        for _ in 0..25 {
+            send(&jojobot, "pm", "otto", &body).await;
+        }
+        let page = bodies(&jojobot, &sid).await;
+        let size = page.to_string().chars().count();
+        // The status bar joins the answer after the verb has returned, in the room
+        // the verb left for it.
+        assert!(
+            size + crate::answer::STATUS_BAR_ROOM <= jojobot_domain::text::ANSWER_CEILING,
+            "the page is {size} characters"
+        );
+        assert!(
+            page["count"].as_u64().expect("a count") >= 18,
+            "the page still carries most of what fits: {}",
+            page["count"]
+        );
     }
 }
