@@ -65,6 +65,9 @@ async fn record_the_upgrade_fixture() {
         .env("JOJOBOT_BIND", format!("127.0.0.1:{http_port}"))
         .env("JOJOBOT_ALLOW_NO_AUTH", "1")
         .env_remove("JOJOBOT_ISSUER")
+        // The serving line is an info event, and the deployed binary treats an
+        // inherited RUST_LOG="" as a filter that drops it.
+        .env("RUST_LOG", "info")
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .kill_on_drop(true)

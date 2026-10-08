@@ -1222,6 +1222,9 @@ mod tests {
             .env("JOJOBOT_BIND", format!("127.0.0.1:{served}"))
             .env("JOJOBOT_STORE_PORT", store.to_string())
             .env("JOJOBOT_ALLOW_NO_AUTH", "1")
+            // The line this case waits for is an info event, and the child
+            // inherits this process's RUST_LOG.
+            .env("RUST_LOG", "info")
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null());
         super::die_with_this_run(&mut spawning);
