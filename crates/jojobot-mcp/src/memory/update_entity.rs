@@ -129,6 +129,10 @@ impl Jojobot {
                 {
                     return Ok(refused);
                 }
+                // **The keys the caller sent are the settings.** The due moment worked
+                // out below is jojobot's own arithmetic beside them, kept as one of
+                // the claim's own fields.
+                let set_keys: std::collections::BTreeSet<String> = fields.keys().cloned().collect();
                 let (due_on, _) = self.moved_due_moment(&handle, &fields, &[]).await;
                 if let jojobot_domain::attention::DueMove::Set(due_on) = due_on {
                     fields.insert(
@@ -136,10 +140,10 @@ impl Jojobot {
                         due_on.to_string(),
                     );
                 }
-                let keys = fields.keys().cloned().collect::<Vec<_>>();
+                let keys = set_keys.iter().cloned().collect::<Vec<_>>();
                 let recorded_at = self.dated(None, args.sid.as_deref()).await?;
                 let first = jojobot_domain::memory::NewFact {
-                    sets: keys.iter().cloned().collect(),
+                    sets: set_keys,
                     fields,
                     session: Some(caller.sid.as_str().to_string()),
                     ..jojobot_domain::memory::NewFact::about(

@@ -256,3 +256,45 @@ async fn an_edit_and_its_settings_are_made_whole_or_not_at_all() {
     .says("The Red Handcart");
     story.finish().await;
 }
+
+/// **The due moment jojobot works out does not move a setting between bags.** A
+/// piece of work is made with its decide-by day as a setting, and jojobot keeps the
+/// due moment beside it as one of the claim's own fields. Moving the day, as a
+/// setting again, has to move the due moment too without the two disagreeing about
+/// a bag.
+#[tokio::test]
+async fn the_due_moment_follows_a_setting_that_moves_without_changing_bag() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    s.add("project:atlas", "The Campaign").await;
+
+    let made = s
+        .call(
+            "add_entity",
+            json!({
+                "kind": "work", "handle": "sigma", "name": "The Rigging",
+                "source": "user-named", "parent": "project:atlas",
+                "sets": {"decide_by": "2026-11-01"},
+            }),
+        )
+        .await
+        .json();
+    let claim = made["first_claim"]["address"]
+        .as_str()
+        .expect("the creation hands back its first claim's address")
+        .to_string();
+    s.shape("what the rigging holds", json!({"subject": "work:sigma"}))
+        .await
+        .says("\"due_on\":\"2026-11-01\"");
+
+    s.call(
+        "update_fact",
+        json!({"address": claim, "sets": {"decide_by": "2026-12-15"}}),
+    )
+    .await;
+    s.shape("what the rigging holds", json!({"subject": "work:sigma"}))
+        .await
+        .says("\"decide_by\":\"2026-12-15\"")
+        .says("\"due_on\":\"2026-12-15\"");
+    story.finish().await;
+}
