@@ -5,7 +5,8 @@
 //! their handle and the first post opens their one box. Nothing on the surface
 //! reads it back: not the bot that wrote it, not a colleague, not the front
 //! door's search, not an outbox listing and not the archive. Only the
-//! operator's own reading surface moves that mail.
+//! operator's own reading surface moves that mail, and that surface is the
+//! operator's own page in the web window, to the operator's own login.
 //!
 //! **Every refusal here sits beside the positive it depends on, in the same
 //! block**: the same call made on an ordinary note in a bot's own box succeeds,
@@ -302,16 +303,21 @@ async fn a_bot_leaves_the_operator_a_message_and_no_bot_can_read_it_back() {
         .await
         .says(sigmas.word);
 
-    // ── the operator's window shows it on no page at all ────────────────────
+    // ── the operator's window shows it on the operator's page, and only there ──
     //
-    // The listing renders a bot's own box on that bot's page and nothing else
-    // renders mail, so the person's page, the instance's page and every bot's
-    // page leave the message out. The ordinary note on a bot's page is the
-    // positive: the window does show mail where it shows any.
-    // A run's own record of having posted names the box, as it names any box
-    // it posted to; it carries none of the message, so the text and the title
-    // are what must be absent.
-    for handle in ["person:lisa", "topic:instance", "bot:otto", "bot:sigma"] {
+    // The operator's own page renders their box to the operator's session, and
+    // nothing else renders it: the other person's page, the instance's page and
+    // every bot's page leave the message out. The ordinary note on a bot's page
+    // is the positive for the pages: the window does show mail where it shows
+    // any. A run's own record of having posted names the box, as it names any
+    // box it posted to; it carries none of the message, so the text and the
+    // title are what must be absent.
+    story
+        .page("person:lisa")
+        .await
+        .says("4242")
+        .says("quarterly");
+    for handle in ["person:milhouse", "topic:instance", "bot:otto", "bot:sigma"] {
         story
             .page(handle)
             .await

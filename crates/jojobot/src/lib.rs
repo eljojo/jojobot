@@ -144,6 +144,20 @@ pub fn build_app(state: AppState, ct: CancellationToken) -> Router {
             // to send anybody.
             .route("/ui/login", get(ui::login::begin))
             .route("/ui/callback", get(ui::login::finish))
+            // **The one action the UI has**, behind a session of its own gate:
+            // the listing's gate answers a path that is no entity with "not
+            // found" before it asks about a login, and an action is no entity.
+            .merge(
+                Router::new()
+                    .route(
+                        "/ui/mail/processed",
+                        axum::routing::post(ui::mail::processed),
+                    )
+                    .route_layer(axum::middleware::from_fn_with_state(
+                        state.clone(),
+                        ui::require_session,
+                    )),
+            )
     });
 
     let mut app = Router::new()

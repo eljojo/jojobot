@@ -1591,6 +1591,376 @@ async fn a_bot_page_shows_the_mailbox_it_owns_and_the_mail_in_it() {
     ct.cancel();
 }
 
+// --- the operator's own mail ------------------------------------------------
+
+/// What the operator cases read back: the id of the one message left in the
+/// operator's box, and the id of one left in an ordinary bot's.
+struct OperatorMail {
+    to_the_operator: jojobot_domain::mailbox::MessageId,
+    to_a_bot: jojobot_domain::mailbox::MessageId,
+}
+
+const OPERATOR_BODY: &str = "the operator-only figure is 4242";
+const OPERATOR_SUBJECT: &str = "A report for the operator";
+
+/// The seeded board plus an operator: a person the instance's record names, a
+/// second person who is not, and the operator's box with one message waiting in
+/// `new`. The bot otto's box holds a message too, which is the control: the
+/// operator's page must not carry it, and a bot's mail is not the operator's to
+/// process.
+async fn with_an_operators_mail(board: &Board) -> OperatorMail {
+    let operator = EntityId("person:lisa".into());
+    for new in [
+        NewEntity::new(operator.clone(), "Lisa", "the fixture roster"),
+        NewEntity::new(
+            EntityId("person:milhouse".into()),
+            "Milhouse",
+            "the fixture roster",
+        ),
+        NewEntity::new(
+            EntityId("topic:instance".into()),
+            "This instance",
+            "the fixture roster",
+        ),
+    ] {
+        board.memory.add_entity(new).await.expect("written");
+    }
+    let mut naming = NewFact::about(
+        EntityId("topic:instance".into()),
+        "who the operator is",
+        Date::constant(2026, 3, 4),
+    );
+    naming.provenance = Provenance::Testimony;
+    naming
+        .fields
+        .insert("operator".to_string(), "person:lisa".to_string());
+    board
+        .memory
+        .capture(naming)
+        .await
+        .expect("the operator is named");
+
+    let box_name = MailboxName::named_for(&operator);
+    board
+        .mailboxes
+        .create_mailbox(&box_name, &operator, None)
+        .await
+        .expect("the operator's box opens");
+    let post = |mailbox: MailboxName, subject: &str, body: &str| NewMessage {
+        mailbox,
+        body: body.to_string(),
+        subject: Some(subject.to_string()),
+        sender: "bot:otto".to_string(),
+        sent_at: FIXED_INSTANT,
+        in_reply_to: None,
+        sender_mail_waiting_at_send: None,
+        posted_by_session: None,
+    };
+    let to_the_operator = board
+        .mailboxes
+        .post_message(post(box_name, OPERATOR_SUBJECT, OPERATOR_BODY))
+        .await
+        .expect("posted")
+        .written()
+        .expect("the post landed")
+        .id;
+    let to_a_bot = board
+        .mailboxes
+        .post_message(post(
+            MailboxName("otto".to_string()),
+            "A note for a bot",
+            "the kiln is relined",
+        ))
+        .await
+        .expect("posted")
+        .written()
+        .expect("the post landed")
+        .id;
+    OperatorMail {
+        to_the_operator,
+        to_a_bot,
+    }
+}
+
+/// A mark-processed POST the way the page's own form sends it: from this
+/// origin, with the session cookie.
+async fn mark_processed_in_the_ui(
+    addr: SocketAddr,
+    cookie: &str,
+    id: &str,
+    note: &str,
+    origin: Option<&str>,
+) -> reqwest::Response {
+    let mut request = browser()
+        .post(format!("http://{addr}/ui/mail/processed"))
+        .header(reqwest::header::COOKIE, cookie)
+        .form(&[("id", id), ("note", note)]);
+    if let Some(origin) = origin {
+        request = request.header(reqwest::header::ORIGIN, origin);
+    }
+    request.send().await.unwrap()
+}
+
+/// **The operator's box is on the operator's page, to the operator, and on no
+/// other page.** A non-operator person's page, the instance's own page and a
+/// bot's page leave the message out. The bot's own box on its own page is the
+/// positive: the window does show mail where it shows any.
+#[tokio::test]
+async fn the_operators_mail_is_on_the_operators_page_and_no_other() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let board = seeded_board().await;
+    let mail = with_an_operators_mail(&board).await;
+    let (addr, ct, _board) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let operator_page = read(&client, addr, "/person:lisa/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    let box_section = section(&operator_page, "mailbox");
+    assert!(
+        box_section.contains(OPERATOR_SUBJECT) && box_section.contains(OPERATOR_BODY),
+        "the operator's page shows their box: {operator_page}"
+    );
+    assert!(
+        box_section.contains(mail.to_the_operator.as_str()),
+        "each message is shown by its id, which is what the action names: {operator_page}"
+    );
+
+    for other in [
+        "/person:milhouse/",
+        "/topic:instance/",
+        "/bot:otto/",
+        "/person:alpha/",
+    ] {
+        let page = read(&client, addr, other, &cookie)
+            .await
+            .text()
+            .await
+            .unwrap();
+        assert!(
+            !page.contains(OPERATOR_BODY) && !page.contains(OPERATOR_SUBJECT),
+            "{other} carries the operator's mail: {page}"
+        );
+    }
+    let bot_page = read(&client, addr, "/bot:otto/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        bot_page.contains("A note for a bot"),
+        "a bot's own box is still on its own page: {bot_page}"
+    );
+    assert!(
+        !operator_page.contains("A note for a bot"),
+        "a bot's mail is not the operator's: {operator_page}"
+    );
+    ct.cancel();
+}
+
+/// **Opening the operator's page takes delivery**, as `read_mailbox` does for a
+/// bot: the message moves new to read. A page that is not the operator's takes
+/// no delivery of it.
+#[tokio::test]
+async fn opening_the_operators_page_takes_delivery_of_what_is_new() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let board = seeded_board().await;
+    let mail = with_an_operators_mail(&board).await;
+    let mailboxes = board.mailboxes.clone();
+    let (addr, ct, _board) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+    let state_of = |id: jojobot_domain::mailbox::MessageId| {
+        let mailboxes = mailboxes.clone();
+        async move {
+            mailboxes
+                .message_by_id(&id)
+                .await
+                .expect("reads")
+                .expect("the message is there")
+                .state
+        }
+    };
+    assert_eq!(
+        state_of(mail.to_the_operator.clone()).await.as_token(),
+        "new"
+    );
+
+    // Another person's page does not take it.
+    read(&client, addr, "/person:milhouse/", &cookie).await;
+    assert_eq!(
+        state_of(mail.to_the_operator.clone()).await.as_token(),
+        "new"
+    );
+
+    read(&client, addr, "/person:lisa/", &cookie).await;
+    assert_eq!(
+        state_of(mail.to_the_operator.clone()).await.as_token(),
+        "read",
+        "opening the operator's page is reading their box"
+    );
+    assert_eq!(
+        state_of(mail.to_a_bot.clone()).await.as_token(),
+        "new",
+        "and a bot's mail is not taken by it"
+    );
+    ct.cancel();
+}
+
+/// **Mark-processed in the UI moves the message to processed with its note**,
+/// read back from the store and from the page. A bot's message is not the
+/// operator's to process here.
+#[tokio::test]
+async fn the_operator_marks_a_message_processed_with_a_note() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let board = seeded_board().await;
+    let mail = with_an_operators_mail(&board).await;
+    let mailboxes = board.mailboxes.clone();
+    let (addr, ct, _board) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+    let origin = format!("http://{addr}");
+
+    // The page carries the action for the message it shows.
+    let page = read(&client, addr, "/person:lisa/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        page.contains("action=\"/ui/mail/processed\"") && page.contains("name=\"note\""),
+        "the operator's page carries a mark-processed form with a note: {page}"
+    );
+
+    let done = mark_processed_in_the_ui(
+        addr,
+        &cookie,
+        mail.to_the_operator.as_str(),
+        "paid on the second",
+        Some(&origin),
+    )
+    .await;
+    assert!(
+        done.status().is_redirection(),
+        "the action lands the operator back on the page: {}",
+        done.status()
+    );
+    assert_eq!(location(&done), "/person:lisa/");
+    let held = mailboxes
+        .message_by_id(&mail.to_the_operator)
+        .await
+        .expect("reads")
+        .expect("the message is there");
+    assert_eq!(held.state.as_token(), "processed");
+    assert_eq!(held.notes.as_deref(), Some("paid on the second"));
+    let after = read(&client, addr, "/person:lisa/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        after.contains("paid on the second"),
+        "the note is on the page: {after}"
+    );
+
+    // A message in a bot's box is not the operator's to process here.
+    let refused = mark_processed_in_the_ui(
+        addr,
+        &cookie,
+        mail.to_a_bot.as_str(),
+        "not mine",
+        Some(&origin),
+    )
+    .await;
+    assert!(
+        !refused.status().is_success() && !refused.status().is_redirection(),
+        "a bot's message was processed from the operator's action: {}",
+        refused.status()
+    );
+    let bots = mailboxes
+        .message_by_id(&mail.to_a_bot)
+        .await
+        .expect("reads")
+        .expect("there");
+    assert_ne!(bots.state.as_token(), "processed");
+    ct.cancel();
+}
+
+/// **The action is a POST that checks where it came from.** A cookie alone is
+/// not enough: a request from another origin, or from none, is refused and moves
+/// nothing. Paired with the same POST from this origin in the case above, which
+/// lands. A request with no session is refused as well.
+#[tokio::test]
+async fn the_action_refuses_a_post_from_another_origin_and_one_with_no_session() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let board = seeded_board().await;
+    let mail = with_an_operators_mail(&board).await;
+    let mailboxes = board.mailboxes.clone();
+    let (addr, ct, _board) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+    let id = mail.to_the_operator.as_str();
+
+    for (what, origin) in [
+        ("from another origin", Some("https://elsewhere.example")),
+        ("with an origin that only starts like ours", {
+            // Held outside the call: the string must outlive the borrow.
+            None
+        }),
+        ("with no origin at all", None),
+    ] {
+        let origin_owned = format!("http://{addr}.elsewhere.example");
+        let origin = if what.starts_with("with an origin") {
+            Some(origin_owned.as_str())
+        } else {
+            origin
+        };
+        let refused = mark_processed_in_the_ui(addr, &cookie, id, "x", origin).await;
+        assert_eq!(
+            refused.status(),
+            reqwest::StatusCode::FORBIDDEN,
+            "a POST {what} with a valid cookie was not refused"
+        );
+        let held = mailboxes
+            .message_by_id(&mail.to_the_operator)
+            .await
+            .expect("reads")
+            .expect("there");
+        assert_ne!(
+            held.state.as_token(),
+            "processed",
+            "a POST {what} moved the message"
+        );
+    }
+
+    let no_session = browser()
+        .post(format!("http://{addr}/ui/mail/processed"))
+        .header(reqwest::header::ORIGIN, format!("http://{addr}"))
+        .form(&[("id", id), ("note", "x")])
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        !no_session.status().is_success(),
+        "a POST with no session was accepted: {}",
+        no_session.status()
+    );
+    let held = mailboxes
+        .message_by_id(&mail.to_the_operator)
+        .await
+        .expect("reads")
+        .expect("there");
+    assert_ne!(held.state.as_token(), "processed");
+    ct.cancel();
+}
+
 #[tokio::test]
 async fn a_bot_page_shows_its_runs_and_what_each_one_recorded() {
     let idp = support::TestIdp::new();

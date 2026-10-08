@@ -227,6 +227,12 @@ pub async fn node(
     if entity.kind == EntityKind::BOT {
         body.push_str(&mailbox_section(&state, &entity.id).await);
         body.push_str(&sessions_section(&state, &entity.id).await);
+    } // **The operator's own box is on the operator's own page and nowhere else.**
+    // It is the one place this listing takes delivery: opening it is reading it.
+    if entity.kind == EntityKind::PERSON
+        && crate::ui::mail::operator_of(&state).await.as_ref() == Some(&entity.id)
+    {
+        body.push_str(&operators_mailbox_section(&state, &entity.id).await);
     }
 
     html(&page(&format!("Index of {canonical}"), &body))
@@ -305,6 +311,89 @@ async fn mailbox_section(state: &AppState, bot: &EntityId) -> String {
         }
         out.push_str("</table>\n");
     }
+    out
+}
+
+/// **The operator's mailbox, and the mail in it, with the one action.**
+///
+/// **Unlike a bot's box this read takes delivery.** The operator opening their
+/// box is the operator reading it, as `read_mailbox` is for a bot: everything
+/// new becomes read. Nothing else here moves mail, and the action that
+/// finishes a message is a POST, never a link.
+async fn operators_mailbox_section(state: &AppState, operator: &EntityId) -> String {
+    let Some(held) = crate::ui::mail::operators_box(state, operator).await else {
+        return "<h2>Mailbox</h2>\n<p>Nobody has written to this person yet.</p>\n".to_string();
+    };
+    if let Err(err) = state
+        .mailboxes
+        .read_mailbox(&held.name, jojobot_domain::mailbox::TakenBy::Reading)
+        .await
+    {
+        return blind("Mailbox", "the mail rail", &err.to_string());
+    }
+    // Counted after the delivery, so the numbers match the rows below.
+    let held = match crate::ui::mail::operators_box(state, operator).await {
+        Some(held) => held,
+        None => return blind("Mailbox", "the mail rail", "the box disappeared"),
+    };
+    let messages = match state.mailboxes.scan_messages().await {
+        Ok(messages) => messages,
+        Err(err) => return blind("Mailbox", "the mail rail", &err.to_string()),
+    };
+    let mut mail: Vec<_> = messages
+        .iter()
+        .filter(|message| message.mailbox == held.name)
+        .collect();
+    mail.sort_by_key(|message| message.sent_at);
+
+    let mut out = format!(
+        "<h2>Mailbox {}</h2>\n<p>{} new, {} read, {} processed",
+        escape(held.name.as_str()),
+        held.counts.new,
+        held.counts.read,
+        held.counts.processed,
+    );
+    if !held.quarantined.is_empty() {
+        out.push_str(&format!(
+            ", and {} jojobot cannot read",
+            held.quarantined.len()
+        ));
+    }
+    out.push_str(".</p>\n");
+    if mail.is_empty() {
+        out.push_str("<p>Nothing has been left here.</p>\n");
+        return out;
+    }
+    out.push_str(
+        "<table id=\"mailbox\">\n<tr><th>Id</th><th>State</th><th>From</th><th>About</th>\
+         <th>Sent</th><th>Outcome</th><th></th></tr>\n",
+    );
+    for message in mail {
+        let action = if message.state.as_token() == "processed" {
+            String::new()
+        } else {
+            format!(
+                "<form method=\"post\" action=\"/ui/mail/processed\">\
+                 <input type=\"hidden\" name=\"id\" value=\"{}\">\
+                 <input type=\"text\" name=\"note\" placeholder=\"note (optional)\">\
+                 <button type=\"submit\">Mark processed</button></form>",
+                escape(message.id.as_str()),
+            )
+        };
+        out.push_str(&format!(
+            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>\n\
+             <tr><td colspan=\"7\">{}</td></tr>\n",
+            escape(message.id.as_str()),
+            escape(message.state.as_token()),
+            escape(&message.sender),
+            escape(message.subject.as_deref().unwrap_or("")),
+            escape(&message.sent_at.to_string()),
+            escape(message.notes.as_deref().unwrap_or("")),
+            action,
+            block(&message.body),
+        ));
+    }
+    out.push_str("</table>\n");
     out
 }
 

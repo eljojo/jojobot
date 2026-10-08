@@ -18,6 +18,7 @@
 //! ([`crate::config`]).
 
 pub mod login;
+pub mod mail;
 pub mod pages;
 pub mod tree;
 
@@ -107,6 +108,9 @@ struct Live {
 pub struct Ui {
     client_id: String,
     redirect_uri: String,
+    /// The origin this UI is served at, as the configuration states it. A
+    /// state-changing request has to come from it.
+    origin: String,
     endpoints: IssuerEndpoints,
     /// Validates the ID token the issuer returns, and authorizes its subject
     /// against the same allowlist `/mcp` uses.
@@ -131,6 +135,7 @@ impl Ui {
         Self {
             client_id: cfg.client_id.clone(),
             redirect_uri: cfg.redirect_uri(),
+            origin: cfg.base_url.trim_end_matches('/').to_string(),
             endpoints,
             id_tokens,
             http,
@@ -247,6 +252,35 @@ impl Ui {
         browsers.contains_key(token)
     }
 
+    /// **Whether a state-changing request came from this UI's own origin.**
+    ///
+    /// The session cookie is `SameSite=Lax`, so a cross-site POST arrives
+    /// without it; this is the second check, for a client that sends the cookie
+    /// anyway. The `Origin` header must equal the configured origin exactly, or,
+    /// when a client sends none, the `Referer` must sit under it. A request with
+    /// neither is refused: a browser sends `Origin` on a POST, so a request
+    /// without one is not a browser acting for a person on this page.
+    pub(crate) fn same_origin(&self, headers: &axum::http::HeaderMap) -> bool {
+        let text = |name: header::HeaderName| headers.get(name).and_then(|v| v.to_str().ok());
+        if let Some(origin) = text(header::ORIGIN) {
+            return origin == self.origin;
+        }
+        text(header::REFERER).is_some_and(|referer| {
+            referer
+                .strip_prefix(self.origin.as_str())
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+        })
+    }
+
+    /// Whether the request carries a cookie that names a live session.
+    fn has_live_session(&self, headers: &axum::http::HeaderMap) -> bool {
+        headers
+            .get(header::COOKIE)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|header| cookie_value(header, SESSION_COOKIE))
+            .is_some_and(|token| self.is_live(token))
+    }
+
     /// The `Set-Cookie` value for a freshly opened session.
     fn session_cookie(&self, token: &str) -> String {
         let mut cookie = format!(
@@ -333,6 +367,23 @@ pub async fn require_browser(State(state): State<AppState>, req: Request, next: 
         .map(|pq| pq.as_str())
         .unwrap_or("/");
     Redirect::to(&format!("/ui/login?next={}", encode_component(wanted))).into_response()
+}
+
+/// Require a logged-in browser on an ACTION. A page that is not a page sends
+/// nobody to the login: a POST has no page to come back to, so a request with
+/// no live session is refused with a status.
+pub async fn require_session(State(state): State<AppState>, req: Request, next: Next) -> Response {
+    let ui = state
+        .ui
+        .as_ref()
+        .expect("require_session mounted without a UI");
+    if ui.has_live_session(req.headers()) {
+        return next.run(req).await;
+    }
+    refuse(
+        StatusCode::UNAUTHORIZED,
+        "That needs a login. Open the page and sign in first.",
+    )
 }
 
 /// A refusal a person reads, rather than a JSON body a program would.
