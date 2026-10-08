@@ -232,7 +232,11 @@ impl Jojobot {
                        Pass new_only: false to get every message back whole, flagged seen_before, \
                        which is the read for a consumer recovering from a crash that no longer \
                        holds what it was given. Either \
-                       way it changes what is SHIPPED, never what is owed. Each message may also \
+                       way it changes what is SHIPPED, never what is owed. AN ANSWER STOPS AT \
+                       THE ANSWER CEILING AND TAKES EVERY MESSAGE ANYWAY: the oldest bodies come \
+                       whole, a body that does not fit is left out and flagged body_elided with \
+                       body_bytes and body_head, and a message that does not fit even so is named \
+                       by id under not_shown; read_message returns any of them whole. Each message may also \
                        carry `sender_mail_waiting_at_send`, stamped once when it was posted — see \
                        `post_message`'s own description for what it means; `null` there is unknown, \
                        never zero. A message that a DIFFERENT run posted than the one reading it \
@@ -313,6 +317,9 @@ impl Jojobot {
                     .and_then(|caller| caller.card);
                 self.mark_other_runs(&mut rendered, &delivery, viewer.as_ref())
                     .await;
+                // Last, so the sizes it fits against include everything the
+                // answer carries.
+                fit_delivery(&mut rendered, &delivery);
                 json_result(&rendered)
             }
             mailbox::Guarded::Blocked {
@@ -1509,5 +1516,57 @@ mod tests {
             recovery.to_string().contains("the first shipment"),
             "new_only false hands the bodies back: {recovery}"
         );
+    }
+
+    /// **A delivery counts its own envelope against the ceiling.** The messages
+    /// are sized so that twenty whole bodies come to just under the ceiling and
+    /// nineteen leave room for everything else the answer carries; a delivery
+    /// that spent the whole ceiling on messages would pass it by the envelope.
+    /// Every message is still taken, and the ones left out are named.
+    #[tokio::test]
+    async fn a_delivery_counts_its_own_envelope_against_the_ceiling() {
+        let read = |jojobot: &Jojobot, sid: &str| {
+            let sid = sid.to_string();
+            let jojobot = jojobot.clone();
+            async move {
+                json_of(
+                    &jojobot
+                        .read_mailbox(Parameters(ReadMailboxArgs {
+                            counts_only: None,
+                            new_only: None,
+                            sid: Some(sid),
+                        }))
+                        .await
+                        .expect("read_mailbox ok"),
+                )
+            }
+        };
+        let probe = mailbox_handler();
+        let sid = owning(&probe, "dev").await;
+        send(&probe, "dev", "epsilon", &"x".repeat(500)).await;
+        let delivery = read(&probe, &sid).await;
+        let probed = delivery["messages"][0].to_string().chars().count() + 1;
+
+        let one = 1_376usize;
+        let body = "x".repeat(500 + one - probed);
+        let jojobot = mailbox_handler();
+        let sid = owning(&jojobot, "dev").await;
+        for _ in 0..25 {
+            send(&jojobot, "dev", "epsilon", &body).await;
+        }
+        let delivery = read(&jojobot, &sid).await;
+        let size = delivery.to_string().chars().count();
+        // The status bar joins the answer after the verb has returned, in the room
+        // the verb left for it.
+        assert!(
+            size + crate::answer::STATUS_BAR_ROOM <= jojobot_domain::text::ANSWER_CEILING,
+            "the delivery is {size} characters"
+        );
+        let carried = delivery["messages"].as_array().expect("messages").len();
+        let named = delivery["not_shown"]["count"].as_u64().unwrap_or(0) as usize;
+        assert_eq!(carried + named, 25, "every message is carried or named");
+        let counts = counts(&jojobot, "dev").await;
+        assert_eq!(counts["counts"]["read"], 25, "all taken: {counts}");
+        assert_eq!(counts["counts"]["new"], 0, "{counts}");
     }
 }

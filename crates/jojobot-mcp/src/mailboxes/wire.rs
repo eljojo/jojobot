@@ -252,7 +252,22 @@ pub(crate) fn message_receipt_json(
     how_to_read: Option<&str>,
 ) -> serde_json::Value {
     let mut body = message_json(message);
-    if let Some(obj) = body.as_object_mut() {
+    elide_body(&mut body, message);
+    if let Some(how_to_read) = how_to_read
+        && let Some(obj) = body.as_object_mut()
+    {
+        obj.insert("how_to_read".into(), how_to_read.into());
+    }
+    body
+}
+
+/// **Put a rendered message's body aside, saying so.** The body becomes null,
+/// `body_elided` is true, `body_bytes` is the exact size of what is stored and
+/// `body_head` is enough of it to tell which message this is. One function for
+/// the receipt of a write and for a body that did not fit under the answer
+/// ceiling, so the two cannot flag it differently.
+pub(crate) fn elide_body(rendered: &mut serde_json::Value, message: &Message) {
+    if let Some(obj) = rendered.as_object_mut() {
         obj.insert("body".into(), serde_json::Value::Null);
         obj.insert("body_elided".into(), true.into());
         obj.insert("body_bytes".into(), message.body.len().into());
@@ -260,11 +275,7 @@ pub(crate) fn message_receipt_json(
             "body_head".into(),
             text::BODY_DIGEST.render(&message.body).into(),
         );
-        if let Some(how_to_read) = how_to_read {
-            obj.insert("how_to_read".into(), how_to_read.into());
-        }
     }
-    body
 }
 
 /// One delivered message: the whole record, plus whether a previous read had
@@ -423,6 +434,84 @@ pub(crate) fn note_leftovers(rendered: &mut serde_json::Value, leftovers: &[Deli
                         processed. read_message returns one by id, or read_mailbox with new_only \
                         false returns them all, flagged seen_before",
     });
+}
+
+/// **Fit a delivery's messages under the answer ceiling, and take none of them
+/// back.** Every message the delivery covers was taken before this runs, so this
+/// only decides how much of each the answer carries. In order, oldest first: the
+/// bodies that fit come whole; from the first that does not, a message comes as
+/// an envelope with its body left out and flagged (`body_elided`, `body_bytes`,
+/// `body_head`, the shape a write's receipt has); and a message that does not fit
+/// even so is named by id in `not_shown`. `read_message` returns any of them
+/// whole, and the next read names the ones this one took as leftovers.
+///
+/// Silent when everything fits: the answer is untouched and carries neither key.
+pub(crate) fn fit_delivery(rendered: &mut serde_json::Value, delivery: &Delivery) {
+    use jojobot_domain::text::ANSWER_CEILING;
+    let Some(messages) = rendered
+        .get_mut("messages")
+        .and_then(|m| m.as_array_mut())
+        .map(std::mem::take)
+    else {
+        return;
+    };
+    let size = |json: &serde_json::Value| json.to_string().chars().count() + 1;
+    let rest = rendered.to_string().chars().count() + crate::answer::STATUS_BAR_ROOM;
+    if rest + messages.iter().map(size).sum::<usize>() <= ANSWER_CEILING {
+        rendered["messages"] = messages.into();
+        return;
+    }
+    let ids: Vec<&str> = delivery
+        .messages
+        .iter()
+        .map(|delivered| delivered.message.id.as_str())
+        .collect();
+    // The block that names the messages left out is measured at its widest,
+    // which is naming every one of them.
+    let reserve = not_shown_ids(&ids).to_string().chars().count();
+    let mut room = ANSWER_CEILING.saturating_sub(rest + reserve);
+    let mut shipped: Vec<serde_json::Value> = Vec::new();
+    let mut named: Vec<&str> = Vec::new();
+    let mut whole_fits = true;
+    let mut elided = false;
+    for (mut json, delivered) in messages.into_iter().zip(&delivery.messages) {
+        if whole_fits && size(&json) <= room {
+            room -= size(&json);
+            shipped.push(json);
+            continue;
+        }
+        whole_fits = false;
+        elide_body(&mut json, &delivered.message);
+        if named.is_empty() && size(&json) <= room {
+            room -= size(&json);
+            elided = true;
+            shipped.push(json);
+        } else {
+            named.push(delivered.message.id.as_str());
+        }
+    }
+    rendered["count"] = shipped.len().into();
+    rendered["messages"] = shipped.into();
+    if !named.is_empty() {
+        rendered["not_shown"] = not_shown_ids(&named);
+    }
+    if elided || !named.is_empty() {
+        rendered["how_to_read"] = "every message was taken, and a body that did not fit under the \
+            answer ceiling is left out: read_message returns one whole by id"
+            .into();
+    }
+}
+
+/// What an answer says of the messages it took and did not carry: how many, and
+/// which. The same name and the same `count` as the block a list cut at the
+/// ceiling carries.
+fn not_shown_ids(ids: &[&str]) -> serde_json::Value {
+    serde_json::json!({
+        "count": ids.len(),
+        "ids": ids,
+        "how_to_proceed": "these were taken with the rest and are owed like them: read_message \
+                           returns one by id, and the next read_mailbox names them as leftovers",
+    })
 }
 
 /// One of the mailbox guard's candidates on the wire.
