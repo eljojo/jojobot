@@ -74,6 +74,20 @@ async fn a_later_run_cannot_rewrite_the_operators_words_in_place_and_the_route_w
         .expect("a capture hands back its address")
         .to_string();
 
+    // **The ordinary read after the replace** carries both, each as what it is
+    // now: the original, archived, with the reason; the corrected claim, active,
+    // derived from it. A read that dropped the archived one, or served it as
+    // active beside the new one, would leave two live claims about one colour.
+    let now = later.recall("thing:handcart").await;
+    now.claim(&red)
+        .says("\"status\":\"archived\"")
+        .says("the handcart is red")
+        .says("the operator corrected it")
+        .never_says("\"status\":\"active\"");
+    now.claim(&blue)
+        .says("\"status\":\"active\"")
+        .says("the handcart is blue")
+        .says(&format!("\"derived_from\":\"{red}\""));
     // The archived original is readable, with what it said and that it is archived.
     later
         .shape(
