@@ -62,7 +62,10 @@ impl Jojobot {
                        there. Newest first, each with its \
                        state (`new` = nobody has picked it up · `read` = delivered, not yet \
                        finished with · `processed` = acted on) plus notes when the consumer \
-                       recorded an outcome. Bodies are left out unless you ask for them — you \
+                       recorded an outcome. A message that has left `new` also carries \
+                       `taken_by`: `reading` = the owner opened the box or took that message \
+                       by id, so somebody looked · `posting` = it rode back with the answer to \
+                       a post of the owner's own, so it reached them and nobody went looking. Bodies are left out unless you ask for them — you \
                        wrote them — so each carries body_bytes and the opening line instead, and \
                        says body_elided: true rather than leaving you to guess, with the one \
                        instruction for getting them said once beside the list rather than on \

@@ -185,10 +185,10 @@ impl Jojobot {
                         "why": "jojobot's own storage failed",
                         "how_to_proceed": "The entry IS recorded — do not send this call again, \
                                            or the entry lands twice. Only the focus did not move. \
-                                           Set it on its own with a journal call carrying a focus \
-                                           and no entry, or leave it: the chronology is what \
-                                           outlives the session, and the focus is overwritten by \
-                                           the next beat anyway.",
+                                           Set it with the `focus` of your next journal beat, or \
+                                           leave it: the chronology is what outlives the \
+                                           session, and the focus is overwritten by the next \
+                                           beat anyway.",
                     }));
                 }
             },
@@ -615,6 +615,11 @@ mod tests {
         assert!(
             how.contains("do not send this call again"),
             "the retry is the danger, so the advice has to forbid it: {how}"
+        );
+
+        assert!(
+            how.contains("`focus`") && !how.contains("no entry"),
+            "the advice must name a call that exists, and `entry` is required: {how}"
         );
 
         assert!(

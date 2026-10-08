@@ -221,8 +221,10 @@ impl Jojobot {
                        `leftovers` (a count and their ids) and not shipped again. A message somebody else finished while this delivery was \
                        in flight is left out, so a delivery can be smaller than counts you saw a \
                        moment ago. Act on what you receive, then call \
-                       mark_processed for each. Draining a whole box makes every message in it \
-                       yours to finish — use read_message when you want only one. ONLY CHECKING \
+                       mark_processed for each. Two sessions of one bot share its one box, so \
+                       a delivery taken by one is not waiting for the other; two workers that \
+                       must not share a queue are two bots. Draining a whole box makes every \
+                       message in it yours to finish — use read_message when you want only one. ONLY CHECKING \
                        WHETHER ANYTHING IS WAITING? Call this with counts_only: true — you get \
                        your box's per-state counts and its unreadable report, NOTHING moves out \
                        of new and nothing becomes yours to finish, so a poll that finds an empty \

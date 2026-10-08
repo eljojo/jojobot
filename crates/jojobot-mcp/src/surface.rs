@@ -825,6 +825,14 @@ fn the_mailbox_verbs_name_written_by_other_run() {
     }
 }
 
+/// **`list_sent` names `taken_by` and its two tokens**, since a sender reading
+/// `reading` and `posting` apart is the only way to tell mail somebody looked at
+/// from mail that merely rode back with a post.
+#[test]
+fn the_list_sent_description_names_taken_by_and_posting() {
+    assert_description_names("list_sent", &["taken_by", "posting"]);
+}
+
 /// **`wrap_session` names `closing_focus`, and `recall` points at it.** A run's
 /// closing focus rides the closing entry beside the story and never inside its
 /// text, and a read of the run's prose does not carry it.
