@@ -24,11 +24,11 @@ pub(crate) fn session_nothing_to_amend() -> CallToolResult {
                            session's chronology, booting as this identity through start_here \
                            reports its state."
             .into();
-    let body = serde_json::json!({
+    let mut body = serde_json::json!({
         "status": "blocked",
         "wrote": false,
-        "how_to_proceed": how_to_proceed.as_str(),
     });
+    how_to_proceed.write_into(&mut body);
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])
 }
 
@@ -43,13 +43,36 @@ pub(crate) fn session_nothing_to_amend() -> CallToolResult {
 /// would leave a caller unable to tell that the run a status check just
 /// called `wrapped` is the same one this refusal is about.
 pub(crate) fn session_declined(e: SessionError, sid: &str) -> Result<CallToolResult, McpError> {
+    let word = session_fix_by(&e);
+    session_declined_arms(e, sid).map(|answered| stamp(answered, word))
+}
+
+/// **The word every session refusal wears, in one exhaustive match.** No
+/// wildcard arm: a kind added to [`SessionError`] without a word does not
+/// compile.
+pub(crate) fn session_fix_by(e: &SessionError) -> Option<FixBy> {
+    match e {
+        SessionError::InvalidId { .. }
+        | SessionError::InvalidEntry { .. }
+        | SessionError::UnknownSession { .. }
+        | SessionError::Closed { .. }
+        | SessionError::NotWrapped { .. }
+        | SessionError::NoEntries { .. }
+        | SessionError::NotABeat { .. } => Some(FixBy::Change),
+        SessionError::KindsNeverLoaded => Some(FixBy::Person),
+        SessionError::Conflict => Some(FixBy::Retry),
+        SessionError::Store(_) => other_store_failure_word(),
+    }
+}
+
+fn session_declined_arms(e: SessionError, sid: &str) -> Result<CallToolResult, McpError> {
     let blocked = |attempted: &str, how: WayForward| {
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "status": "blocked",
             "attempted": attempted,
             "wrote": false,
-            "how_to_proceed": how.as_str(),
         });
+        how.write_into(&mut body);
         Ok(CallToolResult::success(vec![ContentBlock::text(
             body.to_string(),
         )]))
@@ -146,6 +169,11 @@ pub(crate) fn session_declined(e: SessionError, sid: &str) -> Result<CallToolRes
 /// Map a [`SessionError`] to an MCP error, splitting client mistakes from
 /// server-side failures — the same split the other two contexts make.
 pub(crate) fn session_error(e: SessionError) -> McpError {
+    let word = session_fix_by(&e);
+    stamp_error(session_error_arms(e), word)
+}
+
+fn session_error_arms(e: SessionError) -> McpError {
     match e {
         // **Backstops, not the intended answer.** Every one of these is a
         // caller mistake and `session_declined` answers all of them as blocked
@@ -338,6 +366,110 @@ mod tests {
             err.message.contains("retry") || err.message.contains("retrying"),
             "the caller's next move must be named: {}",
             err.message
+        );
+    }
+    /// One row per refusal kind: its name, an error the domain raises for it, and
+    /// the word it wears. `session_fix_by` is an exhaustive match, so a kind
+    /// added without a word does not compile.
+    fn session_refusal_rows() -> Vec<(&'static str, SessionError, Option<&'static str>)> {
+        use jojobot_domain::session::SessionState;
+        let s = |text: &str| text.to_string();
+        vec![
+            ("InvalidId", SessionError::InvalidId(s("x")), Some("change")),
+            (
+                "InvalidEntry",
+                SessionError::InvalidEntry(s("empty")),
+                Some("change"),
+            ),
+            (
+                "UnknownSession",
+                SessionError::UnknownSession {
+                    attempted: s("zz99"),
+                },
+                Some("change"),
+            ),
+            (
+                "Closed (abandoned)",
+                SessionError::Closed {
+                    attempted: s("zz99"),
+                    state: SessionState::Abandoned,
+                },
+                Some("change"),
+            ),
+            (
+                "Closed (wrapped)",
+                SessionError::Closed {
+                    attempted: s("zz99"),
+                    state: SessionState::Wrapped,
+                },
+                Some("change"),
+            ),
+            (
+                "NotWrapped",
+                SessionError::NotWrapped {
+                    attempted: s("zz99"),
+                    state: SessionState::Active,
+                },
+                Some("change"),
+            ),
+            (
+                "NoEntries",
+                SessionError::NoEntries {
+                    attempted: s("zz99"),
+                },
+                Some("change"),
+            ),
+            (
+                "NotABeat",
+                SessionError::NotABeat {
+                    attempted: s("e1"),
+                    session: s("zz99"),
+                },
+                Some("change"),
+            ),
+            (
+                "KindsNeverLoaded",
+                SessionError::KindsNeverLoaded,
+                Some("person"),
+            ),
+            ("Conflict", SessionError::Conflict, Some("retry")),
+            (
+                "Store",
+                SessionError::Store(s("connection refused")),
+                other_store_failure_word().map(FixBy::as_token),
+            ),
+        ]
+    }
+
+    /// 🚨 **Every refusal kind the session lane answers wears its word.** One
+    /// row per kind, each reddening alone. A session that is closed or missing
+    /// is a call that has to change; a kind set nothing re-reads is a person's;
+    /// a collision or a storage failure is a retry. Held against the match,
+    /// against the blocked answer the lane serves, and against the protocol
+    /// error the backstop raises.
+    #[test]
+    fn every_refusal_kind_in_the_session_lane_wears_its_word() {
+        for (label, error, word) in session_refusal_rows() {
+            assert_eq!(
+                session_fix_by(&error).map(FixBy::as_token),
+                word,
+                "{label}: the match and the row disagree"
+            );
+        }
+        for (label, error, word) in session_refusal_rows() {
+            match session_declined(error, "zz99") {
+                Ok(answered) => assert_word(label, &answered, word),
+                Err(raised) => assert_error_word(label, &raised, word),
+            }
+        }
+        for (label, error, word) in session_refusal_rows() {
+            let raised = session_error(error);
+            assert_error_word(label, &raised, word);
+        }
+        assert_fix_by(
+            "session_nothing_to_amend",
+            &session_nothing_to_amend(),
+            "change",
         );
     }
 }

@@ -213,6 +213,40 @@ pub(crate) fn blocked(result: &CallToolResult) -> serde_json::Value {
     body
 }
 
+/// **A refusal and the word it wears.** The body is a blocked answer whose
+/// `fix_by` is `word`, and the word sits ahead of the prose in the text a
+/// caller reads, so it is read before `how_to_proceed`. `label` names the
+/// refusal kind the row stands for.
+pub(crate) fn assert_fix_by(label: &str, result: &CallToolResult, word: &str) {
+    let body = blocked(result);
+    assert_eq!(body["fix_by"], word, "{label}: {body}");
+    let text = text_of(result);
+    assert!(
+        text.find("\"fix_by\"") < text.find("\"how_to_proceed\""),
+        "{label}: the word must come before the prose: {text}"
+    );
+}
+
+/// **A refusal and the word it may not wear**: with `Some(word)` this is
+/// [`assert_fix_by`]; with `None` the answer is blocked and carries no
+/// `fix_by` at all. A storage failure's word is `None` while the store-failure
+/// switch is off, and its rows expect whatever the switch says.
+pub(crate) fn assert_word(label: &str, result: &CallToolResult, word: Option<&str>) {
+    match word {
+        Some(word) => assert_fix_by(label, result, word),
+        None => {
+            let body = blocked(result);
+            assert!(body.get("fix_by").is_none(), "{label}: {body}");
+        }
+    }
+}
+
+/// The same for a protocol error: the word rides in `data`, or there is none.
+pub(crate) fn assert_error_word(label: &str, error: &McpError, word: Option<&str>) {
+    let carried = error.data.as_ref().and_then(|data| data["fix_by"].as_str());
+    assert_eq!(carried, word, "{label}: {error:?}");
+}
+
 // ── a handler under test, booted as somebody ────────────────────────────────
 //
 // **Here rather than in a context's own `testing`, because an identity is not

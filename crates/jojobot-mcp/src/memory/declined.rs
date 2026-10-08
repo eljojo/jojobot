@@ -172,14 +172,85 @@ pub(crate) fn blocked_body(
     how_to_proceed: impl Into<WayForward>,
 ) -> CallToolResult {
     let how_to_proceed = how_to_proceed.into();
-    let body = serde_json::json!({
+    let mut body = serde_json::json!({
         "status": "blocked",
         "attempted": attempted.as_str(),
         "wrote": false,
         "candidates": candidates.iter().map(candidate_json).collect::<Vec<_>>(),
-        "how_to_proceed": how_to_proceed.as_str(),
     });
+    how_to_proceed.write_into(&mut body);
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])
+}
+
+/// **The word every memory refusal wears, in one exhaustive match.** There is
+/// no wildcard arm: a kind added to [`MemoryError`] without a word does not
+/// compile, so a refusal cannot ship without one. [`memory_declined`] and
+/// [`memory_error`] stamp this word on whatever they answer, and the cases below
+/// check what is served against it.
+///
+/// `change` is the call itself; `person` is damage or a decision only a person
+/// can make; `retry` is a failure the same call may get past. `None` is not a
+/// refusal: a fold that is behind says the write LANDED.
+pub(crate) fn memory_fix_by(e: &MemoryError) -> Option<FixBy> {
+    match e {
+        MemoryError::InvalidFact { .. }
+        | MemoryError::InvalidSubject { .. }
+        | MemoryError::InvalidAddress { .. }
+        | MemoryError::InvalidEntity { .. }
+        | MemoryError::InvalidEdge { .. }
+        | MemoryError::InvalidQuery { .. }
+        | MemoryError::InvalidType { .. }
+        | MemoryError::ShippedType { .. }
+        | MemoryError::RepeatsShipped
+        | MemoryError::BreaksFit { .. }
+        | MemoryError::BreaksSchedule { .. }
+        | MemoryError::BootTooHeavy { .. }
+        | MemoryError::BreaksType { .. }
+        | MemoryError::UnknownFact { .. }
+        | MemoryError::NotYours { .. }
+        | MemoryError::RoomFull { .. }
+        | MemoryError::KeyNotYours { .. }
+        | MemoryError::ChartCycle { .. }
+        | MemoryError::MergeCarriesGuardedKeys { .. }
+        | MemoryError::ThoughtTooLong { .. }
+        | MemoryError::MergeOverfillsRoom { .. }
+        | MemoryError::MergeThoughtTooLong { .. }
+        | MemoryError::RoleFieldGuarded { .. }
+        | MemoryError::RoleNotHeld { .. }
+        | MemoryError::UnknownEntity { .. }
+        | MemoryError::NothingToMerge { .. }
+        | MemoryError::AlreadyMerged { .. }
+        | MemoryError::NothingToRename { .. }
+        | MemoryError::HandleMoved { .. }
+        | MemoryError::SuppliedHandle { .. }
+        | MemoryError::AlreadyRetracted { .. }
+        | MemoryError::AlreadyArchived { .. }
+        | MemoryError::NotArchived { .. }
+        | MemoryError::NotRetractable { .. }
+        | MemoryError::UnsourcedObservation
+        | MemoryError::UnstatedProvenance
+        | MemoryError::TestimonyRewritten { .. } => Some(FixBy::Change),
+        // A kind set nothing re-reads, a build that collided with a stored row,
+        // and a claim only the operator can bless.
+        MemoryError::KindsNeverLoaded { .. }
+        | MemoryError::SuppliedRecordCollidesWithStoredRow { .. }
+        | MemoryError::UnconfirmedPromotion
+        | MemoryError::UnconfirmedSettling => Some(FixBy::Person),
+        // A held role frees when its lease ends; a collision clears on the next try.
+        MemoryError::RoleTaken { .. } | MemoryError::Conflict => Some(FixBy::Retry),
+        MemoryError::Store(_) => memory_store_failure_word(),
+        MemoryError::FoldBehind { .. } => None,
+    }
+}
+
+/// The answer for a refusal: the arms below build the body and the word comes
+/// from [`memory_fix_by`], stamped here once for every one of them.
+pub(crate) fn memory_declined(
+    verb: &'static str,
+    e: MemoryError,
+) -> Result<CallToolResult, McpError> {
+    let word = memory_fix_by(&e);
+    memory_declined_arms(verb, e).map(|answered| stamp(answered, word))
 }
 
 /// **A miss and a block speak one shape.** An id, handle or address that names
@@ -196,10 +267,7 @@ pub(crate) fn blocked_body(
 /// Everything that is genuinely a caller mistake (a malformed address, an
 /// unknown kind token) or genuinely a failure (the store is down) stays an
 /// error. `Ok` here is the refusal; `Err` is still an error.
-pub(crate) fn memory_declined(
-    verb: &'static str,
-    e: MemoryError,
-) -> Result<CallToolResult, McpError> {
+fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolResult, McpError> {
     match e {
         MemoryError::UnknownEntity { attempted, nearest } => Ok(blocked_result(
             &EntityId(attempted),
@@ -440,7 +508,31 @@ pub(crate) fn memory_declined(
                 .first()
                 .map(|(part, n)| format!("{part} ({n} characters)"))
                 .unwrap_or_default();
-            let body = serde_json::json!({
+            let how_to_proceed = WayForward::from(match verb {
+                "set_charter" => format!(
+                    "Nothing was written: {e}. Send a shorter charter. The largest part of \
+                         the floor is {largest}; floor_parts lists every part. A rule that \
+                         binds at one moment is better carried by a skill than by the charter."
+                ),
+                // **A creation made nothing, so there is nothing to unstar.**
+                // The ways down for an existing bot name rules and seats
+                // that a bot not yet created does not have.
+                "add_entity" => format!(
+                    "Nothing was created: {e}. The largest part of the floor is {largest}; \
+                         floor_parts lists every part. Send a smaller `sets` in the same call, or \
+                         create the bot without `sets` and capture the fields on it afterwards."
+                ),
+                // **Three ways down, and the caller picks the one that
+                // costs least.** Which rules are starred and how many seats
+                // a bot has are data, so none of them is chosen for the
+                // caller.
+                _ => format!(
+                    "Nothing was written: {e}. The largest part of the floor is {largest}; \
+                         floor_parts lists every part. {}",
+                    crate::orientation::floor::ways_down(subject),
+                ),
+            });
+            let mut body = serde_json::json!({
                 "status": "blocked",
                 "attempted": subject,
                 "wrote": false,
@@ -454,31 +546,8 @@ pub(crate) fn memory_declined(
                     .iter()
                     .map(|(part, n)| serde_json::json!({"part": part, "characters": n}))
                     .collect::<Vec<_>>(),
-                "how_to_proceed": match verb {
-                    "set_charter" => format!(
-                        "Nothing was written: {e}. Send a shorter charter. The largest part of \
-                         the floor is {largest}; floor_parts lists every part. A rule that \
-                         binds at one moment is better carried by a skill than by the charter."
-                    ),
-                    // **A creation made nothing, so there is nothing to unstar.**
-                    // The ways down for an existing bot name rules and seats
-                    // that a bot not yet created does not have.
-                    "add_entity" => format!(
-                        "Nothing was created: {e}. The largest part of the floor is {largest}; \
-                         floor_parts lists every part. Send a smaller `sets` in the same call, or \
-                         create the bot without `sets` and capture the fields on it afterwards."
-                    ),
-                    // **Three ways down, and the caller picks the one that
-                    // costs least.** Which rules are starred and how many seats
-                    // a bot has are data, so none of them is chosen for the
-                    // caller.
-                    _ => format!(
-                        "Nothing was written: {e}. The largest part of the floor is {largest}; \
-                         floor_parts lists every part. {}",
-                        crate::orientation::floor::ways_down(subject),
-                    ),
-                },
             });
+            how_to_proceed.write_into(&mut body);
             Ok(CallToolResult::success(vec![ContentBlock::text(
                 body.to_string(),
             )]))
@@ -651,7 +720,69 @@ pub(crate) fn memory_declined(
             aged_out,
         } => {
             let empty_room_without_capacity = live == 0 && capacity == 0;
-            let body = serde_json::json!({
+            let how_to_proceed = WayForward::from(if empty_room_without_capacity {
+                // **A room with no capacity holds nothing, so there is no
+                // thought to archive or to drop** — naming either points at
+                // nothing. What is true is that the ceiling has to move
+                // first, and it is not this caller's to move.
+                if verb == "update_fact" {
+                    format!(
+                        "Nothing was written: '{subject}'s room has a capacity of 0, so it \
+                             holds no thoughts and {verb} cannot make this claim one. A \
+                             different identity has to give '{subject}' a thought_capacity above \
+                             0 first — ask another bot, or the operator — then re-call {verb}."
+                    )
+                } else {
+                    format!(
+                        "Nothing was written: '{subject}'s room has a capacity of 0, so no \
+                             thought can be written in it and there is none to give up. A \
+                             different identity has to give '{subject}' a thought_capacity above \
+                             0 — ask another bot, or the operator — then re-call {verb}. Once \
+                             and only once, borrow: true lets this one land over the ceiling \
+                             anyway."
+                    )
+                }
+            } else if verb == "update_fact" {
+                // **An edit has no drop and no borrow**, so naming either
+                // would send the caller round a loop (rule 68). Archiving
+                // a live thought and writing the thought through capture
+                // are the two moves it has.
+                //
+                // **How many, because one is not always enough.** The edit
+                // adds a thought, so the room has to end below its
+                // capacity first. A room an earlier borrow left over its
+                // capacity needs more than one archived, and the count is
+                // the same arithmetic in every case.
+                let archive = match live + 1 - capacity {
+                    1 => "one of the thoughts above".to_string(),
+                    n => format!("{n} of the thoughts above"),
+                };
+                format!(
+                    "Nothing was written: '{subject}'s room already holds {live} of \
+                         {capacity}, and {verb} cannot make room in it. Archive {archive} with \
+                         update_fact (status: archived, and details saying why it no longer \
+                         earns its slot), then re-call {verb} — or write this thought through \
+                         capture, which can archive one thought as it writes this one."
+                )
+            } else if live > capacity {
+                format!(
+                    "Nothing was written: '{subject}'s room already holds {live} of \
+                         {capacity} — its emergency reserve is already spent. Re-call {verb} \
+                         naming drop (one of the addresses above) and drop_because (why it no \
+                         longer earns its slot), or archive a live thought with update_fact to \
+                         bring it back at or under {capacity} first. Borrowing again is not on \
+                         offer while this debt stands."
+                )
+            } else {
+                format!(
+                    "Nothing was written: '{subject}'s room already holds {live} of \
+                         {capacity}. Re-call {verb} naming drop (one of the addresses above) and \
+                         drop_because (why it no longer earns its slot) — or, once and only \
+                         once, borrow: true to let this one land over the ceiling anyway — or \
+                         wait, and let this one go unwritten for now."
+                )
+            });
+            let mut body = serde_json::json!({
                 "status": "blocked",
                 "attempted": subject,
                 "wrote": false,
@@ -688,69 +819,8 @@ pub(crate) fn memory_declined(
                 // the reserve again. Exactly at capacity is the one moment
                 // `borrow` is genuinely on the table, so it is the one
                 // moment the refusal names it.
-                "how_to_proceed": if empty_room_without_capacity {
-                    // **A room with no capacity holds nothing, so there is no
-                    // thought to archive or to drop** — naming either points at
-                    // nothing. What is true is that the ceiling has to move
-                    // first, and it is not this caller's to move.
-                    if verb == "update_fact" {
-                        format!(
-                            "Nothing was written: '{subject}'s room has a capacity of 0, so it \
-                             holds no thoughts and {verb} cannot make this claim one. A \
-                             different identity has to give '{subject}' a thought_capacity above \
-                             0 first — ask another bot, or the operator — then re-call {verb}."
-                        )
-                    } else {
-                        format!(
-                            "Nothing was written: '{subject}'s room has a capacity of 0, so no \
-                             thought can be written in it and there is none to give up. A \
-                             different identity has to give '{subject}' a thought_capacity above \
-                             0 — ask another bot, or the operator — then re-call {verb}. Once \
-                             and only once, borrow: true lets this one land over the ceiling \
-                             anyway."
-                        )
-                    }
-                } else if verb == "update_fact" {
-                    // **An edit has no drop and no borrow**, so naming either
-                    // would send the caller round a loop (rule 68). Archiving
-                    // a live thought and writing the thought through capture
-                    // are the two moves it has.
-                    //
-                    // **How many, because one is not always enough.** The edit
-                    // adds a thought, so the room has to end below its
-                    // capacity first. A room an earlier borrow left over its
-                    // capacity needs more than one archived, and the count is
-                    // the same arithmetic in every case.
-                    let archive = match live + 1 - capacity {
-                        1 => "one of the thoughts above".to_string(),
-                        n => format!("{n} of the thoughts above"),
-                    };
-                    format!(
-                        "Nothing was written: '{subject}'s room already holds {live} of \
-                         {capacity}, and {verb} cannot make room in it. Archive {archive} with \
-                         update_fact (status: archived, and details saying why it no longer \
-                         earns its slot), then re-call {verb} — or write this thought through \
-                         capture, which can archive one thought as it writes this one."
-                    )
-                } else if live > capacity {
-                    format!(
-                        "Nothing was written: '{subject}'s room already holds {live} of \
-                         {capacity} — its emergency reserve is already spent. Re-call {verb} \
-                         naming drop (one of the addresses above) and drop_because (why it no \
-                         longer earns its slot), or archive a live thought with update_fact to \
-                         bring it back at or under {capacity} first. Borrowing again is not on \
-                         offer while this debt stands."
-                    )
-                } else {
-                    format!(
-                        "Nothing was written: '{subject}'s room already holds {live} of \
-                         {capacity}. Re-call {verb} naming drop (one of the addresses above) and \
-                         drop_because (why it no longer earns its slot) — or, once and only \
-                         once, borrow: true to let this one land over the ceiling anyway — or \
-                         wait, and let this one go unwritten for now."
-                    )
-                },
             });
+            how_to_proceed.write_into(&mut body);
             Ok(CallToolResult::success(vec![ContentBlock::text(
                 body.to_string(),
             )]))
@@ -771,7 +841,22 @@ pub(crate) fn memory_declined(
             // caller's to move — the branch `RoomFull` takes for the same room.
             let empty_room_without_capacity = live == 0 && capacity == 0;
             let archive_needed = live + incoming - capacity;
-            let body = serde_json::json!({
+            let how_to_proceed = WayForward::from(if empty_room_without_capacity {
+                format!(
+                    "Nothing was merged: '{subject}'s room has a capacity of 0, so it holds \
+                         no thoughts and this merge brings {incoming}. There is none to archive. \
+                         A different identity has to give '{subject}' a thought_capacity above \
+                         0 — ask another bot, or the operator — then re-call {verb}."
+                )
+            } else {
+                format!(
+                    "Nothing was merged: '{subject}'s room holds {live} of {capacity}, and \
+                         this merge brings {incoming} more thoughts. Archive {archive_needed} of \
+                         the thoughts above with update_fact (status: archived, and details \
+                         saying why it no longer earns its slot), then re-call {verb}."
+                )
+            });
+            let mut body = serde_json::json!({
                 "status": "blocked",
                 "attempted": subject,
                 "wrote": false,
@@ -784,22 +869,8 @@ pub(crate) fn memory_declined(
                     .collect::<Vec<_>>(),
                 "incoming": incoming,
                 "archive_needed": (!empty_room_without_capacity).then_some(archive_needed),
-                "how_to_proceed": if empty_room_without_capacity {
-                    format!(
-                        "Nothing was merged: '{subject}'s room has a capacity of 0, so it holds \
-                         no thoughts and this merge brings {incoming}. There is none to archive. \
-                         A different identity has to give '{subject}' a thought_capacity above \
-                         0 — ask another bot, or the operator — then re-call {verb}."
-                    )
-                } else {
-                    format!(
-                        "Nothing was merged: '{subject}'s room holds {live} of {capacity}, and \
-                         this merge brings {incoming} more thoughts. Archive {archive_needed} of \
-                         the thoughts above with update_fact (status: archived, and details \
-                         saying why it no longer earns its slot), then re-call {verb}."
-                    )
-                },
             });
+            how_to_proceed.write_into(&mut body);
             Ok(CallToolResult::success(vec![ContentBlock::text(
                 body.to_string(),
             )]))
@@ -931,16 +1002,17 @@ pub(crate) fn memory_declined(
         // reason: what it carries has no `EntityId` to hang the shared
         // shape on.
         MemoryError::RoleFieldGuarded { ref role, ref key } => {
-            let body = serde_json::json!({
+            let how_to_proceed = WayForward::from(format!(
+                "Nothing was written: {e}. Claim the '{role}' role through start_here's own \
+                     claim argument — that is the only door either of a role's own two fields \
+                     opens through."
+            ));
+            let mut body = serde_json::json!({
                 "status": "blocked",
                 "attempted": key,
                 "wrote": false,
-                "how_to_proceed": format!(
-                    "Nothing was written: {e}. Claim the '{role}' role through start_here's own \
-                     claim argument — that is the only door either of a role's own two fields \
-                     opens through."
-                ),
             });
+            how_to_proceed.write_into(&mut body);
             Ok(CallToolResult::success(vec![ContentBlock::text(
                 body.to_string(),
             )]))
@@ -955,17 +1027,18 @@ pub(crate) fn memory_declined(
             ref holder,
             until,
         } => {
-            let body = serde_json::json!({
+            let how_to_proceed = WayForward::from(format!(
+                "Nothing was written: {e}. {}",
+                role_taken_way_forward(role, holder, &until.to_string())
+            ));
+            let mut body = serde_json::json!({
                 "status": "blocked",
                 "attempted": role,
                 "wrote": false,
                 "holder": holder,
                 "until": until.to_string(),
-                "how_to_proceed": format!(
-                    "Nothing was written: {e}. {}",
-                    role_taken_way_forward(role, holder, &until.to_string())
-                ),
             });
+            how_to_proceed.write_into(&mut body);
             Ok(CallToolResult::success(vec![ContentBlock::text(
                 body.to_string(),
             )]))
@@ -984,6 +1057,11 @@ pub(crate) fn role_taken_way_forward(role: &str, holder: &str, until: &str) -> S
 /// Map a domain [`MemoryError`] to an MCP error, splitting client mistakes
 /// (invalid params) from server-side failures.
 pub(crate) fn memory_error(e: MemoryError) -> McpError {
+    let word = memory_fix_by(&e);
+    stamp_error(memory_error_arms(e), word)
+}
+
+fn memory_error_arms(e: MemoryError) -> McpError {
     match e {
         // **Backstops, not the intended answer.** Every one of these is a
         // caller mistake and `memory_declined` answers all of them as blocked
@@ -1339,5 +1417,454 @@ mod tests {
             "the caller's next move must be named: {}",
             err.message
         );
+    }
+    /// One row per refusal kind: its name, an error the domain raises for it,
+    /// and the word it wears. `memory_fix_by` is an exhaustive match, so a kind
+    /// added without a word does not compile; the rows are what the served
+    /// answers are held against.
+    fn memory_refusal_rows() -> Vec<(&'static str, MemoryError, Option<&'static str>)> {
+        use jojobot_domain::memory::MayWrite;
+
+        let s = |text: &str| text.to_string();
+        let rows: Vec<(&str, MemoryError, Option<&str>)> = vec![
+            (
+                "InvalidFact",
+                MemoryError::InvalidFact(s("empty")),
+                Some("change"),
+            ),
+            (
+                "InvalidSubject",
+                MemoryError::InvalidSubject(s("x")),
+                Some("change"),
+            ),
+            (
+                "InvalidAddress",
+                MemoryError::InvalidAddress(s("x")),
+                Some("change"),
+            ),
+            (
+                "InvalidEntity",
+                MemoryError::InvalidEntity(s("x")),
+                Some("change"),
+            ),
+            (
+                "InvalidEdge",
+                MemoryError::InvalidEdge(s("x")),
+                Some("change"),
+            ),
+            (
+                "InvalidQuery",
+                MemoryError::InvalidQuery(s("x")),
+                Some("change"),
+            ),
+            (
+                "InvalidType",
+                MemoryError::InvalidType(s("x")),
+                Some("change"),
+            ),
+            (
+                "UnstatedProvenance",
+                MemoryError::UnstatedProvenance,
+                Some("change"),
+            ),
+            (
+                "UnknownEntity",
+                MemoryError::UnknownEntity {
+                    attempted: s("person:lisa"),
+                    nearest: Vec::new(),
+                },
+                Some("change"),
+            ),
+            (
+                "UnknownFact",
+                MemoryError::UnknownFact {
+                    attempted: s("person:alpha#f9"),
+                    nearest: Vec::new(),
+                },
+                Some("change"),
+            ),
+            (
+                "NotYours",
+                MemoryError::NotYours {
+                    attempted: s("zz99"),
+                },
+                Some("change"),
+            ),
+            (
+                "AlreadyRetracted",
+                MemoryError::AlreadyRetracted {
+                    attempted: s("person:alpha#f1"),
+                },
+                Some("change"),
+            ),
+            (
+                "AlreadyArchived",
+                MemoryError::AlreadyArchived {
+                    attempted: s("person:alpha"),
+                },
+                Some("change"),
+            ),
+            (
+                "NotArchived",
+                MemoryError::NotArchived {
+                    attempted: s("person:alpha"),
+                },
+                Some("change"),
+            ),
+            (
+                "UnsourcedObservation",
+                MemoryError::UnsourcedObservation,
+                Some("change"),
+            ),
+            (
+                "NotRetractable",
+                MemoryError::NotRetractable {
+                    attempted: s("person:alpha#f1"),
+                    why: s("a rule"),
+                },
+                Some("change"),
+            ),
+            (
+                "TestimonyRewritten",
+                MemoryError::TestimonyRewritten {
+                    address: s("person:alpha#f1"),
+                },
+                Some("change"),
+            ),
+            (
+                "RepeatsShipped",
+                MemoryError::RepeatsShipped,
+                Some("change"),
+            ),
+            (
+                "ShippedType",
+                MemoryError::ShippedType {
+                    name: s("trip"),
+                    displaced: None,
+                },
+                Some("change"),
+            ),
+            (
+                "BreaksFit",
+                MemoryError::BreaksFit {
+                    name: s("pet"),
+                    keys: vec![s("owner")],
+                },
+                Some("change"),
+            ),
+            (
+                "BreaksSchedule",
+                MemoryError::BreaksSchedule {
+                    held: s("cadence_days"),
+                    missing: s("due_date"),
+                    accepts: Vec::new(),
+                },
+                Some("change"),
+            ),
+            (
+                "BreaksType",
+                MemoryError::BreaksType {
+                    name: s("trip"),
+                    key: s("starts"),
+                    wanted: s("date"),
+                    value: s("soon"),
+                },
+                Some("change"),
+            ),
+            (
+                "BootTooHeavy",
+                MemoryError::BootTooHeavy {
+                    subject: s("bot:gamma"),
+                    floor: 30_000,
+                    budget: 28_000,
+                    parts: vec![(s("charter"), 20_000)],
+                },
+                Some("change"),
+            ),
+            (
+                "KeyNotYours",
+                MemoryError::KeyNotYours {
+                    subject: s("bot:gamma"),
+                    key: s("reports_to"),
+                    may: MayWrite::Subject,
+                    allowed: Vec::new(),
+                },
+                Some("change"),
+            ),
+            (
+                "ChartCycle",
+                MemoryError::ChartCycle {
+                    subject: s("bot:gamma"),
+                    manager: s("bot:delta"),
+                },
+                Some("change"),
+            ),
+            (
+                "MergeCarriesGuardedKeys",
+                MemoryError::MergeCarriesGuardedKeys {
+                    duplicate: s("bot:gamma"),
+                    survivor: s("bot:delta"),
+                    keys: s("rule_seats"),
+                    may: MayWrite::DifferentIdentity,
+                    allowed: Vec::new(),
+                },
+                Some("change"),
+            ),
+            (
+                "RoleFieldGuarded",
+                MemoryError::RoleFieldGuarded {
+                    role: s("dev"),
+                    key: s("role/dev/holder"),
+                },
+                Some("change"),
+            ),
+            (
+                "RoomFull",
+                MemoryError::RoomFull {
+                    subject: s("bot:gamma"),
+                    live: 3,
+                    capacity: 3,
+                    room: Vec::new(),
+                    aged_out: 0,
+                },
+                Some("change"),
+            ),
+            (
+                "MergeOverfillsRoom",
+                MemoryError::MergeOverfillsRoom {
+                    subject: s("bot:gamma"),
+                    live: 3,
+                    capacity: 3,
+                    incoming: 1,
+                    room: Vec::new(),
+                },
+                Some("change"),
+            ),
+            (
+                "ThoughtTooLong",
+                MemoryError::ThoughtTooLong {
+                    subject: s("bot:gamma"),
+                    len: 900,
+                    cap: 500,
+                },
+                Some("change"),
+            ),
+            (
+                "MergeThoughtTooLong",
+                MemoryError::MergeThoughtTooLong {
+                    subject: s("bot:gamma"),
+                    thought: s("x"),
+                    len: 900,
+                    cap: 500,
+                },
+                Some("change"),
+            ),
+            (
+                "NothingToMerge",
+                MemoryError::NothingToMerge {
+                    attempted: s("person:alpha"),
+                },
+                Some("change"),
+            ),
+            (
+                "NothingToRename",
+                MemoryError::NothingToRename {
+                    attempted: s("person:alpha"),
+                },
+                Some("change"),
+            ),
+            (
+                "AlreadyMerged",
+                MemoryError::AlreadyMerged {
+                    attempted: s("person:alpha"),
+                    into: s("person:beta"),
+                },
+                Some("change"),
+            ),
+            (
+                "HandleMoved",
+                MemoryError::HandleMoved {
+                    attempted: s("person:alpha"),
+                    now: s("person:beta"),
+                },
+                Some("change"),
+            ),
+            (
+                "SuppliedHandle",
+                MemoryError::SuppliedHandle {
+                    attempted: s("view:colleagues"),
+                },
+                Some("change"),
+            ),
+            // Damage no caller can repair, a kind set nothing re-reads, a build
+            // that collided with a stored row, and claims only the operator can
+            // bless.
+            (
+                "KindsNeverLoaded",
+                MemoryError::KindsNeverLoaded { attempted: None },
+                Some("person"),
+            ),
+            (
+                "SuppliedRecordCollidesWithStoredRow",
+                MemoryError::SuppliedRecordCollidesWithStoredRow {
+                    attempted: s("view:colleagues"),
+                },
+                Some("person"),
+            ),
+            (
+                "UnconfirmedPromotion",
+                MemoryError::UnconfirmedPromotion,
+                Some("person"),
+            ),
+            (
+                "UnconfirmedSettling",
+                MemoryError::UnconfirmedSettling,
+                Some("person"),
+            ),
+            // A held role frees when its lease ends; a collision clears on the
+            // next try; a storage failure is a retry while the store-failure
+            // switch is on. `FoldBehind` is not in the table: the write LANDED,
+            // so it has no refusal word (`memory_fix_by` says `None`), and
+            // building its landed record here would test the fixture.
+            (
+                "RoleTaken",
+                MemoryError::RoleTaken {
+                    role: s("dev"),
+                    holder: s("4nfx"),
+                    until: jiff::Timestamp::UNIX_EPOCH,
+                },
+                Some("retry"),
+            ),
+            ("Conflict", MemoryError::Conflict, Some("retry")),
+            (
+                "Store",
+                MemoryError::Store(s("connection refused")),
+                memory_store_failure_word().map(FixBy::as_token),
+            ),
+        ];
+        rows
+    }
+
+    /// 🚨 **Every refusal kind this lane answers wears the word its fix needs.**
+    /// One row per kind, each reddening alone: the row names the kind, builds
+    /// the error the domain raises for it, and asserts the word on the answer
+    /// that comes back. `change` is the call itself; `person` is damage a
+    /// person has to repair, where sending the call again or changing it
+    /// cannot help. A kind that answers as a protocol error rather than as a
+    /// blocked body (a storage failure or a collision) is not in this table.
+    #[test]
+    fn every_refusal_kind_in_the_memory_lane_wears_its_word() {
+        for (label, error, word) in memory_refusal_rows() {
+            assert_eq!(
+                memory_fix_by(&error).map(FixBy::as_token),
+                word,
+                "{label}: the match and the row disagree"
+            );
+        }
+        // Served as a blocked answer where the lane answers one, or as a
+        // protocol error carrying the word in `data` where it does not.
+        for (label, error, word) in memory_refusal_rows() {
+            match memory_declined("capture", error) {
+                Ok(answered) => assert_word(label, &answered, word),
+                Err(raised) => assert_error_word(label, &raised, word),
+            }
+        }
+        // And every kind as the protocol error the backstop raises.
+        for (label, error, word) in memory_refusal_rows() {
+            let raised = memory_error(error);
+            assert_error_word(label, &raised, word);
+        }
+    }
+
+    /// **The pair beside the table: an answer that is not a refusal carries no
+    /// word.** A valid capture lands, and the word is a property of a refusal,
+    /// so it is absent from the receipt.
+    #[tokio::test]
+    async fn an_answer_that_is_not_a_refusal_carries_no_word() {
+        let jojobot = handler();
+        ensure(&jojobot, "person:alpha").await;
+        let landed = json_of(
+            &jojobot
+                .capture(Parameters(capture_args("person:alpha", "likes the diner")))
+                .await
+                .expect("capture ok"),
+        );
+        assert_ne!(landed["status"], "blocked", "{landed}");
+        assert!(landed.get("fix_by").is_none(), "{landed}");
+    }
+    /// **The resemblance and existence gates, which no error enum carries**,
+    /// each wear `change`: the answer is a different call, or the same call with
+    /// the token the refusal hands back. One row per gate and per case of it.
+    #[test]
+    fn every_gate_that_blocks_a_write_wears_the_change_word() {
+        use jojobot_domain::memory::guard::{EntityMatch, MatchReason};
+        let slot = || TokenSlot::from(&add_args("person", "alpha", "Alpha"));
+        let attempted = EntityId("person:alpha".into());
+        let near = |reason| {
+            vec![EntityMatch {
+                handle: EntityId("person:alphaa".into()),
+                kind: EntityKind::PERSON,
+                name: "Alphaa".into(),
+                source: "user-named".into(),
+                reason,
+            }]
+        };
+        let rows: Vec<(&str, CallToolResult)> = vec![
+            (
+                "creating a near miss",
+                blocked_result(
+                    &attempted,
+                    &near(MatchReason::Contains),
+                    Blocked::Creating(slot()),
+                ),
+            ),
+            (
+                "creating an exact handle",
+                blocked_result(
+                    &attempted,
+                    &near(MatchReason::ExactHandle),
+                    Blocked::Creating(slot()),
+                ),
+            ),
+            (
+                "relabelling",
+                blocked_result(
+                    &attempted,
+                    &near(MatchReason::Contains),
+                    Blocked::Relabelling(slot()),
+                ),
+            ),
+            (
+                "renaming a near miss",
+                blocked_result(
+                    &attempted,
+                    &near(MatchReason::Contains),
+                    Blocked::Renaming(slot()),
+                ),
+            ),
+            (
+                "renaming an exact handle",
+                blocked_result(
+                    &attempted,
+                    &near(MatchReason::ExactHandle),
+                    Blocked::Renaming(slot()),
+                ),
+            ),
+            (
+                "naming an unknown entity",
+                blocked_result(&attempted, &[], Blocked::MustExist("capture")),
+            ),
+            (
+                "naming a near miss",
+                blocked_result(
+                    &attempted,
+                    &near(MatchReason::Contains),
+                    Blocked::MustExist("capture"),
+                ),
+            ),
+        ];
+        for (label, answered) in rows {
+            assert_fix_by(label, &answered, "change");
+        }
     }
 }

@@ -1145,6 +1145,10 @@ mod tests {
         );
         assert_eq!(second["session"]["claim"]["status"], "refused", "{second}");
         assert_eq!(
+            second["session"]["claim"]["fix_by"], "retry",
+            "a held role frees when its lease ends: {second}"
+        );
+        assert_eq!(
             second["session"]["claim"]["holder"], holder_sid,
             "the refusal names who holds it: {second}"
         );

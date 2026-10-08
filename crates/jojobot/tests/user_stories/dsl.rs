@@ -606,6 +606,27 @@ impl Story {
             })
     }
 
+    /// **Give a bot a second box, straight in the store.** No verb on the
+    /// served surface does this: a box opens with its bot. It is the damage
+    /// every read of a box is entitled to refuse over, planted the only way it
+    /// can arrive.
+    pub async fn plant_a_second_box(&self, bot: &str, name: &str) {
+        use jojobot_domain::mailbox::Mailboxes;
+        let written = self
+            .mail
+            .create_mailbox(
+                &jojobot_domain::mailbox::MailboxName(name.to_string()),
+                &jojobot_domain::memory::EntityId(bot.to_string()),
+                None,
+            )
+            .await
+            .expect("the store writes it");
+        assert!(
+            matches!(written, jojobot_domain::mailbox::Guarded::Written(_)),
+            "the second box {name:?} was never opened, so there is no damage to meet"
+        );
+    }
+
     /// **Retire a message in the store itself**, the way the operator's own
     /// reading surface will: no verb on the served surface does this for a
     /// message in a person's box, so the story reaches past it.

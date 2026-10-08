@@ -72,11 +72,11 @@ pub(crate) fn session_unbound() -> CallToolResult {
          attributed until it is back. Tell the operator — nothing is lost and nothing ran."
     )
     .into();
-    let body = serde_json::json!({
+    let mut body = serde_json::json!({
         "status": "blocked",
         "wrote": false,
-        "how_to_proceed": how_to_proceed.as_str(),
     });
+    how_to_proceed.write_into(&mut body);
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])
 }
 
@@ -89,12 +89,12 @@ pub(crate) fn handle_declined(
     how_to_proceed: impl Into<WayForward>,
 ) -> CallToolResult {
     let how_to_proceed = how_to_proceed.into();
-    let body = serde_json::json!({
+    let mut body = serde_json::json!({
         "status": "blocked",
         "attempted": attempted,
         "wrote": false,
-        "how_to_proceed": how_to_proceed.as_str(),
     });
+    how_to_proceed.write_into(&mut body);
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])
 }
 

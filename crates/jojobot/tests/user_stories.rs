@@ -112,6 +112,8 @@ mod promises;
 mod quarantining;
 #[path = "user_stories/receipts.rs"]
 mod receipts;
+#[path = "user_stories/refusal_words.rs"]
+mod refusal_words;
 #[path = "user_stories/rhythms.rs"]
 mod rhythms;
 #[path = "user_stories/rule_seats.rs"]

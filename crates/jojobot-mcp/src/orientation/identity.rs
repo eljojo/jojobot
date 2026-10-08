@@ -53,7 +53,7 @@ pub(crate) fn booting_unknown(
         )
     }
     .into();
-    let body = serde_json::json!({
+    let mut body = serde_json::json!({
         "status": "blocked",
         "attempted": attempted.as_str(),
         "wrote": false,
@@ -63,8 +63,8 @@ pub(crate) fn booting_unknown(
         // does exist.
         "bots": roster,
         "candidates": candidates.iter().map(candidate_json).collect::<Vec<_>>(),
-        "how_to_proceed": how_to_proceed.as_str(),
     });
+    how_to_proceed.write_into(&mut body);
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])
 }
 

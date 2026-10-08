@@ -915,13 +915,11 @@ impl Jojobot {
                     error = %e, %bot, role,
                     "could not read the bot's claims to decide a role claim"
                 );
-                return serde_json::json!({
-                    "role": role,
-                    "status": "unavailable",
-                    "note": "the memory world could not be read, so this claim was neither \
-                             granted nor refused. Nothing was written.",
-                    "how_to_proceed": claim_unavailable_way_forward(role),
-                });
+                return unavailable_claim(
+                    role,
+                    "the memory world could not be read, so this claim was neither granted nor \
+                     refused. Nothing was written.",
+                );
             }
         };
         let written = match &existing {
@@ -958,6 +956,7 @@ impl Jojobot {
             Err(MemoryError::RoleTaken { holder, until, .. }) => serde_json::json!({
                 "role": role,
                 "status": "refused",
+                FixBy::KEY: FixBy::Retry.as_token(),
                 "how_to_proceed": crate::memory::role_taken_way_forward(
                     role,
                     &holder,
@@ -976,6 +975,7 @@ impl Jojobot {
                 serde_json::json!({
                     "role": role,
                     "status": "conflict",
+                    FixBy::KEY: FixBy::Retry.as_token(),
                     "note": "the claim collided with another write landing the same instant. \
                              Nothing is held. Retry the same claim: it is a transient \
                              collision on a store that is working correctly, not a mistake in \
@@ -988,16 +988,28 @@ impl Jojobot {
                 } else {
                     tracing::warn!(%bot, role, "a role claim's own write was blocked unexpectedly");
                 }
-                serde_json::json!({
-                    "role": role,
-                    "status": "unavailable",
-                    "note": "the claim was decided but could not be written. Nothing is \
-                             held.",
-                    "how_to_proceed": claim_unavailable_way_forward(role),
-                })
+                unavailable_claim(
+                    role,
+                    "the claim was decided but could not be written. Nothing is held.",
+                )
             }
         }
     }
+}
+
+/// **A claim the store could not decide**, with the word a storage failure
+/// wears (see [`memory_store_failure_word`]).
+fn unavailable_claim(role: &str, note: &str) -> serde_json::Value {
+    let mut outcome = serde_json::json!({
+        "role": role,
+        "status": "unavailable",
+        "note": note,
+        "how_to_proceed": claim_unavailable_way_forward(role),
+    });
+    if let Some(word) = memory_store_failure_word() {
+        outcome[FixBy::KEY] = word.as_token().into();
+    }
+    outcome
 }
 
 /// **What to do about a claim the store could not decide.** Said once for both
@@ -1061,6 +1073,10 @@ mod tests {
             claim["status"], "unavailable",
             "a Conflict must read as its own outcome, not the generic write failure: {booted}"
         );
+        assert_eq!(
+            claim["fix_by"], "retry",
+            "a collision clears on the next try, and the claim says so: {booted}"
+        );
         let note = claim["note"]
             .as_str()
             .unwrap_or_else(|| panic!("a Conflict answer must say what to do: {booted}"));
@@ -1099,6 +1115,11 @@ mod tests {
         assert_eq!(
             claim["status"], "unavailable",
             "the store cannot write the claim, so it is undecided: {booted}"
+        );
+        assert_eq!(
+            claim["fix_by"].as_str(),
+            memory_store_failure_word().map(FixBy::as_token),
+            "a claim the store could not decide wears the storage-failure word: {booted}"
         );
         let how = claim["how_to_proceed"]
             .as_str()

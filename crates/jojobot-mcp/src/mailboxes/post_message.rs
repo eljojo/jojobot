@@ -121,6 +121,10 @@ impl Jojobot {
             .await
             .unwrap_or_default();
         let nearby = guard::screen(addressee, &[addressee.slug()], &bots);
+        // **Which word the refusal wears is decided by what was found**: damage
+        // is a person's, and a board that could not be read may read on a later try.
+        let is_damage = matches!(found, OwnBox::Several(_));
+        let may_read_later = matches!(found, OwnBox::Unreadable);
         let how_to_proceed = match found {
             OwnBox::Several(boxes) => format!(
                 "Nothing was written. '{addressee}' owns more than one mailbox ({}), and one bot \
@@ -162,6 +166,13 @@ impl Jojobot {
         // The blocked shape every other refusal on this surface wears, with
         // the addressee as what was attempted: a caller branches on `status`,
         // never on which gate fired.
+        let how_to_proceed = if is_damage {
+            WayForward::person(how_to_proceed)
+        } else if may_read_later {
+            WayForward::mailbox_store_failure(how_to_proceed)
+        } else {
+            WayForward::from(how_to_proceed)
+        };
         blocked_body(addressee, &nearby, how_to_proceed)
     }
 
@@ -1306,6 +1317,63 @@ mod tests {
             counts(&jojobot, "gamma").await["counts"]["total"],
             1,
             "only the first post landed"
+        );
+    }
+    async fn post_to(jojobot: &Jojobot, to: &str, sid: &str) -> Result<CallToolResult, McpError> {
+        jojobot
+            .post_message(Parameters(PostMessageArgs {
+                to: to.into(),
+                body: "hello".into(),
+                in_reply_to: None,
+                subject: None,
+                sid: sid.into(),
+            }))
+            .await
+    }
+
+    /// 🚨 **The refusals for an addressee wear the word their repair needs.** A
+    /// name nobody answers to is a call that has to change; a bot holding two
+    /// boxes is damage no caller can repair, a person's. A board nobody can read
+    /// is a storage failure and wears that word.
+    #[tokio::test]
+    async fn the_refusals_for_an_addressee_wear_their_words() {
+        let jojobot = mailbox_handler();
+        let sender = owning(&jojobot, "epsilon").await;
+        owning(&jojobot, "gamma").await;
+
+        let unknown = post_to(&jojobot, "nobody-answers-to-this", &sender)
+            .await
+            .expect("a refusal is an answer");
+        assert_fix_by("unknown addressee", &unknown, "change");
+
+        // The positive: a post to a bot with exactly one box lands.
+        let landed = json_of(
+            &post_to(&jojobot, "bot:gamma", &sender)
+                .await
+                .expect("post ok"),
+        );
+        assert_ne!(landed["status"], "blocked", "{landed}");
+        assert!(landed.get("fix_by").is_none(), "{landed}");
+
+        a_second_box(&jojobot, "gamma", "sigma").await;
+        let damaged = post_to(&jojobot, "bot:gamma", &sender)
+            .await
+            .expect("a refusal is an answer");
+        assert_fix_by("a bot holding two boxes", &damaged, "person");
+
+        let down = handler_with_mailboxes_down(std::sync::Arc::new(
+            jojobot_domain::memory::testing::InMemoryMemory::booted(),
+        ));
+        let down_sender = as_bot(&down, "epsilon");
+        let unreadable = blocked(
+            &post_to(&down, "bot:gamma", &down_sender)
+                .await
+                .expect("a refusal is an answer"),
+        );
+        assert_eq!(
+            unreadable["fix_by"].as_str(),
+            other_store_failure_word().map(FixBy::as_token),
+            "{unreadable}"
         );
     }
 }

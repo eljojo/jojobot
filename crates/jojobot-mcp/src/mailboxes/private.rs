@@ -74,12 +74,12 @@ pub(crate) fn private_box(id: &MessageId) -> CallToolResult {
          their handle."
     )
     .into();
-    let body = serde_json::json!({
+    let mut body = serde_json::json!({
         "status": "blocked",
         "attempted": id.as_str(),
         "wrote": false,
-        "how_to_proceed": how_to_proceed.as_str(),
     });
+    how_to_proceed.write_into(&mut body);
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])
 }
 
@@ -148,7 +148,7 @@ impl Jojobot {
                 return Err(blocked_body(
                     addressee,
                     &[],
-                    format!(
+                    WayForward::person(format!(
                         "Nothing was written. The operator owns more than one mailbox ({}), and \
                          one person has exactly one. This is damage rather than anything you \
                          did: report it, it needs a person.",
@@ -157,15 +157,18 @@ impl Jojobot {
                             .map(|b| b.as_str().to_string())
                             .collect::<Vec<_>>()
                             .join(", "),
-                    ),
+                    )),
                 ));
             }
             OwnBox::Unreadable => {
                 return Err(blocked_body(
                     addressee,
                     &[],
-                    "Nothing was written. jojobot could not read the mail board, so it cannot \
-                     say where this belongs. Nothing is wrong with your call: try it again.",
+                    WayForward::mailbox_store_failure(
+                        "Nothing was written. jojobot could not read the mail board, so it \
+                         cannot say where this belongs. Nothing is wrong with your call: try it \
+                         again.",
+                    ),
                 ));
             }
             OwnBox::None => {}

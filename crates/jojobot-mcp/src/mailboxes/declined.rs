@@ -28,13 +28,13 @@ pub(crate) fn not_yours(id: &MessageId, theirs: &MailboxName) -> CallToolResult 
              need. Your own mail is read_mailbox, which needs no id and no name."
     )
     .into();
-    let body = serde_json::json!({
+    let mut body = serde_json::json!({
         "status": "blocked",
         "attempted": id.as_str(),
         "wrote": false,
         "mailbox": theirs.as_str(),
-        "how_to_proceed": how_to_proceed.as_str(),
     });
+    how_to_proceed.write_into(&mut body);
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])
 }
 
@@ -84,7 +84,7 @@ pub(crate) fn mailbox_blocked_body(
     how_to_proceed: impl Into<WayForward>,
 ) -> CallToolResult {
     let how_to_proceed = how_to_proceed.into();
-    let body = serde_json::json!({
+    let mut body = serde_json::json!({
         "status": "blocked",
         "attempted": attempted,
         "wrote": false,
@@ -93,8 +93,8 @@ pub(crate) fn mailbox_blocked_body(
             .iter()
             .map(mailbox_candidate_json)
             .collect::<Vec<_>>(),
-        "how_to_proceed": how_to_proceed.as_str(),
     });
+    how_to_proceed.write_into(&mut body);
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])
 }
 
@@ -147,13 +147,13 @@ pub(crate) fn mailbox_quarantined(attempted: &str, reason: &str) -> CallToolResu
              so rather than reporting it delivered."
     )
     .into();
-    let body = serde_json::json!({
+    let mut body = serde_json::json!({
         "status": "blocked",
         "attempted": attempted,
         "wrote": false,
         "reason": crate::boundary::unreadable(&format!("message {attempted}"), reason),
-        "how_to_proceed": how_to_proceed.as_str(),
     });
+    how_to_proceed.write_into(&mut body);
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])
 }
 
@@ -171,14 +171,14 @@ pub(crate) fn mailbox_quarantined_on_purpose(
          fault, and lifting it is not something this call can do."
     )
     .into();
-    let body = serde_json::json!({
+    let mut body = serde_json::json!({
         "status": "blocked",
         "attempted": attempted,
         "wrote": false,
         "quarantined_by": by,
         "quarantine_reason": reason,
-        "how_to_proceed": how_to_proceed.as_str(),
     });
+    how_to_proceed.write_into(&mut body);
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])
 }
 
@@ -194,13 +194,13 @@ pub(crate) fn mailbox_not_your_message(attempted: &str, mailbox: &str, by: &str)
          reading it, which is the shape of a request."
     )
     .into();
-    let body = serde_json::json!({
+    let mut body = serde_json::json!({
         "status": "blocked",
         "attempted": attempted,
         "wrote": false,
         "mailbox": mailbox,
-        "how_to_proceed": how_to_proceed.as_str(),
     });
+    how_to_proceed.write_into(&mut body);
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])
 }
 
@@ -209,6 +209,32 @@ pub(crate) fn mailbox_not_your_message(attempted: &str, mailbox: &str, by: &str)
 /// — one is repairable by a better id, the other only by a person on the board
 /// — in one shape.
 pub(crate) fn mailbox_declined(e: MailboxError) -> Result<CallToolResult, McpError> {
+    let word = mailbox_fix_by(&e);
+    mailbox_declined_arms(e).map(|answered| stamp(answered, word))
+}
+
+/// **The word every mailbox refusal wears, in one exhaustive match.** No
+/// wildcard arm: a kind added to [`MailboxError`] without a word does not
+/// compile. `person` is a card nothing can read, a quarantine a session decided,
+/// a bot holding two boxes and a kind set nothing re-reads.
+pub(crate) fn mailbox_fix_by(e: &MailboxError) -> Option<FixBy> {
+    match e {
+        MailboxError::InvalidName { .. }
+        | MailboxError::InvalidMessageId { .. }
+        | MailboxError::InvalidMessage { .. }
+        | MailboxError::UnknownMessage { .. }
+        | MailboxError::NotYourMessage { .. }
+        | MailboxError::NameTaken { .. } => Some(FixBy::Change),
+        MailboxError::Quarantined { .. }
+        | MailboxError::QuarantinedOnPurpose { .. }
+        | MailboxError::OwnerHasMultipleBoxes { .. }
+        | MailboxError::KindsNeverLoaded => Some(FixBy::Person),
+        MailboxError::Conflict => Some(FixBy::Retry),
+        MailboxError::Store(_) => other_store_failure_word(),
+    }
+}
+
+fn mailbox_declined_arms(e: MailboxError) -> Result<CallToolResult, McpError> {
     match e {
         MailboxError::UnknownMessage { attempted } => Ok(mailbox_blocked_body(
             &attempted,
@@ -283,6 +309,11 @@ fn mailbox_malformed(attempted: &str, said: &MailboxError) -> CallToolResult {
 /// Map a domain [`MailboxError`] to an MCP error, splitting client mistakes from
 /// server-side failures — the same split [`memory_error`] makes.
 pub(crate) fn mailbox_error(e: MailboxError) -> McpError {
+    let word = mailbox_fix_by(&e);
+    stamp_error(mailbox_error_arms(e), word)
+}
+
+fn mailbox_error_arms(e: MailboxError) -> McpError {
     match e {
         // **Backstops, not the intended answer.** Every one of these is a
         // caller mistake and `mailbox_declined` answers all of them as blocked
@@ -466,6 +497,143 @@ mod tests {
             err.message.contains("retry") || err.message.contains("retrying"),
             "the caller's next move must be named: {}",
             err.message
+        );
+    }
+    /// One row per refusal kind: its name, an error the domain raises for it, and
+    /// the word it wears. `mailbox_fix_by` is an exhaustive match, so a kind
+    /// added without a word does not compile.
+    fn mailbox_refusal_rows() -> Vec<(&'static str, MailboxError, Option<&'static str>)> {
+        let s = |text: &str| text.to_string();
+        vec![
+            (
+                "InvalidName",
+                MailboxError::InvalidName(s("In Box!")),
+                Some("change"),
+            ),
+            (
+                "InvalidMessageId",
+                MailboxError::InvalidMessageId(s("x")),
+                Some("change"),
+            ),
+            (
+                "InvalidMessage",
+                MailboxError::InvalidMessage(s("empty")),
+                Some("change"),
+            ),
+            (
+                "UnknownMessage",
+                MailboxError::UnknownMessage { attempted: s("9") },
+                Some("change"),
+            ),
+            (
+                "NotYourMessage",
+                MailboxError::NotYourMessage {
+                    attempted: s("9"),
+                    mailbox: s("gamma"),
+                    by: s("otto"),
+                },
+                Some("change"),
+            ),
+            (
+                "NameTaken",
+                MailboxError::NameTaken {
+                    attempted: s("gamma"),
+                    held_by: s("bot:gamma"),
+                },
+                Some("change"),
+            ),
+            (
+                "Quarantined",
+                MailboxError::Quarantined {
+                    attempted: s("9"),
+                    reason: s("unreadable"),
+                },
+                Some("person"),
+            ),
+            (
+                "QuarantinedOnPurpose",
+                MailboxError::QuarantinedOnPurpose {
+                    attempted: s("9"),
+                    by: s("bot:gamma"),
+                    reason: s("not for me"),
+                },
+                Some("person"),
+            ),
+            (
+                "OwnerHasMultipleBoxes",
+                MailboxError::OwnerHasMultipleBoxes {
+                    owner: s("bot:gamma"),
+                    names: vec![s("gamma"), s("kiln-spare")],
+                },
+                Some("person"),
+            ),
+            (
+                "KindsNeverLoaded",
+                MailboxError::KindsNeverLoaded,
+                Some("person"),
+            ),
+            ("Conflict", MailboxError::Conflict, Some("retry")),
+            (
+                "Store",
+                MailboxError::Store(s("connection refused")),
+                other_store_failure_word().map(FixBy::as_token),
+            ),
+        ]
+    }
+
+    /// 🚨 **Every refusal kind the mailbox lane answers wears its word.** One
+    /// row per kind, each reddening alone: `person` is a card nothing can read,
+    /// a quarantine a session decided, a bot holding two boxes and a kind set
+    /// nothing re-reads; `retry` is a failure the same call may get past; the
+    /// rest are a call that has to change. Held against the match, against the
+    /// blocked answer the lane serves, and against the protocol error the
+    /// backstop raises.
+    #[test]
+    fn every_refusal_kind_in_the_mailbox_lane_wears_its_word() {
+        for (label, error, word) in mailbox_refusal_rows() {
+            assert_eq!(
+                mailbox_fix_by(&error).map(FixBy::as_token),
+                word,
+                "{label}: the match and the row disagree"
+            );
+        }
+        for (label, error, word) in mailbox_refusal_rows() {
+            match mailbox_declined(error) {
+                Ok(answered) => assert_word(label, &answered, word),
+                Err(raised) => assert_error_word(label, &raised, word),
+            }
+        }
+        for (label, error, word) in mailbox_refusal_rows() {
+            let raised = mailbox_error(error);
+            assert_error_word(label, &raised, word);
+        }
+    }
+
+    /// **The refusals built straight from a message id or a box name**, which
+    /// no error enum carries: a message that is another bot's, one in a
+    /// person's box, and a box that does not exist. Each is a call that has to
+    /// change, and each names the call that works.
+    #[test]
+    fn the_mailbox_refusals_built_from_an_id_or_a_name_wear_their_word() {
+        let id = MessageId("9".to_string());
+        assert_fix_by(
+            "not_yours",
+            &not_yours(&id, &MailboxName("gamma".into())),
+            "change",
+        );
+        assert_fix_by(
+            "private_box",
+            &super::super::private::private_box(&id),
+            "change",
+        );
+        assert_fix_by(
+            "mailbox_blocked",
+            &mailbox_blocked(
+                &MailboxName("nowhere".into()),
+                &[],
+                BlockedBox::MustExist("post_message"),
+            ),
+            "change",
         );
     }
 }

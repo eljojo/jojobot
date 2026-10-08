@@ -20,22 +20,152 @@ use super::*;
 /// tries to build one rather than shipping it to a caller who has to notice
 /// on their own. A session that has never read decision log 261 still
 /// cannot write a bare rejection, because the type refuses to hold one.
-pub(crate) struct WayForward(String);
+pub(crate) struct WayForward {
+    text: String,
+    /// The word. `None` only for a storage failure whose switch is off: see
+    /// [`memory_store_failure_word`] and [`other_store_failure_word`].
+    fix_by: Option<FixBy>,
+}
 
-impl WayForward {
-    pub(crate) fn as_str(&self) -> &str {
-        &self.0
+/// **Who fixes a refusal, in one word a caller reads before the prose.** A
+/// caller that cannot tell a transient failure from a refusal that will never
+/// change retries the second forever, or gives up on the first. Every refusal
+/// carries one of three words: in the body of a blocked answer, written by
+/// [`WayForward::write_into`], and in the `data` of a protocol error, written
+/// by [`stamp_error`]. Each error type picks its word in ONE exhaustive match,
+/// so a kind added without a word does not compile.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FixBy {
+    /// Transient: the same call may succeed, as after a write conflict.
+    Retry,
+    /// The call itself must change, and the refusal names what to change. The
+    /// common case, and the one a bare sentence means.
+    Change,
+    /// Stored damage, or a decision only a person can make. Sending the call
+    /// again will not help, and neither will changing it.
+    Person,
+}
+
+impl FixBy {
+    /// The key the word is served under. It sorts ahead of `how_to_proceed`,
+    /// so the word is read before the prose.
+    pub(crate) const KEY: &'static str = "fix_by";
+
+    /// The word on the wire.
+    pub(crate) fn as_token(self) -> &'static str {
+        match self {
+            FixBy::Retry => "retry",
+            FixBy::Change => "change",
+            FixBy::Person => "person",
+        }
     }
 }
 
-impl From<String> for WayForward {
-    fn from(text: String) -> Self {
+/// **THE SWITCHES for storage failures**, one per store, because the stores do
+/// not yet tell a refused write from an outage alike. A storage failure is a
+/// `retry` only where the failure really is transient.
+///
+/// `MEMORY_STORE_FAILURE_IS_RETRY` holds while card 2068 (a constraint
+/// violation is no longer reported with the outage's words) is in the base this
+/// ships on. If that fix slips, set it to `false`: every memory-store failure
+/// then ships WITHOUT a word rather than with a wrong one.
+pub(crate) const MEMORY_STORE_FAILURE_IS_RETRY: bool = true;
+
+/// The session, mailbox and teaching stores still report a constraint violation
+/// with the outage's words (card 2070), so their failures wear no word until it
+/// lands. Set this to `true` then.
+pub(crate) const OTHER_STORE_FAILURE_IS_RETRY: bool = false;
+
+/// The word a memory-store failure wears: `retry` while its switch is on, none
+/// when it is off.
+pub(crate) fn memory_store_failure_word() -> Option<FixBy> {
+    MEMORY_STORE_FAILURE_IS_RETRY.then_some(FixBy::Retry)
+}
+
+/// The word a session, mailbox or teaching store failure wears: none until
+/// [`OTHER_STORE_FAILURE_IS_RETRY`] is turned on.
+pub(crate) fn other_store_failure_word() -> Option<FixBy> {
+    OTHER_STORE_FAILURE_IS_RETRY.then_some(FixBy::Retry)
+}
+
+impl WayForward {
+    fn with(fix_by: Option<FixBy>, text: impl Into<String>) -> Self {
+        let text = text.into();
         assert!(
             !text.trim().is_empty(),
             "a refusal was built with no way forward — every blocked result must say what it \
              unlocks (decision log 261, 262)",
         );
-        WayForward(text)
+        WayForward { text, fix_by }
+    }
+
+    /// A refusal only a person can resolve: stored damage, or a decision that
+    /// is theirs. Sending the call again will not help.
+    pub(crate) fn person(text: impl Into<String>) -> Self {
+        Self::with(Some(FixBy::Person), text)
+    }
+
+    /// A refusal because the mailbox store could not be read. It wears whatever
+    /// [`other_store_failure_word`] says, which is no word until card 2070.
+    pub(crate) fn mailbox_store_failure(text: impl Into<String>) -> Self {
+        Self::with(other_store_failure_word(), text)
+    }
+
+    /// **The one place a blocked body gets its way forward and its word.** A
+    /// constructor calls this and never inserts `how_to_proceed` by hand, so a
+    /// refusal cannot leave without a word.
+    pub(crate) fn write_into(&self, body: &mut serde_json::Value) {
+        if let Some(fix_by) = self.fix_by {
+            body[FixBy::KEY] = fix_by.as_token().into();
+        }
+        body["how_to_proceed"] = self.text.as_str().into();
+    }
+}
+
+/// **Set the word on a refusal an error type produced.** An error type picks its
+/// word in one exhaustive match (`fix_by_of`), and its lane's one exit stamps
+/// the result here, so the word served is the word the match says and an arm
+/// cannot disagree with it. A body that is not a blocked answer is left alone;
+/// a `None` word takes any word off.
+pub(crate) fn stamp(result: CallToolResult, word: Option<FixBy>) -> CallToolResult {
+    let Some(text) = result.content.first().and_then(|b| b.as_text()) else {
+        return result;
+    };
+    let Ok(mut body) = serde_json::from_str::<serde_json::Value>(&text.text) else {
+        return result;
+    };
+    if body["status"] != "blocked" {
+        return result;
+    }
+    match word {
+        Some(word) => body[FixBy::KEY] = word.as_token().into(),
+        None => {
+            if let Some(fields) = body.as_object_mut() {
+                fields.remove(FixBy::KEY);
+            }
+        }
+    }
+    CallToolResult::success(vec![ContentBlock::text(body.to_string())])
+}
+
+/// **Put the word on a protocol error**, in its `data` object, beside the prose
+/// the error already carries. A `None` word leaves the error as it was.
+pub(crate) fn stamp_error(mut error: McpError, word: Option<FixBy>) -> McpError {
+    if let Some(word) = word {
+        let mut data = match error.data.take() {
+            Some(serde_json::Value::Object(fields)) => fields,
+            _ => serde_json::Map::new(),
+        };
+        data.insert(FixBy::KEY.to_string(), word.as_token().into());
+        error.data = Some(serde_json::Value::Object(data));
+    }
+    error
+}
+
+impl From<String> for WayForward {
+    /// A bare sentence means the call must change.
+    fn from(text: String) -> Self {
+        Self::with(Some(FixBy::Change), text)
     }
 }
 
@@ -86,11 +216,11 @@ impl From<&str> for WayForward {
 /// stretching it into something that reads like a near miss.
 pub(crate) fn misused(how_to_proceed: impl Into<WayForward>) -> CallToolResult {
     let how_to_proceed = how_to_proceed.into();
-    let body = serde_json::json!({
+    let mut body = serde_json::json!({
         "status": "blocked",
         "wrote": false,
-        "how_to_proceed": how_to_proceed.as_str(),
     });
+    how_to_proceed.write_into(&mut body);
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])
 }
 
@@ -584,11 +714,94 @@ mod tests {
         let _: WayForward = "   ".into();
     }
 
-    /// The ordinary case: real prose survives the constructor unchanged.
+    /// The ordinary case: real prose survives the constructor unchanged, and a
+    /// bare sentence means the call must change.
     #[test]
     fn a_real_way_forward_survives_construction() {
         let built: WayForward = "call add_entity first".into();
-        assert_eq!(built.as_str(), "call add_entity first");
+        let mut body = serde_json::json!({});
+        built.write_into(&mut body);
+        assert_eq!(body["how_to_proceed"], "call add_entity first");
+        assert_eq!(body[FixBy::KEY], "change");
+    }
+
+    /// **The three words, each from its own constructor, and the word is the
+    /// key's value on the wire.** Pinned as literals because the spelling is
+    /// served and nothing outside this process declares it: a caller branches on
+    /// these three strings.
+    #[test]
+    fn each_constructor_writes_its_own_word_beside_the_prose() {
+        for (way, word) in [
+            (
+                WayForward::from("send a different call".to_string()),
+                "change",
+            ),
+            (WayForward::person("a person has to repair it"), "person"),
+        ] {
+            let mut body = serde_json::json!({"status": "blocked"});
+            way.write_into(&mut body);
+            assert_eq!(body["fix_by"], word, "{body}");
+            assert!(body["how_to_proceed"].is_string(), "{body}");
+        }
+        assert_eq!(FixBy::KEY, "fix_by");
+        assert_eq!(FixBy::Retry.as_token(), "retry");
+        let mut body = serde_json::json!({"status": "blocked"});
+        WayForward::mailbox_store_failure("the store failed").write_into(&mut body);
+        assert_eq!(
+            body["fix_by"].as_str(),
+            other_store_failure_word().map(FixBy::as_token),
+            "a mailbox storage failure wears whatever its switch says: {body}"
+        );
+    }
+
+    /// **The switch and the stamp.** With no word a stamped refusal carries
+    /// none (the shape the store-failure switch produces when it is off); with
+    /// one it carries exactly that one, replacing any other; a body that is no
+    /// refusal is left alone; and a protocol error carries the word in `data`
+    /// beside its message.
+    #[test]
+    fn the_stamp_sets_replaces_and_removes_the_word_and_leaves_other_answers_alone() {
+        let refusal = || {
+            CallToolResult::success(vec![ContentBlock::text(
+                serde_json::json!({"status": "blocked", "wrote": false, "fix_by": "change"})
+                    .to_string(),
+            )])
+        };
+        assert_eq!(
+            json_of(&stamp(refusal(), Some(FixBy::Person)))["fix_by"],
+            "person"
+        );
+        assert!(json_of(&stamp(refusal(), None)).get("fix_by").is_none());
+        let receipt = CallToolResult::success(vec![ContentBlock::text(
+            serde_json::json!({"id": "x"}).to_string(),
+        )]);
+        assert!(
+            json_of(&stamp(receipt, Some(FixBy::Retry)))
+                .get("fix_by")
+                .is_none()
+        );
+
+        let error = stamp_error(
+            McpError::internal_error("the store failed", None),
+            Some(FixBy::Retry),
+        );
+        assert_eq!(error.message, "the store failed");
+        assert_eq!(error.data.expect("data")["fix_by"], "retry");
+        assert!(
+            stamp_error(McpError::internal_error("x", None), None)
+                .data
+                .is_none()
+        );
+        assert_eq!(
+            memory_store_failure_word(),
+            MEMORY_STORE_FAILURE_IS_RETRY.then_some(FixBy::Retry),
+            "the switch and the word it yields agree"
+        );
+        assert_eq!(
+            other_store_failure_word(),
+            OTHER_STORE_FAILURE_IS_RETRY.then_some(FixBy::Retry),
+            "the switch and the word it yields agree"
+        );
     }
 
     /// **Two different names can each carry a displaced record in one
@@ -765,6 +978,23 @@ mod tests {
             body["teaching"],
             serde_json::json!(["first domain's content", "second domain's content"]),
             "both teachings must be readable, in the order they were recorded: {body}"
+        );
+    }
+    /// **The refusals every lane shares**, built outside any error enum: a call
+    /// whose arguments are each fine and wrong together, a call with no session,
+    /// and a boot the door declined. Each is a call that has to change.
+    #[test]
+    fn the_refusals_every_lane_shares_wear_the_change_word() {
+        assert_fix_by("misused", &misused("send one of the two"), "change");
+        assert_fix_by(
+            "session_unbound",
+            &crate::caller::session_unbound(),
+            "change",
+        );
+        assert_fix_by(
+            "handle_declined",
+            &crate::caller::handle_declined("zz99", "boot as a bot that exists".to_string()),
+            "change",
         );
     }
 }

@@ -61,6 +61,12 @@ enum NoBox {
 
 /// The refusal a read gets when there is no box behind its handle.
 fn no_box_for(attempted: &str, why: NoBox) -> CallToolResult {
+    // **Which word the refusal wears is decided by why there is no box.**
+    // Damage is a person's. A world that cannot be reached has no word yet: it
+    // reads like a transient failure and may be damage, and which it is has
+    // not been ruled on.
+    let is_damage = matches!(why, NoBox::Several(_));
+    let not_ruled_on = matches!(why, NoBox::Unknowable);
     let how_to_proceed = match why {
         NoBox::Anonymous => {
             format!(
@@ -109,13 +115,19 @@ fn no_box_for(attempted: &str, why: NoBox) -> CallToolResult {
                 .join(", "),
         ),
     };
-    let how_to_proceed: WayForward = how_to_proceed.into();
-    let body = serde_json::json!({
+    let how_to_proceed = if is_damage {
+        WayForward::person(how_to_proceed)
+    } else if not_ruled_on {
+        WayForward::mailbox_store_failure(how_to_proceed)
+    } else {
+        WayForward::from(how_to_proceed)
+    };
+    let mut body = serde_json::json!({
         "status": "blocked",
         "attempted": attempted,
         "wrote": false,
-        "how_to_proceed": how_to_proceed.as_str(),
     });
+    how_to_proceed.write_into(&mut body);
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])
 }
 
@@ -712,6 +724,10 @@ mod tests {
                 }))
                 .await
                 .expect("an answer, not a protocol failure"),
+        );
+        assert_eq!(
+            refused["fix_by"], "person",
+            "damage no verb of the caller's repairs is a person's: {refused}"
         );
         let how = refused["how_to_proceed"].as_str().expect("advice");
         assert!(
@@ -1362,5 +1378,53 @@ mod tests {
             full["searched"].is_null(),
             "a delivery needs no line: {full}"
         );
+    }
+    async fn ask_box(jojobot: &Jojobot, sid: Option<String>) -> Result<CallToolResult, McpError> {
+        jojobot
+            .read_mailbox(Parameters(ReadMailboxArgs {
+                counts_only: None,
+                new_only: None,
+                sid,
+            }))
+            .await
+    }
+
+    /// 🚨 **The refusals a read gets when no box stands behind its handle each
+    /// wear the word their repair needs.** No `sid` and a bot that has no box
+    /// are both a call that has to change (boot, and the boot opens the box). A
+    /// board nobody can read is a storage failure, which wears the word that
+    /// failure wears (`retry` while the store-failure switch is on).
+    #[tokio::test]
+    async fn the_refusals_for_no_box_wear_their_words() {
+        let jojobot = mailbox_handler();
+        // No handle at all: the call has to change.
+        let anonymous = ask_box(&jojobot, None).await.expect("an answer");
+        assert_fix_by("anonymous read", &anonymous, "change");
+        // A bot with no box behind its handle: boot, and the boot opens it.
+        let boxless = ask_box(&jojobot, Some(as_bot(&jojobot, "boxless")))
+            .await
+            .expect("an answer");
+        assert_fix_by("a bot with no box", &boxless, "change");
+
+        // The positive: a bot with a box reads, and gets no refusal word.
+        let reader = owning(&jojobot, "gamma").await;
+        let read = json_of(&ask_box(&jojobot, Some(reader)).await.expect("read ok"));
+        assert!(read.get("fix_by").is_none(), "{read}");
+
+        // A board that cannot be read is a storage failure: a retry.
+        let down = handler_with_mailboxes_down(std::sync::Arc::new(
+            jojobot_domain::memory::testing::InMemoryMemory::booted(),
+        ));
+        let unreadable = blocked(
+            &ask_box(&down, Some(as_bot(&down, "gamma")))
+                .await
+                .expect("an answer"),
+        );
+        assert_eq!(
+            unreadable["fix_by"].as_str(),
+            other_store_failure_word().map(FixBy::as_token),
+            "{unreadable}"
+        );
+        assert!(unreadable["how_to_proceed"].is_string(), "{unreadable}");
     }
 }
