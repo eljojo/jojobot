@@ -23,6 +23,9 @@ const MARKER_FACTS: usize = 300;
 const FACTS_ON_ONE_SUBJECT: usize = 60;
 const MESSAGES: usize = 50;
 const PLACES: usize = 10;
+/// How many runs otto has had, each with a focus near the longest a run keeps,
+/// so `list_runs` at its widest has more to list than one answer holds.
+const RUNS: usize = 90;
 
 /// The two days an aged world is written on: every place is described whole in
 /// the first, and one of its keys is rewritten in the second.
@@ -33,7 +36,10 @@ const OCTOBER: &str = "2026-10-08";
 /// call that was measured. A later slice that makes one fit removes its line
 /// here, and a verb that starts passing the ceiling without being added fails
 /// the case that compares the two.
-const STILL_OVER: &[&str] = &[];
+///
+/// `list_runs` has no fit yet: with runs enough to stretch it, its widest call
+/// passes the ceiling. Written down here until the slice that fits it.
+const STILL_OVER: &[&str] = &["list_runs"];
 
 /// A slug of ten letters that depends on nothing but the index, spread far
 /// enough apart that no two screen as near-misses of each other.
@@ -251,6 +257,17 @@ async fn world(aged: bool) -> World {
             };
             kept.push((message.id.as_str().to_string(), body));
         }
+    }
+
+    // Otto's runs: each opened beside the others and given a journal entry,
+    // which is what makes a run exist, with a focus near the longest kept.
+    for i in 0..RUNS {
+        let run = first.as_bot("bot:otto").await;
+        run.call(
+            "journal",
+            json!({"entry": format!("sitting {i}"), "focus": filler(190, 3000 + i)}),
+        )
+        .await;
     }
 
     let story = if aged {
