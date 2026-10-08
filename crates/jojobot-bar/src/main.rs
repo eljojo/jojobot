@@ -504,11 +504,10 @@ fn run_check_phases(known: &KnownReds) -> std::io::Result<ExitCode> {
         &format!("{limit} test binaries at a time ({TEST_JOBS_VARIABLE})"),
     );
     summary.test_phase(ok, &verdict, known);
-    if !test_healthy(ok, &verdict) {
-        summary.phase_skipped("lint");
-        finish(&mut summary, &log_path);
-        return Ok(ExitCode::FAILURE);
-    }
+    // **The lint runs whatever the tests said.** A red test step used to end
+    // the run here, and a lint failure then stayed hidden behind every test that
+    // was red; the two are separate questions and the verdict carries both. The
+    // run is green only when both are.
 
     let (ok, _) = run_phase(
         &log_path,
@@ -693,11 +692,10 @@ fn run_narrow(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
     )?;
     let verdict = summarize_test_output(&text);
     summary.test_phase(ok, &verdict, known);
-    if !test_healthy(ok, &verdict) {
-        summary.phase_skipped("lint");
-        finish(&mut summary, &log_path);
-        return Ok(ExitCode::FAILURE);
-    }
+    // **The lint runs whatever the tests said.** A red test step used to end
+    // the run here, and a lint failure then stayed hidden behind every test that
+    // was red; the two are separate questions and the verdict carries both. The
+    // run is green only when both are.
 
     let (ok, _) = run_phase(
         &log_path,
