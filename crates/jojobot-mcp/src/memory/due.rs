@@ -213,6 +213,70 @@ impl Jojobot {
         }
     }
 
+    /// **What a write's receipt says about reach.** The keys of the claim that
+    /// reached the thing it is about, told apart from the ones that stayed on the
+    /// record because they only describe it; and, for a key the caller sent as one
+    /// of the claim's own fields that the thing's kind or a carrier reads off the
+    /// thing, a hint that it belongs in `sets`.
+    ///
+    /// `own_sent` is the keys this call sent as the claim's own fields, so a key
+    /// already in the setting bag, or one a call did not send, is never hinted.
+    pub(crate) fn note_reach_and_hint(
+        &self,
+        body: &mut serde_json::Value,
+        fact: &Fact,
+        own_sent: &[String],
+    ) {
+        let describing = crate::seed::describing_keys();
+        let (stayed, reached): (Vec<String>, Vec<String>) = fact
+            .fields
+            .keys()
+            .cloned()
+            .partition(|key| describing.contains(key));
+        crate::answer::note_reach(body, reached, stayed);
+        let read = self.keys_read_off_a_thing(&fact.subject);
+        let to_move: Vec<&String> = own_sent.iter().filter(|key| read.contains(*key)).collect();
+        if to_move.is_empty() {
+            return;
+        }
+        let named = to_move
+            .iter()
+            .map(|key| key.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        crate::answer::note_hint(
+            body,
+            format!(
+                "{named} sent as the claim's own fields, and the thing's kind or a carrier reads \
+                 {} off the thing. A claim's own fields will stop reaching the thing, so {} \
+                 would not reach it then: send {} in `sets` instead.",
+                if to_move.len() == 1 { "it" } else { "them" },
+                if to_move.len() == 1 { "it" } else { "they" },
+                if to_move.len() == 1 { "it" } else { "them" },
+            ),
+        );
+    }
+
+    /// **The keys a thing of this subject's kind, or a carrier, reads off the
+    /// thing**: the keys its kind declares, and the keys that make it fall due.
+    fn keys_read_off_a_thing(&self, subject: &EntityId) -> std::collections::BTreeSet<String> {
+        let mut keys: std::collections::BTreeSet<String> = subject
+            .kind()
+            .map(|kind| {
+                jojobot_domain::memory::kinds::keys_of(kind.as_token())
+                    .into_iter()
+                    .map(|field| field.key)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let carriers = self.carriers();
+        keys.extend(attention::due_keys(&carriers));
+        for carrier in &carriers {
+            keys.extend(carrier.also_reads().iter().map(|key| key.to_string()));
+        }
+        keys
+    }
+
     /// **The refusal for a caller that writes or clears the stored due moment.**
     ///
     /// It is jojobot's own: set from the keys that make a thing fall due, kept

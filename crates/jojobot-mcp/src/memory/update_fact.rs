@@ -311,6 +311,9 @@ impl Jojobot {
         let declared = Declared::of(&args);
         let cleared = args.clear_fields.clone().unwrap_or_default();
         let mut fields = args.fields.unwrap_or_default();
+        // **What this call sent as the claim's own fields**, kept apart from the
+        // setting bag for the receipt's hint.
+        let own_sent: Vec<String> = fields.keys().cloned().collect();
         // **The setting bag joins `fields` for everything below**, exactly as
         // `capture`'s own copy does; the keys that are the bag travel apart.
         let sets_sent = args.sets.unwrap_or_default();
@@ -621,6 +624,7 @@ impl Jojobot {
                     self.what_an_update_left_standing(&fact, &cleared, keep)
                         .await,
                 );
+                self.note_reach_and_hint(&mut body, &fact, &own_sent);
                 self.note_seat_pushed_off(&fact, &mut body).await;
                 let unstarred_this_write =
                     was_starred && fact.fields.get("starred").is_none_or(|v| v != "true");

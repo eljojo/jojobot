@@ -655,6 +655,26 @@ pub(crate) fn note_postcondition(body: &mut serde_json::Value, line: String) {
     fields.insert("postcondition".into(), line.into());
 }
 
+/// **Which keys of a claim reached the thing it is about, and which stayed on
+/// the record.** Two lists, always both when a claim carries keys, so a reader
+/// never has to infer the second from the first.
+pub(crate) fn note_reach(body: &mut serde_json::Value, reached: Vec<String>, stayed: Vec<String>) {
+    let Some(fields) = body.as_object_mut() else {
+        return;
+    };
+    fields.insert("reached_the_thing".into(), reached.into());
+    fields.insert("stayed_on_the_record".into(), stayed.into());
+}
+
+/// **A hint, for the release in which it is useful.** One sentence on the receipt
+/// of the write that earned it, and absent from every other.
+pub(crate) fn note_hint(body: &mut serde_json::Value, hint: String) {
+    let Some(fields) = body.as_object_mut() else {
+        return;
+    };
+    fields.insert("hint".into(), hint.into());
+}
+
 /// **State that a write landed even though the in-process fold behind it
 /// could not confirm it** (rule 130) — the write-path sibling of memory's own
 /// coverage note: one vocabulary for "an in-process projection is behind the

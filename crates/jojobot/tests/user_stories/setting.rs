@@ -228,7 +228,7 @@ async fn an_edit_and_its_settings_are_made_whole_or_not_at_all() {
         "update_entity",
         json!({
             "handle": "thing:handcart", "name": "The Blue Handcart",
-            "sets": {"blocks": "work:nobody-holds-this"},
+            "sets": {"blocks": "work:contract-claimed-nobody"},
         }),
     )
     .await
@@ -254,6 +254,104 @@ async fn an_edit_and_its_settings_are_made_whole_or_not_at_all() {
     .await
     .says("\"size\":\"large\"")
     .says("The Red Handcart");
+    story.finish().await;
+}
+
+/// **The receipt says what reached the thing apart from what stayed on the
+/// record, and says which of the claim's own keys the thing's kind reads.**
+///
+/// A claim writes a key the work kind declares as one of its own fields and
+/// another one as a setting, and labels itself with a key that only describes
+/// it. The receipt names both lists. It also says, once, that the key the kind
+/// reads would not reach the thing if the claim's own fields stopped doing so,
+/// and that it belongs in `sets` — and says nothing of the key already there.
+/// **Paired with a call that sends everything in `sets`**, which gets no hint.
+#[tokio::test]
+async fn the_receipt_splits_what_reached_the_thing_from_what_stayed_and_hints_at_sets() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    s.add("project:atlas", "The Campaign").await;
+    s.add_under("project:atlas", "work:phi", "The Wiring").await;
+
+    let receipt = s
+        .call(
+            "capture",
+            json!({
+                "subject": "work:phi", "content": "the wiring is under way",
+                "provenance": "testimony",
+                "fields": {"status": "now", "purpose": "a progress note"},
+                "sets": {"decide_by": "2026-11-01"},
+            }),
+        )
+        .await
+        .json();
+    let list = |key: &str| -> Vec<String> {
+        receipt[key]
+            .as_array()
+            .unwrap_or_else(|| panic!("the receipt names {key}: {receipt}"))
+            .iter()
+            .map(|v| v.as_str().expect("a key").to_string())
+            .collect()
+    };
+    let mut reached = list("reached_the_thing");
+    reached.sort();
+    // `due_on` is jojobot's own arithmetic from the decide-by day, kept as one of
+    // the claim's own fields, and it reaches the thing like the rest.
+    assert_eq!(reached, ["decide_by", "due_on", "status"], "{receipt}");
+    assert_eq!(list("stayed_on_the_record"), ["purpose"], "{receipt}");
+    let hint = receipt["hint"]
+        .as_str()
+        .unwrap_or_else(|| panic!("a kind-read key sent as an own field is hinted: {receipt}"));
+    assert!(hint.contains("status"), "the hint names the key: {hint}");
+    assert!(
+        !hint.contains("decide_by") && !hint.contains("purpose"),
+        "and only the key that needs moving: {hint}",
+    );
+
+    // **An edit's receipt says the same**, about the claim it edited.
+    let address = receipt["address"].as_str().expect("an address").to_string();
+    let edited = s
+        .call(
+            "update_fact",
+            json!({"address": address, "fields": {"status": "waiting"}}),
+        )
+        .await
+        .json();
+    assert!(
+        edited["reached_the_thing"]
+            .as_array()
+            .is_some_and(|reached| reached.iter().any(|key| key == "status")),
+        "an edit's receipt names what reached the thing: {edited}",
+    );
+    assert_eq!(
+        edited["stayed_on_the_record"],
+        json!(["purpose"]),
+        "{edited}"
+    );
+    assert!(
+        edited["hint"]
+            .as_str()
+            .is_some_and(|hint| hint.contains("status")),
+        "an edit sending a kind-read key as an own field is hinted too: {edited}",
+    );
+
+    // Everything in the setting bag: both lists still, and no hint.
+    let settled = s
+        .call(
+            "capture",
+            json!({
+                "subject": "work:phi", "content": "the wiring is done",
+                "provenance": "testimony",
+                "sets": {"status": "done"},
+            }),
+        )
+        .await
+        .json();
+    assert!(
+        settled.get("hint").is_none_or(|hint| hint.is_null()),
+        "nothing to move, so nothing to hint: {settled}",
+    );
+    assert_eq!(settled["reached_the_thing"], json!(["status"]), "{settled}");
     story.finish().await;
 }
 

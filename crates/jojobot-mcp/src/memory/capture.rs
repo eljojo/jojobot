@@ -800,6 +800,9 @@ impl Jojobot {
         }
 
         let mut fields = args.fields.unwrap_or_default();
+        // **What this call sent as the claim's own fields**, kept apart from the
+        // setting bag for the receipt's hint.
+        let own_sent: Vec<String> = fields.keys().cloned().collect();
         // **The setting bag joins `fields` for everything below**, so every guard
         // that reads a claim's keys reads these too, and the keys that are the bag
         // travel apart in `sets` so a store can tell them from the claim's own.
@@ -1035,6 +1038,7 @@ impl Jojobot {
                     self.what_a_capture_left_standing(&fact, checked_in, opened_the_loop)
                         .await,
                 );
+                self.note_reach_and_hint(&mut body, &fact, &own_sent);
                 self.note_seat_pushed_off(&fact, &mut body).await;
                 self.note_unstars_without_a_summary(&fact, false, caller.sid.as_str(), &mut body);
                 if self.first_contact(CLAIMS_DOMAIN, Some(&caller)).await {
