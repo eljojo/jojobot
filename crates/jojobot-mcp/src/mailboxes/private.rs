@@ -103,10 +103,8 @@ impl Jojobot {
                 addressee,
                 &[],
                 format!(
-                    "Nothing was written. The handle the instance names as operator is not a \
-                     person, so no person is the operator yet and no person has a mailbox. The \
-                     operator is named on the instance's record: {}.",
-                    crate::orientation::instance_zone::no_operator_yet(),
+                    "Nothing was written: {}.",
+                    crate::orientation::instance_zone::operator_is_not_a_person(&operator),
                 ),
             )
         })
@@ -133,6 +131,16 @@ impl Jojobot {
                 ),
             ));
         };
+        if operator.kind() != Some(EntityKind::PERSON) {
+            return Err(blocked_body(
+                addressee,
+                &[],
+                format!(
+                    "Nothing was written: {}.",
+                    crate::orientation::instance_zone::operator_is_not_a_person(&operator),
+                ),
+            ));
+        }
         if &operator != addressee {
             return Err(blocked_body(
                 addressee,

@@ -1310,9 +1310,13 @@ mod tests {
         assert_eq!(refused["status"], "blocked", "{refused}");
         assert_eq!(refused["wrote"], false, "{refused}");
         let how = refused["how_to_proceed"].as_str().expect("a way forward");
-        for identifier in ["add_entity", "topic:instance", "operator"] {
+        for identifier in ["bot:gamma", "topic:instance", "operator"] {
             assert!(how.contains(identifier), "names {identifier}: {how}");
         }
+        assert!(
+            !how.contains("no entity yet"),
+            "the record names an entity that exists: {how}"
+        );
         assert_eq!(
             counts(&jojobot, "gamma").await["counts"]["total"],
             1,
@@ -1375,5 +1379,47 @@ mod tests {
             other_store_failure_word().map(FixBy::as_token),
             "{unreadable}"
         );
+    }
+    /// **A post to a person, while the record names a bot as operator, says
+    /// what the record holds.** The person is not the operator, but "this person
+    /// is not the operator, write to the handle the boot names" would send the
+    /// caller to a handle that is no person. The refusal names the held handle
+    /// and why it does not count. Paired with the same post once the record
+    /// names that person, which lands.
+    #[tokio::test]
+    async fn a_post_to_a_person_while_the_record_names_a_bot_says_what_the_record_holds() {
+        let jojobot = mailbox_handler();
+        let sender = owning(&jojobot, "epsilon").await;
+        owning(&jojobot, "gamma").await;
+        crate::memory::testing::ensure(&jojobot, "person:milhouse").await;
+        let names = |handle: &str| CaptureArgs {
+            fields: Some([("operator".to_string(), handle.to_string())].into()),
+            provenance: Some("testimony".into()),
+            ..crate::memory::testing::capture_args("topic:instance", "who the operator is")
+        };
+
+        crate::memory::testing::capture_ok(&jojobot, names("bot:gamma")).await;
+        let refused = blocked(
+            &post_to(&jojobot, "person:milhouse", &sender)
+                .await
+                .expect("a refusal is an answer"),
+        );
+        let how = refused["how_to_proceed"].as_str().expect("a way forward");
+        assert!(
+            how.contains("bot:gamma"),
+            "names what the record holds: {how}"
+        );
+        assert!(
+            !how.contains("no entity yet"),
+            "the record names an entity that exists: {how}"
+        );
+
+        crate::memory::testing::capture_ok(&jojobot, names("person:milhouse")).await;
+        let landed = json_of(
+            &post_to(&jojobot, "person:milhouse", &sender)
+                .await
+                .expect("post ok"),
+        );
+        assert_ne!(landed["status"], "blocked", "{landed}");
     }
 }

@@ -94,6 +94,20 @@ pub(crate) fn no_operator_yet() -> String {
     )
 }
 
+/// **The sentence for a record that names something other than a person as the
+/// operator.** The operator is a person, so the handle the record holds does not
+/// count, and the sentence says what it holds, its kind, and where a person is
+/// written. The entity exists, so it never says there is none. The boot and a
+/// post to that handle both carry this one sentence, so they cannot disagree.
+pub(crate) fn operator_is_not_a_person(held: &EntityId) -> String {
+    let kind = held.kind().map_or("unknown kind", |kind| kind.as_token());
+    format!(
+        "the instance's record holds '{held}' as its operator, which is a {kind} and not a \
+         person, so there is no operator yet: capture {INSTANCE_OPERATOR_KEY} with a person's \
+         handle on {INSTANCE_RECORD}"
+    )
+}
+
 impl Jojobot {
     /// **The person the instance's record names as its operator**, or `None`
     /// when the record or the key is absent or the store cannot be read. A
@@ -117,6 +131,9 @@ impl Jojobot {
     /// thing, because the boot cannot name a person it did not read.
     pub(crate) async fn operator_answer(&self) -> serde_json::Value {
         match self.instance_operator().await {
+            Some(held) if held.kind() != Some(EntityKind::PERSON) => {
+                operator_is_not_a_person(&held).into()
+            }
             Some(operator) => operator.as_str().into(),
             None => no_operator_yet().into(),
         }
@@ -388,5 +405,50 @@ mod tests {
 
         let day = jojobot.dated(None, None).await.expect("a day");
         assert_eq!(day.to_string(), day_in(zone));
+    }
+    /// 🚨 **A record that names something other than a person as operator is
+    /// said to, not passed off as an operator and not called an absence.** The
+    /// operator is a person. A record can still hold a handle of another kind
+    /// (data from before a retype was refused), and the boot used to hand that
+    /// handle over as the operator. The line now names what the record holds,
+    /// says it is not a person, and says where a person is written. It is NOT
+    /// "no entity yet": the entity exists. Paired with a record that names a
+    /// person, which the boot hands over as before.
+    #[tokio::test]
+    async fn a_record_naming_a_bot_as_operator_is_said_not_to_be_a_person() {
+        let jojobot = handler();
+        make_bot(&jojobot, "otto").await;
+        make_bot(&jojobot, "gamma").await;
+        let names = |handle: &str| {
+            let mut args = capture_args(INSTANCE_RECORD, "who the operator is");
+            args.provenance = Some("testimony".into());
+            args.fields = Some([(INSTANCE_OPERATOR_KEY.to_string(), handle.to_string())].into());
+            args
+        };
+
+        capture_ok(&jojobot, names("bot:gamma")).await;
+        let body = boot_answering_dated(&jojobot, "otto", "new", None, None).await;
+        let said = body["operator"].as_str().expect("one operator line");
+        assert!(
+            said.contains("bot:gamma"),
+            "names what the record holds: {said}"
+        );
+        assert!(
+            !said.starts_with("bot:"),
+            "a bot is not handed over as the operator: {said}"
+        );
+        assert!(
+            !said.contains("no entity yet"),
+            "the entity exists, so that would be false: {said}"
+        );
+        assert!(
+            said.contains(INSTANCE_RECORD),
+            "and where to write a person: {said}"
+        );
+
+        ensure(&jojobot, "person:lisa").await;
+        capture_ok(&jojobot, names("person:lisa")).await;
+        let body = boot_answering_dated(&jojobot, "otto", "new", None, None).await;
+        assert_eq!(body["operator"], "person:lisa", "{body}");
     }
 }
