@@ -571,9 +571,10 @@ impl Jojobot {
                 answer,
                 format!(
                     "No session was started. '{answer}' addresses a session that is {state} — its \
-                 story has been told, so this end is the last word. Its chronology stands as \
-                 the record of what happened. Call start_here with your bot name and no \
-                 resume to begin the next run."
+                 story has been told, so this end is the last word, except through the \
+                 wrap_code its wrap handed back: pass that code as resume for one last \
+                 change. Its chronology stands as the record of what happened. Call \
+                 start_here with your bot name and no resume to begin the next run."
                 ),
             )),
             Err(SessionError::UnknownSession { .. }) => Err(handle_declined(
@@ -1746,6 +1747,10 @@ mod tests {
         assert!(
             how.contains("wrapped") && how.contains("story"),
             "the refusal says why this end is the last word: {how}"
+        );
+        assert!(
+            how.contains("wrap_code"),
+            "…and names the one way a wrapped run takes another change: {how}"
         );
         assert_eq!(
             store.read_session(&told.id).await.expect("read ok").state,

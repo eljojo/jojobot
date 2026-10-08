@@ -46,8 +46,9 @@ impl Jojobot {
                        reached. The two ends part company on what comes NEXT — a run that stopped \
                        without being wrapped up is offered back at your next boot, and resuming \
                        it continues this same record, while a wrapped one is the last word — its \
-                       story is told and nothing appends to it, so carrying on means a fresh \
-                       session. IT ANSWERS WITH A RECEIPT, NOT YOUR BEAT: the id the entry was \
+                       story is told and nothing appends to it except through the wrap_code its \
+                       wrap handed back, so carrying on means a fresh session. IT ANSWERS \
+                       WITH A RECEIPT, NOT YOUR BEAT: the id the entry was \
                        given, when it was stamped, the run it landed in, the byte count of what \
                        was stored and the opening line. You wrote the entry; start_here returns \
                        the whole chronology when you resume. IF YOUR SESSION HOLDS A CLAIMED \
@@ -747,6 +748,23 @@ mod tests {
         assert!(
             !on_stopped.contains("belongs to a new session"),
             "…and it must not send the caller off to fork the work: {on_stopped}"
+        );
+
+        // The description that calls a wrapped run the last word carries the
+        // wrap_code in the same sentence: a wrap hands one back.
+        let tools = crate::Jojobot::tool_router().list_all();
+        let journal = tools
+            .iter()
+            .find(|t| t.name == "journal")
+            .expect("journal is served");
+        let description = journal.description.as_deref().unwrap_or_default();
+        let at = description
+            .find("is the last word")
+            .expect("the description says a wrapped run is the last word");
+        let sentence = description[at..].split(". ").next().expect("a sentence");
+        assert!(
+            sentence.contains("wrap_code"),
+            "the exception rides in the sentence that states the rule: {sentence}"
         );
 
         let on_told = advice(&told.id).await;

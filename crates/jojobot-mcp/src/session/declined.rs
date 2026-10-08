@@ -18,7 +18,8 @@ pub(crate) fn session_nothing_to_amend() -> CallToolResult {
         "Nothing was written. There is no OPEN session to amend: either this \
                            identity has not written anything yet — a session's record begins on \
                            its first beat — or its last session is closed, and closed is \
-                           terminal both ways. Use journal to begin the next one; its first \
+                           terminal both ways except through the wrap_code its wrap handed \
+                           back. Use journal to begin the next one; its first \
                            entry is what brings the record into being. To read a closed \
                            session's chronology, booting as this identity through start_here \
                            reports its state."
@@ -183,6 +184,36 @@ pub(crate) fn session_error(e: SessionError) -> McpError {
 mod tests {
     use super::*;
     use crate::harness::*;
+
+    /// **The refusal to amend where nothing is open calls a closed run
+    /// terminal, and says in the same sentence that a `wrap_code` is the
+    /// exception**, because a wrap hands one back.
+    #[tokio::test]
+    async fn the_refusal_to_amend_names_the_wrap_code_where_it_calls_closed_terminal() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+        let refused = blocked(
+            &jojobot
+                .amend_journal(Parameters(
+                    crate::session::amend_journal::AmendJournalArgs {
+                        entry: "a correction".into(),
+                        sid,
+                    },
+                ))
+                .await
+                .expect("a handle with no card behind it is an answer"),
+        );
+        let how = refused["how_to_proceed"].as_str().expect("advice");
+        let at = how
+            .find("terminal both ways")
+            .expect("the refusal calls a closed run terminal");
+        let sentence = how[at..].split(". ").next().expect("a sentence");
+        assert!(
+            sentence.contains("wrap_code"),
+            "the exception rides in the sentence that states the rule: {sentence}"
+        );
+    }
 
     /// **A caller mistake never leaves this rail through the error channel**
     /// (rule 68). It comes back as a blocked answer carrying what is wrong and
