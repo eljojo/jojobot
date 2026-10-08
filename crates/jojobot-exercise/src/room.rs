@@ -335,6 +335,11 @@ impl Room {
             .env("JOJOBOT_BIND", format!("127.0.0.1:{served}"))
             .env("JOJOBOT_STORE_PORT", store.to_string())
             .env("JOJOBOT_ALLOW_NO_AUTH", "1")
+            // The room is ready when the server prints its serving line, an
+            // info event. The child inherits this process's RUST_LOG, and a
+            // sandbox that exports "" or "warn" would hide the line from a
+            // server that is healthy, so the filter is set here.
+            .env("RUST_LOG", "info")
             // The server's own log is the first place to look when a room does
             // not come up, so it goes to this process's stderr rather than into
             // a pipe nobody drains.
