@@ -6398,6 +6398,31 @@ pub async fn field_ages_say_when_each_key_was_taken_in_and_when_anything_was<M: 
     let edited = store.field_ages(&subject).await.expect("ages read");
     assert!(edited.newest > archived.newest, "{edited:?}");
 
+    // An edit that writes a claim sets its keys as a capture does: the key it
+    // set takes the later moment. Read straight after an ages read, so a store
+    // that serves ages from a cache has to have dropped it on this verb too.
+    store
+        .update_entity_with_claim(
+            &subject,
+            EntityPatch::default(),
+            NewFact {
+                fields: [("colour".to_string(), "green".to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(subject.clone(), "repainted again", date(2026, 7, 4))
+            },
+        )
+        .await
+        .expect("the call answers")
+        .written()
+        .expect("nothing blocks it");
+    let repainted = store.field_ages(&subject).await.expect("ages read");
+    assert!(
+        repainted.keys["colour"] > edited.keys["colour"],
+        "the key the edit set kept its old moment: {repainted:?}"
+    );
+    assert!(repainted.newest > edited.newest, "{repainted:?}");
+
     // A thing with no keys has no key ages, and a thing that is not there is a
     // miss.
     let bare = EntityId::person("person:contract-blank-slate");

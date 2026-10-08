@@ -195,6 +195,7 @@ impl Memory for Folded {
         patch: EntityPatch,
         claim: NewFact,
     ) -> Result<Guarded<(Entity, Fact)>, MemoryError> {
+        let _forget = self.forgetting_ages();
         match self
             .inner
             .update_entity_with_claim(handle, patch, claim)
