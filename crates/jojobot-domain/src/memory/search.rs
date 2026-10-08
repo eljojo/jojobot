@@ -144,8 +144,10 @@ pub struct EdgeFilter {
     pub object: EntityId,
 }
 
-/// The default number of results — raisable by the caller. There is **no
-/// pagination and no cursor**: a second page is a better query.
+/// The default number of results — raisable by the caller. `limit` is how deep
+/// the ranking goes, counted from the best hit; the verb's `offset` reads the
+/// part of that ranking an answer left out at the answer ceiling. The index
+/// itself has no cursor and takes no offset.
 pub const DEFAULT_LIMIT: usize = 20;
 
 /// **Which day a search ranks recency against.** The operator's own ruling:

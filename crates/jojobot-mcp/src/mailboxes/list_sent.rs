@@ -25,9 +25,9 @@ pub struct ListSentArgs {
     pub(crate) to: Option<String>,
     /// How many messages to return, newest first. Defaults to twenty.
     ///
-    /// **No pagination and no cursor**, as `search` has none: a second page is
-    /// a narrower question — one box, or one sender. What is left out is
-    /// counted and said, never silently dropped.
+    /// **No pagination and no cursor yet**: a second page is a narrower
+    /// question — one box, or one sender. What is left out is counted and said,
+    /// never silently dropped.
     #[serde(default)]
     pub(crate) limit: Option<u32>,
     /// Ship the bodies back too. Off by default: you wrote them, so the useful

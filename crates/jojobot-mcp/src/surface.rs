@@ -718,6 +718,13 @@ fn the_list_entities_description_names_the_restore() {
     assert_description_names("list_entities", &["archive_entity", "restore"]);
 }
 
+/// **`search` names the ceiling's two words**: the block that says what an
+/// answer left out, and the argument that reads it.
+#[test]
+fn the_search_description_names_not_shown_and_offset() {
+    assert_description_names("search", &["not_shown", "offset"]);
+}
+
 /// **`merge_entities` says its names become aliases of the survivor.**
 #[test]
 fn the_merge_description_names_the_aliases_it_carries() {

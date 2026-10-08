@@ -440,6 +440,13 @@ impl Jojobot {
     }
 }
 
+/// **The room an answer keeps for what `finish` adds after the verb has
+/// counted its own text**: the status bar. A verb that fills a collection
+/// against the answer ceiling subtracts this along with the rest of its answer,
+/// so the answer that reaches the client is under the ceiling and not merely
+/// the verb's part of it.
+pub(crate) const STATUS_BAR_ROOM: usize = 200;
+
 // ── what a write says about itself ──────────────────────────────────────────
 
 /// **A count and its noun, agreeing.** A real model read "1 entries long" off

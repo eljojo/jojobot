@@ -106,10 +106,18 @@ pub struct SearchArgs {
     /// still recall with history_record.
     #[serde(default)]
     pub(crate) include_history: Option<bool>,
-    /// How many results; defaults to 20. There is no pagination — a second page
-    /// is a better query.
+    /// How many results, counted from the best; defaults to 20. An answer
+    /// carries the best of them that fit under the answer ceiling and says how
+    /// many it left out; `offset` reads the rest.
     #[serde(default)]
     pub(crate) limit: Option<u32>,
+    /// **How many of the ranked results you have already read.** The answer
+    /// stops at the ceiling and names the `offset` that returns the next part;
+    /// repeat the same call with it. `limit` still counts from the best hit, so
+    /// the same `limit` with a larger `offset` walks to the end of the same
+    /// ranking and returns every hit exactly once. Defaults to 0.
+    #[serde(default)]
+    pub(crate) offset: Option<u32>,
     /// **Which day ranking reads: `recorded_on`** (the default — the day a
     /// claim was said) **or `happened_at`** (the day the thing itself did).
     /// Neither is the system's default over the other; this is a choice the
@@ -616,8 +624,10 @@ impl Jojobot {
                        `recall` reads the store itself. `clock` picks the day ranking reads: \
                        `recorded_on` (the default — the day a claim was said) or \
                        happened_at (the day the thing itself did); a claim with no \
-                       happened_at ranks by recorded_on, and `rank_fallbacks` counts them. No \
-                       pagination — raise `limit` or ask a better question. THE MATCHING AND \
+                       happened_at ranks by recorded_on, and `rank_fallbacks` counts them. AN ANSWER \
+                       IS CUT AT THE CEILING, never mid-hit: it carries the best hits that fit, \
+                       and `not_shown` says how many it left out and the `offset` that returns \
+                       them — repeat the same call with it. THE MATCHING AND \
                        CORPUS NOTES (what the matcher can miss, and the earlier wordings it \
                        never reaches) ride your first search of a session and every answer of \
                        fewer than three hits, and are left out of the rest. AN EMPTY ANSWER NAMES \
@@ -707,10 +717,17 @@ impl Jojobot {
         }
         // Awaited before the coverage below is read: the refresh this search
         // takes is what those two answers describe.
-        let hits = match self.search.search(&query).await {
+        let ranked = match self.search.search(&query).await {
             Ok(hits) => hits,
             Err(e) => return memory_declined("search", e),
         };
+        // **`offset` is the part of the ranking the caller has already read.**
+        // `limit` is how deep the ranking goes, counted from the best, so a
+        // continuation repeats the call with a larger offset and the same limit
+        // and the parts it returns tile the ranking with no hit twice.
+        let offset = args.offset.map_or(0, |o| o as usize);
+        let ranked_len = ranked.len();
+        let hits: Vec<Hit> = ranked.into_iter().skip(offset).collect();
         // **The day this answer is read against**, in the zone of the run that
         // asked: whether a claim has passed the day it stays good is a question
         // about a day, and two runs in two zones answer it differently for one
@@ -762,10 +779,7 @@ impl Jojobot {
             "memory": memory_coverage(self.search.memory_coverage()),
             "mail": mail_coverage(&query, self.search.mail_coverage()),
             "sessions": session_coverage(self.search.session_coverage()),
-            "results": hits
-                .iter()
-                .map(|hit| hit_json(hit, as_of))
-                .collect::<Vec<_>>(),
+            "results": serde_json::json!([]),
         });
         if caveats {
             // **A third question, beside the two above and folded into
@@ -776,7 +790,13 @@ impl Jojobot {
         // says the wording may have missed; this says which population the call
         // narrowed to and what the default left out. Added only to an answer
         // that returned nothing.
-        if hits.is_empty() {
+        if hits.is_empty() && offset > 0 {
+            body["past_the_end"] = format!(
+                "offset {offset} is past the last of the {ranked_len} hits ranked under this \
+                 limit, so nothing is left to read"
+            )
+            .into();
+        } else if hits.is_empty() {
             let mut looked: Vec<String> = Vec::new();
             for (name, value) in [
                 ("kind", args.kind.as_deref()),
@@ -823,11 +843,60 @@ impl Jojobot {
         for (wanted, displaced) in &type_displaced {
             crate::answer::note_type_displaced(&mut body, wanted, displaced.as_ref());
         }
+        // **The hits fill what the rest of the answer leaves of the ceiling, in
+        // rank order, whole hits only.** The envelope is counted first, with
+        // the block that names what was left out measured at its widest, so the
+        // answer that ships is under the ceiling and not merely its hits.
+        let rendered: Vec<(serde_json::Value, usize)> = hits
+            .iter()
+            .map(|hit| {
+                let json = hit_json(hit, as_of);
+                let size = json.to_string().chars().count() + 1;
+                (json, size)
+            })
+            .collect();
+        let widest_not_shown = not_shown(rendered.len(), offset + rendered.len());
+        let rest = body.to_string().chars().count()
+            + widest_not_shown.to_string().chars().count()
+            + crate::answer::STATUS_BAR_ROOM;
+        let kept = jojobot_domain::text::Capped::beside(rest).head(&rendered, |(_, size)| *size);
+        body["results"] = kept
+            .kept()
+            .iter()
+            .map(|(json, _)| json.clone())
+            .collect::<Vec<_>>()
+            .into();
+        body["count"] = kept.kept().len().into();
+        if kept.elided() {
+            body["not_shown"] = not_shown(kept.omitted(), offset + kept.kept().len());
+        }
+        if matches!(query.rank_clock, RankClock::HappenedAt) {
+            body["rank_fallbacks"] = hits
+                .iter()
+                .take(kept.kept().len())
+                .filter(|hit| matches!(hit, Hit::Fact { fact, .. } if fact.happened_at.is_none()))
+                .count()
+                .into();
+        }
         if let Some(sid) = args.sid.as_deref() {
             self.registry.note_shown(sid, &body);
         }
         json_result(&body)
     }
+}
+
+/// **What an answer says of the hits it left out**: how many, and the one
+/// argument that returns them. The same call with this `offset` reads the next
+/// part of the same ranking.
+fn not_shown(count: usize, offset: usize) -> serde_json::Value {
+    serde_json::json!({
+        "count": count,
+        "offset": offset,
+        "how_to_proceed": format!(
+            "these hits ranked below the ones above and did not fit under the answer \
+             ceiling: repeat this call with offset: {offset} to read them"
+        ),
+    })
 }
 
 /// **What the matcher can and cannot promise about this query.**
@@ -1299,6 +1368,7 @@ mod tests {
                 include_mail: Some(false),
                 include_history: Some(false),
                 limit: Some(5),
+                offset: None,
                 clock: Some("happened_at".into()),
                 sid: None,
                 fits_type: None,
@@ -2985,5 +3055,146 @@ mod tests {
         );
         assert_eq!(full["count"], 1, "{full}");
         assert!(full["searched"].is_null(), "a hit needs no line: {full}");
+    }
+
+    /// A ranked list of prose hits, each about `snippet` characters, named by
+    /// its rank so a test can read the order back.
+    fn ranked_hits(count: usize, snippet: usize) -> Vec<Hit> {
+        (0..count)
+            .map(|rank| Hit::Prose {
+                doc_id: format!("doc-{rank}"),
+                title: format!("hit {rank:04}"),
+                entity: None,
+                edges: Vec::new(),
+                snippet: format!("{rank:04} {}", "kiln ".repeat(snippet / 5)),
+            })
+            .collect()
+    }
+
+    /// One call of `search` over scripted hits, read as the body it served.
+    async fn searched_over(hits: Vec<Hit>, limit: u32, offset: u32) -> serde_json::Value {
+        json_of(
+            &handler_with(Arc::new(SpySearch::answering(hits)))
+                .search(Parameters(SearchArgs {
+                    query: Some("kiln".into()),
+                    limit: Some(limit),
+                    offset: Some(offset),
+                    ..search_args()
+                }))
+                .await
+                .expect("search ok"),
+        )
+    }
+
+    /// The ranks a body's results carry, read from the titles.
+    fn ranks_of(body: &serde_json::Value) -> Vec<usize> {
+        body["results"]
+            .as_array()
+            .expect("a list of results")
+            .iter()
+            .map(|hit| {
+                hit["title"]
+                    .as_str()
+                    .and_then(|title| title.strip_prefix("hit "))
+                    .and_then(|rank| rank.parse().ok())
+                    .unwrap_or_else(|| panic!("a prose hit with a ranked title: {hit}"))
+            })
+            .collect()
+    }
+
+    /// **An answer of ranked hits stops at the ceiling, whole hits only, in rank
+    /// order, and says how many it left out and where the rest begins.** A hundred
+    /// hits of a thousand characters each is far past the ceiling, so the answer
+    /// is the best of them that fit. The count it states is the number it left
+    /// out of the hundred, and the offset it names is the first rank it did not
+    /// carry.
+    #[tokio::test]
+    async fn an_answer_of_ranked_hits_stops_at_the_ceiling_and_says_what_it_left_out() {
+        let whole = searched_over(ranked_hits(100, 1_000), 100, 0).await;
+        let size = whole.to_string().chars().count();
+        assert!(
+            size <= jojobot_domain::text::ANSWER_CEILING,
+            "the answer is {size} characters"
+        );
+        let ranks = ranks_of(&whole);
+        assert!(
+            ranks.len() > 10 && ranks.len() < 100,
+            "some of the hundred, not all and not a handful: {}",
+            ranks.len()
+        );
+        assert_eq!(
+            ranks,
+            (0..ranks.len()).collect::<Vec<_>>(),
+            "the best hits, in rank order"
+        );
+        assert_eq!(whole["count"], ranks.len(), "{whole}");
+        assert_eq!(whole["not_shown"]["count"], 100 - ranks.len(), "{whole}");
+        assert_eq!(whole["not_shown"]["offset"], ranks.len(), "{whole}");
+    }
+
+    /// **Continuing until the end returns every hit exactly once.** The same call
+    /// with the offset each answer names walks the whole ranking, no hit comes
+    /// back twice, none is missed, and the count each part states as left out is
+    /// what the parts after it return.
+    #[tokio::test]
+    async fn continuing_with_the_named_offset_returns_every_hit_exactly_once() {
+        let mut seen: Vec<usize> = Vec::new();
+        let mut parts = 0;
+        let mut offset = 0u32;
+        let mut left_out_by_the_last: Option<u64> = None;
+        loop {
+            let part = searched_over(ranked_hits(100, 1_000), 100, offset).await;
+            parts += 1;
+            assert!(parts < 100, "the walk never ends");
+            let ranks = ranks_of(&part);
+            assert!(!ranks.is_empty(), "a part carries at least one hit: {part}");
+            if let Some(promised) = left_out_by_the_last {
+                let returned_from_here =
+                    ranks.len() as u64 + part["not_shown"]["count"].as_u64().unwrap_or(0);
+                assert_eq!(
+                    promised, returned_from_here,
+                    "what the last part left out is what this one and the rest return"
+                );
+            }
+            seen.extend(ranks);
+            match part["not_shown"]["offset"].as_u64() {
+                Some(next) => {
+                    left_out_by_the_last = part["not_shown"]["count"].as_u64();
+                    offset = next as u32;
+                }
+                None => break,
+            }
+        }
+        assert!(parts > 2, "the hundred hits took several parts: {parts}");
+        assert_eq!(
+            seen,
+            (0..100).collect::<Vec<_>>(),
+            "each hit once, in order"
+        );
+    }
+
+    /// **The pair: an answer that fits says nothing was left out.** Three small
+    /// hits come back whole with no `not_shown` at all, and a hit larger than the
+    /// whole ceiling is still served whole rather than leaving an empty answer.
+    #[tokio::test]
+    async fn an_answer_that_fits_leaves_nothing_out_and_one_oversized_hit_is_still_served() {
+        let small = searched_over(ranked_hits(3, 100), 20, 0).await;
+        assert_eq!(small["count"], 3, "{small}");
+        assert!(small.get("not_shown").is_none(), "{small}");
+
+        let oversized = searched_over(ranked_hits(3, 40_000), 20, 0).await;
+        assert_eq!(ranks_of(&oversized), vec![0], "the first, whole");
+        assert_eq!(oversized["not_shown"]["count"], 2, "{oversized}");
+        assert_eq!(oversized["not_shown"]["offset"], 1, "{oversized}");
+    }
+
+    /// **An offset past the last hit says so instead of describing an empty
+    /// search.** The query matched; the caller has read it all.
+    #[tokio::test]
+    async fn an_offset_past_the_last_hit_says_it_is_past_the_end() {
+        let past = searched_over(ranked_hits(5, 100), 20, 50).await;
+        assert_eq!(past["count"], 0, "{past}");
+        assert!(past["past_the_end"].is_string(), "{past}");
+        assert!(past.get("searched").is_none(), "{past}");
     }
 }
