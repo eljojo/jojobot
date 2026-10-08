@@ -711,6 +711,13 @@ fn the_archive_description_names_the_duplicate_repair_and_the_owed_read() {
     assert_description_names("archive_entity", &["merge_entities", "overdue"]);
 }
 
+/// **`list_entities` names the verb that brings an archived entity back**, since
+/// its description is where a reader learns the inventory leaves one out.
+#[test]
+fn the_list_entities_description_names_the_restore() {
+    assert_description_names("list_entities", &["archive_entity", "restore"]);
+}
+
 /// **`merge_entities` says its names become aliases of the survivor.**
 #[test]
 fn the_merge_description_names_the_aliases_it_carries() {

@@ -300,6 +300,7 @@ pub(crate) fn entity_json(entity: &Entity) -> serde_json::Value {
         "archived": entity.archived.as_ref().map(|a| serde_json::json!({
             "reason": a.reason,
             "at": a.at.to_string(),
+            "how_to_restore": "archive_entity with restore: true, this handle and a reason",
         })),
     })
 }

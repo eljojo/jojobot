@@ -39,7 +39,8 @@ impl Jojobot {
                        a child's own handle to go deeper. A `parent` naming nothing comes back \
                        blocked with candidates, never an empty list. Metadata only — no facts, \
                        no ordering guarantee. An archived entity is excluded — recall it by its \
-                       own handle to read it whole, including why and when it was archived. An empty answer carries `searched`: \
+                       own handle to read it whole, including why and when it was archived, and \
+                       call archive_entity with restore: true to bring it back. An empty answer carries `searched`: \
                        one line naming what it looked through and what it left out."
     )]
     pub(crate) async fn list_entities(
@@ -349,6 +350,44 @@ mod tests {
             object["archived"]["at"].as_str().is_some(),
             "the direct door must serve when it was archived: {body}",
         );
+    }
+
+    /// **An archived entity's block says how it comes back.** A reader who
+    /// finds a thing archived by reaching for it by handle has no other way to
+    /// learn that the act is undone by `archive_entity` with `restore`, and the
+    /// block is where the reader is looking. An active entity carries no block.
+    #[tokio::test]
+    async fn an_archived_entitys_block_points_at_the_restore() {
+        let jojobot = handler();
+        ensure(&jojobot, "person:bart").await;
+        ensure(&jojobot, "person:lisa").await;
+        jojobot
+            .memory
+            .archive_entity(&EntityId("person:bart".into()), "a mistaken write")
+            .await
+            .expect("archive_entity ok");
+
+        let read = |handle: &'static str| {
+            let jojobot = &jojobot;
+            async move {
+                json_of(
+                    &jojobot
+                        .recall(Parameters(of_subject(handle)))
+                        .await
+                        .expect("recall ok"),
+                )
+            }
+        };
+        let archived = read("person:bart").await;
+        let pointer = archived["objects"][0]["archived"]["how_to_restore"]
+            .as_str()
+            .unwrap_or_else(|| panic!("the block points at the restore: {archived}"));
+        for named in ["archive_entity", "restore"] {
+            assert!(pointer.contains(named), "{named}: {pointer}");
+        }
+
+        let active = read("person:lisa").await;
+        assert!(active["objects"][0]["archived"].is_null(), "{active}");
     }
 
     /// **`parent` reaches one level, never the whole subtree.**
