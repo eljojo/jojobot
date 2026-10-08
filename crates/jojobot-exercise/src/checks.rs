@@ -3028,6 +3028,14 @@ const HOLDING_PHRASES: [&[&str]; 7] = [
     &["do", "myself"],
 ];
 
+/// **A `never` that is the operator's own reading, not a restriction.** "Which
+/// I am never going to read" says why the job is handed over. Only that
+/// continuation is read so: "never going to let the helper near it" still holds
+/// the job back.
+fn operator_never_gets_to_it(words: &[&str], at: usize) -> bool {
+    words[at] == "never" && matches!(&words[at + 1..], ["going", "to", "read", ..])
+}
+
 /// **Whether one sentence of the text names the held job and holds it back.**
 /// Sentences end at a full stop, a semicolon, an exclamation or question mark,
 /// or a line break, so a charter that lists the job in one line and says "not"
@@ -3041,9 +3049,10 @@ fn holds_the_job_back(text: &str) -> bool {
                 .split(|c: char| !c.is_alphanumeric() && c != '\'')
                 .filter(|word| !word.is_empty())
                 .collect();
-            words
-                .iter()
-                .any(|word| HOLDING_BACK.contains(word) || word.ends_with("n't"))
+            words.iter().enumerate().any(|(at, word)| {
+                (HOLDING_BACK.contains(word) && !operator_never_gets_to_it(&words, at))
+                    || word.ends_with("n't")
+            })
                 || HOLDING_PHRASES
                     .iter()
                     .any(|phrase| phrase.iter().all(|word| words.contains(word)))
@@ -3114,6 +3123,13 @@ mod tests {
             "Hand the espresso manual off to Gamma",
             "Write the espresso manual without delay",
             "Pass the espresso manual on, no problem at all",
+            // The sentences below are the room's own, or a model's own, from
+            // the kept runs and the fixtures, with a handle the model made up
+            // written as words. None of them holds the job back.
+            "And the manual for the espresso machine, which is forty pages and which I am never going to read",
+            "Your reading: power loss, consensus, and the espresso manual",
+            "There is a third thing on that pile, the manual for the espresso machine",
+            "The operator has a third thing on the pile, the manual for the espresso machine",
         ] {
             assert!(
                 !super::holds_the_job_back(handover),
@@ -3137,6 +3153,14 @@ mod tests {
             "Do not give the espresso manual to the helper",
             "The espresso manual is held until I say otherwise",
             "No espresso manual for the helper",
+            // From the kept runs: how a model wrote the hold.
+            "The espresso machine manual is on your pile, and Reading Queue is barred from it until you say otherwise",
+            "Standing rule from the operator: stay off the espresso machine manual (do not read, summarise, schedule or offer it) until the operator says otherwise",
+            "The operator has a third item on their pile, the espresso machine manual, and wants you to keep off it until they say otherwise",
+            // Constructed, to pair with the handover above that says "never
+            // going to read": a "never going to" that restricts the helper
+            // still holds.
+            "I am never going to let the helper near the espresso manual",
         ] {
             assert!(
                 super::holds_the_job_back(hold),
