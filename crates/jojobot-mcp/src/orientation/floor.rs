@@ -26,6 +26,36 @@ pub(crate) struct Floor {
     pub(crate) parts: Vec<(String, usize)>,
 }
 
+/// **The claim a write would add, as the boot would serve it once stored.**
+/// `inserted_at` is the moment the store stamps at the append; the boot serializes
+/// it beside the claim, so a claim measured without it is measured short by the
+/// width of a timestamp.
+fn prospective_fact(new: &NewFact, ordinal: usize, inserted_at: Option<jiff::Timestamp>) -> Fact {
+    Fact {
+        id: jojobot_domain::memory::FactId(format!("f{ordinal}")),
+        home: new.subject.clone(),
+        subject: new.subject.clone(),
+        content: new.content.clone(),
+        details: new.details.clone(),
+        provenance: new.provenance,
+        standing: new.standing.unwrap_or(match new.provenance {
+            Provenance::Testimony => jojobot_domain::memory::Standing::Settled,
+            _ => jojobot_domain::memory::Standing::Open,
+        }),
+        status: FactStatus::Active,
+        recorded_at: new.recorded_at,
+        happened_at: new.happened_at,
+        happened_through: new.happened_through,
+        edge: new.edge.clone(),
+        fields: new.fields.clone(),
+        refs: new.refs.clone(),
+        derived_from: new.derived_from.clone(),
+        stands_for: Vec::new(),
+        inserted_at,
+        stale_after: new.stale_after,
+    }
+}
+
 fn json_len(value: &serde_json::Value) -> usize {
     value.to_string().chars().count()
 }
@@ -358,29 +388,14 @@ impl Jojobot {
             Some(_) => Vec::new(),
             None => self.memory.recall(&new.subject).await.ok()?,
         };
-        held.push(Fact {
-            id: jojobot_domain::memory::FactId(format!("f{}", held.len() + 1)),
-            home: new.subject.clone(),
-            subject: new.subject.clone(),
-            content: new.content.clone(),
-            details: new.details.clone(),
-            provenance: new.provenance,
-            standing: new.standing.unwrap_or(match new.provenance {
-                Provenance::Testimony => jojobot_domain::memory::Standing::Settled,
-                _ => jojobot_domain::memory::Standing::Open,
-            }),
-            status: FactStatus::Active,
-            recorded_at: new.recorded_at,
-            happened_at: new.happened_at,
-            happened_through: new.happened_through,
-            edge: new.edge.clone(),
-            fields: new.fields.clone(),
-            refs: new.refs.clone(),
-            derived_from: new.derived_from.clone(),
-            stands_for: Vec::new(),
-            inserted_at: None,
-            stale_after: new.stale_after,
-        });
+        // **Stamped as the store will stamp it**: the boot serializes the moment
+        // beside the rule, and a rule measured without it fits by the width of a
+        // timestamp it will not have room for.
+        held.push(prospective_fact(
+            new,
+            held.len() + 1,
+            Some(self.clock().now()),
+        ));
         self.refuses_a_boot_floor_over(&new.subject, &held, seats.map(String::as_str), creating)
             .await
     }
@@ -489,11 +504,93 @@ mod tests {
         };
         let (stale_somewhere, utc, there) = measured(false).await;
         let (never_stale, _, _) = measured(true).await;
+        // **The note is far wider than the noise.** The two rules render a
+        // character apart for reasons that are not staleness, so "carries the
+        // note" is a difference of dozens of characters and "does not" is a
+        // difference of a few; the case cannot flip on the hour it runs.
+        const NOTE: usize = 40;
+        let carries_the_note = stale_somewhere > never_stale + NOTE;
+        let does_not = stale_somewhere.abs_diff(never_stale) < NOTE;
+        assert!(
+            carries_the_note || does_not,
+            "the floors differ by something that is neither the note nor noise: \
+             {stale_somewhere} against {never_stale}"
+        );
         assert_eq!(
-            stale_somewhere > never_stale,
+            carries_the_note,
             there > utc,
             "the floor carries the stale note exactly when the instance's day is the later \
              one: {stale_somewhere} against {never_stale}, the zone on {there} and UTC on {utc}"
+        );
+    }
+
+    /// **A claim near the ceiling is measured with the timestamp the store will
+    /// give it.** The boot serializes a rule's `inserted_at` beside the rule, and
+    /// a rule about to be written has none yet, so it was measured with `null`
+    /// where the boot will carry a full timestamp. A starred rule that fit the
+    /// check by the width of a timestamp was then stored over the ceiling.
+    ///
+    /// The case finds the length at which a starred rule's floor is exactly the
+    /// ceiling without the stamp, and over it with the stamp, and asks the check
+    /// about a rule of that length: it must refuse. A rule one character shorter
+    /// than the first that overflows is accepted, so a check that refused every
+    /// rule would not pass.
+    #[tokio::test]
+    async fn a_rule_is_measured_with_the_timestamp_it_will_be_stored_with() {
+        let jojobot = mailbox_handler();
+        make_bot(&jojobot, "gamma").await;
+        let bot = EntityId("bot:gamma".into());
+        let budget = jojobot_domain::text::BOOT_ANSWER.budget;
+        let starred = |content: String| {
+            let mut new = NewFact::about(
+                bot.clone(),
+                content,
+                jojobot.clock().today_in(&jiff::tz::TimeZone::UTC),
+            );
+            new.fields = [("starred".to_string(), "true".to_string())].into();
+            new
+        };
+        let stamp = jiff::Timestamp::now();
+        let floor_of = |content: usize, stamped: bool| {
+            let new = starred("x".repeat(content));
+            let fact = prospective_fact(&new, 1, stamped.then_some(stamp));
+            let jojobot = &jojobot;
+            let bot = &bot;
+            async move {
+                jojobot
+                    .boot_floor_if(bot, &[fact], 5, None, None)
+                    .await
+                    .expect("the floor")
+                    .total
+            }
+        };
+        // Floors grow one character per character of content, so the length at
+        // which the unstamped floor sits exactly on the ceiling follows from one
+        // measurement. The stamped floor is a timestamp wider.
+        let unstamped_at_one = floor_of(1, false).await;
+        let fits_unstamped = 1 + (budget - unstamped_at_one);
+        assert_eq!(floor_of(fits_unstamped, false).await, budget);
+        assert!(
+            floor_of(fits_unstamped, true).await > budget,
+            "the stamp is wider than null, so the stamped rule is over"
+        );
+
+        let refused = jojobot
+            .refuses_a_boot_floor_for_capture(&starred("x".repeat(fits_unstamped)), &bot)
+            .await;
+        assert!(
+            refused.is_some(),
+            "a rule that only fits without its timestamp is refused"
+        );
+        // The positive: a rule short enough to fit with its timestamp is not.
+        let stamp_width = floor_of(1, true).await - unstamped_at_one;
+        let fits_stamped = fits_unstamped - stamp_width;
+        assert!(
+            jojobot
+                .refuses_a_boot_floor_for_capture(&starred("x".repeat(fits_stamped)), &bot)
+                .await
+                .is_none(),
+            "a rule that fits with its timestamp is accepted"
         );
     }
 }
