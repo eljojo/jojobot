@@ -17,19 +17,50 @@
 
 use super::*;
 
+/// What the board says about one box name.
+pub(crate) enum BoxStanding {
+    /// The board lists the box and a person owns it.
+    Person,
+    /// The board lists the box and no person owns it.
+    Bot,
+    /// The board does not list the box. A name a lookup found and the board
+    /// read after it does not know is a box that was renamed in between, so
+    /// nothing says whose it is.
+    Unlisted,
+}
+
 impl Jojobot {
+    /// What the board says about the box named. An error when the board cannot
+    /// say, so the caller refuses rather than reading on.
+    pub(crate) async fn box_standing(
+        &self,
+        name: &mailbox::MailboxName,
+    ) -> Result<BoxStanding, mailbox::MailboxError> {
+        Ok(self
+            .mailboxes
+            .list_mailboxes()
+            .await?
+            .iter()
+            .find(|held| &held.name == name)
+            .map_or(BoxStanding::Unlisted, |held| {
+                if held.is_private() {
+                    BoxStanding::Person
+                } else {
+                    BoxStanding::Bot
+                }
+            }))
+    }
+
     /// Whether the box named is a person's. An error when the board cannot say,
     /// so the caller refuses rather than reading on.
     pub(crate) async fn box_is_private(
         &self,
         name: &mailbox::MailboxName,
     ) -> Result<bool, mailbox::MailboxError> {
-        Ok(self
-            .mailboxes
-            .list_mailboxes()
-            .await?
-            .iter()
-            .any(|held| &held.name == name && held.is_private()))
+        Ok(matches!(
+            self.box_standing(name).await?,
+            BoxStanding::Person
+        ))
     }
 }
 
@@ -50,16 +81,33 @@ impl Jojobot {
             .any(|held| held.is_private() && held.quarantined.contains(id)))
     }
 
-    /// **Whether the message this id names is in a person's box**, whether it is
-    /// readable or not. The one question every verb that takes an id asks first.
-    pub(crate) async fn is_in_a_private_box(
+    /// **The refusal a bot earns by naming this message, or `None` when its box
+    /// is open to bots.** The one question every verb that takes an id asks
+    /// first, with the message already located (`None` for a card jojobot
+    /// cannot read).
+    ///
+    /// **A box is open only when the board lists it and no person owns it.** The
+    /// message was located before the board was read, and a rename of the box's
+    /// owner can land between the two: the lookup holds the old name and the
+    /// board only the new one. Judging by "not among the person's boxes" would
+    /// call that message public for being unmatched, so a box the board does not
+    /// list is refused with a word to send the call again.
+    pub(crate) async fn privacy_refusal(
         &self,
         id: &MessageId,
-    ) -> Result<bool, mailbox::MailboxError> {
-        match self.mailboxes.message_by_id(id).await? {
-            Some(message) => self.box_is_private(&message.mailbox).await,
-            None => self.is_unreadable_in_a_private_box(id).await,
-        }
+        located: Option<&Message>,
+    ) -> Result<Option<CallToolResult>, mailbox::MailboxError> {
+        Ok(match located {
+            Some(message) => match self.box_standing(&message.mailbox).await? {
+                BoxStanding::Bot => None,
+                BoxStanding::Person => Some(private_box(id)),
+                BoxStanding::Unlisted => Some(box_moved(id)),
+            },
+            None => self
+                .is_unreadable_in_a_private_box(id)
+                .await?
+                .then(|| private_box(id)),
+        })
     }
 }
 
@@ -74,6 +122,23 @@ pub(crate) fn private_box(id: &MessageId) -> CallToolResult {
          their handle."
     )
     .into();
+    let mut body = serde_json::json!({
+        "status": "blocked",
+        "attempted": id.as_str(),
+        "wrote": false,
+    });
+    how_to_proceed.write_into(&mut body);
+    CallToolResult::success(vec![ContentBlock::text(body.to_string())])
+}
+
+/// **The refusal for a message whose box the board did not list.** The box was
+/// renamed while the call ran, so nothing could say whether a person owns it.
+/// It names the message the caller gave and nothing about it.
+pub(crate) fn box_moved(id: &MessageId) -> CallToolResult {
+    let how_to_proceed = WayForward::retry(format!(
+        "Nothing was delivered and nothing moved. The box message '{id}' sits in changed name \
+         while this call ran, so it could not be judged. Send the same call again."
+    ));
     let mut body = serde_json::json!({
         "status": "blocked",
         "attempted": id.as_str(),

@@ -626,6 +626,7 @@ mod tests {
             &super::super::private::private_box(&id),
             "change",
         );
+        assert_fix_by("box_moved", &super::super::private::box_moved(&id), "retry");
         assert_fix_by(
             "mailbox_blocked",
             &mailbox_blocked(

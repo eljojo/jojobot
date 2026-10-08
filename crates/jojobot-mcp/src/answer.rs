@@ -105,6 +105,11 @@ impl WayForward {
         Self::with(Some(FixBy::Person), text)
     }
 
+    /// A refusal the same call gets past: what it judged moved while it ran.
+    pub(crate) fn retry(text: impl Into<String>) -> Self {
+        Self::with(Some(FixBy::Retry), text)
+    }
+
     /// A refusal because the mailbox store could not be read. It wears whatever
     /// [`other_store_failure_word`] says, which is no word until card 2070.
     pub(crate) fn mailbox_store_failure(text: impl Into<String>) -> Self {

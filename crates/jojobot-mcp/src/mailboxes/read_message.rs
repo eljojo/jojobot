@@ -71,21 +71,16 @@ impl Jojobot {
         // **A person's box is read by no bot, in any state.** Asked before the
         // archive exception below, because that exception is about a bot's
         // box: `processed` stays readable from any BOT's box, and a person's
-        // box is not one. A board that cannot say refuses too.
-        let in_a_private_box = match &located {
-            Some(message) => self
-                .box_is_private(&message.mailbox)
-                .await
-                .map_err(mailbox_error)?,
-            // A card jojobot cannot read answers no lookup by id, and the
-            // refusal that follows would describe what is wrong with it.
-            None => self
-                .is_unreadable_in_a_private_box(&id)
-                .await
-                .map_err(mailbox_error)?,
-        };
-        if in_a_private_box {
-            return Ok(private_box(&id));
+        // box is not one. A board that cannot say refuses too, and so does a
+        // box it does not list. A card jojobot cannot read answers no lookup by
+        // id, and the refusal that follows would describe what is wrong with
+        // it.
+        if let Some(refused) = self
+            .privacy_refusal(&id, located.as_ref())
+            .await
+            .map_err(mailbox_error)?
+        {
+            return Ok(refused);
         }
         if let Some(message) = located
             // **The guard is on the STATE CHANGE, not on the bytes.** `processed`
@@ -601,5 +596,68 @@ mod tests {
         assert_eq!(unreadable.len(), 1, "{listed}");
         assert_eq!(unreadable[0]["mailbox"], "sigma", "{listed}");
         assert_eq!(unreadable[0]["ids"][0], ordinary_id.as_str(), "{listed}");
+    }
+
+    /// **A person renamed while a message is read does not open their box.**
+    /// The verb locates the message, then reads the board to learn whose box it
+    /// sits in. A rename of the owner between the two leaves the lookup holding
+    /// the old name of the box and the board only the new one, so a guard that
+    /// asks "is that name a person's" gets no for being unmatched. A box the
+    /// board does not list is judged by nothing, the call is refused with the
+    /// word that says to send it again, and nothing moves. Sent again, the board
+    /// lists the box under its new name and refuses it as a person's.
+    #[tokio::test]
+    async fn a_person_renamed_while_a_message_is_read_does_not_open_their_box() {
+        let (jojobot, store) = renaming_handler();
+        a_persons_box(&jojobot, "milhouse").await;
+        owning(&jojobot, "epsilon").await;
+        let reader = owning(&jojobot, "sigma").await;
+        let posted = send_titled(
+            &jojobot,
+            "person:milhouse",
+            "epsilon",
+            Some("the quarterly figure"),
+            "the secret figure is 4242",
+        )
+        .await;
+        let id = posted["id"].as_str().expect("an id").to_string();
+        // A retired message is readable from any bot's box, so only the guard
+        // on a person's box stands between it and the reader.
+        jojobot
+            .mailboxes
+            .mark_processed(&mailbox::MessageId(id.clone()), None)
+            .await
+            .expect("the store retires it");
+        let read = |sid: String| {
+            let jojobot = &jojobot;
+            let id = id.clone();
+            async move {
+                json_of(
+                    &jojobot
+                        .read_message(Parameters(ReadMessageArgs {
+                            message_id: id,
+                            sid: Some(sid),
+                        }))
+                        .await
+                        .expect("a refusal is an answer"),
+                )
+            }
+        };
+
+        store.arm("person:milhouse", "person:lisa");
+        let midway = read(reader.clone()).await;
+        assert_eq!(midway["status"], "blocked", "{midway}");
+        assert_eq!(midway["fix_by"], "retry", "{midway}");
+        assert!(!midway.to_string().contains("4242"), "{midway}");
+        assert_eq!(
+            store_counts(&jojobot, &mailbox::MailboxName("person-lisa".into())).await,
+            (0, 0, 1),
+            "the box now wears its new name and its retired message is where it was"
+        );
+
+        let again = read(reader).await;
+        assert_eq!(again["status"], "blocked", "{again}");
+        assert_eq!(again["fix_by"], "change", "{again}");
+        assert!(!again.to_string().contains("4242"), "{again}");
     }
 }

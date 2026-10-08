@@ -85,8 +85,17 @@ impl Jojobot {
         // the message: retiring one would tell its writer, and anyone else who
         // asked after it, that the person had dealt with it. Asked before
         // either branch so no path reaches the store first.
-        if self.is_in_a_private_box(&id).await.map_err(mailbox_error)? {
-            return Ok(private_box(&id));
+        let located = self
+            .mailboxes
+            .message_by_id(&id)
+            .await
+            .map_err(mailbox_error)?;
+        if let Some(refused) = self
+            .privacy_refusal(&id, located.as_ref())
+            .await
+            .map_err(mailbox_error)?
+        {
+            return Ok(refused);
         }
         // **A blank reason is refused, never read as absent.** `notes` may be
         // blank-is-absent because leaving it off retires the message anyway.
@@ -831,6 +840,62 @@ mod tests {
             store_counts(&jojobot, &held).await,
             (1, 0, 0),
             "no refusal moved the message"
+        );
+    }
+
+    /// **A person renamed while a message is retired does not hand their mail
+    /// to a bot.** The verb locates the message, then reads the board to learn
+    /// whose box it sits in; a rename of the owner between the two leaves the
+    /// board without the name the lookup found. A box the board does not list is
+    /// judged by nothing: the call is refused with the word that says to send it
+    /// again, and the message stays where it was. Sent again, the box is refused
+    /// as a person's.
+    #[tokio::test]
+    async fn a_person_renamed_while_a_message_is_retired_does_not_hand_it_to_a_bot() {
+        let (jojobot, store) = renaming_handler();
+        a_persons_box(&jojobot, "milhouse").await;
+        owning(&jojobot, "epsilon").await;
+        let other = owning(&jojobot, "sigma").await;
+        let posted = send_titled(
+            &jojobot,
+            "person:milhouse",
+            "epsilon",
+            Some("the quarterly figure"),
+            "the secret figure is 4242",
+        )
+        .await;
+        let id = posted["id"].as_str().expect("an id").to_string();
+        let retire = || async {
+            json_of(
+                &jojobot
+                    .mark_processed(Parameters(MarkProcessedArgs {
+                        message_id: id.clone(),
+                        notes: Some("handled".into()),
+                        sid: Some(other.clone()),
+                        quarantine: None,
+                    }))
+                    .await
+                    .expect("a refusal is an answer"),
+            )
+        };
+
+        store.arm("person:milhouse", "person:lisa");
+        let midway = retire().await;
+        assert_eq!(midway["status"], "blocked", "{midway}");
+        assert_eq!(midway["fix_by"], "retry", "{midway}");
+        assert_eq!(
+            store_counts(&jojobot, &mailbox::MailboxName("person-lisa".into())).await,
+            (1, 0, 0),
+            "the box now wears its new name and its message was not retired"
+        );
+
+        let again = retire().await;
+        assert_eq!(again["status"], "blocked", "{again}");
+        assert_eq!(again["fix_by"], "change", "{again}");
+        assert_eq!(
+            store_counts(&jojobot, &mailbox::MailboxName("person-lisa".into())).await,
+            (1, 0, 0),
+            "the second refusal moved nothing either"
         );
     }
 }

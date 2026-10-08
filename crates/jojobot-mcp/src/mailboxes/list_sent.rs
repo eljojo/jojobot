@@ -163,6 +163,16 @@ impl Jojobot {
             .filter(|b| b.is_private())
             .map(|b| &b.name)
             .collect();
+        // **A message is shown whole only when the board lists its box and no
+        // person owns it.** The messages were read before the board, and a
+        // rename of a box's owner can land between the two: a message then sits
+        // under a name the board no longer lists, and "not among the private
+        // names" would call it public for being unmatched.
+        let open: std::collections::BTreeSet<&mailbox::MailboxName> = board
+            .iter()
+            .filter(|b| !b.is_private())
+            .map(|b| &b.name)
+            .collect();
         let unreadable: Vec<serde_json::Value> = board
             .iter()
             .filter(|b| only.is_none_or(|name| b.name.as_str() == name))
@@ -212,6 +222,8 @@ impl Jojobot {
                 .iter()
                 .map(|m| if private.contains(&m.mailbox) {
                     private_listing_json(m)
+                } else if !open.contains(&m.mailbox) {
+                    unlisted_listing_json(m)
                 } else if bodies {
                     message_json(m)
                 } else {
@@ -235,6 +247,20 @@ fn private_listing_json(message: &Message) -> serde_json::Value {
         "private": true,
         "how_to_read": "this message is in a person's box, so no bot reads it back, its \
                         writer included",
+    })
+}
+
+/// **A message whose box the board did not list**, as a sender is allowed to see
+/// it: its id and when it was sent. The box was renamed while the answer was
+/// built, so nothing says whether a person owns it, and nothing of it is shown
+/// until a second listing reads the box under its new name.
+fn unlisted_listing_json(message: &Message) -> serde_json::Value {
+    serde_json::json!({
+        "id": message.id.as_str(),
+        "sent_at": message.sent_at.to_string(),
+        "withheld": true,
+        "how_to_read": "the box this message sits in changed name while this list was built, \
+                        so nothing of it is shown; call list_sent again",
     })
 }
 
@@ -781,5 +807,87 @@ mod tests {
         send(&jojobot, "person:milhouse", "epsilon", "for the operator").await;
         let after = ask().await;
         assert_eq!(after["count"], 1, "{after}");
+    }
+
+    /// **A person renamed while a sender's mail is listed does not put their
+    /// mail's text on the list.** The verb reads the sender's messages, then the
+    /// board, and a rename of the owner between the two leaves a message under a
+    /// box name the board no longer lists. A message whose box the board does
+    /// not list is shown as nothing but its id and time, with the withholding
+    /// said, and the message to a bot's box beside it is rendered as always.
+    /// Listed again, the box wears its new name and is listed as a person's.
+    #[tokio::test]
+    async fn a_person_renamed_while_mail_is_listed_does_not_put_its_text_on_the_list() {
+        let (jojobot, store) = renaming_handler();
+        a_persons_box(&jojobot, "milhouse").await;
+        make_box(&jojobot, "pm").await;
+        let writer = owning(&jojobot, "epsilon").await;
+        let private = send_titled(
+            &jojobot,
+            "person:milhouse",
+            "epsilon",
+            Some("the quarterly figure"),
+            "the secret figure is 4242",
+        )
+        .await;
+        send(&jojobot, "pm", "epsilon", "an ordinary report").await;
+        let list = || async {
+            json_of(
+                &jojobot
+                    .list_sent(Parameters(ListSentArgs {
+                        limit: None,
+                        sender: None,
+                        to: None,
+                        include_bodies: Some(true),
+                        sid: Some(writer.clone()),
+                    }))
+                    .await
+                    .expect("list_sent ok"),
+            )
+        };
+
+        store.arm("person:milhouse", "person:lisa");
+        let midway = list().await;
+        let messages = midway["messages"].as_array().expect("messages");
+        assert_eq!(messages.len(), 2, "both are listed: {midway}");
+        let to_the_person = messages
+            .iter()
+            .find(|m| m["id"] == private["id"])
+            .unwrap_or_else(|| panic!("the message to the person is listed: {midway}"));
+        for leaked in ["4242", "quarterly", "epsilon"] {
+            assert!(
+                !to_the_person.to_string().contains(leaked),
+                "the listing carries {leaked}: {to_the_person}"
+            );
+        }
+        let keys: std::collections::BTreeSet<&str> = to_the_person
+            .as_object()
+            .expect("an object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            keys,
+            ["id", "sent_at", "withheld", "how_to_read"].into(),
+            "{to_the_person}"
+        );
+        let ordinary = messages
+            .iter()
+            .find(|m| m["id"] != private["id"])
+            .expect("the ordinary message");
+        assert!(
+            ordinary.to_string().contains("ordinary report"),
+            "{ordinary}"
+        );
+
+        let again = list().await;
+        let to_the_person = again["messages"]
+            .as_array()
+            .expect("messages")
+            .iter()
+            .find(|m| m["id"] == private["id"])
+            .unwrap_or_else(|| panic!("the message to the person is listed: {again}"));
+        assert_eq!(to_the_person["private"], true, "{to_the_person}");
+        assert!(!to_the_person.to_string().contains("4242"));
     }
 }

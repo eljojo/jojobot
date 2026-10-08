@@ -256,6 +256,55 @@ pub(crate) fn counting_handler() -> (Jojobot, Arc<CountingMailboxes>) {
     (jojobot, mailboxes)
 }
 
+/// **A store whose box is renamed between the two reads a guard makes.** A
+/// guard locates a message, then reads the board to learn whose box it sits in;
+/// a rename of the owner lands in between and moves the box to a new name. The
+/// double runs that rename right after the first lookup of a message or of a
+/// sender's mail returns, once, so the lookup holds the old name and the board
+/// only the new one.
+pub(crate) struct RenamingMailboxes {
+    inner: InMemoryMailboxes,
+    rename: std::sync::Mutex<Option<(EntityId, EntityId)>>,
+}
+
+impl RenamingMailboxes {
+    /// Rename `from` to `to` after the next lookup of a message or of a
+    /// sender's mail. Armed after the fixtures, which look messages up too.
+    pub(crate) fn arm(&self, from: &str, to: &str) {
+        *self.rename.lock().expect("rename lock") =
+            Some((EntityId(from.into()), EntityId(to.into())));
+    }
+
+    async fn rename_now(&self) {
+        let due = self.rename.lock().expect("rename lock").take();
+        if let Some((from, to)) = due {
+            self.inner
+                .repoint_owner(&from, &to)
+                .await
+                .expect("the rename lands")
+                .expect("the renamed owner had a box");
+        }
+    }
+}
+
+/// A handler over a board that renames a box mid-call, and the handle the test
+/// arms it with.
+pub(crate) fn renaming_handler() -> (Jojobot, Arc<RenamingMailboxes>) {
+    let mailboxes = Arc::new(RenamingMailboxes {
+        inner: InMemoryMailboxes::knowing_any_owner(),
+        rename: std::sync::Mutex::new(None),
+    });
+    let jojobot = Jojobot::new(
+        Arc::new(InMemoryMemory::booted()),
+        Arc::new(SpySearch::default()),
+        mailboxes.clone(),
+        Arc::new(InMemorySessions::new()),
+        Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+        crate::harness::seeded_registry(),
+    );
+    (jojobot, mailboxes)
+}
+
 /// Write a bot straight to Memory, with no box — the damage the heal exists
 /// to repair. The surface cannot produce this state, which is the point.
 pub(crate) async fn broken_bot(jojobot: &Jojobot, slug: &str) {
@@ -489,6 +538,82 @@ impl mailbox::Mailboxes for CountingMailboxes {
         senders: &[&str],
     ) -> Result<Vec<mailbox::Message>, mailbox::MailboxError> {
         self.inner.sent_by(senders).await
+    }
+    async fn read_message(
+        &self,
+        id: &mailbox::MessageId,
+    ) -> Result<mailbox::Delivered, mailbox::MailboxError> {
+        self.inner.read_message(id).await
+    }
+    async fn mark_processed(
+        &self,
+        id: &mailbox::MessageId,
+        notes: Option<&str>,
+    ) -> Result<mailbox::Message, mailbox::MailboxError> {
+        self.inner.mark_processed(id, notes).await
+    }
+    async fn quarantine(
+        &self,
+        id: &mailbox::MessageId,
+        by: &mailbox::MailboxName,
+        reason: &str,
+        at: jiff::Timestamp,
+    ) -> Result<mailbox::Quarantined, mailbox::MailboxError> {
+        self.inner.quarantine(id, by, reason, at).await
+    }
+}
+
+#[async_trait]
+impl mailbox::Mailboxes for RenamingMailboxes {
+    async fn create_mailbox(
+        &self,
+        name: &mailbox::MailboxName,
+        owner: &EntityId,
+        note: Option<&str>,
+    ) -> Result<mailbox::Guarded<mailbox::Mailbox>, mailbox::MailboxError> {
+        self.inner.create_mailbox(name, owner, note).await
+    }
+    async fn repoint_owner(
+        &self,
+        from: &EntityId,
+        to: &EntityId,
+    ) -> Result<Option<mailbox::Mailbox>, mailbox::MailboxError> {
+        self.inner.repoint_owner(from, to).await
+    }
+    async fn list_mailboxes(&self) -> Result<Vec<mailbox::Mailbox>, mailbox::MailboxError> {
+        self.inner.list_mailboxes().await
+    }
+    async fn post_message(
+        &self,
+        new: mailbox::NewMessage,
+    ) -> Result<mailbox::Guarded<mailbox::Message>, mailbox::MailboxError> {
+        self.inner.post_message(new).await
+    }
+    async fn read_mailbox(
+        &self,
+        name: &mailbox::MailboxName,
+        taken_by: mailbox::TakenBy,
+    ) -> Result<mailbox::Guarded<mailbox::Delivery>, mailbox::MailboxError> {
+        self.inner.read_mailbox(name, taken_by).await
+    }
+    async fn scan_messages(&self) -> Result<Vec<mailbox::Message>, mailbox::MailboxError> {
+        self.inner.scan_messages().await
+    }
+    async fn message_by_id(
+        &self,
+        id: &mailbox::MessageId,
+    ) -> Result<Option<mailbox::Message>, mailbox::MailboxError> {
+        let found = self.inner.message_by_id(id).await;
+        self.rename_now().await;
+        found
+    }
+    async fn sent_by(
+        &self,
+        senders: &[&str],
+    ) -> Result<Vec<mailbox::Message>, mailbox::MailboxError> {
+        let found = self.inner.sent_by(senders).await;
+        self.rename_now().await;
+        found
     }
     async fn read_message(
         &self,
