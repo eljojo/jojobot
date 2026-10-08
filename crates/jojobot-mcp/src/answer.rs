@@ -64,9 +64,10 @@ pub(crate) fn nothing_for(verb: &str) -> &'static str {
 /// **The route from no handle to a handle**, in the door's own two steps. A
 /// boot naming only the bot hands back a choice and no handle when the bot has
 /// a run in flight, so naming the door alone sends a caller to a dead end.
-pub(crate) const ROUTE_TO_A_SID: &str = "Call start_here with your bot name. A bot with a run in \
-    flight is handed a choice and no handle: call start_here again with resume set to the sid \
-    of the run you are picking up, or to \"new\" for a fresh session.";
+pub(crate) const ROUTE_TO_A_SID: &str = "Call start_here with your bot name; if you were not told \
+    one, call start_here with no bot, which boots nobody and lists the bots you could boot as. A \
+    bot with a run in flight is handed a choice and no handle: call start_here again with \
+    resume set to the sid of the run you are picking up, or to \"new\" for a fresh session.";
 
 impl From<&str> for WayForward {
     fn from(text: &str) -> Self {

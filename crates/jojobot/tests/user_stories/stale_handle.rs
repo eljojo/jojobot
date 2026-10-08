@@ -207,6 +207,90 @@ async fn a_write_with_no_handle_is_told_the_whole_route_to_one() {
     story.finish().await;
 }
 
+/// "I was never told which bot I am, and the refusal told me to call start_here
+/// with my bot name."
+///
+/// A caller that holds no handle may hold no bot name either, a cold sitting
+/// that was handed a task and nothing else. The refusal names the door that lists
+/// the bots, so the caller reaches a booted session without guessing a name and
+/// reading the real ones off a second refusal.
+///
+/// **The story follows the route the refusal names, and the name it boots with
+/// is read off the door's own list**, not known in advance. Paired with the
+/// caller that was told its bot name, which goes straight to the boot.
+#[tokio::test]
+async fn a_caller_with_no_handle_and_no_bot_name_is_sent_to_the_door_that_lists_them() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("person:milhouse", "Milhouse").await;
+
+    // ── the cold caller: no handle, and no name to boot with ────────────────
+    let mut unbound = json!({
+        "subject": "person:milhouse",
+        "content": "learned before booting",
+        "provenance": "testimony",
+    });
+    unbound["sid"] = json!(null);
+    s.refused("capture", unbound.clone())
+        .await
+        .says("\"wrote\":false")
+        .says("start_here")
+        // The step for a caller with no name: the boot that names no bot.
+        .says("no bot");
+
+    // ── follow it: the door that names no bot, and the list it hands back ───
+    let (listing, no_handle) = story.call("start_here", json!({"brief": true})).await;
+    assert!(
+        no_handle.is_none(),
+        "naming no bot boots nobody and hands back no handle"
+    );
+    let listed = listing.json();
+    let bots: Vec<&str> = listed["snapshot"]["entities"]["bots"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the door lists the bots: {listed}"))
+        .iter()
+        .filter_map(|bot| bot["handle"].as_str())
+        .collect();
+    assert!(
+        bots.contains(&"bot:otto"),
+        "the list names the bot to boot as: {bots:?}"
+    );
+
+    // ── boot as a bot the list named, and write with the handle it hands back ─
+    let name = bots
+        .iter()
+        .find(|handle| **handle == "bot:otto")
+        .expect("read off the list");
+    let (_, booted) = story
+        .call(
+            "start_here",
+            json!({"bot": name.trim_start_matches("bot:"), "brief": true, "resume": "new"}),
+        )
+        .await;
+    let fresh = booted.expect("the bot read off the list boots");
+    fresh
+        .fact("person:milhouse", "learned after booting, with a handle")
+        .await;
+    fresh
+        .recall("person:milhouse")
+        .await
+        .says("learned after booting");
+    fresh
+        .wrap("followed the refusal to the list and booted")
+        .await;
+
+    // ── the positive beside it: a caller that knows its bot goes straight there ─
+    let (_, known) = story
+        .call(
+            "start_here",
+            json!({"bot": "otto", "brief": true, "resume": "new"}),
+        )
+        .await;
+    let known = known.expect("a caller that was told its bot name boots without the list");
+    known.wrap("booted by name").await;
+    story.finish().await;
+}
+
 /// "I read my box before I had a handle, and the refusal sent me to a door that
 /// answered with a choice and no handle."
 ///

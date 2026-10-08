@@ -746,6 +746,10 @@ mod tests {
             "a run that stopped is picked back up, not replaced: {on_stopped}"
         );
         assert!(
+            on_stopped.contains("no bot"),
+            "…and a caller that lost its bot name is told which call lists the bots: {on_stopped}"
+        );
+        assert!(
             !on_stopped.contains("belongs to a new session"),
             "…and it must not send the caller off to fork the work: {on_stopped}"
         );

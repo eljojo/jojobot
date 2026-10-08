@@ -76,8 +76,8 @@ pub(crate) fn session_declined(e: SessionError, sid: &str) -> Result<CallToolRes
             format!(
                 "Nothing was written. Session '{sid}' is abandoned — it stopped without \
                  being wrapped up, so it takes no write as it stands. That is not a failure and \
-                 not the end of it: resume it. Call start_here with your bot name, and either \
-                 take it from the offer or pass resume with its sid — it reopens where it left \
+                 not the end of it: resume it. Call start_here with your bot name (with no bot \
+                 it lists them), and either take it from the offer or pass resume with its sid — it reopens where it left \
                  off and its chronology continues."
             )
             .into(),
