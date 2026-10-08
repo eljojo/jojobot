@@ -550,6 +550,40 @@ fn the_journal_description_states_it_renews_a_held_role_claim() {
     );
 }
 
+/// **The descriptions say what the role-object gate does**, in the places a
+/// caller reads before it acts: `start_here` says what a refused claim can mean,
+/// and the verbs that archive, rename or merge a thing say that a role object is
+/// only the owner's or the chart head's to act on. They were written before the
+/// gate, and a caller told nothing of it learns it from a refusal.
+#[test]
+fn the_descriptions_say_what_the_role_object_gate_does() {
+    let tools = Jojobot::tool_router().list_all();
+    let describing = |name: &str| -> String {
+        tools
+            .iter()
+            .find(|t| t.name.as_ref() == name)
+            .unwrap_or_else(|| panic!("the surface offers {name}"))
+            .description
+            .as_deref()
+            .unwrap_or_default()
+            .to_string()
+    };
+    let start_here = describing("start_here");
+    assert!(
+        start_here.contains("role object") && start_here.contains("archive_entity"),
+        "start_here does not say a claim is refused while the role object is archived, and \
+         which call restores it: {start_here}"
+    );
+    for verb in ["archive_entity", "rename_entity", "merge_entities"] {
+        let description = describing(verb);
+        assert!(
+            description.contains("role object") && description.contains("heading the chart"),
+            "{verb} does not say a role object is the owner's or the chart head's to act on: \
+             {description}"
+        );
+    }
+}
+
 /// **The orientation essay explains claiming a role**, in the Sessions
 /// section where it already explains what a session is — the same place a
 /// caller reads to understand `start_here`'s `claim` argument, so the

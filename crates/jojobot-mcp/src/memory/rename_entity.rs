@@ -228,7 +228,9 @@ impl Jojobot {
                        the same write, and a box follows its owner to the owner's new name. A \
                        rename that moves an owner across the person line — a bot into a person, \
                        a person into a bot, or the operator out of the person kind — is \
-                       refused, because a person's box is private. What does \
+                       refused, because a person's box is private. A role object (kind role) is \
+                       renamed, retyped or reparented only by the bot it belongs to or a bot \
+                       heading the chart; anyone else is refused and told who may. What does \
                        NOT follow, ever: a handle written as free prose that never used \
                        @kind:slug — nothing marked it as a link, so nothing resolves it. And a \
                        thing renamed and later folded into another resolves one hop short of \

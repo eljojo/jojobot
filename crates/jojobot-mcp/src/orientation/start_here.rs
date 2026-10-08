@@ -185,7 +185,10 @@ impl Jojobot {
                        is the door you come back to. PASS `claim` WITH A ROLE NAME TO HOLD THAT \
                        ROLE for 45 minutes, so two sessions never work one role at once: the \
                        answer says `taken` (your claim succeeded and you hold the role), \
-                       `refused` (somebody else holds it, and the answer names who and until when), \
+                       `refused` (somebody else holds it, and the answer names who and until when; \
+                       or the role belongs to another bot, and the answer names the owner; or its \
+                       role object is archived, and the answer names the archive_entity call that \
+                       restores it), \
                        `conflict` (the same call, retried, is the answer) or `unavailable` \
                        (the store could not decide the claim, nothing is held, and the answer \
                        says what to do next). Any write renews the lease and wrapping \

@@ -52,7 +52,9 @@ impl Jojobot {
                        read both with recall first. ⚠️ THE CLAIMS THAT MOVE GET NEW ADDRESSES, \
                        because an address is local to the thing that holds it — any address you \
                        were holding for the duplicate's claims is stale afterwards, and the \
-                       answer says how many moved. A MERGE INTO YOUR OWN BOT IS REFUSED WHEN THE DUPLICATE CARRIES \
+                       answer says how many moved. A role object (kind role), on either side of \
+                       a merge, is merged only by the bot it belongs to or a bot heading the \
+                       chart; anyone else is refused and told who may. A MERGE INTO YOUR OWN BOT IS REFUSED WHEN THE DUPLICATE CARRIES \
                        thought_capacity OR thought_body_cap, because the merge would raise your \
                        own ceiling: have a different identity merge it, or take the key off the \
                        duplicate first with update_fact and clear_fields. THE DUPLICATE'S \
