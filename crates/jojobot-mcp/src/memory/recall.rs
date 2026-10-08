@@ -2728,12 +2728,14 @@ impl Jojobot {
             ));
         }
         // **Reading its own charter is what ends the notice that it changed.** A
-        // session of the bot that was handed the charter in this answer has it.
-        if want_charter
-            && let Some(asking) = &caller
+        // session of the bot that was handed the charter in this answer has it,
+        // whether it asked for `charter` or for the page, which carries the same
+        // text.
+        if let Some(asking) = &caller
             && body["objects"].as_array().is_some_and(|objects| {
                 objects.iter().any(|object| {
-                    object["id"] == asking.bot.as_str() && object["charter_elided"] == false
+                    object["id"] == asking.bot.as_str()
+                        && (object["charter_elided"] == false || object["prose"].is_string())
                 })
             })
         {

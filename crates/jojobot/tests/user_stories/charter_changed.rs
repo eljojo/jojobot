@@ -351,3 +351,51 @@ async fn a_charter_read_before_the_run_had_a_card_is_remembered_by_the_card_it_m
 
     again.finish().await;
 }
+
+/// **Reading the instance's charter text through `prose` ends the notice too.**
+/// `recall` with `prose: true` on one's own bot returns the same text a charter
+/// read returns, so a session that read it that way has it. Reading another
+/// bot's page does not end a notice about one's own.
+#[tokio::test]
+async fn reading_ones_own_bots_prose_ends_the_notice_and_another_bots_does_not() {
+    let story = Story::begin("bot:gamma").await;
+    let gamma = story.session().await;
+    gamma.add("bot:delta", "Delta").await;
+    let delta = story.as_bot("bot:delta").await;
+    delta
+        .call(
+            "set_charter",
+            json!({ "bot": "bot:gamma", "prose": "Written by delta." }),
+        )
+        .await;
+    let told = gamma.call("list_entities", json!({ "kind": "bot" })).await;
+    assert_eq!(entrant(&told)["by"], "bot:delta", "{}", told.raw());
+
+    // ── another bot's page is not gamma's charter ───────────────────────────
+    let other = gamma
+        .call("recall", json!({ "subject": "bot:delta", "prose": true }))
+        .await;
+    assert_eq!(
+        entrant(&other)["by"],
+        "bot:delta",
+        "reading another bot's page ends nothing: {}",
+        other.raw()
+    );
+
+    // ── without the prose the page is not read either ───────────────────────
+    let bare = gamma
+        .call("recall", json!({ "subject": "bot:gamma" }))
+        .await;
+    assert_eq!(entrant(&bare)["by"], "bot:delta", "{}", bare.raw());
+
+    // ── gamma's own page, prose asked for, is the charter text ──────────────
+    let read = gamma
+        .call("recall", json!({ "subject": "bot:gamma", "prose": true }))
+        .await;
+    read.says("Written by delta.");
+    assert_eq!(entrant(&read), Value::Null, "{}", read.raw());
+    let after = gamma.call("list_entities", json!({ "kind": "bot" })).await;
+    assert_eq!(entrant(&after), Value::Null, "{}", after.raw());
+
+    story.finish().await;
+}
