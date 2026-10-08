@@ -60,6 +60,13 @@ pub struct Folded {
     /// age against; a cache that outlived a write would date a value by a write
     /// that is no longer the newest.
     ages: RwLock<HashMap<EntityId, FieldAges>>,
+    /// **The version marker of `ages`.** The store's own marker advances on a
+    /// claim write only, so it cannot date a read against a write to a thing's
+    /// row; this one advances on every write verb that passes through, under
+    /// the lock that clears the map. A reader notes it before it reads the store
+    /// and installs what it read only if it is still the same: a read taken
+    /// before a write must not be installed after that write cleared the map.
+    ages_version: std::sync::atomic::AtomicU64,
 }
 
 /// **Drops the cached ages when a write verb is finished**, on whichever path it
@@ -69,7 +76,11 @@ struct ForgetAges<'a>(&'a Folded);
 
 impl Drop for ForgetAges<'_> {
     fn drop(&mut self) {
-        self.0.ages.write().expect("fold lock").clear();
+        let mut ages = self.0.ages.write().expect("fold lock");
+        self.0
+            .ages_version
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        ages.clear();
     }
 }
 
@@ -84,6 +95,7 @@ impl Folded {
             inner,
             cache: RwLock::new(HashMap::new()),
             ages: RwLock::new(HashMap::new()),
+            ages_version: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -343,11 +355,12 @@ impl Memory for Folded {
         if let Some(ages) = self.ages.read().expect("fold lock").get(entity) {
             return Ok(ages.clone());
         }
+        let version = self.ages_version.load(std::sync::atomic::Ordering::SeqCst);
         let ages = self.inner.field_ages(entity).await?;
-        self.ages
-            .write()
-            .expect("fold lock")
-            .insert(entity.clone(), ages.clone());
+        let mut cached = self.ages.write().expect("fold lock");
+        if self.ages_version.load(std::sync::atomic::Ordering::SeqCst) == version {
+            cached.insert(entity.clone(), ages.clone());
+        }
         Ok(ages)
     }
 
@@ -1112,6 +1125,215 @@ mod tests {
         async fn reclaim_kind(&self, token: &str) -> Result<(), MemoryError> {
             self.inner.reclaim_kind(token).await
         }
+    }
+
+    /// **A store whose `field_ages` answer is taken and then held back**, so a
+    /// test can let a write land between a reader's store read and the moment
+    /// that reader installs what it read.
+    struct AgesBehindAGate {
+        inner: Arc<InMemoryMemory>,
+        /// The next `field_ages` call reads the store, tells the first of these
+        /// it has, and waits for the second before it answers.
+        gate: std::sync::Mutex<Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>>,
+    }
+
+    #[async_trait]
+    impl Memory for AgesBehindAGate {
+        async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
+            self.inner.add_entity(new).await
+        }
+        async fn list_entities(
+            &self,
+            kind: Option<EntityKind>,
+        ) -> Result<Vec<Entity>, MemoryError> {
+            self.inner.list_entities(kind).await
+        }
+        async fn former_handles(&self) -> Result<Vec<FormerHandle>, MemoryError> {
+            self.inner.former_handles().await
+        }
+        async fn update_entity(
+            &self,
+            handle: &EntityId,
+            patch: EntityPatch,
+        ) -> Result<Guarded<Entity>, MemoryError> {
+            self.inner.update_entity(handle, patch).await
+        }
+        async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {
+            self.inner.archive_entity(id, reason).await
+        }
+        async fn restore_entity(&self, id: &EntityId) -> Result<(Entity, Archived), MemoryError> {
+            self.inner.restore_entity(id).await
+        }
+        async fn rename_entity(
+            &self,
+            from: &EntityId,
+            to: &EntityId,
+            parent: Option<EntityId>,
+            date: Date,
+            override_token: Option<&str>,
+        ) -> Result<Guarded<Entity>, MemoryError> {
+            self.inner
+                .rename_entity(from, to, parent, date, override_token)
+                .await
+        }
+        async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
+            self.inner.capture(fact).await
+        }
+        async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
+            self.inner.recall(subject).await
+        }
+        async fn history(
+            &self,
+            entity: &EntityId,
+            key: &str,
+        ) -> Result<Vec<FieldWrite>, MemoryError> {
+            self.inner.history(entity, key).await
+        }
+        async fn claim_history(
+            &self,
+            address: &FactAddress,
+        ) -> Result<Vec<ClaimWrite>, MemoryError> {
+            self.inner.claim_history(address).await
+        }
+        async fn update_fact(
+            &self,
+            address: &FactAddress,
+            patch: FactPatch,
+            caller: &EntityId,
+        ) -> Result<Guarded<Fact>, MemoryError> {
+            self.inner.update_fact(address, patch, caller).await
+        }
+        async fn fields(&self, entity: &EntityId) -> Result<BTreeMap<String, String>, MemoryError> {
+            self.inner.fields(entity).await
+        }
+        async fn retract(
+            &self,
+            address: &FactAddress,
+            reason: Option<&str>,
+            date: Date,
+            caller: &EntityId,
+        ) -> Result<Retraction, MemoryError> {
+            self.inner.retract(address, reason, date, caller).await
+        }
+        async fn merge(
+            &self,
+            folded: &EntityId,
+            survivor: &EntityId,
+            reason: Option<&str>,
+            date: Date,
+            caller: &EntityId,
+        ) -> Result<Merge, MemoryError> {
+            self.inner
+                .merge(folded, survivor, reason, date, caller)
+                .await
+        }
+        async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
+            self.inner.set_prose(entity, prose).await
+        }
+        async fn scan(&self) -> Result<Vec<DocScan>, MemoryError> {
+            self.inner.scan().await
+        }
+        /// **The store read happens, then the call waits.** Whatever the store
+        /// answers is already taken when the gate holds, so a write that lands
+        /// while it waits is one the answer cannot include.
+        async fn field_ages(&self, entity: &EntityId) -> Result<FieldAges, MemoryError> {
+            let answered = self.inner.field_ages(entity).await?;
+            let gate = self.gate.lock().expect("gate lock").take();
+            if let Some((reached, release)) = gate {
+                reached.notify_one();
+                release.notified().await;
+            }
+            Ok(answered)
+        }
+        async fn scan_entity(&self, entity: &EntityId) -> Result<Option<DocScan>, MemoryError> {
+            Ok(self
+                .inner
+                .scan()
+                .await?
+                .into_iter()
+                .find(|d| d.entity.as_ref().is_some_and(|e| &e.id == entity)))
+        }
+        async fn declare_type(&self, declared: DeclaredType) -> Result<DeclaredType, MemoryError> {
+            self.inner.declare_type(declared).await
+        }
+        async fn declared_types(&self) -> Result<Vec<DeclaredType>, MemoryError> {
+            self.inner.declared_types().await
+        }
+        async fn declare_kind(
+            &self,
+            token: &str,
+            origin: types::Origin,
+            fields: Vec<types::Field>,
+        ) -> Result<(), MemoryError> {
+            self.inner.declare_kind(token, origin, fields).await
+        }
+        async fn declared_kinds(&self) -> Result<Vec<(String, types::Origin)>, MemoryError> {
+            self.inner.declared_kinds().await
+        }
+        async fn reclaim_kind(&self, token: &str) -> Result<(), MemoryError> {
+            self.inner.reclaim_kind(token).await
+        }
+    }
+
+    /// **A reader that read the store before a write cannot install what it
+    /// read after the write has cleared the cache.** The write drops every cached
+    /// age when it finishes, and a reader that was between its store read and its
+    /// insert would put the pre-write ages back, to be served as current until the
+    /// next write. The double holds the reader exactly there, the write passes
+    /// through, and the reader is let go. A reader that comes after must be told
+    /// the ages the store holds now, not the ones the late reader carried.
+    #[tokio::test]
+    async fn a_reader_that_read_before_a_write_does_not_cache_the_pre_write_ages() {
+        let inner = Arc::new(InMemoryMemory::booted());
+        let gated = Arc::new(AgesBehindAGate {
+            inner: inner.clone(),
+            gate: std::sync::Mutex::new(None),
+        });
+        let folded = Arc::new(Folded::new(gated.clone()));
+        seeded(&folded, &alpha(), "Alpha").await;
+        let write = |colour: &str, content: &str| NewFact {
+            fields: BTreeMap::from([("colour".to_string(), colour.to_string())]),
+            ..NewFact::about(alpha(), content.to_string(), date(2026, 9, 1))
+        };
+        folded
+            .capture(write("green", "first colour"))
+            .await
+            .expect("capture ok")
+            .written()
+            .expect("not blocked");
+
+        let reached = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        *gated.gate.lock().expect("gate lock") = Some((reached.clone(), release.clone()));
+        let reader = tokio::spawn({
+            let folded = folded.clone();
+            async move { folded.field_ages(&alpha()).await }
+        });
+        // The reader has read the store and not yet installed what it read.
+        reached.notified().await;
+        folded
+            .capture(write("blue", "repainted"))
+            .await
+            .expect("capture ok")
+            .written()
+            .expect("not blocked");
+        release.notify_one();
+        let late = reader
+            .await
+            .expect("the reader finished")
+            .expect("ages read");
+
+        let served = folded.field_ages(&alpha()).await.expect("ages read");
+        let held = inner.field_ages(&alpha()).await.expect("ages read");
+        assert_eq!(
+            served, held,
+            "the ages served after the write are the ones the store holds now"
+        );
+        assert!(
+            served.keys["colour"] > late.keys["colour"],
+            "the late reader carried the pre-write age and it was served: \
+             late {late:?}, served {served:?}"
+        );
     }
 
     /// 🚨 **One write's own store work must not grow with how much is
