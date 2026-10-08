@@ -263,7 +263,10 @@ impl Jojobot {
         };
         let rest = envelope(page.len(), &[]).to_string().chars().count()
             + BODIES_POINTER.chars().count()
-            + not_shown_page(held, held).to_string().chars().count()
+            + crate::answer::not_shown(held, held, "messages")
+                .to_string()
+                .chars()
+                .count()
             + STATUS_BAR_ROOM;
         let kept = Capped::beside(rest).head(&rendered, |(_, size)| *size);
         let shown = &page[..kept.kept().len()];
@@ -278,24 +281,14 @@ impl Jojobot {
         // says how many there are after it and which call reads them, and it is
         // absent when nothing was cut rather than saying "0 left out".
         if held > offset + shown.len() {
-            answer["not_shown"] = not_shown_page(held - offset - shown.len(), offset + shown.len());
+            answer["not_shown"] = crate::answer::not_shown(
+                held - offset - shown.len(),
+                offset + shown.len(),
+                "messages",
+            );
         }
         json_result(&answer)
     }
-}
-
-/// **What an answer says of the messages after the ones it carries**: how many,
-/// and the one argument that reads them. The same name and the same `count` and
-/// `offset` as the block `search` carries for the hits it left out.
-fn not_shown_page(count: usize, offset: usize) -> serde_json::Value {
-    serde_json::json!({
-        "count": count,
-        "offset": offset,
-        "how_to_proceed": format!(
-            "these are older than the ones above, or did not fit under the answer ceiling: \
-             repeat this call with offset: {offset} to read them, or narrow to one mailbox"
-        ),
-    })
 }
 
 /// **What the top of an answer says about reading bodies**, for the messages it

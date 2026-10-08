@@ -451,6 +451,22 @@ impl Jojobot {
 /// the verb's part of it.
 pub(crate) const STATUS_BAR_ROOM: usize = 200;
 
+/// **What an answer says of the items it did not carry**: how many, and the one
+/// argument that reads them. Every list that fills against the ceiling
+/// (`search`, `list_sent`, `recall`) names what it left out in this one shape,
+/// so a caller who has seen one has seen them all: repeat the same call with
+/// the `offset` named. `what` is the plural noun for the items.
+pub(crate) fn not_shown(count: usize, offset: usize, what: &str) -> serde_json::Value {
+    serde_json::json!({
+        "count": count,
+        "offset": offset,
+        "how_to_proceed": format!(
+            "these {what} come after the ones above: repeat this call with offset: {offset} \
+             to read them"
+        ),
+    })
+}
+
 // ── what a write says about itself ──────────────────────────────────────────
 
 /// **A count and its noun, agreeing.** A real model read "1 entries long" off

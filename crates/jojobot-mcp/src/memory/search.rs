@@ -855,7 +855,8 @@ impl Jojobot {
                 (json, size)
             })
             .collect();
-        let widest_not_shown = not_shown(rendered.len(), offset + rendered.len());
+        let widest_not_shown =
+            crate::answer::not_shown(rendered.len(), offset + rendered.len(), "hits");
         let rest = body.to_string().chars().count()
             + widest_not_shown.to_string().chars().count()
             + crate::answer::STATUS_BAR_ROOM;
@@ -868,7 +869,8 @@ impl Jojobot {
             .into();
         body["count"] = kept.kept().len().into();
         if kept.elided() {
-            body["not_shown"] = not_shown(kept.omitted(), offset + kept.kept().len());
+            body["not_shown"] =
+                crate::answer::not_shown(kept.omitted(), offset + kept.kept().len(), "hits");
         }
         if matches!(query.rank_clock, RankClock::HappenedAt) {
             body["rank_fallbacks"] = hits
@@ -883,20 +885,6 @@ impl Jojobot {
         }
         json_result(&body)
     }
-}
-
-/// **What an answer says of the hits it left out**: how many, and the one
-/// argument that returns them. The same call with this `offset` reads the next
-/// part of the same ranking.
-fn not_shown(count: usize, offset: usize) -> serde_json::Value {
-    serde_json::json!({
-        "count": count,
-        "offset": offset,
-        "how_to_proceed": format!(
-            "these hits ranked below the ones above and did not fit under the answer \
-             ceiling: repeat this call with offset: {offset} to read them"
-        ),
-    })
 }
 
 /// **What the matcher can and cannot promise about this query.**
