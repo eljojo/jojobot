@@ -286,8 +286,8 @@ async fn the_pointer_check_is_windowed_to_june_and_not_to_a_later_sitting() {
             &surface,
             &sid,
             "capture",
-            json!({"subject": "org:north-trail-club",
-                   "content": "@place:north-trail and @person:milhouse came up today",
+            json!({"subject": "org:north-gorge-club",
+                   "content": "@place:north-gorge and @person:milhouse came up today",
                    "provenance": "testimony"}),
         )
         .await;
@@ -314,8 +314,8 @@ async fn the_pointer_check_is_windowed_to_june_and_not_to_a_later_sitting() {
             &surface,
             &sid,
             "capture",
-            json!({"subject": "org:north-trail-club",
-                   "content": "@place:north-trail and @person:milhouse came up today",
+            json!({"subject": "org:north-gorge-club",
+                   "content": "@place:north-gorge and @person:milhouse came up today",
                    "provenance": "testimony"}),
         )
         .await;

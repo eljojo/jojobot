@@ -1735,12 +1735,12 @@ pub async fn a_claims_lineage_is_walkable_from_its_source<M: Memory>(store: &M) 
 }
 
 pub async fn referring_to_answers_from_the_far_end<M: Memory>(store: &M) {
-    let gate = EntityId("event:contract-winter-fest".into());
+    let gate = EntityId("event:contract-krusty-fest".into());
     let other = EntityId("event:contract-leaving-party".into());
     let holder = EntityId("person:contract-milhouse".into());
     let bystander = EntityId("person:contract-otto".into());
     for (id, name) in [
-        (&gate, "Contract Winter Fest"),
+        (&gate, "Contract Krusty Fest"),
         (&other, "Contract Leaving Party"),
         (&holder, "Contract Milhouse"),
         (&bystander, "Contract Otto"),
@@ -3357,11 +3357,11 @@ pub async fn prose_is_replaced_whole_and_reads_back<M: Memory>(store: &M) {
 
 /// `list_entities(kind)` narrows to one kind and never leaks another's.
 pub async fn list_entities_filters_by_kind<M: Memory>(store: &M) {
-    let place = EntityId("place:contract-north-trail".into());
+    let place = EntityId("place:contract-north-gorge".into());
     let topic = EntityId("topic:contract-widgets".into());
     add(
         store,
-        NewEntity::new(place.clone(), "North Trail", "user-named"),
+        NewEntity::new(place.clone(), "North Gorge", "user-named"),
     )
     .await;
     add(
@@ -6198,10 +6198,10 @@ pub async fn a_wrong_kind_edge_object_is_refused<M: Memory>(store: &M) {
 /// nobody else references, so the walk comes back empty and nothing looks
 /// wrong. It comes back as candidates instead, and nothing is written.
 pub async fn an_edge_object_is_screened_by_the_guard<M: Memory>(store: &M) {
-    let object = EntityId("place:contract-riverbend".into());
+    let object = EntityId("place:contract-shelbyville".into());
     add(
         store,
-        NewEntity::new(object.clone(), "Riverbend", "user-named"),
+        NewEntity::new(object.clone(), "Shelbyville", "user-named"),
     )
     .await;
 
@@ -6214,7 +6214,7 @@ pub async fn an_edge_object_is_screened_by_the_guard<M: Memory>(store: &M) {
     )
     .await;
 
-    let typo = EntityId("place:contract-riverbnd".into());
+    let typo = EntityId("place:contract-shelbyvlle".into());
     let outcome = store
         .capture(NewFact {
             edge: Some(Edge::new(EdgeShape::Location, typo.clone())),
@@ -6845,7 +6845,7 @@ pub async fn update_fact_attaches_an_edge<M: Memory>(store: &M) {
 
     let edge = Edge::new(
         EdgeShape::Attendance,
-        EntityId("event:contract-winter-fest".into()),
+        EntityId("event:contract-krusty-fest".into()),
     );
     let updated = edit(
         store,

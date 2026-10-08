@@ -45,7 +45,7 @@ async fn a_bot_finds_its_own_past_work_and_is_told_a_colleagues_exists() {
     // ── ① otto does some work ───────────────────────────────────────────────
     let otto = story.session().await;
     otto.add("bot:epsilon", "Epsilon").await;
-    otto.journal("otto surveyed the east trail and found the bridge closed")
+    otto.journal("otto surveyed the east gorge and found the bridge closed")
         .await;
     let before = my_past_runs(&otto).await;
     let withheld_before = before["withheld"]
@@ -77,7 +77,7 @@ async fn a_bot_finds_its_own_past_work_and_is_told_a_colleagues_exists() {
         runs[0]["prose"]
             .as_str()
             .unwrap_or_default()
-            .contains("east trail"),
+            .contains("east gorge"),
         "otto's own run must read back what it did: {answered}"
     );
 
@@ -114,7 +114,7 @@ async fn a_bot_finds_its_own_past_work_and_is_told_a_colleagues_exists() {
         found[0]["prose"]
             .as_str()
             .unwrap_or_default()
-            .contains("east trail"),
+            .contains("east gorge"),
         "the earlier sitting's run must read back whole: {last_time}"
     );
     assert_eq!(
@@ -167,7 +167,7 @@ async fn a_caller_with_no_identity_is_told_runs_exist_and_shown_none() {
     // ── ① an instance with a run on it, asked by a caller carrying no sid ───
     let story = Story::begin("bot:otto").await;
     let otto = story.session().await;
-    otto.journal("otto surveyed the east trail and found the bridge closed")
+    otto.journal("otto surveyed the east gorge and found the bridge closed")
         .await;
     // What an identified caller sees: its own run shown, the rest counted.
     let identified = my_past_runs(&otto).await;
@@ -198,7 +198,7 @@ async fn a_caller_with_no_identity_is_told_runs_exist_and_shown_none() {
          {answered}"
     );
     assert!(
-        !answered.to_string().contains("east trail"),
+        !answered.to_string().contains("east gorge"),
         "a run's words reached a caller that owns none: {answered}"
     );
     let how = answered["withheld_note"].as_str().unwrap_or_else(|| {

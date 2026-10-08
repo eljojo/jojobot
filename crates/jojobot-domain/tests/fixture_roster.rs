@@ -220,21 +220,27 @@ const ROSTER: &[&str] = &[
     "bot:worker-1",
     "bot:worker-2",
     "event:birthday-party",
+    "event:contract-krusty-fest",
     "event:departure-flight",
+    // A generic-noun family (a gorge, a club, a survey) standing for no real place and
+    // no real club. The noun is as long as the one it replaced, so the sibling and
+    // distance shapes the tests measure are unchanged.
+    "event:gorge-survey",
+    "event:gorge-survey-2026",
+    // Krusty the Clown's festival, The Simpsons.
+    "event:krusty-fest",
     "event:the-booking",
     "event:the-jotting",
-    "event:the-june-trail-day",
     "event:erosion-review",
     "event:kitchen-safety-course-oct-2026",
     "event:moe-open-mic",
     "event:otto-benefit-show",
     "event:leaving-party",
     "event:lisa-quartet-night",
-    "event:trail-survey",
-    "event:trail-survey-2026",
     // Wagstaff Middle School's fair, Bob's Burgers.
+    "event:the-june-gorge-day",
     "event:wagstaff-fair",
-    "event:winter-fest",
+    // Capital City is the state capital in The Simpsons; a trip there is a plain noun.
     "event:capital-city-trip",
     "machine:omicron",
     "machine:phi",
@@ -250,8 +256,11 @@ const ROSTER: &[&str] = &[
     // Homer's snowplow business, the Simpsons, repurposed here as a
     // furnace-servicing company.
     "org:mr-plow",
-    "org:north-trail-club",
     // Quahog is the fictional town Family Guy is set in.
+    // A generic-noun family (a gorge, a club, a survey) standing for no real place and
+    // no real club. The noun is as long as the one it replaced, so the sibling and
+    // distance shapes the tests measure are unchanged.
+    "org:north-gorge-club",
     "org:quahog-community-college",
     "org:springfield-cyclery",
     "org:springfield-movers",
@@ -371,6 +380,7 @@ const ROSTER: &[&str] = &[
     "person:x",
     "person:y",
     "person:zenit",
+    // A plain noun. `zenit` beside it is its one-letter sibling, kept for the near-name cases.
     "person:zenith",
     "person:zzz",
     "person:zzz-nobody",
@@ -381,28 +391,35 @@ const ROSTER: &[&str] = &[
     "place:bet",
     "place:capital-citty",
     "place:capital-city",
+    // A generic-noun family (a gorge, a club, a survey) standing for no real place and
+    // no real club. The noun is as long as the one it replaced, so the sibling and
+    // distance shapes the tests measure are unchanged.
+    "place:contract-north-gorge",
+    "place:contract-shelbyville",
+    "place:contract-shelbyvlle",
     "place:far-country",
-    "place:golden-north-trail",
+    "place:golden-north-gorge",
+    "place:gorge-spot",
     "place:leftorium",
     "place:moes-tavern",
     "place:moes",
+    "place:north-gorge",
+    "place:north-gorge-2",
     "place:north-haverbook",
     "place:north-haverbrook",
-    "place:north-trail",
-    "place:north-trail-2",
     // The Belcher family's street, Bob's Burgers.
     "place:ocean-avenue",
-    "place:riverbend",
-    "place:riverbnd",
     "place:shelbyvile",
     "place:shelbyville",
+    "place:shelbyvlle",
     "place:springfeild",
     "place:springfield",
     "place:springfield-mall",
-    "place:trail-spot",
     // Bob's Burgers.
     "place:wagstaff-pool",
+    // Wonder Wharf is the amusement park in Bob's Burgers; the road is a plain road name.
     "place:wharf-road",
+    // The amusement park in Bob's Burgers.
     "place:wonder-wharf",
     "place:x",
     "project:atlas",
@@ -428,6 +445,10 @@ const ROSTER: &[&str] = &[
     "rhythm:swim",
     "rhythm:weekly-review",
     "rhythm:worming",
+    // A generic-noun family (a gorge, a club, a survey) standing for no real place and
+    // no real club. The noun is as long as the one it replaced, so the sibling and
+    // distance shapes the tests measure are unchanged.
+    "thing:gorge-email",
     "thing:jukebox",
     "thing:recorded-twin",
     "thing:the-couch",
@@ -471,7 +492,6 @@ const ROSTER: &[&str] = &[
     "thing:that-search-summary",
     "thing:the-furnace",
     "thing:torque-wrench",
-    "thing:trail-email",
     "thing:upgrade-fixture-archived",
     "thing:upgrade-fixture-namesake",
     "thing:upgrade-fixture-successor",
@@ -736,11 +756,8 @@ const ROSTER: &[&str] = &[
     "place:contract-harbour-end",
     "place:contract-kiln-yard",
     "place:contract-moes",
-    "place:contract-north-trail",
     "place:contract-nowhere-in-particular",
     "place:contract-orient-hall",
-    "place:contract-riverbend",
-    "place:contract-riverbnd",
     "place:contract-tavern",
     "place:upgrade-fixture-place",
     "project:upgrade-fixture-project",

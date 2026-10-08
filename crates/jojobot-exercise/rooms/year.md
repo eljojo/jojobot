@@ -63,9 +63,9 @@ Almost nothing, on purpose: the operator is starting. Five nouns and one brief.
 **Everything else in this document is built by the sittings**, which is what
 makes a later one depend on an earlier one rather than on the furniture.
 
-**Two of the five nouns are named alike and both are real** — `org:north-trail-club`
-is the club and `place:north-trail` is the trail it is named for. Neither is a
-mistake, and a sitting asked about "the north trail" has two right answers to
+**Two of the five nouns are named alike and both are real** — `org:north-gorge-club`
+is the club and `place:north-gorge` is the gorge it is named for. Neither is a
+mistake, and a sitting asked about "the north gorge" has two right answers to
 choose between. That is the shape a real store grows on its own.
 
 ⚠️ **Nothing here is dated on a day any sitting claims.** A record already
@@ -77,8 +77,8 @@ entity  person:milhouse | Milhouse
 entity  place:springfield | Springfield
 entity  place:shelbyville | Shelbyville
 entity  thing:gravel-bike | The Gravel Bike
-entity  org:north-trail-club | The North Trail Club
-entity  place:north-trail | The North Trail
+entity  org:north-gorge-club | The North Gorge Club
+entity  place:north-gorge | The North Gorge
 
 # The operator's own words, and the whole of what the first sitting is told
 # beyond its entry line. An indented line continues the one above it.
@@ -86,7 +86,7 @@ message assistant | starting to keep track of things | I am going to start keepi
 
     The gravel bike: its chain wants looking at every ninety days and I last did it on 2025-12-20. If I let one slide, the next ninety days should run from when I actually did it rather than from when it was meant to happen.
 
-    I ride with the North Trail Club. Milhouse is in it and he lives in Springfield. The club is running a trail survey in June and I mean to be there.
+    I ride with the North Gorge Club. Milhouse is in it and he lives in Springfield. The club is running a gorge survey in June and I mean to be there.
 
     And one more thing, since I know I will forget to say it later: when I pay someone for work on the bike or the canoe, there are three words I use for where that stands, and no others — invoiced, paid, or waived.
 
@@ -267,20 +267,20 @@ say     April: the Springfield claim is either gone or still standing as current
 >
 > Nobody will answer you, but your answer is being read. You must answer.
 >
-> start jojobot as assistant — it is 10 May 2026 and the north trail was washed out at the top end this spring, put it where it belongs, and I gave the canoe seat a coat of varnish since it was getting rough
+> start jojobot as assistant — it is 10 May 2026 and the north gorge was washed out at the top end this spring, put it where it belongs, and I gave the canoe seat a coat of varnish since it was getting rough
 
 ```locks
-# The trail and the club are both real and neither is a typo. What is locked is
-# that the washout reached the trail that already existed: the near-miss guard
+# The gorge and the club are both real and neither is a typo. What is locked is
+# that the washout reached the gorge that already existed: the near-miss guard
 # is there to be met, and a session that pushes past it leaves the store with
-# two trails.
+# two gorges.
 #
-# One lock rather than two, because "no second trail" is true of a room nobody
+# One lock rather than two, because "no second gorge" is true of a room nobody
 # worked in. The count is what makes the absence mean something.
 recall {"kind": "place", "facts": true}
-at least 1 of "subject":"place:north-trail"
-lacks   place:north-trail-2
-say     May: the washout was not filed against the trail that already existed — either nothing was filed, or a second trail was stood up to carry it
+at least 1 of "subject":"place:north-gorge"
+lacks   place:north-gorge-2
+say     May: the washout was not filed against the gorge that already existed — either nothing was filed, or a second gorge was stood up to carry it
 
 # The third small repair, same reason as before.
 recall {"subject": "thing:canoe", "facts": true, "stood_for": true}
@@ -296,7 +296,7 @@ say     May: nothing on the canoe carries this sitting's own day, so the varnish
 >
 > Nobody will answer you, but your answer is being read. You must answer.
 >
-> start jojobot as assistant — it is 14 June 2026, the survey happened today up on the north trail and Milhouse and Nelson were both there, and I did the bike chain this morning, and I've put around 800 kilometres on it since the spring
+> start jojobot as assistant — it is 14 June 2026, the survey happened today up on the north gorge and Milhouse and Nelson were both there, and I did the bike chain this morning, and I've put around 800 kilometres on it since the spring
 
 ```locks
 # Attendance is an edge. August walks it.
@@ -338,7 +338,7 @@ say     June: the chain check does not say it was done on the day this sitting c
 # event's handle, so a lock that spelled it would fail a run whose January
 # called it something else — and naming the kinds is the same fault one level
 # up, because which things a sitting points at is the sitting's own choice. A
-# claim linking the club to the trail did the identical thing.
+# claim linking the club to the gorge did the identical thing.
 #
 # 🚨 **The floor is TWO KINDS ON ONE RECORD, and it used to be a person, a place
 # and an event together.** No sitting in this year is asked to name all three in
@@ -413,7 +413,7 @@ say     August: somebody who was never at the survey is now recorded as having b
 # occupant's prose measures whoever wrote the needle. Nothing else writes on the
 # club on this day: January's claim is January's, March's is rewritten under
 # July's day, and October touches the pump.
-recall {"subject": "org:north-trail-club", "facts": true}
+recall {"subject": "org:north-gorge-club", "facts": true}
 carries "recorded_at":"2026-08-16"
 say     August: nothing on the club carries this sitting's own day, so the one thing it was asked to record is not there
 ```
@@ -474,7 +474,7 @@ say     September: nothing on the canoe carries this sitting's own day, so the c
 >
 > Nobody will answer you, but your answer is being read. You must answer.
 >
-> start jojobot as assistant — it is 11 October 2026 and I should note that Nelson brought my floor pump back over the summer, and put down where we held the survey — the ground there needs a look before next year, and the trail association has renamed that survey — from now on it goes on record as the Erosion Review
+> start jojobot as assistant — it is 11 October 2026 and I should note that Nelson brought my floor pump back over the summer, and put down where we held the survey — the ground there needs a look before next year, and the gorge association has renamed that survey — from now on it goes on record as the Erosion Review
 
 ```locks
 # 🚨 The operator ruled 2026-09-10: a later statement is a correction whether
@@ -512,9 +512,9 @@ say     October: September's account of the pump was not corrected in place — 
 # survey can be walked to the place it was held at, which is a thing this
 # sitting could only record after finding it.
 #
-# ⚠️ **A walk rather than a record on the trail.** A claim filed on the place
+# ⚠️ **A walk rather than a record on the gorge.** A claim filed on the place
 # needs the place to exist and nothing else, so a year that skipped January
-# would satisfy it — the trail came with the furniture. The event did not: it is
+# would satisfy it — the gorge came with the furniture. The event did not: it is
 # January's, so this lock rests on January and June both, which is what the
 # sentence beside it claims.
 #
@@ -524,13 +524,13 @@ say     October: September's account of the pump was not corrected in place — 
 # own lock reaches the event the same way, by kind and edge, and this one
 # follows suit.
 # 🚨 **A hatch, scoped to October's own window.** Asked of the finished
-# board, `carries place:north-trail` holds on a retracted claim exactly as on
+# board, `carries place:north-gorge` holds on a retracted claim exactly as on
 # a standing one — nothing here retracts it today, but the gap is the same
 # shape June's attendance walk carried before its own fix. No subject is
 # pinned: this sitting renames the survey's own event in the same breath, and
 # a check pinning the old handle would miss its own record the moment the
 # rename runs first.
-check   octobers_note_drew_a_standing_location_edge_to_the_trail
+check   octobers_note_drew_a_standing_location_edge_to_the_gorge
 say     October: the survey cannot be walked to the place it was held at, so where it happened is in one sitting's sentence and nowhere a later reader of the event will look
 ```
 
@@ -972,7 +972,7 @@ say     later December: the bike's distance does not read as the year's two figu
 # record still says what it always said.
 #
 # Placed last, for the reason every lock in this block already is.
-recall {"subject": "event:trail-survey", "facts": true}
+recall {"subject": "event:gorge-survey", "facts": true}
 carries "standing":"open"
 say     later December: the survey's own planning claim does not read as still open, so either it was never recorded as a hedge or something settled it that had no business doing so
 

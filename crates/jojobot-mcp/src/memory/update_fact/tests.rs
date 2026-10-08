@@ -912,35 +912,35 @@ async fn update_fact_refuses_the_reserved_key() {
 #[tokio::test]
 async fn clear_edge_takes_the_edge_off_and_a_silent_edit_does_not() {
     let jojobot = handler();
-    ensure(&jojobot, "event:winter-fest").await;
+    ensure(&jojobot, "event:krusty-fest").await;
     let drawn = |said: &str| CaptureArgs {
         shape: Some("attendance".into()),
-        object: Some("event:winter-fest".into()),
+        object: Some("event:krusty-fest".into()),
         ..capture_args("person:alpha", said)
     };
 
-    let kept = capture_ok(&jojobot, drawn("was at the winter fest")).await;
+    let kept = capture_ok(&jojobot, drawn("was at the krusty fest")).await;
     let reworded = json_of(
         &jojobot
             .update_fact(Parameters(UpdateFactArgs {
                 provenance: Some("inference".to_string()),
-                content: Some("was at the winter fest, both nights".into()),
+                content: Some("was at the krusty fest, both nights".into()),
                 ..update_args(&address_of(&kept))
             }))
             .await
             .expect("update ok"),
     );
     assert_eq!(
-        reworded["edge"]["object"], "event:winter-fest",
+        reworded["edge"]["object"], "event:krusty-fest",
         "an edit that never mentioned edges took one off: {reworded}",
     );
 
-    let wrong = capture_ok(&jojobot, drawn("was at the winter fest")).await;
+    let wrong = capture_ok(&jojobot, drawn("was at the krusty fest")).await;
     let corrected = json_of(
         &jojobot
             .update_fact(Parameters(UpdateFactArgs {
                 provenance: Some("inference".to_string()),
-                content: Some("was never at the winter fest".into()),
+                content: Some("was never at the krusty fest".into()),
                 clear_edge: Some(true),
                 ..update_args(&address_of(&wrong))
             }))
@@ -957,7 +957,7 @@ async fn clear_edge_takes_the_edge_off_and_a_silent_edit_does_not() {
     );
     assert_eq!(
         corrected["content_bytes"].as_u64(),
-        Some("was never at the winter fest".len() as u64),
+        Some("was never at the krusty fest".len() as u64),
         "the rewrite itself did not land: {corrected}",
     );
 }
@@ -968,20 +968,20 @@ async fn update_fact_attaches_an_edge() {
     let jojobot = handler();
     let captured = capture_ok(&jojobot, capture_args("alpha", "was at the festival")).await;
     assert!(captured["edge"].is_null());
-    ensure(&jojobot, "event:winter-fest").await;
+    ensure(&jojobot, "event:krusty-fest").await;
 
     let updated = json_of(
         &jojobot
             .update_fact(Parameters(UpdateFactArgs {
                 shape: Some("attendance".into()),
-                object: Some("event:winter-fest".into()),
+                object: Some("event:krusty-fest".into()),
                 ..update_args(&address_of(&captured))
             }))
             .await
             .expect("update ok"),
     );
     assert_eq!(updated["edge"]["type"], "attendee");
-    assert_eq!(updated["edge"]["object"], "event:winter-fest");
+    assert_eq!(updated["edge"]["object"], "event:krusty-fest");
 }
 
 /// 🚨 **A correction can carry the day it was made, and omitting it leaves

@@ -25,7 +25,7 @@ async fn reading_the_thing_says_who_holds_what_gets_them_in() {
 
     // ── months earlier · somebody says what they hold, and it is written ────
     let s = story.session().await;
-    s.add("event:winter-fest", "The Winter Fest").await;
+    s.add("event:krusty-fest", "The Krusty Fest").await;
     s.add("person:milhouse", "Milhouse").await;
     s.add("person:bart", "Bart").await;
 
@@ -36,7 +36,7 @@ async fn reading_the_thing_says_who_holds_what_gets_them_in() {
         "person:milhouse",
         "holds a full pass for the whole run",
         json!({
-            "admits": "event:winter-fest",
+            "admits": "event:krusty-fest",
             "tier": "full",
             "valid_until": "2026-12-31",
         }),
@@ -50,7 +50,7 @@ async fn reading_the_thing_says_who_holds_what_gets_them_in() {
         "person:bart",
         "held a day pass",
         json!({
-            "admits": "event:winter-fest",
+            "admits": "event:krusty-fest",
             "tier": "day",
             "valid_until": "2026-01-04",
         }),
@@ -63,7 +63,7 @@ async fn reading_the_thing_says_who_holds_what_gets_them_in() {
 
     // ── months later · a session pulls the event, having been told nothing ──
     let later = story.session().await;
-    let pulled = later.recall("event:winter-fest").await;
+    let pulled = later.recall("event:krusty-fest").await;
 
     // **It asked for the event. It was told about the pass.** No walk, no
     // relation named, no key mentioned anywhere in the call.
@@ -86,14 +86,14 @@ async fn reading_the_thing_says_who_holds_what_gets_them_in() {
         .hedged_with(
             "person:nelson",
             "thinks he still has a pass from last year",
-            json!({ "admits": "event:winter-fest", "tier": "full" }),
+            json!({ "admits": "event:krusty-fest", "tier": "full" }),
         )
         .await;
     unsure
         .wrap("wrote down the one he was not sure about")
         .await;
 
-    let with_the_hedge = story.session().await.recall("event:winter-fest").await;
+    let with_the_hedge = story.session().await.recall("event:krusty-fest").await;
     // **Both keys, on the same object, in one read.** They answer different
     // questions — how sure the operator was, and whether the pass is in force
     // on the day — and asserting either alone passes on a build that still
@@ -121,14 +121,14 @@ async fn reading_the_thing_says_who_holds_what_gets_them_in() {
         .event_with(
             "person:bart",
             "was promised a pass by the organisers",
-            json!({ "admits": "event:winter-fest", "tier": "guest" }),
+            json!({ "admits": "event:krusty-fest", "tier": "guest" }),
             &[],
         )
         .await;
     later
         .retract(&withdrawn, "the organisers never issued it")
         .await;
-    let after = later.recall("event:winter-fest").await;
+    let after = later.recall("event:krusty-fest").await;
     after
         .says("holds a full pass for the whole run")
         .never_says("was promised a pass by the organisers");

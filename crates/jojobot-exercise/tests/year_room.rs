@@ -192,18 +192,18 @@ async fn sitting(room: &Surface, day: &str) -> String {
 /// mid-sentence, every check on it still passes, and the fault reaches a
 /// reader — five instances of it across three crates so far.
 const WHAT_JUNE_SAW: &str =
-    "@event:trail-survey ran on @place:north-trail with @person:milhouse and @person:nelson";
+    "@event:gorge-survey ran on @place:north-gorge with @person:milhouse and @person:nelson";
 
 /// The three nouns as words, which is what a sitting that never reached for a
 /// mention leaves behind.
-const IN_WORDS: &str = "the trail survey ran on the north trail with Milhouse and Nelson";
+const IN_WORDS: &str = "the gorge survey ran on the north gorge with Milhouse and Nelson";
 
 /// **Two kinds on one record and not the three the lock used to name.** The
 /// event is the claim's own topic and is spelled rather than pointed at; the
 /// place and the people are pointers, so the claim leads somewhere in two
 /// directions.
 const A_PLACE_AND_A_PERSON: &str =
-    "the survey ran on @place:north-trail with @person:milhouse and @person:nelson";
+    "the survey ran on @place:north-gorge with @person:milhouse and @person:nelson";
 
 /// **Pointers, all of one kind.** Every mention leads to a person, so no claim
 /// links a thing of one kind to a thing of another.
@@ -374,14 +374,14 @@ async fn january(room: &Surface, sid: &str) {
         "capture",
         json!({"subject": "person:milhouse", "content": "rides with the club",
                "provenance": "testimony",
-               "shape": "membership", "object": "org:north-trail-club"}),
+               "shape": "membership", "object": "org:north-gorge-club"}),
     )
     .await;
     did(
         room,
         sid,
         "add_entity",
-        json!({"kind": "event", "handle": "trail-survey", "name": "The trail survey",
+        json!({"kind": "event", "handle": "gorge-survey", "name": "The gorge survey",
                "source": "the operator"}),
     )
     .await;
@@ -394,7 +394,7 @@ async fn january(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "event:trail-survey", "content": "planning to attend",
+        json!({"subject": "event:gorge-survey", "content": "planning to attend",
                "provenance": "testimony", "standing": "open"}),
     )
     .await;
@@ -454,7 +454,7 @@ async fn february(room: &Surface, sid: &str) {
         "capture",
         json!({"subject": "person:nelson", "content": "joined the club",
                "provenance": "testimony",
-               "shape": "membership", "object": "org:north-trail-club"}),
+               "shape": "membership", "object": "org:north-gorge-club"}),
     )
     .await;
     did(
@@ -507,7 +507,7 @@ async fn february_records_no_holder(room: &Surface, sid: &str) {
         "capture",
         json!({"subject": "person:nelson", "content": "joined the club",
                "provenance": "testimony",
-               "shape": "membership", "object": "org:north-trail-club"}),
+               "shape": "membership", "object": "org:north-gorge-club"}),
     )
     .await;
     did(
@@ -525,7 +525,7 @@ async fn march(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "org:north-trail-club", "content": "meets on Tuesdays",
+        json!({"subject": "org:north-gorge-club", "content": "meets on Tuesdays",
                "provenance": "testimony", "recorded_at": "2026-03-15"}),
     )
     .await;
@@ -568,7 +568,7 @@ async fn may(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "place:north-trail", "content": "washed out at the top end this spring",
+        json!({"subject": "place:north-gorge", "content": "washed out at the top end this spring",
                "provenance": "testimony", "recorded_at": "2026-05-10"}),
     )
     .await;
@@ -595,7 +595,7 @@ async fn june_with_attendance_as_mentions(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "org:north-trail-club",
+        json!({"subject": "org:north-gorge-club",
                "content": WHAT_JUNE_SAW,
                "provenance": "testimony"}),
     )
@@ -605,9 +605,9 @@ async fn june_with_attendance_as_mentions(room: &Surface, sid: &str) {
             room,
             sid,
             "capture",
-            json!({"subject": who, "content": "was at the trail survey, @event:trail-survey",
+            json!({"subject": who, "content": "was at the gorge survey, @event:gorge-survey",
                    "provenance": "testimony",
-                   "shape": "attendance", "object": "event:trail-survey"}),
+                   "shape": "attendance", "object": "event:gorge-survey"}),
         )
         .await;
     }
@@ -633,7 +633,7 @@ async fn june_also_points_at_a_second_event(room: &Surface, sid: &str) {
         room,
         sid,
         "add_entity",
-        json!({"kind": "event", "handle": "winter-fest", "name": "Winter Fest",
+        json!({"kind": "event", "handle": "krusty-fest", "name": "Krusty Fest",
                "source": "the operator"}),
     )
     .await;
@@ -641,8 +641,8 @@ async fn june_also_points_at_a_second_event(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "org:north-trail-club",
-               "content": "already looking ahead to @event:winter-fest",
+        json!({"subject": "org:north-gorge-club",
+               "content": "already looking ahead to @event:krusty-fest",
                "provenance": "testimony"}),
     )
     .await;
@@ -654,7 +654,7 @@ async fn june_also_points_at_a_second_event(room: &Surface, sid: &str) {
 /// Nothing tells a model what to call the survey — January's own handle is
 /// that sitting's invention, not a word the operator used — so a June that
 /// lands on a different spelling has done the same work as one that landed
-/// on `event:trail-survey` by chance. `event:trail-survey` itself is left
+/// on `event:gorge-survey` by chance. `event:gorge-survey` itself is left
 /// standing, unused: the point is that June's own lock must not care which
 /// event carries the edges, only that one does.
 async fn june_points_at_a_differently_spelled_survey(room: &Surface, sid: &str) {
@@ -662,7 +662,7 @@ async fn june_points_at_a_differently_spelled_survey(room: &Surface, sid: &str) 
         room,
         sid,
         "add_entity",
-        json!({"kind": "event", "handle": "the-june-trail-day", "name": "The June trail day",
+        json!({"kind": "event", "handle": "the-june-gorge-day", "name": "The June gorge day",
                "source": "the operator"}),
     )
     .await;
@@ -670,7 +670,7 @@ async fn june_points_at_a_differently_spelled_survey(room: &Surface, sid: &str) 
         room,
         sid,
         "capture",
-        json!({"subject": "org:north-trail-club",
+        json!({"subject": "org:north-gorge-club",
                "content": WHAT_JUNE_SAW,
                "provenance": "testimony"}),
     )
@@ -680,9 +680,9 @@ async fn june_points_at_a_differently_spelled_survey(room: &Surface, sid: &str) 
             room,
             sid,
             "capture",
-            json!({"subject": who, "content": "was at the trail survey",
+            json!({"subject": who, "content": "was at the gorge survey",
                    "provenance": "testimony",
-                   "shape": "attendance", "object": "event:the-june-trail-day"}),
+                   "shape": "attendance", "object": "event:the-june-gorge-day"}),
         )
         .await;
     }
@@ -714,7 +714,7 @@ async fn june_saying(room: &Surface, sid: &str, said: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "org:north-trail-club",
+        json!({"subject": "org:north-gorge-club",
                "content": said,
                "provenance": "testimony"}),
     )
@@ -724,9 +724,9 @@ async fn june_saying(room: &Surface, sid: &str, said: &str) {
             room,
             sid,
             "capture",
-            json!({"subject": who, "content": "was at the trail survey",
+            json!({"subject": who, "content": "was at the gorge survey",
                    "provenance": "testimony",
-                   "shape": "attendance", "object": "event:trail-survey"}),
+                   "shape": "attendance", "object": "event:gorge-survey"}),
         )
         .await;
     }
@@ -774,9 +774,9 @@ async fn june_writes_the_turn_by_hand(room: &Surface, sid: &str) {
             room,
             sid,
             "capture",
-            json!({"subject": who, "content": "was at the trail survey",
+            json!({"subject": who, "content": "was at the gorge survey",
                    "provenance": "testimony",
-                   "shape": "attendance", "object": "event:trail-survey"}),
+                   "shape": "attendance", "object": "event:gorge-survey"}),
         )
         .await;
     }
@@ -842,13 +842,13 @@ async fn late_november_stands_up_a_second_loop(room: &Surface, sid: &str) {
 /// either way, which is exactly why the room needs a lock that can tell the
 /// two apart.
 async fn july(room: &Surface, sid: &str) {
-    let wrong = address_of(room, "org:north-trail-club", "Tuesdays").await;
+    let wrong = address_of(room, "org:north-gorge-club", "Tuesdays").await;
     did(
         room,
         sid,
         "update_fact",
         json!({"address": wrong,
-               "content": "The North Trail Club does not meet on Tuesdays — the operator was mistaken in March; that never stood.",
+               "content": "The North Gorge Club does not meet on Tuesdays — the operator was mistaken in March; that never stood.",
                "recorded_at": "2026-07-05", "provenance": "testimony"}),
     )
     .await;
@@ -886,7 +886,7 @@ async fn july_writes_only_the_canoe(room: &Surface, sid: &str) {
 /// complete here — there is nothing else the record needs to say, exactly as
 /// Nelson's own retracted attendance needs no replacement claim either.
 async fn july_takes_the_claim_back(room: &Surface, sid: &str) {
-    let wrong = address_of(room, "org:north-trail-club", "Tuesdays").await;
+    let wrong = address_of(room, "org:north-gorge-club", "Tuesdays").await;
     did(
         room,
         sid,
@@ -917,9 +917,9 @@ async fn august_puts_a_third_person_there(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "person:ralph", "content": "was at the trail survey",
+        json!({"subject": "person:ralph", "content": "was at the gorge survey",
                "provenance": "inference",
-               "shape": "attendance", "object": "event:trail-survey"}),
+               "shape": "attendance", "object": "event:gorge-survey"}),
     )
     .await;
 }
@@ -929,7 +929,7 @@ async fn august(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "org:north-trail-club", "content": "the operator is standing for election to the club board",
+        json!({"subject": "org:north-gorge-club", "content": "the operator is standing for election to the club board",
                "provenance": "testimony", "recorded_at": "2026-08-16"}),
     )
     .await;
@@ -971,9 +971,9 @@ async fn september_names_ralph_in_prose(room: &Surface, sid: &str) {
         sid,
         "capture",
         json!({"subject": "thing:floor-pump",
-               "content": "@person:ralph gave the floor pump back at @event:trail-survey",
+               "content": "@person:ralph gave the floor pump back at @event:gorge-survey",
                "provenance": "testimony", "happened_at": "2026-06-14",
-               "shape": "attendance", "object": "event:trail-survey"}),
+               "shape": "attendance", "object": "event:gorge-survey"}),
     )
     .await;
 }
@@ -1026,7 +1026,7 @@ async fn october(room: &Surface, sid: &str) {
         room,
         sid,
         "rename_entity",
-        json!({"handle": "event:trail-survey", "to": "event:erosion-review"}),
+        json!({"handle": "event:gorge-survey", "to": "event:erosion-review"}),
     )
     .await;
 }
@@ -1050,7 +1050,7 @@ async fn october_without_renaming_the_survey(room: &Surface, sid: &str) {
 /// own address can, because that address is retracted rather than renamed.
 async fn october_retracts_junes_claim_instead_of_renaming(room: &Surface, sid: &str) {
     october_writes_the_pump_and_the_place(room, sid).await;
-    let junes = address_of(room, "org:north-trail-club", "ran on").await;
+    let junes = address_of(room, "org:north-gorge-club", "ran on").await;
     did(
         room,
         sid,
@@ -1071,8 +1071,8 @@ async fn october_retracts_junes_claim_instead_of_renaming(room: &Surface, sid: &
         room,
         sid,
         "capture",
-        json!({"subject": "org:north-trail-club",
-               "content": "the survey ran on @place:north-trail, filed now as @event:the-jotting",
+        json!({"subject": "org:north-gorge-club",
+               "content": "the survey ran on @place:north-gorge, filed now as @event:the-jotting",
                "provenance": "testimony"}),
     )
     .await;
@@ -1090,7 +1090,7 @@ async fn october_retracts_junes_claim_instead_of_renaming(room: &Surface, sid: &
 /// actually carried across the rename.
 async fn october_retracts_junes_claim_and_renames_the_survey_anyway(room: &Surface, sid: &str) {
     october_writes_the_pump_and_the_place(room, sid).await;
-    let junes = address_of(room, "org:north-trail-club", "ran on").await;
+    let junes = address_of(room, "org:north-gorge-club", "ran on").await;
     did(
         room,
         sid,
@@ -1103,7 +1103,7 @@ async fn october_retracts_junes_claim_and_renames_the_survey_anyway(room: &Surfa
         room,
         sid,
         "rename_entity",
-        json!({"handle": "event:trail-survey", "to": "event:erosion-review"}),
+        json!({"handle": "event:gorge-survey", "to": "event:erosion-review"}),
     )
     .await;
 }
@@ -1201,10 +1201,10 @@ async fn october_writes_the_pump_and_the_place(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "event:trail-survey",
+        json!({"subject": "event:gorge-survey",
                "content": "the ground needs a look before next year",
                "provenance": "testimony",
-               "shape": "location", "object": "place:north-trail"}),
+               "shape": "location", "object": "place:north-gorge"}),
     )
     .await;
 }
@@ -1241,10 +1241,10 @@ async fn october_removes_one_of_the_two_accounts(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "event:trail-survey",
+        json!({"subject": "event:gorge-survey",
                "content": "the ground needs a look before next year",
                "provenance": "testimony",
-               "shape": "location", "object": "place:north-trail"}),
+               "shape": "location", "object": "place:north-gorge"}),
     )
     .await;
 }
@@ -1261,7 +1261,7 @@ async fn october_files_the_note_on_the_event(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "event:trail-survey",
+        json!({"subject": "event:gorge-survey",
                "content": "the ground needs a look before next year",
                "provenance": "testimony"}),
     )
@@ -1287,10 +1287,10 @@ async fn october_captures_a_second_account_instead_of_correcting(room: &Surface,
         room,
         sid,
         "capture",
-        json!({"subject": "event:trail-survey",
+        json!({"subject": "event:gorge-survey",
                "content": "the ground needs a look before next year",
                "provenance": "testimony",
-               "shape": "location", "object": "place:north-trail"}),
+               "shape": "location", "object": "place:north-gorge"}),
     )
     .await;
 }
@@ -1302,7 +1302,7 @@ async fn october_captures_a_second_account_instead_of_correcting(room: &Surface,
 /// membership is folded in beside it, the same shape February used for
 /// Nelson himself.
 async fn late_october(room: &Surface, sid: &str) {
-    let wrong = address_of(room, "person:nelson", "trail survey").await;
+    let wrong = address_of(room, "person:nelson", "gorge survey").await;
     did(
         room,
         sid,
@@ -1325,7 +1325,7 @@ async fn late_october(room: &Surface, sid: &str) {
         "capture",
         json!({"subject": "person:bart", "content": "joined the club",
                "provenance": "testimony",
-               "shape": "membership", "object": "org:north-trail-club"}),
+               "shape": "membership", "object": "org:north-gorge-club"}),
     )
     .await;
 }
@@ -1342,7 +1342,7 @@ async fn late_october_puts_a_third_person_there(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "person:bart", "content": "was at the trail survey",
+        json!({"subject": "person:bart", "content": "was at the gorge survey",
                "provenance": "inference",
                "shape": "attendance", "object": survey}),
     )
@@ -2448,7 +2448,7 @@ async fn the_locks_fail_on_a_year_written_entirely_in_prose() {
     for (subject, said, day) in [
         (
             "person:milhouse",
-            "he lives in Springfield and rides with the north trail club",
+            "he lives in Springfield and rides with the north gorge club",
             "2026-01-12",
         ),
         (
@@ -2457,7 +2457,7 @@ async fn the_locks_fail_on_a_year_written_entirely_in_prose() {
             "2026-01-12",
         ),
         (
-            "org:north-trail-club",
+            "org:north-gorge-club",
             "Ralph has the floor pump on loan and Nelson has joined",
             "2026-02-08",
         ),
@@ -2785,7 +2785,7 @@ async fn the_surveys_hedge_lock_fails_when_nothing_is_marked_open() {
         &surface,
         &jan,
         "add_entity",
-        json!({"kind": "event", "handle": "trail-survey", "name": "The trail survey",
+        json!({"kind": "event", "handle": "gorge-survey", "name": "The gorge survey",
                "source": "the operator"}),
     )
     .await;
@@ -2793,7 +2793,7 @@ async fn the_surveys_hedge_lock_fails_when_nothing_is_marked_open() {
         &surface,
         &jan,
         "capture",
-        json!({"subject": "event:trail-survey", "content": "planning to attend",
+        json!({"subject": "event:gorge-survey", "content": "planning to attend",
                "provenance": "testimony"}),
     )
     .await;
@@ -3054,7 +3054,7 @@ async fn julys_window_catches_a_guilty_july_and_ignores_a_later_retraction() {
     //    club claim back — an act July's own window must not be credited for.
     let (_room, surface) = furnished().await;
     let boundaries = worked_the_year(&surface).await;
-    let committee = address_of(&surface, "org:north-trail-club", "standing for election").await;
+    let committee = address_of(&surface, "org:north-gorge-club", "standing for election").await;
     // **A sitting after the year's last**, which is what makes it a later one.
     let later = sitting(&surface, "2026-12-22").await;
     did(
@@ -3135,7 +3135,7 @@ async fn augusts_window_catches_a_guilty_august_and_ignores_a_later_invention() 
         &surface,
         &later,
         "capture",
-        json!({"subject": "person:bart", "content": "was at the trail survey",
+        json!({"subject": "person:bart", "content": "was at the gorge survey",
                "provenance": "inference",
                "shape": "attendance", "object": survey}),
     )
@@ -3501,14 +3501,14 @@ async fn an_october_that_never_said_where_leaves_the_survey_unplaceable() {
 
 /// 🚨 **The walk to the place holds whatever the event is actually called.**
 ///
-/// A paid run named the event `event:trail-survey-2026` — a reasonable slug
+/// A paid run named the event `event:gorge-survey-2026` — a reasonable slug
 /// nothing in the year rules out. The scripted sittings above always use the
 /// one slug this file's own `january` picks, so they cannot catch a lock
 /// that secretly depends on it — this test picks a different one on purpose.
 ///
 /// **No subject is pinned in the hatch this proves**, for the same reason:
 /// `has_standing_edge` is asked with `None`, so it is the object alone —
-/// `place:north-trail` — that has to carry the claim, whatever handle the
+/// `place:north-gorge` — that has to carry the claim, whatever handle the
 /// event wears.
 #[tokio::test]
 async fn the_walk_to_the_place_holds_whatever_the_event_is_actually_called() {
@@ -3519,7 +3519,7 @@ async fn the_walk_to_the_place_holds_whatever_the_event_is_actually_called() {
         &surface,
         &sid,
         "add_entity",
-        json!({"kind": "event", "handle": "trail-survey-2026", "name": "The trail survey",
+        json!({"kind": "event", "handle": "gorge-survey-2026", "name": "The gorge survey",
                "source": "the operator"}),
     )
     .await;
@@ -3527,10 +3527,10 @@ async fn the_walk_to_the_place_holds_whatever_the_event_is_actually_called() {
         &surface,
         &sid,
         "capture",
-        json!({"subject": "event:trail-survey-2026",
+        json!({"subject": "event:gorge-survey-2026",
                "content": "the ground needs a look before next year",
                "provenance": "testimony",
-               "shape": "location", "object": "place:north-trail"}),
+               "shape": "location", "object": "place:north-gorge"}),
     )
     .await;
     let after = boundary(&surface, "the end").await;
@@ -3539,7 +3539,7 @@ async fn the_walk_to_the_place_holds_whatever_the_event_is_actually_called() {
     assert!(
         judged[OCTOBER[1]].held,
         "the walk to the place failed against an event named something other than \
-         event:trail-survey: {}",
+         event:gorge-survey: {}",
         saying(&judged),
     );
 }
@@ -3620,11 +3620,11 @@ async fn the_cached_year_reads_the_same_as_a_live_furnish() {
 
     for (surface, label) in [(&live, "live"), (&cached, "cached")] {
         let recall = surface
-            .call("recall", json!({"subject": "org:north-trail-club"}))
+            .call("recall", json!({"subject": "org:north-gorge-club"}))
             .await;
         let read: Value = serde_json::from_str(&recall).expect("a JSON read");
         assert_eq!(
-            read["objects"][0]["id"], "org:north-trail-club",
+            read["objects"][0]["id"], "org:north-gorge-club",
             "{label} room: the club from the opening furniture is not there: {recall}"
         );
     }
@@ -4251,11 +4251,11 @@ async fn junes_attendee_lock_holds_despite_a_later_legitimate_retraction() {
 
 /// 🚨 **June's lock holds however the survey happens to be spelled.**
 ///
-/// The old lock pinned `event:trail-survey` as the object, hardcoded — safe
+/// The old lock pinned `event:gorge-survey` as the object, hardcoded — safe
 /// only because the reference transcript here happens to spell it that way.
 /// Nothing tells a model what to call the event it just invented, so a June
 /// that draws its attendee edges at a differently spelled handle has done
-/// the same work. `event:trail-survey` itself still exists, from January,
+/// the same work. `event:gorge-survey` itself still exists, from January,
 /// untouched and unused — proving the lock is not merely failing open on a
 /// missing object.
 #[tokio::test]
@@ -4316,20 +4316,20 @@ async fn aprils_shelbyville_lock_fails_when_aprils_own_window_drew_nothing() {
     );
 }
 
-/// 🚨 **October's north-trail lock fails when October's own window drew
+/// 🚨 **October's north-gorge lock fails when October's own window drew
 /// nothing.**
 ///
 /// The positive half of the pair the pattern needs: a year that never ran
-/// October drew no location edge to the trail at all, and the lock must say
+/// October drew no location edge to the gorge at all, and the lock must say
 /// so rather than holding over an empty record.
 #[tokio::test]
-async fn octobers_north_trail_lock_fails_when_octobers_own_window_drew_nothing() {
+async fn octobers_north_gorge_lock_fails_when_octobers_own_window_drew_nothing() {
     let (_room, surface) = furnished().await;
     let boundaries = work_the_year(&surface, &room_document(), &[0], &[]).await;
     let judged = judge_all(&surface, &boundaries).await;
     assert!(
         !judged[OCTOBER[1]].held,
-        "a year where October never ran held its north-trail lock, so it is satisfied by \
+        "a year where October never ran held its north-gorge lock, so it is satisfied by \
          something other than that sitting: {}",
         saying(&judged),
     );

@@ -1438,10 +1438,10 @@ async fn a_fact_can_be_about_any_kind() {
     let jojobot = handler();
     let captured = capture_ok(
         &jojobot,
-        capture_args("place:north-trail", "swimmable in August"),
+        capture_args("place:north-gorge", "swimmable in August"),
     )
     .await;
-    assert_eq!(captured["subject"], "place:north-trail");
+    assert_eq!(captured["subject"], "place:north-gorge");
 }
 
 /// Capture's subject must exist, near miss or complete stranger, and the
@@ -1529,13 +1529,13 @@ async fn capture_draws_an_edge_and_renders_its_schema_org_name() {
         &jojobot,
         CaptureArgs {
             shape: Some("membership".into()),
-            object: Some("org:north-trail-club".into()),
+            object: Some("org:north-gorge-club".into()),
             ..capture_args("alpha", "rides with the club")
         },
     )
     .await;
     assert_eq!(captured["edge"]["type"], "memberOf");
-    assert_eq!(captured["edge"]["object"], "org:north-trail-club");
+    assert_eq!(captured["edge"]["object"], "org:north-gorge-club");
 
     let recalled = json_of(
         &jojobot
@@ -1558,7 +1558,7 @@ async fn an_unknown_shape_is_a_client_error() {
         let err = jojobot
             .capture(Parameters(CaptureArgs {
                 shape: Some(shape.into()),
-                object: Some("place:north-trail".into()),
+                object: Some("place:north-gorge".into()),
                 ..capture_args("alpha", "an unknown shape")
             }))
             .await
@@ -1598,7 +1598,7 @@ async fn a_wrong_kind_edge_object_is_a_client_error() {
 async fn a_blocked_edge_object_returns_candidates() {
     let jojobot = handler();
     jojobot
-        .add_entity(Parameters(add_args("place", "riverbend", "Riverbend")))
+        .add_entity(Parameters(add_args("place", "shelbyville", "Shelbyville")))
         .await
         .expect("add ok");
     // The subject faces the gate too, and the guard reports the first handle
@@ -1608,14 +1608,14 @@ async fn a_blocked_edge_object_returns_candidates() {
     let result = jojobot
         .capture(Parameters(CaptureArgs {
             shape: Some("location".into()),
-            object: Some("place:riverbnd".into()),
+            object: Some("place:shelbyvlle".into()),
             ..capture_args("alpha", "should not land")
         }))
         .await
         .expect("the call succeeds; the guard answers in the body");
     let body = blocked(&result);
-    assert_eq!(body["attempted"], "place:riverbnd");
-    assert_eq!(body["candidates"][0]["handle"], "place:riverbend");
+    assert_eq!(body["attempted"], "place:shelbyvlle");
+    assert_eq!(body["candidates"][0]["handle"], "place:shelbyville");
     assert_eq!(body["candidates"][0]["type"], "Place");
 
     let recalled = json_of(

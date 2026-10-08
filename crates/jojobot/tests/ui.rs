@@ -264,7 +264,7 @@ async fn seeded_board_over(memory: Arc<dyn Memory>) -> Board {
     mailboxes
         .post_message(NewMessage {
             mailbox: box_name,
-            body: "The trail survey needs a second pair of eyes.".to_string(),
+            body: "The gorge survey needs a second pair of eyes.".to_string(),
             subject: Some("A second pair of eyes".to_string()),
             sender: "bot:gamma".to_string(),
             sent_at: FIXED_INSTANT,

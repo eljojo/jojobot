@@ -63,7 +63,7 @@
 //!   correlation, on Milhouse's move to Shelbyville, asked in April's own
 //!   window. Also pins the OBJECT, not only the shape: Milhouse already
 //!   carries a `location` edge to Springfield when April opens.
-//! * **`octobers_note_drew_a_standing_location_edge_to_the_trail`** — the
+//! * **`octobers_note_drew_a_standing_location_edge_to_the_gorge`** — the
 //!   same correlation again, on where the survey was held, asked in
 //!   October's own window. No subject is pinned: October renames the
 //!   survey's own event in the same sitting that writes this claim.
@@ -265,10 +265,10 @@ pub const CHECKS: [Hatch; 44] = [
         checked(|seen| Box::pin(aprils_move_archives_the_springfield_claim(seen)))
     }),
     (
-        "octobers_note_drew_a_standing_location_edge_to_the_trail",
+        "octobers_note_drew_a_standing_location_edge_to_the_gorge",
         || {
             checked(|seen| {
-                Box::pin(octobers_note_drew_a_standing_location_edge_to_the_trail(
+                Box::pin(octobers_note_drew_a_standing_location_edge_to_the_gorge(
                     seen,
                 ))
             })
@@ -929,7 +929,7 @@ async fn what_goes_with_theta_was_left_alone_in_october(seen: &Observed<'_>) -> 
 
 /// The sitting whose window this reads, and the subject it counts records on.
 const MARCH: &str = "Phase 3";
-const CLUB: &str = "\"subject\":\"org:north-trail-club\"";
+const CLUB: &str = "\"subject\":\"org:north-gorge-club\"";
 
 /// 🚨 **What ONE SITTING recorded, asked in that sitting's own window.**
 ///
@@ -1248,8 +1248,8 @@ async fn julys_claim_is_withdrawn_rather_than_rewritten(seen: &Observed<'_>) -> 
     // does other business too — every woven thread adds one more sitting that
     // does — so counting the needle across the whole world would be satisfied
     // by a retraction anywhere, on any subject.
-    let club_before = hits_naming_subject(&before.world, "org:north-trail-club");
-    let club_after = hits_naming_subject(&after.world, "org:north-trail-club");
+    let club_before = hits_naming_subject(&before.world, "org:north-gorge-club");
+    let club_after = hits_naming_subject(&after.world, "org:north-gorge-club");
     let count = |hits: &[String], needle: &str| hits.iter().filter(|h| h.contains(needle)).count();
     match count(&club_after, TAKEN_BACK) > count(&club_before, TAKEN_BACK) {
         true => Ok(()),
@@ -1466,7 +1466,7 @@ fn handle_run(text: &str) -> &str {
 ///
 /// ⛔️ **No kind is named here and no slug is.** The kinds a sitting reaches for
 /// are its own choice, exactly as the slugs are: January invents the event's
-/// handle, and a sitting that pointed at the club and the trail rather than at
+/// handle, and a sitting that pointed at the club and the gorge rather than at
 /// a person and an event did the identical thing. A check that spelled either
 /// would fail a run for the word it chose rather than for what it wrote — the
 /// fault this room removed from its late November lock.
@@ -1691,7 +1691,7 @@ async fn aprils_move_archives_the_springfield_claim(seen: &Observed<'_>) -> Resu
 ///
 /// ⛔️ **No handle is named here, on either side.** January invents the
 /// survey's own handle just as it invents everything else about it — a
-/// check pinning `event:trail-survey` would fail a run that chose a
+/// check pinning `event:gorge-survey` would fail a run that chose a
 /// different word for the identical thing, the fault this room's own
 /// `one_record_points_at_two_kinds` and October's location-edge check
 /// already remove for their own handles. **The object is matched by KIND**
@@ -1745,7 +1745,7 @@ async fn februarys_club_drew_a_standing_member_for_each(seen: &Observed<'_>) -> 
              boundaries.",
         ));
     };
-    let club = "org:north-trail-club";
+    let club = "org:north-gorge-club";
     let nelson_gained = !has_standing_edge(&before.world, Some("person:nelson"), "memberOf", club)
         && has_standing_edge(&after.world, Some("person:nelson"), "memberOf", club);
     let milhouse_stands =
@@ -1803,10 +1803,10 @@ async fn aprils_move_drew_a_standing_location_edge(seen: &Observed<'_>) -> Resul
     }
 }
 
-/// 🚨 **October drew a standing location edge to the trail — asked in
+/// 🚨 **October drew a standing location edge to the gorge — asked in
 /// October's own window.**
 ///
-/// Asked of the finished board, `carries place:north-trail` holds on a
+/// Asked of the finished board, `carries place:north-gorge` holds on a
 /// retracted claim exactly as on a standing one — nothing in this room's
 /// honest storyline ever retracts it, so the gap is structural rather than
 /// reproducing today, the same shape as June's attendance walk carried
@@ -1816,10 +1816,10 @@ async fn aprils_move_drew_a_standing_location_edge(seen: &Observed<'_>) -> Resul
 /// checks.** October renames the survey's own event in the SAME sitting
 /// that writes this claim — the rename moves no id, but it does move which
 /// handle a read renders the record's subject under, so a check pinning
-/// `event:trail-survey` would miss its own record the moment the rename
+/// `event:gorge-survey` would miss its own record the moment the rename
 /// runs first. Only the event ever draws a `location` edge to this place, so
 /// the object alone is enough to correlate on.
-async fn octobers_note_drew_a_standing_location_edge_to_the_trail(
+async fn octobers_note_drew_a_standing_location_edge_to_the_gorge(
     seen: &Observed<'_>,
 ) -> Result<(), String> {
     let Some((before, after)) = seen.across(OCTOBER) else {
@@ -1829,12 +1829,12 @@ async fn octobers_note_drew_a_standing_location_edge_to_the_trail(
              boundaries.",
         ));
     };
-    let gained = !has_standing_edge(&before.world, None, "location", "place:north-trail")
-        && has_standing_edge(&after.world, None, "location", "place:north-trail");
+    let gained = !has_standing_edge(&before.world, None, "location", "place:north-gorge")
+        && has_standing_edge(&after.world, None, "location", "place:north-gorge");
     match gained {
         true => Ok(()),
         false => Err(format!(
-            "{OCTOBER}'s window did not draw a standing location edge to place:north-trail, so \
+            "{OCTOBER}'s window did not draw a standing location edge to place:north-gorge, so \
              where the survey was held was not recorded where a later reader would find it",
         )),
     }
@@ -1904,7 +1904,7 @@ async fn late_octobers_club_drew_a_standing_member_for_bart(
              boundaries.",
         ));
     };
-    let club = "org:north-trail-club";
+    let club = "org:north-gorge-club";
     let gained = !has_standing_edge(&before.world, Some("person:bart"), "memberOf", club)
         && has_standing_edge(&after.world, Some("person:bart"), "memberOf", club);
     match gained {

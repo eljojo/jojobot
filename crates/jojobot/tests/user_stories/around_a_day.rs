@@ -16,7 +16,7 @@ async fn what_was_recorded_around_a_day() {
     let s = story.session().await;
 
     s.add("person:milhouse", "Milhouse").await;
-    s.add("org:north-trail-club", "North Trail Club").await;
+    s.add("org:north-gorge-club", "North Gorge Club").await;
 
     // A year of claims about one person, spread across it. Read back by
     // subject they are one undifferentiated list; what makes any of them

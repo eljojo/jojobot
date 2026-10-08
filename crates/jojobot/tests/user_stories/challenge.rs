@@ -129,8 +129,8 @@ async fn where_did_you_get_that() {
 
     // The same search summary produced a second claim, about a different
     // place, and that one is still standing.
-    s.add("place:riverbend", "Riverbend Grill").await;
-    s.guess("place:riverbend", "serves food until midnight")
+    s.add("place:shelbyville", "Shelbyville Grill").await;
+    s.guess("place:shelbyville", "serves food until midnight")
         .await;
 
     // What CAN be asked is everything nobody vouched for, across the store, in
@@ -138,7 +138,7 @@ async fn where_did_you_get_that() {
     // both guesses come back and what the operator actually said does not.
     s.unbacked()
         .await
-        .says("place:riverbend")
+        .says("place:shelbyville")
         .says("closes at 6 on Sundays")
         .never_says("week has been long");
 
@@ -148,7 +148,7 @@ async fn where_did_you_get_that() {
     s.add("thing:that-search-summary", "The Search Summary")
         .await;
     s.fact_about(
-        "place:riverbend",
+        "place:shelbyville",
         "listed as sourcing from a farm co-op",
         "about",
         "thing:that-search-summary",
@@ -156,7 +156,7 @@ async fn where_did_you_get_that() {
     .await;
     s.through_any("about", "thing:that-search-summary")
         .await
-        .says("place:riverbend");
+        .says("place:shelbyville");
 
     // GAP — and discrediting the summary still reaches none of them. There is
     // no way to mark a source as unreliable, so each claim resting on it has

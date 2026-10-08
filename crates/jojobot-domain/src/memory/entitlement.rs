@@ -253,13 +253,13 @@ mod tests {
     /// being turned away at a door.
     #[test]
     fn live_comes_before_lapsed_and_testimony_before_inference() {
-        let target = EntityId("event:winter-fest".into());
+        let target = EntityId("event:krusty-fest".into());
         let facts = vec![
             holding(
                 "f1",
                 "person:milhouse",
                 ADMITS,
-                "event:winter-fest",
+                "event:krusty-fest",
                 (None, Some("2026-08-10")),
                 Provenance::Testimony,
             ),
@@ -267,7 +267,7 @@ mod tests {
                 "f2",
                 "person:otto",
                 ADMITS,
-                "event:winter-fest",
+                "event:krusty-fest",
                 (None, None),
                 Provenance::Inference,
             ),
@@ -275,7 +275,7 @@ mod tests {
                 "f3",
                 "person:bart",
                 ADMITS,
-                "event:winter-fest",
+                "event:krusty-fest",
                 (Some("2026-08-01"), Some("2026-08-31")),
                 Provenance::Testimony,
             ),
@@ -316,14 +316,14 @@ mod tests {
     /// all.
     #[test]
     fn an_archived_claim_is_not_something_anybody_holds() {
-        let target = EntityId("event:winter-fest".into());
+        let target = EntityId("event:krusty-fest".into());
         let with_status = |id: &str, holder: &str, status: FactStatus| Fact {
             status,
             ..holding(
                 id,
                 holder,
                 ADMITS,
-                "event:winter-fest",
+                "event:krusty-fest",
                 (None, None),
                 Provenance::Testimony,
             )
@@ -354,12 +354,12 @@ mod tests {
     /// dated is one nobody dated.
     #[test]
     fn a_record_with_no_window_is_live() {
-        let target = EntityId("event:winter-fest".into());
+        let target = EntityId("event:krusty-fest".into());
         let facts = vec![holding(
             "f1",
             "person:milhouse",
             ADMITS,
-            "event:winter-fest",
+            "event:krusty-fest",
             (None, None),
             Provenance::Testimony,
         )];
@@ -381,12 +381,12 @@ mod tests {
     /// is the failure this whole read exists to end.
     #[test]
     fn a_bound_that_cannot_be_read_does_not_hide_the_record() {
-        let target = EntityId("event:winter-fest".into());
+        let target = EntityId("event:krusty-fest".into());
         let facts = vec![holding(
             "f1",
             "person:milhouse",
             ADMITS,
-            "event:winter-fest",
+            "event:krusty-fest",
             (None, Some("next thursday")),
             Provenance::Testimony,
         )];
@@ -411,7 +411,7 @@ mod tests {
         let target = EntityId("place:moes".into());
         let pointing = holding(
             "f9",
-            "event:winter-fest",
+            "event:krusty-fest",
             "arrives_at",
             "place:moes",
             (None, None),
@@ -482,7 +482,7 @@ mod tests {
         assert!(
             ranked(
                 &facts,
-                &EntityId("event:winter-fest".into()),
+                &EntityId("event:krusty-fest".into()),
                 date(2026, 8, 19),
                 &keys(),
                 Widen::WhenEmpty,

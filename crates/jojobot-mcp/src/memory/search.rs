@@ -1396,7 +1396,7 @@ mod tests {
             .search(Parameters(SearchArgs {
                 edge: Some(EdgeFilterArgs {
                     shape: None,
-                    object: "event:winter-fest".into(),
+                    object: "event:krusty-fest".into(),
                 }),
                 ..search_args()
             }))

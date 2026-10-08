@@ -27,9 +27,9 @@ async fn a_curveball_collides_with_the_week() {
     // ── session 1 · the week as it stands ───────────────────────────────────
     let s = story.session().await;
 
-    s.add("event:winter-fest", "Winter Fest").await;
-    let winter_fest = s
-        .fact("event:winter-fest", "already on the calendar for Thursday")
+    s.add("event:krusty-fest", "Krusty Fest").await;
+    let krusty_fest = s
+        .fact("event:krusty-fest", "already on the calendar for Thursday")
         .await;
 
     s.add("project:atlas", "The Report").await;
@@ -65,7 +65,7 @@ async fn a_curveball_collides_with_the_week() {
     // happen to say "Thursday".
     s.find("Thursday")
         .await
-        .says("event:winter-fest")
+        .says("event:krusty-fest")
         .says("event:birthday-party");
 
     // GAP — and that is the whole mechanism HERE. Two commitments worded "the
@@ -91,7 +91,7 @@ async fn a_curveball_collides_with_the_week() {
     // What moves: the earlier session's claim is archived and the postponement
     // stands beside it, derived from it.
     s.replace(
-        &winter_fest,
+        &krusty_fest,
         "postponed a week to make room for Ned's party",
         json!({}),
     )
@@ -123,10 +123,10 @@ async fn a_curveball_collides_with_the_week() {
     // is a fact address — and a reference holds a handle. `derived_from` is
     // the one claim-to-claim link and it says derived, never chosen over. So
     // the reasoning that survives is three unconnected sentences.
-    //   s.decided("project:atlas", "…", instead_of: "event:winter-fest").await;
+    //   s.decided("project:atlas", "…", instead_of: "event:krusty-fest").await;
     s.has_no_verb("decide", &["capture", "update_fact"]).await;
     let _ = &accepted;
-    //   s.decided(&accepted, over: &[&winter_fest], because: "the draft is fixed").await;
+    //   s.decided(&accepted, over: &[&krusty_fest], because: "the draft is fixed").await;
 
     s.wrap("replanned, and the decision is on record").await;
 
@@ -134,7 +134,7 @@ async fn a_curveball_collides_with_the_week() {
     let s = story.session().await;
 
     // The new shape of the week, read back — each piece real, on its own.
-    s.recall("event:winter-fest").await.says("postponed");
+    s.recall("event:krusty-fest").await.says("postponed");
     s.recall("event:birthday-party")
         .await
         .says("confirmed attending");

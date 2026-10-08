@@ -2888,7 +2888,7 @@ fn a_list_of_references_walks_to_every_handle_in_it() {
             Vec::new(),
         ),
         doc(
-            entity("event:winter-fest", "Winter Fest"),
+            entity("event:krusty-fest", "Krusty Fest"),
             "The outing's page.",
             vec![Fact {
                 fields: [(
@@ -2897,7 +2897,7 @@ fn a_list_of_references_walks_to_every_handle_in_it() {
                 )]
                 .into_iter()
                 .collect(),
-                ..fact("event:winter-fest", "f1", "who came along")
+                ..fact("event:krusty-fest", "f1", "who came along")
             }],
         ),
     ];
@@ -2926,7 +2926,7 @@ fn a_list_of_references_walks_to_every_handle_in_it() {
         .expect("a declared relation is followable")
     };
 
-    let out = walk("event:winter-fest", Direction::Out);
+    let out = walk("event:krusty-fest", Direction::Out);
     assert_eq!(
         handles(&out[0].connected),
         vec!["person:bart", "person:milhouse"],
@@ -2936,7 +2936,7 @@ fn a_list_of_references_walks_to_every_handle_in_it() {
     let back = walk("person:milhouse", Direction::In);
     assert_eq!(
         handles(&back[0].connected),
-        vec!["event:winter-fest"],
+        vec!["event:krusty-fest"],
         "the second name in the cell is not the whole cell, so an equality on the cell \
              finds nothing: {back:?}",
     );
@@ -2968,7 +2968,7 @@ fn an_unscoped_walk_reaches_every_handle_in_a_declared_list_of_references() {
             Vec::new(),
         ),
         doc(
-            entity("event:winter-fest", "Winter Fest"),
+            entity("event:krusty-fest", "Krusty Fest"),
             "The outing's page.",
             vec![Fact {
                 fields: [(
@@ -2977,7 +2977,7 @@ fn an_unscoped_walk_reaches_every_handle_in_a_declared_list_of_references() {
                 )]
                 .into_iter()
                 .collect(),
-                ..fact("event:winter-fest", "f1", "who came along")
+                ..fact("event:krusty-fest", "f1", "who came along")
             }],
         ),
     ];
@@ -3017,16 +3017,16 @@ fn an_unscoped_walk_reaches_every_handle_in_a_declared_list_of_references() {
             Along::Relation("came_along".into()),
             Direction::In
         ),
-        vec!["event:winter-fest".to_string()],
+        vec!["event:krusty-fest".to_string()],
     );
     for (from, direction, expected) in [
         (
-            "event:winter-fest",
+            "event:krusty-fest",
             Direction::Out,
             vec!["person:bart", "person:milhouse"],
         ),
-        ("person:bart", Direction::In, vec!["event:winter-fest"]),
-        ("person:milhouse", Direction::In, vec!["event:winter-fest"]),
+        ("person:bart", Direction::In, vec!["event:krusty-fest"]),
+        ("person:milhouse", Direction::In, vec!["event:krusty-fest"]),
     ] {
         assert_eq!(
             walk(from, Along::AnyEdge, direction),

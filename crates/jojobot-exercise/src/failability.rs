@@ -437,7 +437,7 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
     },
     NegativeControl {
         room: YEAR_ROOM,
-        lock: "Phase 5 — May: the washout was not filed against the trail that already existed — either nothing was filed, or a second trail was stood up to carry it",
+        lock: "Phase 5 — May: the washout was not filed against the gorge that already existed — either nothing was filed, or a second gorge was stood up to carry it",
         file: "tests/year_room.rs",
         function: "a_year_nobody_worked_in_fails_every_lock",
         strength: Strength::Blanket,

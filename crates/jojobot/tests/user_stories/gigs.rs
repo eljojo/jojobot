@@ -2,7 +2,7 @@
 //! them were gigs, and which did I actually go to?"
 //!
 //! Nobody wrote these as gigs. They went in as events, because that is what
-//! they are — the same handle shape as a birthday and a winter fest — and the
+//! they are — the same handle shape as a birthday and a krusty fest — and the
 //! two things worth knowing about a gig got written beside the record as they
 //! came up: who played, and whether the evening actually happened for me.
 //!
@@ -74,9 +74,9 @@ async fn a_schema_that_is_not_a_kind_finds_the_gigs_among_the_events() {
         &[],
     )
     .await;
-    s.add("event:winter-fest", "The Winter Fest").await;
+    s.add("event:krusty-fest", "The Krusty Fest").await;
     s.event_with(
-        "event:winter-fest",
+        "event:krusty-fest",
         "stood behind a stall for four hours",
         json!({ "brought": "a folding table" }),
         &[],
@@ -140,7 +140,7 @@ async fn a_schema_that_is_not_a_kind_finds_the_gigs_among_the_events() {
     // …and the negatives, in the same answer that just proved it is not empty.
     // The birthday and the fest are events sharing no key with the shape.
     gigs.never_says("event:birthday-party");
-    gigs.never_says("event:winter-fest");
+    gigs.never_says("event:krusty-fest");
     // **The one that carries the key and is not a gig.** The jukebox answers
     // `played` as honestly as any of them, and the kind is the only thing
     // keeping it out. Take the kind off this call and it comes back.

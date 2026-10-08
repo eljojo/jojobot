@@ -43,7 +43,7 @@ async fn an_unsourced_candidate_is_visibly_unsourced() {
     // session in a hurry skips it.
 
     s.add("place:leftorium", "The Leftorium Diner").await;
-    s.add("place:riverbend", "Riverbend Grill").await;
+    s.add("place:shelbyville", "Shelbyville Grill").await;
 
     s.wrap("looking for somewhere to eat Thursday").await;
 
@@ -64,8 +64,8 @@ async fn an_unsourced_candidate_is_visibly_unsourced() {
 
     // Unsourced: worked out from nothing in particular — no menu, no review,
     // no earlier claim behind it.
-    let riverbend_guess = s
-        .guess("place:riverbend", "probably good, seems like a nice spot")
+    let shelbyville_guess = s
+        .guess("place:shelbyville", "probably good, seems like a nice spot")
         .await;
 
     s.wrap("one candidate sourced, one worked out from nothing")
@@ -81,7 +81,7 @@ async fn an_unsourced_candidate_is_visibly_unsourced() {
         .await
         .says("testimony")
         .says("thing:leftorium-menu");
-    s.recall("place:riverbend")
+    s.recall("place:shelbyville")
         .await
         .says("inference")
         .never_says("\"edge\":")
@@ -94,7 +94,7 @@ async fn an_unsourced_candidate_is_visibly_unsourced() {
     // return every place in the store. What is still missing is the rest of
     // choosing — nothing ranks the two, and the one ruled out cannot be asked
     // for by its absence.
-    //   s.shortlist("the Thursday dinner pick", &["place:leftorium", "place:riverbend"]).await;
+    //   s.shortlist("the Thursday dinner pick", &["place:leftorium", "place:shelbyville"]).await;
     s.has_no_verb("shortlist", &["capture", "search"]).await;
 
     s.wrap("looked at both, one visibly sourced and one not")
@@ -105,9 +105,9 @@ async fn an_unsourced_candidate_is_visibly_unsourced() {
 
     // It rings the grill, and there is no Thursday special. The guess was not
     // merely unsourced, it was wrong, and the claim is rewritten in place.
-    let checked = s.recall("place:riverbend").await;
+    let checked = s.recall("place:shelbyville").await;
     checked.says("probably good");
-    s.find("Riverbend").await.says("place:riverbend");
+    s.find("Shelbyville").await.says("place:shelbyville");
 
     // The check goes down as a claim naming the guessed claim's own fact
     // address as `derived_from`, with what was found under a field of its
@@ -117,10 +117,10 @@ async fn an_unsourced_candidate_is_visibly_unsourced() {
         .call(
             "capture",
             json!({
-                "subject": "place:riverbend",
+                "subject": "place:shelbyville",
                 "content": "checked by phone: no Thursday special",
                 "provenance": "inference",
-                "derived_from": &riverbend_guess,
+                "derived_from": &shelbyville_guess,
                 "fields": {"found": "nothing to source it to"},
             }),
         )
@@ -128,7 +128,7 @@ async fn an_unsourced_candidate_is_visibly_unsourced() {
         .field("address");
     s.shape(
         "what was built on the unsourced guess",
-        json!({"built_on": &riverbend_guess}),
+        json!({"built_on": &shelbyville_guess}),
     )
     .await
     .says(&format!("\"address\":\"{check_record}\""))
@@ -148,7 +148,7 @@ async fn an_unsourced_candidate_is_visibly_unsourced() {
         .call(
             "capture",
             json!({
-                "subject": "place:riverbend",
+                "subject": "place:shelbyville",
                 "content": "worth a second look regardless",
                 "provenance": "inference",
             }),
@@ -158,20 +158,20 @@ async fn an_unsourced_candidate_is_visibly_unsourced() {
     // Before the edit: nothing built on the guess names this claim.
     s.shape(
         "what was built on the unsourced guess",
-        json!({"built_on": &riverbend_guess}),
+        json!({"built_on": &shelbyville_guess}),
     )
     .await
     .never_says("worth a second look regardless");
     s.call(
         "update_fact",
-        json!({"address": &second_opinion, "derived_from": &riverbend_guess}),
+        json!({"address": &second_opinion, "derived_from": &shelbyville_guess}),
     )
     .await;
     // After it: the same walk finds it, sourced exactly as the first check
     // was — the edit is what moved it, not a second capture.
     s.shape(
         "what was built on the unsourced guess",
-        json!({"built_on": &riverbend_guess}),
+        json!({"built_on": &shelbyville_guess}),
     )
     .await
     .says("worth a second look regardless");
@@ -187,14 +187,14 @@ async fn an_unsourced_candidate_is_visibly_unsourced() {
     .await;
     s.shape(
         "what was built on the unsourced guess",
-        json!({"built_on": &riverbend_guess}),
+        json!({"built_on": &shelbyville_guess}),
     )
     .await
     .never_says("worth a second look regardless");
     // **The negative: clearing the lineage did not touch the claim itself.**
     // It is still on the record, exactly worded, simply not filed as
     // resting on anything.
-    s.recall("place:riverbend")
+    s.recall("place:shelbyville")
         .await
         .says("worth a second look regardless");
 

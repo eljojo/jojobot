@@ -48,7 +48,7 @@ pub enum MatchReason {
     /// `place:moes` beside `place:moes-tavern`.
     ///
     /// **A second channel, not a wider budget.** These two are seven edits
-    /// apart, and so are `north-trail` and `golden-north-trail`; no distance
+    /// apart, and so are `north-gorge` and `golden-north-gorge`; no distance
     /// that reaches them leaves two genuinely different names alone. It is
     /// weaker evidence than a typo, because the pair is often real —
     /// `springfield` and `springfield-mall` are two places — so it sorts below
@@ -538,7 +538,7 @@ mod tests {
             entity("person:alpha", "Alpha", "crm-card"),
             entity("person:beta", "Beta", "user-named"),
             entity("project:atlas", "Atlas", "user-named"),
-            entity("place:north-trail", "North Trail", "user-named"),
+            entity("place:north-gorge", "North Gorge", "user-named"),
         ]
     }
 
@@ -604,7 +604,7 @@ mod tests {
     /// name.**
     ///
     /// `moes` beside `moes-tavern` is seven edits apart, and so is
-    /// `north-trail` beside `golden-north-trail`. No budget reaches either
+    /// `north-gorge` beside `golden-north-gorge`. No budget reaches either
     /// without blocking almost every genuinely different name — the threshold
     /// is right and the instrument is wrong, so this is a second channel rather
     /// than a wider one.
@@ -616,13 +616,13 @@ mod tests {
     fn a_handle_whose_tokens_sit_inside_another_is_a_near_miss() {
         let idx = vec![
             entity("place:moes", "Moe's", "user-named"),
-            entity("place:north-trail", "North Trail", "user-named"),
+            entity("place:north-gorge", "North Gorge", "user-named"),
         ];
         for (incoming, expected) in [
             // The short form arriving beside the fuller one.
             ("place:moes-tavern", "place:moes"),
             // …and the fuller one arriving beside the short.
-            ("place:golden-north-trail", "place:north-trail"),
+            ("place:golden-north-gorge", "place:north-gorge"),
         ] {
             let handle = EntityId(incoming.into());
             let Decision::Block(candidates) = decide(&handle, &[], &idx, None) else {
@@ -669,15 +669,15 @@ mod tests {
         // of its own can tell "every token" from "any token" apart — and that
         // needs the longer side to have three.
         let idx = vec![entity(
-            "place:golden-north-trail",
-            "Golden North Trail",
+            "place:golden-north-gorge",
+            "Golden North Gorge",
             "user-named",
         )];
         for unrelated in [
-            // Shares `trail`, brings `spot`. Shorter, overlapping, not
+            // Shares `gorge`, brings `spot`. Shorter, overlapping, not
             // contained. Far outside the typo budget, so nothing else can be
             // what waves it through.
-            "place:trail-spot",
+            "place:gorge-spot",
             // Shares `north`, brings `haverbrook`.
             "place:north-haverbrook",
         ] {
@@ -726,14 +726,14 @@ mod tests {
 
     #[test]
     fn a_name_matches_an_existing_handle_and_vice_versa() {
-        // "North Trail" slugifies onto the existing `place:north-trail` handle.
+        // "North Gorge" slugifies onto the existing `place:north-gorge` handle.
         assert_eq!(
-            reasons("place:trail-spot", Some("north trail")),
+            reasons("place:gorge-spot", Some("north gorge")),
             vec![MatchReason::SameName]
         );
         // …and an incoming handle that spells out an existing entity's name.
         assert_eq!(
-            reasons("place:north-trail-2", None),
+            reasons("place:north-gorge-2", None),
             vec![MatchReason::NearSlug]
         );
     }
@@ -795,10 +795,10 @@ mod tests {
                 true,
             ),
             (
-                "place:riverbend",
-                "Riverbend",
-                "place:riverbnd",
-                "Riverbnd",
+                "place:shelbyville",
+                "Shelbyville",
+                "place:shelbyvlle",
+                "Shelbyvlle",
                 true,
             ),
             (
@@ -812,10 +812,10 @@ mod tests {
             // blocked and the refusal's own token is how it gets made. Working
             // as designed: the guard suspects, the caller decides.
             (
-                "place:north-trail",
-                "North Trail",
-                "place:north-trail-2",
-                "North Trail 2",
+                "place:north-gorge",
+                "North Gorge",
+                "place:north-gorge-2",
+                "North Gorge 2",
                 true,
             ),
             // **The reported case, and now caught — on the other channel.**
@@ -831,10 +831,10 @@ mod tests {
                 true,
             ),
             (
-                "place:golden-north-trail",
-                "Golden North Trail",
-                "place:north-trail",
-                "North Trail",
+                "place:golden-north-gorge",
+                "Golden North Gorge",
+                "place:north-gorge",
+                "North Gorge",
                 true,
             ),
             // Genuinely different places: untouched, which is the half that
@@ -1192,13 +1192,13 @@ mod tests {
     /// an existing handle is the collision the guard exists for.
     #[test]
     fn a_rename_onto_an_existing_handles_spelling_is_blocked() {
-        let renamer = EntityId("place:trail-spot".into());
+        let renamer = EntityId("place:gorge-spot".into());
         let Decision::Block(candidates) =
-            rename(&renamer, "North Trail", "Trail Spot", &index(), None)
+            rename(&renamer, "North Gorge", "Gorge Spot", &index(), None)
         else {
             panic!("a name that spells out an existing handle must block");
         };
-        assert_eq!(candidates[0].handle.as_str(), "place:north-trail");
+        assert_eq!(candidates[0].handle.as_str(), "place:north-gorge");
         assert_eq!(candidates[0].reason, MatchReason::SameName);
     }
 
@@ -1330,8 +1330,8 @@ mod tests {
     #[test]
     fn slugify_renders_a_name_as_the_handle_it_would_have_got() {
         assert_eq!(slugify("Alpha One"), "alpha-one");
-        assert_eq!(slugify("  The North Trail! "), "the-north-trail");
-        assert_eq!(slugify("North Trail Club"), "north-trail-club");
+        assert_eq!(slugify("  The North Gorge! "), "the-north-gorge");
+        assert_eq!(slugify("North Gorge Club"), "north-gorge-club");
         assert_eq!(slugify("!!!"), "");
     }
 }

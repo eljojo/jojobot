@@ -1967,7 +1967,7 @@ mod standing_tests {
         let locks = read(
             "```locks\n\
              recall {\"kind\": \"person\", \"follow\": {\"shape\": \"membership\"}}\n\
-             carries org:north-trail-club\n\
+             carries org:north-gorge-club\n\
              say     nothing walks to the club\n\
              ```\n",
         )
@@ -1976,7 +1976,7 @@ mod standing_tests {
         assert!(
             found
                 .iter()
-                .any(|f| f.needle == "org:north-trail-club" && f.risk == Risk::Retraction),
+                .any(|f| f.needle == "org:north-gorge-club" && f.risk == Risk::Retraction),
             "a needle out of a query that follows an edge was not flagged: {:?}",
             found.iter().map(|f| &f.needle).collect::<Vec<_>>(),
         );

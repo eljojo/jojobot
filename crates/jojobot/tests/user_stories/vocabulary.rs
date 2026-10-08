@@ -29,10 +29,10 @@ async fn the_software_ships_a_vocabulary_a_session_never_declared() {
     // ── the things ──────────────────────────────────────────────────────────
     s.add("thing:gravel-bike", "The Gravel Bike").await;
     s.add("thing:torque-wrench", "The Torque Wrench").await;
-    s.add("event:trail-survey", "The Trail Survey").await;
-    s.add("event:winter-fest", "The Winter Fest").await;
+    s.add("event:gorge-survey", "The Gorge Survey").await;
+    s.add("event:krusty-fest", "The Krusty Fest").await;
     s.add("place:springfield", "Springfield").await;
-    s.add("place:north-trail", "The North Trail").await;
+    s.add("place:north-gorge", "The North Gorge").await;
 
     // ── a session writes the shipped keys, having declared nothing ───────────
     //
@@ -65,11 +65,11 @@ async fn the_software_ships_a_vocabulary_a_session_never_declared() {
 
     // A trip, in the shipped words: where from, where to, and the two dates.
     s.event_with(
-        "event:trail-survey",
-        "four days up the trail",
+        "event:gorge-survey",
+        "four days up the gorge",
         json!({
             "departs_from": "place:springfield",
-            "arrives_at": "place:north-trail",
+            "arrives_at": "place:north-gorge",
             "leaves_on": "2026-09-03",
             "returns_on": "2026-09-07",
         }),
@@ -79,11 +79,11 @@ async fn the_software_ships_a_vocabulary_a_session_never_declared() {
 
     // Half a trip: where from and where to, and nobody has picked the dates.
     s.event_with(
-        "event:winter-fest",
+        "event:krusty-fest",
         "we are going, at some point",
         json!({
             "departs_from": "place:springfield",
-            "arrives_at": "place:north-trail",
+            "arrives_at": "place:north-gorge",
         }),
         &[],
     )
@@ -95,11 +95,11 @@ async fn the_software_ships_a_vocabulary_a_session_never_declared() {
         .await;
     // The positive the strict answer below rests on: nobody declared `trip` on
     // this instance and the question still works.
-    described.says("event:trail-survey");
+    described.says("event:gorge-survey");
     described.says("\"complete\":true");
     // ⭐ The half-planned one comes back, saying what it lacks BY NAME — which
     // is what a reader acts on. A count would leave them nothing to fill in.
-    described.says("event:winter-fest");
+    described.says("event:krusty-fest");
     described.says("\"lacking\":[\"leaves_on\",\"returns_on\"]");
     // …and the negative in the same answer that just proved it is not empty:
     // the bike shares no key with a trip, so it is not a weak match.
@@ -107,7 +107,7 @@ async fn the_software_ships_a_vocabulary_a_session_never_declared() {
 
     // ── the strict question, about the same two things ──────────────────────
     //
-    // ⭐ **The difference between the two, on one thing.** The winter fest
+    // ⭐ **The difference between the two, on one thing.** The krusty fest
     // answered the type a moment ago and is not here, because a trip with no
     // dates does not FIT one. Which of the two questions you are asking is
     // yours to choose, and the tolerant one is what you get when you name
@@ -115,8 +115,8 @@ async fn the_software_ships_a_vocabulary_a_session_never_declared() {
     let are_trips = s
         .call("search", json!({ "fits_type": "trip", "limit": 50 }))
         .await;
-    are_trips.says("event:trail-survey");
-    are_trips.never_says("event:winter-fest");
+    are_trips.says("event:gorge-survey");
+    are_trips.never_says("event:krusty-fest");
     are_trips.never_says("thing:gravel-bike");
 
     // **And a key written on one thing over two sittings reads off the KEY.**
@@ -129,7 +129,7 @@ async fn the_software_ships_a_vocabulary_a_session_never_declared() {
         )
         .await;
     planned.says("\"leaves_on\":\"2026-09-03\"");
-    planned.says("\"arrives_at\":\"place:north-trail\"");
+    planned.says("\"arrives_at\":\"place:north-gorge\"");
 
     // ── a type of the session's own, beside the ones it was given ───────────
     let declared = s
@@ -200,9 +200,9 @@ async fn a_cold_session_asking_for_a_type_nothing_holds_is_told_its_keys_and_wri
     // of a single key.
     let story = Story::begin("bot:gamma").await;
     let s = story.session().await;
-    s.add("event:trail-survey", "The Trail Survey").await;
+    s.add("event:gorge-survey", "The Gorge Survey").await;
     s.add("place:springfield", "Springfield").await;
-    s.add("place:north-trail", "The North Trail").await;
+    s.add("place:north-gorge", "The North Gorge").await;
 
     // ── nothing is a trip yet, and the answer says what one is ──────────────
     let asked = s
@@ -239,8 +239,8 @@ async fn a_cold_session_asking_for_a_type_nothing_holds_is_told_its_keys_and_wri
         fields.insert(name.to_string(), json!(value));
     }
     s.event_with(
-        "event:trail-survey",
-        "four days up the trail",
+        "event:gorge-survey",
+        "four days up the gorge",
         serde_json::Value::Object(fields),
         &[],
     )
@@ -255,7 +255,7 @@ async fn a_cold_session_asking_for_a_type_nothing_holds_is_told_its_keys_and_wri
         .await
         .json();
     assert_eq!(
-        found["objects"][0]["id"], "event:trail-survey",
+        found["objects"][0]["id"], "event:gorge-survey",
         "a thing written under the keys the answer named is found by them: {found}"
     );
     story.finish().await;
