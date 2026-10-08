@@ -808,6 +808,41 @@ fn the_recall_description_names_the_room_block_and_when_it_appears() {
     assert_description_names("recall", &["`room`", "aged_out"]);
 }
 
+/// **Three lines of the essay stay true to the briefs they summarise.** One
+/// bot ships with the software, so the essay may not say nothing about a bot is
+/// built in. A session that compacts is thrown away and a fresh one starts, so
+/// the essay does not send a resume note across "a context reset". And the
+/// journal records what happened, not what was decided, on the essay and on
+/// the verb's own description. A phrase absence is all a removal can pin, so
+/// each is paired with the surrounding line that proves the text was read.
+#[test]
+fn the_essay_and_the_journal_verb_keep_to_their_briefs() {
+    let essay = crate::orientation::essay::orientation();
+    assert!(
+        essay.contains("An **identity** is an entity of kind `bot`")
+            && !essay.contains("is built into jojobot"),
+        "the essay says no bot is built in, and one ships"
+    );
+    assert!(
+        essay.contains("CLEAR AND RESUME") && !essay.contains("context reset"),
+        "the essay sends a resume note across a context reset, which ends a session"
+    );
+    assert!(
+        essay.contains("Record a beat") && !essay.contains("what you decided"),
+        "the essay tells a beat to record a decision"
+    );
+    let tools = Jojobot::tool_router().list_all();
+    let journal = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "journal")
+        .and_then(|t| t.description.as_deref())
+        .unwrap_or_default();
+    assert!(
+        journal.contains("literal journal") && !journal.contains("what you decided"),
+        "the journal verb tells a beat to record a decision: {journal}"
+    );
+}
+
 /// **`start_here`'s description names `claims_role`**, since a boot that passes
 /// no `claim` still takes the role its bot carries, and a caller who was only
 /// taught the explicit claim never learns that.

@@ -89,7 +89,7 @@ A plain **error** is a narrow thing: **a token this server cannot parse at all**
 
 ## Bots
 
-An **identity** is an entity of kind `bot`: a handle like `bot:gamma`, a **charter** (its prose — what this identity is, its hard lines, where its work lives), **rules** as ordinary facts about it (so each one carries its own provenance: an inferred rule is a hypothesis, not a policy), and **one owned mailbox**, named for it and opened with it — not optional, and not separately created: an identity that cannot be written to is not one. If you were told which identity you are, pass that name to `start_here` — the one door — and it hands over everything here plus that identity. If you were NOT told, the snapshot names every bot on the server, so you can see what there is to be rather than having to guess a name and read the real ones off the refusal. Nothing about a bot is built into jojobot — a bot is data somebody wrote, like every other entity.
+An **identity** is an entity of kind `bot`: a handle like `bot:gamma`, a **charter** (its prose — what this identity is, its hard lines, where its work lives), **rules** as ordinary facts about it (so each one carries its own provenance: an inferred rule is a hypothesis, not a policy), and **one owned mailbox**, named for it and opened with it — not optional, and not separately created: an identity that cannot be written to is not one. If you were told which identity you are, pass that name to `start_here` — the one door — and it hands over everything here plus that identity. If you were NOT told, the snapshot names every bot on the server, so you can see what there is to be rather than having to guess a name and read the real ones off the refusal. One bot ships with the software, the assistant; every other bot is data somebody wrote.
 
 ## Sessions
 
@@ -99,7 +99,7 @@ A bot is a **role**; a **session is one mortal run of it** — the unit of work,
 
 A session has two halves that answer different questions. Its **focus** is what it is working on NOW, one line, rewritten in place. Its **chronology** is what happened: append-only, oldest first, with only the newest entry amendable.
 
-- *Record a beat* → `journal` — **a literal journal, not a log.** What you set out to do, what you found, what you decided, what went wrong. NOT every tool call and not every file: a reader months from now wants the story, and a firehose buries it. Pass `focus` when what you are working on changes.
+- *Record a beat* → `journal` — **a literal journal, not a log.** What you did, what you found, what went wrong. NOT every tool call and not every file: a reader months from now wants the story, and a firehose buries it. Pass `focus` when what you are working on changes.
 - *Fix the beat you just wrote* → `amend_journal`. Only the most recent one; everything older is what it was.
 - *End* → `wrap_session` with the story, written for somebody with none of your context. It becomes your final entry and the session goes `wrapped` — terminal both ways, except through the `wrap_code` its wrap hands back. It is published NOWHERE: your chronology is the record, and it is the only one.
 
@@ -111,7 +111,7 @@ jojobot also writes **its own beats** into your chronology: one per class of WRI
 
 **WRAP when the work is over.** Your run finished what it was for; the story is told and the run closes clean.
 
-**CLEAR AND RESUME when the work continues on another agent.** You are stopping, the job is not done, and somebody — a later run of you, on another device, after a context reset — picks it up. Then **journal a resume note and do NOT wrap**: the next boot of this identity is offered this session by what it says it is working on, and whoever resumes it reads your chronology. Wrapping here would tell the story of something that has not happened yet and force the next run to start from nothing.
+**CLEAR AND RESUME when the work continues on another agent.** You are stopping, the job is not done, and somebody — a later run of you, on another device, after a compaction — picks it up. Then **journal a resume note and do NOT wrap**: the next boot of this identity is offered this session by what it says it is working on, and whoever resumes it reads your chronology. Wrapping here would tell the story of something that has not happened yet and force the next run to start from nothing.
 
 The resume note is **the one sanctioned exception to journal leanness**. Everywhere else a beat is high-level; here, be dense and specific — where you got to, what you already ruled out, the exact next step, the thing that will bite whoever picks this up. Its only reader is somebody with your job and none of your context.
 

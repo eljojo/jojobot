@@ -8,8 +8,8 @@ use super::*;
 /// Arguments to `journal`.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct JournalArgs {
-    /// One high-level beat: what you set out to do, what you found, what you
-    /// decided, what went wrong. Prose — paragraphs are fine.
+    /// One high-level beat: what you did, what you found, what went
+    /// wrong. Prose — paragraphs are fine.
     ///
     /// Write `@kind:slug` to link to something that already exists, e.g.
     /// `@person:milhouse` — stored as the name that does not move, served as
@@ -32,8 +32,7 @@ pub struct JournalArgs {
 impl Jojobot {
     #[tool(
         description = "Record ONE beat in your session's chronology — a literal journal, not a \
-                       log. High-level: what you set out to do, what you found, what you \
-                       decided, what went wrong. Not every tool call, not every file: a reader \
+                       log. High-level: what you did, what you found, what went wrong. Not every tool call, not every file: a reader \
                        months from now wants the story, and a firehose buries it. `focus` \
                        rewrites what your session says it is working on RIGHT NOW, in place — \
                        the chronology is history, the focus is the present, and they answer \
