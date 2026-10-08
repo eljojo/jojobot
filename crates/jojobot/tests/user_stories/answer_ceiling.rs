@@ -22,15 +22,13 @@ const ENTITIES: usize = 120;
 const MARKER_FACTS: usize = 300;
 const FACTS_ON_ONE_SUBJECT: usize = 60;
 const MESSAGES: usize = 50;
+const PLACES: usize = 10;
 
 /// The verbs whose widest call still passes the ceiling, each named for the
 /// call that was measured. A later slice that makes one fit removes its line
 /// here, and a verb that starts passing the ceiling without being added fails
 /// the case that compares the two.
-const STILL_OVER: &[&str] = &[
-    "recall one subject with its facts",
-    "recall every thing of a kind",
-];
+const STILL_OVER: &[&str] = &[];
 
 /// A slug of ten letters that depends on nothing but the index, spread far
 /// enough apart that no two screen as near-misses of each other.
@@ -88,6 +86,11 @@ struct World {
     /// as each was written, so the walk of a search has an oracle that is not
     /// the search.
     marker_addresses: Vec<String>,
+    /// The address of every fact on the heavy place, and the handle of every
+    /// place, as the store reported them.
+    heavy_addresses: Vec<String>,
+    place_ids: Vec<String>,
+    thing_ids: Vec<String>,
     /// The id and body of every message sent to otto, as the store reported
     /// them when each was posted.
     messages: Vec<(String, String)>,
@@ -136,17 +139,49 @@ async fn hostile_world() -> World {
         };
         marker_addresses.push(fact.address().to_string());
     }
-    let heavy = handles[ENTITIES - 1].clone();
-    for i in 0..FACTS_ON_ONE_SUBJECT {
+    // The places: a small kind with many facts apiece, one of them heavy. A kind
+    // recall costs more than the answer grows, so the kind that carries the
+    // facts is kept to ten.
+    let mut place_ids: Vec<String> = Vec::new();
+    let mut heavy_addresses: Vec<String> = Vec::new();
+    let mut heavy = None;
+    for p in 0..PLACES {
+        let id = EntityId::new(EntityKind::PLACE, slug(10_000 + p));
         memory
-            .capture(NewFact::about(
-                heavy.clone(),
-                format!("long record {i}: {}", filler(780, i)),
-                today,
+            .add_entity(NewEntity::new(
+                id.clone(),
+                format!("Spot {}", slug(10_000 + p)),
+                "user-named",
             ))
             .await
-            .expect("a fact lands");
+            .expect("a place lands");
+        let (facts, length) = if p == 0 {
+            (FACTS_ON_ONE_SUBJECT, 780)
+        } else {
+            (8, 500)
+        };
+        for i in 0..facts {
+            let written = memory
+                .capture(NewFact::about(
+                    id.clone(),
+                    format!("long record {i}: {}", filler(length, i + p)),
+                    today,
+                ))
+                .await
+                .expect("a fact lands");
+            let jojobot_domain::memory::Guarded::Written(fact) = written else {
+                panic!("a fact about a place that exists lands");
+            };
+            if p == 0 {
+                heavy_addresses.push(fact.address().to_string());
+            }
+        }
+        if p == 0 {
+            heavy = Some(id.clone());
+        }
+        place_ids.push(id.as_str().to_string());
     }
+    let heavy = heavy.expect("a heavy place");
     let mail = first.mail_store();
     let mut messages = Vec::new();
     let mut sigma_messages = Vec::new();
@@ -185,6 +220,9 @@ async fn hostile_world() -> World {
         sigma,
         heavy: heavy.as_str().to_string(),
         marker_addresses,
+        heavy_addresses,
+        place_ids,
+        thing_ids: handles.iter().map(|id| id.as_str().to_string()).collect(),
         messages,
         sigma_messages,
     }
@@ -207,6 +245,11 @@ async fn widest_calls(world: &World) -> Vec<(&'static str, usize)> {
     measured.push((
         "recall every thing of a kind",
         o.answer_size("recall", json!({"kind": "thing"})).await,
+    ));
+    measured.push((
+        "recall every place with its facts",
+        o.answer_size("recall", json!({"kind": "place", "facts": true}))
+            .await,
     ));
     measured.push((
         "list_entities",
@@ -551,5 +594,219 @@ async fn a_walk_of_list_sent_returns_each_message_once_under_the_ceiling() {
     assert_eq!(
         walked, sent,
         "every message that was sent, and nothing else"
+    );
+}
+
+/// **One subject with far more facts than fit comes back in parts that each fit
+/// the ceiling, and walking on returns every fact once.** The heavy place holds
+/// sixty long records, far past the ceiling. The offset names how many of its
+/// facts have been read, the count each part states is what the later parts
+/// return, and the facts together are exactly those the store reported.
+#[tokio::test]
+async fn a_subject_past_the_ceiling_is_read_in_parts_that_return_each_fact_once() {
+    let world = hostile_world().await;
+    let mut seen: Vec<String> = Vec::new();
+    let mut offset = 0u64;
+    let mut parts = 0;
+    let mut left_out_by_the_last: Option<u64> = None;
+    loop {
+        let part = world
+            .otto
+            .call(
+                "recall",
+                json!({"subject": world.heavy, "facts": true, "offset": offset}),
+            )
+            .await;
+        parts += 1;
+        assert!(parts < 100, "the walk never ends");
+        assert!(
+            part.size() <= ANSWER_CEILING,
+            "part {parts}: {}",
+            part.size()
+        );
+        let body = part.json();
+        assert_eq!(body["count"], 1, "one subject is one object: {body}");
+        let addresses: Vec<String> = body["objects"][0]["facts"]
+            .as_array()
+            .expect("the facts")
+            .iter()
+            .map(|f| f["address"].as_str().expect("an address").to_string())
+            .collect();
+        assert!(!addresses.is_empty(), "a part carries at least one fact");
+        if let Some(promised) = left_out_by_the_last {
+            let from_here =
+                addresses.len() as u64 + body["not_shown"]["count"].as_u64().unwrap_or(0);
+            assert_eq!(
+                promised, from_here,
+                "what was left out is what the rest return"
+            );
+        }
+        seen.extend(addresses);
+        match body["not_shown"]["offset"].as_u64() {
+            Some(next) => {
+                left_out_by_the_last = body["not_shown"]["count"].as_u64();
+                offset = next;
+            }
+            None => break,
+        }
+    }
+    assert!(parts > 1, "the facts took several parts: {parts}");
+    let mut walked = seen.clone();
+    walked.sort();
+    walked.dedup();
+    assert_eq!(walked.len(), seen.len(), "no fact came back twice");
+    let mut written = world.heavy_addresses.clone();
+    written.sort();
+    assert_eq!(
+        walked, written,
+        "every fact that was written, and nothing else"
+    );
+}
+
+/// **A kind past the ceiling is read in parts, and walking on returns every
+/// thing once.** The places carry facts and one of them alone is past the
+/// ceiling, so its facts are cut where it stands and the answer names the call
+/// that reads them; the other places come whole in the parts around it. The
+/// objects of all the parts are exactly the places that were written.
+#[tokio::test]
+async fn a_kind_past_the_ceiling_is_read_in_parts_that_return_each_thing_once() {
+    let world = hostile_world().await;
+    let mut seen: Vec<String> = Vec::new();
+    let mut cut: Vec<String> = Vec::new();
+    let mut offset = 0u64;
+    let mut parts = 0;
+    let mut left_out_by_the_last: Option<u64> = None;
+    loop {
+        let part = world
+            .otto
+            .call(
+                "recall",
+                json!({"kind": "place", "facts": true, "offset": offset}),
+            )
+            .await;
+        parts += 1;
+        assert!(parts < 100, "the walk never ends");
+        assert!(
+            part.size() <= ANSWER_CEILING,
+            "part {parts}: {}",
+            part.size()
+        );
+        let body = part.json();
+        let objects = body["objects"].as_array().expect("objects");
+        assert!(!objects.is_empty(), "a part carries at least one object");
+        assert_eq!(body["count"], objects.len(), "{body}");
+        for object in objects {
+            seen.push(object["id"].as_str().expect("an id").to_string());
+            if object["facts_not_shown"].is_object() {
+                cut.push(object["id"].as_str().expect("an id").to_string());
+                // Every fact is accounted for: carried, or counted as left out.
+                let carried = object["facts"].as_array().expect("facts").len();
+                let left_out = object["facts_not_shown"]["count"]
+                    .as_u64()
+                    .expect("a count");
+                assert_eq!(
+                    carried as u64 + left_out,
+                    FACTS_ON_ONE_SUBJECT as u64,
+                    "{object}"
+                );
+                // …and the answer names the call that reads them: this place alone.
+                assert!(
+                    object["facts_not_shown"]["how_to_proceed"]
+                        .as_str()
+                        .expect("a way on")
+                        .contains(&world.heavy),
+                    "{object}"
+                );
+            }
+        }
+        if let Some(promised) = left_out_by_the_last {
+            let from_here = objects.len() as u64 + body["not_shown"]["count"].as_u64().unwrap_or(0);
+            assert_eq!(
+                promised, from_here,
+                "what was left out is what the rest return"
+            );
+        }
+        match body["not_shown"]["offset"].as_u64() {
+            Some(next) => {
+                left_out_by_the_last = body["not_shown"]["count"].as_u64();
+                offset = next;
+            }
+            None => break,
+        }
+    }
+    assert!(parts > 1, "the places took several parts: {parts}");
+    let mut walked = seen.clone();
+    walked.sort();
+    walked.dedup();
+    assert_eq!(walked.len(), seen.len(), "no place came back twice");
+    let mut written = world.place_ids.clone();
+    written.sort();
+    assert_eq!(
+        walked, written,
+        "every place that was written, and nothing else"
+    );
+    assert_eq!(
+        cut,
+        vec![world.heavy.clone()],
+        "only the heavy place had its facts cut, and said so"
+    );
+}
+
+/// **A kind whose objects carry no facts is filled the same way.** A hundred and
+/// twenty things are past the ceiling by their fields alone, so the parts are
+/// whole objects, the count each states is what the later parts return, and the
+/// things together are exactly those that were written.
+#[tokio::test]
+async fn a_kind_without_facts_past_the_ceiling_is_read_in_parts_too() {
+    let world = hostile_world().await;
+    let mut seen: Vec<String> = Vec::new();
+    let mut offset = 0u64;
+    let mut parts = 0;
+    let mut left_out_by_the_last: Option<u64> = None;
+    loop {
+        let part = world
+            .otto
+            .call("recall", json!({"kind": "thing", "offset": offset}))
+            .await;
+        parts += 1;
+        assert!(parts < 100, "the walk never ends");
+        assert!(
+            part.size() <= ANSWER_CEILING,
+            "part {parts}: {}",
+            part.size()
+        );
+        let body = part.json();
+        let objects = body["objects"].as_array().expect("objects");
+        assert!(!objects.is_empty(), "a part carries at least one object");
+        if let Some(promised) = left_out_by_the_last {
+            let from_here = objects.len() as u64 + body["not_shown"]["count"].as_u64().unwrap_or(0);
+            assert_eq!(
+                promised, from_here,
+                "what was left out is what the rest return"
+            );
+        }
+        seen.extend(
+            objects
+                .iter()
+                .map(|o| o["id"].as_str().expect("an id").to_string()),
+        );
+        match body["not_shown"]["offset"].as_u64() {
+            Some(next) => {
+                left_out_by_the_last = body["not_shown"]["count"].as_u64();
+                offset = next;
+            }
+            None => break,
+        }
+    }
+    assert!(parts > 1, "the things took several parts: {parts}");
+    let mut walked = seen.clone();
+    walked.sort();
+    walked.dedup();
+    assert_eq!(walked.len(), seen.len(), "no thing came back twice");
+    let mut written = world.thing_ids.clone();
+    written.sort();
+    assert_eq!(
+        walked, written,
+        "every thing that was written, and nothing else"
     );
 }
