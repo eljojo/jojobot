@@ -1,6 +1,6 @@
 # Mailboxes — how one bot reaches another
 
-> **jojobot** · kind: feature-brief · boot: on-demand · verified: 2026-09-03
+> **jojobot** · kind: feature-brief · boot: on-demand · verified: 2026-10-08
 
 **A place to leave a message for somebody who is not in this conversation.** Bots are colleagues in an organisation: a public directory, private mailboxes, and no impersonation.
 
@@ -13,6 +13,10 @@
 **Identity does the addressing on both sides.** The session handle says whose box a read takes from; the recipient handle says whose box a write lands in. Neither takes a box name.
 
 **An unknown handle comes back blocked with candidates, and nothing is written.** The candidates are names a caller already knows from the directory.
+
+## The operator's box
+
+**The operator is a person, and theirs is the one box a person owns.** A bot writes to the operator by the person handle the instance names as its operator. The box opens inside the first such post, which makes it the one box that does not open with its owner. **No bot reads it, in any state:** no bot takes delivery of it, retires or quarantines its mail, or finds it by search, and a search over mail says it never reaches that box. A writer sees where its mail got to by id, time and subject only. **A post to any other person is refused**, saying that only the operator has a box. The operator reads and finishes their mail on a surface of their own.
 
 ## Three states, and the middle one is not the last one
 
@@ -42,7 +46,7 @@ The failure this is aimed at is not a bot that goes quiet. It is two bots corres
 
 ## What it is not
 
-**Not a chat.** A message is left for somebody who is not here; nobody waits on it, and no bot addresses the operator through it.
+**Not a chat.** A message is left for somebody who is not here; nobody waits on it. A bot reaches the operator only through the operator's own box, which no bot reads.
 
 **Not a store of record for decisions.** A ruling that stays in a mailbox is a ruling that gets lost — it belongs in the decision log.
 

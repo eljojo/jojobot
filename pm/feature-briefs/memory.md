@@ -118,4 +118,4 @@ This prevents one failure: a claim put on the parent because that was easier. A 
 
 **Not the reader's question.** A reader asks for some of the keys or for all of them, and that decides what comes back. It never decides what a write may do. These are two questions, and collapsing them makes the design toothless.
 
-**Not a place anything is created by accident.** Everything a write names must already exist. jojobot brings nothing into being as a side effect.
+**Not a place anything is created by accident.** Everything a write names must already exist. jojobot brings nothing into being as a side effect. The one exception is the operator's mailbox, which opens inside the first post to them.
