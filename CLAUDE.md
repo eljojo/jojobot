@@ -38,9 +38,10 @@ in doubt, it doesn't cross.
 
 - **The roadmap is the work-queue board**, not a document. Every release, rock
   and slice lives there; a release that exists only in prose is one nobody
-  works. **The decision log** — every rule the operator has set, one line each —
-  and **the product brief** that renders it live in the operator's private wiki,
-  not in this repo. **The per-feature briefs DO live here, at
+  works. **The decision log** — every rule the operator has set, one claim each —
+  **lives in jojobot itself**, under its decision-log topic, each rule on the
+  rules topic of its subject; read it with `recall`. **The product brief** that
+  renders it lives in the operator's private wiki, not in this repo. **The per-feature briefs DO live here, at
   `pm/feature-briefs/`** — one file per feature, saying what it is for, why it is
   shaped that way, and what it deliberately is not. **Read the brief for a
   feature before you reason about that feature**: it usually already answers what
