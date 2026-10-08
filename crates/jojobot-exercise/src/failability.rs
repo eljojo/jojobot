@@ -110,7 +110,7 @@ pub enum Strength {
 
 /// **Every lock this build has actually proven failable, so far.**
 ///
-/// 169 entries, of five different shapes: 77 blanket and 92 discriminating.
+/// 167 entries, of five different shapes: 77 blanket and 90 discriminating.
 /// Quote the discriminating count as twelve, with one constructed positive
 /// — never as a bare twelve; see the note on `tests/fair_lock.rs` below for
 /// why.
@@ -1376,23 +1376,9 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
     },
     NegativeControl {
         room: expectations::AGENCY_ROOM,
-        lock: "Phase 2 — May: January's question about splitting a bill is no longer readable as it was, so the answer replaced the question instead of following it",
-        file: "tests/agency_room.rs",
-        function: "may_the_question_written_over_by_its_answer_reds_only_the_readable_lock",
-        strength: Strength::Discriminating,
-    },
-    NegativeControl {
-        room: expectations::AGENCY_ROOM,
         lock: "Phase 3 — September: Krusty's closing word on splitting a bill is not on record attributed to Krusty, or does not say the question is dropped",
         file: "tests/agency_room.rs",
         function: "september_the_closing_word_filed_against_martin_reds_only_the_attribution_lock",
-        strength: Strength::Discriminating,
-    },
-    NegativeControl {
-        room: expectations::AGENCY_ROOM,
-        lock: "Phase 3 — September: May's answer about splitting a bill is no longer readable as it was, so the closing word replaced the answer instead of following it",
-        file: "tests/agency_room.rs",
-        function: "september_the_answer_written_over_by_the_closing_word_reds_only_the_readable_lock",
         strength: Strength::Discriminating,
     },
     NegativeControl {
@@ -1413,13 +1399,23 @@ pub struct Pending<'a> {
     pub lock: &'a str,
 }
 
-/// **The backlog.** Every `vault.md` lock nobody has proven yet. `vault.md`
+/// **The backlog.** Every `vault.md` lock nobody has proven yet, and the two
+/// `agency.md` locks about a claim written over, whose play has been refused
+/// since card 2038 — see the lines in `agency.md` at those locks. `vault.md`
 /// has no driver proving its own locks the way `bike_room.rs`,
 /// `loop_room.rs`, `handover_room.rs` and `year_room.rs` each prove theirs
 /// — see [`NEGATIVE_CONTROLS`]'s own doc — and `vault_room.rs` covers only
 /// one lock, already moved there. As a control gets written for one, move
 /// its entry from here to [`NEGATIVE_CONTROLS`].
 pub const PENDING: &[Pending<'static>] = &[
+    Pending {
+        room: expectations::AGENCY_ROOM,
+        lock: "Phase 2 — May: January's question about splitting a bill is no longer readable as it was, so the answer replaced the question instead of following it",
+    },
+    Pending {
+        room: expectations::AGENCY_ROOM,
+        lock: "Phase 3 — September: May's answer about splitting a bill is no longer readable as it was, so the closing word replaced the answer instead of following it",
+    },
     Pending {
         room: VAULT_ROOM,
         lock: "Phase 1 — January: the brief is still sitting new, so nobody took delivery of the vault",

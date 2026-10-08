@@ -113,37 +113,6 @@ impl Lab {
             .to_string()
     }
 
-    /// The address of the claim on `subject` whose words hold `needle`.
-    async fn address_of(&self, sid: &str, subject: &str, needle: &str) -> String {
-        let read = self
-            .call(sid, "recall", json!({"subject": subject, "facts": true}))
-            .await;
-        let parsed: Value = serde_json::from_str(&read).expect("json");
-        parsed["objects"][0]["facts"]
-            .as_array()
-            .and_then(|facts| {
-                facts
-                    .iter()
-                    .find(|f| f["content"].as_str().is_some_and(|c| c.contains(needle)))
-            })
-            .and_then(|f| f["address"].as_str())
-            .unwrap_or_else(|| panic!("no claim on {subject} holds {needle}: {read}"))
-            .to_string()
-    }
-
-    /// A claim rewritten in place: its words and its one link.
-    async fn rewrite(&self, sid: &str, address: &str, content: &str, about: &str) {
-        let said = self
-            .call(
-                sid,
-                "update_fact",
-                json!({"address": address, "content": content, "provenance": "testimony",
-                       "shape": "about", "object": about}),
-            )
-            .await;
-        assert!(!said.contains("blocked"), "{said}");
-    }
-
     async fn add(&self, sid: &str, kind: &str, handle: &str, name: &str, parent: Option<&str>) {
         let mut args =
             json!({"kind": kind, "handle": handle, "name": name, "source": "user-named"});
@@ -373,8 +342,7 @@ async fn may(lab: &mut Lab, wrong: Wrong) {
     )
     .await;
     // Martin answers the question January left on the ordering phase. The wrong
-    // ways: the answer is filed against Krusty, or it is written over the
-    // question it answers.
+    // way: the answer is filed against Krusty.
     let answer = "Martin answered that splitting a bill needs the payments phase, so it cannot ship \
                   with ordering and moves after payments.";
     let who = if is(wrong, 9) {
@@ -382,18 +350,13 @@ async fn may(lab: &mut Lab, wrong: Wrong) {
     } else {
         "person:martin"
     };
-    if is(wrong, 10) {
-        let asked = lab.address_of(&sid, ORDERING, "ordering screen").await;
-        lab.rewrite(&sid, &asked, answer, who).await;
-    } else {
-        lab.say(
-            &sid,
-            ORDERING,
-            answer,
-            json!({"shape": "about", "object": who}),
-        )
-        .await;
-    }
+    lab.say(
+        &sid,
+        ORDERING,
+        answer,
+        json!({"shape": "about", "object": who}),
+    )
+    .await;
     lab.ends("Phase 2", 2).await;
 }
 
@@ -495,8 +458,8 @@ async fn september(lab: &mut Lab, wrong: Wrong) {
         "Ordering now waits on Homer's sign-off."
     };
     lab.say(&sid, APP, waiting, json!({})).await;
-    // Krusty closes the question. The wrong ways: the closing word is filed
-    // against Martin, or it is written over May's answer.
+    // Krusty closes the question. The wrong way: the closing word is filed
+    // against Martin.
     let closing = "Krusty said staff split bills at the till, so the app does not need to split \
                    bills. The question is closed as dropped.";
     let closer = if is(wrong, 11) {
@@ -504,18 +467,13 @@ async fn september(lab: &mut Lab, wrong: Wrong) {
     } else {
         "person:krusty"
     };
-    if is(wrong, 12) {
-        let answered = lab.address_of(&sid, ORDERING, "after payments").await;
-        lab.rewrite(&sid, &answered, closing, closer).await;
-    } else {
-        lab.say(
-            &sid,
-            ORDERING,
-            closing,
-            json!({"shape": "about", "object": closer}),
-        )
-        .await;
-    }
+    lab.say(
+        &sid,
+        ORDERING,
+        closing,
+        json!({"shape": "about", "object": closer}),
+    )
+    .await;
     lab.ends("Phase 3", 3).await;
 }
 
@@ -1132,20 +1090,8 @@ async fn may_the_answer_filed_against_krusty_reds_only_the_attribution_lock() {
 }
 
 #[tokio::test]
-#[ignore = "card 2038: testimony from an earlier sitting is refused an in-place rewrite, so the wrong way this case plays cannot be played; the lock it discriminates stays"]
-async fn may_the_question_written_over_by_its_answer_reds_only_the_readable_lock() {
-    discriminates(1, 10).await;
-}
-
-#[tokio::test]
 async fn september_the_closing_word_filed_against_martin_reds_only_the_attribution_lock() {
     discriminates(2, 11).await;
-}
-
-#[tokio::test]
-#[ignore = "card 2038: testimony from an earlier sitting is refused an in-place rewrite, so the wrong way this case plays cannot be played; the lock it discriminates stays"]
-async fn september_the_answer_written_over_by_the_closing_word_reds_only_the_readable_lock() {
-    discriminates(2, 12).await;
 }
 
 #[tokio::test]

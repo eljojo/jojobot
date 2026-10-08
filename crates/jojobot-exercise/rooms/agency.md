@@ -312,6 +312,9 @@ window  phase-end
 
 # January's question, as January left it. An answer written over the question
 # leaves the answer where the question was, and the question's own words gone.
+# No case drives this lock red: since card 2038 an in-place overwrite of
+# testimony from an earlier sitting is refused, and the archive-and-replace route
+# leaves the question readable, so the play that reddened it cannot be made.
 recall  {"kind": "work", "facts": true, "follow": {"direction": "in"}}
 carries-any-case ordering screen
 carries "status":"active"
@@ -408,6 +411,8 @@ say     September: Krusty's closing word on splitting a bill is not on record at
 window  phase-end
 
 # May's answer, as May left it.
+# No case drives this lock red, for the reason the May one has none: an in-place
+# overwrite of testimony from an earlier sitting is refused since card 2038.
 recall  {"kind": "work", "facts": true, "follow": {"direction": "in"}}
 carries-any-case after payments
 carries "status":"active"
