@@ -131,7 +131,7 @@ async fn a_session_records_a_claim_with_its_source_unprompted() {
         .await
         .says("may do a Thursday special")
         .says("\"provenance\":\"inference\"")
-        .says("\"edge\":null");
+        .never_says("\"edge\":");
 
     s.wrap("recorded a claim with nothing behind it, visibly")
         .await;

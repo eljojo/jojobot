@@ -350,7 +350,7 @@ async fn a_room_with_no_capacity_does_not_offer_a_thought_to_drop() {
         )
         .await;
     edit.says("thought_capacity")
-        .says("\"archive_needed\":null");
+        .never_says("\"archive_needed\":");
 
     // The room that is full still names a drop.
     s.add("bot:sigma", "Sigma").await;

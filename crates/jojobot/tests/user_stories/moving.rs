@@ -245,9 +245,9 @@ async fn moving_abroad() {
     s.list("project")
         .await
         .says("\"parent\":\"project:atlas\"")
-        // The move itself is under nothing, and the listing says so: a reader
-        // must be able to tell a root from a pointer nobody rendered.
-        .says("\"parent\":null");
+        // The move itself is under nothing: it is listed, and it carries no
+        // parent, so a root is told from a child by the key being there.
+        .says("\"id\":\"project:atlas\"");
 
     s.wrap("the list exists; nothing is done").await;
 

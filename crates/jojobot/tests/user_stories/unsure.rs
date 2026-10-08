@@ -97,7 +97,8 @@ async fn a_hedged_claim_and_a_guess_no_longer_read_the_same() {
     // And nothing was smuggled into free text to carry the hedge: it is a
     // field, so the note is empty on the claim that carries one.
     read.claim(&hedged)
-        .says("\"details\":null")
+        .says("closes early on Sundays")
+        .never_says("\"details\":")
         .never_says("was not sure");
 
     // ── and the question an agent asks about its own work ───────────────────

@@ -310,6 +310,68 @@ pub(crate) fn structure(answered: &mut CallToolResponse) {
     result.structured_content = serde_json::from_str(&text.text).ok();
 }
 
+/// **The nulls that mean something, kept by the name of the key.** Every other
+/// null-valued key is left out of an answer: an absent key says what a null one
+/// said, and costs nothing. These stay because a reader is told what the null
+/// means and an absent key would say something else:
+///
+/// - `sender_mail_waiting_at_send`: null is "could not tell", never zero.
+/// - `overdue_by_days`: present and null on the one object the distance cannot
+///   be measured for; absent would read as "you did not ask".
+/// - `ended`: whether the posting run has ended, null when the store could not
+///   say.
+/// - `sid`: a boot's choice carries no handle until it is answered.
+/// - `name`: a null name on a hit means the handle names nothing, a defect to
+///   report.
+pub(crate) const KEPT_NULLS: &[&str] = &[
+    "sender_mail_waiting_at_send",
+    "overdue_by_days",
+    "ended",
+    "sid",
+    "name",
+];
+
+/// **Remove every null-valued key, at every depth, except [`KEPT_NULLS`].** A null
+/// inside an array is a position and stays.
+pub(crate) fn strip_nulls(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(fields) => {
+            fields.retain(|key, held| !held.is_null() || KEPT_NULLS.contains(&key.as_str()));
+            for held in fields.values_mut() {
+                strip_nulls(held);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                strip_nulls(item);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Apply [`strip_nulls`] to the body of a completed answer. An answer this
+/// cannot read as a JSON object is left exactly as the verb wrote it, for the
+/// reason [`structure`] leaves one alone.
+fn strip_nulls_from(answered: &mut CallToolResponse) {
+    let CallToolResponse::Complete(result) = answered else {
+        return;
+    };
+    for block in &mut result.content {
+        let Some(text) = block.as_text() else {
+            continue;
+        };
+        let Ok(mut body) = serde_json::from_str::<serde_json::Value>(&text.text) else {
+            continue;
+        };
+        if !body.is_object() {
+            continue;
+        }
+        strip_nulls(&mut body);
+        *block = ContentBlock::text(body.to_string());
+    }
+}
+
 impl Jojobot {
     /// **The last two things that happen to every answer, in the one order
     /// that works.** The status bar is written into the body, so it has to be
@@ -325,6 +387,9 @@ impl Jojobot {
         structured: bool,
     ) {
         self.add_status_bar(answered, sid).await;
+        // Before the answer is counted and before it moves: what is charged to
+        // the session and what ships are the same text.
+        strip_nulls_from(answered);
         if let Some(sid) = sid {
             self.registry.note_call(sid);
         }
@@ -996,5 +1061,40 @@ mod tests {
             &crate::caller::handle_declined("zz99", "boot as a bot that exists".to_string()),
             "change",
         );
+    }
+    /// **A key whose value is null is not sent**, at every depth, in an answer
+    /// and in a refusal alike: an absent key says the same as a null one and
+    /// costs nothing. The few nulls that MEAN something stay, and stay by name
+    /// (see [`KEPT_NULLS`]). A null inside an array is a position and stays.
+    #[test]
+    fn a_null_key_is_removed_at_every_depth_and_the_documented_ones_stay() {
+        let mut body = serde_json::json!({
+            "id": "x",
+            "details": null,
+            "claim": {"edge": null, "words": "kept", "deep": {"derived_from": null, "n": 1}},
+            "rows": [{"happened_at": null, "k": 1}, null, {"sender_mail_waiting_at_send": null}],
+            "overdue_by_days": null,
+        });
+        strip_nulls(&mut body);
+        assert_eq!(
+            body,
+            serde_json::json!({
+                "id": "x",
+                "claim": {"words": "kept", "deep": {"n": 1}},
+                "rows": [{"k": 1}, null, {"sender_mail_waiting_at_send": null}],
+                "overdue_by_days": null,
+            })
+        );
+        // The kept names are the documented ones, pinned as literals because
+        // the spelling is served and a caller reads the difference.
+        for kept in [
+            "sender_mail_waiting_at_send",
+            "overdue_by_days",
+            "ended",
+            "sid",
+            "name",
+        ] {
+            assert!(KEPT_NULLS.contains(&kept), "{kept}");
+        }
     }
 }

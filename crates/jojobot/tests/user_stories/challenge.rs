@@ -82,7 +82,7 @@ async fn where_did_you_get_that() {
         .await
         .claim(&claim)
         .says("\"provenance\":\"inference\"")
-        .says("\"derived_from\":null");
+        .never_says("\"derived_from\":");
 
     // GAP — and nothing records that a claim was ACTED ON. A wrong guess that
     // sat unread and a wrong guess that sent somebody across town on a Sunday

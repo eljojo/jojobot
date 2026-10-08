@@ -110,6 +110,8 @@ mod projects;
 mod promises;
 #[path = "user_stories/quarantining.rs"]
 mod quarantining;
+#[path = "user_stories/quiet_answers.rs"]
+mod quiet_answers;
 #[path = "user_stories/receipts.rs"]
 mod receipts;
 #[path = "user_stories/refusal_words.rs"]

@@ -84,8 +84,8 @@ async fn an_unsourced_candidate_is_visibly_unsourced() {
     s.recall("place:riverbend")
         .await
         .says("inference")
-        .says("\"edge\":null")
-        .says("\"derived_from\":null");
+        .never_says("\"edge\":")
+        .never_says("\"derived_from\":");
 
     // GAP — but that comparison took a read per candidate, and it did not have
     // to. Grouping them is served: a key declared to hold a reference points

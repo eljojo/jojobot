@@ -49,7 +49,7 @@ impl Jojobot {
                        `entries_omitted` says how much is not here. Nothing was dropped from the \
                        record — what was written is stored whole. THE FOCUS AS IT STOOD AT THE \
                        CLOSE rides on the closing entry as `closing_focus`, beside the story \
-                       rather than inside its text; every other entry carries it as null. \
+                       rather than inside its text; every other entry has none. \
                        THE FIRST WRAP ALSO HANDS BACK A `wrap_code`: calling start_here with \
                        that code as its resume answer hands this run's own sid back for one \
                        last change, while the run stays wrapped. The window ends when you wrap \

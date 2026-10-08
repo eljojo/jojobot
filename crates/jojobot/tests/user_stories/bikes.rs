@@ -53,7 +53,7 @@ async fn keeping_track_of_bikes() {
     s.recall("thing:gravel-bike")
         .await
         .claim(&serviced)
-        .says("\"happened_at\":null")
+        .never_says("\"happened_at\":")
         .says("had it serviced over the summer");
 
     // ── a stretch of days, not one ──────────────────────────────────────────
@@ -78,7 +78,7 @@ async fn keeping_track_of_bikes() {
         .says("\"happened_at\":\"2024-05-24\"")
         .says("\"happened_through\":\"2024-05-26\"");
     // **The negative**: a single day carries no far end at all.
-    read.claim(&bought).says("\"happened_through\":null");
+    read.claim(&bought).never_says("\"happened_through\":");
 
     // ── learning a day late, and walking an approximation back ─────────────
     //
@@ -106,7 +106,7 @@ async fn keeping_track_of_bikes() {
     s.recall("thing:gravel-bike")
         .await
         .claim(&serviced)
-        .says("\"happened_at\":null");
+        .never_says("\"happened_at\":");
 
     // ── the far end, learned late and then un-learned ───────────────────────
     //
@@ -133,7 +133,7 @@ async fn keeping_track_of_bikes() {
     s.recall("thing:gravel-bike")
         .await
         .claim(&trip)
-        .says("\"happened_through\":null");
+        .never_says("\"happened_through\":");
 
     // ── when the claim was made, corrected after the fact ────────────────────
     //
@@ -476,9 +476,19 @@ async fn keeping_track_of_bikes() {
         .says("\"parent\":\"thing:gravel-bike\"");
 
     // The negative the line above rests on: a thing nobody put anywhere is a
-    // root, and the listing says so rather than leaving a reader to guess
-    // whether the pointer is absent or merely unrendered.
-    s.list("thing").await.says("\"parent\":null");
+    // root, and it carries no parent at all; the thing listed is there, so the
+    // absence is not an empty answer.
+    let things = s.list("thing").await.json();
+    let root = things["entities"]
+        .as_array()
+        .expect("entities")
+        .iter()
+        .find(|e| e["id"] == "thing:gravel-bike")
+        .unwrap_or_else(|| panic!("the thing is listed: {things}"));
+    assert!(
+        root.get("parent").is_none(),
+        "a root carries no parent: {root}"
+    );
 
     // A parent nobody created is refused, exactly as every other handle a write
     // names is, and nothing is written. `wrote` is the field only a blocked

@@ -318,7 +318,7 @@ async fn nothing_on_the_surface_goes_unexercised() {
     s.call("list_sent", json!({}))
         .await
         .says("\"body_elided\":true")
-        .says("\"body\":null");
+        .never_says("\"body\":");
     s.call("list_sent", json!({"include_bodies": true}))
         .await
         .says("\"body\":\"One for epsilon.\"");
