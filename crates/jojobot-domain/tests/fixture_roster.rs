@@ -1207,6 +1207,10 @@ fn prose_lines(path: &Path, text: &str) -> Vec<(usize, String)> {
 /// characters in the calls it makes and talks about them in the comment above,
 /// so a license that only read the comment would report correct English every
 /// time the name sat one line below it.
+///
+/// ⚠️ **It reports less than its name says**: a block holding a roster name
+/// that is also an ordinary word is licensed whole. [`names_somebody`] says
+/// why and what that means for a green run.
 fn pronouns_for_nobody(files: &[PathBuf]) -> Vec<String> {
     let names = character_names();
     let mut unattached = Vec::new();
@@ -1245,6 +1249,19 @@ fn pronouns_for_nobody(files: &[PathBuf]) -> Vec<String> {
 /// question of different text — a block of source, and a block of a commit
 /// message — so they ask it through one function rather than two copies that
 /// drift (rule 51).
+///
+/// ⚠️ **A KNOWN LIMIT: a block holding a roster name that is also an ordinary
+/// word is licensed whole**, so a pronoun about nobody in that block passes.
+/// Many roster names are words a sentence capitalizes — "Ghost" opening a
+/// phrase, "Default", "Assistant", the Greek letters — and the capital cannot
+/// tell the name from the word. A measurement over this workspace found 311
+/// licensing names, 268 of them dictionary words. Both fixes tried failed: a
+/// smaller block flagged 28 blameless lines at a window of one, and a
+/// narrower name set needs a hand-picked exclusion list, which rule 106
+/// forbids. **So this guard's green says "no pronoun stands alone in a block
+/// with no name in it", and nothing more.** A better guard is new design.
+/// [`a_block_naming_an_ordinary_word_roster_name_licenses_a_pronoun_about_nobody`]
+/// pins the limit as known behaviour.
 fn names_somebody(block: &str, names: &[String]) -> bool {
     block.contains("person:")
         || block.contains("pet:")
@@ -1691,6 +1708,42 @@ fn the_gate_reads_a_named_character_and_an_unnamed_role_apart() {
         !unattached.iter().any(|line| line.contains("named.rs")),
         "…and a pronoun for a character the line names must pass, or the report above is the \
          gate flagging everything rather than working: {unattached:?}"
+    );
+}
+
+/// **A KNOWN LIMIT, pinned as behaviour and not as a pass of the rule.** A block
+/// that holds a roster name which is also an ordinary word is licensed whole,
+/// so a pronoun about nobody in that block is not reported.
+///
+/// The sentence below capitalizes "Ghost" as the start of a phrase, and the
+/// roster holds a character of that name, so the block counts as naming
+/// somebody. The control file has the same pronoun without that word and IS
+/// reported, which shows the silence above comes from the licensing and not
+/// from a scan that read nothing.
+#[test]
+fn a_block_naming_an_ordinary_word_roster_name_licenses_a_pronoun_about_nobody() {
+    let scratch = Scratch::new("ordinary-word-license");
+    scratch.write(
+        "crates/licensed.rs",
+        "// Ghost writing is not what this file does.\n\
+         // It is the surface he reads himself.\nfn a() {}\n",
+    );
+    scratch.write(
+        "crates/control.rs",
+        "// Typing is what this file does.\n\
+         // It is the surface he reads himself.\nfn b() {}\n",
+    );
+
+    let unattached = pronouns_for_nobody(&scanned_files(&scratch.0));
+
+    assert!(
+        unattached.iter().any(|line| line.contains("control.rs")),
+        "the same pronoun without the ordinary word has to be reported, or the silence \
+         below proves nothing: {unattached:?}"
+    );
+    assert!(
+        !unattached.iter().any(|line| line.contains("licensed.rs")),
+        "a block holding an ordinary-word roster name is licensed whole: {unattached:?}"
     );
 }
 
