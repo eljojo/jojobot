@@ -1438,6 +1438,19 @@ pub struct Board {
     /// worth saying. Each of these is left `active` for the next boot to try
     /// again; a sweep that cannot close one session must not stop a boot.
     pub unswept: Vec<(SessionId, SessionError)>,
+    /// **Every run of this bot that carries a wrap window**, as the read the
+    /// sweep started from saw it. A boot ends them when a newer run begins, and
+    /// handing the ids down is what lets it do so without asking the store for
+    /// the bot's runs a second time.
+    pub windows_open: Vec<SessionId>,
+}
+
+/// The ids of the runs among these that carry a wrap window, open or offered.
+pub fn windows_open(runs: &[Session]) -> Vec<SessionId> {
+    runs.iter()
+        .filter(|run| run.wrap_window.is_some())
+        .map(|run| run.id.clone())
+        .collect()
 }
 
 /// Sweep this bot's stale sessions and hand back what is on its board.
@@ -1488,6 +1501,7 @@ pub async fn sweep_and_find(
     // `abandoned` is the archetypal "resume last session" — it is the one that
     // stopped yesterday — so it has to be a candidate here, and the list read
     // above still says `active` for it.
+    let windows_open = windows_open(&existing);
     let offerable = existing
         .into_iter()
         .map(|s| match swept.contains(&s.id.to_string()) {
@@ -1504,6 +1518,7 @@ pub async fn sweep_and_find(
         handover,
         swept,
         unswept,
+        windows_open,
     })
 }
 

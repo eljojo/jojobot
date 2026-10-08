@@ -90,6 +90,7 @@ impl Jojobot {
             handover,
             swept,
             unswept,
+            windows_open,
         } = match sweep_and_find(self.sessions.as_ref(), bot, swept_at, today).await {
             Ok(found) => found,
             Err(e) => {
@@ -122,7 +123,7 @@ impl Jojobot {
             // ── the caller answered the offer ───────────────────────────────
             Some(answer) if answer.eq_ignore_ascii_case(sid::NEW) => {
                 let handle = self.mint_or_say_why(bot, None)?;
-                self.end_wrap_windows(bot).await;
+                self.end_windows(&windows_open).await;
                 self.registry
                     .set_zone(&handle, timezone.map(str::to_string));
                 self.registry.set_day(&handle, today);
@@ -206,7 +207,7 @@ impl Jojobot {
             // ── a first boot: the two branches ──────────────────────────────
             None if live.is_empty() && offerable.is_none() => {
                 let handle = self.mint_or_say_why(bot, None)?;
-                self.end_wrap_windows(bot).await;
+                self.end_windows(&windows_open).await;
                 self.registry
                     .set_zone(&handle, timezone.map(str::to_string));
                 self.registry.set_day(&handle, today);
@@ -399,6 +400,10 @@ impl Jojobot {
     /// a run that starts after it is the work that came next. Best-effort: a
     /// store that cannot clear one leaves it for the use of its code, which
     /// checks for a newer run itself.
+    ///
+    /// **This one reads the bot's runs.** A caller that already holds them, as
+    /// a boot does after its sweep, ends the windows through
+    /// [`end_windows`](Self::end_windows) instead and reads nothing.
     pub(crate) async fn end_wrap_windows(&self, bot: &EntityId) {
         let runs = match self.sessions.sessions_of(bot).await {
             Ok(runs) => runs,
@@ -407,9 +412,15 @@ impl Jojobot {
                 return;
             }
         };
-        for run in runs.iter().filter(|run| run.wrap_window.is_some()) {
-            if let Err(e) = self.sessions.set_wrap_window(&run.id, None).await {
-                tracing::warn!(error = %e, run = %run.id, "a wrap window could not be ended");
+        self.end_windows(&jojobot_domain::session::windows_open(&runs))
+            .await;
+    }
+
+    /// Clear the wrap window of each run named, with no read of the store.
+    pub(crate) async fn end_windows(&self, open: &[SessionId]) {
+        for run in open {
+            if let Err(e) = self.sessions.set_wrap_window(run, None).await {
+                tracing::warn!(error = %e, %run, "a wrap window could not be ended");
             }
         }
     }
@@ -462,7 +473,8 @@ impl Jojobot {
             .iter()
             .any(|run| run.id != wrapped.id && run.started_at > wrapped.started_at)
         {
-            self.end_wrap_windows(bot).await;
+            self.end_windows(&jojobot_domain::session::windows_open(&runs))
+                .await;
             return Err(spent(
                 "A newer run of this bot has started, which ends the window for the run that \
                  wrapped.",
@@ -3030,5 +3042,118 @@ mod tests {
             "nothing was left out, so there is no count to report: {session}"
         );
         assert!(session["chronology_note"].is_null(), "{session}");
+    }
+
+    /// **A boot reads the runs of its bot once, whichever way it goes.** The
+    /// sweep already holds every run, so ending the wrap windows of an older
+    /// run has to use that read rather than ask the store for the same list
+    /// again. Three routes end windows — a first boot, the answer `new` to an
+    /// offer, and a wrap code refused because a newer run exists — and each is
+    /// counted and paired with the windows actually having ended, so a boot
+    /// that read once and ended nothing does not pass.
+    #[tokio::test]
+    async fn a_boot_reads_the_runs_of_its_bot_once_and_still_ends_their_windows() {
+        async fn window_of(
+            store: &InMemorySessions,
+            run: &jojobot_domain::session::Session,
+        ) -> Option<jojobot_domain::session::WrapWindow> {
+            store
+                .read_session(&run.id)
+                .await
+                .expect("read ok")
+                .wrap_window
+        }
+
+        // A first boot: nothing live, two wrapped runs holding windows.
+        let counting = Arc::new(CountingSessions::new(InMemorySessions::new()));
+        let (jojobot, _memory) = with_sessions_port_and_memory(counting.clone());
+        make_bot(&jojobot, "gamma").await;
+        let (first, _) = wrapped_with_a_code(counting.store(), 5, "t010").await;
+        let (second, _) = wrapped_with_a_code(counting.store(), 4, "t011").await;
+        let before = counting.reads();
+        let booted = boot(&jojobot, "gamma").await;
+        assert!(
+            sid_of(&booted).is_some(),
+            "a first boot hands back a sid: {booted}"
+        );
+        assert_eq!(
+            counting.reads() - before,
+            1,
+            "a first boot reads the runs once"
+        );
+        for run in [&first, &second] {
+            assert!(
+                window_of(counting.store(), run).await.is_none(),
+                "…and the older run's window ended: {run:?}"
+            );
+        }
+
+        // The answer `new` to an offer.
+        let counting = Arc::new(CountingSessions::new(InMemorySessions::new()));
+        let (jojobot, _memory) = with_sessions_port_and_memory(counting.clone());
+        make_bot(&jojobot, "gamma").await;
+        let (wrapped, _) = wrapped_with_a_code(counting.store(), 5, "t012").await;
+        counting
+            .store()
+            .begin(NewSession {
+                timezone: None,
+                bot: EntityId("bot:gamma".into()),
+                sid: Sid("t013".into()),
+                focus: "a run still going".into(),
+                started_at: jiff::Timestamp::now(),
+                started_on: None,
+            })
+            .await
+            .expect("begin ok");
+        let offer = boot(&jojobot, "gamma").await;
+        assert!(
+            sid_of(&offer).is_none(),
+            "a live run makes the boot an offer: {offer}"
+        );
+        let before = counting.reads();
+        let answered = boot_answering(&jojobot, "gamma", "new").await;
+        assert!(
+            sid_of(&answered).is_some(),
+            "the answer hands back a sid: {answered}"
+        );
+        assert_eq!(
+            counting.reads() - before,
+            1,
+            "answering `new` reads the runs once"
+        );
+        assert!(
+            window_of(counting.store(), &wrapped).await.is_none(),
+            "…and the older run's window ended"
+        );
+
+        // A wrap code refused because a newer run exists.
+        let counting = Arc::new(CountingSessions::new(InMemorySessions::new()));
+        let (jojobot, _memory) = with_sessions_port_and_memory(counting.clone());
+        make_bot(&jojobot, "gamma").await;
+        let (wrapped, code) = wrapped_with_a_code(counting.store(), 5, "t014").await;
+        counting
+            .store()
+            .begin(NewSession {
+                timezone: None,
+                bot: EntityId("bot:gamma".into()),
+                sid: Sid("t015".into()),
+                focus: "the newer run".into(),
+                started_at: jiff::Timestamp::now(),
+                started_on: None,
+            })
+            .await
+            .expect("begin ok");
+        let before = counting.reads();
+        let refused = boot_answering(&jojobot, "gamma", &code).await;
+        assert_eq!(refused["status"], "blocked", "{refused}");
+        assert_eq!(
+            counting.reads() - before,
+            1,
+            "a refused code reads the runs once"
+        );
+        assert!(
+            window_of(counting.store(), &wrapped).await.is_none(),
+            "…and the older run's window ended"
+        );
     }
 }

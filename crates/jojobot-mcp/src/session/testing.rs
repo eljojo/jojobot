@@ -434,6 +434,104 @@ impl Sessions for RefusingWindowClear {
     }
 }
 
+/// **A session store that says how often the runs were read.** `sessions_of`
+/// and `all_sessions` return every run they match, so how many times one boot
+/// reaches for them is the difference between one read shared by the steps
+/// that need it and the same question asked of the store again.
+pub(crate) struct CountingSessions {
+    inner: InMemorySessions,
+    reads: std::sync::atomic::AtomicUsize,
+}
+
+impl CountingSessions {
+    pub(crate) fn new(inner: InMemorySessions) -> Self {
+        CountingSessions {
+            inner,
+            reads: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+
+    /// The store the fixtures stage runs in; staging is not counted by the
+    /// reads below, which a test takes either side of the call it measures.
+    pub(crate) fn store(&self) -> &InMemorySessions {
+        &self.inner
+    }
+
+    /// How many whole-run reads there have been so far.
+    pub(crate) fn reads(&self) -> usize {
+        self.reads.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    fn counted(&self, runs: Vec<Session>) -> Vec<Session> {
+        self.reads.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        runs
+    }
+}
+
+#[async_trait]
+impl Sessions for CountingSessions {
+    async fn sessions_of(&self, bot: &EntityId) -> Result<Vec<Session>, SessionError> {
+        self.inner.sessions_of(bot).await.map(|r| self.counted(r))
+    }
+    async fn all_sessions(&self) -> Result<Vec<Session>, SessionError> {
+        self.inner.all_sessions().await.map(|r| self.counted(r))
+    }
+    async fn read_session(&self, id: &SessionId) -> Result<Session, SessionError> {
+        self.inner.read_session(id).await
+    }
+    async fn begin(&self, new: NewSession) -> Result<Session, SessionError> {
+        self.inner.begin(new).await
+    }
+    async fn append(&self, id: &SessionId, entry: NewEntry) -> Result<JournalEntry, SessionError> {
+        self.inner.append(id, entry).await
+    }
+    async fn amend_last(&self, id: &SessionId, text: &str) -> Result<JournalEntry, SessionError> {
+        self.inner.amend_last(id, text).await
+    }
+    async fn amend_beat(
+        &self,
+        id: &SessionId,
+        entry: &EntryId,
+        text: &str,
+        touched: jiff::Timestamp,
+    ) -> Result<JournalEntry, SessionError> {
+        self.inner.amend_beat(id, entry, text, touched).await
+    }
+    async fn set_focus(&self, id: &SessionId, focus: &str) -> Result<Session, SessionError> {
+        self.inner.set_focus(id, focus).await
+    }
+    async fn set_timezone(
+        &self,
+        id: &SessionId,
+        timezone: Option<&str>,
+    ) -> Result<Session, SessionError> {
+        self.inner.set_timezone(id, timezone).await
+    }
+    async fn set_stated_day(
+        &self,
+        id: &SessionId,
+        day: Option<jiff::civil::Date>,
+    ) -> Result<Session, SessionError> {
+        self.inner.set_stated_day(id, day).await
+    }
+    async fn set_wrap_window(
+        &self,
+        id: &SessionId,
+        window: Option<WrapWindow>,
+    ) -> Result<Session, SessionError> {
+        self.inner.set_wrap_window(id, window).await
+    }
+    async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
+        self.inner.close(id, to).await
+    }
+    async fn add_served(&self, id: &SessionId, chars: u64) -> Result<(), SessionError> {
+        self.inner.add_served(id, chars).await
+    }
+    async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
+        self.inner.reopen(id).await
+    }
+}
+
 /// **A session store whose `append` fails** — the earlier half of a journal
 /// call, and the one whose failure cannot say whether the write landed.
 pub(crate) struct RefusingAppend(pub(crate) InMemorySessions);
