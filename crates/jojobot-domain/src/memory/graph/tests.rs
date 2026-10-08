@@ -456,6 +456,7 @@ fn a_run(bot: &str, id: &str, focus: &str, text: &str) -> DocScan {
             touched: None,
             beat: None,
             closing_focus: None,
+            closing: false,
         }],
     })
 }

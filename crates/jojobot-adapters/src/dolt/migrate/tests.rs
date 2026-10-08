@@ -94,6 +94,7 @@ const ALL_VERSIONS: &[&str] = &[
     "0064_session_wrap_window",
     "0065_fact_write_session",
     "0068_field_write_written_at",
+    "0069_journal_entry_closing",
 ];
 
 /// **A migration set of this test's own, carrying the shape no shipped

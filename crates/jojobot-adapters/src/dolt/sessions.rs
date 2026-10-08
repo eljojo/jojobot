@@ -255,7 +255,7 @@ impl DoltSessions {
             attempted: id.to_string(),
         })?;
         let entries = sqlx::query(
-            "SELECT id, at, text, touched, beat, happened_on, closing_focus FROM journal_entry
+            "SELECT id, at, text, touched, beat, happened_on, closing_focus, closing FROM journal_entry
              WHERE session = ? ORDER BY ordinal",
         )
         .bind(id.as_str())
@@ -477,6 +477,7 @@ fn entry_from(row: &sqlx::mysql::MySqlRow) -> Result<JournalEntry, SessionError>
         closing_focus: row
             .try_get::<Option<String>, _>("closing_focus")
             .map_err(store)?,
+        closing: row.try_get::<i64, _>("closing").map_err(store)? != 0,
     })
 }
 
@@ -710,8 +711,9 @@ impl Sessions for DoltSessions {
         );
         sqlx::query(
             "INSERT INTO journal_entry
-                 (session, id, ordinal, at, text, touched, beat, happened_on, closing_focus)
-             VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?)",
+                 (session, id, ordinal, at, text, touched, beat, happened_on, closing_focus,
+                  closing)
+             VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)",
         )
         .bind(id.as_str())
         .bind(entry_id.as_str())
@@ -721,6 +723,7 @@ impl Sessions for DoltSessions {
         .bind(entry.beat.as_deref())
         .bind(entry.on.map(|day| day.to_string()))
         .bind(entry.closing_focus.as_deref())
+        .bind(entry.closing)
         .execute(&mut *tx)
         .await
         .map_err(store)?;
@@ -1000,7 +1003,7 @@ async fn read_entry(
     entry: &EntryId,
 ) -> Result<JournalEntry, SessionError> {
     let row = sqlx::query(
-        "SELECT id, at, text, touched, beat, happened_on, closing_focus FROM journal_entry \
+        "SELECT id, at, text, touched, beat, happened_on, closing_focus, closing FROM journal_entry \
          WHERE session = ? AND id = ?",
     )
     .bind(session.as_str())

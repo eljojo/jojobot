@@ -1649,6 +1649,7 @@ async fn one_beat_scanned_into_two_writes_of_a_run_answers_once() {
         beat: None,
         on: None,
         closing_focus: None,
+        closing: false,
     });
 
     let index = FullTextIndex::open().expect("index opens");
@@ -2474,6 +2475,7 @@ fn run(id: &str, bot: &str, focus: &str, beat: &str) -> jojobot_domain::session:
             beat: None,
             on: None,
             closing_focus: None,
+            closing: false,
         }],
     }
 }
@@ -3083,6 +3085,7 @@ fn run_of(id: &str, bot: &str, beats: &[(&str, &str)]) -> jojobot_domain::sessio
                 beat: None,
                 on: None,
                 closing_focus: None,
+                closing: false,
             })
             .collect(),
     }

@@ -386,3 +386,132 @@ async fn a_reopened_run_can_capture_and_post_and_the_second_wrap_ends_both() {
         .await
         .says("\"wrote\":false");
 }
+
+/// **The next boot's handover is the story the run closed on, not the last
+/// thing written after it.** A run reopened with its wrap code takes one more
+/// entry, and that entry is the newest in the chronology. The handover is the
+/// closing story, so it names that and not the afterthought. The first half is
+/// the positive: a wrap that nobody reopened hands over its story.
+#[tokio::test]
+async fn the_handover_after_a_reopened_run_is_the_closing_story() {
+    let story = Story::begin("bot:otto").await;
+
+    // A wrap nobody reopens: the handover is its story.
+    let plain = story.session().await;
+    working_on(&plain, "a run nobody reopens", "set out").await;
+    plain
+        .call("wrap_session", json!({"story": "plain story: all done"}))
+        .await;
+    let (booted, _) = story
+        .call(
+            "start_here",
+            json!({"bot": "otto", "brief": true, "resume": "new"}),
+        )
+        .await;
+    let handover = booted.json()["session"]["handover"]["story"].to_string();
+    assert!(
+        handover.contains("plain story"),
+        "a wrap nobody reopened hands over its story: {handover}"
+    );
+
+    // A wrap that is reopened and written to once.
+    let second_run = story.session().await;
+    working_on(&second_run, "a run reopened once", "set out again").await;
+    let wrapped = second_run
+        .call(
+            "wrap_session",
+            json!({"story": "closing story: the work is done"}),
+        )
+        .await
+        .json();
+    let code = wrapped["wrap_code"]
+        .as_str()
+        .expect("a wrap code")
+        .to_string();
+    let (_, reopened) = story
+        .call(
+            "start_here",
+            json!({"bot": "otto", "brief": true, "resume": code}),
+        )
+        .await;
+    let reopened = reopened.expect("the code hands back the run's sid");
+    working_on(
+        &reopened,
+        "a run reopened once",
+        "an afterthought after the wrap",
+    )
+    .await;
+
+    let (booted, _) = story
+        .call(
+            "start_here",
+            json!({"bot": "otto", "brief": true, "resume": "new"}),
+        )
+        .await;
+    let handover = booted.json()["session"]["handover"].to_string();
+    assert!(
+        handover.contains("closing story"),
+        "the handover serves the story the run closed on: {handover}"
+    );
+    assert!(
+        !handover.contains("afterthought"),
+        "and not the entry written after it: {handover}"
+    );
+}
+
+/// **A run wrapped twice hands over the story it ended on.** The first wrap, one
+/// last change and a second wrap leave two closing entries in the chronology;
+/// the handover is the second, the newest, and not the first story and not the
+/// last change between them.
+#[tokio::test]
+async fn the_handover_after_a_second_wrap_is_the_newest_closing_story() {
+    let story = Story::begin("bot:otto").await;
+    let run = story.session().await;
+    working_on(&run, "a run wrapped twice", "set out").await;
+    let wrapped = run
+        .call(
+            "wrap_session",
+            json!({"story": "first closing story: the first part is done"}),
+        )
+        .await
+        .json();
+    let code = wrapped["wrap_code"]
+        .as_str()
+        .expect("a wrap code")
+        .to_string();
+    let (_, reopened) = story
+        .call(
+            "start_here",
+            json!({"bot": "otto", "brief": true, "resume": code}),
+        )
+        .await;
+    let reopened = reopened.expect("the code hands back the run's sid");
+    working_on(
+        &reopened,
+        "a run wrapped twice",
+        "a change between the two wraps",
+    )
+    .await;
+    reopened
+        .call(
+            "wrap_session",
+            json!({"story": "second closing story: and one more thing"}),
+        )
+        .await;
+
+    let (booted, _) = story
+        .call(
+            "start_here",
+            json!({"bot": "otto", "brief": true, "resume": "new"}),
+        )
+        .await;
+    let handover = booted.json()["session"]["handover"].to_string();
+    assert!(
+        handover.contains("second closing story"),
+        "the handover is the story the run ended on: {handover}"
+    );
+    assert!(
+        !handover.contains("first closing story") && !handover.contains("between the two wraps"),
+        "and neither the first story nor the change between the wraps: {handover}"
+    );
+}

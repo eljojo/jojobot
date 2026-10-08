@@ -320,12 +320,18 @@ impl Jojobot {
             });
         };
         serde_json::json!({
-            // **The last entry, because wrapping folds the still-open focus
-            // into the chronology as one final beat.** That entry IS the story.
-            "story": run.entries.last().map(|e| e.text.clone()),
+            // **The entry the wrap closed the run with**, because wrapping folds
+            // the still-open focus into the chronology as one final beat and that
+            // entry IS the story. A run reopened for one last change takes entries
+            // after it, so the newest entry is not the story. A run from before the
+            // closing mark has no marked entry, and its last entry is its story.
+            "story": run
+                .closing_entry()
+                .or_else(|| run.entries.last())
+                .map(|e| e.text.clone()),
             "working_on": run.focus,
             "session": run.id.to_string(),
-            "wrapped_at": run.last_beat().to_string(),
+            "wrapped_at": run.wrapped_at().to_string(),
             "note": "the last run of this identity that was wrapped up. It is here to READ: a \
                      wrapped run is read-only unless you hold its wrap_code, and it cannot be \
                      resumed as a running session. Read it, then start your own.",
@@ -962,6 +968,89 @@ mod tests {
         assert!(
             note.contains("wrap_code"),
             "the handover note names the way a wrapped run reopens: {note}"
+        );
+    }
+
+    /// **The handover is the run that was WRAPPED last, by the moment of its
+    /// closing entry, and not the run that was WRITTEN to last.** The older run
+    /// is wrapped first, then the newer one, then the older one is reopened for
+    /// one last change: its last write is now the newest in the board, and its
+    /// wrap is still the older. The handover is the newer run's story, at the
+    /// newer run's wrap. Without the closing mark both halves would name the
+    /// reopened run and the afterthought.
+    #[tokio::test]
+    async fn the_handover_follows_the_wrap_and_not_the_last_write_of_a_reopened_run() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma").await;
+        let now = jiff::Timestamp::now();
+        let hours = |h: i64| now - jiff::SignedDuration::from_hours(h);
+
+        let wrapped = |sid: &str, started: i64, story: &str, wrapped_at: i64| {
+            let store = store.clone();
+            let (sid, story) = (sid.to_string(), story.to_string());
+            async move {
+                let run = store
+                    .begin(NewSession {
+                        timezone: None,
+                        started_on: None,
+                        bot: EntityId("bot:gamma".into()),
+                        sid: Sid(sid),
+                        focus: "a piece of work".into(),
+                        started_at: hours(started),
+                    })
+                    .await
+                    .expect("begin ok");
+                store
+                    .append(
+                        &run.id,
+                        NewEntry::manual(story, hours(wrapped_at), None).closing(None),
+                    )
+                    .await
+                    .expect("append ok");
+                store
+                    .close(&run.id, SessionState::Wrapped)
+                    .await
+                    .expect("close ok");
+                run
+            }
+        };
+        let older = wrapped("t001", 30, "older story: wrapped first", 20).await;
+        let newer = wrapped("t002", 10, "newer story: wrapped second", 5).await;
+
+        // Both are reopened and take one more entry each. The older run's is the
+        // newest in the board; the newer run's comes after its own wrap, so the
+        // handover's moment has to be the wrap and not that entry.
+        for (run, entry, at) in [
+            (&older, "an afterthought on the older run", 1),
+            (&newer, "an afterthought on the newer run", 2),
+        ] {
+            store
+                .set_wrap_window(
+                    &run.id,
+                    Some(jojobot_domain::session::WrapWindow::Open(
+                        "wc-testtesttest".into(),
+                    )),
+                )
+                .await
+                .expect("window opens");
+            store
+                .append(&run.id, NewEntry::manual(entry, hours(at), None))
+                .await
+                .expect("append ok");
+        }
+
+        let body = boot(&jojobot, "gamma").await;
+        let handover = &body["session"]["handover"];
+        let story = handover["story"].as_str().expect("a story");
+        assert!(
+            story.contains("newer story"),
+            "the handover is the run wrapped last, not the one written to last: {handover}"
+        );
+        assert_eq!(
+            handover["wrapped_at"].as_str(),
+            Some(hours(5).to_string().as_str()),
+            "and it was wrapped at its own closing entry's moment: {handover}"
         );
     }
 

@@ -1365,6 +1365,59 @@ async fn an_alias_survives_a_rename_and_a_search_still_finds_it_by_nickname() {
     store.stop().await;
 }
 
+/// 🚨 **An entry written before the closing mark existed reads as not
+/// closing.** The row is inserted the way an older build wrote it, without the
+/// column, so the store's default is what answers; a run whose entries are all
+/// from before the mark has no closing entry, and the reader keeps its last entry
+/// as its story.
+#[tokio::test]
+async fn a_journal_entry_written_before_the_closing_mark_reads_as_not_closing() {
+    let scratch = Scratch::new("journal-entry-before-the-closing-mark");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("journal_entry_before_the_closing_mark")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let sessions_store = DoltSessions::open(pool.clone());
+    let session = sessions_store
+        .begin(NewSession {
+            bot: EntityId("bot:conflict-not-a-failure".into()),
+            sid: Sid("cnf2".into()),
+            focus: "a run from before".into(),
+            started_at: sessions::epoch(),
+            timezone: None,
+            started_on: None,
+        })
+        .await
+        .expect("begin ok");
+    sqlx::query(
+        "INSERT INTO journal_entry (session, id, ordinal, at, text, touched, beat, happened_on, \
+         closing_focus) VALUES (?, 'legacy-1', 1, '2026-01-01T00:00:00Z', 'the story it ended on', \
+         NULL, NULL, NULL, NULL)",
+    )
+    .bind(session.id.as_str())
+    .execute(&pool)
+    .await
+    .expect("a row the way an older build wrote it");
+
+    let read = sessions_store
+        .read_session(&session.id)
+        .await
+        .expect("the run reads");
+    assert_eq!(read.entries.len(), 1, "the legacy entry is on the run");
+    assert!(!read.entries[0].closing, "it reads as not closing");
+    assert!(
+        read.closing_entry().is_none(),
+        "so the run has no closing entry"
+    );
+
+    store.stop().await;
+}
+
 /// 🚨 **The session rail tells a write the store refused from a store that
 /// cannot be reached**, as the memory rail does: a unique index the store
 /// enforces, two runs begun on the same words, and then a store that is gone.
@@ -5107,6 +5160,7 @@ async fn session_write_summary_answers_the_real_store() {
                 beat: None,
                 on: None,
                 closing_focus: None,
+                closing: false,
             },
         )
         .await
@@ -5151,6 +5205,7 @@ async fn session_write_summary_answers_the_real_store() {
                 beat: Some("test-beat".into()),
                 on: None,
                 closing_focus: None,
+                closing: false,
             },
         )
         .await
@@ -5293,6 +5348,7 @@ async fn session_write_summary_answers_the_real_store() {
                 beat: None,
                 on: None,
                 closing_focus: None,
+                closing: false,
             },
         )
         .await

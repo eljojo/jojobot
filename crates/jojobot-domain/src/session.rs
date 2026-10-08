@@ -626,6 +626,15 @@ pub struct JournalEntry {
     /// run was doing beside it, never inside it.
     #[serde(default)]
     pub closing_focus: Option<String>,
+    /// **Whether a wrap closed the run with this entry.** `wrap_session`'s own
+    /// mark, and nothing else sets it. It is a mark of its own because
+    /// [`JournalEntry::closing_focus`] cannot be it: that field is empty on a
+    /// closing entry whenever the run had no focus, or a focus the story
+    /// repeats. A run reopened for one last change takes entries after its
+    /// closing one, so the newest entry is not the story, and this is how the
+    /// story is found. `false` on every entry written before the mark existed.
+    #[serde(default)]
+    pub closing: bool,
 }
 
 impl JournalEntry {
@@ -653,6 +662,10 @@ pub struct NewEntry {
     /// `None` for every ordinary entry — only `wrap_session` ever sets it, via
     /// [`NewEntry::closing`].
     pub closing_focus: Option<String>,
+    /// **Whether this entry closes the session** — see
+    /// [`JournalEntry::closing`]. Set by [`NewEntry::closing`] and by nothing
+    /// else.
+    pub closing: bool,
 }
 
 impl NewEntry {
@@ -664,6 +677,7 @@ impl NewEntry {
             on,
             beat: None,
             closing_focus: None,
+            closing: false,
         }
     }
 
@@ -680,15 +694,18 @@ impl NewEntry {
             on,
             beat: Some(class.into()),
             closing_focus: None,
+            closing: false,
         }
     }
 
     /// **Mark this entry as the one closing the session**, carrying the run's
     /// own focus at that moment. `None` when the run had none, which adds no
-    /// field rather than an empty one.
+    /// field rather than an empty one. **The entry is marked closing either
+    /// way**: the mark is what finds the story, and the focus is only a label.
     #[must_use]
     pub fn closing(mut self, focus: Option<String>) -> Self {
         self.closing_focus = focus;
+        self.closing = true;
         self
     }
 }
@@ -856,6 +873,25 @@ impl Session {
             .flat_map(|e| [e.at, e.touched.unwrap_or(e.at)])
             .max()
             .unwrap_or(self.started_at)
+    }
+
+    /// **The entry a wrap closed this run with**: the newest entry marked
+    /// closing. A run wrapped a second time holds two, and the second is the
+    /// story it ended on. `None` for a run that was never wrapped and for one
+    /// wrapped before the mark existed, which could not be reopened, so its last
+    /// entry is its story.
+    pub fn closing_entry(&self) -> Option<&JournalEntry> {
+        self.entries.iter().rev().find(|entry| entry.closing)
+    }
+
+    /// **When the run was wrapped**: the moment of its closing entry. A run
+    /// reopened for one last change takes entries after it, so
+    /// [`Session::last_beat`] moves and this does not. A run with no marked
+    /// entry answers `last_beat`, which is its wrap for a run from before the
+    /// mark.
+    pub fn wrapped_at(&self) -> Timestamp {
+        self.closing_entry()
+            .map_or_else(|| self.last_beat(), |entry| entry.at)
     }
 
     /// **The newest day this session has to show for itself in the caller's own
@@ -1379,12 +1415,13 @@ pub async fn sweep_and_find(
     // list is consumed. `existing` sorts newest-START-first, which is not
     // the order a WRAP happened in: a run started long ago and wrapped just
     // now still needs to win over one started more recently and wrapped
-    // earlier. `last_beat` is the wrap's own moment — the closing story is
-    // the last entry `wrap_session` appends, right before the close.
+    // earlier. `wrapped_at` is the wrap's own moment: the moment of the entry
+    // `wrap_session` closed the run with, which a later entry written by a run
+    // reopened for one last change does not move.
     let handover = existing
         .iter()
         .filter(|s| s.state == SessionState::Wrapped)
-        .max_by_key(|s| s.last_beat())
+        .max_by_key(|s| s.wrapped_at())
         .cloned();
     // **Read AFTER the sweep, and through it.** The run this boot just marked
     // `abandoned` is the archetypal "resume last session" — it is the one that
@@ -1555,6 +1592,7 @@ mod projection_tests {
                     touched: None,
                     beat: None,
                     closing_focus: None,
+                    closing: false,
                 },
                 JournalEntry {
                     id: EntryId("e2".into()),
@@ -1564,6 +1602,7 @@ mod projection_tests {
                     touched: None,
                     beat: None,
                     closing_focus: None,
+                    closing: false,
                 },
             ],
         };
@@ -1900,6 +1939,7 @@ mod tests {
                     beat: Some((*class).to_string()),
                     text: text.clone(),
                     closing_focus: None,
+                    closing: false,
                 };
                 let read = parse_beat(phrase, &entry)
                     .unwrap_or_else(|| panic!("{class} must read back its own line: {text:?}"));
@@ -1965,6 +2005,7 @@ mod tests {
             beat: Some("capture".into()),
             text: text.to_string(),
             closing_focus: None,
+            closing: false,
         };
         for hand_edited in [
             "captured facts about milhouse and a few others",
@@ -1993,6 +2034,7 @@ mod tests {
             beat: beat.map(str::to_string),
             text: text.to_string(),
             closing_focus: None,
+            closing: false,
         };
         let session = Session {
             timezone: None,
@@ -2313,6 +2355,7 @@ mod tests {
                 touched: None,
                 beat: None,
                 closing_focus: None,
+                closing: false,
             }],
         };
 
@@ -2386,6 +2429,7 @@ mod tests {
                 touched: None,
                 beat: None,
                 closing_focus: None,
+                closing: false,
             }],
             ..bare.clone()
         };
@@ -2520,6 +2564,7 @@ mod tests {
             touched: None,
             beat: new.beat,
             closing_focus: new.closing_focus,
+            closing: new.closing,
         };
         assert!(!entry(manual).is_auto());
         assert!(entry(auto).is_auto());

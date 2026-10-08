@@ -176,6 +176,7 @@ impl Sessions for InMemorySessions {
             touched: None,
             beat: entry.beat,
             closing_focus: entry.closing_focus,
+            closing: entry.closing,
         };
         sessions[at].entries.push(recorded.clone());
         Ok(recorded)
@@ -1259,6 +1260,52 @@ pub mod contract {
         );
     }
 
+    /// **The closing mark survives a write and a read, whether or not the
+    /// closing entry carries a focus, and an ordinary entry carries none.**
+    /// Paired in one round trip: a store that marked every entry, or only the
+    /// entries that carry a focus, would pass one half and fail the other. The
+    /// closing entry with NO focus is the case the mark exists for.
+    pub async fn a_closing_mark_survives_the_round_trip_and_an_ordinary_entry_carries_none(
+        store: &dyn Sessions,
+    ) {
+        let session = begin(store, "gamma", "the first run", 0).await;
+        journal(store, &session.id, "read the hand-off", 60).await;
+        store
+            .append(
+                &session.id,
+                NewEntry::manual("the seam is cut", at(120), None).closing(None),
+            )
+            .await
+            .expect("append ok");
+        store
+            .append(
+                &session.id,
+                NewEntry::manual("and the focus rides with it", at(180), None)
+                    .closing(Some("cutting the codec seam".to_string())),
+            )
+            .await
+            .expect("append ok");
+
+        let read = store.read_session(&session.id).await.expect("read ok");
+        assert!(
+            !read.entries[0].closing,
+            "an ordinary entry is not a closing one"
+        );
+        assert!(
+            read.entries[1].closing && read.entries[1].closing_focus.is_none(),
+            "a closing entry with no focus is marked all the same"
+        );
+        assert!(
+            read.entries[2].closing && read.entries[2].closing_focus.is_some(),
+            "and so is one that carries a focus"
+        );
+        assert_eq!(
+            read.closing_entry().map(|entry| entry.text.as_str()),
+            Some("and the focus rides with it"),
+            "the newest closing entry is the one the run ended on"
+        );
+    }
+
     /// The whole spec, against one store. Each case runs on a **fresh** store,
     /// so nothing here depends on the order the others ran in.
     /// 🚨 **A stated day survives a write and a read**, on the run and on the
@@ -1587,6 +1634,7 @@ pub mod contract {
         a_handle_that_is_not_drawn_is_refused(&fresh()).await;
         an_entry_survives_the_round_trip(&fresh()).await;
         a_closing_focus_survives_the_round_trip_and_an_ordinary_entry_carries_none(&fresh()).await;
+        a_closing_mark_survives_the_round_trip_and_an_ordinary_entry_carries_none(&fresh()).await;
         a_stated_day_survives_a_write_and_a_read(&fresh()).await;
         a_moved_day_is_stored_and_can_be_moved_again(&fresh()).await;
         a_wrapped_runs_window_is_stored_read_back_and_cleared(&fresh()).await;

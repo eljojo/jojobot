@@ -1,0 +1,12 @@
+-- Whether a wrap closed the run with this entry.
+--
+-- **The closing entry could not be found.** `closing_focus` marks it only when
+-- the run had a focus the story does not repeat, and is empty on the rest. A run
+-- reopened for one last change takes entries after its closing one, so the
+-- newest entry is not the story, and nothing else told them apart.
+--
+-- Only wrap_session sets it. **Every row written before this column existed is
+-- false**, and nothing is backfilled: a run from before could not be reopened,
+-- so its last entry is its story and the reader keeps that rule for a run with
+-- no marked entry.
+ALTER TABLE journal_entry ADD COLUMN closing BOOLEAN NOT NULL DEFAULT FALSE;
