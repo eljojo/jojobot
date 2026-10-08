@@ -2654,6 +2654,27 @@ impl Jojobot {
         if own_runs_excluded > 0 {
             body["own_runs_excluded"] = own_runs_excluded.into();
         }
+        // **An answer that holds something and left something out says how to
+        // get it.** The counts say that archived or merged-away entities are
+        // missing; only an empty answer carried the way to them above. Added
+        // only when a count is above zero, so an answer that left nothing out
+        // carries no extra bytes.
+        if !found.is_empty() && (archived_excluded > 0 || merged_excluded > 0) {
+            let mut routes: Vec<String> = Vec::new();
+            if archived_excluded > 0 {
+                routes.push(format!(
+                    "{archived_excluded} archived left out of this browse: recall the handle of \
+                     one to read it whole, an archived entity answers by its own handle"
+                ));
+            }
+            if merged_excluded > 0 {
+                routes.push(format!(
+                    "{merged_excluded} merged into another thing left out: recall the handle of \
+                     one and merged_into names where it went"
+                ));
+            }
+            body["excluded_note"] = routes.join("; ").into();
+        }
         for (wanted, displaced) in &type_displaced {
             crate::answer::note_type_displaced(&mut body, wanted, displaced.as_ref());
         }

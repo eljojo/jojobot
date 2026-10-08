@@ -1224,6 +1224,106 @@ async fn a_kind_browse_leaves_out_a_merged_away_entity_and_counts_it() {
     );
 }
 
+/// 🚨 **A browse that holds something and left something out says how to get
+/// it.** The count alone told a caller that an archived or a merged-away entity
+/// was missing and nothing about where it went; only an EMPTY answer carried
+/// the route. Now a non-empty answer that left either out names the call that
+/// reads one, and the key that says where a merged one went. Paired with a
+/// browse that left nothing out, which carries no note, so the note is not
+/// something every answer pays for.
+#[tokio::test]
+async fn a_browse_that_holds_something_and_left_something_out_names_the_route() {
+    let jojobot = handler();
+    for handle in ["person:bart", "person:homer", "person:milhouse"] {
+        ensure(&jojobot, handle).await;
+    }
+    jojobot
+        .memory
+        .archive_entity(&EntityId("person:bart".into()), "a mistaken write")
+        .await
+        .expect("archive_entity ok");
+    let landed = json_of(
+        &jojobot
+            .merge_entities(Parameters(crate::memory::merge_entities::MergeArgs {
+                duplicate: "person:homer".into(),
+                survivor: "person:milhouse".into(),
+                reason: None,
+                recorded_at: None,
+                sid: Some(writing_as(&jojobot)),
+            }))
+            .await
+            .expect("merge ok"),
+    );
+    assert_eq!(landed["merged"], "person:homer", "{landed}");
+
+    let body = json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                kind: Some("person".into()),
+                ..of_nothing()
+            }))
+            .await
+            .expect("recall ok"),
+    );
+    assert!(
+        !body["objects"].as_array().expect("objects").is_empty(),
+        "the case is about an answer that holds something: {body}"
+    );
+    assert_eq!(body["archived_excluded"], 1, "{body}");
+    assert_eq!(body["merged_excluded"], 1, "{body}");
+    let note = body["excluded_note"]
+        .as_str()
+        .unwrap_or_else(|| panic!("a browse that left things out names no route: {body}"));
+    assert!(
+        note.contains("recall") && note.contains("merged_into"),
+        "the note names the call that reads one and the key that says where a merged one went: {note}"
+    );
+
+    // Only archived left out: the note names the call and not the merged key.
+    let archived_only = handler();
+    for handle in ["person:bart", "person:milhouse"] {
+        ensure(&archived_only, handle).await;
+    }
+    archived_only
+        .memory
+        .archive_entity(&EntityId("person:bart".into()), "a mistaken write")
+        .await
+        .expect("archive_entity ok");
+    let body = json_of(
+        &archived_only
+            .recall(Parameters(RecallArgs {
+                kind: Some("person".into()),
+                ..of_nothing()
+            }))
+            .await
+            .expect("recall ok"),
+    );
+    let note = body["excluded_note"].as_str().expect("a note");
+    assert!(
+        note.contains("recall") && !note.contains("merged_into"),
+        "the note speaks of what was left out and no more: {note}"
+    );
+
+    // Nothing left out: no note.
+    let whole = handler();
+    for handle in ["person:bart", "person:milhouse"] {
+        ensure(&whole, handle).await;
+    }
+    let body = json_of(
+        &whole
+            .recall(Parameters(RecallArgs {
+                kind: Some("person".into()),
+                ..of_nothing()
+            }))
+            .await
+            .expect("recall ok"),
+    );
+    assert!(
+        body.get("excluded_note").is_none(),
+        "an answer that left nothing out carries a note: {body}"
+    );
+}
+
 /// **The direct door excludes nothing, so it counts nothing.** Naming
 /// the archived entity's own handle returns it whole — untouched by
 /// this change — and the count reads zero rather than being left off,
