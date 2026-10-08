@@ -14,6 +14,22 @@ pub(crate) fn store_failed(verb: &str, detail: &str) -> String {
     )
 }
 
+/// **A write the store refused on a rule it enforces, told apart from a store
+/// failure.** `rule` is the kind of rule and is safe to return; the server's own
+/// account stays in the log. The sentence says what `store_failed`'s does not:
+/// the store is reachable and answered, and sending the same call again meets
+/// the same refusal, so a retry is the wrong next move.
+pub(crate) fn refused(verb: &str, rule: &str) -> String {
+    tracing::error!(verb, rule, "a refused write reached the boundary");
+    format!(
+        "{verb} was refused by jojobot's own storage on a rule it enforces ({rule}). The store \
+         is working and answered; nothing was written. Sending the same call again will meet \
+         the same refusal, so do not retry it unchanged. This is not something your call did \
+         wrong that you can fix by calling differently: tell the operator, because it needs a \
+         person."
+    )
+}
+
 /// **A write that collided with another, told apart from a store failure.**
 ///
 /// Logged at `warn` rather than `error`: the store answered correctly and

@@ -2493,10 +2493,26 @@ const FACT_WRITE_COLUMNS: &str = "w.entity, w.fact_id AS id, w.content, w.detail
 /// the same bucket as a store that could not be reached at all would tell a
 /// caller to escalate the commonest, most self-healing case exactly as it
 /// would a genuine outage.
+///
+/// **A write the store refused on a rule it enforces is told apart too.** A
+/// duplicate key, a reference to nothing, a required value left out or a failed
+/// check is the store answering promptly and correctly, so the words for an
+/// outage would send a caller to retry a write that can never land. The answer
+/// carries the kind of rule and nothing of the server's own account.
 fn store(e: sqlx::Error) -> MemoryError {
     if e.as_database_error().and_then(|db| db.code()).as_deref() == Some("40001") {
         tracing::warn!(error = %e, "a write conflicted with another landing the same instant");
         return MemoryError::Conflict;
+    }
+    if let Some(rule) = e.as_database_error().and_then(|db| match db.kind() {
+        sqlx::error::ErrorKind::UniqueViolation => Some("a key held twice"),
+        sqlx::error::ErrorKind::ForeignKeyViolation => Some("a reference to nothing"),
+        sqlx::error::ErrorKind::NotNullViolation => Some("a required value left out"),
+        sqlx::error::ErrorKind::CheckViolation => Some("a check that failed"),
+        _ => None,
+    }) {
+        tracing::error!(error = %e, rule, "the memory store refused a write on a rule it enforces");
+        return MemoryError::Refused(rule.to_string());
     }
     tracing::error!(error = %e, "the memory store failed");
     MemoryError::Store("the memory store could not be reached".into())

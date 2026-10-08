@@ -1365,6 +1365,81 @@ async fn an_alias_survives_a_rename_and_a_search_still_finds_it_by_nickname() {
     store.stop().await;
 }
 
+/// 🚨 **A write the store refuses is told apart from a store that cannot be
+/// reached.**
+///
+/// A constraint the store enforces (here a unique index, so two ordinary
+/// captures of the same words collide) used to come back as the words for an
+/// outage, and a caller told the store is down retries a write that can never
+/// land. The refusal has its own answer. A store that is genuinely gone still
+/// reads as unreachable: both halves are asserted, because an answer that said
+/// "refused" for everything would pass the first half alone.
+#[tokio::test]
+async fn a_refused_write_is_not_reported_as_an_unreachable_store() {
+    let scratch = Scratch::new("refused-write");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("refused_write")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool.clone());
+
+    let first = EntityId("thing:contract-links-duplicate".into());
+    let second = EntityId("thing:contract-links-survivor".into());
+    for (id, name) in [(&first, "First"), (&second, "Second")] {
+        memory
+            .add_entity(NewEntity::new(id.clone(), name, "contract-fixture"))
+            .await
+            .expect("add_entity ok")
+            .written()
+            .expect("nothing collides with it");
+    }
+    // A rule the store enforces that no write of this build breaks on its own.
+    sqlx::query("ALTER TABLE fact_write ADD UNIQUE INDEX one_telling (content(100))")
+        .execute(&pool)
+        .await
+        .expect("the store takes a unique index");
+    memory
+        .capture(NewFact::about(
+            first.clone(),
+            "the same words",
+            date(2026, 8, 1),
+        ))
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("the first telling lands");
+
+    let refused = memory
+        .capture(NewFact::about(
+            second.clone(),
+            "the same words",
+            date(2026, 8, 2),
+        ))
+        .await;
+    match &refused {
+        Err(MemoryError::Store(said)) => {
+            panic!("a write the store refused came back as the words for an outage: {said:?}",)
+        }
+        other => assert!(
+            matches!(other, Err(MemoryError::Refused(_))),
+            "a write the store refused came back as something else: {other:?}",
+        ),
+    }
+
+    // The positive beside it: a store that is gone is still an unreachable store.
+    store.stop().await;
+    let gone = memory.list_entities(None).await;
+    assert!(
+        matches!(gone, Err(MemoryError::Store(_))),
+        "a store that cannot be reached did not read as one: {gone:?}",
+    );
+}
+
 /// 🚨 **Renaming a row from before the badge column exists is a readable
 /// error, never a panic.**
 ///

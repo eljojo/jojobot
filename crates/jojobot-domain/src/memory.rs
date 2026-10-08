@@ -5041,6 +5041,21 @@ pub enum MemoryError {
     /// if it were this is the wrong advice for the commoner case.
     #[error("store error: {0}")]
     Store(String),
+    /// **The store was reached and refused the write**: a rule it enforces
+    /// itself (a key that would be held twice, a reference to nothing, a
+    /// required value left out) stopped it. The word is the rule's kind and
+    /// nothing else; the server's own account is logged and never crosses.
+    ///
+    /// **Not [`MemoryError::Store`].** That one says the store could not be
+    /// reached and that trying again is reasonable. A refusal is the store
+    /// answering promptly and correctly, and the same call sent again meets the
+    /// same refusal. A caller told the store is down retries a write that can
+    /// never land.
+    #[error(
+        "the store refused this write on a rule it enforces ({0}); nothing was written, and \
+         sending the same call again will meet the same refusal"
+    )]
+    Refused(String),
     /// **A write collided with another that committed the same instant.**
     ///
     /// The store's own optimistic concurrency caught it before either write

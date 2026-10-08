@@ -1027,6 +1027,12 @@ pub(crate) fn memory_error(e: MemoryError) -> McpError {
         MemoryError::Store(msg) => {
             McpError::internal_error(crate::boundary::store_failed("this call", &msg), None)
         }
+        // **A refusal is not an outage** — see the domain's own doc on
+        // [`MemoryError::Refused`]. The sentence says the store answered and that
+        // sending the same call again meets the same refusal.
+        MemoryError::Refused(rule) => {
+            McpError::internal_error(crate::boundary::refused("this call", &rule), None)
+        }
         // **A conflict is not a failure** — see the domain's own doc on
         // [`MemoryError::Conflict`]. It reaches the caller through the same
         // JSON-RPC error shape as `Store` (rated with the same severity,
@@ -1285,6 +1291,25 @@ mod tests {
             err.message.contains("Try once more"),
             "a caller needs its next move: {}",
             err.message
+        );
+    }
+
+    /// **`memory_error` routes `Refused` through `refused`, not `store_failed`**
+    /// — the wiring proof beside `boundary`'s own sentence. A write the store
+    /// refused reaches the caller as its own answer, naming the kind of rule,
+    /// and never as the answer a store that could not be reached gets.
+    #[test]
+    fn a_refused_write_is_mapped_through_its_own_sentence_not_the_failure_one() {
+        let refused = memory_error(MemoryError::Refused("a key held twice".into()));
+        let outage = memory_error(MemoryError::Store("the store is gone".into()));
+        assert_ne!(
+            refused.message, outage.message,
+            "a refusal and an outage reached the caller as one answer"
+        );
+        assert!(
+            refused.message.contains("a key held twice"),
+            "the caller is told which kind of rule refused it: {}",
+            refused.message
         );
     }
 
