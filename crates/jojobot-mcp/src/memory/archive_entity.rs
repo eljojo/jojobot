@@ -62,10 +62,17 @@ impl Jojobot {
     ) -> Result<CallToolResult, McpError> {
         // Refused here, before anything is written — see
         // [`Jojobot::attributable`].
-        if let Err(refused) = self.identified_for_write(args.sid.as_deref()).await {
+        let caller = match self.identified_for_write(args.sid.as_deref()).await {
+            Ok(caller) => caller,
+            Err(refused) => return Ok(refused),
+        };
+        let handle = EntityId::person(&args.handle);
+        if let Some(refused) = self
+            .refuse_a_stranger_the_role_object(&caller.bot, &handle)
+            .await
+        {
             return Ok(refused);
         }
-        let handle = EntityId::person(&args.handle);
         if args.restore.unwrap_or(false) {
             return self.restore(&handle, &args).await;
         }

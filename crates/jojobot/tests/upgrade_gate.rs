@@ -1281,7 +1281,8 @@ async fn field_link_holds_the_links_the_writes_imply_and_nothing_else() {
 /// assistant. A second bot is named its owner through `claims_role`, and its
 /// claim at the door is taken: the old field sits on another bot and is never
 /// read as its lease. The assistant, now a non-owner, is refused with the owner
-/// named, whatever its old field says.
+/// named, whatever its old field says. The owner then archives the role
+/// object its claim made, and a stranger's archive of it is refused.
 #[tokio::test]
 async fn an_old_role_field_on_a_bot_that_is_not_the_owner_does_not_stop_the_owner() {
     let Restored {
@@ -1368,6 +1369,50 @@ async fn an_old_role_field_on_a_bot_that_is_not_the_owner_does_not_stop_the_owne
         fail(
             "the old holder being refused with the owner named",
             &stray.to_string(),
+        );
+    }
+
+    // **The role object the owner's claim made is the owner's to archive, and a
+    // stranger's archive of it is refused naming the owner.** Read over the real
+    // store, where the object's parent comes back as a handle.
+    let stranger = parse(
+        "the stranger's archive",
+        &surface
+            .call(
+                "archive_entity",
+                json!({"handle": "role:upgrade-fixture-holder", "reason": "i want it",
+                       "sid": sid}),
+            )
+            .await,
+    );
+    if stranger["status"] != "blocked"
+        || !stranger["how_to_proceed"]
+            .as_str()
+            .is_some_and(|way| way.contains("bot:alpha"))
+    {
+        fail(
+            "a stranger's archive of a role object being refused, naming its owner",
+            &stranger.to_string(),
+        );
+    }
+    let owner_sid = owner["session"]["sid"]
+        .as_str()
+        .unwrap_or_else(|| fail("the owner's handle", &owner.to_string()))
+        .to_string();
+    let archived = parse(
+        "the owner's archive",
+        &surface
+            .call(
+                "archive_entity",
+                json!({"handle": "role:upgrade-fixture-holder", "reason": "made by mistake",
+                       "sid": owner_sid}),
+            )
+            .await,
+    );
+    if archived["archived"]["reason"] != "made by mistake" {
+        fail(
+            "the owner's archive of its role object",
+            &archived.to_string(),
         );
     }
     surface.finish().await;

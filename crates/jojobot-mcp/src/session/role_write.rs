@@ -208,6 +208,93 @@ impl Jojobot {
         Ok(parent.filter(|parent| parent != claimant))
     }
 
+    /// **The bots that head a chart**: a bot with no manager that something
+    /// reports to. Read in one pass over the folded fields, never one pass per
+    /// bot.
+    pub(crate) async fn chart_heads(&self) -> Result<Vec<EntityId>, MemoryError> {
+        let mut managers: std::collections::BTreeSet<String> = Default::default();
+        let mut unmanaged: Vec<EntityId> = Vec::new();
+        for entity in self.memory.list_entities(None).await? {
+            if entity.archived.is_some() {
+                continue;
+            }
+            let held = self.memory.fields(&entity.id).await?;
+            match held.get(jojobot_domain::memory::REPORTS_TO) {
+                Some(manager) => {
+                    managers.insert(manager.trim().to_string());
+                }
+                None if entity.kind == EntityKind::BOT => unmanaged.push(entity.id),
+                None => {}
+            }
+        }
+        unmanaged.retain(|bot| managers.contains(bot.as_str()));
+        unmanaged.sort();
+        Ok(unmanaged)
+    }
+
+    /// **Refuse archiving or restoring a role object to a bot that may not.**
+    /// Only the bot the object is a child of, its owner, and the bots heading
+    /// the chart may. Without this, archiving frees the name and any bot could
+    /// archive another's role object and claim the role itself. `None` lets the
+    /// call go on: the handle is not a role object, or the caller may.
+    ///
+    /// **A read that fails refuses**, because a check that could not be made is
+    /// not a licence.
+    pub(crate) async fn refuse_a_stranger_the_role_object(
+        &self,
+        by: &EntityId,
+        handle: &EntityId,
+    ) -> Option<rmcp::model::CallToolResult> {
+        if handle.kind() != Some(EntityKind::ROLE) {
+            return None;
+        }
+        let read = async {
+            let parent = self
+                .memory
+                .list_entities(Some(EntityKind::ROLE))
+                .await?
+                .into_iter()
+                .find(|entity| &entity.id == handle)
+                .map(|entity| entity.parent);
+            let Some(parent) = parent else {
+                return Ok::<_, MemoryError>(None);
+            };
+            if parent.as_ref() == Some(by) {
+                return Ok(None);
+            }
+            let heads = self.chart_heads().await?;
+            if heads.contains(by) {
+                return Ok(None);
+            }
+            Ok(Some((parent, heads)))
+        }
+        .await;
+        match read {
+            Ok(None) => None,
+            Ok(Some((owner, heads))) => {
+                let mut may: Vec<String> = owner.iter().map(|o| o.to_string()).collect();
+                may.extend(heads.iter().map(|h| h.to_string()));
+                Some(crate::caller::handle_declined(
+                    handle.as_str(),
+                    format!(
+                        "Only the bot this role object belongs to or a bot heading the chart may \
+                         archive or restore it: {}. Nothing was written.",
+                        may.join(", ")
+                    ),
+                ))
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, %handle, "who may archive a role object could not be read");
+                Some(crate::caller::handle_declined(
+                    handle.as_str(),
+                    "Who may archive this role object could not be read just now, so nothing was \
+                     written. Try again in a moment."
+                        .to_string(),
+                ))
+            }
+        }
+    }
+
     /// **The claim record of a role, if the role has one.** `Ok(None)` is a role
     /// object with no record, or one that does not exist yet, and the caller
     /// tells those apart by what it does next. The record is the fact that
