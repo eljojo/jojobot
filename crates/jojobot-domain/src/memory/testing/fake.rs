@@ -947,11 +947,28 @@ impl InMemoryMemory {
         // Asked only by the write that names a manager for a thing with none.
         let has_reports =
             above.is_empty() && named.is_some() && self.has_reports_among(facts, subject);
+        // The guarded keys the subject holds now, off its fold before this write.
+        let holds = match self.storage_key(subject) {
+            Some(key) => super::super::held_guarded_keys(&super::super::folded_fields(
+                &self.writes_on(&key, facts),
+                &self.declarations(),
+            )),
+            None => Default::default(),
+        };
+        // The bots that head the chart, read only when the subject holds a key
+        // only the head may change.
+        let heads = if super::super::heads_wanted(&holds) {
+            self.chart_heads_among(facts)
+        } else {
+            Vec::new()
+        };
         super::super::Lineage {
             above,
             named,
             above_named,
             has_reports,
+            holds,
+            heads,
         }
     }
 
@@ -971,6 +988,29 @@ impl InMemoryMemory {
                 };
                 super::super::reports_to(&self.with_manager_served(&held), subject)
             })
+    }
+
+    /// **The bots that head the chart**: each manager something reports to that
+    /// has no manager of its own, off each thing's fold served as handles.
+    fn chart_heads_among(&self, facts: &[Fact]) -> Vec<EntityId> {
+        let declared = self.declarations();
+        let managers: std::collections::BTreeSet<EntityId> = self
+            .known()
+            .iter()
+            .filter_map(|other| {
+                let key = self.storage_key(&other.id)?;
+                let held = self.with_manager_served(&super::super::folded_fields(
+                    &self.writes_on(&key, facts),
+                    &declared,
+                ));
+                held.get(super::super::REPORTS_TO)
+                    .and_then(|value| super::super::manager_in(value))
+            })
+            .collect();
+        managers
+            .into_iter()
+            .filter(|manager| self.chain_above_among(facts, manager).is_empty())
+            .collect()
     }
 
     /// The bots above `start` on its `reports_to` chain, nearest first.

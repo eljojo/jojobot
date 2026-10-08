@@ -2058,6 +2058,18 @@ pub enum MayWrite {
     /// by a bot above it. And nobody puts a thing under one of its own reports,
     /// whoever asks (decision log 381).
     Superior,
+    /// **On the record `on` names: anybody while the key is unheld; once it is
+    /// held, only the bot that heads the chart.** A key every instance needs
+    /// once, whose first writer cannot be told from any other bot, and whose
+    /// later value decides where mail lands. A bot heads the chart when nothing
+    /// is above it and something reports to it. With nobody at the head, a held
+    /// value is changed by nobody (rule 349: the way forward is a head, and the
+    /// refusal says so). **On any other record the key is nobody's business**:
+    /// the same word may mean something else on another thing.
+    HeadOnceHeld {
+        /// The handle of the one record this applies to.
+        on: &'static str,
+    },
 }
 
 /// **A key the build guards, and who may write it.** The table is the build's
@@ -2074,12 +2086,24 @@ pub struct GuardedKey {
 /// **The key a bot's manager is written under.** The chart is a chain of these.
 pub const REPORTS_TO: &str = "reports_to";
 
+/// **The key that names the operator**, on the instance's own record. It decides
+/// whose box operator mail lands in. The spelling is stored in a fields bag and
+/// nothing outside this process declares it, so a case pins the literal.
+pub const OPERATOR: &str = "operator";
+
+/// **The record the instance holds about itself**, the one [`OPERATOR`] is
+/// guarded on. The spelling is a handle a person typed once, and nothing outside
+/// this process declares it, so a case pins the literal.
+pub const INSTANCE_RECORD: &str = "topic:instance";
+
 /// **The keys this build guards.** Its own room's capacity, its own thoughts'
 /// body cap, how long a thought of its own may go untouched, its own boot seats
 /// and the role its boot claims: each binds the thing it is read off, so each
 /// is a different-identity key. And the chart: who a bot reports to is changed
-/// only by a superior.
-pub const GUARDED_KEYS: [GuardedKey; 6] = [
+/// only by a superior. And who the operator is:
+/// named by any bot while nobody is, changed afterwards only by the head of the
+/// chart.
+pub const GUARDED_KEYS: [GuardedKey; 7] = [
     GuardedKey {
         key: THOUGHT_CAPACITY,
         may: MayWrite::DifferentIdentity,
@@ -2103,6 +2127,12 @@ pub const GUARDED_KEYS: [GuardedKey; 6] = [
     GuardedKey {
         key: REPORTS_TO,
         may: MayWrite::Superior,
+    },
+    GuardedKey {
+        key: OPERATOR,
+        may: MayWrite::HeadOnceHeld {
+            on: INSTANCE_RECORD,
+        },
     },
 ];
 
@@ -2134,6 +2164,14 @@ pub struct Lineage {
     /// that names a manager for a thing with none, because that is the one write
     /// that asks.
     pub has_reports: bool,
+    /// **The guarded keys the subject holds now.** Read for a write that touches
+    /// a key whose relation asks whether it is already held.
+    pub holds: std::collections::BTreeSet<String>,
+    /// **The bots that head the chart**: nothing above them, and something
+    /// reports to them. Read only for a write whose subject holds a key only the
+    /// head may change, because that is the one question that asks, and it is
+    /// what a refusal names.
+    pub heads: Vec<EntityId>,
 }
 
 /// What a write is judged against when its key's relation needs the chart.
@@ -2197,8 +2235,32 @@ pub fn chart_wanted(
     written: &BTreeMap<String, String>,
 ) -> Option<Option<EntityId>> {
     keys.iter()
-        .any(|rule| matches!(rule.may, MayWrite::Ancestor | MayWrite::Superior))
+        .any(|rule| {
+            matches!(
+                rule.may,
+                MayWrite::Ancestor | MayWrite::Superior | MayWrite::HeadOnceHeld { .. }
+            )
+        })
         .then(|| written.get(REPORTS_TO).and_then(|value| manager_in(value)))
+}
+
+/// **The guarded keys a fold holds now**: a key with a value that is not blank.
+/// The one reading every store's [`Lineage::holds`] comes from, so they cannot
+/// come to disagree about what "held" means.
+pub fn held_guarded_keys(fold: &BTreeMap<String, String>) -> std::collections::BTreeSet<String> {
+    GUARDED_KEYS
+        .iter()
+        .filter(|rule| fold.get(rule.key).is_some_and(|v| !v.trim().is_empty()))
+        .map(|rule| rule.key.to_string())
+        .collect()
+}
+
+/// **Whether the bots that head the chart must be read** for a subject that
+/// holds `holds`: some key it holds is one only the head may change.
+pub fn heads_wanted(holds: &std::collections::BTreeSet<String>) -> bool {
+    GUARDED_KEYS
+        .iter()
+        .any(|rule| matches!(rule.may, MayWrite::HeadOnceHeld { .. }) && holds.contains(rule.key))
 }
 
 /// **Whether a write naming `fields` needs the chart read first.**
@@ -2286,6 +2348,7 @@ enum Why {
 /// **Whether `caller` may write a key declared as `may` about `subject`.**
 fn licensed(
     may: MayWrite,
+    key: &str,
     subject: &EntityId,
     caller: &EntityId,
     lineage: Managers,
@@ -2294,6 +2357,13 @@ fn licensed(
         MayWrite::Subject => caller == subject,
         MayWrite::DifferentIdentity => caller != subject,
         MayWrite::Ancestor => lineage.is_some_and(|l| l.above.contains(caller)),
+        // **Fails closed**: a write that forgot to read the lineage is one
+        // nobody may make, as for the other chart relations. A record the key
+        // is not guarded on is nobody's business, with or without a lineage.
+        MayWrite::HeadOnceHeld { on } => {
+            subject.as_str() != on
+                || lineage.is_some_and(|l| !l.holds.contains(key) || l.heads.contains(caller))
+        }
         MayWrite::Superior => {
             let Some(l) = lineage else {
                 return Err(Why::NotLicensed);
@@ -2334,6 +2404,7 @@ fn who_may_write(may: MayWrite, subject: &EntityId, lineage: Managers) -> Vec<St
     let names = |bots: &[EntityId]| bots.iter().map(ToString::to_string).collect::<Vec<_>>();
     match (may, lineage) {
         (MayWrite::Ancestor, Some(l)) => names(&l.above),
+        (MayWrite::HeadOnceHeld { .. }, Some(l)) => names(&l.heads),
         (MayWrite::Superior, Some(l)) if !l.above.is_empty() => names(&l.above),
         // The head of a chart places itself, so it is the one the refusal names.
         (MayWrite::Superior, Some(l)) if l.has_reports && l.named.is_some() => {
@@ -2359,6 +2430,16 @@ fn who_may(may: MayWrite, subject: &str, allowed: &[String]) -> String {
         MayWrite::DifferentIdentity => {
             "only a different identity may raise or lower it".to_string()
         }
+        MayWrite::HeadOnceHeld { .. } if allowed.is_empty() => format!(
+            "it is already set on '{subject}', and only the bot that heads the chart may change \
+             or remove it. No bot heads the chart yet: place a bot at the top of it, a bot with \
+             reports and nothing above it, and that bot can make the change"
+        ),
+        MayWrite::HeadOnceHeld { .. } => format!(
+            "it is already set on '{subject}', and only the bot that heads the chart may change \
+             or remove it: {}",
+            bots()
+        ),
         MayWrite::Ancestor | MayWrite::Superior if allowed.is_empty() => {
             format!("no bot is recorded above '{subject}' to write it")
         }
@@ -2467,7 +2548,7 @@ pub fn refuses_unlicensed_write_by(
         .iter()
         .filter(|rule| fields.contains_key(rule.key))
         .find_map(|rule| {
-            licensed(rule.may, subject, caller, lineage)
+            licensed(rule.may, rule.key, subject, caller, lineage)
                 .err()
                 .map(|why| refusal(why, rule, subject, lineage))
         })
@@ -2514,7 +2595,7 @@ pub fn refuses_unlicensed_change_by(
         .iter()
         .filter(|rule| before.get(rule.key) != after.get(rule.key))
         .find_map(|rule| {
-            licensed(rule.may, subject, caller, lineage)
+            licensed(rule.may, rule.key, subject, caller, lineage)
                 .err()
                 .map(|why| refusal(why, rule, subject, lineage))
         })
@@ -2583,7 +2664,7 @@ pub fn refuses_merge_carrying_by(
     }
     let mut barred: Vec<&GuardedKey> = Vec::new();
     for rule in table.iter().filter(|rule| carried.contains_key(rule.key)) {
-        match licensed(rule.may, survivor, caller, lineage) {
+        match licensed(rule.may, rule.key, survivor, caller, lineage) {
             Ok(()) => {}
             // A merge that would invert the chart is the chart's own refusal.
             Err(why @ Why::Cycle(_)) => return Some(refusal(why, rule, survivor, lineage)),

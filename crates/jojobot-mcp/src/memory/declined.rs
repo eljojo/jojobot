@@ -970,6 +970,19 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                 jojobot_domain::memory::MayWrite::Subject => {
                     format!("Nothing was written: {e}. '{subject}' has to write '{key}' itself.")
                 }
+                // **Set already, and no bot of this caller's standing changes
+                // it.** The way forward is the head of the chart, or making one.
+                jojobot_domain::memory::MayWrite::HeadOnceHeld { .. } => match allowed.is_empty() {
+                    true => format!(
+                        "Nothing was written: {e}. A bot has to be placed at the top of the chart \
+                         first, a bot with reports and nothing above it; then that bot can write \
+                         '{key}' on '{subject}'."
+                    ),
+                    false => format!(
+                        "Nothing was written: {e}. Ask {} to write '{key}' on '{subject}'.",
+                        allowed.join(" or ")
+                    ),
+                },
                 jojobot_domain::memory::MayWrite::Ancestor
                 | jojobot_domain::memory::MayWrite::Superior => match allowed.is_empty() {
                     true => format!(
@@ -1014,6 +1027,23 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
         // caller tried to set a key: it sent no fields. Both ways forward
         // exist: a different identity performs the merge, or the key comes off
         // the duplicate first.
+        MemoryError::MergeCarriesGuardedKeys {
+            ref duplicate,
+            ref survivor,
+            ref keys,
+            may: jojobot_domain::memory::MayWrite::HeadOnceHeld { .. },
+            ..
+        } => Ok(blocked_body(
+            &EntityId(duplicate.clone()),
+            &[],
+            format!(
+                "Nothing was written. '{duplicate}' carries {keys}, and '{survivor}' already \
+                 holds it, so merging them would change it, which only the bot that heads the \
+                 chart may do. Ask that bot to make this merge, or take {keys} off \
+                 '{duplicate}' first: update_fact the record that sets it with clear_fields, \
+                 then merge again."
+            ),
+        )),
         MemoryError::MergeCarriesGuardedKeys {
             ref duplicate,
             ref survivor,

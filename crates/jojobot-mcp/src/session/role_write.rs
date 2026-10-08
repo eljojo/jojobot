@@ -208,11 +208,14 @@ impl Jojobot {
         Ok(parent.filter(|parent| parent != claimant))
     }
 
-    /// **The bots that head a chart**: a bot with no manager that something
-    /// reports to. One listing of every entity and one folded-fields read per
+    /// **The bots that head a chart, archived entities left out**: a bot with no
+    /// manager that something live reports to. The operator guard asks a
+    /// different question with the same word (`chart_heads` in capture.rs counts
+    /// a report held by an archived bot, as both stores do), so this one is named
+    /// for what it skips. One listing of every entity and one folded-fields read per
     /// entity, so the cost grows with the entities in the store rather than
     /// with its bots. Only a stranger's archive of a role object reaches it.
-    pub(crate) async fn chart_heads(&self) -> Result<Vec<EntityId>, MemoryError> {
+    pub(crate) async fn live_chart_heads(&self) -> Result<Vec<EntityId>, MemoryError> {
         let mut managers: std::collections::BTreeSet<String> = Default::default();
         let mut unmanaged: Vec<EntityId> = Vec::new();
         for entity in self.memory.list_entities(None).await? {
@@ -263,7 +266,7 @@ impl Jojobot {
             if parent.as_ref() == Some(by) {
                 return Ok(None);
             }
-            let heads = self.chart_heads().await?;
+            let heads = self.live_chart_heads().await?;
             if heads.contains(by) {
                 return Ok(None);
             }

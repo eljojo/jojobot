@@ -187,7 +187,7 @@ fn a_folded_bot_is_followed_to_the_one_it_became_and_a_loop_ends() {
 /// A built-in key for each relation a key can declare, so the one predicate is
 /// held to all three at once. No MCP call can declare one of these: the table
 /// is the build's own.
-const WHO_MAY: [GuardedKey; 3] = [
+const WHO_MAY: [GuardedKey; 4] = [
     GuardedKey {
         key: "only_itself",
         may: MayWrite::Subject,
@@ -199,6 +199,10 @@ const WHO_MAY: [GuardedKey; 3] = [
     GuardedKey {
         key: "only_above",
         may: MayWrite::Ancestor,
+    },
+    GuardedKey {
+        key: "head_once_held",
+        may: MayWrite::HeadOnceHeld { on: "bot:sigma" },
     },
 ];
 
@@ -242,6 +246,68 @@ fn a_key_declares_who_may_write_it_relative_to_its_subject() {
     assert!(refused("only_above", &manager, None).is_some());
     // A key nobody declared is nobody's business.
     assert!(refused("anything_else", &bot, None).is_none());
+}
+
+/// **Anybody writes a head-once-held key while it is unheld, and once it is
+/// held only the bot that heads the chart does.** Each answer is asked of both
+/// callers, so a predicate that always refused, or never did, would fail one.
+/// A lineage nobody read refuses, so a caller that forgot to read it fails
+/// closed. Held with nobody heading the chart refuses everybody and the refusal
+/// says what makes a head.
+#[test]
+fn a_head_once_held_key_is_free_while_unheld_and_the_heads_once_held() {
+    let bot = handle("bot:sigma");
+    let other = handle("bot:delta");
+    let holds = ["head_once_held".to_string()].into_iter().collect();
+    let unheld = Lineage::default();
+    let held = Lineage {
+        holds,
+        ..Default::default()
+    };
+    let head = Lineage {
+        heads: vec![other.clone()],
+        ..held.clone()
+    };
+    let refused = |caller: &EntityId, chain: Option<&Lineage>| {
+        refuses_unlicensed_write_by(&WHO_MAY, &bot, caller, &writing("head_once_held"), chain)
+    };
+    assert!(refused(&other, Some(&unheld)).is_none(), "unheld is free");
+    assert!(
+        refused(&other, Some(&held)).is_some(),
+        "held, caller no head"
+    );
+    assert!(refused(&other, Some(&head)).is_none(), "held, caller heads");
+    assert!(refused(&other, None).is_some(), "no lineage fails closed");
+    let said = refused(&other, Some(&held)).expect("refused").to_string();
+    assert!(
+        said.contains("chart"),
+        "the refusal says what makes a head: {said}"
+    );
+    // The change twin: the fold moving from unheld to held is free, and from
+    // held to anything else is not, whether the key changes or goes.
+    let before = BTreeMap::new();
+    let after = writing("head_once_held");
+    let change =
+        |before: &BTreeMap<String, String>, after: &BTreeMap<String, String>, chain: &Lineage| {
+            refuses_unlicensed_change_by(&WHO_MAY, &bot, &other, before, after, Some(chain))
+        };
+    assert!(change(&before, &after, &unheld).is_none());
+    assert!(change(&after, &before, &held).is_some(), "taking it off");
+    assert!(change(&after, &before, &head).is_none());
+    // The merge twin: carrying the key onto a record that holds it.
+    let merge = |chain: &Lineage| {
+        refuses_merge_carrying_by(
+            &WHO_MAY,
+            &other,
+            &bot,
+            &handle("bot:gamma"),
+            &after,
+            Some(chain),
+        )
+    };
+    assert!(merge(&unheld).is_none());
+    assert!(merge(&held).is_some());
+    assert!(merge(&head).is_none());
 }
 
 /// **The refusal names who may make the write** (rule 261): the bots above the
@@ -318,7 +384,7 @@ fn lineage(above: &[&str], named: Option<&str>, above_named: &[&str]) -> Lineage
         above: above.iter().map(|h| handle(h)).collect(),
         named: named.map(handle),
         above_named: above_named.iter().map(|h| handle(h)).collect(),
-        has_reports: false,
+        ..Default::default()
     }
 }
 
@@ -576,7 +642,22 @@ fn the_four_existing_keys_are_different_identity_keys() {
         .find(|rule| rule.key == REPORTS_TO)
         .expect("reports_to is declared");
     assert_eq!(chart.may, MayWrite::Superior);
-    assert_eq!(GUARDED_KEYS.len(), 6);
+    // …and the operator's key is the one head-once-held key. The spelling is
+    // stored in a fields bag and nothing outside this process declares it, so
+    // it is pinned as a literal.
+    let operator = GUARDED_KEYS
+        .iter()
+        .find(|rule| rule.key == "operator")
+        .expect("operator is declared");
+    assert_eq!(
+        operator.may,
+        MayWrite::HeadOnceHeld {
+            on: "topic:instance"
+        }
+    );
+    assert_eq!(OPERATOR, "operator");
+    assert_eq!(INSTANCE_RECORD, "topic:instance");
+    assert_eq!(GUARDED_KEYS.len(), 7);
 }
 
 /// **The cutoff counts back the number of runs it is given**, not a fixed

@@ -1370,7 +1370,20 @@ mod tests {
         send(&jojobot, "person:milhouse", "epsilon", "for the first").await;
         let old = boxes_owned_by(&jojobot, "person:milhouse").await;
 
-        name_the_operator(&jojobot, "ned-flanders").await;
+        // **A different operator is named by the bot that heads the chart**, so
+        // epsilon is given a report and nothing above it.
+        let epsilon = as_bot(&jojobot, "epsilon");
+        crate::memory::testing::ensure(&jojobot, "bot:omega").await;
+        crate::memory::testing::capture_as(
+            &jojobot,
+            &epsilon,
+            CaptureArgs {
+                fields: Some([("reports_to".to_string(), "bot:epsilon".to_string())].into()),
+                ..crate::memory::testing::capture_args("bot:omega", "omega reports to epsilon")
+            },
+        )
+        .await;
+        name_the_operator_as(&jojobot, &epsilon, "ned-flanders").await;
         send(&jojobot, "person:ned-flanders", "epsilon", "for the second").await;
 
         assert_eq!(boxes_owned_by(&jojobot, "person:milhouse").await, old);
@@ -1564,7 +1577,20 @@ mod tests {
             "the record names an entity that exists: {how}"
         );
 
-        crate::memory::testing::capture_ok(&jojobot, names("person:milhouse")).await;
+        // **Changing the operator once one is named is the head of the chart's**,
+        // so the sender is given a report and nothing above it.
+        let head = as_bot(&jojobot, "epsilon");
+        crate::memory::testing::ensure(&jojobot, "bot:omega").await;
+        crate::memory::testing::capture_as(
+            &jojobot,
+            &head,
+            CaptureArgs {
+                fields: Some([("reports_to".to_string(), "bot:epsilon".to_string())].into()),
+                ..crate::memory::testing::capture_args("bot:omega", "omega reports to epsilon")
+            },
+        )
+        .await;
+        crate::memory::testing::capture_as(&jojobot, &head, names("person:milhouse")).await;
         let landed = json_of(
             &post_to(&jojobot, "person:milhouse", &sender)
                 .await

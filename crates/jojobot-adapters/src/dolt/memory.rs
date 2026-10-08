@@ -2090,12 +2090,65 @@ impl DoltMemory {
         } else {
             false
         };
+        // The guarded keys the subject holds now, off its fold before this write.
+        let holds = match self.resolve(tx, subject).await? {
+            Some((key, _)) => {
+                let held = Self::held_by(tx, &key).await?;
+                jojobot_domain::memory::held_guarded_keys(&held)
+            }
+            None => Default::default(),
+        };
+        // The bots that head the chart, read only when the subject holds a key
+        // only the head may change.
+        let heads = if jojobot_domain::memory::heads_wanted(&holds) {
+            self.chart_heads_in(tx).await?
+        } else {
+            Vec::new()
+        };
         Ok(jojobot_domain::memory::Lineage {
             above,
             named,
             above_named,
             has_reports,
+            holds,
+            heads,
         })
+    }
+
+    /// **The bots that head the chart**, read inside the write's own transaction:
+    /// each manager something reports to that has no manager of its own. The
+    /// candidates are the things that ever wrote a manager; each is folded and
+    /// served as handles, as the chain is, so a manager that was taken back or
+    /// moved does not count.
+    async fn chart_heads_in(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+    ) -> Result<Vec<EntityId>, MemoryError> {
+        let candidates: Vec<String> = sqlx::query_scalar(
+            "SELECT DISTINCT entity FROM field_write WHERE `key` = ? AND value IS NOT NULL",
+        )
+        .bind(jojobot_domain::memory::REPORTS_TO)
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(store)?;
+        let mut managers = std::collections::BTreeSet::new();
+        for candidate in candidates {
+            let held = Self::held_by(tx, &EntityId(candidate)).await?;
+            let served = self.with_manager_rendered(tx, &held).await?;
+            if let Some(manager) = served
+                .get(jojobot_domain::memory::REPORTS_TO)
+                .and_then(|value| jojobot_domain::memory::manager_in(value))
+            {
+                managers.insert(manager);
+            }
+        }
+        let mut heads = Vec::new();
+        for manager in managers {
+            if self.chain_above_in(tx, &manager).await?.is_empty() {
+                heads.push(manager);
+            }
+        }
+        Ok(heads)
     }
 
     /// **Whether any other thing reports to `subject`**, read inside the write's

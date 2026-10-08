@@ -1222,12 +1222,47 @@ impl Jojobot {
         } else {
             false
         };
+        let holds = jojobot_domain::memory::held_guarded_keys(&self.memory.fields(subject).await?);
+        let heads = if jojobot_domain::memory::heads_wanted(&holds) {
+            self.chart_heads().await?
+        } else {
+            Vec::new()
+        };
         Ok(jojobot_domain::memory::Lineage {
             above,
             named,
             above_named,
             has_reports,
+            holds,
+            heads,
         })
+    }
+
+    /// **The bots that head the chart**: each manager something reports to that
+    /// has no manager of its own. Read through the store's folded fields one
+    /// thing at a time, as the chain is. **This is the stores' own definition**,
+    /// archived bots included: a report held by an archived bot still makes its
+    /// manager a head, as the fake and the real store read it, so the guard here
+    /// and the guard inside the write cannot disagree. The reading that skips
+    /// archived entities is [`Jojobot::live_chart_heads`], a different question.
+    async fn chart_heads(&self) -> Result<Vec<EntityId>, MemoryError> {
+        let mut managers = std::collections::BTreeSet::new();
+        for other in self.memory.list_entities(None).await? {
+            let held = self.memory.fields(&other.id).await?;
+            if let Some(manager) = held
+                .get(jojobot_domain::memory::REPORTS_TO)
+                .and_then(|value| jojobot_domain::memory::manager_in(value))
+            {
+                managers.insert(manager);
+            }
+        }
+        let mut heads = Vec::new();
+        for manager in managers {
+            if self.chain_above(&manager).await?.is_empty() {
+                heads.push(manager);
+            }
+        }
+        Ok(heads)
     }
 
     /// **The chart around a thing being created**: nothing above it, because it
@@ -1255,6 +1290,9 @@ impl Jojobot {
             named,
             above_named,
             has_reports,
+            // A thing being created holds nothing.
+            holds: Default::default(),
+            heads: Vec::new(),
         })
     }
 

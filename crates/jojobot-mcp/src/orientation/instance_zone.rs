@@ -11,7 +11,7 @@ use super::*;
 
 /// The record the instance holds about itself. The operator creates it and
 /// writes [`INSTANCE_ZONE_KEY`] on it once.
-pub(crate) const INSTANCE_RECORD: &str = "topic:instance";
+pub(crate) const INSTANCE_RECORD: &str = jojobot_domain::memory::INSTANCE_RECORD;
 
 /// The key on [`INSTANCE_RECORD`] that holds the zone, as an IANA name.
 pub(crate) const INSTANCE_ZONE_KEY: &str = "timezone";
@@ -446,8 +446,21 @@ mod tests {
             "and where to write a person: {said}"
         );
 
+        // **Changing the operator once one is named is the head of the chart's**,
+        // so otto is given a report and nothing above it.
+        let head = as_bot(&jojobot, "otto");
+        ensure(&jojobot, "bot:omega").await;
+        capture_as(
+            &jojobot,
+            &head,
+            CaptureArgs {
+                fields: Some([("reports_to".to_string(), "bot:otto".to_string())].into()),
+                ..capture_args("bot:omega", "omega reports to otto")
+            },
+        )
+        .await;
         ensure(&jojobot, "person:lisa").await;
-        capture_ok(&jojobot, names("person:lisa")).await;
+        capture_as(&jojobot, &head, names("person:lisa")).await;
         let body = boot_answering_dated(&jojobot, "otto", "new", None, None).await;
         assert_eq!(body["operator"], "person:lisa", "{body}");
     }

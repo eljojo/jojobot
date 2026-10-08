@@ -94,6 +94,9 @@ mod my_past_runs;
 /// The boot names the operator, and what waits on them is one read away.
 #[path = "user_stories/operator.rs"]
 mod operator;
+/// Any bot names the operator while nobody is named; then only the chart's head.
+#[path = "user_stories/operator_key.rs"]
+mod operator_key;
 /// A bot leaves the operator a message, and no bot can read it back.
 #[path = "user_stories/operators_mailbox.rs"]
 mod operators_mailbox;

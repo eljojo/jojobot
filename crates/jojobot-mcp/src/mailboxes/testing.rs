@@ -159,6 +159,13 @@ pub(crate) async fn a_persons_box(jojobot: &Jojobot, person: &str) -> MailboxNam
 /// **Name a person as the instance's operator**, the way the operator does: the
 /// person exists, and `topic:instance` holds their handle under `operator`.
 pub(crate) async fn name_the_operator(jojobot: &Jojobot, person: &str) {
+    name_the_operator_as(jojobot, crate::harness::TEST_SID, person).await;
+}
+
+/// [`name_the_operator`], written by the session `sid`. **Naming a different
+/// operator once one is named is the head of the chart's to do**, so a test that
+/// changes the operator writes it as the bot that heads one.
+pub(crate) async fn name_the_operator_as(jojobot: &Jojobot, sid: &str, person: &str) {
     let handle = format!("person:{person}");
     crate::memory::testing::ensure(jojobot, &handle).await;
     crate::memory::testing::capture_ok(
@@ -166,6 +173,7 @@ pub(crate) async fn name_the_operator(jojobot: &Jojobot, person: &str) {
         CaptureArgs {
             fields: Some([("operator".to_string(), handle)].into()),
             provenance: Some("testimony".into()),
+            sid: Some(sid.to_string()),
             ..crate::memory::testing::capture_args("topic:instance", "who the operator is")
         },
     )
