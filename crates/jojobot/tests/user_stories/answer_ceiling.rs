@@ -40,13 +40,8 @@ const OCTOBER: &str = "2026-10-08";
 /// Listed in the order the table measures them, which is the order the case
 /// compares. A record stored over the ceiling before writes were bounded is
 /// still served whole, so recalling its subject passes the ceiling; no write can
-/// make such a record any more. `list_runs` has no fit yet: with runs enough to
-/// stretch it, its widest call passes the ceiling. Written down here until the
-/// slice that fits it.
-const STILL_OVER: &[&str] = &[
-    "recall the subject holding a record over the ceiling",
-    "list_runs",
-];
+/// make such a record any more.
+const STILL_OVER: &[&str] = &["recall the subject holding a record over the ceiling"];
 
 /// A slug of ten letters that depends on nothing but the index, spread far
 /// enough apart that no two screen as near-misses of each other.
@@ -118,6 +113,9 @@ struct World {
     messages: Vec<(String, String)>,
     /// The same for the box sigma owns, which sigma's own post collects.
     sigma_messages: Vec<(String, String)>,
+    /// The handle of each run otto holds, oldest first, as the boot that
+    /// opened it was given it.
+    run_sids: Vec<String>,
 }
 
 /// **A world too big to write through the served surface**, seeded in the
@@ -146,7 +144,8 @@ async fn world(aged: bool) -> World {
     } else {
         (Story::begin("bot:otto").await, None)
     };
-    first.session().await.add("bot:sigma", "Sigma").await;
+    let opening = first.session().await;
+    opening.add("bot:sigma", "Sigma").await;
 
     let memory = first.memory_store();
     let today: jiff::civil::Date = "2026-10-01".parse().expect("a day");
@@ -288,8 +287,11 @@ async fn world(aged: bool) -> World {
 
     // Otto's runs: each opened beside the others and given a journal entry,
     // which is what makes a run exist, with a focus near the longest kept.
+    // The world's own first run is otto's too, and the oldest.
+    let mut run_sids = vec![opening.sid().to_string()];
     for i in 0..RUNS {
         let run = first.as_bot("bot:otto").await;
+        run_sids.push(run.sid().to_string());
         run.call(
             "journal",
             json!({"entry": format!("sitting {i}"), "focus": filler(190, 3000 + i)}),
@@ -316,6 +318,7 @@ async fn world(aged: bool) -> World {
         thing_ids: handles.iter().map(|id| id.as_str().to_string()).collect(),
         messages,
         sigma_messages,
+        run_sids,
     }
 }
 
@@ -845,6 +848,52 @@ async fn a_walk_of_list_sent_returns_each_message_once_under_the_ceiling() {
         walked, sent,
         "every message that was sent, and nothing else"
     );
+}
+
+/// **A walk of `list_runs` returns each run once, newest first, under the
+/// ceiling.** Otto has ninety runs, far more than one answer holds. Each part is
+/// under it, the offset each names reads the next, and the parts together are
+/// exactly the runs that were opened, which the boots handed back as each was
+/// opened and which `list_runs` did not produce.
+#[tokio::test]
+async fn a_walk_of_list_runs_returns_each_run_once_under_the_ceiling() {
+    let world = hostile_world().await;
+    let mut seen: Vec<String> = Vec::new();
+    let mut offset = 0u64;
+    let mut parts = 0;
+    loop {
+        let part = world
+            .otto
+            .call("list_runs", json!({"limit": 1000, "offset": offset}))
+            .await;
+        parts += 1;
+        assert!(parts < 100, "the walk never ends");
+        assert!(
+            part.size() <= ANSWER_CEILING,
+            "part {parts}: {}",
+            part.size()
+        );
+        let body = part.json();
+        let sids: Vec<String> = body["runs"]
+            .as_array()
+            .expect("a list")
+            .iter()
+            .map(|r| r["sid"].as_str().expect("a handle").to_string())
+            .collect();
+        assert!(!sids.is_empty(), "a part carries at least one run");
+        seen.extend(sids);
+        match body["not_shown"]["offset"].as_u64() {
+            Some(next) => {
+                assert_eq!(next as usize, seen.len(), "the offset counts runs read");
+                offset = next;
+            }
+            None => break,
+        }
+    }
+    assert!(parts > 1, "the runs took several parts: {parts}");
+    let mut opened = world.run_sids.clone();
+    opened.reverse();
+    assert_eq!(seen, opened, "every run that was opened, newest first");
 }
 
 /// **One subject with far more facts than fit comes back in parts that each fit

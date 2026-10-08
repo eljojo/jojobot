@@ -5,6 +5,8 @@
 //! and an entrypoint that chains the systems below it.
 
 use super::*;
+use crate::answer::STATUS_BAR_ROOM;
+use jojobot_domain::text::Capped;
 
 /// How many runs come back when the caller does not say — the same twenty
 /// `search` and `list_sent` answer with, and for the same reason: an answer
@@ -17,6 +19,11 @@ pub struct ListRunsArgs {
     /// How many runs to return, newest first. Defaults to twenty.
     #[serde(default)]
     pub(crate) limit: Option<u32>,
+    /// **How many of the newest runs you have already read.** The answer names
+    /// the `offset` that returns the next part whenever it left runs out;
+    /// repeat the same call with it. Defaults to 0.
+    #[serde(default)]
+    pub(crate) offset: Option<u32>,
     /// **Your session id**, exactly as the boot door returned it. It is what
     /// tells jojobot which bot is asking — there is no other way to name
     /// whose runs this reads, and no way to name a different one.
@@ -49,9 +56,11 @@ impl Jojobot {
                        closing story arrives there too, as the handover, on every boot of this \
                        identity. Each run also carries `served`: the total characters this run has \
                        been answered, plus a token count that is an estimate derived from those \
-                       characters, never a real tokenisation. Newest first. Twenty newest by default: raise `limit` for more, \
-                       and whatever a cut leaves out is counted under not_shown rather than \
-                       silently dropped. A call with no `sid` at all comes back status: blocked — \
+                       characters, never a real tokenisation. Newest first. Twenty newest by default: \
+                       `limit` is the size of a page. An answer stops at the answer ceiling, never \
+                       mid-run, and whatever it leaves out is counted under not_shown with the \
+                       `offset` that reads the next part: repeat the same call with it. A call \
+                       with no `sid` at all comes back status: blocked — \
                        jojobot will not guess whose runs to read."
     )]
     pub(crate) async fn list_runs(
@@ -70,21 +79,25 @@ impl Jojobot {
         // materializes a run lazily on its first write. A caller asking
         // what it has run is not the caller starting one, and is not the
         // caller paying for the text of every beat either.
-        let mut runs = self
+        let runs = self
             .sessions
             .summaries_of(&caller.bot)
             .await
             .map_err(session_error)?;
         // Already newest-start-first off the port; the cut below keeps that
-        // order rather than re-deriving it.
+        // order rather than re-deriving it. `limit` is the size of a page and
+        // `offset` is how many runs the caller has already read, so a page is
+        // a window of the ordered list and the ceiling can make it shorter.
         let held = runs.len();
         let limit = args.limit.map_or(DEFAULT_LIMIT, |l| l as usize);
-        runs.truncate(limit);
+        let offset = args.offset.map_or(0, |o| o as usize);
+        let page: Vec<_> = runs.into_iter().skip(offset).take(limit).collect();
 
-        let rendered: Vec<serde_json::Value> = runs
+        // **Rendered first, so the page can be filled against the ceiling.**
+        let rendered: Vec<(serde_json::Value, usize)> = page
             .iter()
             .map(|session| {
-                serde_json::json!({
+                let json = serde_json::json!({
                     // **The handle the card was born with, read off the
                     // record — never minted.** A registry mint is a write,
                     // and this call promises to begin, close and sweep none
@@ -100,26 +113,52 @@ impl Jojobot {
                     "last_beat": session.last_beat.to_string(),
                     "entry_count": session.entry_count,
                     "served": served_json(session.served_chars),
-                })
+                });
+                let size = json.to_string().chars().count() + 1;
+                (json, size)
             })
             .collect();
 
-        json_result(&serde_json::json!({
-            "bot": caller.bot.as_str(),
-            "count": rendered.len(),
-            "runs_total": held,
-            // **Eliding is never silent.** Absent when nothing was cut, rather
-            // than present saying zero — the same convention `list_sent` uses.
-            "not_shown": (held > rendered.len()).then(|| serde_json::json!({
-                "count": held - rendered.len(),
-                "how_to_proceed": "these are the newest; raise limit for more",
-            })),
-            "how_to_read": "this is which runs, in what state, and when — not their \
-                            chronology, which grows without bound. Resume a live or abandoned \
-                            run through start_here to read its beats; the most recently \
-                            wrapped run's closing story arrives there too, as the handover.",
-            "runs": rendered,
-        }))
+        // The envelope with its run list empty, and the block that names what
+        // was left out at its widest, so what ships is under the ceiling.
+        let envelope = |count: usize| {
+            serde_json::json!({
+                "bot": caller.bot.as_str(),
+                "count": count,
+                "runs_total": held,
+                "how_to_read": "this is which runs, in what state, and when — not their \
+                                chronology, which grows without bound. Resume a live or \
+                                abandoned run through start_here to read its beats; the most \
+                                recently wrapped run's closing story arrives there too, as the \
+                                handover.",
+                "runs": [],
+            })
+        };
+        let rest = envelope(page.len()).to_string().chars().count()
+            + crate::answer::not_shown(held, held, "runs")
+                .to_string()
+                .chars()
+                .count()
+            + STATUS_BAR_ROOM;
+        let kept = Capped::beside(rest).head(&rendered, |(_, size)| *size);
+        let mut answer = envelope(kept.kept().len());
+        answer["runs"] = kept
+            .kept()
+            .iter()
+            .map(|(json, _)| json.clone())
+            .collect::<Vec<_>>()
+            .into();
+        // **Eliding is never silent.** This says how many runs there are after
+        // the ones above and which call reads them; it is absent when nothing
+        // was cut rather than saying "0 left out".
+        if held > offset + kept.kept().len() {
+            answer["not_shown"] = crate::answer::not_shown(
+                held - offset - kept.kept().len(),
+                offset + kept.kept().len(),
+                "runs",
+            );
+        }
+        json_result(&answer)
     }
 }
 
@@ -171,6 +210,7 @@ mod tests {
             &jojobot
                 .list_runs(Parameters(ListRunsArgs {
                     limit: None,
+                    offset: None,
                     sid: Some(sid),
                 }))
                 .await
@@ -206,6 +246,7 @@ mod tests {
             &jojobot
                 .list_runs(Parameters(ListRunsArgs {
                     limit: None,
+                    offset: None,
                     sid: Some(never_ran),
                 }))
                 .await
@@ -240,6 +281,7 @@ mod tests {
             &jojobot
                 .list_runs(Parameters(ListRunsArgs {
                     limit: None,
+                    offset: None,
                     sid: Some(sid),
                 }))
                 .await
@@ -270,6 +312,7 @@ mod tests {
             &jojobot
                 .list_runs(Parameters(ListRunsArgs {
                     limit: None,
+                    offset: None,
                     sid: Some(sid),
                 }))
                 .await
@@ -316,6 +359,7 @@ mod tests {
             &jojobot
                 .list_runs(Parameters(ListRunsArgs {
                     limit: None,
+                    offset: None,
                     sid: Some(sid),
                 }))
                 .await
@@ -351,6 +395,7 @@ mod tests {
             &jojobot
                 .list_runs(Parameters(ListRunsArgs {
                     limit: None,
+                    offset: None,
                     sid: Some(sid),
                 }))
                 .await
@@ -376,6 +421,7 @@ mod tests {
             &jojobot
                 .list_runs(Parameters(ListRunsArgs {
                     limit: Some(2),
+                    offset: None,
                     sid: Some(sid.clone()),
                 }))
                 .await
@@ -384,17 +430,16 @@ mod tests {
         assert_eq!(cut["count"], 2, "{cut}");
         assert_eq!(cut["runs_total"], 4);
         assert_eq!(cut["not_shown"]["count"], 2);
-        assert!(
-            cut["not_shown"]["how_to_proceed"]
-                .as_str()
-                .expect("a way on")
-                .contains("limit")
+        assert_eq!(
+            cut["not_shown"]["offset"], 2,
+            "the part that reads the runs left out starts after the two shown: {cut}"
         );
 
         let whole = json_of(
             &jojobot
                 .list_runs(Parameters(ListRunsArgs {
                     limit: None,
+                    offset: None,
                     sid: Some(sid),
                 }))
                 .await
@@ -405,6 +450,126 @@ mod tests {
             whole["not_shown"].is_null(),
             "nothing was cut, so nothing says it was: {whole}"
         );
+    }
+
+    /// The size of an answer as the surface serves it: the body, one newline
+    /// and the status bar's room, counted in characters as the ceiling is.
+    fn served_size(body: &serde_json::Value) -> usize {
+        body.to_string().chars().count() + 1 + crate::answer::STATUS_BAR_ROOM
+    }
+
+    /// **A bot with more runs than one answer can hold is read in parts.** Every
+    /// part is under the ceiling, the offset each names reads the next, and the
+    /// parts together are exactly the runs that were begun, newest first, none
+    /// twice and none skipped.
+    #[tokio::test]
+    async fn a_long_history_is_read_in_parts_under_the_ceiling_with_none_twice_and_none_skipped() {
+        const RUNS: u32 = 150;
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma").await;
+        for n in 0..RUNS {
+            // A focus may hold 200 characters; this one is 176.
+            let focus = format!(
+                "run {n:03} {}",
+                "weighing the kiln ledger against the flue ".repeat(4)
+            );
+            run(&store, "gamma", n, &focus).await;
+        }
+        let sid = as_bot(&jojobot, "gamma");
+
+        let mut seen: Vec<String> = Vec::new();
+        let mut offset = 0u32;
+        let mut parts = 0;
+        loop {
+            let part = json_of(
+                &jojobot
+                    .list_runs(Parameters(ListRunsArgs {
+                        limit: Some(1000),
+                        offset: Some(offset),
+                        sid: Some(sid.clone()),
+                    }))
+                    .await
+                    .expect("list_runs ok"),
+            );
+            parts += 1;
+            assert!(
+                served_size(&part) <= jojobot_domain::text::ANSWER_CEILING,
+                "part {parts} passes the ceiling at {}",
+                served_size(&part)
+            );
+            assert_eq!(part["runs_total"], RUNS, "{}", part["not_shown"]);
+            let runs = part["runs"].as_array().expect("a list");
+            assert!(
+                !runs.is_empty(),
+                "a part with no run cannot be walked on from"
+            );
+            seen.extend(
+                runs.iter()
+                    .map(|r| r["working_on"].as_str().expect("a focus")[..7].to_string()),
+            );
+            match part["not_shown"]["offset"].as_u64() {
+                Some(next) => {
+                    assert_eq!(
+                        next as usize,
+                        seen.len(),
+                        "the offset named is the count of runs already read"
+                    );
+                    offset = next as u32;
+                }
+                None => break,
+            }
+        }
+        assert!(
+            parts >= 3,
+            "a hundred and fifty long runs take three parts at least: {parts}"
+        );
+        let expected: Vec<String> = (0..RUNS).rev().map(|n| format!("run {n:03}")).collect();
+        assert_eq!(seen, expected, "every run once, newest first");
+    }
+
+    /// An `offset` skips the runs already read even when nothing needs the
+    /// ceiling, so a caller paging by `limit` reads the whole history.
+    #[tokio::test]
+    async fn an_offset_skips_the_runs_already_read() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma").await;
+        for n in 0..5u32 {
+            run(&store, "gamma", n, &format!("run number {n}")).await;
+        }
+        let sid = as_bot(&jojobot, "gamma");
+        let page = json_of(
+            &jojobot
+                .list_runs(Parameters(ListRunsArgs {
+                    limit: Some(2),
+                    offset: Some(2),
+                    sid: Some(sid),
+                }))
+                .await
+                .expect("list_runs ok"),
+        );
+        let focus: Vec<&str> = page["runs"]
+            .as_array()
+            .expect("a list")
+            .iter()
+            .map(|r| r["working_on"].as_str().expect("a focus"))
+            .collect();
+        assert_eq!(focus, vec!["run number 2", "run number 1"], "{page}");
+        assert_eq!(page["not_shown"]["offset"], 4, "{page}");
+        assert_eq!(page["not_shown"]["count"], 1, "{page}");
+    }
+
+    /// A caller learns the argument exists from the tool's own description.
+    #[test]
+    fn list_runs_description_names_offset() {
+        let tools = Jojobot::tool_router().list_all();
+        let tool = tools
+            .iter()
+            .find(|t| t.name == "list_runs")
+            .expect("list_runs is a tool");
+        let description = tool.description.as_deref().unwrap_or_default();
+        assert!(description.contains("offset"), "{description}");
     }
 
     /// **The served figure has no path but reading the diff, and that is no
@@ -440,6 +605,7 @@ mod tests {
             &jojobot
                 .list_runs(Parameters(ListRunsArgs {
                     limit: None,
+                    offset: None,
                     sid: None,
                 }))
                 .await
