@@ -241,6 +241,7 @@ impl Jojobot {
                     .into_iter()
                     .collect(),
                 );
+                crate::memory::wire::elide_aliases_past_the_ceiling(&mut body);
                 json_result(&body)
             }
             Guarded::Blocked {

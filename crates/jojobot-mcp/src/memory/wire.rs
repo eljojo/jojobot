@@ -305,6 +305,40 @@ pub(crate) fn entity_json(entity: &Entity) -> serde_json::Value {
     })
 }
 
+/// **Take the aliases out of a write's receipt when keeping them would take the
+/// receipt past the ceiling.** The receipt of a creation or an edit echoes the
+/// row it leaves, and an edit may leave a row that is still over one answer (it
+/// shrinks it in steps), so the echo cannot always fit. Called last, on the body
+/// as it will be served, so it measures the answer and not a part of it. A body
+/// that fits keeps its aliases whole.
+///
+/// **Eliding is never silent**: the aliases become null, a marker and their count
+/// replace them, and `how_to_read` names the read that returns them.
+pub(crate) fn elide_aliases_past_the_ceiling(body: &mut serde_json::Value) {
+    let served = body.to_string().chars().count() + crate::answer::STATUS_BAR_ROOM;
+    if served <= jojobot_domain::text::ANSWER_CEILING {
+        return;
+    }
+    let Some(fields) = body.as_object_mut() else {
+        return;
+    };
+    let count = fields
+        .get("alternateName")
+        .and_then(serde_json::Value::as_array)
+        .map_or(0, Vec::len);
+    let how = format!(
+        "the aliases do not fit this answer. recall {} to read them.",
+        fields
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("the thing")
+    );
+    fields.insert("alternateName".into(), serde_json::Value::Null);
+    fields.insert("alternateName_elided".into(), true.into());
+    fields.insert("alternateName_count".into(), count.into());
+    fields.insert("how_to_read".into(), how.into());
+}
+
 /// One of the guard's candidates on the wire.
 pub(crate) fn candidate_json(candidate: &EntityMatch) -> serde_json::Value {
     serde_json::json!({
@@ -422,6 +456,51 @@ mod tests {
         assert!(
             parse_kind("Person").is_err(),
             "a capitalized kind stays rejected"
+        );
+    }
+
+    /// **A receipt keeps its aliases until they would take it past the ceiling.**
+    /// The same entity is served twice: with a few aliases it is left whole, and
+    /// with enough to pass one answer the aliases are replaced by a marker, their
+    /// count and the read that returns them. The rest of the receipt stays.
+    #[test]
+    fn a_receipt_elides_its_aliases_only_when_they_would_pass_the_ceiling() {
+        let entity = |count: usize| Entity {
+            id: EntityId::person("person:alpha"),
+            kind: EntityKind::PERSON,
+            name: "Alpha".into(),
+            aliases: (0..count)
+                .map(|i| format!("{i} {}", "x".repeat(150)))
+                .collect(),
+            source: "the roster".into(),
+            crm: None,
+            parent: None,
+            boot: Default::default(),
+            merged_into: None,
+            badge: None,
+            archived: None,
+        };
+
+        let mut small = entity_json(&entity(3));
+        let before = small.clone();
+        elide_aliases_past_the_ceiling(&mut small);
+        assert_eq!(small, before, "a receipt that fits is left whole");
+        assert_eq!(small["alternateName"].as_array().map(Vec::len), Some(3));
+
+        let mut large = entity_json(&entity(300));
+        elide_aliases_past_the_ceiling(&mut large);
+        assert_eq!(large["alternateName"], serde_json::Value::Null, "{large}");
+        assert_eq!(large["alternateName_elided"], true, "{large}");
+        assert_eq!(large["alternateName_count"], 300, "{large}");
+        let how = large["how_to_read"].as_str().unwrap_or_default();
+        assert!(
+            how.contains("recall") && how.contains("person:alpha"),
+            "{large}"
+        );
+        assert_eq!(large["id"], "person:alpha", "the rest stays: {large}");
+        assert!(
+            large.to_string().chars().count() <= jojobot_domain::text::ANSWER_CEILING,
+            "the elided receipt fits one answer"
         );
     }
 
