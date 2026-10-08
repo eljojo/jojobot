@@ -1159,6 +1159,7 @@ impl InMemoryMemory {
     /// the old shape, whose first renewal on the object is an append): the caller
     /// then writes as it always did.
     fn overwrite_lease_moment(&self, home: &EntityId, moment: &str) -> bool {
+        let now = self.clock().now();
         let mut writes = self.writes.lock().expect("fake mutex poisoned");
         let newest = writes
             .iter_mut()
@@ -1167,6 +1168,10 @@ impl InMemoryMemory {
         match newest {
             Some(write) if write.value.is_some() => {
                 write.value = Some(moment.to_string());
+                // **Restamped with the value**, as the real store does: the age
+                // of a key is the age of the write holding it, and this write
+                // is the renewal now.
+                write.written_at = Some(now);
                 true
             }
             _ => false,
