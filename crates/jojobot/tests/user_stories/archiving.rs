@@ -11,7 +11,23 @@
 
 use serde_json::json;
 
-use super::dsl::Story;
+use super::dsl::{Session, Story};
+
+/// **The child of an archived-and-restored parent, checked at one moment.** It
+/// is listed, it is found under its parent, and its own record still names the
+/// parent. Asked before the archive, during it and after the restore, so that
+/// "its children exactly as they were" compares three moments and is not one
+/// read that would pass whatever the restore did: archiving a parent touches no
+/// child, and a build that hid or detached them would fail the middle one.
+async fn the_child_is_where_it_was(s: &Session, when: &str) {
+    s.list("work").await.says("work:phi");
+    s.call("recall", json!({"parent": "project:atlas"}))
+        .await
+        .says("work:phi");
+    let child = s.recall("work:phi").await.json()["objects"][0].clone();
+    assert_eq!(child["parent"], "project:atlas", "{when}: {child}");
+    assert_eq!(child["name"], "Phi", "{when}: {child}");
+}
 
 #[tokio::test]
 async fn a_mistaken_entry_drops_out_of_the_default_list_and_stays_reachable_by_name() {
@@ -91,6 +107,7 @@ async fn an_archived_thing_is_put_back_with_its_records_and_the_history_of_both_
     s.add_under("project:atlas", "work:phi", "Phi").await;
     s.fact("project:atlas", "the plan for the launch").await;
     s.list("project").await.says("project:atlas");
+    the_child_is_where_it_was(&s, "before the archive").await;
 
     s.call(
         "archive_entity",
@@ -98,6 +115,7 @@ async fn an_archived_thing_is_put_back_with_its_records_and_the_history_of_both_
     )
     .await;
     s.list("project").await.never_says("project:atlas");
+    the_child_is_where_it_was(&s, "while its parent is archived").await;
 
     // Asking to restore what was never archived is refused, and says nothing was written.
     s.refused(
@@ -123,7 +141,7 @@ async fn an_archived_thing_is_put_back_with_its_records_and_the_history_of_both_
     s.list("project").await.says("project:atlas");
     let atlas = s.recall("project:atlas").await;
     atlas.says("the plan for the launch");
-    s.list("work").await.says("work:phi");
+    the_child_is_where_it_was(&s, "after the restore").await;
 
     // The history of both acts is on the thing: why it left, when, and why it came back.
     atlas
