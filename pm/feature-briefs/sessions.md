@@ -22,7 +22,7 @@
 
 ## The lifecycle, and its one asymmetry
 
-* **Wrapping happens from inside, by the bot, on the operator's instruction.** Starting a session never wraps another — **but it does ABANDON that bot's other live runs.** One worker runs one line at a time, and a run nobody is in should not go on looking live at the next boot. **Abandoning is the safe half of that: it walks back, and wrapping does not.**
+* **Wrapping happens from inside, by the bot, on the operator's instruction.** Starting a session never wraps another, and never closes a live one: two sessions of one bot may run at once and share its box (rules 174, 175), so a new run sweeps only the runs that have gone quiet. **Abandoning a quiet run is the safe half: it walks back, and wrapping does not.**
 * **A wrap folds the session's unfinished focus into its closing story, as ONE entry** — both things said, in one place, rather than a closing note and a dangling focus line that read as two events.
 * **Terminal is asymmetric: a wrapped session never reopens.** Only an abandoned one walks back to active.
 * **A wrap hands back a one-time code for a last change.** Resuming with it lets the wrapped run write again while it stays wrapped, until it wraps a second time or a newer run of the bot starts. Its first story stands, and the second wrap adds a closing entry beside it.

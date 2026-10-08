@@ -14,7 +14,7 @@
 
 **Claiming is part of booting.** A session names the role it claims when it boots. A bot that carries a role claims it by default, so a line that forgets to ask still takes its seat. Which role a bot carries is written about it by somebody else, never by the bot.
 
-**Every write the holder makes renews the lease** — a journal beat, a capture, a message. The lease is 45 minutes. Past that with no write, the role is takeable, and the next claimant gets it.
+**Every write the holder makes, and every read of its own box, renews the lease** — a journal beat, a capture, a message, a poll of its own box. The lease is 45 minutes. Past that with no write, the role is takeable, and the next claimant gets it.
 
 **A claim has four answers, and each says plainly what it means.** *Taken*: you hold the role, including when you were already holding it. *Refused*: somebody else holds it, named, with the moment their lease runs out. *Conflict*: your claim collided with another write in the same instant; the store worked correctly, and you send the same call again. *Unavailable*: the store could not decide; you hold nothing.
 
