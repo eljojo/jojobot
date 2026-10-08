@@ -356,13 +356,15 @@ fn a_write_that_puts_a_bot_under_its_own_report_is_refused_whoever_asks() {
     ));
 }
 
-/// **The head of a chart is placed by no bot.** A thing with no manager and
-/// reports of its own gets a manager from nobody: not the bot named, not a bot
-/// above it. The cycle check cannot see this, because neither side has a chain.
-/// Paired with the leaf, or a rule that refused every adoption would pass: a
-/// thing with no manager and no reports is still adopted by the bot named.
+/// **The head of a chart places itself, and no other bot places it.** A thing
+/// with no manager and reports of its own gets a manager from nobody but
+/// itself: not the bot named, not a bot above that one. The cycle check cannot
+/// see this, because neither side has a chain. The refusal names the head as the
+/// one who may. Paired with the leaf, or a rule that refused every adoption
+/// would pass: a thing with no manager and no reports is still adopted by the bot
+/// named. A merge that would give the head a manager follows the same rule.
 #[test]
-fn the_head_of_a_chart_is_placed_by_no_bot() {
+fn the_head_of_a_chart_places_itself() {
     let omega = handle("bot:omega");
     let alpha = handle("bot:alpha");
     let head = Lineage {
@@ -372,12 +374,20 @@ fn the_head_of_a_chart_is_placed_by_no_bot() {
     for caller in [&omega, &handle("bot:beta")] {
         let refused =
             refuses_unlicensed_write(&alpha, caller, &reporting_to("bot:omega"), Some(&head))
-                .expect("nobody places the head of a chart");
+                .expect("no other bot places the head of a chart");
         assert!(
-            matches!(refused, MemoryError::ChartHead { .. }),
+            matches!(
+                &refused,
+                MemoryError::KeyNotYours { allowed, key, .. }
+                    if allowed == &vec![alpha.to_string()] && key == REPORTS_TO
+            ),
             "{caller}: {refused:?}"
         );
     }
+    assert!(
+        refuses_unlicensed_write(&alpha, &alpha, &reporting_to("bot:omega"), Some(&head)).is_none(),
+        "the head places itself"
+    );
     let leaf = lineage(&[], Some("bot:omega"), &[]);
     assert!(
         refuses_unlicensed_write(
@@ -388,6 +398,25 @@ fn the_head_of_a_chart_is_placed_by_no_bot() {
         )
         .is_none(),
         "a thing with no reports is adopted by the manager it names"
+    );
+
+    // A merge that would carry a manager onto the head: refused for a stranger,
+    // naming the head, and allowed for the head itself.
+    let carried = reporting_to("bot:omega");
+    let twin = handle("bot:gamma");
+    let refused = refuses_merge_carrying(&omega, &alpha, &twin, &carried, Some(&head))
+        .expect("a stranger cannot place the head by merging");
+    assert!(
+        matches!(
+            &refused,
+            MemoryError::MergeCarriesGuardedKeys { allowed, .. }
+                if allowed == &vec![alpha.to_string()]
+        ),
+        "{refused:?}"
+    );
+    assert!(
+        refuses_merge_carrying(&alpha, &alpha, &twin, &carried, Some(&head)).is_none(),
+        "the head may merge a manager onto itself"
     );
 }
 

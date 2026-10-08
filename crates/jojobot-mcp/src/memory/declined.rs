@@ -211,7 +211,6 @@ pub(crate) fn memory_fix_by(e: &MemoryError) -> Option<FixBy> {
         | MemoryError::RoomFull { .. }
         | MemoryError::KeyNotYours { .. }
         | MemoryError::ChartCycle { .. }
-        | MemoryError::ChartHead { .. }
         | MemoryError::MergeCarriesGuardedKeys { .. }
         | MemoryError::ThoughtTooLong { .. }
         | MemoryError::MergeOverfillsRoom { .. }
@@ -988,17 +987,6 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                  first."
             ),
         )),
-        // **A chart write that would give the head of a chart a manager.**
-        // Refused whoever asks, and no bot can make it: the way forward is the
-        // operator, not a different caller or a different manager.
-        MemoryError::ChartHead { ref subject } => Ok(blocked_body(
-            &EntityId(subject.clone()),
-            &[],
-            format!(
-                "Nothing was written: {e}. The head of a chart is placed by the operator, not \
-                 by a bot."
-            ),
-        )),
         // **A merge into the caller's own bot that would carry a ceiling onto
         // it.** The refusal says the MERGE was refused and why, not that the
         // caller tried to set a key: it sent no fields. Both ways forward
@@ -1126,7 +1114,6 @@ fn memory_error_arms(e: MemoryError) -> McpError {
         | MemoryError::RoomFull { .. }
         | MemoryError::KeyNotYours { .. }
         | MemoryError::ChartCycle { .. }
-        | MemoryError::ChartHead { .. }
         | MemoryError::MergeCarriesGuardedKeys { .. }
         | MemoryError::ThoughtTooLong { .. }
         | MemoryError::MergeOverfillsRoom { .. }
@@ -1621,13 +1608,6 @@ mod tests {
                 MemoryError::ChartCycle {
                     subject: s("bot:gamma"),
                     manager: s("bot:delta"),
-                },
-                Some("change"),
-            ),
-            (
-                "ChartHead",
-                MemoryError::ChartHead {
-                    subject: s("bot:gamma"),
                 },
                 Some("change"),
             ),

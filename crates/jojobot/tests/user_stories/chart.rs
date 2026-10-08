@@ -134,7 +134,7 @@ async fn a_new_bot_is_placed_under_a_manager_only_by_whom_may_place_it() {
 }
 
 #[tokio::test]
-async fn the_head_of_a_chart_is_placed_by_no_bot() {
+async fn the_head_of_a_chart_places_itself() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
     for (handle, name) in [
@@ -159,12 +159,14 @@ async fn the_head_of_a_chart_is_placed_by_no_bot() {
     // ── a bot with no manager cannot name itself the head's manager ─────────
     //
     // Omega is the bot named, so adoption alone would allow it, and neither
-    // side has a chain for the cycle check to read.
+    // side has a chain for the cycle check to read. The refusal names the head
+    // as the one who may.
     omega
         .refused("capture", reporting_to("bot:alpha", "bot:omega"))
         .await
         .says("\"wrote\":false")
-        .says("operator");
+        .says("bot:alpha")
+        .never_says("operator");
     s.call("recall", json!({"subject": "bot:alpha"}))
         .await
         .never_says("\"reports_to\":\"bot:omega\"");
@@ -185,7 +187,8 @@ async fn the_head_of_a_chart_is_placed_by_no_bot() {
         )
         .await
         .says("\"wrote\":false")
-        .says("operator");
+        .says("bot:alpha")
+        .never_says("operator");
     s.call("recall", json!({"subject": "bot:alpha"}))
         .await
         .never_says("\"reports_to\":\"bot:omega\"");
@@ -195,6 +198,14 @@ async fn the_head_of_a_chart_is_placed_by_no_bot() {
         .call("capture", reporting_to("bot:gamma", "bot:omega"))
         .await;
     s.call("recall", json!({"subject": "bot:gamma"}))
+        .await
+        .says("\"reports_to\":\"bot:omega\"");
+
+    // ── and the head places itself ──────────────────────────────────────────
+    alpha
+        .call("capture", reporting_to("bot:alpha", "bot:omega"))
+        .await;
+    s.call("recall", json!({"subject": "bot:alpha"}))
         .await
         .says("\"reports_to\":\"bot:omega\"");
 

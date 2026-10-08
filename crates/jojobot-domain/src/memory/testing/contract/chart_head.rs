@@ -8,19 +8,28 @@
 use super::support::{add, capture};
 use super::*;
 
-/// **A bot with no manager cannot name itself the manager of a chart's head,
-/// and still adopts a thing that has no reports.** Paired, or a store that
-/// refused every adoption would pass the first half.
-pub async fn the_head_of_a_chart_is_placed_by_no_bot<M: Memory>(store: &M) {
+/// **The head of a chart places itself, and no other bot places it.** A bot with
+/// no manager cannot name itself the manager of a chart's head, by an edit or by a
+/// merge, and the refusal names the head as the one who may. The head itself
+/// writes its own manager and it lands. A thing with no reports is still adopted
+/// by the manager it names. Paired, or a store that refused every adoption would
+/// pass the first half.
+pub async fn the_head_of_a_chart_places_itself<M: Memory>(store: &M) {
     let omega = EntityId("bot:contract-head-omega".into());
     let alpha = EntityId("bot:contract-head-alpha".into());
     let beta = EntityId("bot:contract-head-beta".into());
     let gamma = EntityId("bot:contract-head-gamma".into());
+    let twin = EntityId("bot:contract-head-twin".into());
+    let second = EntityId("bot:contract-head-second".into());
+    let follower = EntityId("bot:contract-head-follower".into());
     for (id, name) in [
         (&omega, "Head Omega"),
         (&alpha, "Head Alpha"),
         (&beta, "Head Beta"),
         (&gamma, "Head Gamma"),
+        (&twin, "Head Twin"),
+        (&second, "Head Second"),
+        (&follower, "Head Follower"),
     ] {
         add(store, NewEntity::new(id.clone(), name, "contract-fixture")).await;
     }
@@ -32,6 +41,13 @@ pub async fn the_head_of_a_chart_is_placed_by_no_bot<M: Memory>(store: &M) {
     let to = |manager: &EntityId| FactPatch {
         fields: reporting(manager),
         ..Default::default()
+    };
+    let names_only = |err: &MemoryError, head: &EntityId| match err {
+        MemoryError::KeyNotYours { allowed, key, .. } => {
+            allowed == &vec![head.to_string()] && key == crate::memory::REPORTS_TO
+        }
+        MemoryError::MergeCarriesGuardedKeys { allowed, .. } => allowed == &vec![head.to_string()],
+        _ => false,
     };
 
     // Beta reports to alpha, and alpha reports to none: alpha heads the chart.
@@ -55,16 +71,32 @@ pub async fn the_head_of_a_chart_is_placed_by_no_bot<M: Memory>(store: &M) {
         let err = store
             .update_fact(&head.address(), to(&omega), caller)
             .await
-            .expect_err("no bot places the head of a chart");
+            .expect_err("no other bot places the head of a chart");
         assert!(
-            matches!(err, MemoryError::ChartHead { .. }),
-            "{caller}: expected ChartHead, got {err:?}"
+            names_only(&err, &alpha),
+            "{caller}: expected a refusal naming the head alone, got {err:?}"
         );
     }
     let held = store.fields(&alpha).await.expect("alpha is readable");
     assert!(
         !held.contains_key(crate::memory::REPORTS_TO),
         "the refused edit wrote nothing: {held:?}"
+    );
+
+    // The head places itself, and it reads back.
+    store
+        .update_fact(&head.address(), to(&omega), &alpha)
+        .await
+        .expect("the head writes its own manager")
+        .written()
+        .expect("the guard must not block the head itself");
+    let placed = store.fields(&alpha).await.expect("alpha is readable");
+    assert_eq!(
+        placed
+            .get(crate::memory::REPORTS_TO)
+            .map(|manager| manager.trim_start_matches(crate::memory::mention::MARK)),
+        Some(omega.as_str()),
+        "the head's own placement reads back: {placed:?}"
     );
 
     // A thing with no reports is adopted by the manager it names.
@@ -79,12 +111,40 @@ pub async fn the_head_of_a_chart_is_placed_by_no_bot<M: Memory>(store: &M) {
         .expect("omega adopts a thing with no reports")
         .written()
         .expect("the guard must not block the manager named");
-    let adopted = store.fields(&gamma).await.expect("gamma is readable");
-    assert_eq!(
-        adopted
-            .get(crate::memory::REPORTS_TO)
-            .map(|manager| manager.trim_start_matches(crate::memory::mention::MARK)),
-        Some(omega.as_str()),
-        "the adoption reads back: {adopted:?}"
+
+    // A merge that would carry a manager onto another head: a second chart,
+    // headed by `second`, with `follower` reporting to it. The twin carries a
+    // manager. A stranger merging it in is refused, naming the head alone.
+    capture(
+        store,
+        NewFact {
+            fields: reporting(&second),
+            ..NewFact::about(
+                follower.clone(),
+                "follower reports to second",
+                date(2026, 10, 3),
+            )
+        },
+    )
+    .await;
+    capture(
+        store,
+        NewFact {
+            fields: reporting(&omega),
+            ..NewFact::about(twin.clone(), "twin reports to omega", date(2026, 10, 3))
+        },
+    )
+    .await;
+    let err = store
+        .merge(&twin, &second, None, date(2026, 10, 3), &omega)
+        .await
+        .expect_err("no other bot places a head by merging a manager onto it");
+    assert!(
+        names_only(&err, &second),
+        "expected a refusal naming the head alone, got {err:?}"
     );
+    store
+        .merge(&twin, &second, None, date(2026, 10, 3), &second)
+        .await
+        .expect("the head may merge a manager onto itself");
 }

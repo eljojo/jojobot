@@ -2275,8 +2275,6 @@ enum Why {
     NotLicensed,
     /// The write would put `subject` under one of its own reports.
     Cycle(String),
-    /// `subject` heads a chart, and no bot places the head of a chart.
-    ChartHead,
 }
 
 /// **Whether `caller` may write a key declared as `may` about `subject`.**
@@ -2309,12 +2307,13 @@ fn licensed(
                 // reports of its own and a manager from nobody, it is the top,
                 // and a bot that named itself the manager would take the chart
                 // over without the cycle check seeing it, since neither side has
-                // a chain. No bot places the head.
+                // a chain. The head places itself, and no other bot does.
                 (true, Some(named)) => {
                     if l.has_reports {
-                        return Err(Why::ChartHead);
+                        caller == subject
+                    } else {
+                        caller == named || l.above_named.contains(caller)
                     }
-                    caller == named || l.above_named.contains(caller)
                 }
                 // Nothing to change: no manager, and none named.
                 (true, None) => false,
@@ -2325,11 +2324,15 @@ fn licensed(
 }
 
 /// **The bots that may make a write**, for a refusal to name (rule 261).
-fn who_may_write(may: MayWrite, lineage: Managers) -> Vec<String> {
+fn who_may_write(may: MayWrite, subject: &EntityId, lineage: Managers) -> Vec<String> {
     let names = |bots: &[EntityId]| bots.iter().map(ToString::to_string).collect::<Vec<_>>();
     match (may, lineage) {
         (MayWrite::Ancestor, Some(l)) => names(&l.above),
         (MayWrite::Superior, Some(l)) if !l.above.is_empty() => names(&l.above),
+        // The head of a chart places itself, so it is the one the refusal names.
+        (MayWrite::Superior, Some(l)) if l.has_reports && l.named.is_some() => {
+            vec![subject.to_string()]
+        }
         (MayWrite::Superior, Some(l)) => l
             .named
             .iter()
@@ -2402,14 +2405,11 @@ fn refusal(why: Why, rule: &GuardedKey, subject: &EntityId, lineage: Managers) -
             subject: subject.to_string(),
             manager,
         },
-        Why::ChartHead => MemoryError::ChartHead {
-            subject: subject.to_string(),
-        },
         Why::NotLicensed => MemoryError::KeyNotYours {
             subject: subject.to_string(),
             key: rule.key.to_string(),
             may: rule.may,
-            allowed: who_may_write(rule.may, lineage),
+            allowed: who_may_write(rule.may, subject, lineage),
         },
     }
 }
@@ -2580,9 +2580,7 @@ pub fn refuses_merge_carrying_by(
         match licensed(rule.may, survivor, caller, lineage) {
             Ok(()) => {}
             // A merge that would invert the chart is the chart's own refusal.
-            Err(why @ (Why::Cycle(_) | Why::ChartHead)) => {
-                return Some(refusal(why, rule, survivor, lineage));
-            }
+            Err(why @ Why::Cycle(_)) => return Some(refusal(why, rule, survivor, lineage)),
             Err(Why::NotLicensed) => barred.push(rule),
         }
     }
@@ -2596,7 +2594,7 @@ pub fn refuses_merge_carrying_by(
             .collect::<Vec<_>>()
             .join(", "),
         may: first.may,
-        allowed: who_may_write(first.may, lineage),
+        allowed: who_may_write(first.may, survivor, lineage),
     })
 }
 
@@ -4814,18 +4812,6 @@ pub enum MemoryError {
         subject: String,
         /// The manager the write named.
         manager: String,
-    },
-    /// **A chart write that would give the head of a chart a manager.** A thing
-    /// with no manager that has reports of its own heads the chart, and a bot
-    /// that named itself its manager would take the chart over. Refused whoever
-    /// asks, because only the operator places the head.
-    #[error(
-        "'{subject}' heads a chart: things report to it and it reports to none, so no bot can \
-         name its manager"
-    )]
-    ChartHead {
-        /// The head of the chart.
-        subject: String,
     },
     /// **A merge that would carry a guarded key onto a thing the caller may not
     /// write it on.** Everything the duplicate holds moves to the survivor and
