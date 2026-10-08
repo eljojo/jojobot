@@ -1293,7 +1293,7 @@ fn the_colleagues_reports_to_key_is_named_where_the_one_liner_is() {
 /// sentence carries.
 #[test]
 fn the_set_charter_description_says_a_bot_above_writes_reports_to() {
-    assert_description_names("set_charter", &["above", "adopted"]);
+    assert_description_names("set_charter", &["above", "adopted", "places itself"]);
 }
 
 /// **capture's `provenance` says what a bot's instruction is, and what a bot's
