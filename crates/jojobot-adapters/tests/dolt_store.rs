@@ -4006,8 +4006,7 @@ async fn a_lease_renewal_stamps_the_row_it_overwrites() {
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = store
-        .database("memory")
+    let pool = migrated_database(&store, "memory")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
@@ -4069,6 +4068,21 @@ async fn a_lease_renewal_stamps_the_row_it_overwrites() {
             .expect("a stamp")
     };
     let before = stamp_of_the_newest_moment().await;
+    let class_of_the_newest_moment = || async {
+        let row: (String,) = sqlx::query_as(
+            "SELECT write_class FROM field_write
+             WHERE entity = (SELECT COALESCE(badge, id) FROM entity WHERE id = ?)
+               AND `key` = ? ORDER BY ordinal DESC LIMIT 1",
+        )
+        .bind(role.as_str())
+        .bind(ROLE_CLAIMED_AT)
+        .fetch_one(&pool)
+        .await
+        .expect("the moment has a row");
+        row.0
+    };
+    let class_before = class_of_the_newest_moment().await;
+    assert_eq!(class_before, "own", "the claim wrote the moment as its own");
 
     let renewed = memory
         .update_fact(
@@ -4103,6 +4117,15 @@ async fn a_lease_renewal_stamps_the_row_it_overwrites() {
     assert!(
         after > before,
         "the overwritten row kept the stamp of the write it replaced: {before} then {after}"
+    );
+
+    // **The overwrite changes the value and the stamp and leaves the bag the
+    // write was made under.** A row reset to the column's default would read as
+    // a write made before the class was kept.
+    assert_eq!(
+        class_of_the_newest_moment().await,
+        class_before,
+        "the renewal changed the bag the overwritten row was written under"
     );
 
     store.stop().await;
