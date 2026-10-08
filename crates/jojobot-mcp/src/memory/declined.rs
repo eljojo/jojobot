@@ -965,6 +965,17 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                         "Nothing was written: {e}. No bot is recorded above '{subject}', so \
                          '{key}' on it has to be set through whoever is at the top of the chart."
                     ),
+                    // **A creation that would head a chart.** Existing records
+                    // already name the new bot as their manager, so it heads a
+                    // chart, and the head is the only one who may place it. It
+                    // does not exist yet to do so: make it bare, then place it.
+                    false if verb == "add_entity" && allowed.as_slice() == [subject.clone()] => {
+                        format!(
+                            "Nothing was written: {e}. Existing records already name '{subject}' \
+                             as their manager, so it heads a chart, and a head is placed by \
+                             itself: create it without {key}, then write {key} on it as itself."
+                        )
+                    }
                     false => format!(
                         "Nothing was written: {e}. Ask {} to write '{key}' on '{subject}'.",
                         allowed.join(" or ")

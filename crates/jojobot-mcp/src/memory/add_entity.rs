@@ -1692,11 +1692,14 @@ mod tests {
                 .expect("a refusal is an answer, not a failure"),
         );
         assert_eq!(refused["wrote"], false, "{refused}");
+        // **The way forward is the two steps**, in the words a caller can follow:
+        // make it with no manager, then write the manager on it as itself.
+        let how = refused["how_to_proceed"].as_str().unwrap_or_default();
         assert!(
-            refused["how_to_proceed"]
-                .as_str()
-                .is_some_and(|how| how.contains("bot:sigma")),
-            "the refusal names the head as the one who may place it: {refused}"
+            how.contains("bot:sigma")
+                && how.contains("create it without reports_to")
+                && how.contains("write reports_to on it as itself"),
+            "the refusal names the head and the two-step route: {refused}"
         );
         let after = json_of(
             &jojobot
@@ -1712,5 +1715,32 @@ mod tests {
             !after.to_string().contains("bot:sigma"),
             "a refused creation leaves nothing behind: {after}"
         );
+
+        // **The route works.** The bot is made with no manager, and then, as
+        // itself, it is placed under the bot that wanted it there.
+        let bare = AddEntityArgs {
+            sid: Some(as_bot(&jojobot, "omega")),
+            ..add_args("bot", "sigma", "Sigma")
+        };
+        let made = json_of(&jojobot.add_entity(Parameters(bare)).await.expect("add ok"));
+        assert_ne!(made["status"], "blocked", "made with no manager: {made}");
+        let as_itself = as_bot(&jojobot, "sigma");
+        let placed = json_of(
+            &jojobot
+                .capture(Parameters(CaptureArgs {
+                    sid: Some(as_itself),
+                    fields: Some(
+                        [("reports_to".to_string(), "bot:omega".to_string())]
+                            .into_iter()
+                            .collect(),
+                    ),
+                    ..capture_args("bot:sigma", "sigma reports to omega")
+                }))
+                .await
+                .expect("capture ok"),
+        );
+        assert_ne!(placed["status"], "blocked", "placed as itself: {placed}");
+        let held = fields_of(&jojobot, "bot:sigma").await;
+        assert_eq!(held["reports_to"], "bot:omega", "{held}");
     }
 }
