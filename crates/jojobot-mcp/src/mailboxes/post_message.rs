@@ -269,8 +269,11 @@ impl Jojobot {
                        drains. THE ONE PERSON YOU MAY ADDRESS IS THE OPERATOR, by their person \
                        handle (`person:` and the slug), which the boot names under `operator`: your first post to them \
                        opens their box, nobody else has one, and no bot reads it back, you \
-                       included. Returns the stored message, including the id that \
-                       read_message and mark_processed later target. Give it a `subject`: one line \
+                       included. A body too long to be handed to its reader whole \
+                       under the answer ceiling is refused with nothing written: split it, or put \
+                       the long text on a record and send its address. Returns the stored \
+                       message, including the id that read_message and mark_processed later \
+                       target. Give it a `subject`: one line \
                        saying what the message is about, which is what a reader sees on the \
                        listing and on a search hit before opening anything — put it there rather \
                        than on the body's first line. The `state` you get back is the state as it \
@@ -411,6 +414,19 @@ impl Jojobot {
             sender_mail_waiting_at_send,
             posted_by_session,
         };
+        // **A message nobody could be handed whole is not posted.** The reader
+        // of a box is handed the messages in it under the answer ceiling, and
+        // one whose body cannot fit even alone would come back with its body
+        // left out. Refused here, before anything is written, with the ways
+        // to send it.
+        if let Some(room) = body_room_beyond(&new) {
+            return mailbox_declined(MailboxError::InvalidMessage(format!(
+                "this body is {} characters and the largest a reader can be handed whole is \
+                 about {room}. Split it into several messages, or put the long text on a record \
+                 with capture and send its address",
+                new.body.chars().count()
+            )));
+        }
         // Declined rather than errored: a reply naming a message jojobot does
         // not hold is a bad reference, and every other bad reference on this
         // surface comes back as the blocked shape.
@@ -487,6 +503,70 @@ impl Jojobot {
 ///
 /// **Named only when something came back**, so a post that collected nothing
 /// does not claim work that does not exist.
+/// **A moment written with every fractional digit a timestamp can carry.** A
+/// timestamp prints without its trailing zeros, so the same message prints a
+/// few characters longer or shorter from one moment to the next. The probe in
+/// [`body_room_beyond`] wears this one, so the answer depends on the lengths of
+/// the message's fields and on nothing that changes between two calls.
+const WIDEST_TIMESTAMP: &str = "2026-10-08T15:30:12.123456789Z";
+
+/// **`Some(room)` when this message could not be handed to a reader whole**,
+/// with `room` the longest body that could be.
+///
+/// The question is asked of the same fill a read of the box uses
+/// ([`fit_delivery`]), on a probe of the message as it would be delivered, so
+/// the refusal and the delivery cannot come to disagree. The probe wears the
+/// widest id a message may have and the widest timestamp, which keeps the answer
+/// on the safe side: a body this lets through is delivered whole whatever id the
+/// store draws and whenever it is sent.
+fn body_room_beyond(new: &NewMessage) -> Option<usize> {
+    let whole = |body: String| -> bool {
+        let message = Message {
+            id: MessageId("x".repeat(64)),
+            mailbox: new.mailbox.clone(),
+            body,
+            subject: new.subject.clone(),
+            sender: new.sender.clone(),
+            sent_at: WIDEST_TIMESTAMP.parse().expect("a fixed moment"),
+            state: mailbox::MessageState::Read,
+            notes: None,
+            in_reply_to: new.in_reply_to.clone(),
+            taken_by: Some(mailbox::TakenBy::Reading),
+            sender_mail_waiting_at_send: new.sender_mail_waiting_at_send,
+            posted_by_session: new.posted_by_session.clone(),
+        };
+        let delivery = Delivery {
+            mailbox: new.mailbox.clone(),
+            messages: vec![Delivered {
+                message,
+                seen_before: false,
+            }],
+        };
+        let mut rendered = delivery_json(&delivery, true);
+        if let Some(run) = new.posted_by_session.as_deref() {
+            note_written_by_other_run(&mut rendered["messages"][0], run, Some(false));
+        }
+        fit_delivery(&mut rendered, &delivery, 0);
+        rendered.get("not_shown").is_none() && rendered["messages"][0].get("body_elided").is_none()
+    };
+    if whole(new.body.clone()) {
+        return None;
+    }
+    // The room is found by the same question asked of shorter bodies: the
+    // longest one that still comes through whole. A body of nothing is the
+    // floor, and a message that cannot be handed whole empty has no room.
+    let (mut fits, mut over) = (0usize, new.body.chars().count());
+    while over - fits > 1 {
+        let mid = (fits + over) / 2;
+        if whole("x".repeat(mid)) {
+            fits = mid;
+        } else {
+            over = mid;
+        }
+    }
+    Some(fits)
+}
+
 fn what_a_post_left_standing(message: &Message, collected: u64) -> String {
     let took = match collected {
         0 => String::new(),
@@ -842,6 +922,122 @@ mod tests {
                 .iter()
                 .all(|m| m["body"].is_string() && m.get("body_elided").is_none()),
             "every body comes whole: {posted}"
+        );
+    }
+
+    /// **The room does not move with the moment the message is sent.** A
+    /// timestamp prints without its trailing zeros, so two moments a second
+    /// apart can print nine characters apart. If the check read the real one, a
+    /// body at the limit would land on one call and be refused on the next.
+    #[test]
+    fn the_room_for_a_body_does_not_depend_on_how_the_moment_prints() {
+        let message = |sent_at: &str| NewMessage {
+            mailbox: mailbox::MailboxName("otto".into()),
+            body: "x".repeat(40_000),
+            subject: None,
+            sender: "bot:epsilon".into(),
+            sent_at: sent_at.parse().expect("a moment"),
+            in_reply_to: None,
+            sender_mail_waiting_at_send: None,
+            posted_by_session: None,
+        };
+        let short = message("2026-10-08T15:30:12Z");
+        let long = message("2026-10-08T15:30:12.123456789Z");
+        assert_ne!(
+            short.sent_at.to_string().len(),
+            long.sent_at.to_string().len(),
+            "the two moments must print at different widths for this to prove anything"
+        );
+        assert!(body_room_beyond(&short).is_some(), "40,000 does not fit");
+        assert_eq!(body_room_beyond(&short), body_room_beyond(&long));
+    }
+
+    /// A post of `body_len` characters into `otto`'s box from `epsilon`, on a
+    /// fresh handler, read back as the answer the verb served.
+    async fn posting_a_body(body_len: usize) -> (Jojobot, serde_json::Value) {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "otto").await;
+        make_box(&jojobot, "epsilon").await;
+        let result = jojobot
+            .post_message(Parameters(PostMessageArgs {
+                to: "otto".into(),
+                sid: as_bot(&jojobot, "epsilon"),
+                subject: None,
+                body: "x".repeat(body_len),
+                in_reply_to: None,
+            }))
+            .await
+            .expect("post_message call ok");
+        (jojobot, json_of(&result))
+    }
+
+    /// The first body length a post refuses, found by bisection between a length
+    /// that lands and one that does not.
+    async fn first_refused_body() -> usize {
+        let (mut fits, mut refused) = (100usize, 60_000usize);
+        let (_, top) = posting_a_body(refused).await;
+        assert_eq!(
+            top["status"], "blocked",
+            "a body of {refused} characters was not refused: {top}"
+        );
+        while refused - fits > 1 {
+            let mid = (fits + refused) / 2;
+            if posting_a_body(mid).await.1["status"] == "blocked" {
+                refused = mid;
+            } else {
+                fits = mid;
+            }
+        }
+        refused
+    }
+
+    /// **A message too big to be delivered whole is refused, with nothing
+    /// written, and the answer names the way to send it.** A body that is just
+    /// under the limit lands and is handed to its reader whole; one character
+    /// more is refused. Nobody could receive the second whole, and a message a
+    /// reader cannot receive whole is not delivered at all in any sense that
+    /// matters to the sender.
+    #[tokio::test]
+    async fn a_body_too_big_to_be_delivered_whole_is_refused_and_one_under_it_is_delivered_whole() {
+        let refused_at = first_refused_body().await;
+        assert!(
+            (20_000..28_000).contains(&refused_at),
+            "the limit is the ceiling less the envelope, not a number of its own: {refused_at}"
+        );
+
+        let (jojobot, under) = posting_a_body(refused_at - 1).await;
+        assert_ne!(under["status"], "blocked", "{under}");
+        let reader = as_bot(&jojobot, "otto");
+        let delivery = json_of(
+            &jojobot
+                .read_mailbox(Parameters(ReadMailboxArgs {
+                    counts_only: None,
+                    new_only: None,
+                    sid: Some(reader),
+                }))
+                .await
+                .expect("read_mailbox ok"),
+        );
+        let message = &delivery["messages"][0];
+        assert_eq!(
+            message["body"].as_str().map(str::len),
+            Some(refused_at - 1),
+            "the largest body that lands is handed over whole: {delivery}"
+        );
+        assert!(message.get("body_elided").is_none(), "{delivery}");
+        assert!(delivery.get("not_shown").is_none(), "{delivery}");
+
+        let (jojobot, over) = posting_a_body(refused_at).await;
+        assert_eq!(over["status"], "blocked", "{over}");
+        assert_eq!(over["wrote"], false, "{over}");
+        assert!(
+            over.to_string().to_lowercase().contains("split"),
+            "the refusal names the way to send it: {over}"
+        );
+        let counted = counts(&jojobot, "otto").await;
+        assert_eq!(
+            counted["counts"]["total"], 0,
+            "nothing was written: {counted}"
         );
     }
 
