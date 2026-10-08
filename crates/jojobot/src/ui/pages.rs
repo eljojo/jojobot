@@ -318,10 +318,11 @@ async fn mailbox_section(state: &AppState, bot: &EntityId) -> String {
 /// **The operator's mailbox, and the mail in it, with the two actions.**
 ///
 /// **This read moves nothing.** It is a GET, so a prefetch of the page must not
-/// mark mail seen. A new message shows its row and an Open button and no body,
-/// because a body shown here would be a message read while it still says new.
-/// Opening is a POST that takes delivery of that one message; marking it
-/// processed is a POST too. A read or processed message shows its body.
+/// mark mail seen. A new message shows its row, an Open button and a
+/// mark-processed form, and no body, because a body shown here would be a
+/// message read while it still says new. Opening is a POST that takes delivery
+/// of that one message; marking it processed is a POST too, and it works from
+/// `new` or `read`. A read or processed message shows its body.
 ///
 /// **Only while the allowlist admits exactly one person.** A session carries no
 /// subject, so with any other number of people admitted, anyone who logs in
@@ -374,20 +375,24 @@ async fn operators_mailbox_section(state: &AppState, operator: &EntityId) -> Str
     );
     for message in mail {
         let state_token = message.state.as_token();
+        let open_form = format!(
+            "<form method=\"post\" action=\"/ui/mail/open\">\
+             <input type=\"hidden\" name=\"id\" value=\"{}\">\
+             <button type=\"submit\">Open</button></form>",
+            escape(message.id.as_str()),
+        );
+        let mark_form = format!(
+            "<form method=\"post\" action=\"/ui/mail/processed\">\
+             <input type=\"hidden\" name=\"id\" value=\"{}\">\
+             <input type=\"text\" name=\"note\" placeholder=\"note (optional)\">\
+             <button type=\"submit\">Mark processed</button></form>",
+            escape(message.id.as_str()),
+        );
+        // **Only Open sets `read`**, so a message can be finished from `new`
+        // without its body ever having been shown.
         let action = match state_token {
-            "new" => format!(
-                "<form method=\"post\" action=\"/ui/mail/open\">\
-                 <input type=\"hidden\" name=\"id\" value=\"{}\">\
-                 <button type=\"submit\">Open</button></form>",
-                escape(message.id.as_str()),
-            ),
-            "read" => format!(
-                "<form method=\"post\" action=\"/ui/mail/processed\">\
-                 <input type=\"hidden\" name=\"id\" value=\"{}\">\
-                 <input type=\"text\" name=\"note\" placeholder=\"note (optional)\">\
-                 <button type=\"submit\">Mark processed</button></form>",
-                escape(message.id.as_str()),
-            ),
+            "new" => format!("{open_form}{mark_form}"),
+            "read" => mark_form,
             _ => String::new(),
         };
         out.push_str(&format!(

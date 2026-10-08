@@ -1718,6 +1718,13 @@ async fn open_in_the_ui(
     request.send().await.unwrap()
 }
 
+/// Whether the page carries the mark-processed form for this message id.
+fn mark_form_for(page: &str, id: &str) -> bool {
+    page.contains(&format!(
+        "action=\"/ui/mail/processed\"><input type=\"hidden\" name=\"id\" value=\"{id}\">"
+    ))
+}
+
 /// The state a message is in, read from the store rather than the page.
 async fn state_in_the_store(
     mailboxes: &InMemoryMailboxes,
@@ -1902,6 +1909,10 @@ async fn the_open_button_takes_delivery_of_one_message_only() {
         "an opened message shows its body: {page}"
     );
     assert!(
+        mark_form_for(&page, mail.to_the_operator.as_str()),
+        "an opened message still carries the mark-processed form: {page}"
+    );
+    assert!(
         !page.contains("the second report is about the kiln"),
         "a message still new keeps its body back: {page}"
     );
@@ -2050,17 +2061,22 @@ async fn the_operator_marks_a_message_processed_with_a_note() {
     let cookie = log_in(&client, addr, "/").await;
     let origin = format!("http://{addr}");
 
-    // A message the operator has opened carries the action for it; one still
-    // new carries the Open button instead.
-    open_in_the_ui(addr, &cookie, mail.to_the_operator.as_str(), Some(&origin)).await;
+    // **A message still new carries the mark-processed form**, beside its Open
+    // button: the operator may finish it without opening it, and nothing but
+    // Open sets `read`.
     let page = read(&client, addr, "/person:lisa/", &cookie)
         .await
         .text()
         .await
         .unwrap();
     assert!(
-        page.contains("action=\"/ui/mail/processed\"") && page.contains("name=\"note\""),
-        "the operator's page carries a mark-processed form with a note: {page}"
+        mark_form_for(&page, mail.to_the_operator.as_str()) && page.contains("name=\"note\""),
+        "a new message carries a mark-processed form with a note: {page}"
+    );
+    assert_eq!(
+        state_in_the_store(&mailboxes, &mail.to_the_operator).await,
+        "new",
+        "the page showed the form without opening the message"
     );
 
     let done = mark_processed_in_the_ui(
