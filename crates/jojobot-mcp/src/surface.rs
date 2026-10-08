@@ -604,6 +604,18 @@ fn add_entity_points_at_the_verb_that_reparents() {
     );
 }
 
+/// **The orientation essay's list of kinds names `role`**, the kind a claimed
+/// role is made as, so a caller reading the list is not surprised by it in a
+/// listing.
+#[test]
+fn the_orientation_essay_lists_the_role_kind() {
+    let essay = crate::orientation::essay::orientation();
+    assert!(
+        essay.contains("thread · role"),
+        "the orientation essay's list of kinds leaves out role"
+    );
+}
+
 /// **The orientation essay explains claiming a role**, in the Sessions
 /// section where it already explains what a session is — the same place a
 /// caller reads to understand `start_here`'s `claim` argument, so the
