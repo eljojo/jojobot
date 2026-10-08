@@ -39,6 +39,10 @@ fn last_day() -> jiff::civil::Date {
 struct Measured {
     size: usize,
     room: usize,
+    /// The thing's own row and the room one answer has for it, **when the row
+    /// alone does not fit**: then no record on the thing can, and the cause is
+    /// the row.
+    row_over: Option<(usize, usize)>,
 }
 
 impl Jojobot {
@@ -67,6 +71,15 @@ impl Jojobot {
             && after.size <= was.size
         {
             return None;
+        }
+        // **The cause is named.** A row already over leaves no room for any record,
+        // and telling the caller to shorten the record would send it the wrong way.
+        if let Some((row, row_room)) = after.row_over {
+            return Some(MemoryError::ThingTooLarge {
+                subject: fact.home.to_string(),
+                size: row,
+                room: row_room,
+            });
         }
         Some(MemoryError::ClaimTooLarge {
             subject: fact.home.to_string(),
@@ -131,9 +144,11 @@ impl Jojobot {
         }
         let record = crate::memory::wire::fact_json(fact, last_day(), Some(WIDEST_REVISION_COUNT));
         let (skeleton, rest, widest) = read_of_a_thing(&entity, &folded);
+        let row_room = record_room(rest, 0, widest);
         Some(Measured {
             size: record.to_string().chars().count() + 1,
             room: record_room(rest, skeleton, widest),
+            row_over: (skeleton > row_room).then_some((skeleton, row_room)),
         })
     }
 

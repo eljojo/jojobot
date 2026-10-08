@@ -204,6 +204,7 @@ pub(crate) fn blocked_body(
 /// is needed instead of guessing.
 fn too_big_to_read(
     subject: &str,
+    what_is_over: &str,
     size: usize,
     room: usize,
     how_to_proceed: impl Into<WayForward>,
@@ -213,6 +214,9 @@ fn too_big_to_read(
         "attempted": subject,
         "wrote": false,
         "candidates": [],
+        // **Which one is over**, as a word a caller branches on: the record being
+        // written, or the thing's own name, aliases and keys, which no claim written on it can fix.
+        "what_is_over": what_is_over,
         "size": size,
         "room": room,
         "over": size - room,
@@ -963,6 +967,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             room,
         } => Ok(too_big_to_read(
             subject,
+            "the record",
             size,
             room,
             format!(
@@ -981,13 +986,29 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             room,
         } => Ok(too_big_to_read(
             subject,
+            "the thing's name, aliases and keys",
             size,
             room,
-            format!(
-                "Nothing was written: {e}. Send fewer or shorter aliases, or set fewer and \
-                 shorter keys, so that {verb} leaves the thing {} characters smaller.",
-                size - room
-            ),
+            // **The thing's own name, aliases and keys are what is over, so nothing about the claim
+            // being written helps.** Every route named here shrinks them, and
+            // the last sentence says why no claim is written until they have shrunk.
+            match verb {
+                "add_entity" => format!(
+                    "Nothing was created: {e}. Send a shorter name, fewer or shorter aliases, or \
+                     fewer keys in `sets` ({} characters over).",
+                    size - room
+                ),
+                _ => format!(
+                    "Nothing was written: {e}. The thing's own name, aliases and keys are what is over ({} \
+                     characters), not the claim you sent, and a read could not serve any claim \
+                     on it until they are smaller. Shrink them: shorten its name or \
+                     aliases with update_entity, take keys off with update_fact and \
+                     clear_fields, move detail to the thing it is about, or keep the long text \
+                     as a page outside the store behind a pointer claim on another thing. Then \
+                     send {verb} again.",
+                    size - room
+                ),
+            },
         )),
         // **A merge that would bring a thought over the survivor's body cap.**
         // The way forward names where the thought is now, because the caller

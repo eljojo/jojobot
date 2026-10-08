@@ -579,3 +579,104 @@ async fn a_merge_whose_account_is_too_big_to_read_back_moves_nothing() {
         "{read}"
     );
 }
+
+/// **A thing whose own row is over one answer is never a dead end.** Such a
+/// row can sit in a store from before the guard. A new claim on it is refused
+/// for the right cause: the refusal says the thing's own row is what is over,
+/// not the claim being written, and names the routes that shrink the row. An
+/// edit that shrinks the row lands, and after it a new claim lands.
+#[tokio::test]
+async fn a_thing_whose_own_row_is_over_names_the_row_and_the_way_out_of_it() {
+    use jojobot_domain::memory::{EntityId, EntityKind, Guarded, NewEntity};
+
+    let first = Story::begin("bot:otto").await;
+    let memory = first.memory_store();
+    let id = EntityId::new(EntityKind::THING, word(120_000));
+    let mut full = NewEntity::new(id.clone(), format!("Spot {}", word(120_000)), "user-named");
+    full.aliases = aliases(120_000, 200);
+    let added = memory.add_entity(full).await;
+    assert!(matches!(added, Ok(Guarded::Written(_))), "{added:?}");
+    let story = first.restarted().await;
+    let otto = story.session().await;
+    let handle = id.as_str().to_string();
+
+    // A new claim is refused, and the answer says whose size it is.
+    let refusal = otto
+        .refused(
+            "capture",
+            json!({"subject": handle, "content": "a short note", "provenance": "testimony"}),
+        )
+        .await;
+    assert_eq!(refusal.json()["fix_by"], "change", "{}", refusal.raw());
+    assert_eq!(
+        refusal.json()["what_is_over"],
+        "the thing's name, aliases and keys",
+        "{}",
+        refusal.raw()
+    );
+    // The routes that shrink the row, and none that is about the claim.
+    refusal.says("aliases").says("pointer");
+    refusal.never_says("split it into claims");
+
+    // A claim that is itself too big says it is the claim.
+    let other = fresh_thing(&otto, 120_001).await;
+    let big = otto
+        .refused(
+            "capture",
+            json!({
+                "subject": other, "content": "a note", "details": text(ANSWER_CEILING),
+                "provenance": "testimony",
+            }),
+        )
+        .await;
+    assert_eq!(big.json()["what_is_over"], "the record", "{}", big.raw());
+
+    // An edit that shrinks the row lands even while the row is still over, so a
+    // row can be brought down in steps, and a claim is still refused for the row.
+    // (Asked without the ceiling check: the receipt of an edit echoes the row it
+    // leaves, and a row still over one answer makes the receipt over it too.)
+    let stepped = otto
+        .attempt(
+            "update_entity",
+            json!({"handle": handle, "aliases": aliases(120_000, 190)}),
+        )
+        .await;
+    assert!(!refused(&stepped), "a smaller row is allowed: {stepped}");
+    let still = otto
+        .refused(
+            "capture",
+            json!({"subject": handle, "content": "a short note", "provenance": "testimony"}),
+        )
+        .await;
+    assert_eq!(
+        still.json()["what_is_over"],
+        "the thing's name, aliases and keys",
+        "{}",
+        still.raw()
+    );
+
+    // An edit that brings the row under the limit lands.
+    otto.call(
+        "update_entity",
+        json!({"handle": handle, "aliases": aliases(120_000, 20)}),
+    )
+    .await;
+
+    // And after it a new claim lands, and reads back.
+    otto.call(
+        "capture",
+        json!({"subject": handle, "content": "a short note", "provenance": "testimony"}),
+    )
+    .await;
+    let read = otto
+        .call("recall", json!({"subject": handle, "facts": true}))
+        .await;
+    assert_eq!(
+        read.json()["objects"][0]["facts"].as_array().map(Vec::len),
+        Some(1),
+        "{}",
+        read.raw()
+    );
+
+    story.finish().await;
+}
