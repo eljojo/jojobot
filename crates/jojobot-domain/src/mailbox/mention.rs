@@ -36,7 +36,7 @@ fn refuse_forged(text: &[&str]) -> Result<(), MailboxError> {
         false => Ok(()),
         true => Err(MailboxError::InvalidMessage(format!(
             "the text carries '{}' followed by a badge, which is how jojobot stores a link to a \
-             thing, and only jojobot writes it. Write the handle (kind:slug) to link a thing, or \
+             thing, and only jojobot writes it. Write @kind:slug to link a thing, or \
              leave the '{}' off.",
             mention::MARK,
             mention::MARK,

@@ -290,7 +290,7 @@ fn refuse_forged(text: &[&str]) -> Result<(), super::MemoryError> {
         false => Ok(()),
         true => Err(super::MemoryError::InvalidFact(format!(
             "the text carries '{MARK}' followed by a badge, which is how jojobot stores a link \
-             to a thing, and only jojobot writes it. Write the handle (kind:slug) to link a \
+             to a thing, and only jojobot writes it. Write @kind:slug to link a \
              thing, or leave the '{MARK}' off."
         ))),
     }

@@ -523,7 +523,10 @@ async fn the_way_a_link_is_stored_is_refused_when_a_caller_writes_it() {
         }),
     )
     .await
-    .says("blocked");
+    .says("blocked")
+    .never_says("@kind:slug");
+    // **Prose links with the at-sign form, and each refusal of prose says so**:
+    // a field value is a handle alone, which is what the refusal above names.
     s.refused(
         "capture",
         json!({
@@ -533,16 +536,19 @@ async fn the_way_a_link_is_stored_is_refused_when_a_caller_writes_it() {
         }),
     )
     .await
-    .says("blocked");
+    .says("blocked")
+    .says("@kind:slug");
     s.refused("journal", json!({"entry": "found @#k7h2mn"}))
         .await
-        .says("blocked");
+        .says("blocked")
+        .says("@kind:slug");
     s.refused(
         "post_message",
         json!({"to": "gamma", "subject": "a link", "body": "see @#k7h2mn"}),
     )
     .await
-    .says("blocked");
+    .says("blocked")
+    .says("@kind:slug");
 
     // **A creation with a first claim is a write of the caller's words too**:
     // the claim's words are the thing's name, so a name carrying the stored
