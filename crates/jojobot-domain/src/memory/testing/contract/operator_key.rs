@@ -218,7 +218,40 @@ pub async fn the_operator_is_named_by_any_bot_and_changed_only_by_the_head_of_th
         .written()
         .expect("nothing blocks it");
     assert_eq!(held_on(plain).await, Some(two.to_string()));
-    // The head's own merge onto a record that holds the key is not asked here:
-    // merging two records that both hold one key fails in the real store for a
-    // reason that has nothing to do with this guard.
+
+    // ── the head's own merge onto a record that holds the key ───────────────
+    //
+    // Both records hold the key, and the bot that heads the chart folds one into
+    // the other. The refusal above is for a bot that does not head it; the same
+    // merge from the head lands, so a store that refused every merge carrying the
+    // key would not pass.
+    capture(
+        store,
+        NewFact {
+            fields: naming(&one),
+            ..NewFact::about(record.clone(), "who the operator is", date(2026, 10, 7))
+        },
+    )
+    .await;
+    assert!(
+        held_on(record.clone()).await.is_some() && held_on(second.clone()).await.is_some(),
+        "both records hold the key before the merge"
+    );
+    store
+        .merge(&second, &record, None, date(2026, 10, 8), &head)
+        .await
+        .expect("the head merges a record that holds the operator onto one that holds it");
+    assert!(
+        held_on(record).await.is_some(),
+        "the survivor still names an operator after the head's merge"
+    );
+    assert!(
+        store
+            .list_entities(None)
+            .await
+            .expect("listable")
+            .iter()
+            .any(|entity| entity.id == second && entity.merged_into.is_some()),
+        "the duplicate was folded into the survivor"
+    );
 }
