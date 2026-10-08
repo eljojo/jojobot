@@ -460,14 +460,16 @@ async fn search_at_its_widest_fits_and_walking_on_returns_every_hit_exactly_once
 }
 
 /// **`limit` is a page and `offset` is where the next page starts.** Three
-/// hundred facts read forty at a time come back as pages that each hold forty
-/// (the last holds the rest), and together they are exactly the facts that were
-/// written, each once. The real index answers, not a double.
+/// hundred facts read forty at a time come back as pages of at most forty: fewer
+/// where forty would pass the ceiling, and a page cut short says so, naming how
+/// many it left out and the offset that reads on. Together they are exactly the
+/// facts that were written, each once. The real index answers, not a double.
 #[tokio::test]
 async fn pages_of_forty_walk_the_whole_ranking_once() {
     let world = hostile_world().await;
     let mut seen: Vec<String> = Vec::new();
-    let mut sizes: Vec<usize> = Vec::new();
+    // Each page's size, and how many the ceiling cut from it when it said so.
+    let mut pages: Vec<(usize, Option<u64>)> = Vec::new();
     let mut offset = 0u64;
     loop {
         let page = world
@@ -484,21 +486,46 @@ async fn pages_of_forty_walk_the_whole_ranking_once() {
             assert!(body["past_the_end"].is_string(), "{body}");
             break;
         }
-        sizes.push(hits.len());
         offset += hits.len() as u64;
+        let cut = body["not_shown"]["count"].as_u64();
+        if let Some(left) = cut {
+            assert_eq!(
+                left as usize + hits.len(),
+                40,
+                "a cut page accounts for the forty it was asked for: {body}"
+            );
+            assert_eq!(
+                body["not_shown"]["offset"], offset,
+                "a cut page names where the next one starts: {body}"
+            );
+        }
+        pages.push((hits.len(), cut));
         seen.extend(
             hits.iter()
                 .map(|h| h["address"].as_str().expect("an address").to_string()),
         );
-        assert!(sizes.len() < 50, "the walk never ends");
+        assert!(pages.len() < 50, "the walk never ends");
     }
+    // A page holds forty unless the ceiling cut it, and a cut says so. "At most
+    // forty" and a count of pages cannot tell this from pages of seven, which
+    // tile the ranking just as well.
+    let (last, full) = pages.split_last().expect("a walk has pages");
+    for (n, cut) in full {
+        assert!(
+            *n == 40 || cut.is_some(),
+            "a page short of forty that does not say it was cut: {pages:?}"
+        );
+    }
+    assert!(last.0 <= 40, "the last page holds the rest: {pages:?}");
     assert!(
-        sizes.iter().all(|n| *n <= 40),
-        "a page is at most forty: {sizes:?}"
+        pages.iter().any(|(_, cut)| cut.is_some()),
+        "the world is big enough that the ceiling cuts a page, or the checks above \
+         were never asked a question: {pages:?}"
     );
-    assert!(
-        sizes.len() >= 8,
-        "three hundred facts need eight pages: {sizes:?}"
+    assert_eq!(
+        pages.iter().map(|(n, _)| n).sum::<usize>(),
+        MARKER_FACTS,
+        "the pages hold every fact: {pages:?}"
     );
     let mut walked = seen.clone();
     walked.sort();
