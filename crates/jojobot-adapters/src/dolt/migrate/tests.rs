@@ -2826,7 +2826,7 @@ async fn an_interrupted_session_started_on_add_is_recognized_by_the_column_being
 /// and rendered in a fixed order. Two databases fingerprint identically
 /// only when their schemas actually agree; this is what a comparison
 /// between a copied store and a freshly migrated one is built on.
-async fn schema_fingerprint(pool: &MySqlPool) -> String {
+pub(crate) async fn schema_fingerprint(pool: &MySqlPool) -> String {
     let tables: Vec<String> = sqlx::query_scalar(
         "SELECT table_name FROM information_schema.tables \
              WHERE table_schema = DATABASE() ORDER BY table_name",

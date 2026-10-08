@@ -62,6 +62,101 @@ pub fn store_log() -> String {
     crate::log_capture::log_sink().text()
 }
 
+/// **A database of its own on this store, already migrated.**
+///
+/// The same database `store.database(name)` followed by `migrate::run` leaves,
+/// restored from a template instead of migrated from nothing. A fresh
+/// migration of the whole chain costs most of a second, and a suite that
+/// starts a store per case pays it per case; a restore costs a few hundredths.
+/// **It is for a case that wants the finished schema.** A case that is about a
+/// migration, or that needs an empty database to start from, keeps
+/// `store.database`.
+///
+/// The kinds are not seeded: a case seeds them or does not, exactly as it did
+/// after a fresh migration. A `migrate::run` after this applies nothing, and
+/// stays worth keeping as a live check that the template is whole.
+pub async fn migrated_database(
+    store: &crate::dolt::Dolt,
+    name: &str,
+) -> Result<sqlx::MySqlPool, crate::dolt::StartError> {
+    static TEMPLATE: tokio::sync::OnceCell<std::path::PathBuf> = tokio::sync::OnceCell::const_new();
+    let backup = TEMPLATE.get_or_try_init(build_template).await?;
+    sqlx::query(&format!(
+        "CALL DOLT_BACKUP('restore', 'file://{}', '{name}')",
+        backup.display()
+    ))
+    .execute(store.pool())
+    .await
+    .map_err(|e| crate::dolt::StartError::Spawn(e.to_string()))?;
+    store.database(name).await
+}
+
+/// **The directory that holds this process's template, and no other
+/// process's.** Named for the process, so two runs on one machine never share
+/// one and a migration added between runs cannot meet a stale template.
+const TEMPLATE_DIR_PREFIX: &str = "jojobot-store-template-";
+
+/// Build the template once for this process: migrate one database on a store of
+/// its own and back it up to a directory a running server can restore from.
+///
+/// **A backup and not a copy of the data directory.** A running server cannot
+/// clone a live database directory, because it holds a chunk journal, and a
+/// directory copy is only seen by a server that starts after it. A backup
+/// restores into a server that is already up.
+async fn build_template() -> Result<std::path::PathBuf, crate::dolt::StartError> {
+    use crate::dolt::StartError;
+    let root = std::env::temp_dir().join(format!("{TEMPLATE_DIR_PREFIX}{}", std::process::id()));
+    sweep_dead_templates();
+    let backup = root.join("backup");
+    let building = root.join("building");
+    std::fs::create_dir_all(&building).map_err(|e| StartError::DataDir {
+        path: building.clone(),
+        why: e.to_string(),
+    })?;
+    let mut store = start_unhurried(&building, free_port()).await?;
+    let pool = store.database("template").await?;
+    crate::dolt::migrate::run(&pool)
+        .await
+        .map_err(|e| StartError::Spawn(e.to_string()))?;
+    sqlx::query(&format!(
+        "CALL DOLT_BACKUP('sync-url', 'file://{}')",
+        backup.display()
+    ))
+    .execute(&pool)
+    .await
+    .map_err(|e| StartError::Spawn(e.to_string()))?;
+    pool.close().await;
+    store.stop().await;
+    let _ = std::fs::remove_dir_all(&building);
+    Ok(backup)
+}
+
+/// Remove the templates of processes that are gone. A process cannot clean up
+/// after a kill, so the next one to build a template does it.
+fn sweep_dead_templates() {
+    let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(pid) = name
+            .to_string_lossy()
+            .strip_prefix(TEMPLATE_DIR_PREFIX)
+            .and_then(|pid| pid.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        let alive = std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success());
+        if !alive {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -141,5 +236,102 @@ mod tests {
             100,
             "a hundred calls must hand out a hundred distinct ports: {handed:?}",
         );
+    }
+
+    /// **How many rows each table of the current database holds**, by table.
+    async fn row_counts(pool: &sqlx::MySqlPool) -> Vec<(String, i64)> {
+        let tables: Vec<String> = sqlx::query_scalar(
+            "SELECT table_name FROM information_schema.tables \
+             WHERE table_schema = DATABASE() ORDER BY table_name",
+        )
+        .fetch_all(pool)
+        .await
+        .expect("tables readable");
+        let mut counts = Vec::new();
+        for table in tables {
+            let (n,): (i64,) = sqlx::query_as(&format!("SELECT COUNT(*) FROM `{table}`"))
+                .fetch_one(pool)
+                .await
+                .expect("rows countable");
+            counts.push((table, n));
+        }
+        counts
+    }
+
+    /// 🚨 **The assertion a templated database rests on.** A database restored
+    /// from the template must read the same as one migrated fresh: the same
+    /// schema (every table, column, type, nullability and index), the same
+    /// migration ledger, nothing left for `migrate::run` to apply, and, once
+    /// the kinds are seeded in both, the same rows in every table.
+    ///
+    /// **Both halves.** The fresh database is the oracle the templated one is
+    /// held to, and the ledger is read as a list that must be non-empty, so a
+    /// comparison of two empty databases cannot pass. A template that lacks
+    /// the last migration fails the schema, the ledger and the no-op run at
+    /// once.
+    #[tokio::test]
+    async fn a_templated_database_reads_the_same_as_a_freshly_migrated_one() {
+        use crate::dolt::memory::DoltMemory;
+        use crate::dolt::migrate;
+        use crate::dolt::migrate::tests::schema_fingerprint;
+
+        let scratch = Scratch::new("templated-canary");
+        let mut store = crate::dolt::Dolt::start(&scratch.0, free_port())
+            .await
+            .expect("the store comes up");
+        let fresh = store
+            .database("fresh")
+            .await
+            .expect("a database of its own");
+        migrate::run(&fresh).await.expect("the schema");
+        let templated = migrated_database(&store, "templated")
+            .await
+            .expect("a templated database");
+
+        assert_eq!(
+            schema_fingerprint(&fresh).await,
+            schema_fingerprint(&templated).await,
+            "a templated database must carry the schema a fresh migration builds"
+        );
+
+        let ledger = |pool: sqlx::MySqlPool| async move {
+            sqlx::query_scalar::<_, String>("SELECT version FROM schema_migration ORDER BY version")
+                .fetch_all(&pool)
+                .await
+                .expect("the ledger is readable")
+        };
+        let fresh_ledger = ledger(fresh.clone()).await;
+        assert!(
+            fresh_ledger.len() > 50,
+            "the oracle must have applied the whole chain: {}",
+            fresh_ledger.len()
+        );
+        assert_eq!(
+            fresh_ledger,
+            ledger(templated.clone()).await,
+            "a templated database must carry the ledger a fresh migration writes"
+        );
+        assert_eq!(
+            migrate::run(&templated).await.expect("the schema"),
+            Vec::<String>::new(),
+            "nothing is left to apply on a templated database"
+        );
+
+        for pool in [&fresh, &templated] {
+            jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
+                .await
+                .expect("the kinds are seeded");
+        }
+        let seeded = row_counts(&fresh).await;
+        assert!(
+            seeded.iter().any(|(_, n)| *n > 0),
+            "seeding the kinds must leave rows, or this compares empty tables: {seeded:?}"
+        );
+        assert_eq!(
+            seeded,
+            row_counts(&templated).await,
+            "a seeded templated database must hold the rows a seeded fresh one holds"
+        );
+        store.stop().await;
     }
 }

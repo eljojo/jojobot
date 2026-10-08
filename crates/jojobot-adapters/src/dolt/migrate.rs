@@ -887,4 +887,4 @@ fn failure(version: &str, e: sqlx::Error) -> MigrateError {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
