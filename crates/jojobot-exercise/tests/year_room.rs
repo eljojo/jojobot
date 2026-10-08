@@ -1508,6 +1508,22 @@ async fn late_october_puts_a_third_person_there(room: &Surface, sid: &str) {
 /// that reaches the loop records the turn on it, and one that does not stands a
 /// second loop beside it.
 async fn late_november(room: &Surface, sid: &str) {
+    late_november_filing(
+        room,
+        sid,
+        [
+            "the shop serviced the drivetrain",
+            "the pump needed a new washer",
+        ],
+        ["sent", "billed"],
+    )
+    .await;
+}
+
+/// **Late November, with the words the two jobs are filed under named.** The
+/// year files them under words the operator does not use; the best sitting files
+/// them under the operator's own from the start, and words them as it likes.
+async fn late_november_filing(room: &Surface, sid: &str, said: [&str; 2], words: [&str; 2]) {
     did(
         room,
         sid,
@@ -1535,8 +1551,8 @@ async fn late_november(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "thing:gravel-bike", "content": "the shop serviced the drivetrain",
-               "provenance": "testimony", "fields": {"cost": "45", "settled": "sent"}}),
+        json!({"subject": "thing:gravel-bike", "content": said[0],
+               "provenance": "testimony", "fields": {"cost": "45", "settled": words[0]}}),
     )
     .await;
     // **The second job off the vocabulary — its own subject, its own wrong
@@ -1547,8 +1563,8 @@ async fn late_november(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "thing:floor-pump", "content": "the pump needed a new washer",
-               "provenance": "testimony", "fields": {"cost": "20", "settled": "billed"}}),
+        json!({"subject": "thing:floor-pump", "content": said[1],
+               "provenance": "testimony", "fields": {"cost": "20", "settled": words[1]}}),
     )
     .await;
 }
@@ -1632,6 +1648,28 @@ async fn corrects_a_job(
     did(room, sid, "capture", correction).await;
 }
 
+/// **The address of the job on `subject` whose words carry `needle`, when it is
+/// filed under a word the operator does not use.** A sitting that finds the job
+/// already under the operator's own word has nothing to put right and leaves it.
+async fn off_vocabulary_job(room: &Surface, subject: &str, needle: &str) -> Option<String> {
+    let address = try_address_of(room, subject, needle).await?;
+    let read = room
+        .call("recall", json!({"subject": subject, "facts": true}))
+        .await;
+    let parsed: Value = serde_json::from_str(&read).ok()?;
+    let fact = parsed["objects"][0]["facts"]
+        .as_array()?
+        .iter()
+        .find(|fact| fact["address"] == address.as_str())?
+        .clone();
+    let word = fact["fields"]["settled"].as_str().unwrap_or_default();
+    (!OPERATORS_WORDS.contains(&word)).then_some(address)
+}
+
+/// The three words the operator uses for where a payment stands, as January
+/// declares them.
+const OPERATORS_WORDS: [&str; 3] = ["invoiced", "paid", "waived"];
+
 async fn later_december_naming(room: &Surface, sid: &str, names_the_source: bool) {
     let address = bike_lock_corrected_in_the_same_breath(room, sid).await;
     let trace = room
@@ -1676,7 +1714,7 @@ async fn later_december_naming(room: &Surface, sid: &str, names_the_source: bool
     // reachable only by having kept the declaration, since nothing about
     // "sent" looks wrong on its own.
     if let Some(wrong_word) =
-        try_address_of(room, "thing:gravel-bike", "serviced the drivetrain").await
+        off_vocabulary_job(room, "thing:gravel-bike", "serviced the drivetrain").await
     {
         corrects_a_job(
             room,
@@ -1692,7 +1730,8 @@ async fn later_december_naming(room: &Surface, sid: &str, names_the_source: bool
     // **The second job off the vocabulary, put right the same way — its own
     // subject, its own address, if late November's own job is there to
     // find.**
-    if let Some(wrong_word) = try_address_of(room, "thing:floor-pump", "needed a new washer").await
+    if let Some(wrong_word) =
+        off_vocabulary_job(room, "thing:floor-pump", "needed a new washer").await
     {
         corrects_a_job(
             room,
@@ -2239,6 +2278,11 @@ const LATE_DECEMBER_CORRECTS_THE_JOBS_AND_NAMES_NO_SOURCE: usize = 50;
 /// Where late November sits in the year, named for the reason `JUNE_AT` is.
 const LATE_NOVEMBER_AT: usize = 12;
 
+/// **Late November's best sitting, named the same way.** It files both jobs
+/// under the operator's own word the first time, so there is nothing in later
+/// December to put right. It is not a guilt: no lock may convict it.
+const LATE_NOVEMBER_FILES_THE_JOBS_UNDER_THE_OPERATORS_WORD: usize = 51;
+
 /// **Late November's other guilt, named by an index no sitting has**, for the
 /// same reason June's variants are — the year holds fifteen sittings, so 18
 /// addresses none of them.
@@ -2303,6 +2347,8 @@ async fn work_the_year(
             && guilty.contains(&OCTOBER_CAPTURES_A_SECOND_ACCOUNT_INSTEAD_OF_CORRECTING);
         let october_clears_the_day_variant =
             at == OCTOBER_AT && guilty.contains(&OCTOBER_ALSO_CLEARS_THE_DAY);
+        let late_november_files_right_variant = at == LATE_NOVEMBER_AT
+            && guilty.contains(&LATE_NOVEMBER_FILES_THE_JOBS_UNDER_THE_OPERATORS_WORD);
         let late_december_without_a_source_variant = at == LATE_DECEMBER_AT
             && guilty.contains(&LATE_DECEMBER_CORRECTS_THE_JOBS_AND_NAMES_NO_SOURCE);
         let october_archives_without_a_source_variant =
@@ -2330,6 +2376,7 @@ async fn work_the_year(
             && !october_clears_the_day_variant
             && !october_archives_without_a_source_variant
             && !late_december_without_a_source_variant
+            && !late_november_files_right_variant
             && !september_prose_variant
             && !september_nobody_variant
         {
@@ -2372,6 +2419,17 @@ async fn work_the_year(
             october_captures_a_second_account_instead_of_correcting(room, sid).await;
         } else if october_clears_the_day_variant {
             october_corrects_the_pump_and_clears_its_day(room, sid).await;
+        } else if late_november_files_right_variant {
+            late_november_filing(
+                room,
+                sid,
+                [
+                    "drivetrain service at the bike shop",
+                    "a washer for the floor pump",
+                ],
+                ["invoiced", "invoiced"],
+            )
+            .await;
         } else if late_december_without_a_source_variant {
             later_december_naming(room, sid, false).await;
         } else if october_archives_without_a_source_variant {
@@ -5333,6 +5391,28 @@ async fn a_year_that_corrects_neither_job_fails_the_lineage_lock_naming_the_stan
     assert!(
         judged[LATE_DECEMBER[15]].saying.contains("still stands at"),
         "the failure should say which job still stands: {}",
+        saying(&judged),
+    );
+}
+
+/// 🚨 **The best sitting is convicted by no lock.** Late November files both jobs
+/// under the operator's own word the first time, so later December finds nothing
+/// off the vocabulary to put right and leaves them. A lock that demands a
+/// correction has to ask first whether anything needed one.
+#[tokio::test]
+async fn jobs_filed_under_the_operators_word_from_the_start_fail_no_lock() {
+    let (_room, surface) = furnished().await;
+    let boundaries = work_the_year(
+        &surface,
+        &room_document(),
+        &WORKED,
+        &[LATE_NOVEMBER_FILES_THE_JOBS_UNDER_THE_OPERATORS_WORD],
+    )
+    .await;
+    let judged = judge_all(&surface, &boundaries).await;
+    assert!(
+        judged.iter().all(|outcome| outcome.held),
+        "a sitting that filed both jobs right the first time failed a lock: {}",
         saying(&judged),
     );
 }

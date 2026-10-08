@@ -49,15 +49,17 @@
 //!   place: only a caller that reads the address's own history and the pump's
 //!   other claims can tell a correction from a retraction, an untouched
 //!   claim, or a second claim filed beside the first.
-//! * **`late_decembers_corrections_name_the_jobs_they_replace`** — say that
-//!   each job filed under a word the operator does not use is archived and that
-//!   a standing job under the operator's own word names it in `derived_from`.
-//!   The correction is a different record from the one it corrects, and the
+//! * **`late_decembers_corrections_name_the_jobs_they_replace`** — say that a
+//!   job filed under a word the operator does not use is archived and that a
+//!   standing job under the operator's own word names it in `derived_from`, and
+//!   that a job filed under the operator's own word the first time has nothing to
+//!   name. The correction is a different record from the one it corrects, and the
 //!   words alone read the same whether or not it says which job it replaces:
 //!   `carries` sees the fold, which keeps the newest write of each key, and an
 //!   archived claim no longer folds. Only a caller that reads each job's own
 //!   record and the claims beside it can tell a correction that can be followed
-//!   back from words that merely came out right.
+//!   back from words that merely came out right. The jobs are found by their
+//!   figures, never by the words a sitting chose for them.
 //! * **`junes_survey_drew_a_standing_attendee_for_each`** — say that a
 //!   record's own edge and its own status are the SAME record's, asked in
 //!   June's own window. A retraction is marked rather than filtered, so
@@ -3157,16 +3159,18 @@ async fn the_hold_is_on_the_helper(seen: &Observed<'_>) -> Result<(), String> {
     }
 }
 
-/// **The jobs late November filed under a word the operator does not use, and
-/// the word each carried.** The subject, a needle in the job's own words, and
-/// the word.
-const JOBS_OFF_THE_VOCABULARY: [(&str, &str, &str); 2] = [
-    ("thing:gravel-bike", "serviced the drivetrain", "sent"),
-    ("thing:floor-pump", "needed a new washer", "billed"),
-];
+/// **The two jobs the year files, by the subject they sit on and what they
+/// cost.** Found by their figures and never by their words, because a sitting
+/// words a job as it likes and the figure is what the operator said.
+const JOBS: [(&str, &str); 2] = [("thing:gravel-bike", "45"), ("thing:floor-pump", "20")];
 
-/// **Each job filed under a word the operator does not use is archived, and a
-/// standing job under the operator's own word names it as its source.**
+/// The three words the operator uses for where a payment stands, as January
+/// declares them. A job under any other word is filed under a wrong one.
+const OPERATORS_WORDS: [&str; 3] = ["invoiced", "paid", "waived"];
+
+/// **A job filed under a word the operator does not use is archived, and a
+/// standing job under the operator's own word names it as its source. A job
+/// filed right the first time has nothing to put right and fails nothing.**
 ///
 /// ⛔️ **A hatch, and the words cannot say it.** A correction is a different
 /// record from the one it corrects, so the fold reads `invoiced` whether or not
@@ -3175,12 +3179,19 @@ const JOBS_OFF_THE_VOCABULARY: [(&str, &str, &str); 2] = [
 /// record, and only a caller that reads each job's own record and the claims
 /// beside it can see it.
 ///
-/// A job that is missing, still standing under its wrong word, or archived with
-/// nothing derived from it fails, each naming what it found.
+/// 🚨 **It asks first whether anything needed a correction.** The best sitting
+/// files the job under the operator's own word the first time, and a lock that
+/// demanded an archived job would convict it. So the lineage is asked only of a
+/// job that was filed under a wrong word, and a job never filed under one passes.
+/// The jobs are found by their cost, not by what a sitting called them.
+///
+/// A job with no standing record under the operator's word, one still standing
+/// under a wrong word, and one archived with nothing derived from it each fail,
+/// naming what they found.
 async fn late_decembers_corrections_name_the_jobs_they_replace(
     seen: &Observed<'_>,
 ) -> Result<(), String> {
-    for (subject, needle, wrong) in JOBS_OFF_THE_VOCABULARY {
+    for (subject, cost) in JOBS {
         let read = seen
             .room
             .call("recall", json!({"subject": subject, "facts": true}))
@@ -3189,40 +3200,43 @@ async fn late_decembers_corrections_name_the_jobs_they_replace(
         let facts = parsed["objects"][0]["facts"].as_array().ok_or_else(|| {
             format!("{subject} has no records to read the job's correction from: {read}")
         })?;
-        let in_its_words = |fact: &&Value| {
-            fact["content"]
-                .as_str()
-                .is_some_and(|said| said.contains(needle))
+        let costs = |fact: &&Value| fact["fields"]["cost"] == cost;
+        let word_of = |fact: &Value| fact["fields"]["settled"].as_str().map(str::to_string);
+        let standing_right = |fact: &&Value| {
+            fact["status"] == "active"
+                && word_of(fact).is_some_and(|word| OPERATORS_WORDS.contains(&word.as_str()))
         };
-        let filed: Vec<&Value> = facts
+        let filed_wrong: Vec<&Value> = facts
             .iter()
-            .filter(in_its_words)
-            .filter(|fact| fact["fields"]["settled"] == wrong)
+            .filter(costs)
+            .filter(|fact| {
+                word_of(fact).is_some_and(|word| !OPERATORS_WORDS.contains(&word.as_str()))
+            })
             .collect();
-        if filed.is_empty() {
+        if let Some(standing) = filed_wrong.iter().find(|fact| fact["status"] == "active") {
             return Err(format!(
-                "no record on {subject} says {needle:?} under the word {wrong:?}, so there is no \
-                 job filed under a wrong word to watch get corrected: {read}"
-            ));
-        }
-        if let Some(standing) = filed.iter().find(|fact| fact["status"] == "active") {
-            return Err(format!(
-                "the job on {subject} filed under {wrong:?} still stands at {}: {read}",
+                "the job on {subject} costing {cost} filed under {:?} still stands at {}: {read}",
+                word_of(standing).unwrap_or_default(),
                 standing["address"]
             ));
         }
-        let named = filed.iter().any(|old| {
-            facts.iter().any(|fact| {
-                fact["status"] == "active"
-                    && fact["derived_from"] == old["address"]
-                    && fact["fields"]["settled"] == "invoiced"
-            })
-        });
-        if !named {
+        if !facts.iter().filter(costs).any(|fact| standing_right(&fact)) {
             return Err(format!(
-                "the job on {subject} filed under {wrong:?} is archived, but no standing job \
-                 under the operator's own word names it in derived_from, so the words were put \
-                 right and nothing leads back to what they replaced: {read}"
+                "no standing job on {subject} costing {cost} is under the operator's own word, so \
+                 nothing was filed right or put right: {read}"
+            ));
+        }
+        let named = filed_wrong.iter().any(|old| {
+            facts
+                .iter()
+                .any(|fact| standing_right(&fact) && fact["derived_from"] == old["address"])
+        });
+        if !filed_wrong.is_empty() && !named {
+            return Err(format!(
+                "the job on {subject} costing {cost} was filed under a word the operator does not \
+                 use and is archived, but no standing job under the operator's own word names it \
+                 in derived_from, so the words were put right and nothing leads back to what they \
+                 replaced: {read}"
             ));
         }
     }

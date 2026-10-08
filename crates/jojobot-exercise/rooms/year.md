@@ -1060,6 +1060,11 @@ say     later December: the bike does not carry what is actually invoiced across
 # claim no longer folds, so `carries` cannot see which claim stands in place of
 # which. Only a caller that reads each job's own record and the claims beside it
 # can see the pointer.
+#
+# 🚨 **A job filed under the operator's own word the first time passes.** There
+# is nothing to put right and nothing to follow back, and a lock that asked for an
+# archived job would convict the best sitting. The jobs are found by what they
+# cost, never by the words a sitting chose for them.
 check   late_decembers_corrections_name_the_jobs_they_replace
 say     later December: the corrected jobs do not name the jobs they replace, so a reader finds the operator's own word on them and cannot follow it back to what was filed, whether a job still stands under its wrong word or was archived and put right with nothing naming it
 ```
