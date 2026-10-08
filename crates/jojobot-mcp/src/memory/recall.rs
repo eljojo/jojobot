@@ -2342,12 +2342,10 @@ impl Jojobot {
             if let Some(declared) = args.answers_type.as_deref() {
                 looked.push(format!("things answering type {declared}"));
             }
+            // **The KEYS the call filtered on, never the values it sent**: the
+            // caller knows what it asked for, and the line is the population.
             for filter in args.fields.iter().flatten() {
-                let key = filter.key.as_deref().unwrap_or("any key");
-                looked.push(match filter.value.as_deref() {
-                    Some(value) => format!("{key} = {value}"),
-                    None => format!("{key} present"),
-                });
+                looked.push(format!("key {}", filter.key.as_deref().unwrap_or("any")));
             }
             if let Some(day) = as_of {
                 looked.push(format!("owed as of {day}"));
@@ -2358,10 +2356,17 @@ impl Jojobot {
             if let Some(subject) = args.subject.as_deref() {
                 looked.push(format!("subject {subject}"));
             }
+            // **How many entities were looked at**: those of the kind named, or
+            // every one, archived ones aside. A store that cannot be read says
+            // so rather than naming a count it did not take.
+            let population = match self.memory.list_entities(query.select.kind).await {
+                Ok(held) => format!("{} entities", held.iter().filter(|e| e.browsable()).count()),
+                Err(_) => "an unreadable number of entities".to_string(),
+            };
             let looked = if looked.is_empty() {
-                "every entity".to_string()
+                format!("{population}, no filter")
             } else {
-                format!("entities matching {}", looked.join(", "))
+                format!("{population}, narrowed by {}", looked.join(", "))
             };
             let mut left_out = vec![format!("archived entities ({archived_excluded})")];
             if withheld > 0 {
