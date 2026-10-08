@@ -121,7 +121,12 @@ Shipped and live:
 - **M1** — Memory: typed entities (`kind:slug` handles) + dated facts with
   provenance — the operator said it, an agent read it in a named system of
   record, or an agent worked it out, and a machine read is **refused unless it
-  names the system**. A claim carries **three dates**: the day it is true of,
+  names the system**. **Every write records the session that made it, and
+  testimony is rewritten in place only by the session of its first write**; a
+  claim with no recorded session counts as written by none. The refusal names
+  the route — archive the claim, then capture the correction with
+  `derived_from` — and says the original stays readable. Inference and
+  observation are still rewritten in place. A claim carries **three dates**: the day it is true of,
   the moment jojobot took it in, and optionally the day its reading stops
   being good. A derived claim names what it was worked out from, and that
   pointer is **walkable both ways** — from a claim to its source, and from a
@@ -199,14 +204,20 @@ Shipped and live:
   a reader can tell a pointer whose thing is gone from words that never named
   one. ✅ **`rename_entity` moves a handle** — a slug, a kind or a parent — **and
   the id underneath does not move**, so everything above is what makes the verb
-  safe rather than a promise waiting on one. 🚨 **EVERY surface that holds a
+  safe rather than a promise waiting on one. **An archive is reversible:**
+  `archive_entity` with `restore: true` brings the thing back and writes one
+  claim saying when and why it was archived, and why it returned. 🚨 **EVERY surface that holds a
   handle in text is a link, not only a claim's** — **a journal beat and a mailbox
   message included** — **and text written before that was true is MIGRATED once
   onto permanent ids, so a rename reaches it.** ⛔️ **A surface that keeps naming
   the old handle is a defect to close, never a limit to document.**
 - **Everything that points at a thing stores its permanent id.** Not only a
   handle written into text: an edge's object, the entries in a record's
-  reference list, and a child's parent all hold the id rather than the name.
+  reference list, a child's parent, and **a field value that names a thing — a
+  handle or a comma list of handles, under any key, declared or not** — all
+  hold the id rather than the name. **Who points at a thing is answered from a
+  table of links** that each field write keeps in the same transaction, never
+  by matching values.
   **The store resolves a handle to an id before the row lands, and renders the
   handle again on the way out**, so a caller still writes and reads names.
   ⭐ **This is what makes a rename safe everywhere rather than in text alone.**
@@ -228,7 +239,9 @@ Shipped and live:
   reaches the thing**, so a rule's star stays on the rule rather than on its
   bot. Only a shipped type may declare it, and a described key may not be
   required. So a thing gains
-  fields a piece at a time and an edit to any record reaches it. **Conformance is asked of the THING, across all its records,
+  fields a piece at a time and an edit to any record reaches it. **A new thing
+  may take its first fields in the call that creates it** — `add_entity`'s
+  `sets`, written as its first claim and held to every guard a capture faces. **Conformance is asked of the THING, across all its records,
   never of one record alone** — `answers_type` selects things carrying *some* of
   a type's keys and says which each one lacks, and `fits_type` keeps only the
   things with no gaps. **Which of the two you want is the reader's question**,
@@ -248,7 +261,11 @@ Shipped and live:
   saying when the next cycle counts from, or the reverse, is refused, so a
   loop is whole from the moment it is made.** **Some keys on a bot are
   ceilings or grants it cannot write about itself** — its thought room, its
-  boot seats and the role it claims — so a different identity sets them. **What a key HOLDS is checked whenever it is set,
+  boot seats and the role it claims — so a different identity sets them. **Who a
+  bot reports to is changed only by a bot above it on the chart**, a bot with no
+  manager is adopted only by the manager named or a bot above that manager, and **the head of a chart is
+  given a manager by no bot**. One table of the build's own says who may write
+  each guarded key, and a refusal names who may. **What a key HOLDS is checked whenever it is set,
   required and optional alike** — so a value that is not what its key declared
   does not count as holding it. **Adding keys is never refused, and a
   thing that answers no type is a first-class thing.** **The software ships five
@@ -335,8 +352,11 @@ Shipped and live:
   it owed work, which is the wrong price for wanting the single one a search
   hit named — **from its own box only**, the read side having no box argument
   so another bot's cannot be opened. The guard is on the state change rather
-  than the bytes, so the terminal `processed` archive stays readable from
-  anywhere: reading history moves nothing. **`list_sent` is the sender's own
+  than the bytes, so the terminal `processed` archive of a bot's box stays
+  readable from anywhere: reading history moves nothing. **The operator's box
+  is the exception: a person owns it, and no bot reads it in any state** —
+  `read_message` and `mark_processed` refuse it, `list_sent` shows mail to it
+  by id, time and subject only, and search leaves it out and says so. **`list_sent` is the sender's own
   view**: where your mail got to and whether anyone has read it, read-only and
   moving nothing. **`read_mailbox` with `counts_only` is how you poll**:
   per-state counts and anything jojobot cannot read, taking delivery of none of
@@ -354,8 +374,9 @@ Shipped and live:
 > (a qualified subject, a defaulted provenance, a trimmed value), plus the
 > byte count of what was STORED and enough of the opening to tell one write
 > from another. Eliding is never silent: each answer names the call that
-> returns the whole thing. `mark_processed` answers with the message's id and
-> its new state, and nothing of its subject or its opening. **`post_message` also takes
+> returns the whole thing. `mark_processed` answers with the message's
+> envelope — id, sender, new state and the notes it stored — and nothing of its
+> subject or body beyond the body's byte count. **`post_message` also takes
 > delivery of the caller's own box in the same call**, lists only the mail
 > nobody had been handed yet and counts the rest, and the answer says how
 > that delivery was taken: writing is a moment a bot is demonstrably present, so
@@ -426,8 +447,11 @@ Shipped and live:
   Anonymous boot gets orientation and no `sid` — an orientation
   preview, with nothing usable behind it. Ownership is stated **on the
   mailbox**, an `owner` field set once when the box opens, so there is no
-  second copy anywhere to keep in step with it. It is not an ACL: a box names
-  its one owner, and nothing on the mail rail enforces anything against it.
+  second copy anywhere to keep in step with it. For a bot's box it is not an
+  ACL: a box names its one owner, and nothing on the mail rail enforces anything
+  against it. **A box a person owns is private**, and that is enforced. **The
+  operator is a person, never a bot:** `topic:instance` names them under
+  `operator`, the boot names them, and theirs is the only person's box.
   A box a bot should have but does not — a record predating the rule, or a
   creation interrupted partway — is healed the moment that bot next boots, and
   the boot says so rather than repairing it silently. **A repair scoped to
@@ -439,7 +463,8 @@ Shipped and live:
 
 > **Creation is an intentional act.** A box is not minted by a call of its
 > own — it opens with the bot that owns it, inside the same `add_entity` that
-> creates the bot, and the near-miss screen that guards it is the bot handle's,
+> creates the bot (the operator's box is the one exception: it opens inside the
+> first `post_message` to them), and the near-miss screen that guards it is the bot handle's,
 > because the box is named for the handle and that is where the collision
 > actually happens. Any future verb that would create something as a side
 > effect of doing something else is the thing this rule exists to forbid.
@@ -450,7 +475,10 @@ Shipped and live:
   **state** (`active` → `wrapped` | `abandoned`; **`wrapped` is the last word,
   because wrapping folds the still-open focus into the closing story as one
   last chronology entry — `abandoned → active` is the one legal walk-back,
-  since a run nobody wrapped up left nothing to fold**) and the
+  since a run nobody wrapped up left nothing to fold**; **the one way back into
+  a wrapped run is its `wrap_code`**: the first wrap hands one back, and booting
+  with it as `resume` reopens the run for one last change while it stays
+  wrapped — a second wrap, or a newer run of the bot, ends that window) and the
   **focus as current truth**, rewritten in place; the **chronology hangs off
   it**, one entry per beat (append-only, oldest first; only the newest
   entry amendable).
