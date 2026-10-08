@@ -311,11 +311,15 @@ impl Jojobot {
             }
             Err(e) => {
                 tracing::warn!(error = %e, %handle, "who may act on a role object could not be read");
+                // **A read that failed decided nothing**, so it is the store's
+                // failure and not a refusal of the caller: it wears the word a
+                // memory-store failure wears, which is `retry`.
                 Some(crate::caller::handle_declined(
                     handle.as_str(),
-                    "Who may act on this role object could not be read just now, so nothing was \
-                     written. Try again in a moment."
-                        .to_string(),
+                    crate::answer::WayForward::memory_store_failure(
+                        "Who may act on this role object could not be read just now, so \
+                         nothing was written. Try again in a moment.",
+                    ),
                 ))
             }
         }
@@ -882,5 +886,40 @@ mod tests {
             None,
             "an archived carrier is cleared"
         );
+    }
+
+    /// **A read that fails while a role object is being judged says to try
+    /// again.** Nothing was decided and nothing was written, so the answer is a
+    /// failure of the store and not a refusal of the caller: it wears the word
+    /// for that, and the caller is told to send the same call again. Beside it
+    /// the refusal of a stranger, which is the caller's to change.
+    #[tokio::test]
+    async fn a_read_that_fails_while_judging_a_role_object_says_to_retry() {
+        use crate::memory::testing::{Down, healthy_and_down};
+        let (healthy, blind) = healthy_and_down(Down::EntityIndex);
+        make_bot(&healthy, "alpha").await;
+        make_bot(&healthy, "beta").await;
+        let alpha = EntityId("bot:alpha".into());
+        let beta = EntityId("bot:beta".into());
+        let object = EntityId("role:gamma".into());
+        healthy
+            .ensure_role_object(&alpha, &object, "gamma")
+            .await
+            .expect("the object is made");
+
+        let unreadable = blind
+            .refuse_a_stranger_the_role_object(&beta, &object, "archive or restore it")
+            .await
+            .expect("a read that failed is an answer");
+        let unreadable = blocked(&unreadable);
+        assert_eq!(unreadable["fix_by"], "retry", "{unreadable}");
+        assert_eq!(unreadable["wrote"], false, "{unreadable}");
+
+        let stranger = healthy
+            .refuse_a_stranger_the_role_object(&beta, &object, "archive or restore it")
+            .await
+            .expect("a stranger is refused");
+        let stranger = blocked(&stranger);
+        assert_eq!(stranger["fix_by"], "change", "{stranger}");
     }
 }

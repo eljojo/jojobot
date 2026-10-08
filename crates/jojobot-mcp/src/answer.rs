@@ -113,6 +113,12 @@ impl WayForward {
         Self::with(Some(FixBy::Retry), text)
     }
 
+    /// A refusal because the memory store could not be read. It wears whatever
+    /// [`memory_store_failure_word`] says, so the switch for that word governs it.
+    pub(crate) fn memory_store_failure(text: impl Into<String>) -> Self {
+        Self::with(memory_store_failure_word(), text)
+    }
+
     /// A refusal because the mailbox store could not be read. It wears whatever
     /// [`other_store_failure_word`] says, which is `retry` while card 2070 is in
     /// the base.
