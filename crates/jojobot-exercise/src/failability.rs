@@ -110,7 +110,7 @@ pub enum Strength {
 
 /// **Every lock this build has actually proven failable, so far.**
 ///
-/// 167 entries, of five different shapes: 77 blanket and 90 discriminating.
+/// 169 entries, of five different shapes: 78 blanket and 91 discriminating.
 /// Quote the discriminating count as twelve, with one constructed positive
 /// — never as a bare twelve; see the note on `tests/fair_lock.rs` below for
 /// why.
@@ -693,6 +693,20 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
         file: "tests/year_room.rs",
         function: "a_year_nobody_worked_in_fails_every_lock",
         strength: Strength::Blanket,
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 15 — later December: the corrected jobs do not name the jobs they replace, so a reader finds the operator's own word on them and cannot follow it back to what was filed, whether a job still stands under its wrong word or was archived and put right with nothing naming it",
+        file: "tests/year_room.rs",
+        function: "a_year_nobody_worked_in_fails_every_lock",
+        strength: Strength::Blanket,
+    },
+    NegativeControl {
+        room: YEAR_ROOM,
+        lock: "Phase 15 — later December: the corrected jobs do not name the jobs they replace, so a reader finds the operator's own word on them and cannot follow it back to what was filed, whether a job still stands under its wrong word or was archived and put right with nothing naming it",
+        file: "tests/year_room.rs",
+        function: "corrections_that_name_no_source_do_not_satisfy_the_lineage_lock",
+        strength: Strength::Discriminating,
     },
     NegativeControl {
         room: HANDOVER_ROOM,

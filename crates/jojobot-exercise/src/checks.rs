@@ -49,6 +49,15 @@
 //!   place: only a caller that reads the address's own history and the pump's
 //!   other claims can tell a correction from a retraction, an untouched
 //!   claim, or a second claim filed beside the first.
+//! * **`late_decembers_corrections_name_the_jobs_they_replace`** — say that
+//!   each job filed under a word the operator does not use is archived and that
+//!   a standing job under the operator's own word names it in `derived_from`.
+//!   The correction is a different record from the one it corrects, and the
+//!   words alone read the same whether or not it says which job it replaces:
+//!   `carries` sees the fold, which keeps the newest write of each key, and an
+//!   archived claim no longer folds. Only a caller that reads each job's own
+//!   record and the claims beside it can tell a correction that can be followed
+//!   back from words that merely came out right.
 //! * **`junes_survey_drew_a_standing_attendee_for_each`** — say that a
 //!   record's own edge and its own status are the SAME record's, asked in
 //!   June's own window. A retraction is marked rather than filtered, so
@@ -139,7 +148,7 @@ type Hatch = (&'static str, fn() -> Box<dyn Checks>);
 
 /// **Every named check this build ships.** A room adds one line here and one
 /// `check` line in its document, and both are visible in the count.
-pub const CHECKS: [Hatch; 44] = [
+pub const CHECKS: [Hatch; 45] = [
     ("question_one_rule_answer", || {
         rule_answer_check("work:pm-state", &[241, 275], &[129, 189, 284])
     }),
@@ -229,6 +238,10 @@ pub const CHECKS: [Hatch; 44] = [
                 Box::pin(septembers_account_of_the_pump_is_superseded_by_a_derived_correction(seen))
             })
         },
+    ),
+    (
+        "late_decembers_corrections_name_the_jobs_they_replace",
+        || checked(|seen| Box::pin(late_decembers_corrections_name_the_jobs_they_replace(seen))),
     ),
     ("august_put_nobody_new_at_the_survey", || {
         checked(|seen| Box::pin(august_put_nobody_new_at_the_survey(seen)))
@@ -3142,6 +3155,78 @@ async fn the_hold_is_on_the_helper(seen: &Observed<'_>) -> Result<(), String> {
              to ride the boot, and nothing in its charter"
         )),
     }
+}
+
+/// **The jobs late November filed under a word the operator does not use, and
+/// the word each carried.** The subject, a needle in the job's own words, and
+/// the word.
+const JOBS_OFF_THE_VOCABULARY: [(&str, &str, &str); 2] = [
+    ("thing:gravel-bike", "serviced the drivetrain", "sent"),
+    ("thing:floor-pump", "needed a new washer", "billed"),
+];
+
+/// **Each job filed under a word the operator does not use is archived, and a
+/// standing job under the operator's own word names it as its source.**
+///
+/// ⛔️ **A hatch, and the words cannot say it.** A correction is a different
+/// record from the one it corrects, so the fold reads `invoiced` whether or not
+/// the new record says which job it replaces. What tells a correction that can be
+/// followed back from words that merely came out right is the pointer on the
+/// record, and only a caller that reads each job's own record and the claims
+/// beside it can see it.
+///
+/// A job that is missing, still standing under its wrong word, or archived with
+/// nothing derived from it fails, each naming what it found.
+async fn late_decembers_corrections_name_the_jobs_they_replace(
+    seen: &Observed<'_>,
+) -> Result<(), String> {
+    for (subject, needle, wrong) in JOBS_OFF_THE_VOCABULARY {
+        let read = seen
+            .room
+            .call("recall", json!({"subject": subject, "facts": true}))
+            .await;
+        let parsed = read_json(&read)?;
+        let facts = parsed["objects"][0]["facts"].as_array().ok_or_else(|| {
+            format!("{subject} has no records to read the job's correction from: {read}")
+        })?;
+        let in_its_words = |fact: &&Value| {
+            fact["content"]
+                .as_str()
+                .is_some_and(|said| said.contains(needle))
+        };
+        let filed: Vec<&Value> = facts
+            .iter()
+            .filter(in_its_words)
+            .filter(|fact| fact["fields"]["settled"] == wrong)
+            .collect();
+        if filed.is_empty() {
+            return Err(format!(
+                "no record on {subject} says {needle:?} under the word {wrong:?}, so there is no \
+                 job filed under a wrong word to watch get corrected: {read}"
+            ));
+        }
+        if let Some(standing) = filed.iter().find(|fact| fact["status"] == "active") {
+            return Err(format!(
+                "the job on {subject} filed under {wrong:?} still stands at {}: {read}",
+                standing["address"]
+            ));
+        }
+        let named = filed.iter().any(|old| {
+            facts.iter().any(|fact| {
+                fact["status"] == "active"
+                    && fact["derived_from"] == old["address"]
+                    && fact["fields"]["settled"] == "invoiced"
+            })
+        });
+        if !named {
+            return Err(format!(
+                "the job on {subject} filed under {wrong:?} is archived, but no standing job \
+                 under the operator's own word names it in derived_from, so the words were put \
+                 right and nothing leads back to what they replaced: {read}"
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

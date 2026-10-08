@@ -1046,6 +1046,22 @@ say     later December: the bike lock's own job does not read as waived, so eith
 recall {"subject": "thing:gravel-bike"}
 carries "owed":"65"
 say     later December: the bike does not carry what is actually invoiced across the year's jobs, so either the sitting did not select on the operator's own word or it summed something other than what the record says
+
+# 🚨 **THE ROUTE, NOT ONLY THE WORDS.** Late November filed two jobs under words
+# the operator does not use, in a sitting that has since ended. Words an earlier
+# sitting wrote are not rewritten in place, so putting them right is two moves:
+# the old job is ARCHIVED, still carrying the wrong word, and the right one is
+# captured with `derived_from` naming it. The three locks above read what the
+# jobs hold now, and a correction that names no source holds every one of them:
+# the words come out right either way, and nobody can follow them back to what
+# they replaced.
+#
+# ⚠️ **A hatch.** The fold keeps the newest write of each key and an archived
+# claim no longer folds, so `carries` cannot see which claim stands in place of
+# which. Only a caller that reads each job's own record and the claims beside it
+# can see the pointer.
+check   late_decembers_corrections_name_the_jobs_they_replace
+say     later December: the corrected jobs do not name the jobs they replace, so a reader finds the operator's own word on them and cannot follow it back to what was filed, whether a job still stands under its wrong word or was archived and put right with nothing naming it
 ```
 
 ## What this room cannot measure

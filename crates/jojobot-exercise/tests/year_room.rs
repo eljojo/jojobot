@@ -46,9 +46,11 @@ const LATE_NOVEMBER: [usize; 2] = [28, 29];
 const DECEMBER: [usize; 3] = [30, 31, 32];
 
 /// How many locks the year carries.
-const LATE_DECEMBER: [usize; 15] = [33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47];
+const LATE_DECEMBER: [usize; 16] = [
+    33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48,
+];
 
-const LOCKS: usize = 48;
+const LOCKS: usize = 49;
 
 /// **The sittings a person reads**, which assert nothing and must not.
 const READ_THESE: [&str; 1] = ["Phase 12"];
@@ -132,6 +134,15 @@ async fn furnished() -> (Room, Surface) {
 /// handle coming straight back is the sweep having worked.** A choice arriving
 /// instead means it did not, and the panic says which runs were offered.
 async fn sitting(room: &Surface, day: &str) -> String {
+    let sid = boot_sitting(room, day).await;
+    SITTING_DAYS
+        .lock()
+        .unwrap()
+        .insert(sid.clone(), day.to_string());
+    sid
+}
+
+async fn boot_sitting(room: &Surface, day: &str) -> String {
     let booted = room
         .must(
             "start_here",
@@ -233,9 +244,81 @@ const CANOE_DAYS: [(&str, &str); 5] = [
 ];
 
 /// A call an occupant would make.
+/// The day each sitting's session was booted in, so a refusal can name the
+/// phase it happened in. A session is minted once per sitting and never reused.
+static SITTING_DAYS: std::sync::Mutex<std::collections::BTreeMap<String, String>> =
+    std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+/// **The sessions of a run that left sittings out**, which is a run that meets
+/// refusals of one kind by design: a write about a thing the left-out sittings
+/// would have made. Declared by the driver that leaves them out and read nowhere
+/// else.
+static SKIPPING_SITTINGS: std::sync::Mutex<std::collections::BTreeSet<String>> =
+    std::sync::Mutex::new(std::collections::BTreeSet::new());
+
+/// The phase a sitting's session belongs to, for a message to name.
+fn phase_of(sid: &str) -> String {
+    let day = SITTING_DAYS.lock().unwrap().get(sid).cloned();
+    day.as_deref()
+        .and_then(|day| {
+            room_document()
+                .phases
+                .iter()
+                .find(|phase| phase.day.as_deref() == Some(day))
+                .map(|phase| phase.name.clone())
+        })
+        .unwrap_or_else(|| "a sitting with no recorded day".to_string())
+}
+
+/// Whether an answer is a refusal, or a transport failure, which ends a script
+/// the same way.
+fn is_refused(answer: &str) -> bool {
+    serde_json::from_str::<Value>(answer)
+        .is_ok_and(|body| body["status"] == "blocked" || !body["transport_error"].is_null())
+}
+
+/// **Whether a refusal is for a thing the room does not hold.** Read off the
+/// room rather than off the refusal's words: the refusal names what it attempted,
+/// and a read of that name is itself blocked when nothing answers to it.
+async fn names_an_absent_entity(room: &Surface, answer: &str) -> bool {
+    let Some(attempted) = serde_json::from_str::<Value>(answer)
+        .ok()
+        .and_then(|body| body["attempted"].as_str().map(str::to_string))
+    else {
+        return false;
+    };
+    if attempted.contains('#') {
+        return false;
+    }
+    is_refused(&room.call("recall", json!({"subject": attempted})).await)
+}
+
+/// **A call an occupant would make, and a call that must land.** The worked
+/// year and its variants are scripts meant to succeed, so a refused call ends
+/// the run at the call, naming the phase and the refusal; swallowed, it shows up
+/// phases later as locks that fail far from the cause.
+///
+/// **One refusal is expected, and only where the run says so.** A run that leaves
+/// sittings out meets writes about things those sittings would have made, and
+/// the room refuses them as unknown. Such a run declares it by naming the
+/// sittings it works ([`work_the_year`]); every other refusal still ends it, and
+/// so does that one in any run that left nothing out.
 async fn did(room: &Surface, sid: &str, verb: &str, mut args: Value) -> String {
     args["sid"] = json!(sid);
-    room.call(verb, args).await
+    let sent = args.clone();
+    let answer = room.call(verb, args).await;
+    if !is_refused(&answer) {
+        return answer;
+    }
+    if SKIPPING_SITTINGS.lock().unwrap().contains(sid)
+        && names_an_absent_entity(room, &answer).await
+    {
+        return answer;
+    }
+    panic!(
+        "{}: {verb} was refused, so the script did not land.\ncall: {sent}\nanswer: {answer}",
+        phase_of(sid)
+    );
 }
 
 /// **Correct a testimony claim an EARLIER sitting wrote, the way the product
@@ -1517,6 +1600,39 @@ async fn bike_lock_corrected_in_the_same_breath(room: &Surface, sid: &str) -> St
 }
 
 async fn later_december(room: &Surface, sid: &str) {
+    later_december_naming(room, sid, true).await;
+}
+
+/// **A job off the vocabulary, corrected by the product's route**: the earlier
+/// job is archived and the corrected one is captured. `names_the_source` is
+/// whether the correction says which job it replaces, with `derived_from`; the
+/// room's one wrong play leaves it off.
+async fn corrects_a_job(
+    room: &Surface,
+    sid: &str,
+    wrong_word: &str,
+    names_the_source: bool,
+    mut correction: Value,
+) {
+    let reason = "filed under a word the operator does not use";
+    if names_the_source {
+        corrects_an_earlier_claim(room, sid, wrong_word, reason, correction).await;
+        return;
+    }
+    did(
+        room,
+        sid,
+        "update_fact",
+        json!({"address": wrong_word, "status": "archived", "details": reason}),
+    )
+    .await;
+    correction
+        .as_object_mut()
+        .map(|call| call.remove("derived_from"));
+    did(room, sid, "capture", correction).await;
+}
+
+async fn later_december_naming(room: &Surface, sid: &str, names_the_source: bool) {
     let address = bike_lock_corrected_in_the_same_breath(room, sid).await;
     let trace = room
         .call(
@@ -1562,13 +1678,14 @@ async fn later_december(room: &Surface, sid: &str) {
     if let Some(wrong_word) =
         try_address_of(room, "thing:gravel-bike", "serviced the drivetrain").await
     {
-        put_the_word_right(
+        corrects_a_job(
             room,
             sid,
-            "thing:gravel-bike",
             &wrong_word,
-            "the shop serviced the drivetrain",
-            "45",
+            names_the_source,
+            json!({"subject": "thing:gravel-bike", "content": "the shop serviced the drivetrain",
+                   "provenance": "testimony",
+                   "fields": {"cost": "45", "settled": "invoiced"}}),
         )
         .await;
     }
@@ -1577,13 +1694,14 @@ async fn later_december(room: &Surface, sid: &str) {
     // find.**
     if let Some(wrong_word) = try_address_of(room, "thing:floor-pump", "needed a new washer").await
     {
-        put_the_word_right(
+        corrects_a_job(
             room,
             sid,
-            "thing:floor-pump",
             &wrong_word,
-            "the pump needed a new washer",
-            "20",
+            names_the_source,
+            json!({"subject": "thing:floor-pump", "content": "the pump needed a new washer",
+                   "provenance": "testimony",
+                   "fields": {"cost": "20", "settled": "invoiced"}}),
         )
         .await;
     }
@@ -1601,38 +1719,6 @@ async fn later_december(room: &Surface, sid: &str) {
     )
     .await;
     fold_the_canoes_pile(room, sid).await;
-}
-
-/// **A job filed under a word the operator does not use, put right by the
-/// correction route.** Late November's sitting wrote the job as testimony, and a
-/// later sitting does not edit another sitting's testimony in place: it archives
-/// the job and captures the corrected one from it, with the same words and the
-/// same cost under the operator's own word.
-async fn put_the_word_right(
-    room: &Surface,
-    sid: &str,
-    subject: &str,
-    wrong_word: &str,
-    content: &str,
-    cost: &str,
-) {
-    did(
-        room,
-        sid,
-        "update_fact",
-        json!({"address": wrong_word, "status": "archived",
-               "details": "filed under a word the operator does not use"}),
-    )
-    .await;
-    did(
-        room,
-        sid,
-        "capture",
-        json!({"subject": subject, "content": content, "provenance": "testimony",
-               "derived_from": wrong_word,
-               "fields": {"cost": cost, "settled": "invoiced"}}),
-    )
-    .await;
 }
 
 /// **THE SELECTIVE SUM, done properly.** Every job-bearing thing the year
@@ -2141,6 +2227,15 @@ const OCTOBER_CAPTURES_A_SECOND_ACCOUNT_INSTEAD_OF_CORRECTING: usize = 24;
 /// anyone can follow back.
 const OCTOBER_ARCHIVES_THE_ACCOUNT_AND_NAMES_NOTHING: usize = 49;
 
+/// Where later December sits in the year, named for the reason `JUNE_AT` is.
+const LATE_DECEMBER_AT: usize = 14;
+
+/// **Later December's guilt, named the same way.** Both jobs filed under a word
+/// the operator does not use are archived and put right, as the product asks, and
+/// each correction is captured with nothing naming the job it replaces: the words
+/// end up right and nobody can follow them back.
+const LATE_DECEMBER_CORRECTS_THE_JOBS_AND_NAMES_NO_SOURCE: usize = 50;
+
 /// Where late November sits in the year, named for the reason `JUNE_AT` is.
 const LATE_NOVEMBER_AT: usize = 12;
 
@@ -2208,6 +2303,8 @@ async fn work_the_year(
             && guilty.contains(&OCTOBER_CAPTURES_A_SECOND_ACCOUNT_INSTEAD_OF_CORRECTING);
         let october_clears_the_day_variant =
             at == OCTOBER_AT && guilty.contains(&OCTOBER_ALSO_CLEARS_THE_DAY);
+        let late_december_without_a_source_variant = at == LATE_DECEMBER_AT
+            && guilty.contains(&LATE_DECEMBER_CORRECTS_THE_JOBS_AND_NAMES_NO_SOURCE);
         let october_archives_without_a_source_variant =
             at == OCTOBER_AT && guilty.contains(&OCTOBER_ARCHIVES_THE_ACCOUNT_AND_NAMES_NOTHING);
         let september_prose_variant =
@@ -2232,6 +2329,7 @@ async fn work_the_year(
             && !october_second_account_variant
             && !october_clears_the_day_variant
             && !october_archives_without_a_source_variant
+            && !late_december_without_a_source_variant
             && !september_prose_variant
             && !september_nobody_variant
         {
@@ -2246,6 +2344,9 @@ async fn work_the_year(
                 .unwrap_or_else(|| panic!("{} claims no day", phase.name)),
         )
         .await;
+        if worked != WORKED.as_slice() {
+            SKIPPING_SITTINGS.lock().unwrap().insert(sid.clone());
+        }
         // **The sitting does the wrong thing, in its own window.** Here rather
         // than in a second driver: two copies of this order was how they came
         // to disagree about which sittings write.
@@ -2271,6 +2372,8 @@ async fn work_the_year(
             october_captures_a_second_account_instead_of_correcting(room, sid).await;
         } else if october_clears_the_day_variant {
             october_corrects_the_pump_and_clears_its_day(room, sid).await;
+        } else if late_december_without_a_source_variant {
+            later_december_naming(room, sid, false).await;
         } else if october_archives_without_a_source_variant {
             october_archives_the_account_and_names_nothing(room, sid).await;
         } else if september_prose_variant {
@@ -2964,6 +3067,14 @@ async fn the_marchs_job_control_fails_when_it_gets_repainted_too() {
     did(
         &surface,
         &sid,
+        "add_entity",
+        json!({"kind": "thing", "handle": "canoe", "name": "The Canoe",
+               "source": "the operator"}),
+    )
+    .await;
+    did(
+        &surface,
+        &sid,
         "capture",
         json!({"subject": "thing:canoe", "content": "the soft spot was patched",
                "provenance": "testimony", "fields": {"cost": "30", "settled": "paid"}}),
@@ -2995,6 +3106,14 @@ async fn the_marchs_job_control_fails_when_it_gets_repainted_too() {
 async fn the_floor_pumps_job_lock_fails_when_nothing_corrects_the_word() {
     let (_room, surface) = furnished().await;
     let sid = sitting(&surface, "2026-11-22").await;
+    did(
+        &surface,
+        &sid,
+        "add_entity",
+        json!({"kind": "thing", "handle": "floor-pump", "name": "The Floor Pump",
+               "source": "the operator"}),
+    )
+    .await;
     did(
         &surface,
         &sid,
@@ -3061,6 +3180,15 @@ async fn the_bike_locks_job_control_fails_when_it_gets_repainted_too() {
 async fn the_selective_sum_lock_fails_when_the_sum_is_not_selective() {
     let (_room, surface) = furnished().await;
     let sid = sitting(&surface, "2026-12-20").await;
+    for (handle, name) in [("canoe", "The Canoe"), ("floor-pump", "The Floor Pump")] {
+        did(
+            &surface,
+            &sid,
+            "add_entity",
+            json!({"kind": "thing", "handle": handle, "name": name, "source": "the operator"}),
+        )
+        .await;
+    }
     did(
         &surface,
         &sid,
@@ -5001,6 +5129,210 @@ async fn the_sources_lock_catches_a_fold_that_misses_one_of_two_same_day_repairs
     assert!(
         !judged[LATE_DECEMBER[3]].held,
         "a fold that left one of February's two same-day repairs unnamed held the sources lock: {}",
+        saying(&judged),
+    );
+}
+
+/// 🚨 **A correction that names no source does not satisfy the lineage lock.**
+/// Both jobs filed under a word the operator does not use are archived and put
+/// right, so the words end up as the operator says them, and each correction is
+/// captured with nothing naming the job it replaces. The three locks that read
+/// the words hold, which is why the lineage lock exists, and it does not.
+#[tokio::test]
+async fn corrections_that_name_no_source_do_not_satisfy_the_lineage_lock() {
+    let (_room, surface) = furnished().await;
+    let boundaries = work_the_year(
+        &surface,
+        &room_document(),
+        &WORKED,
+        &[LATE_DECEMBER_CORRECTS_THE_JOBS_AND_NAMES_NO_SOURCE],
+    )
+    .await;
+    let judged = judge_all(&surface, &boundaries).await;
+    assert!(
+        !judged[LATE_DECEMBER[15]].held,
+        "later December put both jobs right and named neither source, and the lineage lock held \
+         anyway: {}",
+        saying(&judged),
+    );
+    assert!(
+        judged[LATE_DECEMBER[15]].saying.contains("derived_from"),
+        "the failure text should say what is missing: {}",
+        saying(&judged),
+    );
+    // **The positive that says the guilty sitting is otherwise a good one**: the
+    // locks that read the words, and every other lock in the year, hold.
+    for (at, outcome) in judged.iter().enumerate() {
+        if at != LATE_DECEMBER[15] {
+            assert!(
+                outcome.held,
+                "the guilty later December failed a lock it was not meant to, so the case above \
+                 is measuring a sitting that did not happen: {}",
+                saying(&judged),
+            );
+        }
+    }
+}
+
+/// What a script's panic said, read off the task it ran in.
+async fn what_the_script_said(task: tokio::task::JoinHandle<()>, ending: &str) -> String {
+    let panic = task.await.expect_err(ending).into_panic();
+    panic
+        .downcast_ref::<String>()
+        .cloned()
+        .expect("the run ends with a message")
+}
+
+/// 🚨 **A refused call in a script ends the run at the call.** The message names
+/// the phase out of the room's own document, the verb and the room's refusal, so
+/// a script that no longer matches the shipped rules is found where it breaks and
+/// not phases later as locks that fail.
+#[tokio::test]
+async fn a_refused_scripted_call_ends_the_run_naming_the_phase_and_the_refusal() {
+    let (_room, surface) = furnished().await;
+    let surface = std::sync::Arc::new(surface);
+    let year = room_document();
+    let phase = year.phases[LATE_DECEMBER_AT].clone();
+    let sid = sitting(&surface, phase.day.as_deref().expect("a day")).await;
+    let task = tokio::spawn({
+        let surface = surface.clone();
+        async move {
+            // A key the room refuses for a bot to set on itself.
+            did(
+                &surface,
+                &sid,
+                "capture",
+                json!({"subject": "bot:assistant", "content": "a ceiling of its own",
+                       "fields": {"thought_capacity": "9"}}),
+            )
+            .await;
+        }
+    });
+    let said = what_the_script_said(task, "a refused call must end the run").await;
+    assert!(said.contains(&phase.name), "the phase is named: {said}");
+    assert!(said.contains("capture"), "the verb is named: {said}");
+    assert!(
+        said.contains("thought_capacity") && said.contains("\"status\":\"blocked\""),
+        "the room's own refusal rides in the message: {said}",
+    );
+}
+
+/// 🚨 **The in-place correction the product refuses ends the worked year AT the
+/// call.** Later December put two jobs right by editing them in place, the room
+/// refused, and the script carried on: eight sittings later three locks failed far
+/// from the cause. Played again here, on the year as worked without that sitting,
+/// it ends at the edit and names the address.
+#[tokio::test]
+async fn an_in_place_correction_of_an_earlier_sittings_testimony_ends_the_year_at_the_edit() {
+    let (_room, surface) = furnished().await;
+    let _ = work_the_year(&surface, &room_document(), &WITHOUT_LATER_DECEMBER, &[]).await;
+    let wrong_word = address_of(&surface, "thing:gravel-bike", "serviced the drivetrain").await;
+    let phase = room_document().phases[LATE_DECEMBER_AT].clone();
+    let sid = sitting(&surface, phase.day.as_deref().expect("a day")).await;
+    let surface = std::sync::Arc::new(surface);
+    let task = tokio::spawn({
+        let (surface, address) = (surface.clone(), wrong_word.clone());
+        async move {
+            did(
+                &surface,
+                &sid,
+                "update_fact",
+                json!({"address": address, "fields": {"settled": "invoiced"}}),
+            )
+            .await;
+        }
+    });
+    let said = what_the_script_said(task, "an in-place edit of testimony must end the year").await;
+    assert!(said.contains(&phase.name), "the phase is named: {said}");
+    assert!(said.contains("update_fact"), "the verb is named: {said}");
+    assert!(
+        said.contains(&wrong_word),
+        "the address that was refused is named: {said}"
+    );
+}
+
+/// 🚨 **A run that leaves sittings out expects refusals of one kind, and only
+/// that kind.** The room refuses a write about a thing the left-out sittings
+/// would have made, and such a run goes on. Any other refusal still ends it, in
+/// the same run, so the allowance cannot swallow a script that has gone wrong.
+#[tokio::test]
+async fn a_run_that_leaves_sittings_out_goes_on_past_an_absent_thing_and_no_further() {
+    let (_room, surface) = furnished().await;
+    let surface = std::sync::Arc::new(surface);
+    let day = room_document().phases[LATE_DECEMBER_AT]
+        .day
+        .clone()
+        .expect("a day");
+    let sid = sitting(&surface, &day).await;
+    SKIPPING_SITTINGS.lock().unwrap().insert(sid.clone());
+
+    // The allowance: a write about a thing nobody made.
+    let answer = did(
+        &surface,
+        &sid,
+        "capture",
+        json!({"subject": "thing:never-furnished", "content": "a job on nothing",
+               "provenance": "testimony"}),
+    )
+    .await;
+    assert!(is_refused(&answer), "the room refused it: {answer}");
+
+    // The same run, a refusal that is not about an absent thing: ends it.
+    let task = tokio::spawn({
+        let surface = surface.clone();
+        async move {
+            did(
+                &surface,
+                &sid,
+                "capture",
+                json!({"subject": "bot:assistant", "content": "a ceiling of its own",
+                       "fields": {"thought_capacity": "9"}}),
+            )
+            .await;
+        }
+    });
+    let said = what_the_script_said(task, "any other refusal must end the run").await;
+    assert!(
+        said.contains("capture") && said.contains("thought_capacity"),
+        "the verb and the refusal are named: {said}"
+    );
+
+    // And the allowance belongs to the run that declared it: a sitting of a run
+    // that left nothing out is ended by the same write about the same absent thing.
+    let whole = sitting(&surface, &day).await;
+    let task = tokio::spawn({
+        let surface = surface.clone();
+        async move {
+            did(
+                &surface,
+                &whole,
+                "capture",
+                json!({"subject": "thing:never-furnished", "content": "a job on nothing",
+                       "provenance": "testimony"}),
+            )
+            .await;
+        }
+    });
+    let said = what_the_script_said(task, "a run that left nothing out expects no refusal").await;
+    assert!(said.contains("thing:never-furnished"), "{said}");
+}
+
+/// 🚨 **A year in which later December corrects nothing leaves the lineage lock
+/// failed, and says the job still stands.** Late November filed both jobs under
+/// words the operator does not use, and no sitting after it touched them.
+#[tokio::test]
+async fn a_year_that_corrects_neither_job_fails_the_lineage_lock_naming_the_standing_job() {
+    let (_room, surface) = furnished().await;
+    let boundaries = work_the_year(&surface, &room_document(), &WITHOUT_LATER_DECEMBER, &[]).await;
+    let judged = judge_all(&surface, &boundaries).await;
+    assert!(
+        !judged[LATE_DECEMBER[15]].held,
+        "both jobs were left under their wrong words and the lineage lock held: {}",
+        saying(&judged),
+    );
+    assert!(
+        judged[LATE_DECEMBER[15]].saying.contains("still stands at"),
+        "the failure should say which job still stands: {}",
         saying(&judged),
     );
 }
