@@ -1177,6 +1177,118 @@ async fn the_fake_stores_a_mention_as_a_badge_and_serves_it_as_a_handle() {
     .await;
 }
 
+/// **Asking who points at a thing does not rebuild the entity rows once per
+/// entity.** The trait's default asks `recall` of every entity, and the fake's
+/// `recall` rebuilds the whole row list each time, so a recall of a whole kind,
+/// which asks this once per object, cost the cube of the store: 150 things took
+/// seconds and 400 took more than half a minute.
+///
+/// **The property is that the number of rebuilds does not move with the number
+/// of entities.** It is asked of two stores that differ only in how many
+/// entities they hold, with the same two claims, so a rebuild per claim, which
+/// is a separate cost, does not fail it. The positive comes first: the one
+/// record that names the target is the one that comes back, and a claim naming
+/// something else does not, so a fake that read less because it answered
+/// nothing, or everything, does not pass.
+#[tokio::test]
+async fn the_fake_answers_who_points_at_a_thing_without_rebuilding_the_rows_per_entity() {
+    async fn reads_for_one_question(fillers: usize) -> usize {
+        let store = InMemoryMemory::booted();
+        let target = EntityId("event:contract-winter-fest".into());
+        let holder = EntityId("person:contract-milhouse".into());
+        for (id, name) in [
+            (&target, "Contract Winter Fest"),
+            (&holder, "Contract Milhouse"),
+        ] {
+            store
+                .add_entity(NewEntity::new(id.clone(), name, "fixture"))
+                .await
+                .expect("the fixture is written");
+        }
+        // Unrelated words, because the creation guard refuses a name that
+        // contains or nearly matches another, and a refused fixture would
+        // shrink the store without a word.
+        let mut seed = 0x9E37_79B9_7F4A_7C15_u64;
+        for _ in 0..fillers {
+            let word: String = (0..10)
+                .map(|_| {
+                    seed = seed
+                        .wrapping_mul(6_364_136_223_846_793_005)
+                        .wrapping_add(1_442_695_040_888_963_407);
+                    (b'a' + ((seed >> 33) % 26) as u8) as char
+                })
+                .collect();
+            store
+                .add_entity(NewEntity::new(
+                    EntityId(format!("thing:{word}")),
+                    word,
+                    "fixture",
+                ))
+                .await
+                .expect("the fixture is written")
+                .written()
+                .expect("the guard did not refuse the fixture");
+        }
+        assert_eq!(
+            store.list_entities(None).await.expect("a listing").len(),
+            2 + fillers,
+            "the store holds every entity the case wrote"
+        );
+        let held = store
+            .capture(NewFact {
+                fields: [("admits".to_string(), target.to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(
+                    holder.clone(),
+                    "holds a full pass",
+                    jiff::civil::date(2026, 8, 1),
+                )
+            })
+            .await
+            .expect("a capture")
+            .written()
+            .expect("nothing blocks it");
+        // A claim naming something else, which must not come back.
+        store
+            .capture(NewFact {
+                fields: [("admits".to_string(), holder.to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(
+                    holder.clone(),
+                    "holds a pass to itself",
+                    jiff::civil::date(2026, 8, 2),
+                )
+            })
+            .await
+            .expect("a capture")
+            .written()
+            .expect("nothing blocks it");
+
+        let before = store.index_reads();
+        let pointing = store.referring_to(&target).await.expect("who points here");
+        let reads = store.index_reads() - before;
+        assert_eq!(
+            pointing
+                .iter()
+                .map(|f| f.address().to_string())
+                .collect::<Vec<_>>(),
+            vec![held.address().to_string()],
+            "the record naming the target comes back, and the one naming something else does not"
+        );
+        reads
+    }
+
+    let small = reads_for_one_question(20).await;
+    let large = reads_for_one_question(60).await;
+    assert_eq!(
+        small, large,
+        "the entity rows were rebuilt {small} times over 22 entities and {large} times over 62: \
+         the cost of one question moves with the size of the store"
+    );
+}
+
 /// A store wired with a supplied record, for the two creation-guard specs
 /// below that need one — `run_all` above never wires one, so these run on
 /// their own.

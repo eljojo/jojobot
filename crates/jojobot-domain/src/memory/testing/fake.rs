@@ -15,6 +15,10 @@ pub struct InMemoryMemory {
     /// that call, so a caller that lists to resolve one handle pays for all of
     /// them; this is how a case sees whether it did.
     listings: std::sync::atomic::AtomicUsize,
+    /// **How many times the entity rows have been rebuilt.** Every read that
+    /// resolves a handle builds the whole list, so a read that does it once per
+    /// entity costs the square of the store; this is how a case sees it.
+    index_reads: std::sync::atomic::AtomicUsize,
     /// The claims. **Their fields are not here**: a claim is stored with an
     /// empty bag and its fields are projected from [`InMemoryMemory::writes`]
     /// on every read, exactly as the real store projects them from its own
@@ -108,6 +112,12 @@ impl InMemoryMemory {
     /// delta across the call it is checking.
     pub fn listings(&self) -> usize {
         self.listings.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// How many times the entity rows have been rebuilt, by any read. A caller
+    /// measures a delta across the call it is checking.
+    pub fn index_reads(&self) -> usize {
+        self.index_reads.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// **The store, told what the build supplies over it.** Only the existence
@@ -416,6 +426,8 @@ impl InMemoryMemory {
     /// every entity and filters in memory — so nothing but this resolution
     /// stands between the stored badge and a reader who wants the handle.
     fn index(&self) -> Vec<Entity> {
+        self.index_reads
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let mut entities = self.entities.lock().expect("fake mutex poisoned").clone();
         let snapshot = entities.clone();
         for entity in &mut entities {
@@ -1797,6 +1809,35 @@ impl Memory for InMemoryMemory {
             .iter()
             .map(|f| self.served(self.projected(f), &entity.id))
             .collect())
+    }
+
+    /// **Who points at a thing, from one read of the rows.** The trait's default
+    /// asks `recall` of every entity, and this store's `recall` rebuilds the
+    /// whole list of rows for each ask, so a recall of a whole kind, which asks
+    /// this once per object, cost the cube of the store. The answer is the same
+    /// one: every entity's records, served and projected as `recall` serves
+    /// them, filtered by what their fields name. The listing is still read
+    /// through [`Memory::list_entities`], so a case that counts listings sees
+    /// what it saw.
+    async fn referring_to(&self, target: &EntityId) -> Result<Vec<Fact>, MemoryError> {
+        super::super::validate_subject(target)?;
+        let declared = self.declared_types().await?;
+        let entities = self.list_entities(None).await?;
+        let stored: Vec<Fact> = self.facts.lock().expect("fake mutex poisoned").clone();
+        let mut pointing = Vec::new();
+        for entity in &entities {
+            let key = match &entity.badge {
+                Some(badge) => EntityId(badge.clone()),
+                None => entity.id.clone(),
+            };
+            for fact in stored.iter().filter(|f| f.subject == key || f.home == key) {
+                let served = self.served(self.projected(fact), &entity.id);
+                if super::super::fields_name_target(&served.fields, &declared, target) {
+                    pointing.push(served);
+                }
+            }
+        }
+        Ok(pointing)
     }
 
     async fn fields(
