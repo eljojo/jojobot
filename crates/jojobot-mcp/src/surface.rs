@@ -702,6 +702,28 @@ fn assert_description_names(verb: &str, names: &[&str]) {
     }
 }
 
+/// **`recall` says the overdue question is asked about the run's day**: the day
+/// the run stated, else today in its zone. The argument used to say "the one
+/// clock read", which names a clock the run has no say over and says nothing
+/// of the day a run states.
+#[test]
+fn recall_names_the_runs_day_as_the_day_overdue_is_asked_about() {
+    let tools = Jojobot::tool_router().list_all();
+    let recall = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "recall")
+        .expect("the surface offers recall");
+    let schema = serde_json::to_string(&recall.input_schema).expect("the schema serializes");
+    assert!(
+        schema.contains("the run's day"),
+        "recall's arguments do not say the overdue day is the run's day: {schema}"
+    );
+    assert!(
+        !schema.contains("the one clock read"),
+        "recall's arguments still call the overdue day the one clock read"
+    );
+}
+
 /// **`search`'s description names the `clock` choice** and the two days it
 /// picks between.
 #[test]

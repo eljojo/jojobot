@@ -456,7 +456,7 @@ pub struct RecallArgs {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct OverdueArgs {
     /// **The date the question is asked about**, `YYYY-MM-DD`. Omit it and
-    /// jojobot uses today — the one clock read, taken here at the edge, and the
+    /// the run's day answers: the day it stated, else today in its zone. The
     /// answer says which day it used.
     ///
     /// Naming a date is what makes *what has gone quiet by next Friday* a

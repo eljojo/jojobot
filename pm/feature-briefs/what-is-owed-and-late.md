@@ -28,7 +28,7 @@
 
 ## The day is always given, never taken from a clock
 
-**The caller names the day it is asking about.** So the same question about the same day always returns the same answer, a session can ask about next Tuesday, and nothing in the answer depends on when it happened to run.
+**The day is the run's: the one it stated, else today in its zone. The engine reads no other clock.** So the same question about the same day always returns the same answer, a session can ask about next Tuesday, and nothing in the answer depends on when it happened to run.
 
 **A session supplies its timezone**, and what counts as *today* resolves against that. Two sessions in different zones legitimately disagree about what today is for one stored claim; the surface says so plainly, because an agent that meets that undocumented reads it as a fault and works around it.
 

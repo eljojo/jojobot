@@ -244,7 +244,8 @@ happened, and the check-in opens it.
 ## How to find what is due
 
 Call `recall` with `kind: "rhythm"` and `overdue: {}`. You get the loops that
-have gone quiet as of today. Put a date in `as_of` to ask about another day.
+have gone quiet as of the run's day: the day it stated, else today in its zone. Put
+a date in `as_of` to ask about another day.
 
 The answer says which day it used. Read it.
 
@@ -547,6 +548,16 @@ mod tests {
             let edge = |c: Option<char>| c.is_none_or(|c| !c.is_alphanumeric());
             edge(before) && edge(after)
         })
+    }
+
+    /// **The rhythms skill asks about the run's day**, which is the day the run
+    /// stated or else today in its zone, and not about "today" as if the engine
+    /// read one clock.
+    #[test]
+    fn the_rhythms_skill_asks_as_of_the_runs_day() {
+        let rhythms = body("rhythms");
+        assert!(rhythms.contains("the run's day"), "{rhythms}");
+        assert!(!rhythms.contains("gone quiet as of today"), "{rhythms}");
     }
 
     /// **The procedure and the engine use one vocabulary**, and the vocabulary
