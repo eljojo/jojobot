@@ -544,6 +544,7 @@ impl super::Memory for Mentioning {
         refuse_forged(&[
             first.content.as_str(),
             first.details.as_deref().unwrap_or(""),
+            first.drop_because.as_deref().unwrap_or(""),
         ])?;
         let known = self.known().await?;
         if let Some(blocked) = Self::screen(
@@ -1188,6 +1189,26 @@ mod tests {
                     drop_because: Some("replaced by @#k7h2mn".to_string()),
                     ..NewFact::about(holder.clone(), "a new thought", day)
                 })
+                .await
+                .map(|_| ()),
+        );
+        // **A claim written in the same act as a thing's creation or edit is a
+        // claim**, so it is held to the same rule.
+        refused(
+            "a first claim",
+            store
+                .add_entity_with_first_claim(
+                    crate::memory::NewEntity::new(
+                        EntityId("thing:contract-forged-created".into()),
+                        "Forged Created",
+                        "test",
+                    ),
+                    NewFact::about(
+                        EntityId("thing:contract-forged-created".into()),
+                        "made with @#k7h2mn",
+                        day,
+                    ),
+                )
                 .await
                 .map(|_| ()),
         );
