@@ -405,6 +405,7 @@ impl InMemoryMemory {
             fields
                 .iter()
                 .map(|(key, value)| (key.to_string(), Some(value.to_string()))),
+            &Default::default(),
         );
         facts.push(stored);
     }
@@ -802,8 +803,13 @@ impl InMemoryMemory {
     ///
     /// A value of `None` is a clear: the key stops being current and the writes
     /// that put it there stay where they are.
-    fn append_writes<I>(&self, home: &EntityId, fact: &FactId, wrote: I)
-    where
+    fn append_writes<I>(
+        &self,
+        home: &EntityId,
+        fact: &FactId,
+        wrote: I,
+        classes: &std::collections::BTreeMap<String, super::super::WriteClass>,
+    ) where
         I: IntoIterator<Item = (String, Option<String>)>,
     {
         let mut writes = self.writes.lock().expect("fake mutex poisoned");
@@ -813,14 +819,43 @@ impl InMemoryMemory {
                 .filter(|w| &w.entity == home && w.key == key)
                 .count() as u64
                 + 1;
+            let class = classes
+                .get(key.trim())
+                .copied()
+                .unwrap_or(super::super::WriteClass::Own);
             writes.push(StoredWrite {
                 entity: home.clone(),
                 key,
                 ordinal,
                 value,
                 fact: fact.clone(),
+                class,
             });
         }
+    }
+
+    /// **The bag each key of a record is held under now**, as the real store reads
+    /// it: the class of the key's newest write on the record, for a key whose
+    /// newest write did not take it off.
+    fn held_classes(
+        &self,
+        home: &EntityId,
+        fact: &FactId,
+    ) -> std::collections::BTreeMap<String, super::super::WriteClass> {
+        let writes = self.writes.lock().expect("fake mutex poisoned");
+        let mut mine: Vec<&StoredWrite> = writes
+            .iter()
+            .filter(|w| &w.entity == home && &w.fact == fact)
+            .collect();
+        mine.sort_by(|a, b| a.key.cmp(&b.key).then(a.ordinal.cmp(&b.ordinal)));
+        let mut held = std::collections::BTreeMap::new();
+        for write in mine {
+            match &write.value {
+                Some(_) => held.insert(write.key.clone(), write.class),
+                None => held.remove(&write.key),
+            };
+        }
+        held
     }
 
     /// **The record as a reader sees it: its claim, with its fields projected.**
@@ -1047,6 +1082,9 @@ impl InMemoryMemory {
         writes
             .iter()
             .filter(|w| &w.entity == entity)
+            // **The one reading of whether a write reaches its thing**, shared by
+            // every store and the fake.
+            .filter(|w| super::super::reaches_the_thing(w.class))
             .filter_map(|w| {
                 let carried = facts
                     .iter()
@@ -1085,6 +1123,9 @@ struct StoredWrite {
     value: Option<String>,
     /// The record that carried it.
     fact: FactId,
+    /// **The bag this write was made under**, kept as the real store keeps it
+    /// in a column.
+    class: super::super::WriteClass,
 }
 
 /// **What serving claims resolves handles through**, built once by a call that
@@ -1564,6 +1605,14 @@ impl Memory for InMemoryMemory {
         validate_fields(&fact.fields)?;
         validate_provenance_source(fact.provenance, &fact.fields)?;
         let standing = standing_of(&fact);
+        // **Which bag each key is written under**, decided before anything lands.
+        let classes = super::super::classes_for_write(
+            &Default::default(),
+            &fact.fields,
+            &fact.sets,
+            &[],
+            &self.declarations(),
+        )?;
 
         // Every entity this write names must already exist — the subject first,
         // then the edge's object. Nothing here provisions.
@@ -1883,7 +1932,7 @@ impl Memory for InMemoryMemory {
         // **A capture is the claim's first write.** Kept here as the real store
         // keeps it, so a claim nobody has corrected answers with one write.
         self.append_claim_write(&stored, fact.session.clone());
-        self.append_writes(&stored.home, &stored.id, wrote);
+        self.append_writes(&stored.home, &stored.id, wrote, &classes);
         // **Stored under the storage key; served under the handle.** The row
         // just pushed keeps the badge, exactly as every other row does; the
         // caller that just wrote it reads back the handle it wrote with,
@@ -2053,6 +2102,7 @@ impl Memory for InMemoryMemory {
         let mut mine: Vec<&StoredWrite> = writes
             .iter()
             .filter(|w| w.entity == storage_key && w.key == key)
+            .filter(|w| super::super::reaches_the_thing(w.class))
             .collect();
         mine.sort_by_key(|w| w.ordinal);
         Ok(mine
@@ -2286,6 +2336,16 @@ impl Memory for InMemoryMemory {
         let first_session = self.first_write_session(&key, &address.local);
         let patch =
             super::super::settle_rewrite(address, &edited, patch, first_session.as_deref())?;
+        // **Which bag each key is written under**, read off what this record holds
+        // now: a key stays in the bag it was first written under.
+        let held_classes = self.held_classes(&key, &address.local);
+        let classes = super::super::classes_for_write(
+            &held_classes,
+            &patch.fields,
+            &patch.sets,
+            &patch.clear_fields,
+            &self.declarations(),
+        )?;
         apply_fact_patch(&mut edited, &patch)?;
         // **Stored under its source's storage key, exactly as a capture's
         // does.** `apply_fact_patch` only carries the patch's address
@@ -2442,7 +2502,7 @@ impl Memory for InMemoryMemory {
         // shape); what actually lands is lowered to a permanent id per
         // reference-typed item, same as a capture's does.
         let lowered_writes = self.lower_writes(super::super::writes_of(&patch, &carried));
-        self.append_writes(&home, &id, lowered_writes);
+        self.append_writes(&home, &id, lowered_writes, &classes);
         let facts = self.facts.lock().expect("fake mutex poisoned");
         let stored = facts
             .iter()
@@ -2796,6 +2856,7 @@ impl Memory for InMemoryMemory {
                 .fields
                 .iter()
                 .map(|(key, value)| (key.clone(), Some(value.clone()))),
+            &Default::default(),
         );
 
         Ok(Merge {
@@ -2938,6 +2999,7 @@ impl Memory for InMemoryMemory {
                 .fields
                 .iter()
                 .map(|(field, value)| (field.clone(), Some(value.clone()))),
+            &Default::default(),
         );
         // **Served under the handle, stored under the key** — the same rule
         // capture and update_fact answer to.

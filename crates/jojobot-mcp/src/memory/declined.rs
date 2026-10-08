@@ -229,6 +229,7 @@ pub(crate) fn memory_fix_by(e: &MemoryError) -> Option<FixBy> {
         | MemoryError::NotRetractable { .. }
         | MemoryError::UnsourcedObservation
         | MemoryError::UnstatedProvenance
+        | MemoryError::KeyInOtherBag { .. }
         | MemoryError::TestimonyRewritten { .. } => Some(FixBy::Change),
         // A store that answered and refused: a constraint the caller's input
         // broke, which sending the same call again meets again. Not an outage.
@@ -386,6 +387,16 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                 "Nothing was written: {e}. The call is not what is wrong, and sending it again \
                  will not help: jojobot loaded no kinds when it started, and nothing a caller \
                  does re-reads them. This one needs the operator."
+            ),
+        )),
+        // **The way forward is a different pair of calls, not this one again**: the
+        // key stays in the bag it was first written under until it is cleared.
+        MemoryError::KeyInOtherBag { ref key, .. } => Ok(blocked_body(
+            &EntityId(key.clone()),
+            &[],
+            format!(
+                "Nothing was written: {e}. Nothing is missing from the store and nothing here \
+                 needs the operator."
             ),
         )),
         // **The way forward is a different call, not this one again.** The words
@@ -1164,6 +1175,7 @@ fn memory_error_arms(e: MemoryError) -> McpError {
         | MemoryError::RoleFieldGuarded { .. }
         | MemoryError::RoleTaken { .. }
         | MemoryError::TestimonyRewritten { .. }
+        | MemoryError::KeyInOtherBag { .. }
         | MemoryError::UnstatedProvenance => McpError::invalid_params(e.to_string(), None),
         MemoryError::Store(msg) => {
             McpError::internal_error(crate::boundary::store_failed("this call", &msg), None)

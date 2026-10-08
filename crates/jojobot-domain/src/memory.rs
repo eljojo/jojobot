@@ -790,6 +790,12 @@ pub struct FactPatch {
     /// session the call came in on. A store records it beside the write, and
     /// [`settle_rewrite`] compares it with the session of the claim's first write.
     pub session: Option<String>,
+    /// **The keys of [`FactPatch::fields`] that are this record's SETTING bag**:
+    /// what the record sets on the thing, apart from its own fields. Every key
+    /// here is also a key of `fields`, which holds both bags' values. A key is
+    /// written under one bag at a time, so a key a record already holds under the
+    /// other is refused ([`classes_for_write`]).
+    pub sets: std::collections::BTreeSet<String>,
 }
 
 /// **The role an entity IS, when it is a role object**: the slug of its handle.
@@ -2918,6 +2924,126 @@ pub fn split_by_age(
     ThoughtRoom { live, aged_out }
 }
 
+/// **Which bag a write of a key was made under**, stored with the write.
+///
+/// A record carries two bags: its own fields, and what it sets on its thing. The
+/// class is the fact that lasts about a write, and whether the write reaches the
+/// thing is a reading of it ([`reaches_the_thing`]). `Legacy` is every write made
+/// before the class was kept: it was an own field, and it reached.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum WriteClass {
+    /// Written before the class was kept.
+    Legacy,
+    /// Written as one of the record's own fields.
+    Own,
+    /// Written as a setting on the record's thing.
+    Sets,
+}
+
+impl WriteClass {
+    /// **The spelling the store keeps.** Nothing outside this process declares
+    /// it, so one test pins the three tokens by literal.
+    pub fn as_token(self) -> &'static str {
+        match self {
+            WriteClass::Legacy => "legacy",
+            WriteClass::Own => "own",
+            WriteClass::Sets => "sets",
+        }
+    }
+
+    /// The class a stored token names. An unknown token reads as `Legacy`, the
+    /// class every write had before one was kept, so a row this build cannot
+    /// read still reaches its thing as it always did.
+    pub fn from_token(token: &str) -> WriteClass {
+        match token {
+            "own" => WriteClass::Own,
+            "sets" => WriteClass::Sets,
+            _ => WriteClass::Legacy,
+        }
+    }
+}
+
+/// **Whether a write of this class reaches its thing.** The one reading the fold,
+/// the history of a key and the backing of a value all go through, in every store
+/// and in the fake. Today every class reaches, so nothing a thing holds depends
+/// on the class; the class is what can change that without any stored row moving.
+pub fn reaches_the_thing(class: WriteClass) -> bool {
+    match class {
+        WriteClass::Legacy | WriteClass::Own | WriteClass::Sets => true,
+    }
+}
+
+/// **The class each key of a write is written under**, and the refusal when a
+/// key would change bag.
+///
+/// `held` is the class of each key the record holds NOW: a key whose newest write
+/// took it off is not held. A key named under `fields` keeps the class it is held
+/// under (a legacy key stays legacy, so correcting an old claim still corrects the
+/// thing) and is `Own` when new. A key named in `sets` is `Sets` when new or
+/// already `Sets`. Anything else is [`MemoryError::KeyInOtherBag`], which names
+/// the route. A clear keeps the class of the key it clears, so `clear_fields`
+/// takes a key off whichever bag holds it.
+///
+/// **A describing key cannot be set on a thing**: a label on one record is never a
+/// property of the thing, so naming one in `sets` is refused by name.
+pub fn classes_for_write(
+    held: &BTreeMap<String, WriteClass>,
+    written: &BTreeMap<String, String>,
+    sets: &std::collections::BTreeSet<String>,
+    cleared: &[String],
+    declared: &[types::DeclaredType],
+) -> Result<BTreeMap<String, WriteClass>, MemoryError> {
+    let mut classes = BTreeMap::new();
+    for key in sets {
+        let key = key.trim();
+        if !written.keys().any(|k| k.trim() == key) {
+            return Err(MemoryError::InvalidFact(format!(
+                "'{key}' is named as a setting but carries no value: a setting is a key with a \
+                 value, and a key is taken off with clear_fields"
+            )));
+        }
+        if types::fold_of(key, declared) == types::Fold::Describes {
+            return Err(MemoryError::InvalidFact(format!(
+                "'{key}' describes the record that carries it and is never a property of its \
+                 thing, so it cannot be set on the thing. Write it as one of the record's own \
+                 fields"
+            )));
+        }
+    }
+    for key in written.keys() {
+        let key = key.trim();
+        let names_as_setting = sets.iter().any(|s| s.trim() == key);
+        let class = match (held.get(key), names_as_setting) {
+            (None, true) | (Some(WriteClass::Sets), true) => WriteClass::Sets,
+            (None, false) => WriteClass::Own,
+            (Some(WriteClass::Legacy), false) => WriteClass::Legacy,
+            (Some(WriteClass::Own), false) => WriteClass::Own,
+            (Some(WriteClass::Sets), false) => {
+                return Err(MemoryError::KeyInOtherBag {
+                    key: key.to_string(),
+                    held: "a setting on the thing",
+                    named: "one of the record's own fields",
+                });
+            }
+            (Some(WriteClass::Legacy | WriteClass::Own), true) => {
+                return Err(MemoryError::KeyInOtherBag {
+                    key: key.to_string(),
+                    held: "one of the record's own fields",
+                    named: "a setting on the thing",
+                });
+            }
+        };
+        classes.insert(key.to_string(), class);
+    }
+    for key in cleared {
+        let key = key.trim();
+        if let Some(class) = held.get(key) {
+            classes.entry(key.to_string()).or_insert(*class);
+        }
+    }
+    Ok(classes)
+}
+
 /// **The writes an edit makes on a record's keys**, in the order
 /// [`apply_fact_patch`] applies them: a cleared key carries no value, and a set
 /// key carries what it puts there.
@@ -3659,6 +3785,9 @@ pub struct NewFact {
     /// [`settle_rewrite`] later asks about. A claim written before the column
     /// existed has none.
     pub session: Option<String>,
+    /// **The keys of [`NewFact::fields`] that are this record's SETTING bag** —
+    /// see [`FactPatch::sets`].
+    pub sets: std::collections::BTreeSet<String>,
 }
 
 impl NewFact {
@@ -3685,6 +3814,7 @@ impl NewFact {
             borrow: false,
             aged_before: None,
             session: None,
+            sets: std::collections::BTreeSet::new(),
         }
     }
 }
@@ -5104,6 +5234,22 @@ pub enum MemoryError {
     TestimonyRewritten {
         /// The claim a content rewrite was refused on.
         address: String,
+    },
+    /// **A key is written under one bag at a time.** A record holds a key as its
+    /// own field or as a setting on its thing, and a write naming it under the
+    /// other bag is refused rather than moving it.
+    #[error(
+        "'{key}' on this record is held as {held}, and this call names it as {named}. A key stays \
+         in the bag it was first written under: clear it with clear_fields, which takes a key off \
+         whichever bag holds it, then write it under the other"
+    )]
+    KeyInOtherBag {
+        /// The key.
+        key: String,
+        /// How the record holds it now.
+        held: &'static str,
+        /// How this call names it.
+        named: &'static str,
     },
     /// An open claim was asked to be settled without the user saying so.
     #[error(

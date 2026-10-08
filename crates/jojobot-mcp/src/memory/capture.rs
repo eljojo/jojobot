@@ -156,6 +156,16 @@ pub struct CaptureArgs {
     /// the boot over its size ceiling is refused, naming the overage.
     #[serde(default)]
     pub(crate) fields: Option<std::collections::BTreeMap<String, String>>,
+    /// **What this claim sets on its thing**, as key/value pairs: the keys that
+    /// are properties of the thing the claim is about, apart from `fields`, which
+    /// are the claim's own. One call records the claim and sets the thing. A key
+    /// belongs to one of the two for as long as this record holds it, so a key
+    /// named here and in `fields` is refused, and a key the record already holds
+    /// in the other is refused with the way to move it. A key that only labels
+    /// the claim (`read_from`, `purpose`, `subject`) is never a property of the
+    /// thing and is refused here by name.
+    #[serde(default)]
+    pub(crate) sets: Option<std::collections::BTreeMap<String, String>>,
     /// The entities this record touches, as `kind:slug` — **each must already
     /// exist**, exactly as `subject` must.
     ///
@@ -790,6 +800,21 @@ impl Jojobot {
         }
 
         let mut fields = args.fields.unwrap_or_default();
+        // **The setting bag joins `fields` for everything below**, so every guard
+        // that reads a claim's keys reads these too, and the keys that are the bag
+        // travel apart in `sets` so a store can tell them from the claim's own.
+        let sets_sent = args.sets.unwrap_or_default();
+        if let Some(key) = sets_sent.keys().find(|key| fields.contains_key(*key)) {
+            return memory_declined(
+                "capture",
+                MemoryError::InvalidFact(format!(
+                    "'{key}' is named in both `fields` and `sets`. A key is one of the claim's \
+                     own fields or a setting on its thing, never both: send it in one"
+                )),
+            );
+        }
+        let set_keys: std::collections::BTreeSet<String> = sets_sent.keys().cloned().collect();
+        fields.extend(sets_sent);
         // **Captured before anything computed joins `fields`** — `check_in`
         // and a moved due moment both add keys below, and this is about what
         // the CALLER sent, never what jojobot added on its own.
@@ -923,6 +948,7 @@ impl Jojobot {
             borrow: args.borrow.unwrap_or(false),
             aged_before,
             session: Some(caller.sid.as_str().to_string()),
+            sets: set_keys,
         };
         // **A star or a seat count that would take the bot's boot over its
         // ceiling is refused here**, before anything lands — see

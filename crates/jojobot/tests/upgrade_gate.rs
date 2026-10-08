@@ -46,6 +46,9 @@ struct Restored {
     state_dir: std::path::PathBuf,
     store_port: u16,
     git_ref: String,
+    /// What every thing held in the old store, as `(handle, key, value)`, read
+    /// before the current binary touched it.
+    held_before: Vec<(String, String, String)>,
 }
 
 async fn restore_the_fixture(label: &str) -> Restored {
@@ -102,12 +105,22 @@ async fn restore_a_fixture(fixture_dir: &str, label: &str) -> Restored {
         .execute(restoring.pool())
         .await
         .expect("the recorded claim's moment is moved to now");
+    // **What every thing holds, read off the old store with plain SQL before the
+    // current binary touches it.** Independent of any fold in this build, so a
+    // migration or a filter that changed what a thing holds cannot move this side
+    // with it.
+    let held_before = fields_every_thing_holds(restoring.pool()).await;
+    assert!(
+        held_before.len() >= 5,
+        "the fixture holds things with fields, or this compares nothing: {held_before:?}"
+    );
     restoring.stop().await;
     Restored {
         scratch,
         state_dir,
         store_port,
         git_ref,
+        held_before,
     }
 }
 
@@ -128,6 +141,7 @@ async fn boots_on_a_store_filled_by(fixture_dir: &str, label: &str) {
         state_dir,
         store_port,
         git_ref,
+        held_before,
     } = restore_a_fixture(fixture_dir, label).await;
 
     // **The current binary boots over the restored store TWICE, and the second
@@ -171,6 +185,11 @@ async fn boots_on_a_store_filled_by(fixture_dir: &str, label: &str) {
         .unwrap_or_else(|e| panic!("reading {role_holder_file}: {e}"))
         .trim()
         .to_string();
+    // **Before the gate writes anything of its own**: the steps below write to
+    // the store, and a thing that has been written to is meant to hold more. The
+    // first two boots wrote nothing of the gate's, and the dump above shows the
+    // second changed nothing the first left.
+    assert_every_thing_holds_what_it_held(&surface, &git_ref, &held_before).await;
     assert_every_recorded_record_reads_back(&surface, &git_ref, &role_holder).await;
     assert_what_a_real_store_holds_reads_back(&surface, &git_ref, &role_holder).await;
     assert_a_role_claimed_in_the_old_shape_is_held_and_moves(&surface, &git_ref, &role_holder)
@@ -471,6 +490,108 @@ async fn assert_a_claim_shaped_lease_renews_in_place(
     }
     surface.finish().await;
     fourth.stop().await;
+}
+
+/// **Every value a thing holds in the old store**, as `(handle, key, value)`:
+/// the newest write of each key among the writes of records that still stand.
+///
+/// **A value stored as permanent ids is read here as the handles those ids answer
+/// to**, off the same old store: each id is replaced, in place, by the handle of
+/// the entity wearing it. What the upgraded binary serves is then
+/// compared with that, position by position, so a list served in another order
+/// or naming other things is a difference and not a match.
+async fn fields_every_thing_holds(pool: &sqlx::MySqlPool) -> Vec<(String, String, String)> {
+    let badges: std::collections::BTreeMap<String, String> =
+        sqlx::query_as::<_, (Option<String>, String)>("SELECT badge, id FROM entity")
+            .fetch_all(pool)
+            .await
+            .expect("the old store's badges read")
+            .into_iter()
+            .filter_map(|(badge, id)| badge.map(|badge| (badge, id)))
+            .collect();
+    let held: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT e.id, w.`key`, w.value
+         FROM field_write w
+         JOIN fact f ON f.entity = w.entity AND f.id = w.fact_id AND f.status = 'active'
+         JOIN entity e ON e.badge = w.entity
+         WHERE w.value IS NOT NULL
+           -- The two keys jojobot writes about a record and never folds onto a thing.
+           AND w.`key` NOT IN ('merged_from', 'retracts')
+           -- A key declared to describe its record is the record's own and the thing
+           -- never holds it.
+           AND w.`key` NOT IN (SELECT key_name FROM type_field WHERE folds = 'describes')
+           AND w.ordinal = (
+             SELECT MAX(w2.ordinal)
+             FROM field_write w2
+             JOIN fact f2 ON f2.entity = w2.entity AND f2.id = w2.fact_id AND f2.status = 'active'
+             WHERE w2.entity = w.entity AND w2.`key` = w.`key`)
+         ORDER BY e.id, w.`key`",
+    )
+    .fetch_all(pool)
+    .await
+    .expect("the old store's folded fields read");
+    held.into_iter()
+        .map(|(handle, key, value)| (handle, key, with_badges_as_handles(&value, &badges)))
+        .collect()
+}
+
+/// **A stored value with each item that is a badge replaced by the handle of the
+/// entity wearing it.** An item is one piece of a comma list, and it is a badge
+/// when it is one an entity wears, with or without the `@#` mark: a field a type
+/// declared a reference holds the bare id, any other key holds the marked one.
+/// Separators and every other item are untouched. A badge nothing wears is left
+/// as it is, so the comparison against it fails loudly.
+fn with_badges_as_handles(
+    value: &str,
+    badges: &std::collections::BTreeMap<String, String>,
+) -> String {
+    value
+        .split(',')
+        .map(|piece| {
+            let item = piece.trim();
+            let bare = item.strip_prefix("@#").unwrap_or(item);
+            match badges.get(bare) {
+                Some(handle) => piece.replacen(item, handle, 1),
+                None => piece.to_string(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// **The upgrade changed nothing a thing holds.** Each value the old store held
+/// is still held, under the same key, after the current binary has booted on it.
+/// A value that names another thing was stored as that thing's permanent id and
+/// is served as the handle the thing answers to; it is compared as that handle,
+/// item by item and in order.
+async fn assert_every_thing_holds_what_it_held(
+    surface: &Surface,
+    git_ref: &str,
+    held_before: &[(String, String, String)],
+) {
+    eprintln!(
+        "upgrade gate: comparing {} values the store recorded at {git_ref} held before the upgrade",
+        held_before.len()
+    );
+    for (handle, key, was) in held_before {
+        let read = surface.call("recall", json!({"subject": handle})).await;
+        let parsed: serde_json::Value = serde_json::from_str(&read).unwrap_or_else(|_| {
+            panic!("recorded at {git_ref}: {handle} did not read back: {read}")
+        });
+        let now = parsed["objects"][0]["fields"][key]
+            .as_str()
+            .unwrap_or_else(|| {
+                panic!(
+                    "recorded at {git_ref}: {handle} held '{key}' = '{was}' before the upgrade \
+                     and holds nothing under it after: {read}"
+                )
+            });
+        assert_eq!(
+            now, was,
+            "recorded at {git_ref}: {handle} held '{key}' = '{was}' before the upgrade (ids \
+             read as the handles they answered to) and holds '{now}' after"
+        );
+    }
 }
 
 /// **A naive split, safe for what this fixture actually contains**: this
@@ -1167,6 +1288,7 @@ async fn a_pair_written_before_the_stamp_merges_after_the_upgrade() {
             state_dir,
             store_port,
             git_ref,
+            ..
         } = restore_a_fixture(dir, label).await;
         let recorded = std::fs::read_to_string(format!("{dir}/doltdump.sql"))
             .unwrap_or_else(|e| panic!("reading the recording in {dir}: {e}"));
@@ -1264,6 +1386,7 @@ async fn field_link_holds_the_links_the_writes_imply_and_nothing_else() {
         state_dir,
         store_port,
         git_ref,
+        held_before: _,
     } = restore_the_fixture("links").await;
     let booted = boot_current(&state_dir, store_port, &git_ref).await;
     let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
@@ -1322,6 +1445,7 @@ async fn an_old_role_field_on_a_bot_that_is_not_the_owner_does_not_stop_the_owne
         state_dir,
         store_port,
         git_ref,
+        ..
     } = restore_the_fixture("stray-role").await;
     let booted = boot_current(&state_dir, store_port, &git_ref).await;
     let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))

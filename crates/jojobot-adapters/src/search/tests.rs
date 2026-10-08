@@ -4482,6 +4482,7 @@ fn ferret() -> NewFact {
         borrow: false,
         aged_before: None,
         session: None,
+        sets: Default::default(),
     }
 }
 

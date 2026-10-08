@@ -618,6 +618,7 @@ pub async fn preserves_all_fields<M: Memory>(store: &M) {
         borrow: false,
         aged_before: None,
         session: None,
+        sets: Default::default(),
     };
     let captured = capture(store, new).await;
     assert_eq!(captured.subject, subject);
@@ -14359,6 +14360,194 @@ pub async fn an_entity_created_with_a_first_claim_is_made_whole_or_not_at_all<M:
     );
 }
 
+/// **A record sets keys on its thing from a bag of its own, and a key stays in
+/// the bag it was first written under.**
+///
+/// One capture records a claim and sets the thing: both bags' keys reach the
+/// thing today, and the claim still carries both. A key the record holds as one
+/// bag's cannot be named under the other, in either direction, until it is taken
+/// off; then it may be written under the other. A key named in both bags of one
+/// call is refused, and so is a key that only describes the claim in the setting
+/// bag.
+pub async fn a_setting_bag_reaches_the_thing_and_a_key_stays_in_its_bag<M: Memory>(store: &M) {
+    let thing = EntityId("thing:contract-bags".into());
+    add(
+        store,
+        NewEntity::new(thing.clone(), "Contract Bags", "contract-fixture"),
+    )
+    .await;
+    store
+        .declare_type(crate::memory::types::DeclaredType::shipped(
+            "contract-bags-label",
+            vec![crate::memory::types::Field::describing("label")],
+        ))
+        .await
+        .expect("a describing key is declared");
+    let pairs = |pairs: &[(&str, &str)]| -> std::collections::BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    };
+    let named = |keys: &[&str]| -> std::collections::BTreeSet<String> {
+        keys.iter().map(|k| k.to_string()).collect()
+    };
+    let claim = capture(
+        store,
+        NewFact {
+            fields: pairs(&[("own_key", "o"), ("set_key", "s")]),
+            sets: named(&["set_key"]),
+            session: Some("session-bags".to_string()),
+            ..NewFact::about(thing.clone(), "one call, two bags", date(2026, 9, 1))
+        },
+    )
+    .await;
+    let held = store.fields(&thing).await.expect("fields read");
+    assert_eq!(held["own_key"], "o", "an own field reaches the thing today");
+    assert_eq!(held["set_key"], "s", "a setting reaches the thing");
+    assert_eq!(
+        read_back(store, &thing, &claim.id).await.fields,
+        pairs(&[("own_key", "o"), ("set_key", "s")]),
+        "the claim carries both bags",
+    );
+
+    let patch = |fields: &[(&str, &str)], sets: &[&str], clear: &[&str]| FactPatch {
+        fields: pairs(fields),
+        sets: named(sets),
+        clear_fields: clear.iter().map(|k| k.to_string()).collect(),
+        session: Some("session-bags".to_string()),
+        ..Default::default()
+    };
+    let refused = |outcome: Result<Guarded<Fact>, MemoryError>, key: &str| {
+        let err = outcome.expect_err("a key does not change bag");
+        assert!(
+            matches!(&err, MemoryError::KeyInOtherBag { key: named, .. } if named == key),
+            "{key} is refused by name: {err:?}",
+        );
+    };
+    // A setting named as an own field, and an own field named as a setting.
+    refused(
+        store
+            .update_fact(
+                &claim.address(),
+                patch(&[("set_key", "t")], &[], &[]),
+                &other_caller(),
+            )
+            .await,
+        "set_key",
+    );
+    refused(
+        store
+            .update_fact(
+                &claim.address(),
+                patch(&[("own_key", "p")], &["own_key"], &[]),
+                &other_caller(),
+            )
+            .await,
+        "own_key",
+    );
+    let after_refusals = store.fields(&thing).await.expect("fields read");
+    assert_eq!(
+        (
+            after_refusals["own_key"].as_str(),
+            after_refusals["set_key"].as_str()
+        ),
+        ("o", "s"),
+        "a refused write moves nothing",
+    );
+    // **Each bag may still patch its own keys.**
+    store
+        .update_fact(
+            &claim.address(),
+            patch(&[("own_key", "o2"), ("set_key", "s2")], &["set_key"], &[]),
+            &other_caller(),
+        )
+        .await
+        .expect("each key stays in its bag")
+        .written()
+        .expect("nothing blocks it");
+    assert_eq!(store.fields(&thing).await.expect("fields")["set_key"], "s2");
+    assert_eq!(
+        store
+            .history(&thing, "set_key")
+            .await
+            .expect("history reads")
+            .len(),
+        2,
+        "the history of a key on the thing is every write that reaches it",
+    );
+
+    // **The route**: take the key off, then write it under the other bag.
+    store
+        .update_fact(
+            &claim.address(),
+            patch(&[], &[], &["own_key"]),
+            &other_caller(),
+        )
+        .await
+        .expect("a clear takes a key off whichever bag holds it")
+        .written()
+        .expect("nothing blocks it");
+    assert!(
+        !store
+            .fields(&thing)
+            .await
+            .expect("fields")
+            .contains_key("own_key"),
+        "the clear took it off the thing",
+    );
+    store
+        .update_fact(
+            &claim.address(),
+            patch(&[("own_key", "now a setting")], &["own_key"], &[]),
+            &other_caller(),
+        )
+        .await
+        .expect("once taken off it is written under the other bag")
+        .written()
+        .expect("nothing blocks it");
+    assert_eq!(
+        store.fields(&thing).await.expect("fields")["own_key"],
+        "now a setting",
+    );
+    // …and now it is a setting, so naming it as an own field is the refusal again.
+    refused(
+        store
+            .update_fact(
+                &claim.address(),
+                patch(&[("own_key", "back")], &[], &[]),
+                &other_caller(),
+            )
+            .await,
+        "own_key",
+    );
+
+    // **A key that only labels the claim is never set on the thing.**
+    let labelled = store
+        .update_fact(
+            &claim.address(),
+            patch(&[("label", "x")], &["label"], &[]),
+            &other_caller(),
+        )
+        .await
+        .expect_err("a describing key cannot be a setting");
+    assert!(
+        matches!(&labelled, MemoryError::InvalidFact(said) if said.contains("label")),
+        "refused by name: {labelled:?}",
+    );
+    // The same key, as one of the claim's own fields, is fine.
+    store
+        .update_fact(
+            &claim.address(),
+            patch(&[("label", "x")], &[], &[]),
+            &other_caller(),
+        )
+        .await
+        .expect("a label is an own field")
+        .written()
+        .expect("nothing blocks it");
+}
+
 /// **Every case of the memory contract, listed once.** The list is a macro so
 /// that counting the cases and running a slice of them read the same list: a
 /// case added here is counted and run, and no second list can drift from it.
@@ -14381,6 +14570,7 @@ macro_rules! all_cases {
         $m!(both_provenances_survive($store));
         $m!(a_content_replacement_without_provenance_is_refused($store));
         $m!(a_rewrite_of_testimony_belongs_to_the_session_that_wrote_it($store));
+        $m!(a_setting_bag_reaches_the_thing_and_a_key_stays_in_its_bag($store));
         $m!(edge_whitespace_is_normalized($store));
         $m!(multiple_facts_all_recallable($store));
         $m!(subjects_are_isolated($store));

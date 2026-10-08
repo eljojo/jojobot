@@ -1052,6 +1052,36 @@ async fn a_rewrite_of_testimony_belongs_to_its_session_against_the_fake() {
         .await;
 }
 
+/// The setting bag and the one-class rule, in milliseconds against the fake.
+#[tokio::test]
+async fn a_setting_bag_reaches_the_thing_against_the_fake() {
+    contract::a_setting_bag_reaches_the_thing_and_a_key_stays_in_its_bag(&InMemoryMemory::booted())
+        .await;
+}
+
+/// 🚨 **The three class tokens, pinned as literals.** They are stored in a column
+/// and nothing outside this process declares them, so an assertion built from the
+/// constants would move with them and pin nothing.
+#[test]
+fn the_three_write_classes_are_stored_as_legacy_own_and_sets() {
+    use crate::memory::WriteClass;
+    assert_eq!(WriteClass::Legacy.as_token(), "legacy");
+    assert_eq!(WriteClass::Own.as_token(), "own");
+    assert_eq!(WriteClass::Sets.as_token(), "sets");
+    for class in [WriteClass::Legacy, WriteClass::Own, WriteClass::Sets] {
+        assert_eq!(WriteClass::from_token(class.as_token()), class);
+        assert!(
+            crate::memory::reaches_the_thing(class),
+            "every class reaches its thing today",
+        );
+    }
+    assert_eq!(
+        WriteClass::from_token("something-newer"),
+        WriteClass::Legacy,
+        "a token this build does not know reads as the class every write once had",
+    );
+}
+
 /// The full behavioural contract holds for the fake — the same suite the
 /// real-store test runs against the real adapter.
 #[tokio::test]

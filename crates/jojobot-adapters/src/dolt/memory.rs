@@ -1674,8 +1674,24 @@ impl DoltMemory {
         // above against the handle-form value the caller actually sent —
         // the guard has already run, so what lands here is free to be the
         // storage shape rather than the served one.
+        // **Which bag each key is written under**, decided before the rows land.
+        let classes = jojobot_domain::memory::classes_for_write(
+            &Default::default(),
+            &stored.fields,
+            &fact.sets,
+            &[],
+            &declared,
+        )?;
         let lowered_writes = self.lower_writes(tx, written_keys(&stored)).await?;
-        Self::append_writes(tx, &stored.home, &stored.id, lowered_writes, &self.clock).await?;
+        Self::append_writes(
+            tx,
+            &stored.home,
+            &stored.id,
+            lowered_writes,
+            &self.clock,
+            &classes,
+        )
+        .await?;
         // **Served under the handle, stored under the key** — resolved
         // before the commit closes the transaction this needs to do it in.
         let served_derived_from = match &stored.derived_from {
@@ -1811,6 +1827,37 @@ impl DoltMemory {
         Ok(facts)
     }
 
+    /// **The bag each key of a record is held under now**: the class of the key's
+    /// newest write on the record, for a key whose newest write did not take it off.
+    async fn held_classes(
+        tx: &mut Transaction<'_, MySql>,
+        entity: &EntityId,
+        fact: &FactId,
+    ) -> Result<std::collections::BTreeMap<String, jojobot_domain::memory::WriteClass>, MemoryError>
+    {
+        let rows = sqlx::query(
+            "SELECT `key`, value, write_class FROM field_write
+             WHERE entity = ? AND fact_id = ? ORDER BY `key`, ordinal",
+        )
+        .bind(entity.as_str())
+        .bind(fact.as_str())
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(store)?;
+        let mut held = std::collections::BTreeMap::new();
+        for row in &rows {
+            let key: String = row.try_get("key").map_err(store)?;
+            match row.try_get::<Option<String>, _>("value").map_err(store)? {
+                Some(_) => {
+                    let token: String = row.try_get("write_class").map_err(store)?;
+                    held.insert(key, jojobot_domain::memory::WriteClass::from_token(&token))
+                }
+                None => held.remove(&key),
+            };
+        }
+        Ok(held)
+    }
+
     /// **A record's fields, projected from the writes it made.**
     ///
     /// One value per key: the newest write of that key inside this record. A
@@ -1853,8 +1900,8 @@ impl DoltMemory {
         entity: &EntityId,
     ) -> Result<Vec<KeyWrite>, MemoryError> {
         let rows = sqlx::query(
-            "SELECT w.`key`, w.ordinal, w.value, w.fact_id, f.status, f.provenance, f.standing,
-                     f.details
+            "SELECT w.`key`, w.ordinal, w.value, w.fact_id, w.write_class, f.status,
+                     f.provenance, f.standing, f.details
              FROM field_write w
              JOIN fact f ON f.entity = w.entity AND f.id = w.fact_id
              WHERE w.entity = ?",
@@ -1865,6 +1912,14 @@ impl DoltMemory {
         .map_err(store)?;
         let mut writes = Vec::with_capacity(rows.len());
         for row in &rows {
+            // **The one reading of whether a write reaches its thing**, shared by
+            // every store and the fake.
+            let class = jojobot_domain::memory::WriteClass::from_token(
+                &row.try_get::<String, _>("write_class").map_err(store)?,
+            );
+            if !jojobot_domain::memory::reaches_the_thing(class) {
+                continue;
+            }
             writes.push(KeyWrite {
                 key: row.try_get("key").map_err(store)?,
                 ordinal: row.try_get::<i64, _>("ordinal").map_err(store)? as u64,
@@ -2163,6 +2218,7 @@ impl DoltMemory {
         fact: &FactId,
         wrote: Vec<(String, Option<String>)>,
         clock: &Clock,
+        classes: &std::collections::BTreeMap<String, jojobot_domain::memory::WriteClass>,
     ) -> Result<(), MemoryError> {
         // **The link rows ride the write that made them**, in its transaction, so
         // a write and the question of who points at its targets never disagree.
@@ -2180,9 +2236,15 @@ impl DoltMemory {
             .await
             .map_err(store)?;
             let ordinal = highest.unwrap_or(0) + 1;
+            // **The bag this write was made under**, stored by name. A key no
+            // caller classed is an own field of its record.
+            let class = classes
+                .get(key.trim())
+                .copied()
+                .unwrap_or(jojobot_domain::memory::WriteClass::Own);
             sqlx::query(
-                "INSERT INTO field_write (entity, `key`, ordinal, value, fact_id, written_at)
-                 VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO field_write (entity, `key`, ordinal, value, fact_id, written_at, write_class)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(entity.as_str())
             .bind(&key)
@@ -2190,6 +2252,7 @@ impl DoltMemory {
             .bind(value.as_deref())
             .bind(fact.as_str())
             .bind(clock.now().to_string())
+            .bind(class.as_token())
             .execute(&mut **tx)
             .await
             .map_err(store)?;
@@ -3662,7 +3725,7 @@ impl Memory for DoltMemory {
             });
         };
         let rows = sqlx::query(
-            "SELECT value, fact_id FROM field_write
+            "SELECT value, fact_id, write_class FROM field_write
              WHERE entity = ? AND `key` = ? ORDER BY ordinal",
         )
         .bind(storage_key.as_str())
@@ -3677,6 +3740,14 @@ impl Memory for DoltMemory {
 
         let mut history = Vec::with_capacity(rows.len());
         for row in &rows {
+            // The history of a key ON A THING is the writes that reach it, read
+            // through the same function the fold reads through.
+            let class = jojobot_domain::memory::WriteClass::from_token(
+                &row.try_get::<String, _>("write_class").map_err(store)?,
+            );
+            if !jojobot_domain::memory::reaches_the_thing(class) {
+                continue;
+            }
             let carried = FactId(row.try_get::<String, _>("fact_id").map_err(store)?);
             let Some(fact) = facts.iter().find(|f| f.id == carried) else {
                 continue;
@@ -3934,6 +4005,16 @@ impl Memory for DoltMemory {
             patch,
             first_session.as_deref(),
         )?;
+        // **Which bag each key is written under**, read off what this record holds
+        // now: a key stays in the bag it was first written under.
+        let held_classes = Self::held_classes(&mut tx, &key, &address.local).await?;
+        let classes = jojobot_domain::memory::classes_for_write(
+            &held_classes,
+            &patch.fields,
+            &patch.sets,
+            &patch.clear_fields,
+            &Self::types_in(&mut tx).await?,
+        )?;
         apply_fact_patch(&mut fact, &patch)?;
         // **Every pointer-bearing field, lowered in one pass, unconditionally**
         // (rule 268) — `apply_fact_patch` carries whatever the patch named, or
@@ -4070,7 +4151,15 @@ impl Memory for DoltMemory {
         let lowered_writes = self
             .lower_writes(&mut tx, writes_of(&patch, &carried))
             .await?;
-        Self::append_writes(&mut tx, &fact.home, &fact.id, lowered_writes, &self.clock).await?;
+        Self::append_writes(
+            &mut tx,
+            &fact.home,
+            &fact.id,
+            lowered_writes,
+            &self.clock,
+            &classes,
+        )
+        .await?;
         // Read back from the substrate rather than from what the patch
         // believed, so the answer is the projection a later read will give.
         let mut fields = Self::fields_of(&mut tx, &fact.home, &fact.id).await?;
@@ -4417,6 +4506,7 @@ impl Memory for DoltMemory {
             &record.id,
             written_keys(&record),
             &self.clock,
+            &Default::default(),
         )
         .await?;
 
@@ -4577,6 +4667,7 @@ impl Memory for DoltMemory {
             &record.id,
             written_keys(&record),
             &self.clock,
+            &Default::default(),
         )
         .await?;
         // **Served under the handle, stored under the key.**

@@ -539,6 +539,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         leaves: Leaves::Column("fact_write", "session"),
     },
     Migration {
+        version: "0067_field_write_class",
+        sql: include_str!("../../migrations/0067_field_write_class.sql"),
+        leaves: Leaves::Column("field_write", "write_class"),
+    },
+    Migration {
         version: "0068_field_write_written_at",
         sql: include_str!("../../migrations/0068_field_write_written_at.sql"),
         leaves: Leaves::Column("field_write", "written_at"),

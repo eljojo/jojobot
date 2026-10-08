@@ -125,6 +125,9 @@ mod rhythms;
 mod role_owner;
 #[path = "user_stories/rule_seats.rs"]
 mod rule_seats;
+/// A claim that sets keys on its thing from a bag of its own.
+#[path = "user_stories/setting.rs"]
+mod setting;
 /// One charter, and a session never learns which half the build supplied.
 #[path = "user_stories/shipping.rs"]
 mod shipping;

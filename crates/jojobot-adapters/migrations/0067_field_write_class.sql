@@ -1,0 +1,12 @@
+-- Which bag each write of a key was made under.
+--
+-- **A record carries two bags: its own fields, and what it sets on its thing.**
+-- The class is the fact that lasts about a write, and whether the write reaches
+-- its thing is a reading of it, made in one place. The values are `legacy`, `own`
+-- and `sets`.
+--
+-- **Every existing row is `legacy`**, which is what the default gives each of
+-- them in this one statement: written before the class was kept, an own field
+-- of its record, and reaching its thing as it always did. Nothing is rewritten,
+-- so a thing holds exactly what it held before.
+ALTER TABLE field_write ADD COLUMN write_class VARCHAR(8) NOT NULL DEFAULT 'legacy';

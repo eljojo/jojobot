@@ -919,6 +919,7 @@ const ROSTER: &[&str] = &[
     "thing:contract-links-survivor",
     "thing:contract-forged-holder",
     "person:contract-session-rewrite",
+    "thing:contract-bags",
     "thing:contract-forged-target",
     "project:contract-restore-board",
     "project:contract-restore-nobody",

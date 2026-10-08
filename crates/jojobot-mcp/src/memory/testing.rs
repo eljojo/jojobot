@@ -135,6 +135,7 @@ pub(crate) fn capture_args(subject: &str, content: &str) -> CaptureArgs {
         object: None,
         derived_from: None,
         fields: None,
+        sets: None,
         refs: None,
         check_in: None,
         sid: Some(crate::harness::TEST_SID.into()),
@@ -183,6 +184,7 @@ pub(crate) fn update_args(address: &str) -> UpdateFactArgs {
     UpdateFactArgs {
         address: address.into(),
         fields: None,
+        sets: None,
         clear_fields: None,
         content: None,
         details: None,

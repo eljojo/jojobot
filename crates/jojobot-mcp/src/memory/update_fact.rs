@@ -122,6 +122,15 @@ pub struct UpdateFactArgs {
     /// edit reaches one field without restating the rest.
     #[serde(default)]
     pub(crate) fields: Option<std::collections::BTreeMap<String, String>>,
+    /// **Fields to set on the thing this claim is about**, as key/value pairs,
+    /// apart from `fields`, which are the claim's own. A key stays in the bag it
+    /// was first written under on this record: naming under `sets` a key the
+    /// record holds as its own, or under `fields` one it holds as a setting, is
+    /// refused with the way to move it — take it off with `clear_fields`, then
+    /// write it under the other. A key that only labels the claim is never a
+    /// property of the thing and is refused here by name.
+    #[serde(default)]
+    pub(crate) sets: Option<std::collections::BTreeMap<String, String>>,
     /// **Fields to remove**, by key. Its own argument rather than an empty
     /// value in `fields`: an empty value is a value somebody wrote, and
     /// setting a key to nothing and taking the key off the record are two
@@ -302,6 +311,20 @@ impl Jojobot {
         let declared = Declared::of(&args);
         let cleared = args.clear_fields.clone().unwrap_or_default();
         let mut fields = args.fields.unwrap_or_default();
+        // **The setting bag joins `fields` for everything below**, exactly as
+        // `capture`'s own copy does; the keys that are the bag travel apart.
+        let sets_sent = args.sets.unwrap_or_default();
+        if let Some(key) = sets_sent.keys().find(|key| fields.contains_key(*key)) {
+            return memory_declined(
+                "update_fact",
+                MemoryError::InvalidFact(format!(
+                    "'{key}' is named in both `fields` and `sets`. A key is one of the claim's \
+                     own fields or a setting on its thing, never both: send it in one"
+                )),
+            );
+        }
+        let set_keys: std::collections::BTreeSet<String> = sets_sent.keys().cloned().collect();
+        fields.extend(sets_sent);
         // **Captured before anything computed joins `fields`**, for the same
         // reason `capture`'s own copy is: this is about what the CALLER
         // sent, never what jojobot added on its own.
@@ -398,6 +421,7 @@ impl Jojobot {
             // Filled in below, after the check that a call names a change: a
             // patch carrying the session would never equal the empty one.
             session: None,
+            sets: set_keys,
         };
         // **`keep` is the one designed way to re-assert a claim on purpose,
         // and the one thing this call refuses rather than silently

@@ -6586,3 +6586,171 @@ async fn dolt_keeps_the_session_that_wrote_a_claim_and_holds_a_rewrite_to_it() {
 
     store.stop().await;
 }
+
+/// **A setting bag, over the real store, and the class each write is kept under.**
+///
+/// The contract case holds the rule. This holds what only the real store can say:
+/// the class of every write is in its own column, by name, so a restart reads the
+/// same bags. A key that moved bags by being taken off first carries each class
+/// in turn.
+#[tokio::test]
+async fn dolt_keeps_the_bag_each_write_was_made_under() {
+    let scratch = Scratch::new("write-class");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("write_class")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+
+    memory::a_setting_bag_reaches_the_thing_and_a_key_stays_in_its_bag(&DoltMemory::open(
+        pool.clone(),
+    ))
+    .await;
+
+    let badge = badge_of(&pool, "thing:contract-bags").await;
+    let rows: Vec<(String, i64, String)> = sqlx::query_as(
+        "SELECT `key`, ordinal, write_class FROM field_write WHERE entity = ? ORDER BY `key`, ordinal",
+    )
+    .bind(&badge)
+    .fetch_all(&pool)
+    .await
+    .expect("the writes read");
+    let classes = |key: &str| -> Vec<&str> {
+        rows.iter()
+            .filter(|(k, _, _)| k == key)
+            .map(|(_, _, class)| class.as_str())
+            .collect()
+    };
+    assert_eq!(
+        classes("own_key"),
+        ["own", "own", "own", "sets"],
+        "{rows:?}"
+    );
+    assert_eq!(classes("set_key"), ["sets", "sets"], "{rows:?}");
+    assert_eq!(classes("label"), ["own"], "{rows:?}");
+
+    store.stop().await;
+}
+
+/// **A row written before the class was kept reads as legacy, reaches its thing,
+/// and keeps writing legacy when it is patched as an own field.**
+///
+/// The column's default is the migration's, so a row inserted without one is the
+/// shape every existing row has. It still reaches the thing, a patch through
+/// `fields` corrects the thing and keeps the class, and a patch naming the same
+/// key as a setting is refused by name.
+#[tokio::test]
+async fn dolt_reads_a_row_from_before_the_class_as_legacy_and_keeps_it_so() {
+    let scratch = Scratch::new("legacy-class");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("legacy_class")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool.clone());
+
+    let thing = EntityId("thing:contract-bags".into());
+    memory
+        .add_entity(NewEntity::new(
+            thing.clone(),
+            "Contract Bags",
+            "contract-fixture",
+        ))
+        .await
+        .expect("add_entity ok")
+        .written()
+        .expect("nothing collides");
+    let claim = memory
+        .capture(NewFact {
+            fields: [("plain".to_string(), "p".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(thing.clone(), "an old claim", date(2026, 8, 1))
+        })
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("the claim lands");
+    // The shape every row had before the class was kept: no class named.
+    let badge = badge_of(&pool, thing.as_str()).await;
+    sqlx::query("DELETE FROM field_write WHERE entity = ?")
+        .bind(&badge)
+        .execute(&pool)
+        .await
+        .expect("the capture's own row goes");
+    sqlx::query(
+        "INSERT INTO field_write (entity, `key`, ordinal, value, fact_id) VALUES (?, 'plain', 1, 'p', ?)",
+    )
+    .bind(&badge)
+    .bind(claim.id.as_str())
+    .execute(&pool)
+    .await
+    .expect("a row from before the class");
+    let default: String = sqlx::query_scalar(
+        "SELECT write_class FROM field_write WHERE entity = ? AND `key` = 'plain'",
+    )
+    .bind(&badge)
+    .fetch_one(&pool)
+    .await
+    .expect("the row reads");
+    assert_eq!(default, "legacy", "the column's default is the migration's");
+    assert_eq!(
+        memory.fields(&thing).await.expect("fields")["plain"],
+        "p",
+        "a legacy row reaches its thing",
+    );
+
+    memory
+        .update_fact(
+            &claim.address(),
+            FactPatch {
+                fields: [("plain".to_string(), "q".to_string())]
+                    .into_iter()
+                    .collect(),
+                ..FactPatch::default()
+            },
+            &EntityId("bot:sigma".into()),
+        )
+        .await
+        .expect("an own-field patch of a legacy key lands")
+        .written()
+        .expect("nothing blocks it");
+    let newest: String = sqlx::query_scalar(
+        "SELECT write_class FROM field_write WHERE entity = ? AND `key` = 'plain' AND ordinal = 2",
+    )
+    .bind(&badge)
+    .fetch_one(&pool)
+    .await
+    .expect("the patch's row reads");
+    assert_eq!(newest, "legacy", "a patch keeps the key's class");
+    assert_eq!(memory.fields(&thing).await.expect("fields")["plain"], "q");
+
+    let refused = memory
+        .update_fact(
+            &claim.address(),
+            FactPatch {
+                fields: [("plain".to_string(), "r".to_string())]
+                    .into_iter()
+                    .collect(),
+                sets: ["plain".to_string()].into_iter().collect(),
+                ..FactPatch::default()
+            },
+            &EntityId("bot:sigma".into()),
+        )
+        .await
+        .expect_err("a legacy key is an own key, so it is not named as a setting");
+    assert!(
+        matches!(&refused, MemoryError::KeyInOtherBag { key, .. } if key == "plain"),
+        "{refused:?}",
+    );
+
+    store.stop().await;
+}
