@@ -5396,6 +5396,167 @@ async fn a_merge_moves_the_link_rows_with_the_writes() {
     store.stop().await;
 }
 
+/// 🚨 **Two things that each wrote the same key can be folded into one.**
+///
+/// A field write is keyed by the thing, the key and an ordinal that counts the
+/// writes of that key on that thing from one. Two things that each wrote
+/// `status` once both hold ordinal 1, so moving the duplicate's write onto the
+/// survivor with its ordinal unchanged lands on the survivor's own row. The
+/// fold has to land, and both writes have to survive it.
+#[tokio::test]
+async fn a_merge_of_two_things_holding_the_same_key_keeps_both_writes() {
+    let scratch = Scratch::new("field-write-merge");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("field_write_merge")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool.clone());
+
+    let duplicate = EntityId("thing:contract-links-duplicate".into());
+    let survivor = EntityId("thing:contract-links-survivor".into());
+    for (id, name) in [(&survivor, "Survivor"), (&duplicate, "Duplicate")] {
+        memory
+            .add_entity(NewEntity::new(id.clone(), name, "contract-fixture"))
+            .await
+            .expect("add_entity ok")
+            .written()
+            .expect("nothing collides with it");
+    }
+    // The survivor writes the key twice, so the highest ordinal it holds (2) is
+    // not the lowest (1) and not the count of the duplicate's writes.
+    for (id, value, day) in [
+        (&survivor, "next", 1),
+        (&survivor, "now", 2),
+        (&duplicate, "done", 3),
+    ] {
+        memory
+            .capture(NewFact {
+                fields: [("status".to_string(), value.to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(id.clone(), "where it stands", date(2026, 8, day))
+            })
+            .await
+            .expect("capture ok")
+            .written()
+            .expect("the claim lands");
+    }
+
+    let folded = memory
+        .merge(&duplicate, &survivor, None, date(2026, 8, 4), &survivor)
+        .await;
+    assert!(
+        folded.is_ok(),
+        "the fold of two things that each wrote status once failed: {folded:?}",
+    );
+
+    let writes: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT value, ordinal FROM field_write WHERE `key` = 'status' ORDER BY ordinal",
+    )
+    .fetch_all(&pool)
+    .await
+    .expect("the writes read");
+    assert_eq!(
+        writes,
+        vec![
+            ("next".to_string(), 1),
+            ("now".to_string(), 2),
+            ("done".to_string(), 3)
+        ],
+        "the survivor's own writes keep their ordinals and the moved one follows them",
+    );
+    assert_eq!(
+        memory.fields(&survivor).await.expect("the fields read")["status"],
+        "done",
+        "the newest write is the one the survivor holds",
+    );
+
+    store.stop().await;
+}
+
+/// 🚨 **Two things that link to the same target under the same key can be
+/// folded into one.**
+///
+/// A link row is the address of the write it was made from (thing, key,
+/// ordinal) and the target. Both things wrote `blocks` once, so both hold ordinal
+/// 1 and a link to the same target: the survivor's row and the duplicate's would
+/// be one row once the duplicate's moves. The links have to follow the writes
+/// to their new ordinals, and what is left has to be exactly what the writes
+/// imply.
+#[tokio::test]
+async fn a_merge_of_two_things_linking_the_same_target_under_one_key_keeps_both_links() {
+    let scratch = Scratch::new("field-link-merge-same-key");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("field_link_merge_same_key")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool.clone());
+
+    let duplicate = EntityId("thing:contract-links-duplicate".into());
+    let survivor = EntityId("thing:contract-links-survivor".into());
+    let alpha = EntityId("work:contract-links-alpha".into());
+    for (id, name) in [
+        (&survivor, "Survivor"),
+        (&duplicate, "Duplicate"),
+        (&alpha, "Alpha"),
+    ] {
+        memory
+            .add_entity(NewEntity::new(id.clone(), name, "contract-fixture"))
+            .await
+            .expect("add_entity ok")
+            .written()
+            .expect("nothing collides with it");
+    }
+    for (id, day) in [(&survivor, 1), (&duplicate, 2)] {
+        memory
+            .capture(NewFact {
+                fields: [("blocks".to_string(), alpha.to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(id.clone(), "waits on alpha", date(2026, 8, day))
+            })
+            .await
+            .expect("capture ok")
+            .written()
+            .expect("the claim lands");
+    }
+    let before = link_rows(&pool).await;
+    assert_eq!(
+        before.len(),
+        2,
+        "each thing links to alpha before the fold: {before:?}"
+    );
+
+    memory
+        .merge(&duplicate, &survivor, None, date(2026, 8, 3), &survivor)
+        .await
+        .expect("the fold lands");
+
+    let after = link_rows(&pool).await;
+    assert_eq!(
+        after.len(),
+        2,
+        "both links survive on the survivor, one per write: {after:?}"
+    );
+    assert_eq!(
+        after,
+        links_the_writes_imply(&pool, &[]).await,
+        "the links are what the writes imply, at the writes' new ordinals",
+    );
+
+    store.stop().await;
+}
+
 /// 🚨 **The field-link migration lowers old plain text and builds the table in one
 /// pass, and a value it cannot name unambiguously stays as it was and is listed.**
 ///

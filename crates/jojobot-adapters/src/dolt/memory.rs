@@ -3941,6 +3941,24 @@ impl Memory for DoltMemory {
         //
         // ⚠️ **Moving a row therefore CHANGES ITS ADDRESS**, and everything
         // pointing at that address moves with it in the same transaction.
+        // 🚨 **A field write's ordinal is renumbered as it moves too.** Its key
+        // is (thing, key, ordinal), and both sides count each key from one, so
+        // two things that each wrote `status` once both own ordinal 1 and the
+        // move onto the survivor would land on the survivor's own row. **One
+        // mapping serves every table keyed by the write's address**: a moved
+        // write's ordinal is its old one plus the highest ordinal the survivor
+        // already holds for that key. The survivor's own writes keep theirs,
+        // the moved ones follow in the order they were written, and the newest
+        // is still last.
+        let offsets: std::collections::HashMap<String, i64> = sqlx::query_as::<_, (String, i64)>(
+            "SELECT `key`, MAX(ordinal) FROM field_write WHERE entity = ? GROUP BY `key`",
+        )
+        .bind(survivor_key.as_str())
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(store)?
+        .into_iter()
+        .collect();
         let moving: Vec<String> = sqlx::query_scalar(
             "SELECT id FROM fact WHERE entity = ? ORDER BY CAST(SUBSTRING(id, 2) AS UNSIGNED)",
         )
@@ -3951,11 +3969,48 @@ impl Memory for DoltMemory {
         let rehomed = moving.len();
         for was in moving {
             let now = Self::mint(&mut tx, &survivor_key).await?;
+            let writes: Vec<(String, i64)> = sqlx::query_as(
+                "SELECT `key`, ordinal FROM field_write WHERE entity = ? AND fact_id = ?",
+            )
+            .bind(folded_key.as_str())
+            .bind(&was)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(store)?;
+            for (key, ordinal) in writes {
+                let moved_to = ordinal + offsets.get(&key).copied().unwrap_or(0);
+                sqlx::query(
+                    "UPDATE field_write SET entity = ?, fact_id = ?, ordinal = ? \
+                     WHERE entity = ? AND `key` = ? AND ordinal = ?",
+                )
+                .bind(survivor_key.as_str())
+                .bind(now.as_str())
+                .bind(moved_to)
+                .bind(folded_key.as_str())
+                .bind(&key)
+                .bind(ordinal)
+                .execute(&mut *tx)
+                .await
+                .map_err(store)?;
+                // **The link rows are the write's own address**, so they take
+                // the write's new ordinal in the same step.
+                sqlx::query(
+                    "UPDATE field_link SET entity = ?, ordinal = ? \
+                     WHERE entity = ? AND `key` = ? AND ordinal = ?",
+                )
+                .bind(survivor_key.as_str())
+                .bind(moved_to)
+                .bind(folded_key.as_str())
+                .bind(&key)
+                .bind(ordinal)
+                .execute(&mut *tx)
+                .await
+                .map_err(store)?;
+            }
             for statement in [
                 "UPDATE fact SET entity = ?, id = ? WHERE entity = ? AND id = ?",
                 "UPDATE fact SET derived_from = ?, derived_from_id = ? \
                  WHERE derived_from = ? AND derived_from_id = ?",
-                "UPDATE field_write SET entity = ?, fact_id = ? WHERE entity = ? AND fact_id = ?",
                 // **The claim's own writes move with the claim**, for the
                 // reason its field writes do: a fold that moved the row and
                 // not the substrate under it would leave a claim the
@@ -3991,15 +4046,6 @@ impl Memory for DoltMemory {
                     .map_err(store)?;
             }
         }
-        // **The link rows follow the writes they were made from**, which moved
-        // above: they are keyed by the same thing and key and the write's ordinal.
-        sqlx::query("UPDATE field_link SET entity = ? WHERE entity = ?")
-            .bind(survivor_key.as_str())
-            .bind(folded_key.as_str())
-            .execute(&mut *tx)
-            .await
-            .map_err(store)?;
-
         // **An edge's object and a ref's entity are stored as the badge the
         // folded side wears** (rule 268), so these compare against that
         // badge alone and rewrite to the survivor's — never a handle, and
