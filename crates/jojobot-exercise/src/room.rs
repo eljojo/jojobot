@@ -131,11 +131,11 @@ impl Room {
                     continue;
                 }
             };
-            if let Err(e) = copy_dir_all(seed, &dir).with_context(|| {
+            if let Err(e) = copy_dir_all(seed, dir.path()).with_context(|| {
                 format!(
                     "copying the seed at {} into {}",
                     seed.display(),
-                    dir.display()
+                    dir.path().display()
                 )
             }) {
                 last = Some(e);
@@ -175,15 +175,13 @@ impl Room {
         F: FnOnce(crate::surface::Surface) -> Fut,
         Fut: std::future::Future<Output = Result<()>>,
     {
-        let (mut room, surface) = Room::open_with_client(binary).await?;
+        let (room, surface) = Room::open_with_client(binary).await?;
         fill(surface).await?;
-        let _ = room.server.kill();
-        let _ = room.server.wait();
-        let dir = room.dir.clone();
-        // **Not dropped.** Same reasoning as `build_template`: `Room::drop`
-        // removes its directory, and this directory is the whole point of
-        // building it. The process is already dead from the kill above.
-        std::mem::forget(room);
+        // **The directory is kept, the room is not.** The server is killed and
+        // the directory, which is the whole point of building it, outlives the
+        // room until this process exits.
+        let dir = room.keep_dir();
+        keep_until_exit(dir.clone());
         Ok(dir)
     }
 
@@ -298,11 +296,11 @@ impl Room {
         let dir = scratch()?;
         if use_template {
             let template = template(binary).await?;
-            copy_dir_all(&template, &dir).with_context(|| {
+            copy_dir_all(&template, dir.path()).with_context(|| {
                 format!(
                     "copying the template at {} into {}",
                     template.display(),
-                    dir.display()
+                    dir.path().display()
                 )
             })?;
         }
@@ -316,7 +314,7 @@ impl Room {
         binary: &Path,
         signal: &DeathSignal,
         today: Option<&str>,
-        dir: PathBuf,
+        dir: RoomDir,
     ) -> Result<Room> {
         // **Held until the spawn, then let go.** Nothing else in this process
         // can take these numbers while the command is being built, which is
@@ -331,7 +329,7 @@ impl Room {
         // never be the thing that serves somebody's memory unauthenticated.
         let mut spawning = std::process::Command::new(binary);
         spawning
-            .env("STATE_DIRECTORY", &dir)
+            .env("STATE_DIRECTORY", dir.path())
             .env("JOJOBOT_BIND", format!("127.0.0.1:{served}"))
             .env("JOJOBOT_STORE_PORT", store.to_string())
             .env("JOJOBOT_ALLOW_NO_AUTH", "1")
@@ -377,7 +375,7 @@ impl Room {
             server,
             serving,
             log,
-            dir,
+            dir: dir.into_path(),
             endpoint,
             _claims: claims,
         };
@@ -401,6 +399,15 @@ impl Room {
     pub fn abandon(self) -> (u32, PathBuf) {
         let mut room = std::mem::ManuallyDrop::new(self);
         (room.server.id(), std::mem::take(&mut room.dir))
+    }
+
+    /// **Stop the server and keep the directory.** What is left of the room is
+    /// released the ordinary way, its port claims included, and the directory is
+    /// handed to the caller, who owns it from here.
+    fn keep_dir(mut self) -> PathBuf {
+        let _ = self.server.kill();
+        let _ = self.server.wait();
+        std::mem::take(&mut self.dir)
     }
 
     /// **The listener is the readiness signal, and it is an honest one.** The
@@ -475,7 +482,9 @@ impl Drop for Room {
     fn drop(&mut self) {
         let _ = self.server.kill();
         let _ = self.server.wait();
-        let _ = std::fs::remove_dir_all(&self.dir);
+        if !self.dir.as_os_str().is_empty() {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
     }
 }
 
@@ -578,15 +587,9 @@ async fn template(binary: &Path) -> Result<PathBuf> {
 /// so [`Room::drop`] never runs over it and the directory survives.
 async fn build_template(binary: &Path) -> Result<PathBuf> {
     let dir = scratch()?;
-    let mut room = Room::spawn_bare(binary, &DeathSignal::Skip, None, dir).await?;
-    let _ = room.server.kill();
-    let _ = room.server.wait();
-    let dir = room.dir.clone();
-    // **Not dropped.** [`Room::drop`] removes its directory, and this
-    // directory is the template — the one thing this function exists to
-    // keep. The process handle is already dead from the kill above, so
-    // nothing is leaked by skipping the rest of what `Drop` would do.
-    std::mem::forget(room);
+    let room = Room::spawn_bare(binary, &DeathSignal::Skip, None, dir).await?;
+    let dir = room.keep_dir();
+    keep_until_exit(dir.clone());
     Ok(dir)
 }
 
@@ -614,8 +617,33 @@ fn copy_dir_all(from: &Path, to: &Path) -> Result<()> {
     Ok(())
 }
 
+/// **A directory of this run's own, removed when it is dropped unless it was
+/// handed on.** Whoever holds it owns it, so a failure on any path between
+/// making the directory and a [`Room`] taking it over, and a panic or a
+/// cancellation there, removes the directory instead of leaving it.
+struct RoomDir(Option<PathBuf>);
+
+impl RoomDir {
+    fn path(&self) -> &Path {
+        self.0.as_deref().expect("a directory not yet handed on")
+    }
+
+    /// Hand the directory on: whoever takes it is its owner from here.
+    fn into_path(mut self) -> PathBuf {
+        self.0.take().expect("a directory not yet handed on")
+    }
+}
+
+impl Drop for RoomDir {
+    fn drop(&mut self) {
+        if let Some(path) = self.0.take() {
+            let _ = std::fs::remove_dir_all(path);
+        }
+    }
+}
+
 /// A directory of this run's own.
-fn scratch() -> Result<PathBuf> {
+fn scratch() -> Result<RoomDir> {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -630,7 +658,42 @@ fn scratch() -> Result<PathBuf> {
     // sharing a store — which is the thing this whole module exists to rule
     // out. Making the parent as needed would let that land silently.
     std::fs::create_dir(&path).with_context(|| format!("making a room at {}", path.display()))?;
-    Ok(path)
+    Ok(RoomDir(Some(path)))
+}
+
+/// **Directories that live as long as this process does, and go when it
+/// exits.** The empty template and the seeds a suite builds are made once and
+/// copied from by every room after, so no room can own them, and a static is
+/// never dropped. They are removed by a hook the process runs on its way out,
+/// which a normal end and a failed run both reach. A kill does not, and the
+/// sweep at the start of the next bar run is for that.
+fn keep_until_exit(dir: PathBuf) {
+    static HOOKED: std::sync::Once = std::sync::Once::new();
+    extern "C" fn at_exit() {
+        remove_listed(&KEPT);
+    }
+    if let Ok(mut kept) = KEPT.lock() {
+        kept.push(dir);
+    }
+    HOOKED.call_once(|| {
+        // SAFETY: the hook takes no arguments and touches only the list and the
+        // file system.
+        unsafe {
+            libc::atexit(at_exit);
+        }
+    });
+}
+
+/// What [`keep_until_exit`] was handed.
+static KEPT: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
+
+/// Remove every directory on `list`, and empty it.
+fn remove_listed(list: &std::sync::Mutex<Vec<PathBuf>>) {
+    if let Ok(mut kept) = list.lock() {
+        for dir in kept.drain(..) {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
 }
 
 /// **What the `nth` room this process makes at `stamp` is called.**
@@ -1076,6 +1139,64 @@ fn depfile_sources(binary: &Path) -> Option<Vec<PathBuf>> {
 mod tests {
     use super::{INIT, RoomServer, abandoned, refuse_a_stale_server, room_name, serves_a_room};
 
+    /// **A directory made for a room is gone when the spawn fails before any
+    /// room exists to own it.** The binary named does not exist, so the spawn
+    /// fails after the directory was made and before a room took it over. The
+    /// directory is there before the spawn, so a guard that removed nothing
+    /// would not pass.
+    #[tokio::test]
+    async fn a_directory_is_removed_when_the_spawn_fails_before_a_room_owns_it() {
+        let dir = super::scratch().expect("a room directory");
+        let path = dir.path().to_path_buf();
+        assert!(path.is_dir(), "the directory was made");
+        let spawned = super::Room::spawn_bare(
+            std::path::Path::new("/nonexistent/jojobot"),
+            &super::DeathSignal::Skip,
+            None,
+            dir,
+        )
+        .await;
+        assert!(spawned.is_err(), "the binary does not exist");
+        assert!(
+            !path.exists(),
+            "{} was left behind by a spawn that failed",
+            path.display()
+        );
+    }
+
+    /// **A directory made for a room is gone when the case that holds it
+    /// panics**, and a directory handed on is not removed by the guard it left.
+    #[test]
+    fn a_directory_is_removed_when_its_holder_panics_and_kept_when_handed_on() {
+        let seen: std::sync::Mutex<Option<std::path::PathBuf>> = std::sync::Mutex::new(None);
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let dir = super::scratch().expect("a room directory");
+            *seen.lock().expect("lock") = Some(dir.path().to_path_buf());
+            panic!("the case fails");
+        }));
+        assert!(outcome.is_err());
+        let path = seen.lock().expect("lock").take().expect("the case ran");
+        assert!(!path.exists(), "{} was left behind", path.display());
+
+        let handed = super::scratch().expect("a room directory").into_path();
+        assert!(handed.is_dir(), "a directory handed on stays");
+        std::fs::remove_dir_all(&handed).expect("removed by its new owner");
+    }
+
+    /// **What is kept until exit is removed by the exit hook's routine**, and
+    /// only what its own list holds: another list's directory is not touched.
+    #[test]
+    fn the_exit_routine_removes_what_its_list_holds_and_nothing_else() {
+        let listed = super::scratch().expect("a room directory").into_path();
+        let unlisted = super::scratch().expect("a room directory").into_path();
+        let list = std::sync::Mutex::new(vec![listed.clone()]);
+        super::remove_listed(&list);
+        assert!(!listed.exists(), "the listed directory was left behind");
+        assert!(unlisted.is_dir(), "a directory on no list was removed");
+        assert!(list.lock().expect("lock").is_empty(), "the list was kept");
+        std::fs::remove_dir_all(&unlisted).expect("removed by its owner");
+    }
+
     /// A file with something in it, and every directory above it.
     fn put(at: &std::path::Path) {
         std::fs::create_dir_all(at.parent().expect("a parent")).expect("the directories");
@@ -1212,13 +1333,14 @@ mod tests {
     async fn the_server_announces_its_address_only_once_that_address_answers() {
         let binary = super::server_binary().expect("a jojobot binary");
         let dir = super::scratch().expect("a room directory");
+        let dir = dir.path();
         let (served, served_held) = super::free_port().expect("a port to serve on");
         let (store, store_held) = super::free_port().expect("a port for the store");
         let endpoint = format!("http://127.0.0.1:{served}/mcp");
 
         let mut spawning = std::process::Command::new(&binary);
         spawning
-            .env("STATE_DIRECTORY", &dir)
+            .env("STATE_DIRECTORY", dir)
             .env("JOJOBOT_BIND", format!("127.0.0.1:{served}"))
             .env("JOJOBOT_STORE_PORT", store.to_string())
             .env("JOJOBOT_ALLOW_NO_AUTH", "1")
@@ -1285,7 +1407,7 @@ mod tests {
         let answering = std::net::TcpStream::connect(("127.0.0.1", served)).is_ok();
         let _ = server.kill();
         let _ = server.wait();
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(dir);
 
         assert!(
             announced,
@@ -1394,7 +1516,7 @@ mod tests {
             // Never set, because this room's server never says it is serving.
             serving: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             log: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
-            dir: super::scratch().expect("a room directory"),
+            dir: super::scratch().expect("a room directory").into_path(),
             endpoint: format!("http://127.0.0.1:{port}/mcp"),
             _claims: Vec::new(),
         };
