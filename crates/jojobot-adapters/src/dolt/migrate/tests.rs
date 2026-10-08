@@ -139,7 +139,6 @@ const BACKFILL: &[Migration] = &[
 async fn the_badge_column_lands_on_an_entity_table_that_already_has_rows() {
     let scratch = Scratch::new("migrate-badge-populated");
     let path = scratch.0.clone();
-    std::mem::forget(scratch);
     let store = crate::dolt::Dolt::start(&path, free_port())
         .await
         .expect("the store comes up");
@@ -211,7 +210,6 @@ async fn the_badge_column_lands_on_an_entity_table_that_already_has_rows() {
 async fn an_interrupted_backfill_is_recognized_by_no_row_being_left_unfilled() {
     let scratch = Scratch::new("migrate-interrupted-backfill");
     let path = scratch.0.clone();
-    std::mem::forget(scratch);
     let mut store = crate::dolt::Dolt::start(&path, free_port())
         .await
         .expect("the store comes up");
@@ -350,7 +348,6 @@ const INDEXED: &[Migration] = &[
 async fn an_interrupted_create_index_is_recognized_by_the_index_being_there() {
     let scratch = Scratch::new("migrate-interrupted-index");
     let path = scratch.0.clone();
-    std::mem::forget(scratch);
     let mut store = crate::dolt::Dolt::start(&path, free_port())
         .await
         .expect("the store comes up");
@@ -479,7 +476,6 @@ const WIDENED: &[Migration] = &[
 async fn an_interrupted_widening_is_recognized_by_the_columns_type() {
     let scratch = Scratch::new("migrate-interrupted-widening");
     let path = scratch.0.clone();
-    std::mem::forget(scratch);
     let mut store = crate::dolt::Dolt::start(&path, free_port())
         .await
         .expect("the store comes up");
@@ -573,7 +569,6 @@ async fn an_interrupted_widening_is_recognized_by_the_columns_type() {
 async fn a_probe_answers_about_the_object_it_was_handed() {
     let scratch = Scratch::new("migrate-probe-scope");
     let path = scratch.0.clone();
-    std::mem::forget(scratch);
     let mut store = crate::dolt::Dolt::start(&path, free_port())
         .await
         .expect("the store comes up");
@@ -738,7 +733,6 @@ fn every_migration_is_a_single_statement() {
 async fn an_interrupted_add_column_is_recognized_by_the_column_being_there() {
     let scratch = Scratch::new("migrate-interrupted-alter");
     let path = scratch.0.clone();
-    std::mem::forget(scratch);
     let mut store = crate::dolt::Dolt::start(&path, free_port())
         .await
         .expect("the store comes up");
@@ -826,7 +820,6 @@ async fn an_interrupted_add_column_is_recognized_by_the_column_being_there() {
 async fn an_interrupted_drop_is_recognized_by_the_table_being_gone() {
     let scratch = Scratch::new("migrate-interrupted-drop");
     let path = scratch.0.clone();
-    std::mem::forget(scratch);
     let mut store = crate::dolt::Dolt::start(&path, free_port())
         .await
         .expect("the store comes up");
@@ -885,7 +878,6 @@ async fn an_interrupted_drop_is_recognized_by_the_table_being_gone() {
 async fn a_refused_migration_logs_the_stores_own_account_without_the_test_asking() {
     let scratch = Scratch::new("migrate-refused-logged");
     let path = scratch.0.clone();
-    std::mem::forget(scratch);
     let mut store = crate::dolt::Dolt::start(&path, free_port())
         .await
         .expect("the store comes up");
@@ -931,7 +923,6 @@ async fn a_refused_migration_logs_the_stores_own_account_without_the_test_asking
 async fn a_migration_that_fails_is_not_recorded_as_done() {
     let scratch = Scratch::new("migrate-fail");
     let path = scratch.0.clone();
-    std::mem::forget(scratch);
     let mut store = crate::dolt::Dolt::start(&path, free_port())
         .await
         .expect("the store comes up");
@@ -1010,7 +1001,6 @@ async fn a_migration_that_fails_is_not_recorded_as_done() {
 async fn a_set_that_fails_part_way_resumes_where_it_stopped() {
     let scratch = Scratch::new("migrate-resume");
     let path = scratch.0.clone();
-    std::mem::forget(scratch);
     let mut store = crate::dolt::Dolt::start(&path, free_port())
         .await
         .expect("the store comes up");
@@ -1092,7 +1082,6 @@ async fn a_set_that_fails_part_way_resumes_where_it_stopped() {
 async fn a_start_after_an_interrupted_migration_completes_the_schema() {
     let scratch = Scratch::new("migrate-interrupted");
     let path = scratch.0.clone();
-    std::mem::forget(scratch);
     let mut store = crate::dolt::Dolt::start(&path, free_port())
         .await
         .expect("the store comes up");
@@ -1181,7 +1170,6 @@ async fn a_start_after_an_interrupted_migration_completes_the_schema() {
 async fn a_refused_migration_is_refused_again_and_not_adopted() {
     let scratch = Scratch::new("migrate-refused-twice");
     let path = scratch.0.clone();
-    std::mem::forget(scratch);
     let mut store = crate::dolt::Dolt::start(&path, free_port())
         .await
         .expect("the store comes up");
@@ -1243,7 +1231,6 @@ async fn a_refused_migration_is_refused_again_and_not_adopted() {
 async fn an_interruption_before_the_change_landed_applies_it() {
     let scratch = Scratch::new("migrate-interrupted-early");
     let path = scratch.0.clone();
-    std::mem::forget(scratch);
     let mut store = crate::dolt::Dolt::start(&path, free_port())
         .await
         .expect("the store comes up");
@@ -1311,7 +1298,6 @@ async fn an_interruption_before_the_change_landed_applies_it() {
 async fn the_start_marks_the_window_it_can_be_interrupted_in() {
     let scratch = Scratch::new("migrate-marks-window");
     let path = scratch.0.clone();
-    std::mem::forget(scratch);
     let mut store = crate::dolt::Dolt::start(&path, free_port())
         .await
         .expect("the store comes up");
@@ -1668,7 +1654,6 @@ async fn seed_before_recovery_check(pool: &MySqlPool, version: &str) {
 async fn an_interrupted_shipped_widening_is_recognized_by_the_columns_type() {
     let scratch = Scratch::new("migrate-interrupted-shipped-widening");
     let path = scratch.0.clone();
-    std::mem::forget(scratch);
     let mut store = crate::dolt::Dolt::start(&path, free_port())
         .await
         .expect("the store comes up");
@@ -1741,7 +1726,6 @@ async fn an_interrupted_shipped_widening_is_recognized_by_the_columns_type() {
 async fn an_interrupted_primary_key_swap_is_recognized_by_whether_the_key_is_there() {
     let scratch = Scratch::new("migrate-interrupted-key-swap");
     let path = scratch.0.clone();
-    std::mem::forget(scratch);
     let mut store = crate::dolt::Dolt::start(&path, free_port())
         .await
         .expect("the store comes up");
@@ -1814,7 +1798,6 @@ async fn an_interrupted_primary_key_swap_is_recognized_by_whether_the_key_is_the
 async fn an_interrupted_rhythm_kind_delete_is_recognized_by_the_types_row_being_gone() {
     let scratch = Scratch::new("migrate-interrupted-rhythm-kind");
     let path = scratch.0.clone();
-    std::mem::forget(scratch);
     let mut store = crate::dolt::Dolt::start(&path, free_port())
         .await
         .expect("the store comes up");
@@ -1882,7 +1865,6 @@ async fn an_interrupted_rhythm_kind_delete_is_recognized_by_the_types_row_being_
 async fn an_interrupted_fact_write_backfill_is_recognized_by_a_claim_with_no_write_of_its_own() {
     let scratch = Scratch::new("migrate-interrupted-fact-write-backfill");
     let path = scratch.0.clone();
-    std::mem::forget(scratch);
     let mut store = crate::dolt::Dolt::start(&path, free_port())
         .await
         .expect("the store comes up");
@@ -1951,7 +1933,6 @@ async fn an_interrupted_fact_status_archive_backfill_is_recognized_by_a_retired_
  {
     let scratch = Scratch::new("migrate-interrupted-fact-status-archived");
     let path = scratch.0.clone();
-    std::mem::forget(scratch);
     let mut store = crate::dolt::Dolt::start(&path, free_port())
         .await
         .expect("the store comes up");
@@ -2009,7 +1990,6 @@ async fn an_interrupted_fact_write_status_archive_backfill_is_recognized_by_a_re
  {
     let scratch = Scratch::new("migrate-interrupted-fact-write-status-archived");
     let path = scratch.0.clone();
-    std::mem::forget(scratch);
     let mut store = crate::dolt::Dolt::start(&path, free_port())
         .await
         .expect("the store comes up");
@@ -2069,7 +2049,6 @@ async fn an_interrupted_fact_write_status_archive_backfill_is_recognized_by_a_re
 async fn an_interrupted_entity_source_widening_is_recognized_by_the_columns_type() {
     let scratch = Scratch::new("migrate-interrupted-entity-source-widening");
     let path = scratch.0.clone();
-    std::mem::forget(scratch);
     let mut store = crate::dolt::Dolt::start(&path, free_port())
         .await
         .expect("the store comes up");
@@ -2122,7 +2101,6 @@ async fn an_interrupted_entity_source_widening_is_recognized_by_the_columns_type
 async fn an_interrupted_entity_crm_widening_is_recognized_by_the_columns_type() {
     let scratch = Scratch::new("migrate-interrupted-entity-crm-widening");
     let path = scratch.0.clone();
-    std::mem::forget(scratch);
     let mut store = crate::dolt::Dolt::start(&path, free_port())
         .await
         .expect("the store comes up");
@@ -2180,7 +2158,6 @@ async fn an_interrupted_entity_crm_widening_is_recognized_by_the_columns_type() 
 async fn an_interrupted_former_handle_widening_is_recognized_by_the_columns_type() {
     let scratch = Scratch::new("migrate-interrupted-former-handle-widening");
     let path = scratch.0.clone();
-    std::mem::forget(scratch);
     let mut store = crate::dolt::Dolt::start(&path, free_port())
         .await
         .expect("the store comes up");
@@ -2237,7 +2214,6 @@ async fn an_interrupted_former_handle_widening_is_recognized_by_the_columns_type
 async fn an_interrupted_type_field_folds_add_is_recognized_by_the_column_being_there() {
     let scratch = Scratch::new("migrate-interrupted-type-field-folds");
     let path = scratch.0.clone();
-    std::mem::forget(scratch);
     let mut store = crate::dolt::Dolt::start(&path, free_port())
         .await
         .expect("the store comes up");
@@ -2311,7 +2287,6 @@ async fn an_interrupted_type_field_folds_add_is_recognized_by_the_column_being_t
 async fn an_interrupted_type_field_owner_add_is_recognized_by_the_column_being_there() {
     let scratch = Scratch::new("migrate-interrupted-type-field-owner");
     let path = scratch.0.clone();
-    std::mem::forget(scratch);
     let mut store = crate::dolt::Dolt::start(&path, free_port())
         .await
         .expect("the store comes up");
@@ -2385,7 +2360,6 @@ async fn an_interrupted_type_field_owner_add_is_recognized_by_the_column_being_t
 async fn an_interrupted_type_field_required_add_is_recognized_by_the_column_being_there() {
     let scratch = Scratch::new("migrate-interrupted-type-field-required");
     let path = scratch.0.clone();
-    std::mem::forget(scratch);
     let mut store = crate::dolt::Dolt::start(&path, free_port())
         .await
         .expect("the store comes up");
@@ -2459,7 +2433,6 @@ async fn an_interrupted_type_field_required_add_is_recognized_by_the_column_bein
 async fn an_interrupted_type_field_one_of_add_is_recognized_by_the_column_being_there() {
     let scratch = Scratch::new("migrate-interrupted-type-field-one-of");
     let path = scratch.0.clone();
-    std::mem::forget(scratch);
     let mut store = crate::dolt::Dolt::start(&path, free_port())
         .await
         .expect("the store comes up");
@@ -2533,7 +2506,6 @@ async fn an_interrupted_type_field_one_of_add_is_recognized_by_the_column_being_
 async fn an_interrupted_session_timezone_add_is_recognized_by_the_column_being_there() {
     let scratch = Scratch::new("migrate-interrupted-session-timezone");
     let path = scratch.0.clone();
-    std::mem::forget(scratch);
     let mut store = crate::dolt::Dolt::start(&path, free_port())
         .await
         .expect("the store comes up");
@@ -2607,7 +2579,6 @@ async fn an_interrupted_session_timezone_add_is_recognized_by_the_column_being_t
 async fn an_interrupted_fact_inserted_at_add_is_recognized_by_the_column_being_there() {
     let scratch = Scratch::new("migrate-interrupted-fact-inserted-at");
     let path = scratch.0.clone();
-    std::mem::forget(scratch);
     let mut store = crate::dolt::Dolt::start(&path, free_port())
         .await
         .expect("the store comes up");
@@ -2681,7 +2652,6 @@ async fn an_interrupted_fact_inserted_at_add_is_recognized_by_the_column_being_t
 async fn an_interrupted_fact_stale_after_add_is_recognized_by_the_column_being_there() {
     let scratch = Scratch::new("migrate-interrupted-fact-stale-after");
     let path = scratch.0.clone();
-    std::mem::forget(scratch);
     let mut store = crate::dolt::Dolt::start(&path, free_port())
         .await
         .expect("the store comes up");
@@ -2755,7 +2725,6 @@ async fn an_interrupted_fact_stale_after_add_is_recognized_by_the_column_being_t
 async fn an_interrupted_session_started_on_add_is_recognized_by_the_column_being_there() {
     let scratch = Scratch::new("migrate-interrupted-session-started-on");
     let path = scratch.0.clone();
-    std::mem::forget(scratch);
     let mut store = crate::dolt::Dolt::start(&path, free_port())
         .await
         .expect("the store comes up");
@@ -2900,7 +2869,6 @@ fn copy_dir_all(from: &std::path::Path, to: &std::path::Path) -> std::io::Result
 async fn a_copied_migrated_store_fingerprints_identically_to_a_fresh_one() {
     let scratch_whole = Scratch::new("migrate-copy-whole");
     let path_whole = scratch_whole.0.clone();
-    std::mem::forget(scratch_whole);
     let mut store_whole = crate::dolt::Dolt::start(&path_whole, free_port())
         .await
         .expect("the whole-chain store comes up");
@@ -2919,7 +2887,6 @@ async fn a_copied_migrated_store_fingerprints_identically_to_a_fresh_one() {
     // does, at the layer where it actually happens.
     let scratch_copy = Scratch::new("migrate-copy-of-whole");
     let path_copy = scratch_copy.0.clone();
-    std::mem::forget(scratch_copy);
     copy_dir_all(&path_whole, &path_copy).expect("the store directory copies");
     let mut store_copy = crate::dolt::Dolt::start(&path_copy, free_port())
         .await
@@ -2942,7 +2909,6 @@ async fn a_copied_migrated_store_fingerprints_identically_to_a_fresh_one() {
     // truncated template.
     let scratch_short = Scratch::new("migrate-copy-short");
     let path_short = scratch_short.0.clone();
-    std::mem::forget(scratch_short);
     let mut store_short = crate::dolt::Dolt::start(&path_short, free_port())
         .await
         .expect("the short-chain store comes up");
@@ -2957,7 +2923,6 @@ async fn a_copied_migrated_store_fingerprints_identically_to_a_fresh_one() {
 
     let scratch_copy_short = Scratch::new("migrate-copy-of-short");
     let path_copy_short = scratch_copy_short.0.clone();
-    std::mem::forget(scratch_copy_short);
     copy_dir_all(&path_short, &path_copy_short).expect("the short store directory copies");
     let mut store_copy_short = crate::dolt::Dolt::start(&path_copy_short, free_port())
         .await
@@ -2982,7 +2947,6 @@ async fn a_copied_migrated_store_fingerprints_identically_to_a_fresh_one() {
 async fn an_interrupted_message_posted_by_session_add_is_recognized_by_the_column_being_there() {
     let scratch = Scratch::new("migrate-interrupted-message-posted-by-session");
     let path = scratch.0.clone();
-    std::mem::forget(scratch);
     let mut store = crate::dolt::Dolt::start(&path, free_port())
         .await
         .expect("the store comes up");

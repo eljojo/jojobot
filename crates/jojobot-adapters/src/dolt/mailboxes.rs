@@ -1074,15 +1074,12 @@ mod tests {
     }
 
     /// A live store with one box and one ordinary message in it, plus the
-    /// process holding it up.
-    async fn board(what: &str) -> (Dolt, DoltMailboxes, MessageId) {
+    /// process holding it up, and the directory it lives in. **The directory
+    /// comes first, so the caller's bindings drop it last**: the server is
+    /// stopped by the caller, and the data goes only after it.
+    async fn board(what: &str) -> (Scratch, Dolt, DoltMailboxes, MessageId) {
         let scratch = Scratch::new(what);
-        // The directory outlives this call only because the server holds it
-        // open; the process is stopped by the caller and the path goes with the
-        // temp dir. Leaked deliberately rather than dropped here, which would
-        // remove the data under a running server.
         let path = scratch.0.clone();
-        std::mem::forget(scratch);
         let store = Dolt::start(&path, free_port())
             .await
             .expect("the store comes up");
@@ -1119,7 +1116,7 @@ mod tests {
             .written()
             .expect("not blocked")
             .id;
-        (store, mail, readable)
+        (scratch, store, mail, readable)
     }
 
     /// **The board holds mail for other boxes too.** `board` opens one box with
@@ -1178,7 +1175,7 @@ mod tests {
     /// verb is asked what it loaded.
     #[tokio::test]
     async fn a_verb_about_one_box_or_one_message_loads_only_that_box_or_message() {
-        let (mut store, mail, first) = board("scoped-reads").await;
+        let (_scratch, mut store, mail, first) = board("scoped-reads").await;
         let others = with_a_second_box(&mail).await;
         took(&mail);
 
@@ -1235,7 +1232,7 @@ mod tests {
     /// store's comparison and pattern semantics.
     #[tokio::test]
     async fn the_counts_the_store_computes_match_a_read_of_every_row() {
-        let (mut store, mail, first) = board("counts-oracle").await;
+        let (_scratch, mut store, mail, first) = board("counts-oracle").await;
         with_a_second_box(&mail).await;
         for (id, state, sent_at) in [
             ("leapok", "new", "2028-02-29T00:00:00Z"),
@@ -1298,7 +1295,7 @@ mod tests {
             ("counts-trailing-cr", "2026-03-01T00:00:00Z\r"),
             ("counts-trailing-crlf", "2026-03-01T00:00:00Z\r\n"),
         ] {
-            let (mut store, mail, _first) = board(name).await;
+            let (_scratch, mut store, mail, _first) = board(name).await;
             unreadable(&store, "trailing", "new", stamp).await;
 
             let counted = mail.list_mailboxes().await.expect("list ok");
@@ -1319,7 +1316,7 @@ mod tests {
     /// quarantine marks.
     #[tokio::test]
     async fn counting_the_boxes_loads_no_message_text_and_counts_what_it_did() {
-        let (mut store, mail, _first) = board("counting").await;
+        let (_scratch, mut store, mail, _first) = board("counting").await;
         with_a_second_box(&mail).await;
         took(&mail);
 
@@ -1374,7 +1371,6 @@ mod tests {
     async fn a_drawn_id_a_message_already_wears_is_drawn_again() {
         let scratch = Scratch::new("drawn-ids");
         let path = scratch.0.clone();
-        std::mem::forget(scratch);
         let mut store = Dolt::start(&path, free_port())
             .await
             .expect("the store comes up");
@@ -1447,7 +1443,7 @@ mod tests {
     /// rather than assumed from the write's own echo.
     #[tokio::test]
     async fn posted_by_session_round_trips_through_the_real_store() {
-        let (mut store, mail, _readable) = board("posted-by-session").await;
+        let (_scratch, mut store, mail, _readable) = board("posted-by-session").await;
         let stamped = mail
             .post_message(NewMessage {
                 mailbox: MailboxName("inbox".into()),
@@ -1485,7 +1481,7 @@ mod tests {
     /// return is a shape nobody gets.
     #[tokio::test]
     async fn a_posted_message_wears_a_drawn_id() {
-        let (mut store, mail, first) = board("drawn-shape").await;
+        let (_scratch, mut store, mail, first) = board("drawn-shape").await;
         assert!(
             jojobot_domain::handle::is_drawn(first.as_str(), 6),
             "an id a caller is handed must be a drawn handle: {first:?}"
@@ -1566,7 +1562,6 @@ mod tests {
 
         let scratch = Scratch::new("owner-index-down");
         let path = scratch.0.clone();
-        std::mem::forget(scratch);
         let mut store = Dolt::start(&path, free_port())
             .await
             .expect("the store comes up");
@@ -1621,7 +1616,7 @@ mod tests {
     /// A store that merely dropped it would report a board with nothing wrong.
     #[tokio::test]
     async fn an_unreadable_card_is_skipped_by_every_verb_and_named_by_its_box() {
-        let (mut store, mail, readable) = board("quarantine").await;
+        let (_scratch, mut store, mail, readable) = board("quarantine").await;
         // Two ways a row stops being readable: a state that is no state, and a
         // stamp that is no time. Both, so neither channel can rot unnoticed.
         unreadable(&store, "q-state", "in-flight", "2026-01-01T00:00:01Z").await;
@@ -1716,7 +1711,6 @@ mod tests {
 
         let scratch = Scratch::new("migrate-mentions-mailbox");
         let path = scratch.0.clone();
-        std::mem::forget(scratch);
         let mut store = Dolt::start(&path, free_port())
             .await
             .expect("the store comes up");
@@ -1837,7 +1831,6 @@ mod tests {
 
         let scratch = Scratch::new("migrate-sender-column-mailbox");
         let path = scratch.0.clone();
-        std::mem::forget(scratch);
         let mut store = Dolt::start(&path, free_port())
             .await
             .expect("the store comes up");

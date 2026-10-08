@@ -1074,7 +1074,6 @@ mod tests {
     async fn a_drawn_id_something_already_wears_is_drawn_again() {
         let scratch = Scratch::new("drawn-session-ids");
         let path = scratch.0.clone();
-        std::mem::forget(scratch);
         let mut store = Dolt::start(&path, free_port())
             .await
             .expect("the store comes up");
@@ -1178,7 +1177,6 @@ mod tests {
     async fn an_entry_id_only_has_to_be_free_inside_its_own_run() {
         let scratch = Scratch::new("entry-id-scope");
         let path = scratch.0.clone();
-        std::mem::forget(scratch);
         let mut store = Dolt::start(&path, free_port())
             .await
             .expect("the store comes up");
@@ -1258,9 +1256,6 @@ mod tests {
     async fn a_row_that_cannot_be_read_is_refused_rather_than_guessed_at() {
         let scratch = Scratch::new("unreadable-session");
         let path = scratch.0.clone();
-        // Leaked deliberately: dropping it removes the data under a running
-        // server. The process is stopped below and the temp dir goes with it.
-        std::mem::forget(scratch);
         let mut store = Dolt::start(&path, free_port())
             .await
             .expect("the store comes up");
@@ -1312,7 +1307,6 @@ mod tests {
     async fn a_sids_shape_is_checked_on_write_and_filtered_on_read() {
         let scratch = Scratch::new("checked-sid-shape");
         let path = scratch.0.clone();
-        std::mem::forget(scratch);
         let mut store = Dolt::start(&path, free_port())
             .await
             .expect("the store comes up");
@@ -1439,7 +1433,6 @@ mod tests {
     async fn both_ends_of_a_run_are_marked_in_the_store() {
         let scratch = Scratch::new("session-boundaries");
         let path = scratch.0.clone();
-        std::mem::forget(scratch);
         let mut store = Dolt::start(&path, free_port())
             .await
             .expect("the store comes up");
@@ -1513,7 +1506,6 @@ mod tests {
     async fn a_boundary_that_cannot_be_marked_leaves_the_run_standing() {
         let scratch = Scratch::new("boundary-unmarkable");
         let path = scratch.0.clone();
-        std::mem::forget(scratch);
         let mut store = Dolt::start(&path, free_port())
             .await
             .expect("the store comes up");
@@ -1584,7 +1576,6 @@ mod tests {
 
         let scratch = Scratch::new("migrate-mentions-sessions");
         let path = scratch.0.clone();
-        std::mem::forget(scratch);
         let mut store = Dolt::start(&path, free_port())
             .await
             .expect("the store comes up");
@@ -1679,7 +1670,6 @@ mod tests {
 
         let scratch = Scratch::new("migrate-bot-column-sessions");
         let path = scratch.0.clone();
-        std::mem::forget(scratch);
         let mut store = Dolt::start(&path, free_port())
             .await
             .expect("the store comes up");
@@ -1789,7 +1779,6 @@ mod tests {
     async fn add_served_totals_across_writes_and_survives_a_close() {
         let scratch = Scratch::new("session-served-chars");
         let path = scratch.0.clone();
-        std::mem::forget(scratch);
         let mut store = Dolt::start(&path, free_port())
             .await
             .expect("the store comes up");
@@ -1871,7 +1860,6 @@ mod tests {
     async fn add_served_neither_parses_the_chronology_nor_signals_the_search_index() {
         let scratch = Scratch::new("session-served-chars-cost");
         let path = scratch.0.clone();
-        std::mem::forget(scratch);
         let mut store = Dolt::start(&path, free_port())
             .await
             .expect("the store comes up");
@@ -1954,7 +1942,6 @@ mod tests {
     async fn summaries_of_answers_sessions_ofs_own_numbers_without_the_full_read() {
         let scratch = Scratch::new("session-summaries");
         let path = scratch.0.clone();
-        std::mem::forget(scratch);
         let mut store = Dolt::start(&path, free_port())
             .await
             .expect("the store comes up");
@@ -2061,7 +2048,6 @@ mod tests {
     async fn entries_read_scales_with_a_runs_own_chronology_not_with_the_call_count() {
         let scratch = Scratch::new("session-entries-read");
         let path = scratch.0.clone();
-        std::mem::forget(scratch);
         let mut store = Dolt::start(&path, free_port())
             .await
             .expect("the store comes up");

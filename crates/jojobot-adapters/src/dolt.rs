@@ -785,6 +785,25 @@ pub(crate) mod tests {
         }
     }
 
+    /// **A test that panics leaves no scratch directory.** The directory is
+    /// there, with a file in it, while the test runs, so a guard that removed
+    /// nothing would not pass.
+    #[test]
+    fn a_scratch_directory_is_gone_after_a_test_that_panics() {
+        let seen: std::sync::Mutex<Option<(PathBuf, bool)>> = std::sync::Mutex::new(None);
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let scratch = Scratch::new("panics");
+            std::fs::write(scratch.0.join("file"), b"x").expect("a file");
+            *seen.lock().expect("lock") =
+                Some((scratch.0.clone(), scratch.0.join("file").exists()));
+            panic!("the test fails");
+        }));
+        assert!(outcome.is_err());
+        let (path, existed) = seen.lock().expect("lock").take().expect("the test ran");
+        assert!(existed, "the directory was there while the test ran");
+        assert!(!path.exists(), "{} was left behind", path.display());
+    }
+
     /// **What the store's own history says**, newest first — the surface a
     /// person looking for what a sitting did actually reads, and the only
     /// evidence a boundary was marked at all.
@@ -875,7 +894,6 @@ pub(crate) mod tests {
     async fn a_restart_against_a_migrated_store_applies_nothing() {
         let scratch = Scratch::new("ready-twice");
         let path = scratch.0.clone();
-        std::mem::forget(scratch);
 
         let (mut first, applied) = Dolt::ready(&path, free_port())
             .await
@@ -1089,7 +1107,6 @@ pub(crate) mod tests {
     async fn a_boot_whose_boundary_cannot_be_marked_still_comes_up() {
         let scratch = Scratch::new("boot-unmarkable");
         let path = scratch.0.clone();
-        std::mem::forget(scratch);
         let nowhere = MySqlPoolOptions::new()
             .acquire_timeout(Duration::from_secs(2))
             .connect_lazy("mysql://root@127.0.0.1:1/nothing-is-there")
@@ -1130,10 +1147,6 @@ pub(crate) mod tests {
     async fn a_boot_marks_a_boundary_and_a_boot_with_nothing_to_mark_does_not() {
         let scratch = Scratch::new("boot-boundary");
         let path = scratch.0.clone();
-        // Leaked deliberately: dropping it removes the data under a running
-        // server. The stores are stopped below and the directory goes with the
-        // process.
-        std::mem::forget(scratch);
         let port = free_port();
 
         let (mut first, applied) = Dolt::ready(&path, port).await.expect("the store comes up");
@@ -1365,7 +1378,6 @@ pub(crate) mod tests {
 
         let scratch = Scratch::new("migrate-permanent-ids-skip");
         let path = scratch.0.clone();
-        std::mem::forget(scratch);
         let mut store = Dolt::start(&path, free_port())
             .await
             .expect("the store comes up");
@@ -1458,7 +1470,6 @@ pub(crate) mod tests {
 
         let scratch = Scratch::new("migrate-permanent-ids-run");
         let path = scratch.0.clone();
-        std::mem::forget(scratch);
         let mut store = Dolt::start(&path, free_port())
             .await
             .expect("the store comes up");
