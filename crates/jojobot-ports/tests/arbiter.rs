@@ -266,6 +266,81 @@ fn skipping_because_a_write_is_never_denied(path: &std::path::Path, what: &str) 
     attempt.is_ok()
 }
 
+/// **A claim is released the moment it is dropped, even while a child that was
+/// forked a moment ago still holds a copy of its descriptor.** A lock belongs to
+/// the open file and not to one descriptor of it, so a thread that forks while
+/// the claim is open gives its child a copy, and the child keeps the port
+/// claimed until it execs. The child here is held in that window on purpose,
+/// between the fork and the exec, so the case does not depend on timing. It
+/// reports that it is there, the claim is dropped, and the port must be
+/// claimable at once. Letting the child go afterwards is not part of the proof:
+/// it only ends the child.
+#[test]
+fn a_claim_is_released_at_once_while_a_forked_child_holds_its_descriptor() {
+    use std::os::unix::process::CommandExt as _;
+
+    // A pipe is two descriptors: the end that reads and the end that writes.
+    let pipe = || -> (i32, i32) {
+        let mut ends = [0i32; 2];
+        // SAFETY: `ends` holds the two descriptors `pipe` writes.
+        assert_eq!(unsafe { libc::pipe(ends.as_mut_ptr()) }, 0, "a pipe");
+        (ends[0], ends[1])
+    };
+    let (ready_r, ready_w) = pipe();
+    let (release_r, release_w) = pipe();
+
+    let allocator = Allocator::within(31_950, 31_960, scratch("forked"));
+    let claim = allocator.claim().expect("a port is free");
+    let port = claim.port();
+
+    // `spawn` returns only when the child has exec'd, so it runs on its own
+    // thread while the child waits for the release below.
+    let child = std::thread::spawn(move || {
+        let mut command = std::process::Command::new("true");
+        // SAFETY: the closure calls only `close`, `write` and `read`, which are
+        // safe to call between the fork and the exec.
+        unsafe {
+            command.pre_exec(move || {
+                // The child's copy of the writing end would keep the release
+                // from ever reading as ended.
+                libc::close(release_w);
+                let said = 1u8;
+                libc::write(ready_w, std::ptr::addr_of!(said).cast(), 1);
+                let mut heard = 0u8;
+                libc::read(release_r, std::ptr::addr_of_mut!(heard).cast(), 1);
+                Ok(())
+            });
+        }
+        command.spawn()?.wait()
+    });
+
+    // The child is now between the fork and the exec, holding the descriptor.
+    let mut heard = 0u8;
+    // SAFETY: one byte is read into a byte this function owns.
+    let read = unsafe { libc::read(ready_r, std::ptr::addr_of_mut!(heard).cast(), 1) };
+    assert_eq!(read, 1, "the child reported that it holds the descriptor");
+
+    drop(claim);
+    let reclaimed = allocator.try_claim(port).expect("the claim can be tried");
+
+    // Let the child go, whatever the claim said: a held child is not a result.
+    // SAFETY: these are descriptors this function made and still owns.
+    unsafe {
+        libc::close(release_w);
+        libc::close(release_r);
+        libc::close(ready_r);
+        libc::close(ready_w);
+    }
+    child
+        .join()
+        .expect("the spawning thread")
+        .expect("the child ran");
+    assert!(
+        reclaimed.is_some(),
+        "a dropped claim stayed held by a child that had not exec'd yet",
+    );
+}
+
 /// **A claim file the caller cannot open is a port held by somebody else.**
 /// Another user's run leaves a claim file this one may not write, and that is
 /// the same answer as a held lock: the port is not this claimer's, and the next

@@ -39,19 +39,18 @@ pub const CLAIM_DIR: &str = "/tmp/jojobot-room-ports";
 
 /// A port held for as long as this value lives.
 ///
-/// **Dropping it releases the port, promptly and not instantly.** A lock
-/// belongs to an open file, and a process being spawned at the same moment on
-/// another thread holds a copy of every open descriptor until it execs, so the
-/// release can land a few milliseconds late. The port stays spoken for until
-/// then, never the other way round.
+/// **Dropping it releases the port at once.** A lock belongs to an open file,
+/// and a process being spawned at the same moment on another thread holds a
+/// copy of every open descriptor until it execs. Dropping unlocks the file
+/// first, so that copy does not keep the port claimed.
 pub struct Claim {
     port: u16,
     /// A listener on the port, kept until the caller is ready to start the
     /// server that binds it, so a process outside these harnesses cannot take
     /// the port in between.
     hold: Option<TcpListener>,
-    /// The lock itself. Never read: dropping it releases the port.
-    _file: File,
+    /// The lock itself. Dropping the claim unlocks it and closes it.
+    file: File,
 }
 
 impl Claim {
@@ -69,6 +68,18 @@ impl Claim {
     /// Whether the claim still holds a listener on its port.
     pub fn holds_listener(&self) -> bool {
         self.hold.is_some()
+    }
+}
+
+impl Drop for Claim {
+    /// **Unlock, then let the file close.** Closing the file alone releases the
+    /// lock only when every copy of its descriptor is gone, and a child forked
+    /// by another thread in the same moment holds one until it execs. The unlock
+    /// ends the claim on the open file for every copy, so the port is free the
+    /// moment the claim is dropped.
+    fn drop(&mut self) {
+        // SAFETY: `flock` takes a descriptor this value owns and no pointer.
+        unsafe { libc::flock(self.file.as_raw_fd(), libc::LOCK_UN) };
     }
 }
 
@@ -217,7 +228,7 @@ impl Allocator {
             return Ok(Some(Claim {
                 port,
                 hold: None,
-                _file: file,
+                file,
             }));
         }
         let refused = io::Error::last_os_error();
