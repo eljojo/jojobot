@@ -239,12 +239,22 @@ async fn moving_abroad() {
     // reads one handle containing another as a probable duplicate — a child is
     // its own entity and takes a name of its own.
     s.add_under("project:atlas", "project:visa", "Visa").await;
-    s.list("project")
-        .await
-        .says("\"parent\":\"project:atlas\"")
-        // The move itself is under nothing: it is listed, and it carries no
-        // parent, so a root is told from a child by the key being there.
-        .says("\"id\":\"project:atlas\"");
+    s.list("project").await.says("\"parent\":\"project:atlas\"");
+    // The move itself is under nothing: it is listed, and it carries no parent
+    // at all, so a root is told from a child by the key being there. Read off the
+    // listing's structure: the move is found in it, so the absence is not an
+    // empty answer.
+    let projects = s.list("project").await.json();
+    let root = projects["entities"]
+        .as_array()
+        .expect("entities")
+        .iter()
+        .find(|e| e["id"] == "project:atlas")
+        .unwrap_or_else(|| panic!("the move is listed: {projects}"));
+    assert!(
+        root.get("parent").is_none(),
+        "a root carries no parent: {root}"
+    );
 
     s.wrap("the list exists; nothing is done").await;
 
