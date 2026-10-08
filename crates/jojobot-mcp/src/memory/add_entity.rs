@@ -1576,4 +1576,75 @@ mod tests {
         let held = fields_of(&jojobot, "bot:sigma").await;
         assert_eq!(held["reports_to"], "bot:omega", "{held}");
     }
+    /// 🚨 **A creation at a handle a renamed thing used to wear is judged as the
+    /// NEW thing it makes.** A rename frees the old handle, and a new bot may
+    /// take it. The licence check resolves a subject to the handle it answers to
+    /// now so a renamed bot cannot raise its own ceiling by its former name, but
+    /// a thing being created has no former handle: resolving it found the bot
+    /// that used to wear the name, and judged the new bot as that one. Here the
+    /// renamed bot creates a new bot at its old handle and sets that new bot's
+    /// ceiling, which a different identity may do. Paired with the same write
+    /// naming the renamed bot itself, which is refused.
+    #[tokio::test]
+    async fn a_creation_at_a_handle_a_renamed_thing_used_to_wear_is_judged_as_the_new_thing() {
+        let jojobot = handler();
+        // Named apart from its slug, so the ordinary same-name screen has
+        // nothing to say about the new bot that takes the freed handle.
+        jojobot
+            .add_entity(Parameters(AddEntityArgs {
+                sid: Some(TEST_SID.into()),
+                ..add_args("bot", "omega", "The Original")
+            }))
+            .await
+            .expect("add ok");
+        let renamed = json_of(
+            &jojobot
+                .rename_entity(Parameters(crate::memory::rename_entity::RenameEntityArgs {
+                    handle: "bot:omega".into(),
+                    to: "bot:delta".into(),
+                    parent: None,
+                    recorded_at: None,
+                    override_token: None,
+                    sid: Some(TEST_SID.into()),
+                }))
+                .await
+                .expect("rename ok"),
+        );
+        assert_ne!(renamed["status"], "blocked", "{renamed}");
+        let delta = as_bot(&jojobot, "delta");
+        let ceiling = || {
+            Some(
+                [("thought_capacity".to_string(), "5".to_string())]
+                    .into_iter()
+                    .collect(),
+            )
+        };
+
+        // The renamed bot sets a ceiling on a NEW bot at its old handle.
+        let created = json_of(
+            &jojobot
+                .add_entity(Parameters(AddEntityArgs {
+                    sid: Some(delta.clone()),
+                    sets: ceiling(),
+                    ..add_args("bot", "omega", "The Spare")
+                }))
+                .await
+                .expect("add ok"),
+        );
+        assert_ne!(created["status"], "blocked", "{created}");
+        assert_eq!(created["id"], "bot:omega", "{created}");
+
+        // The pair: the same bot setting its OWN ceiling is still refused.
+        let own = blocked(
+            &jojobot
+                .capture(Parameters(CaptureArgs {
+                    sid: Some(delta),
+                    fields: ceiling(),
+                    ..capture_args("bot:delta", "raising my own ceiling")
+                }))
+                .await
+                .expect("a refusal is an answer"),
+        );
+        assert_eq!(own["wrote"], false, "{own}");
+    }
 }

@@ -1135,7 +1135,10 @@ impl Jojobot {
         caller: &EntityId,
         fields: &std::collections::BTreeMap<String, String>,
     ) -> Result<Option<CallToolResult>, McpError> {
-        let ceiling_subject = if jojobot_domain::memory::names_a_guarded_key(fields) {
+        // **A thing being created is judged as given.** It has no former handle,
+        // and resolving its handle would find the thing that used to wear the
+        // name, whose rename freed it for this new one.
+        let ceiling_subject = if exists && jojobot_domain::memory::names_a_guarded_key(fields) {
             match self.current_handle(subject).await {
                 Ok(current) => current,
                 Err(e) => return memory_declined(verb, e).map(Some),
