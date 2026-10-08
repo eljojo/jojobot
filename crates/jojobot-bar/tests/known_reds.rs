@@ -29,6 +29,19 @@ case "$1" in
   test)
     echo 'test {LISTED} ... FAILED'
     echo 'test {UNLISTED} ... FAILED'
+    echo
+    echo 'failures:'
+    echo
+    echo '---- {LISTED} stdout ----'
+    echo
+    echo "thread '{LISTED}' (1) panicked at a.rs:1:1:"
+    echo 'items that failed:'
+    printf '%s\n' "$FAKE_ITEMS"
+    echo 'note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace'
+    echo
+    echo 'failures:'
+    echo '    {LISTED}'
+    echo
     echo 'test result: FAILED. 1 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s'
     exit 101 ;;
   *) exit 0 ;;
@@ -65,6 +78,11 @@ fn listing(test: &str) -> String {
 
 /// Run `bar` with `args` in a scratch directory holding `known_reds`.
 fn bar(tag: &str, args: &[&str], known_reds: Option<&str>) -> (Output, String) {
+    bar_saying(tag, args, known_reds, "")
+}
+
+/// The same, with the listed test printing `items` as what failed.
+fn bar_saying(tag: &str, args: &[&str], known_reds: Option<&str>, items: &str) -> (Output, String) {
     let dir = scratch_dir(tag);
     let fake_cargo = write_fake_cargo(&dir);
     if let Some(text) = known_reds {
@@ -75,6 +93,7 @@ fn bar(tag: &str, args: &[&str], known_reds: Option<&str>) -> (Output, String) {
         .current_dir(&dir)
         .env("TMPDIR", &dir)
         .env("CARGO", &fake_cargo)
+        .env("FAKE_ITEMS", items)
         .output()
         .expect("run bar");
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
@@ -160,4 +179,54 @@ fn a_malformed_list_is_refused_with_its_line_and_nothing_runs() {
         !stdout.contains("verdict:"),
         "no phase may run behind a refused list: {stdout}"
     );
+}
+
+/// An entry that says what it expects.
+fn listing_expecting(test: &str, expects: &str) -> String {
+    format!("{}expects = [{expects}]\n", listing(test))
+}
+
+/// **A known red that names what it expects is compared with what it printed,
+/// at each of the three verdicts.** Failing on exactly those items it stays a
+/// known red. Failing on one more it is a new red, with the extra item named
+/// and no known annotation. Paired, so a bar that called every such red new, or
+/// none, would not pass.
+#[test]
+fn a_known_red_is_compared_with_what_it_expects_at_each_verdict() {
+    let expects = "\"items that failed\", \"person:homer\", \"person:bart\"";
+    let list = listing_expecting(LISTED, expects);
+    for args in [
+        vec!["check"],
+        vec!["narrow", "--crate", "jojobot-bar"],
+        vec!["rooms", "--test", "any_room"],
+    ] {
+        let (output, stdout) = bar_saying(
+            "expects-held",
+            &args,
+            Some(&list),
+            "person:homer\nperson:bart",
+        );
+        assert!(
+            stdout.contains(&format!(
+                "  FAILED: {LISTED} (known red: card 2036, dev3, since 2026-10-07)"
+            )),
+            "{args:?}: {stdout}"
+        );
+        assert!(!stdout.contains("NEW"), "{args:?}: {stdout}");
+        assert!(!output.status.success(), "{args:?}");
+
+        let (output, stdout) = bar_saying(
+            "expects-broken",
+            &args,
+            Some(&list),
+            "person:homer\nperson:bart\nperson:lisa",
+        );
+        assert!(
+            stdout.contains("NEW beyond known red card 2036: person:lisa"),
+            "{args:?}: {stdout}"
+        );
+        assert!(!stdout.contains("(known red:"), "{args:?}: {stdout}");
+        assert!(stdout.contains("verdict: RED"), "{args:?}: {stdout}");
+        assert!(!output.status.success(), "{args:?}");
+    }
 }

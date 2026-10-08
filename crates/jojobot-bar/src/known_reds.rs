@@ -4,6 +4,10 @@
 //! renders a verdict and says, beside a failing test that is on it, which card
 //! owns the red. That is information and nothing else: the verdict stays red,
 //! the exit code does not change, and no test is retried, skipped or hidden.
+//!
+//! **An entry may name what it expects.** Its failure output is then compared
+//! with that list, and a line beyond it makes the test a new red that happens
+//! to sit inside a known one, so a known red cannot absorb a different failure.
 
 use std::path::Path;
 
@@ -14,6 +18,58 @@ pub struct KnownRed {
     pub card: u32,
     pub owner: String,
     pub since: String,
+    /// **What the red is known to say**: the pieces of text its failure output
+    /// is made of, each a substring of one line. `None` is an entry that names
+    /// nothing, and then any failure of the test is the known one; `Some` is an
+    /// entry that names what it expects, and a line of output beyond it is a new
+    /// failure that happens to sit inside a known test.
+    pub expects: Option<Vec<String>>,
+}
+
+/// **What a known red's failure output says beyond, and short of, what the
+/// entry expects.**
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Difference {
+    /// Lines of the failure output that no expected piece is part of.
+    pub beyond: Vec<String>,
+    /// Expected pieces that no line of the failure output carries any more.
+    pub gone: Vec<String>,
+}
+
+impl KnownRed {
+    /// **Compare a failure's output with what this entry expects.** `None` when
+    /// the entry names nothing to compare with. The output is read as the lines
+    /// of the failure, less the line that says where it panicked and the one
+    /// that names the backtrace variable, which are the same for every failure.
+    pub fn difference(&self, failure: &str) -> Option<Difference> {
+        let expects = self.expects.as_ref()?;
+        let lines = failure_lines(failure);
+        Some(Difference {
+            beyond: lines
+                .iter()
+                .filter(|line| !expects.iter().any(|piece| line.contains(piece.as_str())))
+                .cloned()
+                .collect(),
+            gone: expects
+                .iter()
+                .filter(|piece| !lines.iter().any(|line| line.contains(piece.as_str())))
+                .cloned()
+                .collect(),
+        })
+    }
+}
+
+/// **The lines of a failure's output that say what failed**: trimmed, not
+/// blank, and not the panic location or the backtrace hint.
+pub fn failure_lines(failure: &str) -> Vec<String> {
+    failure
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .filter(|line| !(line.starts_with("thread '") && line.contains("panicked at")))
+        .filter(|line| !line.starts_with("note: run with `RUST_BACKTRACE"))
+        .map(str::to_string)
+        .collect()
 }
 
 /// The whole list.
@@ -83,6 +139,7 @@ struct Pending {
     card: Option<u32>,
     owner: Option<String>,
     since: Option<String>,
+    expects: Option<Vec<String>>,
 }
 
 impl Pending {
@@ -122,6 +179,12 @@ impl Pending {
                 }
                 self.since = Some(day);
             }
+            "expects" => {
+                if let Some(e) = taken(self.expects.is_some()) {
+                    return Err(e);
+                }
+                self.expects = Some(quoted_list(key, value, line)?);
+            }
             other => return Err(format!("line {line}: unknown key {other}")),
         }
         Ok(())
@@ -134,6 +197,7 @@ impl Pending {
             card: self.card.ok_or_else(|| missing("card"))?,
             owner: self.owner.ok_or_else(|| missing("owner"))?,
             since: self.since.ok_or_else(|| missing("since"))?,
+            expects: self.expects,
         })
     }
 }
@@ -146,6 +210,30 @@ fn quoted(key: &str, value: &str, line: usize) -> Result<String, String> {
         .filter(|inner| !inner.contains(['"', '\\']) && !inner.is_empty())
         .map(str::to_string)
         .ok_or_else(|| format!("line {line}: {key} must be a non-empty string in double quotes"))
+}
+
+/// A list of strings in double quotes on one line, `["a", "b"]`, each with
+/// nothing inside that needs an escape and none containing a comma. The list may
+/// be empty, which says the red expects nothing at all.
+fn quoted_list(key: &str, value: &str, line: usize) -> Result<Vec<String>, String> {
+    let refusal = || {
+        format!(
+            "line {line}: {key} must be a list of non-empty strings in double quotes on one \
+             line, none holding a comma"
+        )
+    };
+    let inner = value
+        .strip_prefix('[')
+        .and_then(|rest| rest.strip_suffix(']'))
+        .ok_or_else(refusal)?
+        .trim();
+    if inner.is_empty() {
+        return Ok(Vec::new());
+    }
+    inner
+        .split(',')
+        .map(|item| quoted(key, item.trim(), line).map_err(|_| refusal()))
+        .collect()
 }
 
 /// `YYYY-MM-DD`, with a month 1 to 12 and a day 1 to 31.
@@ -333,5 +421,96 @@ mod tests {
     fn the_shipped_list_parses() {
         let text = include_str!("../../../known-reds.toml");
         KnownReds::parse(text).expect("known-reds.toml at the repository root is well-formed");
+    }
+
+    const WITH_EXPECTS: &str = "[[known_red]]\n\
+        test = \"roster::every_handle_is_on_it\"\n\
+        card = 2036\n\
+        owner = \"dev3\"\n\
+        since = \"2026-10-07\"\n\
+        expects = [\"handles outside the roster\", \"person:homer in \", \"person:bart in \"]\n";
+
+    /// A failure the way `cargo test` prints it: where it panicked, the message,
+    /// and the items.
+    const FAILURE: &str = "\nthread 'roster::every_handle_is_on_it' (31) panicked at a.rs:9:5:\n\
+        handles outside the roster, add them:\n\
+        person:homer in /x/AGENTS.md\n\
+        person:bart in /x/CLAUDE.md\n\
+        note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n";
+
+    fn the_red() -> KnownRed {
+        KnownReds::parse(WITH_EXPECTS)
+            .expect("a well-formed file parses")
+            .find("roster::every_handle_is_on_it")
+            .expect("listed")
+            .clone()
+    }
+
+    /// **An entry that names what it expects reads its list back**, and an entry
+    /// that names nothing has none, which is the old meaning.
+    #[test]
+    fn an_entry_reads_back_what_it_expects() {
+        assert_eq!(
+            the_red().expects,
+            Some(vec![
+                "handles outside the roster".to_string(),
+                "person:homer in ".to_string(),
+                "person:bart in ".to_string(),
+            ])
+        );
+        let plain = KnownReds::parse(ENTRY).expect("parses");
+        let red = plain
+            .find("testing::tests::two_stores_started_together_both_take_a_port")
+            .expect("listed");
+        assert_eq!(red.expects, None);
+        assert_eq!(red.difference(FAILURE), None, "nothing to compare with");
+    }
+
+    /// **The failure is compared line by line with what is expected.** Exactly
+    /// the expected items leave no difference. A line no expected piece is part
+    /// of is beyond it, and an expected piece no line carries is gone. The
+    /// location line and the backtrace hint are the same for every failure and
+    /// are not compared.
+    #[test]
+    fn a_failure_is_compared_with_what_the_entry_expects() {
+        let red = the_red();
+        assert_eq!(red.difference(FAILURE), Some(Difference::default()));
+
+        let more = format!("{FAILURE}person:lisa in /x/CLAUDE.md\n");
+        assert_eq!(
+            red.difference(&more).expect("compared").beyond,
+            vec!["person:lisa in /x/CLAUDE.md".to_string()]
+        );
+
+        let less = FAILURE.replace("person:bart in /x/CLAUDE.md\n", "");
+        let difference = red.difference(&less).expect("compared");
+        assert!(difference.beyond.is_empty(), "{difference:?}");
+        assert_eq!(difference.gone, vec!["person:bart in ".to_string()]);
+    }
+
+    /// **A list that is not a list of quoted strings is refused with its
+    /// line**, and an empty list is read, as an entry that expects nothing.
+    #[test]
+    fn a_malformed_expects_is_refused_with_its_line() {
+        for (what, value) in [
+            ("not a list", "\"person:homer in \""),
+            ("an unquoted item", "[person:homer]"),
+            ("an empty item", "[\"a\", \"\"]"),
+            ("no closing bracket", "[\"a\""),
+        ] {
+            let text = format!("{ENTRY}expects = {value}\n");
+            let refused = KnownReds::parse(&text).expect_err(what);
+            assert!(refused.starts_with("line 6:"), "{what}: {refused}");
+            assert!(refused.contains("expects"), "{what}: {refused}");
+        }
+        let empty = KnownReds::parse(&format!("{ENTRY}expects = []\n")).expect("an empty list");
+        let red = empty
+            .find("testing::tests::two_stores_started_together_both_take_a_port")
+            .expect("listed");
+        assert_eq!(red.expects, Some(Vec::new()));
+        assert!(
+            !red.difference(FAILURE).expect("compared").beyond.is_empty(),
+            "an entry that expects nothing finds everything beyond it"
+        );
     }
 }

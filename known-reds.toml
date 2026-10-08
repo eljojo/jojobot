@@ -1,11 +1,20 @@
-# Tests that fail on a loaded machine, each already owned by a card. The bar
-# reads this file and prints the card beside a failing test that is listed here.
-# It changes nothing else: the verdict stays red and the exit code is unchanged.
-# A test leaves this list when its card closes.
+# Tests that fail today, each already owned by a card. The bar reads this file
+# and prints the card beside a failing test that is listed here. It changes
+# nothing else: the verdict stays red and the exit code is unchanged. A test
+# leaves this list when its card closes.
 #
 # Only this shape is read, and anything else is refused with its line number:
 # a [[known_red]] header, then test, card, owner and since, each once, with
 # strings in double quotes. `test` is the name cargo test prints, `card` is a
 # whole number and `since` is the day the entry was added, as YYYY-MM-DD.
+#
+# An entry may also say WHAT it expects, with `expects = ["a", "b"]`: a list on
+# one line of non-empty strings, none holding a comma. Each line the test prints
+# about its failure (less the line that says where it panicked) has to hold one
+# of them. A line that holds none is a failure beyond the known one, and the bar
+# prints the test as a NEW red with that line named, not as a known red. An
+# expected string that no line holds any more is said beside the card, so the
+# entry can be tightened. An entry with no `expects` accepts any failure of its
+# test, as before.
 #
 # No test is listed now.

@@ -30,6 +30,11 @@ pub struct TestVerdict {
     /// them — read off the `test <name> ... FAILED` lines directly, never
     /// re-derived from the suite counts.
     pub failed_names: Vec<String>,
+    /// **What each failing test printed about its failure**, by the name
+    /// `cargo test` gave it: the text under its `---- name stdout ----` header,
+    /// up to the next header or the end of the failures section. A failing test
+    /// that printed no such section has no entry.
+    pub failures: std::collections::BTreeMap<String, String>,
 }
 
 impl TestVerdict {
@@ -66,7 +71,24 @@ pub fn test_healthy(exit_ok: bool, verdict: &TestVerdict) -> bool {
 /// function's to trust.
 pub fn summarize_test_output(output: &str) -> TestVerdict {
     let mut verdict = TestVerdict::default();
+    // The test whose failure section the lines are inside, if any.
+    let mut inside: Option<String> = None;
     for line in output.lines() {
+        if let Some(name) = line
+            .strip_prefix("---- ")
+            .and_then(|rest| rest.strip_suffix(" stdout ----"))
+        {
+            inside = Some(name.to_string());
+            verdict.failures.entry(name.to_string()).or_default();
+            continue;
+        }
+        if line == "failures:" || line.starts_with("test result: ") || line.starts_with("---- ") {
+            inside = None;
+        } else if let Some(name) = &inside {
+            let body = verdict.failures.entry(name.clone()).or_default();
+            body.push_str(line);
+            body.push('\n');
+        }
         if let Some(rest) = line.strip_prefix("test result: ") {
             verdict.suites += 1;
             if let Some((passed, failed)) = suite_counts(rest) {
@@ -308,17 +330,40 @@ impl Summary {
             verdict.suites, verdict.passed, verdict.failed
         ));
         const SHOWN: usize = 5;
-        let (listed, unlisted): (Vec<&String>, Vec<&String>) = verdict
-            .failed_names
-            .iter()
-            .partition(|name| known.find(name).is_some());
+        // **A known red that says more than it expects is new**, and is listed
+        // with the ones that were never known.
+        let (listed, unlisted): (Vec<&String>, Vec<&String>) =
+            verdict.failed_names.iter().partition(|name| {
+                known.find(name).is_some_and(|red| {
+                    red.difference(verdict.failures.get(*name).map_or("", String::as_str))
+                        .is_none_or(|difference| difference.beyond.is_empty())
+                })
+            });
         for name in unlisted.into_iter().chain(listed).take(SHOWN) {
-            match known.find(name) {
-                Some(red) => self.lines.push(format!(
+            let Some(red) = known.find(name) else {
+                self.lines.push(format!("  FAILED: {name}"));
+                continue;
+            };
+            let said = verdict.failures.get(name).map_or("", String::as_str);
+            let difference = red.difference(said).unwrap_or_default();
+            if difference.beyond.is_empty() {
+                let mut line = format!(
                     "  FAILED: {name} (known red: card {}, {}, since {})",
                     red.card, red.owner, red.since
-                )),
-                None => self.lines.push(format!("  FAILED: {name}")),
+                );
+                if !difference.gone.is_empty() {
+                    line.push_str(&format!(
+                        " — no longer fails on: {}",
+                        difference.gone.join("; ")
+                    ));
+                }
+                self.lines.push(line);
+            } else {
+                self.lines.push(format!(
+                    "  FAILED: {name} (NEW beyond known red card {}: {})",
+                    red.card,
+                    difference.beyond.join(" | ")
+                ));
             }
         }
         if verdict.failed_names.len() > SHOWN {
@@ -773,6 +818,7 @@ mod tests {
                 .cloned()
                 .chain(["m::tests::brand_new".to_string()])
                 .collect(),
+            ..TestVerdict::default()
         };
         let mut summary = Summary::new();
         summary.test_phase(
@@ -785,5 +831,131 @@ mod tests {
         let first_known = rendered.find("m::tests::known_0").expect(&rendered);
         assert!(new < first_known, "{rendered}");
         assert!(rendered.contains("...and 2 more"), "{rendered}");
+    }
+
+    /// A run with one failing test, as `cargo test` prints it: the line, then the
+    /// failures section with the test's own output.
+    fn one_failure_saying(items: &[&str]) -> String {
+        let mut text = String::from(
+            "running 2 tests\ntest m::tests::fine ... ok\n\
+             test m::tests::the_roster_one ... FAILED\n\nfailures:\n\n\
+             ---- m::tests::the_roster_one stdout ----\n\n\
+             thread 'm::tests::the_roster_one' (31) panicked at a.rs:9:5:\n\
+             handles outside the roster, add them:\n",
+        );
+        for item in items {
+            text.push_str(item);
+            text.push('\n');
+        }
+        text.push_str(
+            "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n\n\n\
+             failures:\n    m::tests::the_roster_one\n\n\
+             test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; \
+             finished in 0.01s\n",
+        );
+        text
+    }
+
+    fn expecting(items: &str) -> KnownReds {
+        KnownReds::parse(&format!(
+            "[[known_red]]\ntest = \"m::tests::the_roster_one\"\ncard = 2036\n\
+             owner = \"dev3\"\nsince = \"2026-10-07\"\nexpects = [{items}]\n"
+        ))
+        .expect("a well-formed list")
+    }
+
+    const THE_ROSTER_ITEMS: &str = "\"handles outside the roster\", \"person:homer in \"";
+
+    /// **What a failing test printed is kept with its name**, from the run's own
+    /// text: the output between its header and the next section.
+    #[test]
+    fn a_failing_tests_own_output_is_kept_under_its_name() {
+        let verdict = summarize_test_output(&one_failure_saying(&["person:homer in /x/A.md"]));
+        let said = verdict
+            .failures
+            .get("m::tests::the_roster_one")
+            .expect("the failure section was read");
+        assert!(said.contains("person:homer in /x/A.md"), "{said}");
+        assert!(!said.contains("test result"), "the section ended: {said}");
+        assert!(!said.contains("failures:"), "the section ended: {said}");
+    }
+
+    /// **A known red that fails on exactly what it expects stays a known red.**
+    #[test]
+    fn a_red_that_fails_on_what_it_expects_is_annotated() {
+        let verdict = summarize_test_output(&one_failure_saying(&["person:homer in /x/A.md"]));
+        let mut summary = Summary::new();
+        summary.test_phase(false, &verdict, &expecting(THE_ROSTER_ITEMS));
+        let rendered = summary.render();
+        assert!(
+            rendered.contains(
+                "  FAILED: m::tests::the_roster_one (known red: card 2036, dev3, since 2026-10-07)\n"
+            ),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("NEW"), "{rendered}");
+    }
+
+    /// **A known red that fails on more than it expects is a new red.** The
+    /// extra line is named, the known annotation is not given, and the failure
+    /// is listed ahead of the ones that are only known.
+    #[test]
+    fn a_red_that_fails_on_more_than_it_expects_is_new() {
+        let verdict = summarize_test_output(&one_failure_saying(&[
+            "person:homer in /x/A.md",
+            "person:lisa in /x/B.md",
+        ]));
+        let mut summary = Summary::new();
+        summary.test_phase(false, &verdict, &expecting(THE_ROSTER_ITEMS));
+        let rendered = summary.render();
+        assert!(
+            rendered.contains("NEW beyond known red card 2036: person:lisa in /x/B.md"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("(known red:"), "{rendered}");
+        assert!(rendered.contains("verdict: RED"), "{rendered}");
+    }
+
+    /// **An expected item that is no longer there is said**, beside the known
+    /// annotation: the entry can be tightened.
+    #[test]
+    fn an_expected_item_that_is_gone_is_said() {
+        let verdict = summarize_test_output(&one_failure_saying(&[]));
+        let mut summary = Summary::new();
+        summary.test_phase(false, &verdict, &expecting(THE_ROSTER_ITEMS));
+        let rendered = summary.render();
+        assert!(
+            rendered.contains("(known red: card 2036, dev3, since 2026-10-07) — no longer fails on: person:homer in "),
+            "{rendered}"
+        );
+    }
+
+    /// **A known red that says more than it expects is listed ahead of the
+    /// reds that are only known**, so a cap on the list cannot hide it.
+    #[test]
+    fn a_red_with_more_than_it_expects_is_listed_ahead_of_known_ones() {
+        let text = format!(
+            "test m::tests::plain_known ... FAILED\n{}",
+            one_failure_saying(&["person:homer in /x/A.md", "person:lisa in /x/B.md"])
+        );
+        let verdict = summarize_test_output(&text);
+        let mut list = String::from(
+            "[[known_red]]\ntest = \"m::tests::plain_known\"\ncard = 1\nowner = \"dev\"\n\
+             since = \"2026-10-07\"\n",
+        );
+        list.push_str(&format!(
+            "[[known_red]]\ntest = \"m::tests::the_roster_one\"\ncard = 2036\n\
+             owner = \"dev3\"\nsince = \"2026-10-07\"\nexpects = [{THE_ROSTER_ITEMS}]\n"
+        ));
+        let mut summary = Summary::new();
+        summary.test_phase(
+            false,
+            &verdict,
+            &KnownReds::parse(&list).expect("a well-formed list"),
+        );
+        let rendered = summary.render();
+        let new = rendered.find("NEW beyond known red").expect(&rendered);
+        let known = rendered.find("m::tests::plain_known").expect(&rendered);
+        assert!(new < known, "{rendered}");
     }
 }
