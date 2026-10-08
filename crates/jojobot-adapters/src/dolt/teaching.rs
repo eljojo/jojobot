@@ -31,6 +31,10 @@ fn store(err: sqlx::Error) -> TeachingError {
         tracing::warn!(error = %err, "a write conflicted with another landing the same instant");
         return TeachingError::Conflict;
     }
+    if let Some(rule) = super::refused_rule(&err) {
+        tracing::error!(error = %err, rule, "the teaching store refused a write on a rule it enforces");
+        return TeachingError::Refused(rule.to_string());
+    }
     TeachingError::Store(err.to_string())
 }
 

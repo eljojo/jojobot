@@ -2677,13 +2677,7 @@ fn store(e: sqlx::Error) -> MemoryError {
         tracing::warn!(error = %e, "a write conflicted with another landing the same instant");
         return MemoryError::Conflict;
     }
-    if let Some(rule) = e.as_database_error().and_then(|db| match db.kind() {
-        sqlx::error::ErrorKind::UniqueViolation => Some("a key held twice"),
-        sqlx::error::ErrorKind::ForeignKeyViolation => Some("a reference to nothing"),
-        sqlx::error::ErrorKind::NotNullViolation => Some("a required value left out"),
-        sqlx::error::ErrorKind::CheckViolation => Some("a check that failed"),
-        _ => None,
-    }) {
+    if let Some(rule) = super::refused_rule(&e) {
         tracing::error!(error = %e, rule, "the memory store refused a write on a rule it enforces");
         return MemoryError::Refused(rule.to_string());
     }

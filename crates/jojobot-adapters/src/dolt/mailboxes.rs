@@ -501,6 +501,10 @@ fn store(e: sqlx::Error) -> MailboxError {
         tracing::warn!(error = %e, "a write conflicted with another landing the same instant");
         return MailboxError::Conflict;
     }
+    if let Some(rule) = super::refused_rule(&e) {
+        tracing::error!(error = %e, rule, "the mailbox store refused a write on a rule it enforces");
+        return MailboxError::Refused(rule.to_string());
+    }
     tracing::error!(error = %e, "the mailbox store failed");
     MailboxError::Store("the mailbox store could not be reached".into())
 }

@@ -1365,6 +1365,173 @@ async fn an_alias_survives_a_rename_and_a_search_still_finds_it_by_nickname() {
     store.stop().await;
 }
 
+/// 🚨 **The session rail tells a write the store refused from a store that
+/// cannot be reached**, as the memory rail does: a unique index the store
+/// enforces, two runs begun on the same words, and then a store that is gone.
+#[tokio::test]
+async fn a_refused_session_write_is_not_reported_as_an_unreachable_store() {
+    let scratch = Scratch::new("session-refused-write");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("session_refused_write")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let sessions_store = DoltSessions::open(pool.clone());
+    sqlx::query("ALTER TABLE session ADD UNIQUE INDEX one_focus (focus(100))")
+        .execute(&pool)
+        .await
+        .expect("the store takes a unique index");
+
+    let bot = EntityId("bot:conflict-not-a-failure".into());
+    let begin = |sid: &str| NewSession {
+        bot: bot.clone(),
+        sid: Sid(sid.into()),
+        focus: "the same words".into(),
+        started_at: sessions::epoch(),
+        timezone: None,
+        started_on: None,
+    };
+    sessions_store
+        .begin(begin("rfs1"))
+        .await
+        .expect("the first run begins");
+
+    let refused = sessions_store.begin(begin("rfs2")).await;
+    match &refused {
+        Err(SessionError::Store(said)) => {
+            panic!("a write the store refused came back as the words for an outage: {said:?}")
+        }
+        other => assert!(
+            matches!(other, Err(SessionError::Refused(_))),
+            "a write the store refused came back as something else: {other:?}"
+        ),
+    }
+
+    store.stop().await;
+    let gone = sessions_store.sessions_of(&bot).await;
+    assert!(
+        matches!(gone, Err(SessionError::Store(_))),
+        "a store that cannot be reached did not read as one: {gone:?}"
+    );
+}
+
+/// 🚨 **The mailbox rail tells a write the store refused from a store that
+/// cannot be reached**: two posts of the same words against a unique index,
+/// and then a store that is gone.
+#[tokio::test]
+async fn a_refused_mailbox_write_is_not_reported_as_an_unreachable_store() {
+    let scratch = Scratch::new("mailbox-refused-write");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("mailbox_refused_write")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let mailboxes_store = DoltMailboxes::open(pool.clone(), Arc::new(RosterOnly));
+    sqlx::query("ALTER TABLE message ADD UNIQUE INDEX one_telling (body(100))")
+        .execute(&pool)
+        .await
+        .expect("the store takes a unique index");
+
+    let owner = EntityId(mailboxes::OWNERS[0].to_string());
+    let name = MailboxName("refused-not-an-outage".into());
+    mailboxes_store
+        .create_mailbox(&name, &owner, None)
+        .await
+        .expect("create_mailbox ok")
+        .written()
+        .expect("nothing collides");
+    let post = || NewMessage {
+        mailbox: name.clone(),
+        body: "the same words".into(),
+        subject: None,
+        sender: owner.to_string(),
+        sent_at: mailboxes::epoch(),
+        in_reply_to: None,
+        sender_mail_waiting_at_send: None,
+        posted_by_session: None,
+    };
+    mailboxes_store
+        .post_message(post())
+        .await
+        .expect("the first post lands");
+
+    let refused = mailboxes_store.post_message(post()).await;
+    match &refused {
+        Err(MailboxError::Store(said)) => {
+            panic!("a write the store refused came back as the words for an outage: {said:?}")
+        }
+        other => assert!(
+            matches!(other, Err(MailboxError::Refused(_))),
+            "a write the store refused came back as something else: {other:?}"
+        ),
+    }
+
+    store.stop().await;
+    let gone = mailboxes_store.list_mailboxes().await;
+    assert!(
+        matches!(gone, Err(MailboxError::Store(_))),
+        "a store that cannot be reached did not read as one: {gone:?}"
+    );
+}
+
+/// 🚨 **The teaching rail tells a write the store refused from a store that
+/// cannot be reached.** (Neither reaches a caller: a teaching that could not be
+/// recorded is logged and the verb it rides on still succeeds. The adapter
+/// still has to say which it was, and the log is what carries it.) Two sessions
+/// are taught the same domain against a unique index on the domain, and then the
+/// store is gone.
+#[tokio::test]
+async fn a_refused_teaching_write_is_not_reported_as_an_unreachable_store() {
+    let scratch = Scratch::new("teaching-refused-write");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("teaching_refused_write")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    let teaching_store = DoltTeachings::open(pool.clone());
+    sqlx::query("ALTER TABLE session_teaching ADD UNIQUE INDEX one_domain (domain)")
+        .execute(&pool)
+        .await
+        .expect("the store takes a unique index");
+
+    teaching_store
+        .first_contact(&Sid("rft1".into()), "same-domain", mailboxes::epoch())
+        .await
+        .expect("the first session is taught");
+    let refused = teaching_store
+        .first_contact(&Sid("rft2".into()), "same-domain", mailboxes::epoch())
+        .await;
+    match &refused {
+        Err(TeachingError::Store(said)) => {
+            panic!("a write the store refused came back as the words for an outage: {said:?}")
+        }
+        other => assert!(
+            matches!(other, Err(TeachingError::Refused(_))),
+            "a write the store refused came back as something else: {other:?}"
+        ),
+    }
+
+    store.stop().await;
+    let gone = teaching_store
+        .first_contact(&Sid("rft3".into()), "another-domain", mailboxes::epoch())
+        .await;
+    assert!(
+        matches!(gone, Err(TeachingError::Store(_))),
+        "a store that cannot be reached did not read as one: {gone:?}"
+    );
+}
+
 /// 🚨 **A write the store refuses is told apart from a store that cannot be
 /// reached.**
 ///

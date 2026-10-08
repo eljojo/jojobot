@@ -759,6 +759,15 @@ pub enum MailboxError {
     /// its answers.
     #[error("store error: {0}")]
     Store(String),
+    /// **The store was reached and refused the write** on a rule it enforces
+    /// itself: see [`crate::memory::MemoryError::Refused`], the same distinction
+    /// on this rail. The word is the rule's kind and nothing of the server's own
+    /// account.
+    #[error(
+        "the store refused this write on a rule it enforces ({0}); nothing was written, and \
+         sending the same call again will meet the same refusal"
+    )]
+    Refused(String),
     /// **A write collided with another that landed the same instant** — see
     /// [`crate::memory::MemoryError::Conflict`], the same distinction on
     /// this rail: the store answered correctly and promptly, so this is not

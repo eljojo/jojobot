@@ -24,6 +24,22 @@ pub mod migrate;
 pub mod sessions;
 pub mod teaching;
 
+/// **Whether the store refused a write on a rule it enforces**, and the kind of
+/// rule if it did: a key held twice, a reference to nothing, a required value left
+/// out, a failed check. Every rail's error mapper asks this one question, so the
+/// four of them cannot disagree about what a refusal is. The words are the
+/// kind and nothing of the server's own account, which is logged and never
+/// crosses.
+pub(crate) fn refused_rule(e: &sqlx::Error) -> Option<&'static str> {
+    e.as_database_error().and_then(|db| match db.kind() {
+        sqlx::error::ErrorKind::UniqueViolation => Some("a key held twice"),
+        sqlx::error::ErrorKind::ForeignKeyViolation => Some("a reference to nothing"),
+        sqlx::error::ErrorKind::NotNullViolation => Some("a required value left out"),
+        sqlx::error::ErrorKind::CheckViolation => Some("a check that failed"),
+        _ => None,
+    })
+}
+
 /// The database jojobot serves out of its data directory. Named rather than
 /// derived from the directory, so a test's temporary path and the deployed
 /// `/var/lib/jojobot/db` address the same database by the same name.

@@ -305,6 +305,12 @@ pub(crate) fn mailbox_error(e: MailboxError) -> McpError {
         MailboxError::Store(msg) => {
             McpError::internal_error(crate::boundary::store_failed("this call", &msg), None)
         }
+        // **A refusal is not an outage** — see the memory rail's own doc on
+        // this shape: the store answered, and the same call meets the same
+        // refusal.
+        MailboxError::Refused(rule) => {
+            McpError::internal_error(crate::boundary::refused("this call", &rule), None)
+        }
         // **A conflict is not a failure** — see the memory rail's own doc on
         // this shape. It reaches the caller through the same JSON-RPC error
         // shape as `Store` (a payload a client cannot act on is a server
@@ -423,6 +429,24 @@ mod tests {
                  {expected}\n  got: {advice}"
             );
         }
+    }
+
+    /// **`mailbox_error` routes `Refused` through `refused`, not `store_failed`**, as
+    /// the memory rail does: a refusal and an outage reach the caller as
+    /// different answers, and the refusal names the kind of rule.
+    #[test]
+    fn a_refused_write_is_mapped_through_its_own_sentence_not_the_failure_one() {
+        let refused = mailbox_error(MailboxError::Refused("a key held twice".into()));
+        let outage = mailbox_error(MailboxError::Store("the store is gone".into()));
+        assert_ne!(
+            refused.message, outage.message,
+            "a refusal and an outage reached the caller as one answer"
+        );
+        assert!(
+            refused.message.contains("a key held twice"),
+            "the caller is told which kind of rule refused it: {}",
+            refused.message
+        );
     }
 
     /// **`mailbox_error` routes `Conflict` through `conflict`, not

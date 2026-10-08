@@ -368,6 +368,10 @@ fn store(e: sqlx::Error) -> SessionError {
         tracing::warn!(error = %e, "a write conflicted with another landing the same instant");
         return SessionError::Conflict;
     }
+    if let Some(rule) = super::refused_rule(&e) {
+        tracing::error!(error = %e, rule, "the session store refused a write on a rule it enforces");
+        return SessionError::Refused(rule.to_string());
+    }
     tracing::error!(error = %e, "the session store failed");
     SessionError::Store("the session store could not be reached".into())
 }
