@@ -101,16 +101,43 @@ struct Ran {
     stderr: String,
 }
 
+/// **What a run's directory is called.** The process, the clock and a counter
+/// that no two callers in this process share. The clock alone does not separate
+/// two runs: these cases start on threads released together, and two of them
+/// read it close enough together to get one answer, and then two bars write one
+/// call log and the first to finish removes the directory under the other. The
+/// counter is what makes the name unique whatever the clock says.
+///
+/// Pure, so the property is checkable with a clock that stands still.
+fn directory_name(pid: u32, nanos: u128, nth: u64) -> String {
+    format!("jojobot-bar-par-{pid}-{nanos}-{nth}")
+}
+
+/// A directory no other run in this process uses.
+fn a_directory_of_this_runs_own() -> PathBuf {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    a_directory_at(nanos)
+}
+
+/// The directory for a run that read `nanos` off the clock.
+fn a_directory_at(nanos: u128) -> PathBuf {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    std::env::temp_dir().join(directory_name(
+        std::process::id(),
+        nanos,
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+    ))
+}
+
 fn run_check(env: &[(&str, &str)]) -> Ran {
     run_bar(&["check"], env)
 }
 
 fn run_bar(args: &[&str], env: &[(&str, &str)]) -> Ran {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("clock")
-        .as_nanos();
-    let dir = std::env::temp_dir().join(format!("jojobot-bar-par-{}-{nanos}", std::process::id()));
+    let dir = a_directory_of_this_runs_own();
     fs::create_dir_all(&dir).expect("scratch dir");
     let cargo = write_cargo(&dir);
     let out = Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
@@ -498,4 +525,24 @@ fn the_jobs_of_a_run_work_in_a_directory_of_its_own_that_is_gone_when_it_ends() 
         left.is_empty(),
         "the run's directory was left behind: {left:?}"
     );
+}
+
+/// **Two runs that read one clock value get two directories.** A name made from
+/// the process and the clock is the same name for two runs that start in the
+/// same instant, and they then share a call log; a name with the counter in it
+/// is not. The second half asks the real function from many threads at once,
+/// all handed the same clock value, and expects every answer different.
+#[test]
+fn two_runs_that_read_one_clock_value_get_two_directories() {
+    assert_ne!(directory_name(7, 1_000, 0), directory_name(7, 1_000, 1));
+
+    let names: std::collections::BTreeSet<PathBuf> = std::thread::scope(|scope| {
+        (0..32)
+            .map(|_| scope.spawn(|| a_directory_at(1_000)))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|handle| handle.join().expect("a thread"))
+            .collect()
+    });
+    assert_eq!(names.len(), 32, "two callers were given one directory");
 }
