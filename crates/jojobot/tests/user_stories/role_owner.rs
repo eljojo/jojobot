@@ -214,3 +214,76 @@ async fn only_the_owner_or_the_chart_head_may_archive_or_restore_a_role_object()
     s.wrap("kept the role object with its owner").await;
     story.finish().await;
 }
+
+/// "Alpha archived the role object. Can anyone claim the role now?"
+///
+/// **A claim whose role object is archived is refused, and the refusal names the
+/// way back.** The object is archived but its claim record is still on it, and a
+/// claim would be written onto an object nobody reads. The way forward is to
+/// restore the object, which only its parent or the chart head may do; the
+/// refusal says so. Restored, the object is the owner's again and the other bot
+/// is told the role belongs to alpha, so a build that refused every claim of
+/// this role would not pass.
+#[tokio::test]
+async fn a_claim_on_an_archived_role_object_is_refused_naming_the_restore() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:alpha", "Alpha").await;
+    s.add("bot:beta", "Beta").await;
+    let alpha = story.as_bot("bot:alpha").await;
+    let claim_as = |bot: &'static str| {
+        let story = &story;
+        async move {
+            let (booted, _) = story
+                .call(
+                    "start_here",
+                    json!({"bot": bot, "brief": true, "claim": "gamma", "resume": "new"}),
+                )
+                .await;
+            booted.json()
+        }
+    };
+
+    let first = claim_as("alpha").await;
+    assert_eq!(claim_of(&first)["status"], "taken", "{first}");
+    alpha
+        .call(
+            "archive_entity",
+            json!({"handle": "role:gamma", "reason": "made by mistake"}),
+        )
+        .await;
+
+    // ── nobody claims it while it is archived, and the answer says how back ──
+    for bot in ["beta", "alpha"] {
+        let claim = claim_as(bot).await;
+        let said = claim_of(&claim);
+        assert_eq!(said["status"], "refused", "{claim}");
+        assert_eq!(said["fix_by"], "change", "{claim}");
+        let how = said["how_to_proceed"].as_str().unwrap_or_default();
+        assert!(
+            how.contains("role:gamma") && how.contains("restore") && how.contains("bot:alpha"),
+            "the refusal names the object, the restore and who may: {claim}"
+        );
+    }
+    s.list("role").await.never_says("role:gamma");
+
+    // ── restored, the object is alpha's again and the answer changes ────────
+    alpha
+        .call(
+            "archive_entity",
+            json!({"handle": "role:gamma", "reason": "needed after all", "restore": true}),
+        )
+        .await;
+    let after = claim_as("beta").await;
+    assert_eq!(claim_of(&after)["owner"], "bot:alpha", "{after}");
+    assert!(
+        !claim_of(&after)["how_to_proceed"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("restore"),
+        "a restored object is no longer sent to be restored: {after}"
+    );
+
+    s.wrap("archived and restored the role object").await;
+    story.finish().await;
+}

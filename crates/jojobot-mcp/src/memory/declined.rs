@@ -1180,6 +1180,23 @@ pub(crate) fn role_owned_way_forward(role: &str, owner: &str) -> String {
     )
 }
 
+/// **What to do about a role whose object is archived.** The refusal a claim at
+/// the boot door gets when the object `role:<role>` stands archived: the way
+/// forward is to restore the object, which only the bot it belongs to or a bot
+/// heading the chart may do, and then claim again.
+pub(crate) fn role_archived_way_forward(
+    role: &str,
+    object: &str,
+    may_restore: &[String],
+) -> String {
+    format!(
+        "'{role}' was not claimed: its role object {object} is archived. Restore it with \
+         archive_entity, handle '{object}' and restore true; only {} may. Then claim '{role}' \
+         again. Nothing was written.",
+        may_restore.join(" or "),
+    )
+}
+
 /// Map a domain [`MemoryError`] to an MCP error, splitting client mistakes
 /// (invalid params) from server-side failures.
 pub(crate) fn memory_error(e: MemoryError) -> McpError {

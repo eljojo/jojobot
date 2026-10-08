@@ -921,6 +921,43 @@ impl Jojobot {
                 );
             }
         }
+        // **An archived role object is restored before the role is claimed.**
+        match self.archived_role_object(role).await {
+            Ok(Some(parent)) => {
+                let object = format!("role:{role}");
+                let mut may_restore: Vec<String> = parent.iter().map(ToString::to_string).collect();
+                match self.live_chart_heads().await {
+                    Ok(heads) => may_restore.extend(heads.iter().map(ToString::to_string)),
+                    Err(e) => {
+                        tracing::warn!(error = %e, %bot, role, "the chart heads could not be read");
+                        return unavailable_claim(
+                            role,
+                            "the claim could not be decided, because the bots that may restore \
+                             the archived role object could not be read. Nothing is held.",
+                        );
+                    }
+                }
+                return serde_json::json!({
+                    "role": role,
+                    "status": "refused",
+                    FixBy::KEY: FixBy::Change.as_token(),
+                    "how_to_proceed": crate::memory::role_archived_way_forward(
+                        role,
+                        &object,
+                        &may_restore,
+                    ),
+                });
+            }
+            Ok(None) => {}
+            Err(e) => {
+                tracing::warn!(error = %e, %bot, role, "the role object could not be read");
+                return unavailable_claim(
+                    role,
+                    "the claim could not be decided, because the role object could not be \
+                     read. Nothing is held.",
+                );
+            }
+        }
         let written = self
             .write_role_keys(
                 bot,

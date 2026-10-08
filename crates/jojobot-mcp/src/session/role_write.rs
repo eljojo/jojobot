@@ -208,6 +208,25 @@ impl Jojobot {
         Ok(parent.filter(|parent| parent != claimant))
     }
 
+    /// **The parent of the role's object, when that object is archived.**
+    /// `None` means there is no archived object under the name: it is free,
+    /// live, or not made yet. A claim does not go on over an archived object,
+    /// because it would write a holder and a moment onto an object nobody reads,
+    /// and the name stays taken by it. Read before the claim writes anything.
+    pub(crate) async fn archived_role_object(
+        &self,
+        role: &str,
+    ) -> Result<Option<Option<EntityId>>, MemoryError> {
+        let object = EntityId::new(EntityKind::ROLE, role);
+        Ok(self
+            .memory
+            .list_entities(Some(EntityKind::ROLE))
+            .await?
+            .into_iter()
+            .find(|entity| entity.id == object && entity.archived.is_some())
+            .map(|entity| entity.parent))
+    }
+
     /// **The bots that head a chart, archived entities left out**: a bot with no
     /// manager that something live reports to. The operator guard asks a
     /// different question with the same word (`chart_heads` in capture.rs counts
