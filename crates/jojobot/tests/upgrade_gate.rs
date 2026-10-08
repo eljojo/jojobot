@@ -175,8 +175,12 @@ async fn boots_on_a_store_filled_by(fixture_dir: &str, label: &str) {
     assert_a_role_claimed_in_the_old_shape_is_held_and_moves(&surface, &git_ref, &role_holder)
         .await;
     surface.finish().await;
-
     third.stop().await;
+
+    // The role is now claim-shaped, with the claim the holder's write made. A
+    // fourth boot is the restart of the deployed server over it.
+    assert_a_claim_shaped_lease_renews_in_place(&state_dir, store_port, &git_ref, &role_holder)
+        .await;
     drop(scratch);
 }
 
@@ -319,6 +323,96 @@ async fn dump_store(state_dir: &std::path::Path) -> String {
         .expect("the dump is where dolt put it");
     let _ = std::fs::remove_file(database_dir.join("gate-compare.sql"));
     text
+}
+
+/// **A lease on a role object survives a restart, and a renewal past the renewal
+/// age overwrites its moment instead of adding a write.** The store is left as
+/// the previous steps made it, the moment on the role object is aged to ten
+/// minutes ago with the binary stopped, and the current binary boots over it. The
+/// holder is read back, a rival is refused, and the holder's next write renews:
+/// the moment is new and the key still holds the writes it had.
+async fn assert_a_claim_shaped_lease_renews_in_place(
+    state_dir: &std::path::Path,
+    store_port: u16,
+    git_ref: &str,
+    role_holder: &str,
+) {
+    let fail = |what: &str, body: &str| -> ! { panic!("recorded at {git_ref}: {what}: {body}") };
+    let database_dir = state_dir.join("db").join("jojobot");
+    let aged = (jiff::Timestamp::now() - jiff::SignedDuration::from_mins(10)).to_string();
+    let aging = tokio::process::Command::new("dolt")
+        .arg("sql")
+        .arg("-q")
+        .arg(format!(
+            "UPDATE field_write SET value = '{aged}' WHERE `key` = 'claimed_at' AND entity = \
+             (SELECT COALESCE(badge, id) FROM entity WHERE id = 'role:upgrade-fixture-holder')"
+        ))
+        .current_dir(&database_dir)
+        .output()
+        .await
+        .expect("dolt sql runs");
+    if !aging.status.success() {
+        fail(
+            "the role object's moment could not be aged",
+            &String::from_utf8_lossy(&aging.stderr),
+        );
+    }
+
+    let fourth = boot_current(state_dir, store_port, git_ref).await;
+    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", fourth.http_port))
+        .await
+        .expect("connecting to the current binary");
+    let read_role = || async {
+        let read = surface
+            .call(
+                "recall",
+                json!({"subject": "role:upgrade-fixture-holder", "history": "claimed_at"}),
+            )
+            .await;
+        let parsed: serde_json::Value =
+            serde_json::from_str(&read).unwrap_or_else(|_| fail("the role object", &read));
+        parsed["objects"][0].clone()
+    };
+
+    let before = read_role().await;
+    if before["fields"]["holder"] != role_holder || before["fields"]["claimed_at"] != aged {
+        fail(
+            "the claim-shaped lease did not read back across a restart",
+            &before.to_string(),
+        );
+    }
+    let rival = surface
+        .call(
+            "start_here",
+            json!({"bot": "assistant", "brief": true, "resume": "new",
+                   "claim": "upgrade-fixture-holder"}),
+        )
+        .await;
+    if !rival.contains("\"refused\"") {
+        fail("a rival was not refused by the restarted lease", &rival);
+    }
+
+    let beat = surface
+        .call(
+            "journal",
+            json!({"entry": "renewed after the restart", "sid": role_holder}),
+        )
+        .await;
+    if beat.contains("\"status\":\"blocked\"") {
+        fail("the holder's write after the restart was refused", &beat);
+    }
+    let after = read_role().await;
+    if after["fields"]["claimed_at"] == before["fields"]["claimed_at"] {
+        fail("the renewal did not move the moment", &after.to_string());
+    }
+    if after["history"]["count"] != before["history"]["count"] {
+        fail(
+            "the renewal added a write to the lease moment",
+            &format!("{} then {}", before["history"], after["history"]),
+        );
+    }
+    surface.finish().await;
+    fourth.stop().await;
 }
 
 /// **A naive split, safe for what this fixture actually contains**: this

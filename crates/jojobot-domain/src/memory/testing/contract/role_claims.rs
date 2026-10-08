@@ -660,7 +660,212 @@ pub async fn a_role_objects_other_keys_land_without_moving_the_lease<M: Memory>(
     );
 }
 
+/// **Renewals overwrite the lease moment; they do not add to the claim's
+/// history.** A renewal is machine state: the holder is alive, and the one
+/// thing that changes is when. Twenty renewals leave the moment with the one
+/// write the claim made, carrying the newest moment, and the claim with the one
+/// write it started with.
+///
+/// **Paired with the positive**, or a store that ignored renewals would pass:
+/// the renewed moment is what a rival is refused against, so a claim made after
+/// the ORIGINAL moment would have lapsed is still refused, and one made after
+/// the renewed moment lapses is granted.
+pub async fn many_renewals_leave_the_lease_moment_at_one_write<M: Memory>(store: &M) {
+    let seat = a_seat(
+        store,
+        "bot:contract-role-many-renewals",
+        "role:contract-many-renewals",
+    )
+    .await;
+    let t0 = crate::session::testing::contract::epoch() + jiff::SignedDuration::from_secs(60);
+    let claimed = capture(
+        store,
+        NewFact {
+            fields: role_fields("delta", t0),
+            ..NewFact::about(seat.role.clone(), "delta claims the role", date(2026, 7, 1))
+        },
+    )
+    .await;
+
+    let mut last = t0;
+    for n in 1..=20 {
+        last = t0 + jiff::SignedDuration::from_mins(5 * n);
+        let renewed = store
+            .update_fact(
+                &claimed.address(),
+                FactPatch {
+                    fields: role_fields("delta", last),
+                    role_move: Some(crate::session::RoleMove {
+                        kind: crate::session::RoleMoveKind::Renew,
+                        role: seat.name.clone(),
+                        claimant: "delta".to_string(),
+                    }),
+                    ..FactPatch::default()
+                },
+                &seat.bot,
+            )
+            .await;
+        assert!(
+            matches!(renewed, Ok(Guarded::Written(_))),
+            "renewal {n} must land: {renewed:?}"
+        );
+    }
+
+    let moment = store
+        .history(&seat.role, crate::session::ROLE_CLAIMED_AT)
+        .await
+        .expect("history is readable");
+    assert_eq!(
+        moment.len(),
+        1,
+        "twenty renewals must leave the lease moment at the claim's one write: {moment:?}"
+    );
+    let holder = store
+        .history(&seat.role, crate::session::ROLE_HOLDER)
+        .await
+        .expect("history is readable");
+    assert_eq!(holder.len(), 1, "a renewal rewrites no holder: {holder:?}");
+    let writes = store
+        .claim_history(&claimed.address())
+        .await
+        .expect("the claim's writes are readable");
+    assert_eq!(
+        writes.len(),
+        1,
+        "a renewal adds no write to the claim: {writes:?}"
+    );
+
+    let fields = folded_fields_of(store, &seat.role).await;
+    assert_eq!(
+        fields.get(crate::session::ROLE_CLAIMED_AT),
+        Some(&last.to_string()),
+        "the one write carries the newest moment: {fields:?}"
+    );
+    assert_eq!(
+        fields.get(crate::session::ROLE_HOLDER),
+        Some(&"delta".to_string()),
+        "{fields:?}"
+    );
+
+    // The renewed moment is the lease: a rival one second past the ORIGINAL
+    // lease is refused, and one second past the renewed lease is granted.
+    let rival = |at| FactPatch {
+        fields: role_fields("epsilon", at),
+        ..FactPatch::default()
+    };
+    let inside = t0 + crate::session::LEASE_FRESHNESS + jiff::SignedDuration::from_secs(1);
+    let refused = store
+        .update_fact(&claimed.address(), rival(inside), &seat.bot)
+        .await;
+    assert!(
+        matches!(refused, Err(MemoryError::RoleTaken { ref holder, .. }) if holder == "delta"),
+        "the lease the renewals kept alive refuses a rival: {refused:?}"
+    );
+    let past = last + crate::session::LEASE_FRESHNESS + jiff::SignedDuration::from_secs(1);
+    let taken = store
+        .update_fact(&claimed.address(), rival(past), &seat.bot)
+        .await;
+    assert!(
+        matches!(taken, Ok(Guarded::Written(_))),
+        "a lease that lapsed without a renewal is takeable: {taken:?}"
+    );
+}
+
+/// **Only a renewal's moment is overwritten.** Every other key on a role, and
+/// the claim and the release, still append: a second key written twice has two
+/// writes, and a claim, a release and a second claim leave the moment with three.
+/// Without this, a store that overwrote every key on a role object would pass the
+/// case above.
+pub async fn only_a_renewals_moment_is_overwritten<M: Memory>(store: &M) {
+    let seat = a_seat(
+        store,
+        "bot:contract-role-only-renewals",
+        "role:contract-only-renewals",
+    )
+    .await;
+    let t0 = crate::session::testing::contract::epoch() + jiff::SignedDuration::from_secs(60);
+    let claimed = capture(
+        store,
+        NewFact {
+            fields: role_fields("delta", t0),
+            ..NewFact::about(seat.role.clone(), "delta claims the role", date(2026, 7, 1))
+        },
+    )
+    .await;
+
+    for agent in ["first-agent", "second-agent"] {
+        let wrote = store
+            .capture(NewFact {
+                fields: [("agent".to_string(), agent.to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(
+                    seat.role.clone(),
+                    "the line records its agent",
+                    date(2026, 7, 1),
+                )
+            })
+            .await;
+        assert!(matches!(wrote, Ok(Guarded::Written(_))), "{wrote:?}");
+    }
+    let agent = store.history(&seat.role, "agent").await.expect("history");
+    assert_eq!(
+        agent.len(),
+        2,
+        "a key that is not the lease moment appends: {agent:?}"
+    );
+
+    let move_of = |kind| {
+        Some(crate::session::RoleMove {
+            kind,
+            role: seat.name.clone(),
+            claimant: "delta".to_string(),
+        })
+    };
+    let released = store
+        .update_fact(
+            &claimed.address(),
+            FactPatch {
+                fields: [(
+                    crate::session::ROLE_CLAIMED_AT.to_string(),
+                    jiff::Timestamp::UNIX_EPOCH.to_string(),
+                )]
+                .into_iter()
+                .collect(),
+                clear_fields: vec![crate::session::ROLE_HOLDER.to_string()],
+                role_move: move_of(crate::session::RoleMoveKind::Release),
+                ..FactPatch::default()
+            },
+            &seat.bot,
+        )
+        .await;
+    assert!(matches!(released, Ok(Guarded::Written(_))), "{released:?}");
+    let taken = store
+        .update_fact(
+            &claimed.address(),
+            FactPatch {
+                fields: role_fields("epsilon", t0 + jiff::SignedDuration::from_mins(1)),
+                ..FactPatch::default()
+            },
+            &seat.bot,
+        )
+        .await;
+    assert!(matches!(taken, Ok(Guarded::Written(_))), "{taken:?}");
+
+    let moment = store
+        .history(&seat.role, crate::session::ROLE_CLAIMED_AT)
+        .await
+        .expect("history is readable");
+    assert_eq!(
+        moment.len(),
+        3,
+        "a claim, a release and a second claim each append: {moment:?}"
+    );
+}
+
 pub async fn run_all_role_claims<M: Memory>(store: &M) {
+    many_renewals_leave_the_lease_moment_at_one_write(store).await;
+    only_a_renewals_moment_is_overwritten(store).await;
     a_role_claimed_in_the_old_shape_is_still_held(store).await;
     a_released_role_object_is_not_read_past_to_the_old_keys(store).await;
     a_role_objects_other_keys_land_without_moving_the_lease(store).await;

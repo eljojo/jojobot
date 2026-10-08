@@ -914,6 +914,33 @@ impl InMemoryMemory {
         Some((role, state))
     }
 
+    /// **The one place a write of the fake's field substrate is changed after
+    /// it was made, and the only key it may change.** A role's lease moment is
+    /// machine state: the holder is alive, and what changes is when. Appending a
+    /// write per renewal grew the claim for as long as the role was held, and
+    /// nothing reads those writes back. So a renewal replaces the value of the
+    /// newest `claimed_at` write on the role and adds nothing. A claim and a
+    /// release still append, and so does every other key, which is what the
+    /// contract's second role case holds.
+    ///
+    /// `false` when the role has no live moment to overwrite (a role claimed in
+    /// the old shape, whose first renewal on the object is an append): the caller
+    /// then writes as it always did.
+    fn overwrite_lease_moment(&self, home: &EntityId, moment: &str) -> bool {
+        let mut writes = self.writes.lock().expect("fake mutex poisoned");
+        let newest = writes
+            .iter_mut()
+            .filter(|w| &w.entity == home && w.key == crate::session::ROLE_CLAIMED_AT)
+            .max_by_key(|w| w.ordinal);
+        match newest {
+            Some(write) if write.value.is_some() => {
+                write.value = Some(moment.to_string());
+                true
+            }
+            _ => false,
+        }
+    }
+
     fn writes_on(&self, entity: &EntityId, facts: &[Fact]) -> Vec<super::super::KeyWrite> {
         let writes = self.writes.lock().expect("fake mutex poisoned");
         writes
@@ -1966,15 +1993,29 @@ impl Memory for InMemoryMemory {
         // atomically with the write it gates** — the same check `capture`
         // runs, against the same state under the same lock, so a renewal and a
         // fresh claim are one mechanism rather than two.
-        if let Some((role, state)) = self.role_state_for(entity, &index, &facts)
+        let role_state = self.role_state_for(entity, &index, &facts);
+        if let Some((role, state)) = &role_state
             && let Some(refused) = super::super::refuses_role_write(
-                &role,
+                role,
                 patch.role_move.as_ref(),
                 &patch.fields,
-                &state,
+                state,
             )
         {
             return Err(refused);
+        }
+        // **A renewal overwrites the lease moment and appends nothing.** See
+        // [`Self::overwrite_lease_moment`] for the one exception this is, and
+        // the real store's identical step.
+        if role_state.is_some()
+            && patch
+                .role_move
+                .as_ref()
+                .is_some_and(|m| m.kind == crate::session::RoleMoveKind::Renew)
+            && let Some(moment) = patch.fields.get(crate::session::ROLE_CLAIMED_AT)
+            && self.overwrite_lease_moment(&fact.home, moment)
+        {
+            return Ok(Guarded::Written(self.served(self.projected(fact), &handle)));
         }
         // **The patch is applied to the record as it reads now**, so a set that
         // replaces a value is validated against the value it replaces — and the

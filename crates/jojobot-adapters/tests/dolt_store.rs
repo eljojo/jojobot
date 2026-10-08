@@ -3873,6 +3873,124 @@ async fn a_fields_miss_still_answers_with_its_near_candidates() {
     store.stop().await;
 }
 
+/// **A renewal of a role's lease moves the version `Folded` keys on.** The
+/// renewal overwrites the moment and adds no claim write, so the version has to
+/// come from somewhere else or a cache could go on holding the older moment: the
+/// watchers read a lease through that cache and restart a session when it looks
+/// old. The case renews with the real store, reads the version and the fields
+/// before and after, and reads the same moment through `Folded`.
+#[tokio::test]
+async fn a_lease_renewal_moves_the_version_the_cache_keys_on() {
+    use jojobot_domain::memory::{FactPatch, Guarded, NewEntity, NewFact};
+    use jojobot_domain::session::{ROLE_CLAIMED_AT, ROLE_HOLDER, RoleMove, RoleMoveKind};
+
+    let scratch = Scratch::new("lease_renewal_version");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("memory")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = Arc::new(DoltMemory::open(pool));
+
+    let bot = EntityId("bot:contract-lease-holder".into());
+    memory
+        .add_entity(NewEntity::new(
+            bot.clone(),
+            "Contract Lease Holder",
+            "user-named",
+        ))
+        .await
+        .expect("add ok")
+        .written()
+        .expect("not blocked");
+    let role = EntityId("role:contract-lease-version".into());
+    memory
+        .add_entity(NewEntity {
+            parent: Some(bot.clone()),
+            ..NewEntity::new(role.clone(), "lease-version", "contract-fixture")
+        })
+        .await
+        .expect("add ok")
+        .written()
+        .expect("not blocked");
+    let t0 = jiff::Timestamp::now() - jiff::SignedDuration::from_mins(10);
+    let fields_at = |at: jiff::Timestamp| {
+        std::collections::BTreeMap::from([
+            (ROLE_HOLDER.to_string(), "delta".to_string()),
+            (ROLE_CLAIMED_AT.to_string(), at.to_string()),
+        ])
+    };
+    let claim = memory
+        .capture(NewFact {
+            fields: fields_at(t0),
+            ..NewFact::about(role.clone(), "delta claims the role", date(2026, 9, 1))
+        })
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("not blocked");
+
+    let folded = Folded::new(memory.clone());
+    folded.rebuild().await.expect("the fold fills");
+    let (_, before) = memory
+        .fields_versioned(&role)
+        .await
+        .expect("a versioned read answers");
+
+    let renewed_at = t0 + jiff::SignedDuration::from_mins(6);
+    let renewed = memory
+        .update_fact(
+            &claim.address(),
+            FactPatch {
+                fields: fields_at(renewed_at),
+                role_move: Some(RoleMove {
+                    kind: RoleMoveKind::Renew,
+                    role: "lease-version".into(),
+                    claimant: "delta".into(),
+                }),
+                ..FactPatch::default()
+            },
+            &bot,
+        )
+        .await
+        .expect("update ok");
+    assert!(matches!(renewed, Guarded::Written(_)), "{renewed:?}");
+
+    let (held, after) = memory
+        .fields_versioned(&role)
+        .await
+        .expect("a versioned read answers");
+    assert_eq!(
+        held.get(ROLE_CLAIMED_AT),
+        Some(&renewed_at.to_string()),
+        "the store answers the renewed moment: {held:?}"
+    );
+    assert!(
+        after > before,
+        "a renewal adds no claim write, so the version has to move some other way: \
+         {before} then {after}"
+    );
+    // Through the same wrapper recall reads: the write refreshes it.
+    let through = Folded::new(memory.clone());
+    through.rebuild().await.expect("the fold fills");
+    assert_eq!(
+        through
+            .fields(&role)
+            .await
+            .expect("the fold answers")
+            .get(ROLE_CLAIMED_AT),
+        Some(&renewed_at.to_string()),
+        "a fold rebuilt after the renewal holds the renewed moment"
+    );
+    drop(folded);
+
+    store.stop().await;
+}
+
 /// **`fields_versioned` defers the listing the same way.** It is the read
 /// every write refresh makes, so a listing built on its hit path is paid on
 /// every write.

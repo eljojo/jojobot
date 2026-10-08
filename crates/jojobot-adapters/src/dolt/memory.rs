@@ -2066,6 +2066,48 @@ impl DoltMemory {
         Ok(Some((role, state)))
     }
 
+    /// **The one place a row of `field_write` is changed after it was made, and
+    /// the only key it may change.** A role's lease moment is machine state: the
+    /// holder is alive, and what changes is when. Appending a write per renewal
+    /// grew the claim for as long as the role was held, and nothing reads those
+    /// writes back. So a renewal replaces the value of the newest `claimed_at`
+    /// write on the role and adds nothing. A claim and a release still append, and
+    /// so does every other key, which is what the contract's second role case
+    /// holds.
+    ///
+    /// `false` when the role has no live moment to overwrite (a role claimed in
+    /// the old shape, whose first renewal on the object is an append): the caller
+    /// then writes as it always did.
+    async fn overwrite_lease_moment(
+        tx: &mut Transaction<'_, MySql>,
+        role: &EntityId,
+        moment: &str,
+    ) -> Result<bool, MemoryError> {
+        let newest: Option<(i64, Option<String>)> = sqlx::query_as(
+            "SELECT ordinal, value FROM field_write
+             WHERE entity = ? AND `key` = ? ORDER BY ordinal DESC LIMIT 1",
+        )
+        .bind(role.as_str())
+        .bind(jojobot_domain::session::ROLE_CLAIMED_AT)
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(store)?;
+        let Some((ordinal, Some(_))) = newest else {
+            return Ok(false);
+        };
+        sqlx::query(
+            "UPDATE field_write SET value = ? WHERE entity = ? AND `key` = ? AND ordinal = ?",
+        )
+        .bind(moment)
+        .bind(role.as_str())
+        .bind(jojobot_domain::session::ROLE_CLAIMED_AT)
+        .bind(ordinal)
+        .execute(&mut **tx)
+        .await
+        .map_err(store)?;
+        Ok(true)
+    }
+
     /// **The columns of the project a work item or project is filed under**, read inside
     /// the write's own transaction off the project's folded fields. `None` is a
     /// thing that is not work, one under no project, or one whose project lists
@@ -3399,12 +3441,15 @@ impl Memory for DoltMemory {
     /// ledger nothing here ever removes a row from.**
     ///
     /// `fact_write` keeps every write of every claim, forever — a
-    /// correction is a new row beside the one it corrects, never an edit in
-    /// place. So `COUNT(*)` for one entity only grows, and it grows by at
-    /// least one for every write that could have changed what
-    /// [`fields`](Self::fields) answers. Read in the SAME transaction as the
-    /// fields it counts for, so the two halves of the answer describe the
-    /// same instant rather than two reads a write could land between.
+    /// correction is a new row beside the one it corrects. The one exception is
+    /// a role's lease moment, which a renewal overwrites and signals through
+    /// `entity_write` instead ([`Self::overwrite_lease_moment`]), so the count
+    /// is the claim writes plus the signal rows filed under the entity's
+    /// storage key. It only grows, and it grows by at least one for every write that could have
+    /// changed what [`fields`](Self::fields) answers. Read in the SAME
+    /// transaction as the fields it counts for, so the two halves of the answer
+    /// describe the same instant rather than two reads a write could land
+    /// between.
     async fn fields_versioned(
         &self,
         entity: &EntityId,
@@ -3424,8 +3469,18 @@ impl Memory for DoltMemory {
             .fetch_one(&mut *tx)
             .await
             .map_err(store)?;
+        // **A renewal of a lease adds no claim write**, only a signal row filed
+        // under the entity's storage key (see [`Self::overwrite_lease_moment`]),
+        // so the claim writes alone would leave the version where it was while the
+        // moment moved. Rows only ever join that table, so the sum only grows.
+        let signalled: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM entity_write WHERE entity = ?")
+                .bind(key.as_str())
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(store)?;
         tx.commit().await.map_err(store)?;
-        Ok((held, written as u64))
+        Ok((held, (written + signalled) as u64))
     }
 
     async fn claim_history(&self, address: &FactAddress) -> Result<Vec<ClaimWrite>, MemoryError> {
@@ -3717,15 +3772,49 @@ impl Memory for DoltMemory {
         // atomically with the write it gates** — the same check `capture`
         // runs, against the same state under the same transaction, so a
         // renewal and a fresh claim are one mechanism rather than two.
-        if let Some((role, state)) = self.role_state_of(&mut tx, &handle, &key).await?
+        let role_state = self.role_state_of(&mut tx, &handle, &key).await?;
+        if let Some((role, state)) = &role_state
             && let Some(refused) = jojobot_domain::memory::refuses_role_write(
-                &role,
+                role,
                 patch.role_move.as_ref(),
                 &patch.fields,
-                &state,
+                state,
             )
         {
             return Err(refused);
+        }
+        // **A renewal overwrites the lease moment and appends nothing.** See
+        // [`Self::overwrite_lease_moment`] for the one exception this is. A claim
+        // that also carries an edge, a source, a ref or a mark is served the
+        // ordinary way, below, so this answers only for the plain claim a role
+        // is made of.
+        if role_state.is_some()
+            && patch
+                .role_move
+                .as_ref()
+                .is_some_and(|m| m.kind == jojobot_domain::session::RoleMoveKind::Renew)
+            && fact.edge.is_none()
+            && fact.derived_from.is_none()
+            && fact.refs.is_empty()
+            && fact.stands_for.is_empty()
+            && let Some(moment) = patch.fields.get(jojobot_domain::session::ROLE_CLAIMED_AT)
+            && Self::overwrite_lease_moment(&mut tx, &key, moment).await?
+        {
+            // The signal `write_summary` reads, so the search index sees the new
+            // moment as a change although no claim write was added.
+            append_entity_write(&mut tx, &key, &self.clock).await?;
+            tx.commit().await.map_err(store)?;
+            let mut fields = fact.fields.clone();
+            fields.insert(
+                jojobot_domain::session::ROLE_CLAIMED_AT.to_string(),
+                moment.clone(),
+            );
+            return Ok(Guarded::Written(Fact {
+                fields,
+                home: handle.clone(),
+                subject: handle,
+                ..fact
+            }));
         }
         // What the ADDRESSED RECORD carries right now — read off before the
         // patch rewrites it, because that is what decides which of the patch's

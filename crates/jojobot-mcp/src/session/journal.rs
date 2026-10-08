@@ -1174,6 +1174,40 @@ mod tests {
         );
     }
 
+    /// **Renewals past the renewal age overwrite the lease moment.** The
+    /// bounded case above stays inside the renewal age, where nothing is
+    /// written. Here the lease is aged before each beat, so every beat renews:
+    /// the moment moves each time, and the holder's history stays at the one
+    /// write the claim made, because a renewal appends nothing.
+    #[tokio::test]
+    async fn renewals_past_the_renewal_age_add_no_write_to_the_claim() {
+        let (jojobot, memory, sid) = holding_dev_dispatch().await;
+        let role = EntityId("role:dev-dispatch".into());
+        let mut seen = Vec::new();
+        for n in 0..5 {
+            age_role_lease(&memory, "dev-dispatch", 10);
+            journal_entry(&jojobot, &sid, &format!("aged beat number {n}")).await;
+            let fields = jojobot.memory.fields(&role).await.expect("fields ok");
+            seen.push(fields.get("claimed_at").cloned().expect("a moment"));
+        }
+        let moved: std::collections::BTreeSet<_> = seen.iter().collect();
+        assert_eq!(
+            moved.len(),
+            5,
+            "every aged beat renewed, so every moment is new: {seen:?}"
+        );
+        let holder = jojobot
+            .memory
+            .history(&role, "holder")
+            .await
+            .expect("history ok");
+        assert_eq!(
+            holder.len(),
+            1,
+            "five renewals rewrote no holder: {holder:?}"
+        );
+    }
+
     /// **A lease still lapses once it is old enough, and a write inside the
     /// renewal age does not stretch it.** Forty-six minutes after the last
     /// renewal a rival takes the role; forty-four minutes after, it is
