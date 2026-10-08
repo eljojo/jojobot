@@ -272,8 +272,9 @@ impl Jojobot {
                        write of a claim is kept, so what it said before this call is still \
                        readable — recall the subject with history_record: the address, and you \
                        get every version of it, oldest first. So a claim you disagree with is \
-                       safe to correct: you are not deciding whether the old wording survives, \
-                       only what the claim says now. \
+                       safe to correct, unless it is testimony from an earlier session, which is \
+                       archived and replaced instead (below): you are not deciding whether the \
+                       old wording survives, only what the claim says now. \
                        TESTIMONY IS REWRITTEN IN PLACE ONLY BY THE SESSION THAT WROTE IT: a \
                        content rewrite of testimony from an earlier session is refused, and so is \
                        one of testimony that records no session. Archive it (status: archived, \

@@ -113,6 +113,19 @@ impl Clock {
         }
     }
 
+    /// **Which day a moment falls on**, in the same frame [`Clock::today_in`]
+    /// answers in, so a day read off a moment and a day read off the clock can sit
+    /// in one sentence. On the wall clock that is the moment in the zone the
+    /// caller asked in. A stated clock stamps its moments on its stated day, so a
+    /// moment it stamped belongs to that day whatever the zone: it is read in UTC,
+    /// which is where the stated day starts.
+    pub fn day_of(&self, moment: Timestamp, zone: &TimeZone) -> Date {
+        match self {
+            Clock::Real => moment.to_zoned(zone.clone()).date(),
+            Clock::Stated { .. } => moment.to_zoned(TimeZone::UTC).date(),
+        }
+    }
+
     /// The start of a day, in UTC. A day is always representable there, so the
     /// fallback below is unreachable rather than a choice.
     fn midnight(day: Date) -> Timestamp {
@@ -185,5 +198,26 @@ mod tests {
         let second = clock.now();
 
         assert!(second >= first, "{second} is not before {first}");
+    }
+    /// **A moment is read in the zone asked for on the wall clock, and on the
+    /// day it was stamped on a stated clock.** The same moment is the 8th in
+    /// Tokyo and the 7th in UTC; a stated clock stamps the 7th and the 7th it
+    /// stays, in any zone, because a stated day is a day somebody named and not a
+    /// moment to be read in a frame.
+    #[test]
+    fn a_moment_is_read_in_the_asked_zone_and_a_stated_one_on_its_stated_day() {
+        let moment: Timestamp = "2026-10-07T23:30:00Z".parse().expect("a moment");
+        let tokyo = TimeZone::get("Asia/Tokyo").expect("a zone");
+        assert_eq!(Clock::Real.day_of(moment, &tokyo), day("2026-10-08"));
+        assert_eq!(
+            Clock::Real.day_of(moment, &TimeZone::UTC),
+            day("2026-10-07")
+        );
+
+        let stated = Clock::stating(day("2026-10-07"));
+        let stamped = stated.now();
+        let honolulu = TimeZone::get("Pacific/Honolulu").expect("a zone");
+        assert_eq!(stated.day_of(stamped, &tokyo), day("2026-10-07"));
+        assert_eq!(stated.day_of(stamped, &honolulu), day("2026-10-07"));
     }
 }

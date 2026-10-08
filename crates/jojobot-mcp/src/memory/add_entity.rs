@@ -201,7 +201,8 @@ impl Jojobot {
                        refused refuses the whole call and creates nothing. The \
                        claim is inference: a field that needs the operator's own word \
                        (testimony), or one you read in a system of record (observation), is \
-                       written with capture. Returns the stored entity. If its handle or any of its names \
+                       written with capture. Returns the stored entity; with sets it also returns \
+                       first_claim, the claim written with it. If its handle or any of its names \
                        resembles something jojobot already knows, NOTHING is written: the \
                        result says status: blocked with candidates and how_to_proceed. Use the \
                        candidate you meant, or re-call with the override_token that refusal \
@@ -556,6 +557,29 @@ impl Jojobot {
 mod tests {
     use super::*;
     use crate::harness::*;
+
+    /// **The description of what a creation returns names the first claim.**
+    /// With `sets` the verb writes a first claim in the same act and returns it
+    /// beside the entity, so a sentence that says only "the stored entity" leaves
+    /// out half of the answer. The needle is the key the answer carries, found in
+    /// the sentence that says what is returned.
+    #[test]
+    fn the_description_of_what_is_returned_names_the_first_claim() {
+        let tools = Jojobot::tool_router().list_all();
+        let tool = tools
+            .iter()
+            .find(|tool| tool.name == "add_entity")
+            .expect("add_entity is served");
+        let description = tool.description.as_deref().unwrap_or_default();
+        let at = description
+            .find("Returns the stored entity")
+            .expect("the description says what is returned");
+        let sentence = description[at..].split(". ").next().expect("a sentence");
+        assert!(
+            sentence.contains("first_claim") && sentence.contains("sets"),
+            "what is returned does not name the first claim and what makes it: {sentence}"
+        );
+    }
 
     /// **The `kind` description names the keys a `work` or `project` carries**,
     /// beside what it says of `promise` and `rhythm`, so a session choosing a

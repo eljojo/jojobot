@@ -107,7 +107,18 @@ impl Jojobot {
             Err(e) => return memory_declined("archive_entity", e),
         };
         let day = self.dated(None, args.sid.as_deref()).await?;
-        let archived_on = was.at.to_zoned(jiff::tz::TimeZone::UTC).date();
+        // **The same frame as `day`**: the run's zone, else the instance's. The
+        // restore day and the archive day sit in one sentence of one claim.
+        let zone = match self
+            .caller(args.sid.as_deref())
+            .ok()
+            .flatten()
+            .and_then(|caller| caller.zone())
+        {
+            Some(zone) => zone,
+            None => self.unzoned_frame().await,
+        };
+        let archived_on = self.clock().day_of(was.at, &zone);
         let content = format!(
             "Restored from the archive on {day}, because: {}. It was archived on {archived_on}, \
              because: {}.",
@@ -191,6 +202,94 @@ mod tests {
         assert!(
             !ids.contains(&"person:bart"),
             "the entity this call archived still crossed the default listing: {listed}",
+        );
+    }
+
+    /// **The restore claim names both days in one frame.** It says on what day
+    /// the entity came back and on what day it was archived, and the archive day
+    /// used to be read in UTC while the restore day was the run's own, in the
+    /// instance's zone. The two acts happen a moment apart here, so one frame
+    /// gives one day twice. The instance's zone is picked so that its date is not
+    /// UTC's at this moment: one of two zones 25 hours apart always differs, which
+    /// makes the case about the frame rather than about the time of day. The days
+    /// are read as the dates the claim holds, not as its prose.
+    #[tokio::test]
+    async fn the_restore_claim_names_both_days_in_one_frame() {
+        let jojobot = handler();
+        let sid = writing_as(&jojobot);
+        let utc_today = jiff::Timestamp::now()
+            .to_zoned(jiff::tz::TimeZone::UTC)
+            .date();
+        let zone = ["Pacific/Kiritimati", "Pacific/Pago_Pago"]
+            .into_iter()
+            .find(|name| {
+                let zone = jiff::tz::TimeZone::get(name).expect("a zone");
+                jiff::Timestamp::now().to_zoned(zone).date() != utc_today
+            })
+            .expect("one of the two zones is on another date than UTC");
+        ensure(&jojobot, "topic:instance").await;
+        jojobot
+            .memory
+            .capture(jojobot_domain::memory::NewFact {
+                fields: [("timezone".to_string(), zone.to_string())]
+                    .into_iter()
+                    .collect(),
+                ..jojobot_domain::memory::NewFact::about(
+                    EntityId("topic:instance".into()),
+                    "the instance works in one zone",
+                    utc_today,
+                )
+            })
+            .await
+            .expect("capture ok");
+        ensure(&jojobot, "person:bart").await;
+        jojobot
+            .archive_entity(Parameters(archive("bart", "a mistaken write", &sid)))
+            .await
+            .expect("archive ok");
+
+        let restored = json_of(
+            &jojobot
+                .archive_entity(Parameters(ArchiveEntityArgs {
+                    restore: Some(true),
+                    ..archive("bart", "it was real after all", &sid)
+                }))
+                .await
+                .expect("restore ok"),
+        );
+        let address = restored["recorded_as"]
+            .as_str()
+            .expect("the restore records itself")
+            .to_string();
+        let record = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    facts: Some(true),
+                    ..recall_args("person:bart")
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        let content = record["objects"][0]["facts"]
+            .as_array()
+            .and_then(|facts| {
+                facts
+                    .iter()
+                    .find(|fact| fact["address"] == address.as_str())
+            })
+            .and_then(|fact| fact["content"].as_str())
+            .unwrap_or_else(|| panic!("the restore claim reads back: {record}"))
+            .to_string();
+        let days: Vec<&str> = content
+            .split(|c: char| !(c.is_ascii_digit() || c == '-'))
+            .filter(|word| {
+                word.len() == 10 && word.as_bytes()[4] == b'-' && word.as_bytes()[7] == b'-'
+            })
+            .collect();
+        assert_eq!(days.len(), 2, "the claim names two days: {content}");
+        assert_eq!(
+            days[0], days[1],
+            "the restore day and the archive day are in two frames: {content}"
         );
     }
 

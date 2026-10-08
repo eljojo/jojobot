@@ -3519,3 +3519,27 @@ async fn an_edit_that_writes_or_clears_the_due_moment_is_refused() {
         "moving the carrier key moves the due moment",
     );
 }
+
+/// **The promise that a correction is safe names its exception.** A rewrite
+/// destroys nothing, but testimony from an earlier session is not rewritten in
+/// place at all: it is archived and replaced. A sentence that said every claim is
+/// safe to correct sent a session to rewrite the one kind it is refused for, so
+/// the sentence that makes the promise has to name `testimony`. The needle is the
+/// provenance token and the sentence is found by the promise it makes.
+#[test]
+fn the_claim_that_a_correction_is_safe_names_testimony_as_its_exception() {
+    let tools = Jojobot::tool_router().list_all();
+    let tool = tools
+        .iter()
+        .find(|tool| tool.name == "update_fact")
+        .expect("update_fact is served");
+    let description = tool.description.as_deref().unwrap_or_default();
+    let at = description
+        .find("safe to correct")
+        .expect("the description promises a correction is safe");
+    let sentence = description[at..].split(". ").next().expect("a sentence");
+    assert!(
+        sentence.contains("testimony"),
+        "the promise does not name the claims it does not hold for: {sentence}"
+    );
+}
