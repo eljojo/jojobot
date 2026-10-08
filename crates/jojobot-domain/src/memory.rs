@@ -2119,6 +2119,14 @@ pub enum MayWrite {
     /// by a bot above it. And nobody puts a thing under one of its own reports,
     /// whoever asks (decision log 381).
     Superior,
+    /// **On a thread: only a bot above the bots that write into it; on anything
+    /// else: only a different identity.** A thread's ceiling binds the bots that
+    /// have written a thought into it, and a ceiling holds only if raising it
+    /// costs those bots something other than asking. So none of them sets it, and
+    /// a bot above one of them on the chart does. A thread nobody has written into
+    /// binds nobody yet, so any bot sets its first ceiling. A write that read no
+    /// chart is one nobody may make, as for the other chart relations.
+    WritersSuperior,
     /// **On the record `on` names: anybody while the key is unheld; once it is
     /// held, only the bot that heads the chart.** A key every instance needs
     /// once, whose first writer cannot be told from any other bot, and whose
@@ -2160,14 +2168,16 @@ pub const INSTANCE_RECORD: &str = "topic:instance";
 /// **The keys this build guards.** Its own room's capacity, its own thoughts'
 /// body cap, how long a thought of its own may go untouched, its own boot seats
 /// and the role its boot claims: each binds the thing it is read off, so each
-/// is a different-identity key. And the chart: who a bot reports to is changed
-/// only by a superior. And who the operator is:
+/// is a different-identity key. The capacity of a thread is the one exception:
+/// it binds the bots that write into the thread, so it is written by a bot above
+/// one of them. And the chart: who a bot reports to is changed only by a
+/// superior. And who the operator is:
 /// named by any bot while nobody is, changed afterwards only by the head of the
 /// chart.
 pub const GUARDED_KEYS: [GuardedKey; 7] = [
     GuardedKey {
         key: THOUGHT_CAPACITY,
-        may: MayWrite::DifferentIdentity,
+        may: MayWrite::WritersSuperior,
     },
     GuardedKey {
         key: THOUGHT_BODY_CAP,
@@ -2205,6 +2215,27 @@ pub fn reports_to(fold: &BTreeMap<String, String>, subject: &EntityId) -> bool {
         .is_some_and(|manager| manager.trim() == subject.as_str())
 }
 
+/// **The bots that have written a thought into `thread`**, read off the claims
+/// the bots hold: one on the bot that draws a `connection` edge at the thread,
+/// whatever has become of it. Nearest-written first, each once. The one reading
+/// every store's [`Lineage::writers`] comes from.
+pub fn writers_in(thread: &EntityId, claims: &[Fact]) -> Vec<EntityId> {
+    let mut writers: Vec<EntityId> = Vec::new();
+    for claim in claims {
+        let points_at_it = claim
+            .edge
+            .as_ref()
+            .is_some_and(|edge| edge.shape == EdgeShape::Connection && &edge.object == thread);
+        if points_at_it
+            && claim.home.kind() == Some(EntityKind::BOT)
+            && !writers.contains(&claim.home)
+        {
+            writers.push(claim.home.clone());
+        }
+    }
+    writers
+}
+
 /// **How far up a chain is read.** A chart deeper than this is a loop or a
 /// mistake, and a read that ran on would never return.
 pub const MAX_CHAIN: usize = 32;
@@ -2233,6 +2264,13 @@ pub struct Lineage {
     /// head may change, because that is the one question that asks, and it is
     /// what a refusal names.
     pub heads: Vec<EntityId>,
+    /// **The bots that have written a thought into the subject**, when it is a
+    /// thread: a claim on the bot that draws a `connection` edge at the thread,
+    /// whatever its status, because archiving a thought is how a full room makes
+    /// way and must not free the bot from the ceiling. Read only for a thread.
+    pub writers: Vec<EntityId>,
+    /// **The bots above any of [`writers`](Self::writers) on their chains.**
+    pub above_writers: Vec<EntityId>,
 }
 
 /// What a write is judged against when its key's relation needs the chart.
@@ -2299,7 +2337,10 @@ pub fn chart_wanted(
         .any(|rule| {
             matches!(
                 rule.may,
-                MayWrite::Ancestor | MayWrite::Superior | MayWrite::HeadOnceHeld { .. }
+                MayWrite::Ancestor
+                    | MayWrite::Superior
+                    | MayWrite::HeadOnceHeld { .. }
+                    | MayWrite::WritersSuperior
             )
         })
         .then(|| written.get(REPORTS_TO).and_then(|value| manager_in(value)))
@@ -2417,6 +2458,15 @@ fn licensed(
     let yes = match may {
         MayWrite::Subject => caller == subject,
         MayWrite::DifferentIdentity => caller != subject,
+        // **Fails closed on a thread**, like the chart relations. Elsewhere the
+        // lineage is not asked and the key is a different identity's.
+        MayWrite::WritersSuperior if subject.kind() != Some(EntityKind::THREAD) => {
+            caller != subject
+        }
+        MayWrite::WritersSuperior => lineage.is_some_and(|l| {
+            !l.writers.contains(caller)
+                && (l.writers.is_empty() || l.above_writers.contains(caller))
+        }),
         MayWrite::Ancestor => lineage.is_some_and(|l| l.above.contains(caller)),
         // **Fails closed**: a write that forgot to read the lineage is one
         // nobody may make, as for the other chart relations. A record the key
@@ -2466,6 +2516,12 @@ fn who_may_write(may: MayWrite, subject: &EntityId, lineage: Managers) -> Vec<St
     match (may, lineage) {
         (MayWrite::Ancestor, Some(l)) => names(&l.above),
         (MayWrite::HeadOnceHeld { .. }, Some(l)) => names(&l.heads),
+        (MayWrite::WritersSuperior, Some(l)) => l
+            .above_writers
+            .iter()
+            .filter(|bot| !l.writers.contains(bot))
+            .map(ToString::to_string)
+            .collect(),
         (MayWrite::Superior, Some(l)) if !l.above.is_empty() => names(&l.above),
         // The head of a chart places itself, so it is the one the refusal names.
         (MayWrite::Superior, Some(l)) if l.has_reports && l.named.is_some() => {
@@ -2481,12 +2537,22 @@ fn who_may_write(may: MayWrite, subject: &EntityId, lineage: Managers) -> Vec<St
     }
 }
 
+/// **The relation a refusal is worded for.** A key licensed to the writers'
+/// superiors reads as a different identity's on anything but a thread, which is
+/// how it is judged there.
+fn worded_for(may: MayWrite, subject: &str) -> MayWrite {
+    match may {
+        MayWrite::WritersSuperior if !subject.starts_with("thread:") => MayWrite::DifferentIdentity,
+        other => other,
+    }
+}
+
 /// **Who may write, in words**, for a refusal to name them. The bots are
 /// named, and the operator never is: the operator acts through the assistant,
 /// which is above every bot that has a chain.
 fn who_may(may: MayWrite, subject: &str, allowed: &[String]) -> String {
     let bots = || allowed.join(", ");
-    match may {
+    match worded_for(may, subject) {
         MayWrite::Subject => format!("only '{subject}' itself may write it"),
         MayWrite::DifferentIdentity => {
             "only a different identity may raise or lower it".to_string()
@@ -2499,6 +2565,15 @@ fn who_may(may: MayWrite, subject: &str, allowed: &[String]) -> String {
         MayWrite::HeadOnceHeld { .. } => format!(
             "it is already set on '{subject}', and only the bot that heads the chart may change \
              or remove it: {}",
+            bots()
+        ),
+        MayWrite::WritersSuperior if allowed.is_empty() => format!(
+            "no bot is recorded above the bots that write into '{subject}', and none of them \
+             may write it: place one of them under a manager, and that manager can"
+        ),
+        MayWrite::WritersSuperior => format!(
+            "none of the bots that write into '{subject}' may write it, only a bot above one of \
+             them: {}",
             bots()
         ),
         MayWrite::Ancestor | MayWrite::Superior if allowed.is_empty() => {
@@ -2515,7 +2590,7 @@ fn who_may(may: MayWrite, subject: &str, allowed: &[String]) -> String {
 /// The text of [`MemoryError::KeyNotYours`]. The different-identity relation
 /// keeps the words the four ceilings have always had.
 fn key_not_yours(subject: &str, key: &str, may: MayWrite, allowed: &[String]) -> String {
-    match may {
+    match worded_for(may, subject) {
         MayWrite::DifferentIdentity => format!(
             "'{subject}' cannot set its own {key}: only a different identity may raise or lower it"
         ),
@@ -2534,7 +2609,7 @@ fn merge_carries(
     may: MayWrite,
     allowed: &[String],
 ) -> String {
-    match may {
+    match worded_for(may, survivor) {
         MayWrite::DifferentIdentity => format!(
             "merging '{duplicate}' into '{survivor}', the caller's own bot, would carry {keys} \
              onto it: only a different identity may raise or lower a ceiling"
@@ -2556,7 +2631,7 @@ fn refusal(why: Why, rule: &GuardedKey, subject: &EntityId, lineage: Managers) -
         Why::NotLicensed => MemoryError::KeyNotYours {
             subject: subject.to_string(),
             key: rule.key.to_string(),
-            may: rule.may,
+            may: worded_for(rule.may, subject.as_str()),
             allowed: who_may_write(rule.may, subject, lineage),
         },
     }
@@ -2741,7 +2816,7 @@ pub fn refuses_merge_carrying_by(
             .map(|rule| rule.key)
             .collect::<Vec<_>>()
             .join(", "),
-        may: first.may,
+        may: worded_for(first.may, survivor.as_str()),
         allowed: who_may_write(first.may, survivor, lineage),
     })
 }
@@ -5715,6 +5790,21 @@ pub trait Memory: Send + Sync {
             }
         }
         Ok(standing_on)
+    }
+
+    /// **The bots that have written a thought into a thread**, read for a write
+    /// that sets the thread's ceiling. A thought is a claim on the bot drawing a
+    /// `connection` edge at the thread; the claim counts whatever its status.
+    ///
+    /// Defaulted off [`list_entities`](Memory::list_entities) and
+    /// [`recall`](Memory::recall), like [`built_on`](Memory::built_on).
+    async fn thought_writers(&self, thread: &EntityId) -> Result<Vec<EntityId>, MemoryError> {
+        validate_subject(thread)?;
+        let mut claims = Vec::new();
+        for bot in self.list_entities(Some(EntityKind::BOT)).await? {
+            claims.extend(self.recall(&bot.id).await?);
+        }
+        Ok(writers_in(thread, &claims))
     }
 
     /// **Which records point at this thing through a field**, whatever key

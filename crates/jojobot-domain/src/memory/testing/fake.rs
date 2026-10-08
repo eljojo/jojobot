@@ -965,6 +965,26 @@ impl InMemoryMemory {
         } else {
             Vec::new()
         };
+        // The bots that wrote a thought into the subject, when it is a thread.
+        let (writers, above_writers) = if subject.kind() == Some(EntityKind::THREAD) {
+            let claims: Vec<Fact> = facts
+                .iter()
+                .filter(|claim| claim.edge.is_some())
+                .map(|claim| self.served(claim.clone(), &self.current_handle(&claim.home)))
+                .collect();
+            let writers = super::super::writers_in(subject, &claims);
+            let mut above_writers: Vec<EntityId> = Vec::new();
+            for writer in &writers {
+                for bot in self.chain_above_among(facts, writer) {
+                    if !above_writers.contains(&bot) {
+                        above_writers.push(bot);
+                    }
+                }
+            }
+            (writers, above_writers)
+        } else {
+            (Vec::new(), Vec::new())
+        };
         super::super::Lineage {
             above,
             named,
@@ -972,6 +992,8 @@ impl InMemoryMemory {
             has_reports,
             holds,
             heads,
+            writers,
+            above_writers,
         }
     }
 

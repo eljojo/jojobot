@@ -1228,6 +1228,22 @@ impl Jojobot {
         } else {
             Vec::new()
         };
+        // The bots that wrote a thought into the subject, when it is a thread.
+        let (writers, above_writers) =
+            if subject.kind() == Some(jojobot_domain::memory::EntityKind::THREAD) {
+                let writers = self.memory.thought_writers(subject).await?;
+                let mut above_writers: Vec<EntityId> = Vec::new();
+                for writer in &writers {
+                    for bot in self.chain_above(writer).await? {
+                        if !above_writers.contains(&bot) {
+                            above_writers.push(bot);
+                        }
+                    }
+                }
+                (writers, above_writers)
+            } else {
+                (Vec::new(), Vec::new())
+            };
         Ok(jojobot_domain::memory::Lineage {
             above,
             named,
@@ -1235,6 +1251,8 @@ impl Jojobot {
             has_reports,
             holds,
             heads,
+            writers,
+            above_writers,
         })
     }
 
@@ -1293,6 +1311,8 @@ impl Jojobot {
             // A thing being created holds nothing.
             holds: Default::default(),
             heads: Vec::new(),
+            writers: Vec::new(),
+            above_writers: Vec::new(),
         })
     }
 

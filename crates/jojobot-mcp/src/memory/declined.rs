@@ -985,6 +985,19 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                         allowed.join(" or ")
                     ),
                 },
+                // **A thread's ceiling binds the bots that write into it**, so
+                // the way forward is a bot above one of them, never the writer.
+                jojobot_domain::memory::MayWrite::WritersSuperior => match allowed.is_empty() {
+                    true => format!(
+                        "Nothing was written: {e}. None of the bots that write into '{subject}' \
+                         has a manager recorded, so '{key}' on it cannot be set yet: place one of \
+                         them under a manager first."
+                    ),
+                    false => format!(
+                        "Nothing was written: {e}. Ask {} to write '{key}' on '{subject}'.",
+                        allowed.join(" or ")
+                    ),
+                },
                 jojobot_domain::memory::MayWrite::Ancestor
                 | jojobot_domain::memory::MayWrite::Superior => match allowed.is_empty() {
                     true => format!(

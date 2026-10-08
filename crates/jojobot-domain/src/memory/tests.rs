@@ -625,17 +625,23 @@ fn a_walk_up_the_chart_stops_at_the_top_a_loop_a_non_handle_and_the_depth_bound(
 }
 
 /// **The four keys a bot cannot write about itself are declarations in the
-/// one table**, each a different-identity key, so moving them changed nothing a
-/// caller sees.
+/// one table.** Three are different-identity keys. The fourth, a room's
+/// capacity, is the same on a bot and reaches the bots above the writers on a
+/// thread.
 #[test]
-fn the_four_existing_keys_are_different_identity_keys() {
-    for key in [THOUGHT_CAPACITY, THOUGHT_BODY_CAP, RULE_SEATS, CLAIMS_ROLE] {
+fn the_four_existing_keys_are_ceilings_a_bot_does_not_write_about_itself() {
+    for key in [THOUGHT_BODY_CAP, RULE_SEATS, CLAIMS_ROLE] {
         let rule = GUARDED_KEYS
             .iter()
             .find(|rule| rule.key == key)
             .unwrap_or_else(|| panic!("{key} is declared"));
         assert_eq!(rule.may, MayWrite::DifferentIdentity, "{key}");
     }
+    let capacity = GUARDED_KEYS
+        .iter()
+        .find(|rule| rule.key == THOUGHT_CAPACITY)
+        .expect("the capacity is declared");
+    assert_eq!(capacity.may, MayWrite::WritersSuperior);
     // …and the chart's own key is the one superior-only key beside them.
     let chart = GUARDED_KEYS
         .iter()

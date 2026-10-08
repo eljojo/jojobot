@@ -2105,6 +2105,23 @@ impl DoltMemory {
         } else {
             Vec::new()
         };
+        // The bots that wrote a thought into the subject, when it is a thread: a
+        // claim on the bot drawing a connection edge at it, of any status.
+        let (writers, above_writers) =
+            if subject.kind() == Some(jojobot_domain::memory::EntityKind::THREAD) {
+                let writers = self.thought_writers_in(tx, subject).await?;
+                let mut above_writers: Vec<EntityId> = Vec::new();
+                for writer in &writers {
+                    for bot in self.chain_above_in(tx, writer).await? {
+                        if !above_writers.contains(&bot) {
+                            above_writers.push(bot);
+                        }
+                    }
+                }
+                (writers, above_writers)
+            } else {
+                (Vec::new(), Vec::new())
+            };
         Ok(jojobot_domain::memory::Lineage {
             above,
             named,
@@ -2112,7 +2129,40 @@ impl DoltMemory {
             has_reports,
             holds,
             heads,
+            writers,
+            above_writers,
         })
+    }
+
+    /// **The bots that have written a thought into `thread`**, read inside the
+    /// write's own transaction: the things holding a claim that draws a
+    /// `connection` edge at it, of any status, that are bots as they answer now.
+    async fn thought_writers_in(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        thread: &EntityId,
+    ) -> Result<Vec<EntityId>, MemoryError> {
+        let Some((thread_key, _)) = self.resolve(tx, thread).await? else {
+            return Ok(Vec::new());
+        };
+        let holders: Vec<String> = sqlx::query_scalar(
+            "SELECT DISTINCT entity FROM fact WHERE edge_shape = ? AND edge_object = ?",
+        )
+        .bind(jojobot_domain::memory::EdgeShape::Connection.as_token())
+        .bind(thread_key.as_str())
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(store)?;
+        let mut writers = Vec::new();
+        for holder in holders {
+            let handle = self.current_handle(tx, &EntityId(holder)).await?;
+            if handle.kind() == Some(jojobot_domain::memory::EntityKind::BOT)
+                && !writers.contains(&handle)
+            {
+                writers.push(handle);
+            }
+        }
+        Ok(writers)
     }
 
     /// **The bots that head the chart**, read inside the write's own transaction:
