@@ -91,6 +91,7 @@ const ROSTER: &[&str] = &[
     "view:contract-asked-by-view",
     "view:contract-supplied-rename-target",
     "view:loops",
+    "view:my-friends",
     "view:marked-things",
     "view:matches-nothing",
     "view:my-loops",

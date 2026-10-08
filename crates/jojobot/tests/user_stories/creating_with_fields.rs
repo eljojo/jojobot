@@ -111,21 +111,50 @@ async fn a_link_to_nothing_blocks_the_call_and_creates_nothing() {
 }
 
 /// **A handle the build supplies cannot be taken by a creation that carries
-/// fields**, any more than by one that carries none.
+/// fields**, any more than by one that carries none. Both halves are asked, and
+/// beside them the same creation under a handle nobody supplies, which lands:
+/// a build that refused every view, or every creation with fields, would pass
+/// the refusals alone.
 #[tokio::test]
 async fn a_supplied_handle_is_refused_with_fields_as_it_is_without() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
-    let taken = s
+    let view = |handle: &str, sets: Option<serde_json::Value>| {
+        let mut args = json!({
+            "kind": "view", "handle": handle, "name": "My Colleagues", "source": "user-named",
+        });
+        if let Some(sets) = sets {
+            args["sets"] = sets;
+        }
+        args
+    };
+
+    let with_fields = s
         .refused(
             "add_entity",
-            json!({
-                "kind": "view", "handle": "colleagues", "name": "My Colleagues",
-                "source": "user-named", "sets": {"selects": "person"},
-            }),
+            view("colleagues", Some(json!({"selects": "person"}))),
         )
         .await;
-    taken.says("colleagues");
+    with_fields.says("colleagues");
+    let without_fields = s.refused("add_entity", view("colleagues", None)).await;
+    without_fields.says("colleagues");
+    // One refusal, about one handle: the fields did not change what was refused.
+    assert_eq!(
+        with_fields.json()["attempted"],
+        without_fields.json()["attempted"],
+        "the creation with fields and the one without are refused about the same handle"
+    );
+
+    // The positive both refusals rest on: a handle nobody supplies, with the
+    // same fields, is made.
+    let made = s
+        .call(
+            "add_entity",
+            view("my-friends", Some(json!({"selects": "person"}))),
+        )
+        .await
+        .json();
+    assert_eq!(made["id"], "view:my-friends", "{made}");
     story.finish().await;
 }
 
