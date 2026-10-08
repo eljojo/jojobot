@@ -48,8 +48,8 @@ pub(crate) const SKILLS: &[Skill] = &[
     },
     Skill {
         name: "rhythms",
-        when_to_use: "When a loop is due, something has to be done by a day, or the operator \
-                      asks to look ahead or back.",
+        when_to_use: "When you are about to record a check-in on a loop, or the operator asks \
+                      to look ahead or back.",
         body: RHYTHMS,
     },
     Skill {
@@ -548,6 +548,32 @@ mod tests {
             let edge = |c: Option<char>| c.is_none_or(|c| !c.is_alphanumeric());
             edge(before) && edge(after)
         })
+    }
+
+    /// **An index line names a moment the session can see for itself.** A
+    /// session reads the index before it knows anything about the job in front
+    /// of it, so a line that is true only when a loop IS due, or a state it
+    /// cannot observe, is a line it cannot compare against anything. The rhythms
+    /// line names the check-in it is about to record.
+    #[test]
+    fn no_index_line_names_a_state_the_session_cannot_see() {
+        for skill in super::SKILLS {
+            assert!(
+                !skill.when_to_use.contains("is due"),
+                "{}'s index line names a state the session cannot see: {}",
+                skill.name,
+                skill.when_to_use
+            );
+        }
+        let rhythms = super::SKILLS
+            .iter()
+            .find(|skill| skill.name == "rhythms")
+            .expect("the rhythms skill is shipped");
+        assert!(
+            rhythms.when_to_use.contains("about to record a check-in"),
+            "{}",
+            rhythms.when_to_use
+        );
     }
 
     /// **The rhythms skill asks about the run's day**, which is the day the run

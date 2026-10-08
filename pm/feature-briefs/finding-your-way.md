@@ -18,7 +18,7 @@
 
 **A procedure arrives when it is asked for by name.** Pushing all of them spends a session's attention on the ones it does not need, which is the same waste as an answer that dumps.
 
-**The index says what each is FOR and never when it applies.** Deciding that is the agent's, and a door that decides it is a door that is wrong at the edges.
+**The index says what each is for, named by a moment the session can see for itself.** Deciding that is the agent's, and a door that decides it is a door that is wrong at the edges.
 
 ## A teaching arrives the first time it is needed, once
 
