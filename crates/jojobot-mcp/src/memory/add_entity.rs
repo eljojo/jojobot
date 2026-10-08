@@ -300,7 +300,15 @@ impl Jojobot {
                 // out below is jojobot's own arithmetic beside them, kept as one of
                 // the claim's own fields, so a later edit that moves it keeps it in
                 // the bag it was written under.
-                let set_keys: std::collections::BTreeSet<String> = fields.keys().cloned().collect();
+                // **A key that only labels the claim is not one of them**: `starred`
+                // on a rule made with its bot has always been the claim's own, and a
+                // label is never a property of the thing.
+                let describing = crate::seed::describing_keys();
+                let set_keys: std::collections::BTreeSet<String> = fields
+                    .keys()
+                    .filter(|key| !describing.contains(*key))
+                    .cloned()
+                    .collect();
                 // **Worked out here too**: a loop made with its cadence is whole
                 // from the moment it is made, with the day it falls due beside
                 // the keys that set it.

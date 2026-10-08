@@ -38,7 +38,7 @@ pub struct UpdateEntityArgs {
     /// `capture` does: a key the kind declares is held to what it declares, and a
     /// key that holds a handle must name a thing that exists. **Whole or not at
     /// all**: a key that is refused refuses the call, and the edit is not made.
-    /// A call that sends only `sets` leaves the entity's own row alone.
+    /// A call that sends only `sets` leaves the entity itself alone.
     ///
     /// The claim is `inference`, as a capture's is when it says nothing. To put
     /// the operator's own word behind a key, write it with `capture`.
