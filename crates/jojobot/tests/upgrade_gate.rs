@@ -196,6 +196,30 @@ fn is_the_recorded_ambiguous_handle(line: &str) -> bool {
     line.contains("FIELD VALUE LEFT AS TEXT") && line.contains("upgrade_fixture_points_at")
 }
 
+/// **Whether the recording made at `git_ref` holds the handle two things have
+/// worn as plain text** under the field the gate looks for. Read off the dump
+/// itself, so the answer is the recording's and not a list kept beside it: a
+/// field value is `'<key>',<ordinal>,'<value>'` in the dump, and a plain handle
+/// is a value that starts with a kind, where a stored id starts with the mark.
+fn recording_holds_the_plain_ambiguous_handle(git_ref: &str) -> bool {
+    let dir = [FIXTURE_DIR, DEPLOY_3_FIXTURE_DIR]
+        .into_iter()
+        .find(|dir| {
+            std::fs::read_to_string(format!("{dir}/ref.txt"))
+                .is_ok_and(|recorded| recorded.trim() == git_ref)
+        })
+        .unwrap_or_else(|| panic!("no fixture was recorded at {git_ref}"));
+    let dump = std::fs::read_to_string(format!("{dir}/doltdump.sql"))
+        .unwrap_or_else(|e| panic!("reading the dump in {dir}: {e}"));
+    dump.split("'upgrade_fixture_points_at',")
+        .skip(1)
+        .any(|rest| {
+            rest.split(',')
+                .nth(1)
+                .is_some_and(|value| value.starts_with("'thing:"))
+        })
+}
+
 /// **A running copy of the current binary over a restored store.**
 struct Booted {
     child: tokio::process::Child,
@@ -300,14 +324,22 @@ async fn boot_current(state_dir: &std::path::Path, store_port: u16, git_ref: &st
     // handle two things have worn cannot be lowered, so each boot says so by
     // name. A boot that says nothing has stopped seeing the row, and the gate
     // would then pass over a store it no longer exercises.
+    //
+    // **Only a recording that holds the handle as plain text has one to report.**
+    // A build that stores every field value as a permanent id leaves nothing to
+    // lower, so a store it filled holds no such row and its boot says nothing,
+    // and a boot that reported one there would be inventing it. The recording
+    // itself says which it is.
+    let holds_it = recording_holds_the_plain_ambiguous_handle(git_ref);
     let reported = seen
         .iter()
         .filter(|line| is_the_recorded_ambiguous_handle(line))
         .count();
     assert_eq!(
-        reported, 1,
-        "the boot of a store recorded at {git_ref} must report the ambiguous handle it holds, \
-         once: {seen:?}"
+        reported,
+        usize::from(holds_it),
+        "the boot of a store recorded at {git_ref} must report the ambiguous handle exactly when \
+         the recording holds it as plain text (it does: {holds_it}): {seen:?}"
     );
     Booted { child, http_port }
 }
