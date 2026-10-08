@@ -58,7 +58,10 @@ pub(crate) fn session_fix_by(e: &SessionError) -> Option<FixBy> {
         | SessionError::Closed { .. }
         | SessionError::NotWrapped { .. }
         | SessionError::NoEntries { .. }
-        | SessionError::NotABeat { .. } => Some(FixBy::Change),
+        | SessionError::NotABeat { .. }
+        // A store that answered and refused: a constraint the caller's input
+        // broke, which sending the same call again meets again. Not an outage.
+        | SessionError::Refused(_) => Some(FixBy::Change),
         SessionError::KindsNeverLoaded => Some(FixBy::Person),
         SessionError::Conflict => Some(FixBy::Retry),
         SessionError::Store(_) => other_store_failure_word(),
@@ -433,10 +436,19 @@ mod tests {
                 Some("person"),
             ),
             ("Conflict", SessionError::Conflict, Some("retry")),
+            // **A store that could not be reached is an outage, so the same call
+            // may get past it; a store that answered and refused is a constraint
+            // the caller's input broke, and the same call meets it again.** The
+            // two words are pinned as words, not through the switch.
+            (
+                "Refused",
+                SessionError::Refused(s("a key held twice")),
+                Some("change"),
+            ),
             (
                 "Store",
                 SessionError::Store(s("connection refused")),
-                other_store_failure_word().map(FixBy::as_token),
+                Some("retry"),
             ),
         ]
     }

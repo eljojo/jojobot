@@ -61,20 +61,23 @@ impl FixBy {
     }
 }
 
-/// **THE SWITCHES for storage failures**, one per store, because the stores do
-/// not yet tell a refused write from an outage alike. A storage failure is a
-/// `retry` only where the failure really is transient.
+/// **THE SWITCHES for storage failures**, one per store, so a revert stays one
+/// line. A storage failure is a `retry` only where the failure really is an
+/// outage. Every store now answers a write its constraints refuse as its own
+/// error (`Refused`, which wears `change`), so what is left of a storage failure
+/// is a store that could not be reached.
 ///
-/// `MEMORY_STORE_FAILURE_IS_RETRY` holds while card 2068 (a constraint
+/// `MEMORY_STORE_FAILURE_IS_RETRY` holds because card 2068 (a constraint
 /// violation is no longer reported with the outage's words) is in the base this
-/// ships on. If that fix slips, set it to `false`: every memory-store failure
-/// then ships WITHOUT a word rather than with a wrong one.
+/// ships on. If that fix is ever lost from the base, set it to `false`: every
+/// memory-store failure then ships WITHOUT a word rather than with a wrong one.
 pub(crate) const MEMORY_STORE_FAILURE_IS_RETRY: bool = true;
 
-/// The session, mailbox and teaching stores still report a constraint violation
-/// with the outage's words (card 2070), so their failures wear no word until it
-/// lands. Set this to `true` then.
-pub(crate) const OTHER_STORE_FAILURE_IS_RETRY: bool = false;
+/// The session, mailbox and teaching stores report a constraint violation as
+/// their own `Refused` error now (card 2070), so their `Store` failures are
+/// outages and wear `retry`. If that fix is ever lost from the base, set this to
+/// `false`: those failures then ship without a word rather than with a wrong one.
+pub(crate) const OTHER_STORE_FAILURE_IS_RETRY: bool = true;
 
 /// The word a memory-store failure wears: `retry` while its switch is on, none
 /// when it is off.
@@ -82,8 +85,8 @@ pub(crate) fn memory_store_failure_word() -> Option<FixBy> {
     MEMORY_STORE_FAILURE_IS_RETRY.then_some(FixBy::Retry)
 }
 
-/// The word a session, mailbox or teaching store failure wears: none until
-/// [`OTHER_STORE_FAILURE_IS_RETRY`] is turned on.
+/// The word a session, mailbox or teaching store failure wears: `retry` while
+/// [`OTHER_STORE_FAILURE_IS_RETRY`] is on, none when it is off.
 pub(crate) fn other_store_failure_word() -> Option<FixBy> {
     OTHER_STORE_FAILURE_IS_RETRY.then_some(FixBy::Retry)
 }
@@ -111,7 +114,8 @@ impl WayForward {
     }
 
     /// A refusal because the mailbox store could not be read. It wears whatever
-    /// [`other_store_failure_word`] says, which is no word until card 2070.
+    /// [`other_store_failure_word`] says, which is `retry` while card 2070 is in
+    /// the base.
     pub(crate) fn mailbox_store_failure(text: impl Into<String>) -> Self {
         Self::with(other_store_failure_word(), text)
     }
@@ -826,6 +830,19 @@ mod tests {
             other_store_failure_word().map(FixBy::as_token),
             "a mailbox storage failure wears whatever its switch says: {body}"
         );
+    }
+
+    /// **A store that could not be reached is an outage, in every store.** The
+    /// word is `retry`, pinned as a word: both switches are on because a refused
+    /// write is now its own error in each store, so what is left of a storage
+    /// failure is an outage. The mailbox constructor writes the same word.
+    #[test]
+    fn a_storage_failure_is_an_outage_that_retries_in_every_store() {
+        assert_eq!(memory_store_failure_word(), Some(FixBy::Retry));
+        assert_eq!(other_store_failure_word(), Some(FixBy::Retry));
+        let mut body = serde_json::json!({"status": "blocked"});
+        WayForward::mailbox_store_failure("the store failed").write_into(&mut body);
+        assert_eq!(body["fix_by"], "retry", "{body}");
     }
 
     /// **The switch and the stamp.** With no word a stamped refusal carries

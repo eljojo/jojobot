@@ -224,7 +224,10 @@ pub(crate) fn mailbox_fix_by(e: &MailboxError) -> Option<FixBy> {
         | MailboxError::InvalidMessage { .. }
         | MailboxError::UnknownMessage { .. }
         | MailboxError::NotYourMessage { .. }
-        | MailboxError::NameTaken { .. } => Some(FixBy::Change),
+        | MailboxError::NameTaken { .. }
+        // A store that answered and refused: a constraint the caller's input
+        // broke, which sending the same call again meets again. Not an outage.
+        | MailboxError::Refused(_) => Some(FixBy::Change),
         MailboxError::Quarantined { .. }
         | MailboxError::QuarantinedOnPurpose { .. }
         | MailboxError::OwnerHasMultipleBoxes { .. }
@@ -573,10 +576,19 @@ mod tests {
                 Some("person"),
             ),
             ("Conflict", MailboxError::Conflict, Some("retry")),
+            // **A store that could not be reached is an outage, so the same call
+            // may get past it; a store that answered and refused is a constraint
+            // the caller's input broke, and the same call meets it again.** The
+            // two words are pinned as words, not through the switch.
+            (
+                "Refused",
+                MailboxError::Refused(s("a key held twice")),
+                Some("change"),
+            ),
             (
                 "Store",
                 MailboxError::Store(s("connection refused")),
-                other_store_failure_word().map(FixBy::as_token),
+                Some("retry"),
             ),
         ]
     }

@@ -231,6 +231,9 @@ pub(crate) fn memory_fix_by(e: &MemoryError) -> Option<FixBy> {
         | MemoryError::UnsourcedObservation
         | MemoryError::UnstatedProvenance
         | MemoryError::TestimonyRewritten { .. } => Some(FixBy::Change),
+        // A store that answered and refused: a constraint the caller's input
+        // broke, which sending the same call again meets again. Not an outage.
+        MemoryError::Refused(_) => Some(FixBy::Change),
         // A kind set nothing re-reads, a build that collided with a stored row,
         // and a claim only the operator can bless.
         MemoryError::KindsNeverLoaded { .. }
@@ -1744,10 +1747,19 @@ mod tests {
                 Some("retry"),
             ),
             ("Conflict", MemoryError::Conflict, Some("retry")),
+            // **A store that could not be reached is an outage, so the same call
+            // may get past it; a store that answered and refused is a constraint
+            // the caller's input broke, and the same call meets it again.** The
+            // two words are pinned as words, not through the switch.
+            (
+                "Refused",
+                MemoryError::Refused(s("a key held twice")),
+                Some("change"),
+            ),
             (
                 "Store",
                 MemoryError::Store(s("connection refused")),
-                memory_store_failure_word().map(FixBy::as_token),
+                Some("retry"),
             ),
         ];
         rows
