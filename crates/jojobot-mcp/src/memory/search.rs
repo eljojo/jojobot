@@ -865,10 +865,8 @@ impl Jojobot {
                 (json, size)
             })
             .collect();
-        let widest_not_shown =
-            crate::answer::not_shown(rendered.len(), offset + rendered.len(), "hits");
         let rest = body.to_string().chars().count()
-            + widest_not_shown.to_string().chars().count()
+            + crate::answer::widest_not_shown("hits")
             + crate::answer::STATUS_BAR_ROOM;
         let kept = jojobot_domain::text::Capped::beside(rest).head(&rendered, |(_, size)| *size);
         body["results"] = kept
@@ -965,6 +963,54 @@ mod tests {
     use jojobot_domain::mailbox::testing::InMemoryMailboxes;
     use jojobot_domain::memory::{Boot, FactId};
     use jojobot_domain::teaching::testing::InMemoryTeachings;
+
+    /// **A search counts the block it adds when it cuts, at every size of hit.**
+    /// Cutting adds `not_shown` to the answer after the hits are chosen. A fill
+    /// that leaves room for the block and not for the key it rides under passes
+    /// the ceiling by that key, but only when the hits add up inside that
+    /// window, so the length of a hit is swept in steps finer than the window.
+    #[tokio::test]
+    async fn a_search_counts_the_block_it_adds_when_it_cuts_at_every_size_of_hit() {
+        let hits_held = 400;
+        for snippet_len in 20..=160 {
+            let hits: Vec<Hit> = (0..hits_held)
+                .map(|i| Hit::Prose {
+                    doc_id: format!("doc-{i}"),
+                    title: format!("Page {i}"),
+                    entity: None,
+                    edges: Vec::new(),
+                    snippet: "x".repeat(snippet_len),
+                })
+                .collect();
+            let jojobot = handler_with(Arc::new(SpySearch::answering(hits)));
+            let body = json_of(
+                &jojobot
+                    .search(Parameters(SearchArgs {
+                        query: Some("x".into()),
+                        limit: Some(1_000),
+                        ..search_args()
+                    }))
+                    .await
+                    .expect("search ok"),
+            );
+            let size = body.to_string().chars().count();
+            assert!(
+                size + crate::answer::STATUS_BAR_ROOM <= jojobot_domain::text::ANSWER_CEILING,
+                "snippets of {snippet_len}: the answer is {size} characters"
+            );
+            let carried = body["results"].as_array().expect("results").len();
+            let left = body["not_shown"]["count"].as_u64().unwrap_or(0) as usize;
+            assert_eq!(
+                carried + left,
+                hits_held,
+                "snippets of {snippet_len}: {body}"
+            );
+            assert!(
+                left > 0,
+                "snippets of {snippet_len} did not make the fill cut"
+            );
+        }
+    }
 
     /// **Each query-driven exclusion is reachable, and by the query the note
     /// gathering uses to reach it.**

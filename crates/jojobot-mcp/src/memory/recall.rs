@@ -1034,10 +1034,7 @@ fn fit_recall(body: &mut serde_json::Value, offset: usize) {
     };
     let size = |json: &serde_json::Value| json.to_string().chars().count() + 1;
     let rest = body.to_string().chars().count() + crate::answer::STATUS_BAR_ROOM;
-    let widest = crate::answer::not_shown(usize::MAX, usize::MAX, "objects")
-        .to_string()
-        .chars()
-        .count();
+    let widest = crate::answer::widest_not_shown("objects");
     let total = objects.len();
 
     if total == 1 && objects[0]["facts"].is_array() {

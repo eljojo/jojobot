@@ -6089,3 +6089,121 @@ async fn a_parent_selects_its_direct_children_and_combines_with_a_kind() {
     );
     assert!(ids(&none).is_empty(), "no child is a person: {none}");
 }
+
+/// A slug of ten letters that depends on nothing but the index, spread far
+/// enough apart that no two screen as near-misses of each other.
+fn spread_slug(i: usize) -> String {
+    let mut state = (i as u64)
+        .wrapping_mul(6364136223846793005)
+        .wrapping_add(1442695040888963407);
+    (0..10)
+        .map(|_| {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (b'a' + ((state >> 33) % 26) as u8) as char
+        })
+        .collect()
+}
+
+/// **A recall of one subject counts the block it adds when it cuts, at every
+/// size of fact.** Cutting adds `not_shown` to the answer after the facts are
+/// chosen. A fill that leaves room for the block and not for the key it rides
+/// under passes the ceiling by that key, but only when the facts add up inside
+/// that window, so the length of a fact is swept in steps finer than the window.
+#[tokio::test]
+async fn a_subject_recall_counts_the_block_it_adds_when_it_cuts_at_every_size_of_fact() {
+    let held = 300;
+    for content_len in 20..=140 {
+        let memory = shared_memory();
+        let jojobot = handler_on(memory.clone(), Arc::new(SpySearch::default()));
+        let subject = EntityId::new(EntityKind::THING, spread_slug(0));
+        memory
+            .add_entity(NewEntity::new(subject.clone(), "Gizmo", "user-named"))
+            .await
+            .expect("a thing lands");
+        for i in 0..held {
+            let fact = NewFact::about(
+                subject.clone(),
+                format!("{i:04} {}", "x".repeat(content_len)),
+                "2026-10-01".parse().expect("a day"),
+            );
+            memory.capture(fact).await.expect("a fact lands");
+        }
+        let body = json_of(
+            &jojobot
+                .recall(Parameters(of(subject.as_str())))
+                .await
+                .expect("recall ok"),
+        );
+        let size = body.to_string().chars().count();
+        assert!(
+            size + crate::answer::STATUS_BAR_ROOM <= jojobot_domain::text::ANSWER_CEILING,
+            "facts of {content_len}: the answer is {size} characters"
+        );
+        let carried = body["objects"][0]["facts"].as_array().expect("facts").len();
+        let left = body["not_shown"]["count"].as_u64().unwrap_or(0) as usize;
+        assert_eq!(carried + left, held, "facts of {content_len}: {body}");
+        assert!(left > 0, "facts of {content_len} did not make the fill cut");
+    }
+}
+
+/// **A recall of a kind counts the block it adds when it cuts, at every size of
+/// object.** The same sweep for the fill that chooses whole objects. Nine
+/// objects of about three thousand characters each: the answer keeps eight, and
+/// every step of one character in the size of an object moves the room that is
+/// left by eight, which is less than the width of the key, so the sweep has to
+/// land in the window.
+#[tokio::test]
+async fn a_kind_recall_counts_the_block_it_adds_when_it_cuts_at_every_size_of_object() {
+    let held = 9;
+    for name_len in 2_700..=3_300 {
+        let memory = shared_memory();
+        let jojobot = handler_on(memory.clone(), Arc::new(SpySearch::default()));
+        for i in 0..held {
+            let id = EntityId::new(EntityKind::THING, spread_slug(i));
+            let added = memory
+                .add_entity(NewEntity::new(
+                    id.clone(),
+                    format!("Gizmo {}", spread_slug(i)),
+                    "user-named",
+                ))
+                .await;
+            assert!(
+                matches!(added, Ok(Guarded::Written(_))),
+                "a thing lands: {added:?}"
+            );
+            let mut fact = NewFact::about(
+                id,
+                "a note".to_string(),
+                "2026-10-01".parse().expect("a day"),
+            );
+            fact.fields = [("note".to_string(), "x".repeat(name_len))]
+                .into_iter()
+                .collect();
+            let noted = memory.capture(fact).await;
+            assert!(
+                matches!(noted, Ok(Guarded::Written(_))),
+                "a note lands: {noted:?}"
+            );
+        }
+        let body = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    kind: Some("thing".into()),
+                    ..of_nothing()
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        let size = body.to_string().chars().count();
+        assert!(
+            size + crate::answer::STATUS_BAR_ROOM <= jojobot_domain::text::ANSWER_CEILING,
+            "names of {name_len}: the answer is {size} characters"
+        );
+        let carried = body["objects"].as_array().expect("objects").len();
+        let left = body["not_shown"]["count"].as_u64().unwrap_or(0) as usize;
+        assert_eq!(carried + left, held, "names of {name_len}: {body}");
+        assert!(left > 0, "names of {name_len} did not make the fill cut");
+    }
+}

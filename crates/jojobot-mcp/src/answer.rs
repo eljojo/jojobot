@@ -473,6 +473,20 @@ pub(crate) fn not_shown(count: usize, offset: usize, what: &str) -> serde_json::
     })
 }
 
+/// **The room an answer keeps for the block that names what a list left out,
+/// with the key it rides under, at its widest.** A fill counts the rest of its
+/// answer, subtracts this, and spends what is left on its items. The key is part
+/// of the block's cost: a fill that measured the block alone passed the ceiling
+/// by the key whenever its items added up inside that window. The block is
+/// measured with the largest numbers a count and an offset can hold, so no real
+/// block of `what` is wider.
+pub(crate) fn widest_not_shown(what: &str) -> usize {
+    serde_json::json!({"not_shown": not_shown(usize::MAX, usize::MAX, what)})
+        .to_string()
+        .chars()
+        .count()
+}
+
 // ── what a write says about itself ──────────────────────────────────────────
 
 /// **A count and its noun, agreeing.** A real model read "1 entries long" off
@@ -823,6 +837,38 @@ mod tests {
     use super::*;
     use crate::harness::*;
     use rmcp::handler::server::wrapper::Parameters;
+
+    /// **The room reserved for the block that names what a list left out is the
+    /// room the block takes WITH the key it rides under, at its widest.** A fill
+    /// that measured the block alone passed the ceiling by the key whenever the
+    /// items added up inside that window. The widest is measured with the largest
+    /// numbers a count and an offset can hold, so no real block is wider, and a
+    /// real block is shorter than it by at least the key.
+    #[test]
+    fn the_room_for_a_not_shown_block_counts_its_key_at_its_widest() {
+        let keyed = |count: usize, offset: usize| {
+            serde_json::json!({"not_shown": not_shown(count, offset, "hits")})
+                .to_string()
+                .chars()
+                .count()
+        };
+        let widest = widest_not_shown("hits");
+        assert_eq!(widest, keyed(usize::MAX, usize::MAX));
+        for (count, offset) in [(1, 1), (37, 1_000), (12_345, 999_999), (usize::MAX, 0)] {
+            assert!(
+                keyed(count, offset) <= widest,
+                "a block of {count} and {offset} is wider than the room kept for it"
+            );
+        }
+        let bare = not_shown(usize::MAX, usize::MAX, "hits")
+            .to_string()
+            .chars()
+            .count();
+        assert!(
+            widest >= bare + "\"not_shown\":".chars().count(),
+            "the key is part of the room: {widest} against {bare}"
+        );
+    }
 
     /// 🚨 **An empty way forward cannot be built at all** (decision log 261,
     /// 262) — the constructor is the one door, and it panics rather than

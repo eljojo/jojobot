@@ -131,11 +131,8 @@ impl Jojobot {
             "merged_excluded": folded,
             "entities": [],
         });
-        // The block is counted with the key it rides under.
-        let widest_not_shown =
-            serde_json::json!({"not_shown": answer::not_shown(held, held, "entities")});
         let rest = envelope.to_string().chars().count()
-            + widest_not_shown.to_string().chars().count()
+            + answer::widest_not_shown("entities")
             + answer::STATUS_BAR_ROOM;
         let kept = jojobot_domain::text::Capped::beside(rest).head(&rendered, |(_, size)| *size);
         let shown = kept.kept().len();

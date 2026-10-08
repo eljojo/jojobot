@@ -263,10 +263,7 @@ impl Jojobot {
         };
         let rest = envelope(page.len(), &[]).to_string().chars().count()
             + BODIES_POINTER.chars().count()
-            + crate::answer::not_shown(held, held, "messages")
-                .to_string()
-                .chars()
-                .count()
+            + crate::answer::widest_not_shown("messages")
             + STATUS_BAR_ROOM;
         let kept = Capped::beside(rest).head(&rendered, |(_, size)| *size);
         let shown = &page[..kept.kept().len()];
@@ -352,6 +349,56 @@ mod tests {
     use super::*;
     use crate::harness::*;
     use crate::mailboxes::testing::*;
+
+    /// **A listing counts the block it adds when it cuts, at every size of
+    /// message.** Cutting adds `not_shown` to the answer after the messages are
+    /// chosen. A fill that leaves room for the block and not for the key it rides
+    /// under passes the ceiling by that key, but only when the messages add up
+    /// inside that window, so the length of a body is swept in steps finer than
+    /// the window. Both shapes of listing are swept: with bodies, and with the
+    /// receipts that carry the pointer to them.
+    #[tokio::test]
+    async fn a_listing_counts_the_block_it_adds_when_it_cuts_at_every_size_of_message() {
+        let sent = 200;
+        for (bodies, lengths) in [(true, 100..=260), (false, 1..=200)] {
+            for body_len in lengths {
+                let jojobot = mailbox_handler();
+                make_box(&jojobot, "pm").await;
+                for _ in 0..sent {
+                    send(&jojobot, "pm", "otto", &"x".repeat(body_len)).await;
+                }
+                let body = json_of(
+                    &jojobot
+                        .list_sent(Parameters(ListSentArgs {
+                            limit: Some(1_000),
+                            offset: None,
+                            sender: Some("bot:otto".into()),
+                            to: None,
+                            include_bodies: Some(bodies),
+                            sid: None,
+                        }))
+                        .await
+                        .expect("list_sent ok"),
+                );
+                let size = body.to_string().chars().count();
+                assert!(
+                    size + STATUS_BAR_ROOM <= jojobot_domain::text::ANSWER_CEILING,
+                    "bodies {bodies}, {body_len} long: the answer is {size} characters"
+                );
+                let carried = body["messages"].as_array().expect("messages").len();
+                let left = body["not_shown"]["count"].as_u64().unwrap_or(0) as usize;
+                assert_eq!(
+                    carried + left,
+                    sent,
+                    "bodies {bodies}, {body_len} long: {body}"
+                );
+                assert!(
+                    left > 0,
+                    "bodies {bodies}, {body_len} long did not make the fill cut"
+                );
+            }
+        }
+    }
 
     /// **A sender can see where their own mail got to, and seeing moves
     /// nothing.** Twice a session wanted to confirm a report had been *read*
