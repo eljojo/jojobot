@@ -616,6 +616,46 @@ fn the_orientation_essay_lists_the_role_kind() {
     );
 }
 
+/// **The status bar is taught where every boot reads it.** Every answer may
+/// carry one, and no session learns that from the answers, so the core of the
+/// essay, which a named boot keeps whole, names it and its one entry, says that
+/// no block is unknown and not zero, and says it carries a count and no
+/// instruction.
+#[test]
+fn the_core_of_the_essay_teaches_the_status_bar() {
+    let core = crate::orientation::essay::ORIENTATION_CORE;
+    assert!(
+        core.contains("status_bar") && core.contains("mail_waiting"),
+        "the core of the essay does not teach the status bar and its mail count"
+    );
+}
+
+/// **The receipts say what persisted and not that the write was "verified".**
+/// The brief of the status bar bans the word for persistence: it reads as though
+/// a claim were true. `capture` and `update_fact` said the write was still
+/// verified against the store.
+#[test]
+fn neither_write_receipt_text_calls_the_write_verified() {
+    let tools = Jojobot::tool_router().list_all();
+    for verb in ["capture", "update_fact"] {
+        let description = tools
+            .iter()
+            .find(|t| t.name.as_ref() == verb)
+            .unwrap_or_else(|| panic!("the surface offers {verb}"))
+            .description
+            .as_deref()
+            .unwrap_or_default();
+        assert!(
+            !description.contains("verified"),
+            "{verb}'s description calls the write verified: {description}"
+        );
+        assert!(
+            description.contains("read back"),
+            "{verb}'s description does not say the write is read back from the store"
+        );
+    }
+}
+
 /// **The orientation essay explains claiming a role**, in the Sessions
 /// section where it already explains what a session is — the same place a
 /// caller reads to understand `start_here`'s `claim` argument, so the

@@ -277,7 +277,7 @@ impl Jojobot {
                        exist — it never creates. IT ANSWERS WITH A RECEIPT, NOT THE RECORD: the \
                        address, the date, the provenance, the standing, the status and how many \
                        keys the record now carries, with the claim itself elided and said to be. \
-                       The write is still verified against the store before it is called a \
+                       The write is read back from the store before it is called a \
                        success; what stops is shipping you the words you just sent. recall the \
                        subject to read the record back. AND A REWRITE DESTROYS NOTHING: every \
                        write of a claim is kept, so what it said before this call is still \
