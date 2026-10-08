@@ -104,9 +104,25 @@ const TEMPLATE_DIR_PREFIX: &str = "jojobot-store-template-";
 /// directory copy is only seen by a server that starts after it. A backup
 /// restores into a server that is already up.
 async fn build_template() -> Result<std::path::PathBuf, crate::dolt::StartError> {
-    use crate::dolt::StartError;
     let root = std::env::temp_dir().join(format!("{TEMPLATE_DIR_PREFIX}{}", std::process::id()));
     sweep_dead_templates();
+    match build_template_in(&root).await {
+        Ok(backup) => {
+            remove_template_at_exit(root);
+            Ok(backup)
+        }
+        // A build that failed leaves a half-made directory nobody will use.
+        Err(e) => {
+            let _ = std::fs::remove_dir_all(&root);
+            Err(e)
+        }
+    }
+}
+
+async fn build_template_in(
+    root: &std::path::Path,
+) -> Result<std::path::PathBuf, crate::dolt::StartError> {
+    use crate::dolt::StartError;
     let backup = root.join("backup");
     let building = root.join("building");
     std::fs::create_dir_all(&building).map_err(|e| StartError::DataDir {
@@ -131,10 +147,44 @@ async fn build_template() -> Result<std::path::PathBuf, crate::dolt::StartError>
     Ok(backup)
 }
 
+/// **The template lives as long as this process does, and goes when it exits.**
+/// Every case restores from it, so no case can own it, and a static is never
+/// dropped; the hook below runs on the way out of a normal end and of a failed
+/// run alike. A kill does not reach it, which is what the sweep is for.
+fn remove_template_at_exit(root: std::path::PathBuf) {
+    static ROOT: std::sync::Mutex<Option<std::path::PathBuf>> = std::sync::Mutex::new(None);
+    extern "C" fn at_exit() {
+        if let Ok(mut root) = ROOT.lock()
+            && let Some(root) = root.take()
+        {
+            let _ = std::fs::remove_dir_all(root);
+        }
+    }
+    if let Ok(mut held) = ROOT.lock() {
+        *held = Some(root);
+    }
+    // SAFETY: the hook takes no arguments and touches only the path above and
+    // the file system.
+    unsafe {
+        libc::atexit(at_exit);
+    }
+}
+
 /// Remove the templates of processes that are gone. A process cannot clean up
 /// after a kill, so the next one to build a template does it.
+///
+/// **Only a process that is certainly gone counts.** A process is gone when
+/// its entry under `/proc` is, and when `/proc` itself cannot be read nothing is
+/// known, so nothing is removed.
 fn sweep_dead_templates() {
-    let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else {
+    sweep_dead_templates_in(&std::env::temp_dir());
+}
+
+fn sweep_dead_templates_in(parent: &std::path::Path) {
+    if !std::path::Path::new("/proc/self").exists() {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(parent) else {
         return;
     };
     for entry in entries.flatten() {
@@ -146,12 +196,7 @@ fn sweep_dead_templates() {
         else {
             continue;
         };
-        let alive = std::process::Command::new("kill")
-            .args(["-0", &pid.to_string()])
-            .stderr(std::process::Stdio::null())
-            .status()
-            .is_ok_and(|status| status.success());
-        if !alive {
+        if !std::path::Path::new("/proc").join(pid.to_string()).exists() {
             let _ = std::fs::remove_dir_all(entry.path());
         }
     }
@@ -161,6 +206,31 @@ fn sweep_dead_templates() {
 mod tests {
     use super::*;
     use crate::dolt::tests::Scratch;
+
+    /// **A template of a process that is gone is removed, and one of a live
+    /// process is kept.** The dead one is a process this case started and
+    /// waited for, so its number is certainly free; the live one is this
+    /// process. A directory that is not a template's name is left alone.
+    #[test]
+    fn the_sweep_removes_the_template_of_a_dead_process_and_keeps_a_live_ones() {
+        let parent = Scratch::new("template-sweep");
+        let mut child = std::process::Command::new("true")
+            .spawn()
+            .expect("a child to start");
+        let dead = child.id();
+        child.wait().expect("the child ends");
+        let template = |pid: u32| parent.0.join(format!("{TEMPLATE_DIR_PREFIX}{pid}"));
+        let gone = template(dead);
+        let live = template(std::process::id());
+        let other = parent.0.join("jojobot-store-template-not-a-pid");
+        for dir in [&gone, &live, &other] {
+            std::fs::create_dir_all(dir.join("backup")).expect("a template");
+        }
+        sweep_dead_templates_in(&parent.0);
+        assert!(!gone.exists(), "the template of a dead process was kept");
+        assert!(live.is_dir(), "the template of a live process was removed");
+        assert!(other.is_dir(), "a name that is no template's was removed");
+    }
 
     /// **A port the suites are handed is claimed in the arbiter every harness
     /// shares**, so a room can never be offered it. The claim is read through
