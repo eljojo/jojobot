@@ -1,5 +1,5 @@
-//! **The head of a chart is placed by no bot, proven against any [`Memory`]
-//! adapter.**
+//! **The head of a chart places itself, and no other bot places it, proven
+//! against any [`Memory`] adapter.**
 //!
 //! A thing with no manager and reports of its own heads a chart. The edit is
 //! judged against the chart read inside its own transaction, so the head has to
