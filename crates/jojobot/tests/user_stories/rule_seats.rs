@@ -1077,8 +1077,12 @@ async fn a_bot_created_with_fields_is_held_to_the_ceiling_a_capture_is() {
         .never_says("rule_seats")
         .never_says("set_charter")
         .says("\"wrote\":false");
-    // Nothing was created: the handle is free and the bot is not listed.
-    s.list("bot").await.never_says("bot:omega");
+    // Nothing was created: the handle is free and the bot is not listed, beside
+    // the one that was made, so an empty listing would not pass.
+    s.list("bot")
+        .await
+        .never_says("bot:omega")
+        .says("bot:sigma");
 
     // ── a capture of the same fields on an existing bot refuses the same way ─
     s.add("bot:psi", "Psi").await;
