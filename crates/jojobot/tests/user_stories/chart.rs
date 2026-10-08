@@ -302,3 +302,73 @@ async fn the_chart_is_guarded_the_same_through_an_edit_a_retraction_and_a_merge(
     s.wrap("tried the other doors to the chart").await;
     story.finish().await;
 }
+
+/// **A key a bot cannot write about itself is refused in the settings of an
+/// update, as it is in a capture.** The settings of `update_entity` become a
+/// claim about the thing, and a key that binds the thing is judged by the same
+/// table whichever verb carries it. The capture of the same key is the control:
+/// it is refused, so a build where no verb refuses would not pass.
+#[tokio::test]
+async fn a_ceiling_key_sent_as_a_setting_is_refused_as_a_capture_of_it_is() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:sigma", "Sigma").await;
+    let sigma = story.as_bot("bot:sigma").await;
+
+    sigma
+        .refused(
+            "capture",
+            json!({
+                "subject": "bot:sigma", "content": "more seats",
+                "provenance": "testimony", "fields": {"rule_seats": "9"},
+            }),
+        )
+        .await
+        .says("rule_seats");
+    sigma
+        .refused(
+            "update_entity",
+            json!({"handle": "bot:sigma", "sets": {"rule_seats": "9"}}),
+        )
+        .await
+        .says("rule_seats");
+    s.call("recall", json!({"subject": "bot:sigma"}))
+        .await
+        .never_says("\"rule_seats\":\"9\"");
+
+    // The same key from a different identity lands, so the refusal above was
+    // about who asked and not about the key.
+    s.call(
+        "update_entity",
+        json!({"handle": "bot:sigma", "sets": {"rule_seats": "9"}}),
+    )
+    .await;
+    s.call("recall", json!({"subject": "bot:sigma"}))
+        .await
+        .says("\"rule_seats\":\"9\"");
+
+    // A creation is judged the same way: a bot cannot make a bot that reports
+    // to a manager it does not outrank, and can make one that reports to itself.
+    sigma
+        .refused(
+            "add_entity",
+            json!({
+                "kind": "bot", "handle": "psi", "name": "Psi", "source": "user-named",
+                "sets": {"reports_to": "bot:otto"},
+            }),
+        )
+        .await
+        .says("reports_to");
+    s.list("bot").await.never_says("bot:psi");
+    sigma
+        .call(
+            "add_entity",
+            json!({
+                "kind": "bot", "handle": "psi", "name": "Psi", "source": "user-named",
+                "sets": {"reports_to": "bot:sigma"},
+            }),
+        )
+        .await;
+    s.list("bot").await.says("bot:psi");
+    story.finish().await;
+}

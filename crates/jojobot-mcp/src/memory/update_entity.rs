@@ -123,6 +123,15 @@ impl Jojobot {
                 {
                     return memory_declined("update_entity", refused);
                 }
+                // **A guarded key is licensed here as on a capture**, through
+                // the same call: the store's combined write takes no caller, so
+                // this is the only place an update's `sets` is judged.
+                if let Some(refused) = self
+                    .refuses_an_unlicensed_key("update_entity", &handle, true, &caller.bot, &fields)
+                    .await?
+                {
+                    return Ok(refused);
+                }
                 if let Some(refused) = self
                     .refuses_a_hand_written_due_moment(&handle, &fields, &[])
                     .await
