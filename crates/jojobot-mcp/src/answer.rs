@@ -541,21 +541,18 @@ pub(crate) fn note_delta(body: &mut serde_json::Value, differences: Vec<Differen
             .collect::<Vec<_>>()
             .into(),
     );
+    // **The fields only.** `delta` already holds what was sent, what was kept
+    // and why, whole, so a line that printed them again would put the caller's
+    // own text in the answer twice.
     fields.insert(
         "delta_note".into(),
         format!(
-            "stored differs from sent. {}",
+            "stored differs from sent on: {}; see delta",
             differences
                 .iter()
-                .map(|d| {
-                    let because = d.because.map(|w| format!(" — {w}")).unwrap_or_default();
-                    format!(
-                        "{}: stored {}, you sent {}{because}",
-                        d.field, d.stored, d.sent
-                    )
-                })
+                .map(|d| d.field.as_str())
                 .collect::<Vec<_>>()
-                .join("; ")
+                .join(", ")
         )
         .into(),
     );

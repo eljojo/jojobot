@@ -459,6 +459,54 @@ mod tests {
         assert!(kept.chars().count() < long.chars().count());
     }
 
+    /// **The caller's own text appears once in the answer to a cut record.**
+    /// `delta` holds what was sent and what was kept, whole, so the line beside
+    /// it names the fields and points at `delta` instead of printing both
+    /// values a second time. The end of the long text is found once, in
+    /// `delta.sent`, and the line names `notes` and `delta`.
+    #[tokio::test]
+    async fn a_cut_outcome_record_carries_the_callers_text_once() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "inbox").await;
+        let posted = send(&jojobot, "inbox", "epsilon", "the shipment landed").await;
+        let id = posted["id"].as_str().expect("an id").to_string();
+
+        let long = format!(
+            "{}zebraend",
+            "counted the crates and reconciled them against the manifest ".repeat(200)
+        );
+        let body = json_of(
+            &jojobot
+                .mark_processed(Parameters(MarkProcessedArgs {
+                    message_id: id,
+                    notes: Some(long),
+                    sid: None,
+                    quarantine: None,
+                }))
+                .await
+                .expect("a long note must not fail the terminal verb"),
+        );
+        assert_eq!(
+            body["delta"][0]["sent"]
+                .as_str()
+                .expect("delta keeps what was sent")
+                .matches("zebraend")
+                .count(),
+            1,
+            "{body}"
+        );
+        assert_eq!(
+            body.to_string().matches("zebraend").count(),
+            1,
+            "the caller's text is in the answer once, in delta and nowhere else"
+        );
+        let line = body["delta_note"].as_str().expect("a line beside delta");
+        assert!(
+            line.contains("notes") && line.contains("delta"),
+            "the line names the field and points at delta: {line}"
+        );
+    }
+
     /// **A caller who recorded nothing was cut off from nothing.** The flag
     /// compared the stored notes against what this call asked to store, on the
     /// premise that the store applies the same rule — but both stores carry a

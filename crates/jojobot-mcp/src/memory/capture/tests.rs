@@ -319,10 +319,10 @@ async fn a_substitution_with_a_reason_carries_it() {
         "the reason has to say what about this call replaced the value: {receipt}",
     );
 
-    // The rendered line carries it too, since that is the half a reader
-    // reads rather than branches on.
+    // The rendered line names the field and points at `delta`, where the
+    // reason sits whole beside the values, so the reason is stated once.
     let note = receipt["delta_note"].as_str().expect("a rendered line");
-    assert!(note.contains(&because), "{receipt}");
+    assert!(!note.contains(&because), "{receipt}");
 
     // ⭐ **Paired with a difference that has no reason to give.** A caller
     // that names a bare handle gets it qualified, and nothing about that
