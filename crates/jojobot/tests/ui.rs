@@ -383,6 +383,21 @@ async fn spawn_jojobot_at(
     board: Board,
     scheme: &str,
 ) -> (SocketAddr, CancellationToken, Board) {
+    spawn_jojobot_guarding(endpoints, allowed, idp, board, scheme, None).await
+}
+
+/// The same, with **`/mcp` guarded by a bearer validator** as well, which is how
+/// a real instance runs: the UI and the MCP surface behind one issuer, each
+/// checking its own credential. `None` leaves `/mcp` open, as every other case
+/// in this file has it.
+async fn spawn_jojobot_guarding(
+    endpoints: IssuerEndpoints,
+    allowed: &[&str],
+    idp: &support::TestIdp,
+    board: Board,
+    scheme: &str,
+    mcp: Option<Arc<jojobot::auth::Validator>>,
+) -> (SocketAddr, CancellationToken, Board) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
@@ -404,7 +419,7 @@ async fn spawn_jojobot_at(
     let state = AppState {
         resource: format!("http://{addr}/mcp"),
         issuer: Some(support::ISS.to_string()),
-        validator: None,
+        validator: mcp,
         metadata_url: format!("http://{addr}/.well-known/oauth-protected-resource"),
         memory: indexed.clone(),
         search,
@@ -1219,6 +1234,128 @@ async fn a_node_page_is_closed_to_a_browser_with_no_session() {
     assert!(
         to.contains("person%3Aalpha"),
         "the login must carry the page the browser wanted: {to}"
+    );
+    ct.cancel();
+}
+
+/// **What a bot holds does not open a page.** A bot reaches this server with a
+/// bearer token that `/mcp` accepts. The pages take a session cookie that only
+/// a completed login mints, so the token is not a way in, however it is
+/// presented: as the bearer it came as, as the value of the session cookie, or
+/// as an ID token minted for the UI's own client. Every one of those is sent to
+/// the login and shown no page. Paired with the same token at `/mcp`, which
+/// lets it in (so it IS a real credential), and with a real login, which opens
+/// the page (so the refusals are about the credential and not about the page).
+#[tokio::test]
+async fn what_a_bot_holds_does_not_open_a_page_and_a_real_session_does() {
+    const BOT: &str = "sub-a-bot";
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let mcp = Arc::new(idp.validator(&[BOT]));
+    let (addr, ct, _) = spawn_jojobot_guarding(
+        endpoints,
+        &[READER],
+        &idp,
+        seeded_board().await,
+        "http",
+        Some(mcp),
+    )
+    .await;
+    let bot_token = idp.token(BOT);
+    let initialize = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"a-bot","version":"0"}}}"#;
+    let at_mcp = |token: Option<String>| {
+        let mut request = browser()
+            .post(format!("http://{addr}/mcp"))
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream")
+            .body(initialize);
+        if let Some(token) = token {
+            request = request.bearer_auth(token);
+        }
+        request.send()
+    };
+
+    // ── the token is a real credential at /mcp, and nothing is not ──────────
+    assert_eq!(
+        at_mcp(None).await.unwrap().status(),
+        reqwest::StatusCode::UNAUTHORIZED,
+        "/mcp must refuse a call with no token, or the positive below proves nothing"
+    );
+    let let_in = at_mcp(Some(bot_token.clone())).await.unwrap().status();
+    assert!(
+        let_in.is_success(),
+        "the bot's token must open /mcp, or it is no credential to refuse elsewhere: {let_in}"
+    );
+
+    // ── and it opens no page, in any of the shapes a bot could try ──────────
+    let real_session = log_in(&browser(), addr, "/").await;
+    let cookie_name = real_session
+        .split_once('=')
+        .map(|(name, _)| name.to_string())
+        .expect("a session pair is name=value");
+    let ui_id_token = idp.token_for(BOT, CLIENT_ID);
+    for (how, request) in [
+        (
+            "as the bearer it came as",
+            browser()
+                .get(format!("http://{addr}/person:alpha/"))
+                .bearer_auth(&bot_token),
+        ),
+        (
+            "as the value of the session cookie",
+            browser()
+                .get(format!("http://{addr}/person:alpha/"))
+                .header("cookie", format!("{cookie_name}={bot_token}")),
+        ),
+        (
+            "as an ID token minted for the UI's client",
+            browser()
+                .get(format!("http://{addr}/person:alpha/"))
+                .bearer_auth(&ui_id_token),
+        ),
+        (
+            "as the bearer, at the index",
+            browser()
+                .get(format!("http://{addr}/"))
+                .bearer_auth(&bot_token),
+        ),
+    ] {
+        let response = request.send().await.unwrap();
+        assert!(
+            response.status().is_redirection(),
+            "a bot's token {how} must be sent to the login, got {}",
+            response.status()
+        );
+        let to = location(&response);
+        assert!(to.starts_with("/ui/login"), "{how}: {to}");
+        assert!(
+            response.text().await.unwrap().is_empty(),
+            "a bot's token {how} was shown a page body, not only redirected"
+        );
+    }
+
+    // ── a real login does open the page ──────────────────────────────────────
+    let opened = browser()
+        .get(format!("http://{addr}/person:alpha/"))
+        .header("cookie", &real_session)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(opened.status(), reqwest::StatusCode::OK);
+    assert!(
+        opened.text().await.unwrap().contains("person:alpha"),
+        "the real session must be shown the page"
+    );
+
+    // ── and the session is no credential at /mcp ────────────────────────────
+    let cookie_value = real_session
+        .split_once('=')
+        .map(|(_, value)| value.to_string())
+        .expect("a session pair is name=value");
+    assert_eq!(
+        at_mcp(Some(cookie_value)).await.unwrap().status(),
+        reqwest::StatusCode::UNAUTHORIZED,
+        "the UI's session cookie must not be a bearer token for /mcp"
     );
     ct.cancel();
 }
