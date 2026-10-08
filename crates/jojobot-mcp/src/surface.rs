@@ -808,6 +808,14 @@ fn the_recall_description_names_the_room_block_and_when_it_appears() {
     assert_description_names("recall", &["`room`", "aged_out"]);
 }
 
+/// **`capture`'s own description names the entitlement keys**, since a pass a
+/// session wrote down under invented keys is a pass the `held` block never
+/// finds.
+#[test]
+fn the_capture_description_names_the_entitlement_keys() {
+    assert_description_names("capture", &["admits", "valid_from", "valid_until"]);
+}
+
 /// **`capture`'s own description names `starred`** — the mark that spends one of
 /// a bot's few boot seats on a rule — so a caller reads it before the schema.
 #[test]

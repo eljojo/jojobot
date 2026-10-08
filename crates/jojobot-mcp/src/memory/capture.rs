@@ -750,7 +750,15 @@ impl Jojobot {
                        and it competes for one of the few seats your boot spends on rules. An \
                        unstarred rule is kept all the same and reads back with recall's facts; \
                        when a new star pushes the oldest starred rule off its seat, the receipt \
-                       names it. A claim too big to be read back whole in one answer is refused with \
+                       names it. A PASS, TICKET, MEMBERSHIP OR REGISTRATION SOMEBODY HOLDS is a claim on \
+                       the HOLDER, with fields `admits` (the handle of the event, place or \
+                       organisation it opens), `valid_from` and `valid_until` (days; no window \
+                       reads as live) and optionally `tier`. That an event offers a tier is a \
+                       claim on the event instead. Holding is not attendance, not wanting to go \
+                       and not a calendar entry: each is its own claim. Recall the holder with \
+                       facts to read what they hold, or recall the event and read its `held` \
+                       block, which ranks who holds what, live first. A claim too big to be read \
+                       back whole in one answer is refused with \
                        nothing written: shorten it, split it into claims that each say one \
                        thing, or keep the long text outside and write a pointer claim."
     )]
