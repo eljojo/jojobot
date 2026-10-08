@@ -273,6 +273,15 @@ impl Jojobot {
                 if let Some(refused) = jojobot_domain::memory::refuses_role_fields(fields.keys()) {
                     return memory_declined("add_entity", refused);
                 }
+                // **A guarded key is licensed here as on a capture**, through
+                // the same call: the store's combined write takes no caller, so
+                // this is the only place a creation's `sets` is judged.
+                if let Some(refused) = self
+                    .refuses_an_unlicensed_key("add_entity", &creating, false, &caller.bot, &fields)
+                    .await?
+                {
+                    return Ok(refused);
+                }
                 if let Some(refused) = self
                     .refuses_a_hand_written_due_moment(&creating, &fields, &[])
                     .await
@@ -1481,5 +1490,66 @@ mod tests {
             remembered.get("teaching").is_none(),
             "a read carries a note: {remembered}",
         );
+    }
+    /// 🚨 **A guarded key in a creation's `sets` is judged as a capture judges
+    /// it.** `reports_to` is written only by whom its declaration licenses, and
+    /// a creation that carried it in `sets` once skipped the check, so any
+    /// caller could place a new bot under any manager. A caller who is neither
+    /// the manager named nor above it is refused and nothing is created; the
+    /// manager itself creates the same bot and the chart reads back.
+    #[tokio::test]
+    async fn a_creation_naming_a_manager_is_licensed_as_a_capture_is() {
+        let jojobot = handler();
+        ensure(&jojobot, "bot:omega").await;
+        let placing = |sid: String| AddEntityArgs {
+            sid: Some(sid),
+            sets: Some(
+                [("reports_to".to_string(), "bot:omega".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+            ..add_args("bot", "sigma", "Sigma")
+        };
+
+        // `TEST_SID` is bot:otto, who is neither bot:omega nor above it.
+        let refused = blocked(
+            &jojobot
+                .add_entity(Parameters(placing(TEST_SID.into())))
+                .await
+                .expect("a refusal is an answer, not a failure"),
+        );
+        assert_eq!(refused["wrote"], false, "{refused}");
+        assert!(
+            refused["how_to_proceed"]
+                .as_str()
+                .is_some_and(|how| how.contains("bot:omega")),
+            "the refusal names the bot that may place it: {refused}"
+        );
+        let after = json_of(
+            &jojobot
+                .list_entities(Parameters(ListEntitiesArgs {
+                    kind: Some("bot".into()),
+                    parent: None,
+                    sid: None,
+                }))
+                .await
+                .expect("list ok"),
+        );
+        assert!(
+            !after.to_string().contains("bot:sigma"),
+            "a refused creation leaves nothing behind: {after}"
+        );
+
+        // The positive: the manager named creates the same bot, and it lands.
+        let omega = as_bot(&jojobot, "omega");
+        let landed = json_of(
+            &jojobot
+                .add_entity(Parameters(placing(omega)))
+                .await
+                .expect("add ok"),
+        );
+        assert_ne!(landed["status"], "blocked", "{landed}");
+        let held = fields_of(&jojobot, "bot:sigma").await;
+        assert_eq!(held["reports_to"], "bot:omega", "{held}");
     }
 }

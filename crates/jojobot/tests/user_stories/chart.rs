@@ -96,3 +96,39 @@ async fn the_chart_is_changed_only_by_a_superior() {
     s.wrap("looked at who may change the chart").await;
     story.finish().await;
 }
+
+/// "I made a new bot and said who it reports to. Does that count as placing it
+/// in the chart?" It does, and the same licence applies as for a capture: a
+/// creation naming a manager is judged on who is asking, so a stranger cannot
+/// hang a new bot under a manager it does not own.
+#[tokio::test]
+async fn a_new_bot_is_placed_under_a_manager_only_by_whom_may_place_it() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:omega", "Omega").await;
+    let omega = story.as_bot("bot:omega").await;
+    let creating = || {
+        json!({
+            "kind": "bot", "handle": "sigma", "name": "Sigma", "source": "user-named",
+            "sets": {"reports_to": "bot:omega"},
+        })
+    };
+
+    // ── a stranger's creation naming omega as the manager is refused ────────
+    s.refused("add_entity", creating())
+        .await
+        .says("\"wrote\":false")
+        .says("bot:omega");
+    s.call("list_entities", json!({"kind": "bot"}))
+        .await
+        .never_says("bot:sigma");
+
+    // ── the manager's own creation lands, and the bot reads back under it ───
+    omega.call("add_entity", creating()).await;
+    s.call("recall", json!({"subject": "bot:sigma"}))
+        .await
+        .says("\"reports_to\":\"bot:omega\"");
+
+    s.wrap("placed a new bot under its manager").await;
+    story.finish().await;
+}

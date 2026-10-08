@@ -795,43 +795,12 @@ impl Jojobot {
         let sent_field_keys: Vec<String> = fields.keys().cloned().collect();
         // **A guarded key is written only by whom its declaration licenses.**
         // Checked before anything else about this write, on the caller's own
-        // identity against the subject it is about to write — never a kind
-        // question, see `refuses_unlicensed_write`.
-        //
-        // **Compared as the handle the subject answers to now.** A subject
-        // typed as a handle the caller's own bot used to wear still names the
-        // bot, and the session is bound to its current one. The resolving read
-        // is spent only on a write that names a ceiling key, and a read that
-        // fails refuses the write rather than waving it through.
-        let ceiling_subject = if jojobot_domain::memory::names_a_guarded_key(&fields) {
-            match self.current_handle(&subject).await {
-                Ok(current) => current,
-                Err(e) => return memory_declined("capture", e),
-            }
-        } else {
-            subject.clone()
-        };
-        // **The chart is read here, before the write, and not inside it.** A
-        // fresh capture carries no caller down to the store, so the chain this
-        // write is judged against can be one write old: a chart change that
-        // lands between this read and the store's write is judged against the
-        // chart before it. Chart changes are rare and made by superiors, and the
-        // window is accepted (decision log 381); the edit, the retraction and
-        // the merge read the chart inside their own transaction.
-        let lineage = match jojobot_domain::memory::needs_the_chart(&fields) {
-            Some(named) => match self.chart_around(&ceiling_subject, named).await {
-                Ok(lineage) => Some(lineage),
-                Err(e) => return memory_declined("capture", e),
-            },
-            None => None,
-        };
-        if let Some(refused) = jojobot_domain::memory::refuses_unlicensed_write(
-            &ceiling_subject,
-            &caller.bot,
-            &fields,
-            lineage.as_ref(),
-        ) {
-            return memory_declined("capture", refused);
+        // identity against the subject it is about to write.
+        if let Some(refused) = self
+            .refuses_an_unlicensed_key("capture", &subject, true, &caller.bot, &fields)
+            .await?
+        {
+            return Ok(refused);
         }
         // **A role's own two fields are the boot door's, whoever is asking.**
         // This call reaches the Memory trait directly from the claim path
@@ -1128,6 +1097,70 @@ impl Jojobot {
 }
 
 impl Jojobot {
+    /// **The licence check every write that sets fields makes, in one place.**
+    /// A guarded key is written only by whom its declaration licenses — never a
+    /// kind question, see `refuses_unlicensed_write`. A verb that writes fields
+    /// calls this and no verb carries a copy, so a key guarded later is covered
+    /// by construction on every door that sets fields.
+    ///
+    /// **Compared as the handle the subject answers to now.** A subject typed as
+    /// a handle the caller's own bot used to wear still names the bot, and the
+    /// session is bound to its current one. The resolving read is spent only on
+    /// a write that names a guarded key, and a read that fails refuses the write
+    /// rather than waving it through.
+    ///
+    /// **The chart is read here, before the write, and not inside it.** A fresh
+    /// write carries no caller down to the store, so the chain this write is
+    /// judged against can be one write old: a chart change that lands between
+    /// this read and the store's write is judged against the chart before it.
+    /// Chart changes are rare and made by superiors, and the window is accepted
+    /// (decision log 381); the edit, the retraction and the merge read the chart
+    /// inside their own transaction.
+    ///
+    /// `exists` is false on a creation: a subject that does not exist yet has no
+    /// chart above it and no former handle, so it is judged on the manager the
+    /// write names alone.
+    pub(crate) async fn refuses_an_unlicensed_key(
+        &self,
+        verb: &'static str,
+        subject: &EntityId,
+        exists: bool,
+        caller: &EntityId,
+        fields: &std::collections::BTreeMap<String, String>,
+    ) -> Result<Option<CallToolResult>, McpError> {
+        let ceiling_subject = if jojobot_domain::memory::names_a_guarded_key(fields) {
+            match self.current_handle(subject).await {
+                Ok(current) => current,
+                Err(e) => return memory_declined(verb, e).map(Some),
+            }
+        } else {
+            subject.clone()
+        };
+        let lineage = match jojobot_domain::memory::needs_the_chart(fields) {
+            Some(named) => {
+                let read = if exists {
+                    self.chart_around(&ceiling_subject, named).await
+                } else {
+                    self.chart_around_new(named).await
+                };
+                match read {
+                    Ok(lineage) => Some(lineage),
+                    Err(e) => return memory_declined(verb, e).map(Some),
+                }
+            }
+            None => None,
+        };
+        match jojobot_domain::memory::refuses_unlicensed_write(
+            &ceiling_subject,
+            caller,
+            fields,
+            lineage.as_ref(),
+        ) {
+            Some(refused) => memory_declined(verb, refused).map(Some),
+            None => Ok(None),
+        }
+    }
+
     /// **The chart around a write**: the bots above `subject`, the manager the
     /// write names and the bots above that one. Read through the store's own
     /// folded fields, one bot at a time, and a read that fails refuses the
@@ -1144,6 +1177,23 @@ impl Jojobot {
         };
         Ok(jojobot_domain::memory::Lineage {
             above,
+            named,
+            above_named,
+        })
+    }
+
+    /// **The chart around a thing being created**: nothing above it, because it
+    /// holds no manager yet, and the bots above the manager the write names.
+    async fn chart_around_new(
+        &self,
+        named: Option<EntityId>,
+    ) -> Result<jojobot_domain::memory::Lineage, MemoryError> {
+        let above_named = match &named {
+            Some(manager) => self.chain_above(manager).await?,
+            None => Vec::new(),
+        };
+        Ok(jojobot_domain::memory::Lineage {
+            above: Vec::new(),
             named,
             above_named,
         })
