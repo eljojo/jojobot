@@ -771,6 +771,158 @@ async fn field_link_holds_the_links_the_writes_imply_and_nothing_else() {
     );
 }
 
+/// **Testimony an older build recorded has no session of its own, and this
+/// build refuses to rewrite its words in place.** The refusal names the route,
+/// the route works, and an edit that touches no words still lands. The claim is
+/// one the recording wrote as testimony, so the case is about stored rows and
+/// not about a claim this build wrote a moment ago.
+#[tokio::test]
+async fn testimony_an_older_build_recorded_is_corrected_by_the_route_and_not_in_place() {
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        ..
+    } = restore_the_fixture("legacy-testimony").await;
+    let booted = boot_current(&state_dir, store_port, &git_ref).await;
+    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
+        .await
+        .expect("connecting to the current binary");
+    let fail = |what: &str, body: &str| -> ! {
+        panic!("recorded at {git_ref}: {what} did not hold: {body}")
+    };
+
+    let boot = surface
+        .call(
+            "start_here",
+            json!({"bot": "assistant", "brief": true, "resume": "new"}),
+        )
+        .await;
+    let boot: serde_json::Value =
+        serde_json::from_str(&boot).unwrap_or_else(|_| fail("booting to write", &boot));
+    let sid = boot["session"]["sid"]
+        .as_str()
+        .unwrap_or_else(|| fail("booting to write", &boot.to_string()))
+        .to_string();
+
+    const WORDS: &str = "lives at the recorded place";
+    let read = surface
+        .call(
+            "recall",
+            json!({"subject": "person:upgrade-fixture-person", "facts": true}),
+        )
+        .await;
+    let parsed: serde_json::Value =
+        serde_json::from_str(&read).unwrap_or_else(|_| fail("the recorded claims", &read));
+    let recorded = parsed["objects"][0]["facts"]
+        .as_array()
+        .and_then(|facts| facts.iter().find(|f| f["content"] == WORDS))
+        .unwrap_or_else(|| fail("the recorded testimony", &read));
+    if recorded["provenance"] != "testimony" {
+        fail("the recorded claim being testimony", &read);
+    }
+    let address = recorded["address"]
+        .as_str()
+        .unwrap_or_else(|| fail("the recorded claim's address", &read))
+        .to_string();
+
+    // (1) A rewrite of the words in place is refused, names the route, and
+    // leaves the words as they were.
+    let refused = surface
+        .call(
+            "update_fact",
+            json!({"address": address, "content": "lives somewhere else",
+                   "provenance": "testimony", "sid": sid}),
+        )
+        .await;
+    if !refused.contains("\"status\":\"blocked\"")
+        || !refused.contains("derived_from")
+        || !refused.contains("archived")
+    {
+        fail("a refusal that names the route", &refused);
+    }
+    let read = surface
+        .call(
+            "recall",
+            json!({"subject": "person:upgrade-fixture-person", "facts": true}),
+        )
+        .await;
+    if !read.contains(WORDS) || read.contains("lives somewhere else") {
+        fail("the refused rewrite leaving the words alone", &read);
+    }
+
+    // (3) An edit that sets a field and leaves the words alone still lands.
+    let landed = surface
+        .call(
+            "update_fact",
+            json!({"address": address, "fields": {"colour": "red"}, "sid": sid}),
+        )
+        .await;
+    if landed.contains("\"status\":\"blocked\"") {
+        fail("a field-only edit", &landed);
+    }
+    let read = surface
+        .call(
+            "recall",
+            json!({"subject": "person:upgrade-fixture-person"}),
+        )
+        .await;
+    let parsed: serde_json::Value =
+        serde_json::from_str(&read).unwrap_or_else(|_| fail("the person's fields", &read));
+    if parsed["objects"][0]["fields"]["colour"] != "red" {
+        fail("the field the edit set", &read);
+    }
+
+    // (2) Archive the claim, then write the corrected one derived from it.
+    let archived = surface
+        .call(
+            "update_fact",
+            json!({"address": address, "status": "archived",
+                   "details": "the operator corrected it", "sid": sid}),
+        )
+        .await;
+    if archived.contains("\"status\":\"blocked\"") {
+        fail("archiving the recorded claim", &archived);
+    }
+    let corrected = surface
+        .call(
+            "capture",
+            json!({"subject": "person:upgrade-fixture-person",
+                   "content": "lives somewhere else", "provenance": "testimony",
+                   "derived_from": address, "sid": sid}),
+        )
+        .await;
+    if corrected.contains("\"status\":\"blocked\"") {
+        fail(
+            "the corrected claim derived from the archived one",
+            &corrected,
+        );
+    }
+    let read = surface
+        .call(
+            "recall",
+            json!({"subject": "person:upgrade-fixture-person", "history_record": address}),
+        )
+        .await;
+    if !read.contains(WORDS) || !read.contains("archived") {
+        fail("the archived original staying readable", &read);
+    }
+    let read = surface
+        .call(
+            "recall",
+            json!({"subject": "person:upgrade-fixture-person", "facts": true}),
+        )
+        .await;
+    if !read.contains("lives somewhere else") {
+        fail("the corrected claim being served", &read);
+    }
+
+    surface.finish().await;
+    booted.stop().await;
+    drop(scratch);
+}
+
 /// A link as the surface names it: the thing, the key, the thing it points at.
 type Link = (String, String, String);
 
