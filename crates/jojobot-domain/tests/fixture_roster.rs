@@ -480,6 +480,7 @@ const ROSTER: &[&str] = &[
     "thing:gorge-email",
     "thing:jukebox",
     "thing:recorded-twin",
+    "thing:shelf",
     "thing:the-couch",
     "thing:the-fern",
     "thing:the-gutter",

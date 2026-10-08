@@ -923,6 +923,87 @@ async fn a_walk_of_list_runs_returns_each_run_once_under_the_ceiling() {
     assert_eq!(seen, opened, "every run that was opened, newest first");
 }
 
+/// "I wrote six long notes about the pantry, a page of detail each. Reading them
+/// a page at a time, does a page ever run over the ceiling?"
+///
+/// **The room the rest of the answer takes is what decides how many long notes
+/// a page carries, and this is the case that holds it.** A page carries one note
+/// and a second would bring the answer past the ceiling by exactly the room the
+/// envelope takes: the notes are long enough that a fill which counted only the
+/// notes would carry two. They are written through the surface, one fact each
+/// with its detail, because the world above cannot show this. Its hits shrink
+/// after the fill, when the keys holding nothing are left out of the served
+/// answer, and the slack that leaves is wider than any envelope. The walk
+/// returns every note once, and it takes one part per note, which is what says
+/// the length is still the one that puts the envelope in the balance.
+#[tokio::test]
+async fn a_page_of_long_pantry_notes_stays_under_the_ceiling_and_the_walk_returns_each_note_once() {
+    /// Long enough that two notes together pass the ceiling by the room the
+    /// envelope takes and by nothing else.
+    const NOTE_DETAIL: usize = 13_385;
+    const NOTES: usize = 6;
+
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("thing:shelf", "The Shelf").await;
+    let mut written: Vec<String> = Vec::new();
+    for i in 0..NOTES {
+        let details: String = filler(NOTE_DETAIL + 80, i)
+            .chars()
+            .take(NOTE_DETAIL)
+            .collect();
+        let address = s
+            .call(
+                "capture",
+                json!({
+                    "subject": "thing:shelf",
+                    "content": format!("pantry note {i:02}"),
+                    "details": details,
+                }),
+            )
+            .await
+            .field("address");
+        written.push(address);
+    }
+
+    let mut seen: Vec<String> = Vec::new();
+    let mut offset = 0u64;
+    let mut parts = 0;
+    loop {
+        let part = s
+            .call(
+                "search",
+                json!({"query": "pantry", "limit": 1000, "offset": offset}),
+            )
+            .await;
+        parts += 1;
+        assert!(parts < 20, "the walk never ends");
+        assert!(
+            part.size() <= ANSWER_CEILING,
+            "part {parts} is {} characters",
+            part.size()
+        );
+        let body = part.json();
+        for hit in body["results"].as_array().expect("a list of results") {
+            seen.push(hit["address"].as_str().expect("an address").to_string());
+        }
+        match body["not_shown"]["offset"].as_u64() {
+            Some(next) => offset = next,
+            None => break,
+        }
+    }
+    assert_eq!(
+        parts, NOTES,
+        "one note a part: the length no longer puts the envelope in the balance"
+    );
+    let mut walked = seen.clone();
+    walked.sort();
+    walked.dedup();
+    assert_eq!(walked.len(), seen.len(), "no note came back twice");
+    written.sort();
+    assert_eq!(walked, written, "every note that was written, and no other");
+}
+
 /// "I wrote sixty long visit notes about the big shed. Do they all arrive?"
 ///
 /// **One subject with far more facts than fit comes back in parts that each fit
