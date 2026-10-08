@@ -72,9 +72,11 @@ async fn tries_every_way_to_read_it(
     outbox_title: &str,
     listing_sender: Option<&str>,
 ) {
-    // Taking delivery of its own box: the ordinary notes arrive, the
-    // operator's does not.
-    let delivered = reader.drain().await;
+    // Taking delivery of its own box, the recovery read that ships every note
+    // whole: the ordinary notes arrive, the operator's does not.
+    let delivered = reader
+        .call("read_mailbox", json!({"new_only": false}))
+        .await;
     delivered.says(own.word).never_says("4242");
 
     // Opening a message by id: the ordinary note opens, the operator's is the
@@ -219,7 +221,9 @@ async fn a_bot_leaves_the_operator_a_message_and_no_bot_can_read_it_back() {
         .await;
     let sigmas = leave_notes(&s, "bot:sigma", "kiln").await;
     let ottos = leave_notes(&sigma, "bot:otto", "oven").await;
-    let delivered = sigma.drain().await;
+    // Sigma's own posts took delivery of its box already, so the whole read is
+    // the recovery read.
+    let delivered = sigma.call("read_mailbox", json!({"new_only": false})).await;
     delivered.says("kiln").never_says("4242");
     s.find_including_mail("kiln").await.says(&to_sigma);
 

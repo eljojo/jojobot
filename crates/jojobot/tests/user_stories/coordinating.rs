@@ -242,14 +242,13 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
         .await
         .says("Shipped it, green, one commit.");
 
-    // A message already taken comes back on the next delivery — still
-    // counted, still owed, and with its body left out, because this consumer
-    // was handed it once. Asking for it back is the read a crashed one makes.
+    // A message already taken is named on the next delivery — still counted,
+    // still owed, and not shipped again, because this consumer was handed it
+    // once. Asking for it back is the read a crashed one makes.
     s.drain()
         .await
-        .says("\"seen_before\":true")
-        .says("\"body_elided\":true")
-        .says("\"body\":null");
+        .number("/leftovers/count", 1)
+        .never_says("Shipped it");
     s.call("read_mailbox", json!({"new_only": false}))
         .await
         .says("\"body\":\"Shipped it, green, one commit.\"");

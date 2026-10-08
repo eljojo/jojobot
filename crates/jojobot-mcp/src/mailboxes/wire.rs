@@ -378,23 +378,51 @@ pub(crate) fn delivery_json(delivery: &Delivery, new_only: bool) -> serde_json::
         "messages": delivery
             .messages
             .iter()
-            .map(|d| if new_only && d.seen_before {
-                let mut body = message_receipt_json(
-                    &d.message,
-                    Some(
-                        "an earlier read already handed you this one. read_message returns it \
-                         in full, or read_mailbox without new_only",
-                    ),
-                );
-                if let Some(obj) = body.as_object_mut() {
-                    obj.insert("seen_before".into(), true.into());
-                }
-                body
-            } else {
-                delivered_json(d)
-            })
+            .map(delivered_json)
             .collect::<Vec<_>>(),
     })
+}
+
+/// **Set the leftovers aside when a read asks for the news only.** A message a
+/// previous read already handed over stays owed, but its envelope is not shipped
+/// again: the read returns the fresh mail, and the leftovers come back as a
+/// separate list for [`note_leftovers`] to name. A read that asks for everything
+/// (`new_only` false, the recovery read) gets every message whole.
+pub(crate) fn split_leftovers(delivery: Delivery, new_only: bool) -> (Delivery, Vec<Delivered>) {
+    if !new_only {
+        return (delivery, Vec::new());
+    }
+    let (leftovers, fresh): (Vec<_>, Vec<_>) = delivery
+        .messages
+        .into_iter()
+        .partition(|delivered| delivered.seen_before);
+    (
+        Delivery {
+            mailbox: delivery.mailbox,
+            messages: fresh,
+        },
+        leftovers,
+    )
+}
+
+/// **Name the leftovers a read did not ship again**: how many, which ids, and the
+/// call that returns them. Added only when there are some, by the one function
+/// both `read_mailbox` and `post_message` use, so the two cannot describe the same
+/// mail differently.
+pub(crate) fn note_leftovers(rendered: &mut serde_json::Value, leftovers: &[Delivered]) {
+    if leftovers.is_empty() {
+        return;
+    }
+    rendered["leftovers"] = serde_json::json!({
+        "count": leftovers.len(),
+        "ids": leftovers
+            .iter()
+            .map(|delivered| delivered.message.id.as_str())
+            .collect::<Vec<_>>(),
+        "how_to_read": "mail an earlier read already handed you, still owed until you mark it \
+                        processed. read_message returns one by id, or read_mailbox with new_only \
+                        false returns them all, flagged seen_before",
+    });
 }
 
 /// One of the mailbox guard's candidates on the wire.

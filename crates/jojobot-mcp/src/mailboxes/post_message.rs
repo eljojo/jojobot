@@ -244,33 +244,13 @@ impl Jojobot {
         // an earlier read: an envelope for each, on every post, is the same
         // thing shipped over and over. They stay owed, and `read_mailbox`
         // still returns them flagged — that is crash recovery. Here they are
-        // counted, and the count names the call that returns them.
-        let (leftovers, fresh): (Vec<_>, Vec<_>) = delivery
-            .messages
-            .into_iter()
-            .partition(|delivered| delivered.seen_before);
-        let delivery = mailbox::Delivery {
-            mailbox: delivery.mailbox,
-            messages: fresh,
-        };
+        // named, and the answer names the call that returns them.
+        let (delivery, leftovers) = split_leftovers(delivery, true);
         // The same rendering `read_mailbox` uses, so mail taken this way reads
         // identically to mail somebody went and got.
         let mut rendered = delivery_json(&delivery, true);
         self.mark_other_runs(&mut rendered, &delivery, viewer).await;
-        if !leftovers.is_empty()
-            && let Some(object) = rendered.as_object_mut()
-        {
-            object.insert(
-                "leftovers".into(),
-                serde_json::json!({
-                    "count": leftovers.len(),
-                    "listed": false,
-                    "how_to_read": "mail an earlier read already handed you, still owed until \
-                                    you mark it processed. read_mailbox returns it, flagged \
-                                    seen_before",
-                }),
-            );
-        }
+        note_leftovers(&mut rendered, &leftovers);
         Some(rendered)
     }
 }
@@ -679,13 +659,13 @@ mod tests {
             "the two already read are still counted, not listed: {last}"
         );
 
-        // The crash contract is untouched: the leftovers are still owed and a
-        // read still returns them, flagged.
+        // The crash contract is untouched: the leftovers are still owed and the
+        // recovery read still returns them, flagged.
         let drained = json_of(
             &jojobot
                 .read_mailbox(Parameters(ReadMailboxArgs {
                     counts_only: None,
-                    new_only: None,
+                    new_only: Some(false),
                     sid: Some(as_bot(&jojobot, "otto")),
                 }))
                 .await

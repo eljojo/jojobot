@@ -216,9 +216,9 @@ impl Jojobot {
                        writes into it without reading it, which is the shape of a request. No \
                        box to open comes back status: blocked, saying which kind of nothing it \
                        found — no sid, no claim, or a claim nobody has opened — and delivers \
-                       nothing. Messages a previous read already handed over come back too, \
-                       flagged seen_before: true — leftovers from an interrupted earlier read, \
-                       not fresh mail. A message somebody else finished while this delivery was \
+                       nothing. Messages a previous read already handed over are leftovers from \
+                       an interrupted earlier read, not fresh mail: they are named under \
+                       `leftovers` (a count and their ids) and not shipped again. A message somebody else finished while this delivery was \
                        in flight is left out, so a delivery can be smaller than counts you saw a \
                        moment ago. Act on what you receive, then call \
                        mark_processed for each. Draining a whole box makes every message in it \
@@ -226,13 +226,12 @@ impl Jojobot {
                        WHETHER ANYTHING IS WAITING? Call this with counts_only: true — you get \
                        your box's per-state counts and its unreadable report, NOTHING moves out \
                        of new and nothing becomes yours to finish, so a poll that finds an empty \
-                       box costs nothing and owes nothing. BY DEFAULT you get bodies for the \
-                       messages nobody has taken yet: \
-                       leftovers still come back, still counted, still flagged and still owed, \
-                       but with their bodies left out (body_elided: true, plus body_bytes and the \
-                       opening line) — because you were handed those bodies once already. Pass \
-                       new_only: false to get them back, which is the read for a consumer \
-                       recovering from a crash that no longer holds what it was given. Either \
+                       box costs nothing and owes nothing. BY DEFAULT you get the messages nobody has taken yet, \
+                       whole: leftovers stay counted and owed, and `leftovers` names them by id \
+                       (read_message returns one) — because you were handed them once already. \
+                       Pass new_only: false to get every message back whole, flagged seen_before, \
+                       which is the read for a consumer recovering from a crash that no longer \
+                       holds what it was given. Either \
                        way it changes what is SHIPPED, never what is owed. Each message may also \
                        carry `sender_mail_waiting_at_send`, stamped once when it was posted — see \
                        `post_message`'s own description for what it means; `null` there is unknown, \
@@ -288,11 +287,13 @@ impl Jojobot {
             .map_err(mailbox_error)?
         {
             mailbox::Guarded::Written(delivery) => {
+                let (delivery, leftovers) = split_leftovers(delivery, new_only);
                 let mut rendered = delivery_json(&delivery, new_only);
+                note_leftovers(&mut rendered, &leftovers);
                 // **An empty delivery names what it looked through.** Nothing
                 // waiting and nothing there are the same empty list without it.
                 // Added only to a delivery that came back empty.
-                if delivery.messages.is_empty() {
+                if delivery.messages.is_empty() && leftovers.is_empty() {
                     let mut left_out = vec![format!("processed mail ({archived})")];
                     if unreadable > 0 {
                         left_out.push(format!("{unreadable} unreadable cards"));
@@ -567,8 +568,26 @@ mod tests {
                 .await
                 .expect("read ok"),
         );
-        assert_eq!(again["count"], 1);
-        assert_eq!(again["messages"][0]["seen_before"], true);
+        assert_eq!(again["count"], 0, "nothing is fresh: {again}");
+        assert_eq!(again["leftovers"]["count"], 1, "…but it is named: {again}");
+        assert!(
+            again.get("searched").is_none(),
+            "a read with mail owed has not looked through nothing: {again}"
+        );
+
+        // The recovery read hands it back whole and flagged.
+        let recovery = json_of(
+            &jojobot
+                .read_mailbox(Parameters(ReadMailboxArgs {
+                    counts_only: None,
+                    new_only: Some(false),
+                    sid: Some(reader.clone()),
+                }))
+                .await
+                .expect("read ok"),
+        );
+        assert_eq!(recovery["count"], 1);
+        assert_eq!(recovery["messages"][0]["seen_before"], true);
     }
 
     /// **The box is not an argument on the read side: the `sid` says whose it
@@ -816,21 +835,20 @@ mod tests {
                 .expect("read ok"),
         );
         assert_eq!(plain["new_only"], true, "the safe branch is the default");
+        assert_eq!(plain["count"], 1, "only the news is shipped: {plain}");
         assert_eq!(
-            plain["count"], 2,
-            "the leftover is still delivered: {plain}"
+            plain["leftovers"]["count"], 1,
+            "the leftover is still counted: {plain}"
         );
-
-        let leftover = plain["messages"]
-            .as_array()
-            .expect("messages")
-            .iter()
-            .find(|m| m["id"] == held_id.as_str())
-            .expect("a default read still hands the leftover over");
-        assert_eq!(leftover["seen_before"], true, "…still owed: {leftover}");
-        assert_eq!(leftover["body_elided"], true, "…and says what it withheld");
-        assert_eq!(leftover["body_bytes"], held_body.trim().len());
-        assert!(leftover["body"].is_null());
+        assert_eq!(
+            plain["leftovers"]["ids"][0],
+            held_id.as_str(),
+            "…and named, so it is still owed and still findable: {plain}"
+        );
+        assert!(
+            !plain.to_string().contains("a long hand-off"),
+            "…and none of it is shipped again: {plain}"
+        );
 
         let fresh = plain["messages"]
             .as_array()
@@ -923,28 +941,22 @@ mod tests {
                 .await
                 .expect("read ok"),
         );
-        assert_eq!(
-            poll["count"], 2,
-            "the leftover is STILL in the delivery: {poll}"
-        );
+        assert_eq!(poll["count"], 1, "only the news is shipped: {poll}");
         assert_eq!(poll["new_only"], true);
 
-        let leftover = poll["messages"]
-            .as_array()
-            .expect("messages")
-            .iter()
-            .find(|m| m["id"] == held_id.as_str())
-            .expect("the held message is still handed over");
         assert_eq!(
-            leftover["seen_before"], true,
-            "…still flagged as owed: {leftover}"
+            poll["leftovers"]["count"], 1,
+            "the leftover is STILL counted: {poll}"
+        );
+        assert_eq!(
+            poll["leftovers"]["ids"][0],
+            held_id.as_str(),
+            "…and named, because what is owed is never silent: {poll}"
         );
         assert!(
-            leftover["body"].is_null(),
-            "…and its body is what was dropped"
+            !poll.to_string().contains("a long hand-off"),
+            "…and none of its text is shipped again: {poll}"
         );
-        assert_eq!(leftover["body_elided"], true);
-        assert_eq!(leftover["body_bytes"], held_body.trim().len());
 
         let fresh = poll["messages"]
             .as_array()
@@ -1075,11 +1087,13 @@ mod tests {
         // A fresh run of the SAME identity — a different session, no card
         // of its own yet.
         let run_b = as_bot(&jojobot, "dev");
+        // The message was handed to run A already, so a default read names it and
+        // does not ship it; the recovery read ships it, with the run marked.
         let cross_run = json_of(
             &jojobot
                 .read_mailbox(Parameters(ReadMailboxArgs {
                     counts_only: None,
-                    new_only: None,
+                    new_only: Some(false),
                     sid: Some(run_b.clone()),
                 }))
                 .await
@@ -1426,5 +1440,74 @@ mod tests {
             "{unreadable}"
         );
         assert!(unreadable["how_to_proceed"].is_string(), "{unreadable}");
+    }
+    /// 🚨 **A default read names what it already handed over, and does not hand
+    /// it over again.** Mail read but not finished stays owed, and every poll
+    /// used to ship an envelope for each such message again. Now the delivery
+    /// carries the fresh mail and a `leftovers` block: how many, which ids, and
+    /// the call that returns them. The read a consumer makes to recover after a
+    /// crash, `new_only: false`, still returns every message whole and flagged.
+    #[tokio::test]
+    async fn a_default_read_names_leftovers_by_id_and_ships_only_the_fresh_envelope() {
+        let jojobot = mailbox_handler();
+        let reader = owning(&jojobot, "inbox").await;
+        let first = send(&jojobot, "inbox", "epsilon", "the first shipment").await;
+        let second = send(&jojobot, "inbox", "epsilon", "the second shipment").await;
+        let read = |new_only: Option<bool>| {
+            let reader = reader.clone();
+            let jojobot = &jojobot;
+            async move {
+                json_of(
+                    &jojobot
+                        .read_mailbox(Parameters(ReadMailboxArgs {
+                            counts_only: None,
+                            new_only,
+                            sid: Some(reader),
+                        }))
+                        .await
+                        .expect("read ok"),
+                )
+            }
+        };
+        let taken = read(None).await;
+        assert_eq!(taken["count"], 2, "both were fresh the first time: {taken}");
+        assert!(
+            taken.get("leftovers").is_none(),
+            "nothing was left over yet: {taken}"
+        );
+
+        let third = send(&jojobot, "inbox", "epsilon", "the third shipment").await;
+        let again = read(None).await;
+        assert_eq!(
+            again["count"], 1,
+            "only the fresh message is shipped: {again}"
+        );
+        assert_eq!(again["messages"][0]["id"], third["id"], "{again}");
+        assert_eq!(again["leftovers"]["count"], 2, "{again}");
+        let ids: Vec<&str> = again["leftovers"]["ids"]
+            .as_array()
+            .expect("the leftovers are named by id")
+            .iter()
+            .filter_map(|id| id.as_str())
+            .collect();
+        for owed in [&first, &second] {
+            assert!(
+                ids.contains(&owed["id"].as_str().expect("an id")),
+                "{owed} is named: {again}"
+            );
+        }
+        assert!(
+            !again.to_string().contains("the first shipment"),
+            "no envelope or opening of a leftover is shipped again: {again}"
+        );
+
+        // The recovery read still returns every message whole and flagged.
+        let recovery = read(Some(false)).await;
+        assert_eq!(recovery["count"], 3, "{recovery}");
+        assert!(recovery.get("leftovers").is_none(), "{recovery}");
+        assert!(
+            recovery.to_string().contains("the first shipment"),
+            "new_only false hands the bodies back: {recovery}"
+        );
     }
 }

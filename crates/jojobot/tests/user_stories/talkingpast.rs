@@ -55,11 +55,11 @@ async fn posting_hands_back_the_reply_that_was_already_waiting() {
 
     // ── it was a real delivery, not a preview ───────────────────────────────
     //
-    // The message is otto's to finish now. Opening the box afterwards hands it
-    // back as a LEFTOVER rather than as fresh mail, which is what proves the
-    // post took delivery rather than peeking.
+    // The message is otto's to finish now. Opening the box afterwards names it
+    // as a LEFTOVER rather than handing it over as fresh mail, which is what
+    // proves the post took delivery rather than peeking.
     let box_now = s.drain().await;
-    box_now.says("\"seen_before\":true");
+    box_now.number("/leftovers/count", 1);
 
     // ── and the sender can tell what actually happened ──────────────────────
     //
@@ -146,7 +146,7 @@ async fn a_post_does_not_ship_again_the_mail_the_bot_is_already_working() {
         .never_says(&envelope(&first));
 
     // ── nothing was lost: the crash contract still hands back all three ─────
-    let again = s.drain().await;
+    let again = s.call("read_mailbox", json!({"new_only": false})).await;
     again
         .says(&envelope(&first))
         .says(&envelope(&second))
