@@ -5051,6 +5051,18 @@ impl Memory for DoltMemory {
         Ok(pointing)
     }
 
+    /// **One read of the claims that draw a connection edge at the thread**, in
+    /// the transaction the lineage of a ceiling write reads the same set in, so
+    /// the write path and the licence agree on who the writers are. The default
+    /// lists every bot and recalls each one.
+    async fn thought_writers(&self, thread: &EntityId) -> Result<Vec<EntityId>, MemoryError> {
+        validate_subject(thread)?;
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        let writers = self.thought_writers_in(&mut tx, thread).await?;
+        tx.commit().await.map_err(store)?;
+        Ok(writers)
+    }
+
     async fn set_prose(&self, entity: &EntityId, prose: &str) -> Result<String, MemoryError> {
         validate_write_subject(entity)?;
         validate_prose(prose)?;

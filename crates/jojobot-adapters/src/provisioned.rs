@@ -364,6 +364,9 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
     async fn referring_to(&self, target: &EntityId) -> Result<Vec<Fact>, MemoryError> {
         self.inner.referring_to(target).await
     }
+    async fn thought_writers(&self, thread: &EntityId) -> Result<Vec<EntityId>, MemoryError> {
+        self.inner.thought_writers(thread).await
+    }
     // **`children` is deliberately NOT overridden here** (rule 234). The port
     // derives it from `list_entities`, and this layer's `list_entities` already
     // resolves what the build supplies — so the default asks the right question

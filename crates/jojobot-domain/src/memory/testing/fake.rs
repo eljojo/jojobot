@@ -998,12 +998,7 @@ impl InMemoryMemory {
         };
         // The bots that wrote a thought into the subject, when it is a thread.
         let (writers, above_writers) = if subject.kind() == Some(EntityKind::THREAD) {
-            let claims: Vec<Fact> = facts
-                .iter()
-                .filter(|claim| claim.edge.is_some())
-                .map(|claim| self.served(claim.clone(), &self.current_handle(&claim.home)))
-                .collect();
-            let writers = super::super::writers_in(subject, &claims);
+            let writers = self.writers_among(facts, subject);
             let mut above_writers: Vec<EntityId> = Vec::new();
             for writer in &writers {
                 for bot in self.chain_above_among(facts, writer) {
@@ -1026,6 +1021,17 @@ impl InMemoryMemory {
             writers,
             above_writers,
         }
+    }
+
+    /// **The bots that have written a thought into `thread`**, read off the
+    /// records the write holds, as the real store reads them in its transaction.
+    fn writers_among(&self, facts: &[Fact], thread: &EntityId) -> Vec<EntityId> {
+        let claims: Vec<Fact> = facts
+            .iter()
+            .filter(|claim| claim.edge.is_some())
+            .map(|claim| self.served(claim.clone(), &self.current_handle(&claim.home)))
+            .collect();
+        super::super::writers_in(thread, &claims)
     }
 
     /// **Whether any other thing reports to `subject`**, read off each thing's
@@ -1470,6 +1476,16 @@ impl Memory for InMemoryMemory {
     /// answers this with one targeted read and never lists, so the default
     /// body, which calls [`Memory::list_entities`], would count a listing no
     /// real caller pays for.
+    /// **Answered from the claims directly, without listing the entities**, as
+    /// the real store answers it. A decorator that does not forward the call gets
+    /// the default instead, which lists every bot, and the listing counter is how
+    /// a case sees it.
+    async fn thought_writers(&self, thread: &EntityId) -> Result<Vec<EntityId>, MemoryError> {
+        super::super::validate_subject(thread)?;
+        let facts = self.facts.lock().expect("fake mutex poisoned");
+        Ok(self.writers_among(&facts, thread))
+    }
+
     async fn built_on(&self, source: &FactAddress) -> Result<Vec<Fact>, MemoryError> {
         super::super::validate_subject(&source.home)?;
         let mut standing_on = Vec::new();

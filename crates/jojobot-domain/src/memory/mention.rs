@@ -1025,6 +1025,15 @@ impl super::Memory for Mentioning {
         self.render_facts(&mut facts).await?;
         Ok(facts)
     }
+
+    /// **Straight through.** The answer is handles and renders nothing, and the
+    /// default would list every bot and recall each one.
+    async fn thought_writers(
+        &self,
+        thread: &EntityId,
+    ) -> Result<Vec<EntityId>, super::MemoryError> {
+        self.inner.thought_writers(thread).await
+    }
     async fn declare_type(
         &self,
         declared: super::types::DeclaredType,

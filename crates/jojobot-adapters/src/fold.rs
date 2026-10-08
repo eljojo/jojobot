@@ -474,6 +474,13 @@ impl Memory for Folded {
         self.inner.referring_to(target).await
     }
 
+    /// **Straight through**, for the reason [`backing`](Self::backing) is: the
+    /// default lists every bot and recalls each one, and the store beneath
+    /// answers in one read.
+    async fn thought_writers(&self, thread: &EntityId) -> Result<Vec<EntityId>, MemoryError> {
+        self.inner.thought_writers(thread).await
+    }
+
     /// **A declaration can change how EVERY entity's existing writes fold**
     /// — `newest` against a counter — so there is no one handle to refresh
     /// the way a capture refreshes its own home. The whole cache is rebuilt

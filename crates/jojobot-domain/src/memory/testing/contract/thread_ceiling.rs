@@ -275,3 +275,77 @@ async fn the_key_is_set_only_above_the_bots_that_write_into_the_thread<M: Memory
         .expect("nothing blocks it");
     assert_eq!(held_on(writer.clone()).await, Some("4".to_string()));
 }
+
+/// **The bots that wrote into a thread are the ones the store names, whichever
+/// way it is asked.** A bot with a claim that draws a connection edge at the
+/// thread is a writer, and stays one when it archives the claim. A person with the
+/// same edge, and a bot whose edge points at another thread, are not, and a thread
+/// nobody wrote into has none. Beside each other, or a store that named every bot
+/// would pass.
+pub async fn thought_writers_are_the_bots_whose_claims_point_at_the_thread<M: Memory>(store: &M) {
+    let thread = EntityId("thread:contract-writers-line".into());
+    let other = EntityId("thread:contract-writers-other".into());
+    let quiet = EntityId("thread:contract-writers-quiet".into());
+    let writer = EntityId("bot:contract-writers-bot".into());
+    let archivist = EntityId("bot:contract-writers-archivist".into());
+    let elsewhere = EntityId("bot:contract-writers-elsewhere".into());
+    let person = EntityId("person:contract-writers-person".into());
+    for id in [
+        &thread, &other, &quiet, &writer, &archivist, &elsewhere, &person,
+    ] {
+        ensure(store, id).await;
+    }
+    let pointing = |home: &EntityId, at: &EntityId, said: &str| NewFact {
+        edge: Some(Edge::new(EdgeShape::Connection, at.clone())),
+        ..NewFact::about(home.clone(), said, date(2026, 10, 6))
+    };
+    capture(store, pointing(&writer, &thread, "the line goes on")).await;
+    let kept = capture(
+        store,
+        pointing(&archivist, &thread, "a thought, later let go"),
+    )
+    .await;
+    capture(store, pointing(&elsewhere, &other, "another line")).await;
+    capture(store, pointing(&person, &thread, "a person's own note")).await;
+    store
+        .update_fact(
+            &kept.address(),
+            FactPatch {
+                status: Some(FactStatus::Archived),
+                ..Default::default()
+            },
+            &archivist,
+        )
+        .await
+        .expect("a thought can be archived")
+        .written()
+        .expect("nothing blocks it");
+
+    let mut named = store
+        .thought_writers(&thread)
+        .await
+        .expect("the writers are readable");
+    named.sort();
+    let mut expected = vec![writer.clone(), archivist.clone()];
+    expected.sort();
+    assert_eq!(
+        named, expected,
+        "the bots with a claim at the thread, archived or not, and no one else"
+    );
+    assert_eq!(
+        store
+            .thought_writers(&other)
+            .await
+            .expect("the writers are readable"),
+        vec![elsewhere],
+        "a bot is named for the thread its edge points at and no other"
+    );
+    assert!(
+        store
+            .thought_writers(&quiet)
+            .await
+            .expect("the writers are readable")
+            .is_empty(),
+        "a thread nobody wrote into has no writers"
+    );
+}

@@ -346,6 +346,12 @@ impl Memory for IndexedMemory {
         self.inner.referring_to(target).await
     }
 
+    /// **Straight through, and it does not touch the index.** Who wrote a thought
+    /// into a thread is a read of the store's own claims.
+    async fn thought_writers(&self, thread: &EntityId) -> Result<Vec<EntityId>, MemoryError> {
+        self.inner.thought_writers(thread).await
+    }
+
     /// **Straight through, and it does not touch the index.** What this build
     /// ships as a default is known to `Provisioned` alone; the default body
     /// here would say no write ever echoes one.
