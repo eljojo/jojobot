@@ -501,13 +501,13 @@ mod tests {
         let added = json_of(
             &jojobot
                 .add_entity(Parameters(AddEntityArgs {
-                    aliases: Some(vec!["Cosme Fulanito".into(), "H.".into()]),
+                    aliases: Some(vec!["Max Power".into(), "H.".into()]),
                     ..add_args("person", "homer-simpson", "Homer Simpson")
                 }))
                 .await
                 .expect("add ok"),
         );
-        assert_eq!(added["alternateName"][0], "Cosme Fulanito");
+        assert_eq!(added["alternateName"][0], "Max Power");
         assert_eq!(added["alternateName"][1], "H.");
 
         let patch = |aliases: Vec<String>| UpdateEntityArgs {
@@ -523,7 +523,7 @@ mod tests {
 
         let replaced = json_of(
             &jojobot
-                .update_entity(Parameters(patch(vec!["Cosme Fulanito".into()])))
+                .update_entity(Parameters(patch(vec!["Max Power".into()])))
                 .await
                 .expect("update ok"),
         );

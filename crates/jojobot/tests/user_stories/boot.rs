@@ -112,7 +112,7 @@ async fn a_fresh_session_tries_to_be_useful_on_turn_one() {
     // Every read above needed a handle to ask for, and the boot hands back
     // none: a fresh session that has not been told a name has nothing yet to
     // recall or search for.
-    //   s.whose_assistant_am_i().says("person:tulio").await;
+    //   s.whose_assistant_am_i().says("person:maude").await;
     s.has_no_verb("whose_assistant", &["start_here", "search"])
         .await;
 

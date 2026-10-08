@@ -424,7 +424,7 @@ impl SearchQuery {
 
 /// A handle, resolved as far as the index can resolve it — **the cure for a bare
 /// hit**. A result that says only `person:homer-simpson` makes the reader spend a second
-/// call to learn whether that is Homer Simpson, and a third to learn he is also Cosme Fulanito.
+/// call to learn whether that is Homer Simpson, and a third to learn he is also Max Power.
 ///
 /// `name` is `None` when the handle resolves to no entity the index holds. That
 /// is the orphan case ([`orphan_subjects`]) and it is left visibly empty rather
@@ -971,7 +971,7 @@ mod tests {
         );
     }
 
-    /// The **other** half of the split-brain tell, and the one the Cosme incident
+    /// The **other** half of the split-brain tell, and the one the Max Power incident
     /// actually wore: a row whose subject names a real entity that is not the doc
     /// it sits in. A hand edit retyped the subject cell into another live handle,
     /// so nothing was orphaned — the row simply answered to one id and lived under

@@ -458,7 +458,7 @@ async fn naming_an_entity_pins_it_above_a_more_relevant_fact() {
 }
 
 /// **A name the user actually says finds the thing.** An entity known as
-/// Homer Simpson and called Cosme Fulanito has to answer to "Cosme Fulanito" — the entity itself, and
+/// Homer Simpson and called Max Power has to answer to "Max Power" — the entity itself, and
 /// the facts on its page, which is what the question was really about.
 ///
 /// A fact carries the labels of the entity **whose page it sits on**. That
@@ -468,7 +468,7 @@ async fn naming_an_entity_pins_it_above_a_more_relevant_fact() {
 #[tokio::test]
 async fn a_query_on_an_alias_finds_the_entity_and_the_facts_on_its_page() {
     let homer = Entity {
-        aliases: vec!["Cosme Fulanito".into()],
+        aliases: vec!["Max Power".into()],
         ..entity("person:homer", "Homer Simpson")
     };
     let index = index_of(vec![scan(
@@ -484,7 +484,7 @@ async fn a_query_on_an_alias_finds_the_entity_and_the_facts_on_its_page() {
     )]);
 
     let hits = index
-        .search(&SearchQuery::text("Cosme Fulanito"))
+        .search(&SearchQuery::text("Max Power"))
         .expect("search ok");
     assert!(
         matches!(hits.first(), Some(Hit::Entity { entity, .. }) if entity.id == homer.id),
@@ -511,12 +511,12 @@ async fn a_query_on_an_alias_finds_the_entity_and_the_facts_on_its_page() {
     );
 
     // The alias has to be in the POSTINGS, not only in the pin. Pinning
-    // fires on a query that names the entity outright ("Cosme Fulanito"); a query
+    // fires on a query that names the entity outright ("Max Power"); a query
     // that merely contains the nickname among other words can only be
     // answered by the index, and that is the common case.
     assert!(
         index
-            .search(&SearchQuery::text("Cosme Fulanito person"))
+            .search(&SearchQuery::text("Max Power person"))
             .expect("search ok")
             .iter()
             .any(|h| matches!(h, Hit::Entity { entity, .. } if entity.id == homer.id)),

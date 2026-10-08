@@ -19,13 +19,13 @@ async fn throwing_a_birthday_party() {
     // ── session 1 · the idea ────────────────────────────────────────────────
     let s = story.session().await;
 
-    s.add("person:bodoque", "Bodoque").await;
-    s.add("event:birthday-party", "Bodoque's Birthday").await;
+    s.add("person:krusty", "Krusty").await;
+    s.add("event:birthday-party", "Krusty's Birthday").await;
     s.fact_about(
         "event:birthday-party",
         "a birthday party for them, ten or twelve people",
         "about",
-        "person:bodoque",
+        "person:krusty",
     )
     .await;
 
@@ -62,7 +62,7 @@ async fn throwing_a_birthday_party() {
     // ── session 2 · the guests, and what they need ──────────────────────────
     let s = story.session().await;
 
-    s.add("person:patana", "Patana").await;
+    s.add("person:apu", "Apu").await;
     // Everybody says the nickname and nobody says the name on the record, so
     // the record carries both. An alias is another label on one person, not a
     // second person to keep in step.
@@ -79,11 +79,7 @@ async fn throwing_a_birthday_party() {
     // The name the operator actually says finds them.
     s.find("Barn").await.says("person:barney-gumble");
 
-    for guest in [
-        "person:patana",
-        "person:barney-gumble",
-        "person:ned-flanders",
-    ] {
+    for guest in ["person:apu", "person:barney-gumble", "person:ned-flanders"] {
         s.fact_about(
             guest,
             "invited to the party",
@@ -93,7 +89,7 @@ async fn throwing_a_birthday_party() {
         .await;
     }
 
-    let patana_eats = s.fact("person:patana", "vegetarian").await;
+    let apu_eats = s.fact("person:apu", "vegetarian").await;
     s.fact("person:barney-gumble", "does not drink").await;
     s.fact("person:ned-flanders", "bringing a partner").await;
 
@@ -150,7 +146,7 @@ async fn throwing_a_birthday_party() {
     // Not coming is information as load-bearing as coming, so it gets the same
     // edge and the same key.
     for (guest, said, answer) in [
-        ("person:patana", "coming to the party", "yes"),
+        ("person:apu", "coming to the party", "yes"),
         (
             "person:barney-gumble",
             "cannot make it, away that weekend",
@@ -179,7 +175,7 @@ async fn throwing_a_birthday_party() {
         .through("attendance", "event:birthday-party", "person")
         .await;
     guests
-        .says("person:patana")
+        .says("person:apu")
         .says("person:barney-gumble")
         .says("person:ned-flanders");
 
@@ -192,7 +188,7 @@ async fn throwing_a_birthday_party() {
         json!({"fields": [{"key": "answer", "value": "yes"}]}),
     )
     .await
-    .says("person:patana")
+    .says("person:apu")
     .never_says("person:barney-gumble");
 
     s.shape(
@@ -201,7 +197,7 @@ async fn throwing_a_birthday_party() {
     )
     .await
     .says("person:barney-gumble")
-    .never_says("person:patana");
+    .never_says("person:apu");
 
     // GAP — but the one who has NOT answered is still not askable. Every
     // filter here says which records to keep, and "the guests carrying no
@@ -238,9 +234,9 @@ async fn throwing_a_birthday_party() {
     // first while it asks the second.
     s.through("attendance", "event:birthday-party", "person")
         .await
-        .says("person:patana");
-    s.recall("person:patana").await.says("vegetarian");
-    s.find("vegetarian").await.says("person:patana");
+        .says("person:apu");
+    s.recall("person:apu").await.says("vegetarian");
+    s.find("vegetarian").await.says("person:apu");
 
     // **And then in ONE question.** "What do my guests eat" is the party, the
     // edges drawn at it, and each guest's own page — a walk that returns the
@@ -256,7 +252,7 @@ async fn throwing_a_birthday_party() {
         )
         .await;
     table
-        .says("person:patana")
+        .says("person:apu")
         .says("vegetarian")
         .says("does not drink")
         .says("bringing a partner");
@@ -264,7 +260,7 @@ async fn throwing_a_birthday_party() {
     // The shape is the answer: the guests hang off the party rather than
     // arriving beside it, so the session reads who eats what without holding
     // anything.
-    table.claim(&patana_eats).says("vegetarian");
+    table.claim(&apu_eats).says("vegetarian");
 
     // ── somebody drops out, and the guest list has to show it ──────────────
     //
@@ -326,7 +322,7 @@ async fn throwing_a_birthday_party() {
     // receipt that always says it is one nobody reads. **Of a claim this run
     // wrote**, because the operator's words from an earlier run are corrected by
     // archiving them, which is not a rewrite.
-    let fish = s.fact("person:patana", "eats chicken").await;
+    let fish = s.fact("person:apu", "eats chicken").await;
     s.correct_reading_the_receipt(&fish, "eats fish as well")
         .await
         .never_says("retract");
@@ -336,7 +332,7 @@ async fn throwing_a_birthday_party() {
     // something a whole-answer assertion can say** — that is pinned per link in
     // the verb's own suite; here the pair that means something is the same read
     // before and after.
-    after.says("person:patana");
+    after.says("person:apu");
 
     // ── and one guest was never coming at all ──────────────────────────────
     //
@@ -367,7 +363,7 @@ async fn throwing_a_birthday_party() {
         .never_says("person:ralph")
         // The half that says the edit reached one claim and not the guest list:
         // everybody else is still on it.
-        .says("person:patana");
+        .says("person:apu");
 
     // ⚠️ **One claim's edge, not the person's.** Barney draws the same edge
     // from several claims, so clearing one of them would leave him on the list

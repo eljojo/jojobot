@@ -3567,7 +3567,7 @@ async fn a_value_selects_and_a_walk_nests() {
     let jojobot = handler();
     for (kind, slug, name) in [
         ("event", "birthday-party", "Birthday Party"),
-        ("person", "patana", "Patana"),
+        ("person", "ralph", "Ralph"),
     ] {
         jojobot
             .add_entity(Parameters(add_args(kind, slug, name)))
@@ -3584,11 +3584,11 @@ async fn a_value_selects_and_a_walk_nests() {
                     .into_iter()
                     .collect(),
             ),
-            ..capture_args("patana", "coming to the party")
+            ..capture_args("ralph", "coming to the party")
         },
     )
     .await;
-    capture_ok(&jojobot, capture_args("patana", "vegetarian")).await;
+    capture_ok(&jojobot, capture_args("ralph", "vegetarian")).await;
 
     let selected = json_of(
         &jojobot
@@ -3609,7 +3609,7 @@ async fn a_value_selects_and_a_walk_nests() {
             .await
             .expect("recall ok"),
     );
-    assert_eq!(selected["objects"][0]["id"], "person:patana", "{selected}");
+    assert_eq!(selected["objects"][0]["id"], "person:ralph", "{selected}");
     assert_eq!(
         selected["objects"][0]["facts"].as_array().map(Vec::len),
         Some(1),
@@ -3637,7 +3637,7 @@ async fn a_value_selects_and_a_walk_nests() {
             .expect("recall ok"),
     );
     let guest = &walked["objects"][0]["connected"][0];
-    assert_eq!(guest["id"], "person:patana", "{walked}");
+    assert_eq!(guest["id"], "person:ralph", "{walked}");
     assert_eq!(guest["via"]["direction"], "in", "{walked}");
     assert!(
         guest["facts"]
@@ -3894,7 +3894,7 @@ async fn a_wide_inbound_fan_in_is_capped_and_names_what_it_left_out() {
 #[tokio::test]
 async fn a_record_scoped_filter_says_what_it_left_out() {
     let jojobot = handler();
-    ensure(&jojobot, "patana").await;
+    ensure(&jojobot, "ralph").await;
     capture_ok(
         &jojobot,
         CaptureArgs {
@@ -3903,16 +3903,16 @@ async fn a_record_scoped_filter_says_what_it_left_out() {
                     .into_iter()
                     .collect(),
             ),
-            ..capture_args("patana", "coming to the party")
+            ..capture_args("ralph", "coming to the party")
         },
     )
     .await;
-    capture_ok(&jojobot, capture_args("patana", "vegetarian")).await;
+    capture_ok(&jojobot, capture_args("ralph", "vegetarian")).await;
 
     let unscoped = json_of(
         &jojobot
             .recall(Parameters(RecallArgs {
-                subject: Some("person:patana".into()),
+                subject: Some("person:ralph".into()),
                 facts: Some(true),
                 ..of_nothing()
             }))
@@ -3932,7 +3932,7 @@ async fn a_record_scoped_filter_says_what_it_left_out() {
     let scoped = json_of(
         &jojobot
             .recall(Parameters(RecallArgs {
-                subject: Some("person:patana".into()),
+                subject: Some("person:ralph".into()),
                 fields: Some(vec![KeyFilterArgs {
                     key: Some("answer".into()),
                     value: Some("yes".into()),

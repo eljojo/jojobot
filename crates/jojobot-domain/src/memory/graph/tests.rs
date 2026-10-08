@@ -1014,8 +1014,8 @@ fn edged(home: &str, id: &str, content: &str, shape: EdgeShape, object: &str) ->
 /// record with keys on it. Everything the cases below select, walk and
 /// read.
 ///
-/// **It holds a chain and a cycle on purpose.** Patana attends the party,
-/// the party is at the tavern, and the party points back at Patana — so an
+/// **It holds a chain and a cycle on purpose.** Ralph attends the party,
+/// the party is at the tavern, and the party points back at Ralph — so an
 /// outbound walk has somewhere to go twice, and somewhere to loop.
 fn store() -> Vec<DocScan> {
     // **The fixture stands a store up, because the set is setup here.**
@@ -1056,18 +1056,18 @@ fn store() -> Vec<DocScan> {
                 edged(
                     "event:birthday-party",
                     "f3",
-                    "Patana is organising it",
+                    "Ralph is organising it",
                     EdgeShape::About,
-                    "person:patana",
+                    "person:ralph",
                 ),
             ],
         ),
         doc(
-            entity("person:patana", "Patana"),
-            "Patana's page.",
+            entity("person:ralph", "Ralph"),
+            "Ralph's page.",
             vec![
-                attending("person:patana", "f1", "coming to the party", "yes"),
-                fact("person:patana", "f2", "vegetarian"),
+                attending("person:ralph", "f1", "coming to the party", "yes"),
+                fact("person:ralph", "f2", "vegetarian"),
             ],
         ),
         doc(
@@ -1124,7 +1124,7 @@ fn a_kind_selects_its_objects_and_prose_comes_back_whole() {
         vec![
             "person:barney-gumble",
             "person:ned-flanders",
-            "person:patana"
+            "person:ralph"
         ],
         "every person and nothing else, in handle order",
     );
@@ -1356,7 +1356,7 @@ fn a_key_and_its_value_select_the_objects_that_hold_it() {
         };
         resolved(&scanned, &[], &query).expect("a key filter is a selection")
     };
-    assert_eq!(handles(&by_value("yes")), vec!["person:patana"]);
+    assert_eq!(handles(&by_value("yes")), vec!["person:ralph"]);
     assert_eq!(handles(&by_value("no")), vec!["person:barney-gumble"]);
 
     let any = resolved(
@@ -1373,11 +1373,11 @@ fn a_key_and_its_value_select_the_objects_that_hold_it() {
     .expect("a key alone is a selection");
     assert_eq!(
         handles(&any),
-        vec!["person:barney-gumble", "person:patana"],
+        vec!["person:barney-gumble", "person:ralph"],
         "the key with no value asked for holds for either value",
     );
     // **A filter says which OBJECTS, and by default it says nothing about
-    // which of an object's records come back.** Patana holds two, one of
+    // which of an object's records come back.** Ralph holds two, one of
     // which carries no key at all, and both are hers.
     assert_eq!(
         any[1].facts.len(),
@@ -1404,7 +1404,7 @@ fn a_key_and_its_value_select_the_objects_that_hold_it() {
     .expect("a key filter asked of a record is a selection too");
     assert_eq!(
         handles(&on_a_record),
-        vec!["person:barney-gumble", "person:patana"],
+        vec!["person:barney-gumble", "person:ralph"],
         "the same objects: each holds a record carrying the key",
     );
     assert_eq!(
@@ -1438,15 +1438,15 @@ fn the_scopes_part_company_when_the_fold_and_a_record_disagree() {
         fields: [("rsvp".to_string(), rsvp.to_string())]
             .into_iter()
             .collect(),
-        ..fact("person:patana", id, content)
+        ..fact("person:ralph", id, content)
     };
     // Two writes of one key, and the thing holds the newer of them. The
     // fields are stated rather than folded from the rows, because that is
     // what the store does and a fixture that recomputed it could not put
     // the two out of step.
     let scanned = vec![doc_holding(
-        entity("person:patana", "Patana"),
-        "Patana's page.",
+        entity("person:ralph", "Ralph"),
+        "Ralph's page.",
         vec![
             wrote("f1", "coming to the party", "yes"),
             wrote("f2", "cannot make it after all", "no"),
@@ -1477,12 +1477,12 @@ fn the_scopes_part_company_when_the_fold_and_a_record_disagree() {
     );
     assert_eq!(
         handles(&by(FieldFilter::holding("rsvp", "yes").on_a_record())),
-        vec!["person:patana"],
+        vec!["person:ralph"],
         "asked of a record, the write that happened still answers",
     );
     assert_eq!(
         handles(&by(FieldFilter::holding("rsvp", "no"))),
-        vec!["person:patana"],
+        vec!["person:ralph"],
         "and the thing is selected by what it holds now, so the empty answer above is about \
              the value rather than about an unreachable store",
     );
@@ -1503,7 +1503,7 @@ fn a_kind_and_a_key_narrow_one_set() {
     };
     assert_eq!(
         handles(&resolved(&scanned, &[], &query(EntityKind::PERSON)).expect("both filters")),
-        vec!["person:barney-gumble", "person:patana"],
+        vec!["person:barney-gumble", "person:ralph"],
     );
     assert!(
         resolved(&scanned, &[], &query(EntityKind::PLACE))
@@ -1536,7 +1536,7 @@ fn a_type_selects_the_records_that_answer_it() {
     .expect("a type is a selection");
     assert_eq!(
         handles(&found),
-        vec!["person:barney-gumble", "person:patana"],
+        vec!["person:barney-gumble", "person:ralph"],
     );
 
     let unheld = types::DeclaredType::new(
@@ -1780,7 +1780,7 @@ fn a_walk_marks_a_link_whose_claim_was_taken_back() {
 
     assert_eq!(
         handles(reached),
-        vec!["person:barney-gumble", "person:patana"],
+        vec!["person:barney-gumble", "person:ralph"],
         "both are still reached, because a retracted claim is marked and not hidden: \
              {reached:?}",
     );
@@ -1796,7 +1796,7 @@ fn a_walk_marks_a_link_whose_claim_was_taken_back() {
     );
     assert!(
         !via(1).retracted,
-        "Patana's still stands, so nothing marks hers — without this the marker could be on \
+        "Ralph's still stands, so nothing marks hers — without this the marker could be on \
              every link: {reached:?}",
     );
     assert_eq!(
@@ -1837,7 +1837,7 @@ fn a_walk_marks_a_link_whose_claim_was_taken_back() {
             .clone()
     };
     let withdrawn = out_from("person:barney-gumble");
-    let stands = out_from("person:patana");
+    let stands = out_from("person:ralph");
     assert_eq!(
         handles(&withdrawn),
         vec!["event:birthday-party"],
@@ -2268,7 +2268,7 @@ fn a_claim_that_stands_keeps_a_link_another_claim_gave_up() {
 
     assert_eq!(
         handles(&reached),
-        vec!["person:barney-gumble", "person:patana"],
+        vec!["person:barney-gumble", "person:ralph"],
         "one link each, not one per claim: {reached:?}",
     );
     assert!(
@@ -2318,7 +2318,7 @@ fn a_walk_leaves_by_either_end_of_an_edge() {
     let inbound = from_party(Direction::In);
     assert_eq!(
         handles(&inbound[0].connected),
-        vec!["person:barney-gumble", "person:patana"],
+        vec!["person:barney-gumble", "person:ralph"],
         "the guests hang off the party: {:?}",
         inbound[0],
     );
@@ -2343,7 +2343,7 @@ fn a_walk_leaves_by_either_end_of_an_edge() {
         &[],
         &GraphQuery {
             select: Selection {
-                subject: Some(EntityId("person:patana".into())),
+                subject: Some(EntityId("person:ralph".into())),
                 ..Selection::default()
             },
             follow: Some(Follow::hop()),
@@ -2391,15 +2391,15 @@ fn a_reached_object_brings_its_own_facts() {
     let guests = &found[0].connected;
     assert_eq!(
         handles(guests),
-        vec!["person:barney-gumble", "person:patana"],
+        vec!["person:barney-gumble", "person:ralph"],
     );
-    let patana = guests
+    let ralph = guests
         .iter()
-        .find(|o| o.entity.id.as_str() == "person:patana")
+        .find(|o| o.entity.id.as_str() == "person:ralph")
         .expect("the guest who is coming");
     assert!(
-        patana.facts.iter().any(|f| f.content == "vegetarian"),
-        "the guest arrives with her own page: {patana:?}",
+        ralph.facts.iter().any(|f| f.content == "vegetarian"),
+        "the guest arrives with her own page: {ralph:?}",
     );
     assert!(
         found[0]
@@ -2421,13 +2421,13 @@ fn a_reached_object_brings_its_own_facts() {
 #[test]
 fn a_two_hop_walk_returns_the_shape_and_not_a_list() {
     let scanned = store();
-    let from_patana = |depth: usize| {
+    let from_ralph = |depth: usize| {
         resolved(
             &scanned,
             &[],
             &GraphQuery {
                 select: Selection {
-                    subject: Some(EntityId("person:patana".into())),
+                    subject: Some(EntityId("person:ralph".into())),
                     ..Selection::default()
                 },
                 include: Include {
@@ -2448,7 +2448,7 @@ fn a_two_hop_walk_returns_the_shape_and_not_a_list() {
         .expect("a walk out of a subject")
     };
 
-    let two = from_patana(2);
+    let two = from_ralph(2);
     assert_eq!(handles(&two[0].connected), vec!["event:birthday-party"]);
     assert_eq!(
         handles(&two[0].connected[0].connected),
@@ -2466,9 +2466,9 @@ fn a_two_hop_walk_returns_the_shape_and_not_a_list() {
     );
 
     assert!(
-        from_patana(1)[0].connected[0].connected.is_empty(),
+        from_ralph(1)[0].connected[0].connected.is_empty(),
         "one hop stops at the party: {:?}",
-        from_patana(1),
+        from_ralph(1),
     );
 }
 
@@ -2483,13 +2483,13 @@ fn a_two_hop_walk_returns_the_shape_and_not_a_list() {
 #[test]
 fn an_object_says_when_it_has_edges_nobody_followed() {
     let scanned = store();
-    let from_patana = |depth: usize| {
+    let from_ralph = |depth: usize| {
         resolved(
             &scanned,
             &[],
             &GraphQuery {
                 select: Selection {
-                    subject: Some(EntityId("person:patana".into())),
+                    subject: Some(EntityId("person:ralph".into())),
                     ..Selection::default()
                 },
                 include: Include {
@@ -2510,7 +2510,7 @@ fn an_object_says_when_it_has_edges_nobody_followed() {
         .expect("a walk out of a subject")
     };
 
-    let one = from_patana(1);
+    let one = from_ralph(1);
     let party = &one[0].connected[0];
     assert!(
         party.connected.is_empty() && party.unwalked,
@@ -2522,11 +2522,11 @@ fn an_object_says_when_it_has_edges_nobody_followed() {
         one[0],
     );
 
-    let two = from_patana(2);
+    let two = from_ralph(2);
     let party = &two[0].connected[0];
     assert!(
         party.unwalked,
-        "at two hops the party still points back at Patana, who is already in the answer: \
+        "at two hops the party still points back at Ralph, who is already in the answer: \
              {party:?}",
     );
     assert!(
@@ -2535,8 +2535,8 @@ fn an_object_says_when_it_has_edges_nobody_followed() {
     );
 }
 
-/// **A cycle stops.** Patana attends the party and the party points back
-/// at Patana, so an outbound walk at the ceiling would loop forever if
+/// **A cycle stops.** Ralph attends the party and the party points back
+/// at Ralph, so an outbound walk at the ceiling would loop forever if
 /// nothing held what it had already reached.
 ///
 /// It asserts where the walk actually ends rather than only that it
@@ -2549,7 +2549,7 @@ fn a_walk_over_a_cycle_terminates() {
         &[],
         &GraphQuery {
             select: Selection {
-                subject: Some(EntityId("person:patana".into())),
+                subject: Some(EntityId("person:ralph".into())),
                 ..Selection::default()
             },
             include: Include {
@@ -2574,7 +2574,7 @@ fn a_walk_over_a_cycle_terminates() {
     assert_eq!(
         handles(&party[0].connected),
         vec!["place:moes"],
-        "the party points back at Patana and at the tavern; only the tavern is new: {found:?}",
+        "the party points back at Ralph and at the tavern; only the tavern is new: {found:?}",
     );
     assert!(
         party[0].connected[0].connected.is_empty(),
@@ -3659,7 +3659,7 @@ fn a_walks_filter_is_asked_of_the_thing_or_of_one_record() {
 fn a_fact_belongs_to_its_subject_and_to_the_page_it_sits_on() {
     let mut scanned = store();
     let visiting = Fact {
-        subject: EntityId("person:patana".into()),
+        subject: EntityId("person:ralph".into()),
         ..fact("event:birthday-party", "f2", "brings the pudding")
     };
     scanned[0].facts.push(visiting);
@@ -3672,6 +3672,6 @@ fn a_fact_belongs_to_its_subject_and_to_the_page_it_sits_on() {
             .iter()
             .any(|f| f.content == "brings the pudding")
     };
-    assert!(says("person:patana"), "it is about her");
+    assert!(says("person:ralph"), "it is about her");
     assert!(says("event:birthday-party"), "and it sits on the party");
 }

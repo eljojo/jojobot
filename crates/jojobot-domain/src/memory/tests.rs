@@ -1931,7 +1931,7 @@ fn a_multi_line_content_refusal_names_details() {
 /// become two.
 #[test]
 fn an_alias_is_a_plain_label_and_never_carries_the_separator() {
-    assert!(validate_aliases(&["Cosme Fulanito".into(), "H.".into()]).is_ok());
+    assert!(validate_aliases(&["Max Power".into(), "H.".into()]).is_ok());
     assert!(
         validate_aliases(&[]).is_ok(),
         "no aliases is the ordinary case"

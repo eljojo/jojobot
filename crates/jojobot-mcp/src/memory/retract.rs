@@ -941,15 +941,12 @@ mod tests {
         let jojobot = handler();
         let refused = blocked(
             &jojobot
-                .retract(Parameters(retract_args(
-                    "person:alphonse#f1",
-                    "no such thing",
-                )))
+                .retract(Parameters(retract_args("person:ghost#f1", "no such thing")))
                 .await
                 .expect("a refusal is an answer, not a protocol failure"),
         );
         assert_eq!(refused["wrote"], false, "{refused}");
-        assert_eq!(refused["attempted"], "person:alphonse", "{refused}");
+        assert_eq!(refused["attempted"], "person:ghost", "{refused}");
     }
 
     /// **A role's own record cannot be taken back through the handle its bot

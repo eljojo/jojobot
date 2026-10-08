@@ -18,24 +18,24 @@ async fn moving_abroad() {
     // ── session 1 · the open question, and what it is optimising for ────────
     let s = story.session().await;
 
-    s.add("person:tulio", "Tulio").await;
+    s.add("person:maude", "Maude").await;
     s.add("place:springfield", "Springfield").await;
-    s.fact("person:tulio", "lives in Springfield, wants to move abroad")
+    s.fact("person:maude", "lives in Springfield, wants to move abroad")
         .await;
 
     // The constraints: testimony, and what every later recommendation has to
     // be checked against.
     s.fact(
-        "person:tulio",
+        "person:maude",
         "can work as a waiter, a teacher, or a programmer",
     )
     .await;
     s.fact(
-        "person:tulio",
+        "person:maude",
         "wants a city with an electronic music scene, and culture generally",
     )
     .await;
-    s.fact("person:tulio", "likes the beach; good weather is a plus")
+    s.fact("person:maude", "likes the beach; good weather is a plus")
         .await;
 
     // GAP — there is no entity for the operator, so outside this story those
@@ -121,12 +121,9 @@ async fn moving_abroad() {
     )
     .await;
 
-    s.add("person:patana", "Patana").await;
-    s.fact(
-        "person:patana",
-        "immigration lawyer, handling the visa file",
-    )
-    .await;
+    s.add("person:apu", "Apu").await;
+    s.fact("person:apu", "immigration lawyer, handling the visa file")
+        .await;
     s.add("org:globex", "Globex").await;
     s.fact("org:globex", "hiring programmers, would sponsor")
         .await;
@@ -136,11 +133,11 @@ async fn moving_abroad() {
     // doing what on this move is prose, and "who is involved" is a word search
     // rather than a walk. Compare the same question about a company, which is
     // one call.
-    //   s.fact_about("person:patana", "handling the visa", "role", "project:atlas").await;
+    //   s.fact_about("person:apu", "handling the visa", "role", "project:atlas").await;
     s.refused(
         "capture",
         json!({
-            "subject": "person:patana", "content": "handling the visa",
+            "subject": "person:apu", "content": "handling the visa",
             "provenance": "testimony", "shape": "membership",
             "object": "project:atlas",
         }),
@@ -306,14 +303,14 @@ async fn moving_abroad() {
             "event:departure-flight",
             "the flight the family is booked on",
             json!({"departs_on": "2027-02-09", "one_way": "yes"}),
-            &["person:tulio"],
+            &["person:maude"],
         )
         .await;
     s.recall("event:departure-flight")
         .await
         .claim(&flight)
         .says("2027-02-09")
-        .says("person:tulio");
+        .says("person:maude");
 
     // The other thing on the calendar, and nobody gave it a day under a key —
     // which is what makes the read below mean anything.
@@ -364,9 +361,9 @@ async fn moving_abroad() {
     // ── session 5 · a session that was not there for any of it ──────────────
     let s = story.session().await;
 
-    s.add("person:bodoque", "Bodoque").await;
+    s.add("person:barney-gumble", "Barney").await;
     s.fact_about(
-        "person:bodoque",
+        "person:barney-gumble",
         "already lives out there, offered a spare room for the first weeks",
         "location",
         "place:capital-city",
@@ -383,7 +380,7 @@ async fn moving_abroad() {
     // through wording.
     s.through("location", "place:capital-city", "person")
         .await
-        .says("person:bodoque");
+        .says("person:barney-gumble");
 
     // The question actually asked at this point, and the two records that were
     // filed with a state answer it: one read, and the sentences come back

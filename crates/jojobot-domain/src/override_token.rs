@@ -91,7 +91,7 @@ mod tests {
     /// which is the boolean again wearing a longer name.
     #[test]
     fn a_refusal_is_lifted_by_its_own_token_and_by_nothing_else() {
-        let refusal = collision("entity", "person:alpha", &["person:alphonse"]);
+        let refusal = collision("entity", "person:alpha", &["person:ghost"]);
 
         assert!(
             refusal.honours(Some(&refusal.token())),
@@ -112,10 +112,10 @@ mod tests {
     /// past the next one.
     #[test]
     fn a_token_minted_for_one_collision_does_not_lift_another() {
-        let alpha = collision("entity", "person:alpha", &["person:alphonse"]);
+        let alpha = collision("entity", "person:alpha", &["person:ghost"]);
         let others = [
             // A different thing attempted.
-            collision("entity", "person:beta", &["person:alphonse"]),
+            collision("entity", "person:beta", &["person:ghost"]),
             // The same attempt against different candidates — the guard found
             // something else, so the caller was told something else.
             collision("entity", "person:alpha", &["person:alpha-two"]),
@@ -123,11 +123,11 @@ mod tests {
             collision(
                 "entity",
                 "person:alpha",
-                &["person:alphonse", "person:alpha-two"],
+                &["person:ghost", "person:alpha-two"],
             ),
             // The other gate. A name can collide in both worlds and they are
             // not one refusal.
-            collision("mailbox", "person:alpha", &["person:alphonse"]),
+            collision("mailbox", "person:alpha", &["person:ghost"]),
         ];
 
         for other in others {
@@ -142,8 +142,8 @@ mod tests {
     /// re-reading its own refusal would be handed a token that no longer works.
     #[test]
     fn one_refusal_mints_one_token() {
-        let once = collision("entity", "person:alpha", &["person:alphonse"]);
-        let again = collision("entity", "person:alpha", &["person:alphonse"]);
+        let once = collision("entity", "person:alpha", &["person:ghost"]);
+        let again = collision("entity", "person:alpha", &["person:ghost"]);
         assert_eq!(once.token(), again.token());
     }
 }

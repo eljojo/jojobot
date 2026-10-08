@@ -240,7 +240,7 @@ fn reason_for(
 
     // The handle channel of a name collision: one of the existing entity's
     // labels spells out the incoming handle ("Alpha One" already there,
-    // `person:alpha-one` arriving; or an alias "Cosme Fulanito" and `person:cosme-fulanito`) — the
+    // `person:alpha-one` arriving; or an alias "Max Power" and `person:max-power`) — the
     // same collision wearing a different hat.
     if folded(&existing.labels())
         .iter()
@@ -743,7 +743,7 @@ mod tests {
         assert_eq!(reasons("person:alphaa", None), vec![MatchReason::NearSlug]);
         assert_eq!(reasons("person:bet", None), vec![MatchReason::NearSlug]);
         // Three edits is a different person, not a typo.
-        assert!(reasons("person:alphonse", None).is_empty());
+        assert!(reasons("person:ghost", None).is_empty());
     }
 
     /// **What the two channels catch, measured on realistic names.** A record
@@ -984,8 +984,8 @@ mod tests {
         }
     }
 
-    /// **The acceptance case.** Someone known as Homer Simpson and called Cosme Fulanito is one
-    /// person. A write arriving as "Cosme Fulanito" has to hit the guard, or the second
+    /// **The acceptance case.** Someone known as Homer Simpson and called Max Power is one
+    /// person. A write arriving as "Max Power" has to hit the guard, or the second
     /// entity gets created under the name the user actually says — and from then
     /// on half the facts live on each.
     #[test]
@@ -993,12 +993,12 @@ mod tests {
         let idx = vec![also_known_as(
             "person:homer-simpson",
             "Homer Simpson",
-            &["Cosme Fulanito"],
+            &["Max Power"],
         )];
 
         let Decision::Block(candidates) = decide(
-            &EntityId("person:cosme-fulanito".into()),
-            &["Cosme Fulanito"],
+            &EntityId("person:max-power".into()),
+            &["Max Power"],
             &idx,
             None,
         ) else {
@@ -1009,14 +1009,14 @@ mod tests {
 
         // The handle channel of the same collision: a slug that spells the alias.
         assert_eq!(
-            screen(&EntityId("person:cosme-fulanito".into()), &[], &idx)[0].reason,
+            screen(&EntityId("person:max-power".into()), &[], &idx)[0].reason,
             MatchReason::SameName,
             "a handle spelling out an alias is the same collision in another hat"
         );
 
         // And a typo of an alias is a near miss, exactly as a typo of a name is.
         assert_eq!(
-            screen(&EntityId("person:zzz".into()), &["Cosme Fulanit"], &idx)[0].reason,
+            screen(&EntityId("person:zzz".into()), &["Max Powe"], &idx)[0].reason,
             MatchReason::NearName
         );
     }
@@ -1047,12 +1047,12 @@ mod tests {
     #[test]
     fn a_rename_onto_an_existing_alias_is_blocked() {
         let idx = vec![
-            also_known_as("person:homer-simpson", "Homer Simpson", &["Cosme Fulanito"]),
+            also_known_as("person:homer-simpson", "Homer Simpson", &["Max Power"]),
             entity("person:zenith", "Zenith", "user-named"),
         ];
         let Decision::Block(candidates) = rename(
             &EntityId("person:zenith".into()),
-            "Cosme Fulanito",
+            "Max Power",
             "Zenith",
             &idx,
             None,
@@ -1065,16 +1065,16 @@ mod tests {
 
     /// A handle a write only names is screened against every label too, so the
     /// candidate list that comes back with a blocked capture can say "you may
-    /// mean Homer Simpson" when what was typed was Cosme Fulanito.
+    /// mean Homer Simpson" when what was typed was Max Power.
     #[test]
     fn a_must_exist_miss_suggests_by_alias() {
         let idx = vec![also_known_as(
             "person:homer-simpson",
             "Homer Simpson",
-            &["Cosme Fulanito"],
+            &["Max Power"],
         )];
         let Decision::Block(candidates) =
-            decide_existing(&EntityId("person:cosme-fulanito".into()), &idx)
+            decide_existing(&EntityId("person:max-power".into()), &idx)
         else {
             panic!("an unknown handle blocks");
         };
@@ -1232,17 +1232,13 @@ mod tests {
     #[test]
     fn an_added_alias_is_screened_like_a_rename() {
         let idx = vec![
-            also_known_as("person:homer-simpson", "Homer Simpson", &["Cosme Fulanito"]),
+            also_known_as("person:homer-simpson", "Homer Simpson", &["Max Power"]),
             entity("person:zenith", "Zenith", "user-named"),
         ];
         let borrower = EntityId("person:zenith".into());
-        let Decision::Block(candidates) = decide_relabel(
-            &borrower,
-            &["Zenith", "Cosme Fulanito"],
-            &["Zenith"],
-            &idx,
-            None,
-        ) else {
+        let Decision::Block(candidates) =
+            decide_relabel(&borrower, &["Zenith", "Max Power"], &["Zenith"], &idx, None)
+        else {
             panic!("an alias onto a name another entity wears must block");
         };
         assert_eq!(candidates[0].handle.as_str(), "person:homer-simpson");
@@ -1252,7 +1248,7 @@ mod tests {
         assert_eq!(
             decide_relabel(
                 &borrower,
-                &["Zenith", "Cosme Fulanito"],
+                &["Zenith", "Max Power"],
                 &["Zenith"],
                 &idx,
                 Some(&override_token(&borrower, &candidates)),
