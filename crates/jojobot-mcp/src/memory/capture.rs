@@ -1003,6 +1003,7 @@ impl Jojobot {
                         .await,
                 );
                 self.note_seat_pushed_off(&fact, &mut body).await;
+                self.note_unstars_without_a_summary(&fact, false, caller.sid.as_str(), &mut body);
                 if self.first_contact(CLAIMS_DOMAIN, Some(&caller)).await {
                     crate::answer::note_teaching(&mut body, CLAIMS_TEACHING);
                 }

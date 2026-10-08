@@ -524,6 +524,20 @@ impl Jojobot {
                 Err(e) => return session_declined(e, caller.sid.as_str()),
             }
         }
+        // **Whether this edit takes the star off a rule of a bot's own**, read
+        // before the write and only for an edit that names the key. Counted after
+        // it lands, so a record written beside three of them can be taught.
+        let names_the_star = patch.fields.contains_key("starred")
+            || patch.clear_fields.iter().any(|key| key == "starred");
+        let was_starred = names_the_star
+            && address.home.kind() == Some(EntityKind::BOT)
+            && match self.memory.recall(&address.home).await {
+                Ok(held) => held
+                    .iter()
+                    .find(|fact| fact.id == address.local)
+                    .is_some_and(|fact| fact.fields.get("starred").is_some_and(|v| v == "true")),
+                Err(_) => false,
+            };
         // **A write that landed is never reported as failed** (rule 130): see
         // `capture`'s own note on the same shape.
         let (written, fold_behind) =
@@ -576,6 +590,15 @@ impl Jojobot {
                         .await,
                 );
                 self.note_seat_pushed_off(&fact, &mut body).await;
+                let unstarred_this_write =
+                    was_starred && fact.fields.get("starred").is_none_or(|v| v != "true");
+                self.note_unstarred(&fact, was_starred, caller.sid.as_str());
+                self.note_unstars_without_a_summary(
+                    &fact,
+                    unstarred_this_write,
+                    caller.sid.as_str(),
+                    &mut body,
+                );
                 if self.first_contact(CLAIMS_DOMAIN, Some(&caller)).await {
                     crate::answer::note_teaching(&mut body, CLAIMS_TEACHING);
                 }

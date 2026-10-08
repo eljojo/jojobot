@@ -130,6 +130,11 @@ pub struct SessionRegistry {
     /// the same handle. Nothing in it is stored: a restart empties it. See
     /// [`crate::seen`].
     seen: std::sync::Mutex<crate::seen::Ledger>,
+    /// **How many starred rules each session has unstarred, per bot**, kept here
+    /// beside the handles it is keyed by: both are process-local and both are
+    /// gone when the process is. Nothing in it is stored. See
+    /// [`SessionRegistry::note_unstar`].
+    unstars: std::sync::Mutex<HashMap<(String, String), usize>>,
 }
 
 impl SessionRegistry {
@@ -145,6 +150,26 @@ impl SessionRegistry {
             .lock()
             .expect("the seen ledger is poisoned")
             .tick(sid);
+    }
+
+    /// Count one starred rule of `bot` that this session unstarred.
+    pub(crate) fn note_unstar(&self, sid: &str, bot: &str) {
+        *self
+            .unstars
+            .lock()
+            .expect("the unstar ledger is poisoned")
+            .entry((sid.to_string(), bot.to_string()))
+            .or_default() += 1;
+    }
+
+    /// How many starred rules of `bot` this session has unstarred.
+    pub(crate) fn unstarred_by(&self, sid: &str, bot: &str) -> usize {
+        self.unstars
+            .lock()
+            .expect("the unstar ledger is poisoned")
+            .get(&(sid.to_string(), bot.to_string()))
+            .copied()
+            .unwrap_or(0)
     }
 
     /// Remember the things a read answer returned.

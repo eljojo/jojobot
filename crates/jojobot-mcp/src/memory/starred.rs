@@ -10,7 +10,50 @@
 
 use super::*;
 
+/// **What a record is told when it lands beside three or more unstars and
+/// stands for nothing.** An unstarred rule is kept but no longer rides the boot,
+/// and nothing leads back to it from a record that does not stand for it.
+pub(crate) const UNSTARS_WITHOUT_A_SUMMARY: &str = "The rules you unstarred this session are kept but \
+    do not ride the boot, and nothing leads to them from this record: mark it with stands_for \
+    naming them, and a read of it can return its sources.";
+
+/// How many unstars a session makes before a record beside them is taught.
+const UNSTARS_BEFORE_TEACHING: usize = 3;
+
 impl Jojobot {
+    /// **Count this write if it unstarred a rule**: a bot's own claim that was
+    /// starred and no longer is. `was_starred` is read before the write; the
+    /// claim's fields after it say whether the star is still there.
+    pub(crate) fn note_unstarred(&self, fact: &Fact, was_starred: bool, sid: &str) {
+        if was_starred
+            && fact.subject.kind() == Some(EntityKind::BOT)
+            && fact.fields.get("starred").is_none_or(|v| v != "true")
+        {
+            self.registry.note_unstar(sid, fact.subject.as_str());
+        }
+    }
+
+    /// **Teach, on the receipt of a record that is not itself an unstar, that
+    /// the rules this session unstarred are not reachable from it.** Only for a
+    /// bot's own record that stands for nothing, once the session has unstarred
+    /// three or more rules of that bot.
+    pub(crate) fn note_unstars_without_a_summary(
+        &self,
+        fact: &Fact,
+        unstarred_this_write: bool,
+        sid: &str,
+        body: &mut serde_json::Value,
+    ) {
+        if unstarred_this_write
+            || fact.subject.kind() != Some(EntityKind::BOT)
+            || !fact.stands_for.is_empty()
+            || self.registry.unstarred_by(sid, fact.subject.as_str()) < UNSTARS_BEFORE_TEACHING
+        {
+            return;
+        }
+        crate::answer::note_teaching(body, UNSTARS_WITHOUT_A_SUMMARY);
+    }
+
     /// **Note it on the receipt when this write just pushed a starred rule
     /// off the boot.** A no-op unless `fact`'s subject is a bot and `fact`
     /// itself carries `fields.starred == "true"` — the one write shape that

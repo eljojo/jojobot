@@ -1110,3 +1110,220 @@ async fn a_bot_created_with_fields_is_held_to_the_ceiling_a_capture_is() {
     );
     story.finish().await;
 }
+
+/// **The refusal at the floor names the summary that keeps its sources, and a
+/// writer who follows it lands.** A bot whose boot is full is refused a star that
+/// would take it over the ceiling. The way out the refusal offers is not only to
+/// shorten or to fetch by skill: it is to write one record that stands for the
+/// others, keep the others unstarred, and read the boot back. The story follows
+/// it, and the sources of the summary come back when they are asked for.
+#[tokio::test]
+async fn a_refusal_at_the_floor_names_the_summary_that_keeps_its_sources_and_following_it_lands() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:epsilon", "Epsilon").await;
+
+    // Eight rules of two thousand characters each, all starred: the floor fits.
+    let rule = "w ".repeat(1000);
+    let mut sources = Vec::new();
+    for n in 0..8 {
+        sources.push(
+            s.call(
+                "capture",
+                json!({
+                    "subject": "bot:epsilon",
+                    "content": format!("{n} {rule}"),
+                    "fields": {"starred": "true"},
+                }),
+            )
+            .await
+            .field("address"),
+        );
+    }
+
+    // ── the star that does not fit, and the move the refusal names ──────────
+    s.refused(
+        "capture",
+        json!({
+            "subject": "bot:epsilon",
+            "content": "heavyrule ".repeat(4000),
+            "fields": {"starred": "true"},
+        }),
+    )
+    .await
+    .says("stands_for")
+    .says("\"wrote\":false");
+
+    // ── follow it: one short record, marked as standing for the eight, and the
+    //    eight kept but no longer starred ─────────────────────────────────────
+    let summary = s
+        .call(
+            "capture",
+            json!({
+                "subject": "bot:epsilon",
+                "content": "the eight working rules, in short",
+                "fields": {"starred": "true"},
+            }),
+        )
+        .await
+        .field("address");
+    s.call(
+        "update_fact",
+        json!({"address": &summary, "stands_for": &sources}),
+    )
+    .await;
+    for address in &sources {
+        s.call(
+            "update_fact",
+            json!({"address": address, "fields": {"starred": "false"}}),
+        )
+        .await;
+    }
+
+    // ── read the boot back: the summary rides it, the eight do not ──────────
+    let (booted, _) = story
+        .call("start_here", json!({"bot": "epsilon", "brief": true}))
+        .await;
+    let rules = booted.json()["identity"]["rules"]
+        .as_array()
+        .expect("the boot carries the bot's rules")
+        .clone();
+    assert_eq!(rules.len(), 1, "only the summary rides the boot: {rules:?}");
+    assert!(
+        rules[0]["content"]
+            .as_str()
+            .is_some_and(|content| content.contains("the eight working rules")),
+        "the rule that rides is the summary: {rules:?}"
+    );
+
+    // ── and its sources come back when they are asked for ───────────────────
+    let whole = s
+        .shape(
+            "the summary, sources included",
+            json!({"subject": "bot:epsilon", "facts": true, "stood_for": true}),
+        )
+        .await;
+    whole
+        .says("the eight working rules")
+        .says("0 w w")
+        .says("7 w w");
+
+    s.wrap("summarised the rules and kept their sources").await;
+    story.finish().await;
+}
+
+/// **Unstarring three rules is taught `stands_for`, unless the record that lands
+/// names what it replaces.** A rule that is unstarred is kept but no longer rides
+/// the boot, and a record written beside the unstars does not lead back to them
+/// unless it stands for them. The receipt of that record says so, naming
+/// `stands_for`. The pair beside it: the same three unstars and a summary that
+/// stands for them carry no such teaching, and two unstars alone are not enough.
+#[tokio::test]
+async fn unstarring_three_rules_is_taught_stands_for_unless_the_summary_names_them() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:delta", "Delta").await;
+    s.add("bot:gamma", "Gamma").await;
+
+    // Two bots, three starred rules each.
+    let mut rules = std::collections::BTreeMap::new();
+    for bot in ["bot:delta", "bot:gamma"] {
+        let mut addresses = Vec::new();
+        for n in 0..3 {
+            addresses.push(
+                s.call(
+                    "capture",
+                    json!({
+                        "subject": bot,
+                        "content": format!("{bot} rule {n}"),
+                        "fields": {"starred": "true"},
+                    }),
+                )
+                .await
+                .field("address"),
+            );
+        }
+        rules.insert(bot, addresses);
+    }
+    let unstar = |address: String| {
+        let s = &s;
+        async move {
+            s.call(
+                "update_fact",
+                json!({"address": address, "fields": {"starred": "false"}}),
+            )
+            .await
+        }
+    };
+    // The teaching sits in the receipt's teaching list; the unstar's own receipt
+    // never carries it, whichever unstar it is.
+    let taught = |answer: &super::dsl::Answer| {
+        answer.json()["teaching"].as_array().is_some_and(|lines| {
+            lines
+                .iter()
+                .any(|line| line.as_str().is_some_and(|l| l.contains("unstarred")))
+        })
+    };
+
+    // ── two unstars and a record: not enough to teach anything ──────────────
+    for address in &rules["bot:gamma"][..2] {
+        let answer = unstar(address.clone()).await;
+        assert!(!taught(&answer), "an unstar is not taught about itself");
+    }
+    let few = s
+        .call(
+            "capture",
+            json!({"subject": "bot:gamma", "content": "a record beside two unstars"}),
+        )
+        .await;
+    assert!(!taught(&few), "two unstars teach nothing: {}", few.raw());
+
+    // ── three unstars and a record that names nothing: taught ───────────────
+    for address in &rules["bot:delta"] {
+        let answer = unstar(address.clone()).await;
+        assert!(!taught(&answer), "an unstar is not taught about itself");
+    }
+    let alone = s
+        .call(
+            "capture",
+            json!({"subject": "bot:delta", "content": "a summary that names nothing"}),
+        )
+        .await;
+    assert!(
+        taught(&alone),
+        "three unstars and a bare record are taught: {}",
+        alone.raw()
+    );
+    alone.says("stands_for");
+
+    // ── the pair: the summary that stands for them carries no teaching ──────
+    let third = unstar(rules["bot:gamma"][2].clone()).await;
+    assert!(!taught(&third), "an unstar is not taught about itself");
+    let summary = s
+        .call(
+            "capture",
+            json!({"subject": "bot:gamma", "content": "the three rules, in short"}),
+        )
+        .await;
+    // Written bare first, as the ordinary flow does, so it is taught once; the
+    // mark then lands on it and the next record beside it is not.
+    assert!(
+        taught(&summary),
+        "a bare record beside three unstars is taught"
+    );
+    let address = summary.field("address");
+    let marked = s
+        .call(
+            "update_fact",
+            json!({"address": &address, "stands_for": &rules["bot:gamma"]}),
+        )
+        .await;
+    assert!(
+        !taught(&marked),
+        "a record that stands for them carries no teaching: {}",
+        marked.raw()
+    );
+
+    s.wrap("unstarred rules and summarised them").await;
+    story.finish().await;
+}
