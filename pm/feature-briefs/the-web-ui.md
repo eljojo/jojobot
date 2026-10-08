@@ -6,7 +6,7 @@
 
 ## One index page per node
 
-**The surface is read-only, and there is one page per node.** You walk the graph by walking the URLs. The path grammar and the entity tree are the same thing. This is what makes the whole surface navigable without anybody designing screens.
+**The surface reads, and there is one page per node. It writes in one place, the operator's own mail, and nowhere else.** You walk the graph by walking the URLs. The path grammar and the entity tree are the same thing. This is what makes the whole surface navigable without anybody designing screens.
 
 **There is no application.** Client-side state, a framework or a component tree is the tell that somebody left the brief. A page renders what is at a node and links to its neighbours. There is nothing else to build.
 
@@ -36,7 +36,7 @@
 
 **No bot reads this surface.** The rules that shape what an agent may be told do not govern what it shows. It shows every record the operator has: entities, events, mailboxes, messages, sessions and journals. It is their instance and their data.
 
-**The constraint that replaces those rules is stronger: the window must not affect bot behaviour.** Looking takes no delivery. It marks nothing read. It opens no session. It writes nothing. A window that changed what it looked at would be worse than no window, because everything seen through it would then be suspect.
+**The constraint that replaces those rules is stronger: the window must not affect bot behaviour.** Looking takes no delivery. It marks nothing read. It opens no session. It writes nothing; the one thing the page does besides look is the operator's own Open and Mark processed on their mail, which are their act and not a look. A window that changed what it looked at would be worse than no window, because everything seen through it would then be suspect.
 
 ## Login
 
