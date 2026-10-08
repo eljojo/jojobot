@@ -254,4 +254,31 @@ mod tests {
             );
         }
     }
+
+    /// **The same holds for the path tantivy's warnings really take.** Tantivy
+    /// logs through the `log` crate, and the binary's subscriber bridges it into
+    /// tracing; a bridged event's own target is "log", with tantivy's module in
+    /// a field. So the events here are sent through `log` over the bridge, and
+    /// another tantivy module's warning still has to come through.
+    #[test]
+    fn the_benign_merge_warning_is_filtered_when_tantivy_logs_it_through_the_log_crate() {
+        // The bridge `init()` installs in the binary. Once per process, so a
+        // second test that installed it first is not a failure.
+        let _ = tracing_log::LogTracer::init();
+        let kept = Kept::default();
+        let subscriber = logging(kept.clone(), tracing_subscriber::EnvFilter::new("info"));
+        tracing::subscriber::with_default(subscriber, || {
+            tracing_log::log::warn!(target: "tantivy::indexer::segment_manager", "couldn't find segment in SegmentManager");
+            tracing_log::log::warn!(target: "tantivy::indexer::segment_updater", "another tantivy warning");
+        });
+        let text = String::from_utf8(kept.0.lock().expect("log buffer").clone()).expect("utf8");
+        assert!(
+            text.contains("another tantivy warning"),
+            "the bridge carried nothing, so this case proves nothing: {text}"
+        );
+        assert!(
+            !text.contains("couldn't find segment"),
+            "the benign warning was logged: {text}"
+        );
+    }
 }

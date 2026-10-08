@@ -64,3 +64,6 @@ sqlx = { workspace = true }
 # same way every room does — refusing a stale one — instead of a second way
 # to find it.
 jojobot-exercise = { path = "../jojobot-exercise" }
+# Tantivy logs through the `log` crate, and the binary's subscriber bridges it
+# into tracing; the case on the merge-warning filter sends its events that way.
+tracing-log = { workspace = true }
