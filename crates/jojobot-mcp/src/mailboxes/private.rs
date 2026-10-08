@@ -84,6 +84,36 @@ pub(crate) fn private_box(id: &MessageId) -> CallToolResult {
 }
 
 impl Jojobot {
+    /// **A post to the handle the instance names as operator is refused when
+    /// that handle is not a person.** The operator is a person. A record that
+    /// names a bot names nobody, and a post to that bot would land in an
+    /// ordinary bot's box that anyone booting it can read. The answer is the
+    /// no-operator one: nothing is written and the way to name an operator is
+    /// in it. A handle the record does not name is not this check's business.
+    pub(crate) async fn refuses_a_non_person_operator(
+        &self,
+        addressee: &EntityId,
+    ) -> Option<CallToolResult> {
+        if addressee.kind() == Some(EntityKind::PERSON) {
+            return None;
+        }
+        let operator = self.instance_operator().await?;
+        (&operator == addressee).then(|| {
+            blocked_body(
+                addressee,
+                &[],
+                format!(
+                    "Nothing was written. The handle the instance names as operator is not a \
+                     person, so no person is the operator yet and no person has a mailbox. The \
+                     operator is named on the instance's record: {}.",
+                    crate::orientation::instance_zone::no_operator_yet(),
+                ),
+            )
+        })
+    }
+}
+
+impl Jojobot {
     /// **The box a post to `addressee` goes into**, opening it when this is the
     /// first post to the operator. A refusal as the answer when the addressee is
     /// a person who is not the operator, when nobody is, or when the box cannot

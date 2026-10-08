@@ -92,6 +92,42 @@ impl Jojobot {
         }
     }
 
+    /// **Refuse a retype that would move the instance's operator out of the
+    /// person kind, whether or not their box exists yet.** The operator is a
+    /// person, and their box opens at the first post, so a retype before it
+    /// leaves no box for the check below to find. The operator would be a bot,
+    /// and a later post to that handle would land in an ordinary bot's box,
+    /// readable by booting as the bot.
+    ///
+    /// The record's operator is compared as the handle `from` answers to now, so
+    /// a former handle of the operator is caught too. A store that cannot be read
+    /// names no operator, and a rename that stays inside the person kind is not
+    /// this check's business.
+    async fn rename_would_unseat_the_operator(
+        &self,
+        from: &EntityId,
+        to: &EntityId,
+    ) -> Option<CallToolResult> {
+        let person = Some(EntityKind::PERSON);
+        if to.kind() == person {
+            return None;
+        }
+        let operator = self.instance_operator().await?;
+        let now = self.current_handle(from).await.ok()?;
+        (now == operator).then(|| {
+            blocked_body(
+                to,
+                &[],
+                format!(
+                    "Nothing was renamed. '{from}' is the instance's operator, and the operator \
+                     is a person, so moving it out of the person kind would leave the instance \
+                     with no operator and a later post to it in an ordinary bot's box. Rename \
+                     it within the person kind, or name another person as operator first."
+                ),
+            )
+        })
+    }
+
     /// **Refuse a retype that would change whether a box's owner is a person,
     /// before anything moves.** A box is private because a person owns it, and a
     /// retype repoints the box with its owner. The operator renamed to a bot
@@ -225,6 +261,9 @@ impl Jojobot {
         // guessing a kind would be guessing the caller's intent about the
         // one thing this call exists to let them state.
         let to = EntityId(args.to.trim().to_string());
+        if let Some(refused) = self.rename_would_unseat_the_operator(&from, &to).await {
+            return Ok(refused);
+        }
         if let Some(refused) = self
             .mailbox_rename_would_change_who_may_read(&from, &to)
             .await?
@@ -1318,5 +1357,67 @@ mod tests {
         );
         assert_ne!(renamed["status"], "blocked", "{renamed}");
         assert_eq!(boxes_owned_by(&jojobot, "bot:delta").await.len(), 1);
+    }
+    /// 🚨 **The person the instance names as operator cannot be retyped, box or
+    /// no box.** Their box opens at the first post, so a retype before it left
+    /// no box to protect and moved the operator into the bot kind; a later post
+    /// then landed in an ordinary bot's box, readable by booting as that bot.
+    /// Refused before anything moves, with the person still the operator. A
+    /// person who is not the operator retypes as before, and the operator
+    /// renamed within the person kind still lands and stays the operator.
+    #[tokio::test]
+    async fn the_operator_cannot_be_retyped_before_their_box_exists() {
+        use crate::mailboxes::testing::*;
+        let jojobot = mailbox_handler();
+        let writer = owning(&jojobot, "gamma").await;
+        name_the_operator(&jojobot, "milhouse").await;
+        assert!(
+            boxes_owned_by(&jojobot, "person:milhouse").await.is_empty(),
+            "the case is the one with no box yet"
+        );
+
+        for to in ["bot:milhouse", "thing:handcart"] {
+            let refused = json_of(
+                &jojobot
+                    .rename_entity(Parameters(args("person:milhouse", to, &writer)))
+                    .await
+                    .expect("a refusal is an answer"),
+            );
+            assert_eq!(refused["status"], "blocked", "{to}: {refused}");
+            assert_eq!(refused["wrote"], false, "{to}: {refused}");
+            assert!(
+                refused["how_to_proceed"]
+                    .as_str()
+                    .is_some_and(|how| how.contains("operator")),
+                "the refusal says why: {refused}"
+            );
+        }
+        let still = fields_of(&jojobot, "topic:instance").await;
+        assert_eq!(still["operator"], "person:milhouse", "{still}");
+
+        // ── the positives the refusal rests on ───────────────────────────────
+        // A person who is not the operator retypes freely.
+        crate::memory::testing::ensure(&jojobot, "person:ned-flanders").await;
+        let free = json_of(
+            &jojobot
+                .rename_entity(Parameters(args(
+                    "person:ned-flanders",
+                    "thing:handcart",
+                    &writer,
+                )))
+                .await
+                .expect("rename ok"),
+        );
+        assert_ne!(free["status"], "blocked", "{free}");
+        // The operator renamed within the person kind lands, and the record follows.
+        let moved = json_of(
+            &jojobot
+                .rename_entity(Parameters(args("person:milhouse", "person:lisa", &writer)))
+                .await
+                .expect("rename ok"),
+        );
+        assert_ne!(moved["status"], "blocked", "{moved}");
+        let followed = fields_of(&jojobot, "topic:instance").await;
+        assert_eq!(followed["operator"], "person:lisa", "{followed}");
     }
 }

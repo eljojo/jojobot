@@ -351,6 +351,9 @@ impl Jojobot {
                  its full handle."
             )));
         }
+        if let Some(refused) = self.refuses_a_non_person_operator(&addressee).await {
+            return Ok(refused);
+        }
         // **A person is addressed by their handle, and only the operator has a
         // box.** Posting to the operator is what opens it the first time.
         let destination = match addressee.kind() {
@@ -1253,5 +1256,54 @@ mod tests {
         assert_eq!(other.len(), 1, "the other box is still its owner's");
         assert_eq!(other[0].as_str(), "person-lisa-box");
         assert_eq!(store_counts(&jojobot, &other[0]).await, (0, 0, 0));
+    }
+    /// 🚨 **A post to a handle the instance names as operator is refused when
+    /// that handle is not a person.** The operator is a person; a record that
+    /// names a bot as operator names nobody, and a post to that bot would land
+    /// in an ordinary bot's box that anyone booting the bot can read. The
+    /// refusal is the no-operator sentence and nothing is written. The same bot
+    /// not named as operator still receives its mail, so the refusal is about
+    /// the operator record and not about bots.
+    #[tokio::test]
+    async fn a_post_to_an_operator_handle_that_is_not_a_person_is_refused() {
+        let jojobot = mailbox_handler();
+        let sender = owning(&jojobot, "epsilon").await;
+        owning(&jojobot, "gamma").await;
+        let post = || {
+            jojobot.post_message(Parameters(PostMessageArgs {
+                to: "bot:gamma".into(),
+                body: "for the operator".into(),
+                in_reply_to: None,
+                subject: None,
+                sid: sender.clone(),
+            }))
+        };
+
+        // The positive first: bot:gamma is an ordinary addressee and it lands.
+        let landed = json_of(&post().await.expect("post ok"));
+        assert_ne!(landed["status"], "blocked", "{landed}");
+
+        // The instance's record now names that bot as operator.
+        crate::memory::testing::capture_ok(
+            &jojobot,
+            CaptureArgs {
+                fields: Some([("operator".to_string(), "bot:gamma".to_string())].into()),
+                provenance: Some("testimony".into()),
+                ..crate::memory::testing::capture_args("topic:instance", "who the operator is")
+            },
+        )
+        .await;
+        let refused = json_of(&post().await.expect("a refusal is an answer"));
+        assert_eq!(refused["status"], "blocked", "{refused}");
+        assert_eq!(refused["wrote"], false, "{refused}");
+        let how = refused["how_to_proceed"].as_str().expect("a way forward");
+        for identifier in ["add_entity", "topic:instance", "operator"] {
+            assert!(how.contains(identifier), "names {identifier}: {how}");
+        }
+        assert_eq!(
+            counts(&jojobot, "gamma").await["counts"]["total"],
+            1,
+            "only the first post landed"
+        );
     }
 }
