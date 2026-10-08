@@ -163,6 +163,51 @@ impl Jojobot {
         }
     }
 
+    /// **The bot a role belongs to, when it is not `claimant`.** A role
+    /// belongs to the bot that carries its name in `claims_role`; when no bot
+    /// does, to the bot whose child the role object is. A claimant that
+    /// carries the name is the owner, whatever else exists. `None` means the
+    /// claim may go on: the claimant owns the role, or nobody does.
+    ///
+    /// Read before the claim writes anything, so a refusal leaves no trace.
+    /// Archived bots and archived role objects are skipped
+    /// here, because `list_entities` returns them; skipping them is how a
+    /// stray one stops owning.
+    pub(crate) async fn owner_of_role(
+        &self,
+        claimant: &EntityId,
+        role: &str,
+    ) -> Result<Option<EntityId>, MemoryError> {
+        let mut carriers: Vec<EntityId> = Vec::new();
+        for bot in self.memory.list_entities(Some(EntityKind::BOT)).await? {
+            if bot.archived.is_some() {
+                continue;
+            }
+            let fields = self.memory.fields(&bot.id).await?;
+            if fields
+                .get(jojobot_domain::memory::CLAIMS_ROLE)
+                .is_some_and(|carried| carried.trim() == role)
+            {
+                carriers.push(bot.id);
+            }
+        }
+        if carriers.contains(claimant) {
+            return Ok(None);
+        }
+        if let Some(carrier) = carriers.into_iter().min() {
+            return Ok(Some(carrier));
+        }
+        let object = EntityId::new(EntityKind::ROLE, role);
+        let parent = self
+            .memory
+            .list_entities(Some(EntityKind::ROLE))
+            .await?
+            .into_iter()
+            .find(|entity| entity.id == object && entity.archived.is_none())
+            .and_then(|entity| entity.parent);
+        Ok(parent.filter(|parent| parent != claimant))
+    }
+
     /// **The claim record of a role, if the role has one.** `Ok(None)` is a role
     /// object with no record, or one that does not exist yet, and the caller
     /// tells those apart by what it does next. The record is the fact that
@@ -610,5 +655,119 @@ mod tests {
             .expect("fields ok");
         assert_eq!(fields.get("holder"), Some(&sid), "{fields:?}");
         assert_eq!(fields.get("agent").map(String::as_str), Some("an-agent-id"));
+    }
+
+    /// Stand a bot's `claims_role` up the way another identity would have
+    /// written it, which this fixture cannot be.
+    async fn carries(jojobot: &Jojobot, bot: &str, role: &str) {
+        jojobot
+            .memory
+            .capture(NewFact {
+                fields: [(
+                    jojobot_domain::memory::CLAIMS_ROLE.to_string(),
+                    role.to_string(),
+                )]
+                .into_iter()
+                .collect(),
+                ..NewFact::about(
+                    EntityId(bot.into()),
+                    format!("{bot} runs {role}"),
+                    jiff::civil::date(2026, 10, 7),
+                )
+            })
+            .await
+            .expect("the key is written")
+            .written()
+            .expect("nothing blocks it");
+    }
+
+    /// **Who a role belongs to, case by case.** The carrier of the name owns
+    /// it and outranks the parent of an object; with no carrier the parent
+    /// owns it; the claimant that owns it, either way, is let through; and a
+    /// name nobody holds is free. An archived object under the wrong bot owns
+    /// nothing, which is how a stray one is cleared.
+    #[tokio::test]
+    async fn a_role_belongs_to_its_carrier_then_to_its_parent_and_a_free_name_to_nobody() {
+        let jojobot = handler();
+        make_bot(&jojobot, "alpha").await;
+        make_bot(&jojobot, "beta").await;
+        let alpha = EntityId("bot:alpha".into());
+        let beta = EntityId("bot:beta".into());
+        let owner = |claimant: &EntityId, role: &'static str| {
+            let jojobot = &jojobot;
+            let claimant = claimant.clone();
+            async move {
+                jojobot
+                    .owner_of_role(&claimant, role)
+                    .await
+                    .expect("read ok")
+            }
+        };
+
+        // A name nobody holds.
+        assert_eq!(owner(&alpha, "sigma").await, None, "a free name");
+
+        // An object with a parent and no carrier: the parent owns it.
+        jojobot
+            .ensure_role_object(&beta, &EntityId("role:omega".into()), "omega")
+            .await
+            .expect("the object is made");
+        assert_eq!(owner(&alpha, "omega").await, Some(beta.clone()));
+        assert_eq!(owner(&beta, "omega").await, None, "its parent may claim it");
+
+        // A carrier and no object.
+        carries(&jojobot, "bot:alpha", "theta").await;
+        assert_eq!(owner(&beta, "theta").await, Some(alpha.clone()));
+        assert_eq!(
+            owner(&alpha, "theta").await,
+            None,
+            "its carrier may claim it"
+        );
+
+        // A carrier outranks the parent of a stray object.
+        carries(&jojobot, "bot:alpha", "kappa").await;
+        jojobot
+            .ensure_role_object(&beta, &EntityId("role:kappa".into()), "kappa")
+            .await
+            .expect("the stray is made");
+        assert_eq!(
+            owner(&alpha, "kappa").await,
+            None,
+            "the carrier is let through"
+        );
+        assert_eq!(owner(&beta, "kappa").await, Some(alpha.clone()));
+
+        // An archived stray owns nothing.
+        jojobot
+            .ensure_role_object(&beta, &EntityId("role:lambda".into()), "lambda")
+            .await
+            .expect("the object is made");
+        assert_eq!(owner(&alpha, "lambda").await, Some(beta.clone()));
+        jojobot
+            .memory
+            .archive_entity(&EntityId("role:lambda".into()), "made under the wrong bot")
+            .await
+            .expect("archived");
+        assert_eq!(
+            owner(&alpha, "lambda").await,
+            None,
+            "an archived stray is cleared"
+        );
+
+        // An archived carrier owns nothing either.
+        make_bot(&jojobot, "gamma").await;
+        carries(&jojobot, "bot:gamma", "rho").await;
+        let gamma = EntityId("bot:gamma".into());
+        assert_eq!(owner(&alpha, "rho").await, Some(gamma.clone()));
+        jojobot
+            .memory
+            .archive_entity(&gamma, "no longer a seat")
+            .await
+            .expect("archived");
+        assert_eq!(
+            owner(&alpha, "rho").await,
+            None,
+            "an archived carrier is cleared"
+        );
     }
 }

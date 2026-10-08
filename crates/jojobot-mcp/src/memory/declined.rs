@@ -1099,6 +1099,17 @@ pub(crate) fn role_taken_way_forward(role: &str, holder: &str, until: &str) -> S
     format!("Wait until {until}, or ask '{holder}' to release '{role}' by wrapping its session.")
 }
 
+/// **What to do about a role that belongs to another bot.** The refusal a claim
+/// at the boot door gets when the role is carried by, or sits under, a bot
+/// other than the one booting.
+pub(crate) fn role_owned_way_forward(role: &str, owner: &str) -> String {
+    let slug = owner.split_once(':').map_or(owner, |(_, slug)| slug);
+    format!(
+        "'{role}' belongs to {owner}. To claim it, call start_here with bot set to '{slug}'. \
+         Or claim a name no bot owns. Nothing was written."
+    )
+}
+
 /// Map a domain [`MemoryError`] to an MCP error, splitting client mistakes
 /// (invalid params) from server-side failures.
 pub(crate) fn memory_error(e: MemoryError) -> McpError {

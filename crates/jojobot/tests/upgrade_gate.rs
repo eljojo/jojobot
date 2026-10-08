@@ -1276,6 +1276,105 @@ async fn field_link_holds_the_links_the_writes_imply_and_nothing_else() {
     );
 }
 
+/// **A role field an older build left on a bot that does not own the role does
+/// not stop the owner.** The recording holds a role in the old shape on the
+/// assistant. A second bot is named its owner through `claims_role`, and its
+/// claim at the door is taken: the old field sits on another bot and is never
+/// read as its lease. The assistant, now a non-owner, is refused with the owner
+/// named, whatever its old field says.
+#[tokio::test]
+async fn an_old_role_field_on_a_bot_that_is_not_the_owner_does_not_stop_the_owner() {
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+    } = restore_the_fixture("stray-role").await;
+    let booted = boot_current(&state_dir, store_port, &git_ref).await;
+    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
+        .await
+        .expect("connecting to the current binary");
+    let fail = |what: &str, body: &str| -> ! {
+        panic!("recorded at {git_ref}: {what} did not hold: {body}")
+    };
+    let parse = |what: &str, body: &str| -> serde_json::Value {
+        serde_json::from_str(body).unwrap_or_else(|_| fail(what, body))
+    };
+
+    // The assistant's boot is the identity that writes.
+    let boot = parse(
+        "booting to write",
+        &surface
+            .call(
+                "start_here",
+                json!({"bot": "assistant", "brief": true, "resume": "new"}),
+            )
+            .await,
+    );
+    let sid = boot["session"]["sid"]
+        .as_str()
+        .unwrap_or_else(|| fail("booting to write", &boot.to_string()))
+        .to_string();
+    let made = surface
+        .call(
+            "add_entity",
+            json!({"kind": "bot", "handle": "alpha", "name": "Alpha",
+                   "source": "user-named", "sid": sid}),
+        )
+        .await;
+    if made.contains("\"status\":\"blocked\"") {
+        fail("making the owner", &made);
+    }
+    let named = surface
+        .call(
+            "capture",
+            json!({"subject": "bot:alpha", "content": "alpha runs the role the recording held",
+                   "provenance": "testimony", "sid": sid,
+                   "fields": {"claims_role": "upgrade-fixture-holder"}}),
+        )
+        .await;
+    if named.contains("\"status\":\"blocked\"") {
+        fail("naming the owner", &named);
+    }
+
+    let owner = parse(
+        "the owner's claim",
+        &surface
+            .call(
+                "start_here",
+                json!({"bot": "alpha", "brief": true, "claim": "upgrade-fixture-holder"}),
+            )
+            .await,
+    );
+    if owner["session"]["claim"]["status"] != "taken" {
+        fail(
+            "the owner's claim being taken over an old field on another bot",
+            &owner.to_string(),
+        );
+    }
+
+    let stray = parse(
+        "the old holder's claim",
+        &surface
+            .call(
+                "start_here",
+                json!({"bot": "assistant", "brief": true, "resume": "new",
+                       "claim": "upgrade-fixture-holder"}),
+            )
+            .await,
+    );
+    let claim = &stray["session"]["claim"];
+    if claim["status"] != "refused" || claim["owner"] != "bot:alpha" {
+        fail(
+            "the old holder being refused with the owner named",
+            &stray.to_string(),
+        );
+    }
+    surface.finish().await;
+    booted.stop().await;
+    drop(scratch);
+}
+
 /// **Testimony an older build recorded has no session of its own, and this
 /// build refuses to rewrite its words in place.** The refusal names the route,
 /// the route works, and an edit that touches no words still lands. The claim is

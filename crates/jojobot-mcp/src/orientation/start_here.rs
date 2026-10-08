@@ -100,7 +100,8 @@ pub struct OrientArgs {
     /// **`taken` means your claim succeeded and YOU hold the role; it never
     /// means somebody else has it, which is `refused`.** The answer is one of
     /// `taken`, `refused` naming who holds it and until
-    /// when, `conflict` when the claim collided with another write
+    /// when — or, when the role belongs to another bot, naming that `owner` and
+    /// writing nothing, so boot as the owner to claim it — `conflict` when the claim collided with another write
     /// landing the same instant, or `unavailable` when the store could not
     /// decide it. **A conflict is the store working correctly, not a
     /// mistake in what you sent** — retry the same call. **An unavailable

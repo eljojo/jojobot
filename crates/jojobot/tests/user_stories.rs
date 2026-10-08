@@ -121,6 +121,8 @@ mod receipts;
 mod refusal_words;
 #[path = "user_stories/rhythms.rs"]
 mod rhythms;
+#[path = "user_stories/role_owner.rs"]
+mod role_owner;
 #[path = "user_stories/rule_seats.rs"]
 mod rule_seats;
 /// One charter, and a session never learns which half the build supplied.

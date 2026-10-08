@@ -899,6 +899,29 @@ impl Jojobot {
         now: jiff::Timestamp,
         today: jiff::civil::Date,
     ) -> serde_json::Value {
+        // **Ownership is decided before anything is written**, so a claim from
+        // the wrong bot leaves no role object and no key behind.
+        match self.owner_of_role(bot, role).await {
+            Ok(Some(owner)) => {
+                return serde_json::json!({
+                    "role": role,
+                    "status": "refused",
+                    "owner": owner.as_str(),
+                    "how_to_proceed": crate::memory::role_owned_way_forward(role, owner.as_str()),
+                });
+            }
+            Ok(None) => {}
+            Err(e) => {
+                tracing::warn!(error = %e, %bot, role, "the owner of a role could not be read");
+                return serde_json::json!({
+                    "role": role,
+                    "status": "unavailable",
+                    "note": "the claim was decided but could not be written. Nothing is \
+                             held.",
+                    "how_to_proceed": claim_unavailable_way_forward(role),
+                });
+            }
+        }
         let written = self
             .write_role_keys(
                 bot,
