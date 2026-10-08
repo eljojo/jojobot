@@ -168,7 +168,11 @@ impl Jojobot {
                        plainly rather than reading as normal. BOOTING STARTS OR RESUMES THAT \
                        BOT'S SESSION — there is no separate start verb. It first sweeps that \
                        bot's sessions that have gone a day without a beat to `abandoned`. That \
-                       sweep and that repair are the only things a boot writes. Name no bot at \
+                       sweep and that repair are the only things a boot writes, except that a boot \
+                       which starts a new run ends any wrap window the bot has open, and a boot \
+                       given a wrap_code as `resume` opens that window: the wrapped run's own \
+                       sid comes back, the run stays wrapped for one last change, and no role \
+                       is taken, nothing is swept and no lease renews. Name no bot at \
                        all and this is an orientation \
                        preview: read-only, the world and the snapshot, no identity and no \
                        session. THIS DOOR IS WHERE A SESSION HANDLE COMES FROM, and it takes one \
@@ -708,6 +712,13 @@ mod tests {
         assert!(
             description.contains("without brief"),
             "the way back to the essay must be stated where brief is: {description}"
+        );
+
+        // A boot given a wrap_code as its resume answer writes a window open, so
+        // the description that lists what a boot writes names that route.
+        assert!(
+            description.contains("wrap_code"),
+            "the door's description names the wrap_code route: {description}"
         );
 
         // Everything that changes between calls is still here.

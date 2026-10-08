@@ -99,7 +99,7 @@ A session has two halves that answer different questions. Its **focus** is what 
 
 - *Record a beat* → `journal` — **a literal journal, not a log.** What you set out to do, what you found, what you decided, what went wrong. NOT every tool call and not every file: a reader months from now wants the story, and a firehose buries it. Pass `focus` when what you are working on changes.
 - *Fix the beat you just wrote* → `amend_journal`. Only the most recent one; everything older is what it was.
-- *End* → `wrap_session` with the story, written for somebody with none of your context. It becomes your final entry and the session goes `wrapped` — terminal both ways. It is published NOWHERE: your chronology is the record, and it is the only one.
+- *End* → `wrap_session` with the story, written for somebody with none of your context. It becomes your final entry and the session goes `wrapped` — terminal both ways, except through the `wrap_code` its wrap hands back. It is published NOWHERE: your chronology is the record, and it is the only one.
 
 jojobot also writes **its own beats** into your chronology: one per class of WRITE you make, its count kept current as you go. Reads are not journalled. They are marked apart (`beat` names the class) because what you said you were doing and what jojobot noticed you doing are different kinds of evidence.
 
@@ -107,7 +107,7 @@ jojobot also writes **its own beats** into your chronology: one per class of WRI
 
 ### The two endings, and they are not interchangeable
 
-**WRAP when the work is over.** Your run finished what it was for; the story is told and the run closes clean. Nothing appends to it afterwards.
+**WRAP when the work is over.** Your run finished what it was for; the story is told and the run closes clean.
 
 **CLEAR AND RESUME when the work continues on another agent.** You are stopping, the job is not done, and somebody — a later run of you, on another device, after a context reset — picks it up. Then **journal a resume note and do NOT wrap**: the next boot of this identity is offered this session by what it says it is working on, and whoever resumes it reads your chronology. Wrapping here would tell the story of something that has not happened yet and force the next run to start from nothing.
 
@@ -423,6 +423,23 @@ mod tests {
         assert!(
             names(&super::orientation(), "stands_for"),
             "a session that reads only the essay has no way to find the synthesis mark"
+        );
+    }
+
+    /// **The essay's claim that a wrapped run is terminal carries its one
+    /// exception.** A wrap hands back a `wrap_code` that reopens the run for one
+    /// last change, so the sentence that calls the end terminal has to name it,
+    /// in the same sentence, or a reader takes the end for absolute.
+    #[test]
+    fn the_essay_names_the_wrap_code_where_it_calls_a_wrap_terminal() {
+        let essay = super::orientation();
+        let at = essay
+            .find("terminal both ways")
+            .expect("the essay says a wrapped run is terminal");
+        let sentence = essay[at..].split(". ").next().expect("a sentence");
+        assert!(
+            names(sentence, "wrap_code"),
+            "the exception rides in the sentence that states the rule: {sentence}"
         );
     }
 

@@ -327,8 +327,8 @@ impl Jojobot {
             "session": run.id.to_string(),
             "wrapped_at": run.last_beat().to_string(),
             "note": "the last run of this identity that was wrapped up. It is here to READ: a \
-                     wrapped run is closed for good, nothing appends to it, and it is not \
-                     something you can resume. Read it, then start your own.",
+                     wrapped run is read-only unless you hold its wrap_code, and it cannot be \
+                     resumed as a running session. Read it, then start your own.",
         })
     }
 
@@ -952,6 +952,15 @@ mod tests {
         assert!(
             !story.contains("older close"),
             "…not the run that merely started later: {body}"
+        );
+        // A wrapped run is read-only unless its wrap_code is held, and the note
+        // on every handover has to say so rather than call the run closed for good.
+        let note = body["session"]["handover"]["note"]
+            .as_str()
+            .expect("a handover carries its note");
+        assert!(
+            note.contains("wrap_code"),
+            "the handover note names the way a wrapped run reopens: {note}"
         );
     }
 

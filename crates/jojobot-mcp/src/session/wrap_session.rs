@@ -27,7 +27,8 @@ impl Jojobot {
         description = "End your session and tell its story. Two things happen together: the \
                        story is recorded in your chronology as its final entry, and the session \
                        moves to `wrapped` — terminal both ways, so \
-                       nothing appends to it or reopens it afterwards, and a later \
+                       nothing appends to it afterwards and nothing reopens it except through \
+                       the wrap_code described below, and a later \
                        journal/amend_journal/wrap_session on that id comes back status: blocked. \
                        A wrap you have to retry finishes what the first attempt started rather \
                        than repeating it, so the story is told once in each place — which means \
@@ -1189,6 +1190,30 @@ mod tests {
                  has to be named in READS",
             );
         }
+    }
+
+    /// **The description that calls a wrapped run terminal names the
+    /// `wrap_code` in the same sentence**, because a wrap hands one back and the
+    /// run it closed takes one last change through it.
+    #[test]
+    fn the_description_names_the_wrap_code_where_it_calls_a_wrap_terminal() {
+        let tools = crate::Jojobot::tool_router().list_all();
+        let wrap = tools
+            .iter()
+            .find(|t| t.name == "wrap_session")
+            .expect("wrap_session is served");
+        let description = wrap.description.as_deref().unwrap_or_default();
+        let at = description
+            .find("terminal both ways")
+            .expect("the description says a wrapped run is terminal");
+        let sentence = description[at..]
+            .split(", and a later")
+            .next()
+            .expect("a clause");
+        assert!(
+            sentence.contains("wrap_code"),
+            "the exception rides in the sentence that states the rule: {sentence}"
+        );
     }
 
     /// Wrapping one session leaves every other one running: a wrap reaches

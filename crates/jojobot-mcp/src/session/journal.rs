@@ -755,6 +755,10 @@ mod tests {
             "a told story names the reason this end is the last word: {on_told}"
         );
         assert!(
+            on_told.contains("wrap_code") && on_told.contains("start_here"),
+            "…and names the wrap_code route to one last change: {on_told}"
+        );
+        assert!(
             !on_told.contains("Journal"),
             "…and never a shared Journal, which is not a thing here: {on_told}"
         );

@@ -86,8 +86,11 @@ pub(crate) fn session_declined(e: SessionError, sid: &str) -> Result<CallToolRes
             format!(
                 "Nothing was written. Session '{sid}' is {state} — its story has been told, \
                  so this end is the last word. Its chronology stands as the record of what \
-                 happened. If there is more to say, it belongs to a new session: boot again (or \
-                 rotate) and start_here mints one."
+                 happened. If you hold the wrap_code its wrap handed back, and no newer run of \
+                 your bot has started, call start_here with your bot name and resume set to \
+                 that code: the run takes one last change and stays wrapped. Otherwise, if \
+                 there is more to say, it belongs to a new session: boot again (or rotate) and \
+                 start_here mints one."
             )
             .into(),
         ),
