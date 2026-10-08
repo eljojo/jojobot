@@ -134,11 +134,11 @@ async fn the_answer_stored_on_the_boundary_is_the_live_querys_answer() {
     assert_eq!(after.answers.len(), 1, "{:?}", after.answers);
     assert_eq!(after.answers[0].phase, "Phase 1");
     assert!(
-        after.answers[0].answer.contains("\"overdue_as_of\""),
+        after.answers[0].answer.contains("\"withheld\""),
         "{}",
         after.answers[0].answer
     );
-    assert!(!after.world.contains("\"overdue_as_of\""));
+    assert!(!after.world.contains("\"withheld\""));
 }
 
 /// **A lock with no window asks nothing at a phase's end.**
