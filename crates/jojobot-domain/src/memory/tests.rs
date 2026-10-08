@@ -666,6 +666,35 @@ fn the_four_existing_keys_are_ceilings_a_bot_does_not_write_about_itself() {
     assert_eq!(GUARDED_KEYS.len(), 7);
 }
 
+/// **A thing that was folded into another is not browsable, as one that was
+/// archived is not**, and a live thing is. The handle of the folded one still
+/// answers when it is asked for by name; a broad read just does not list it.
+#[test]
+fn a_folded_or_archived_entity_is_not_browsable_and_a_live_one_is() {
+    let entity = |merged_into: Option<&str>, archived: bool| Entity {
+        id: EntityId("thing:contract-thought-pointer-v1".into()),
+        kind: EntityKind::THING,
+        name: "Husk".into(),
+        aliases: Vec::new(),
+        source: "user-named".into(),
+        crm: None,
+        parent: None,
+        boot: Boot::OnDemand,
+        merged_into: merged_into.map(|h| EntityId(h.into())),
+        badge: None,
+        archived: archived.then(|| Archived {
+            reason: "retired".into(),
+            at: jiff::Timestamp::UNIX_EPOCH,
+        }),
+    };
+    assert!(entity(None, false).browsable(), "a live thing is listed");
+    assert!(
+        !entity(Some("thing:contract-thought-pointer-v2"), false).browsable(),
+        "a folded thing is not a thing any more"
+    );
+    assert!(!entity(None, true).browsable(), "an archived thing is out");
+}
+
 /// **The cutoff counts back the number of runs it is given**, not a fixed
 /// twenty: three runs age on a setting of three and answer the oldest of them,
 /// and the same three runs answer nothing on the default.

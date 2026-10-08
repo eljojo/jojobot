@@ -40,7 +40,9 @@ impl Jojobot {
                        blocked with candidates, never an empty list. Metadata only — no facts, \
                        no ordering guarantee. An archived entity is excluded — recall it by its \
                        own handle to read it whole, including why and when it was archived, and \
-                       call archive_entity with restore: true to bring it back. An empty answer carries `searched`: \
+                       call archive_entity with restore: true to bring it back. So is one that \
+                       was merged into another (counted apart, as merged_excluded): its handle \
+                       still answers, and says where it went. An empty answer carries `searched`: \
                        one line naming what it looked through and what it left out."
     )]
     pub(crate) async fn list_entities(
@@ -86,14 +88,19 @@ impl Jojobot {
         // the handle directly (through `recall`), never by browsing the
         // inventory — the same broad-door/direct-door split a claim's own
         // archived state already has.
-        let before = entities.len();
+        let archived = entities.iter().filter(|e| e.archived.is_some()).count();
+        let folded = entities.iter().filter(|e| e.left_out_as_folded()).count();
         let entities: Vec<_> = entities.into_iter().filter(Entity::browsable).collect();
         let mut body = serde_json::json!({
             "count": entities.len(),
             // 🚨 **How many this read excluded as archived** — a total, the
             // same shape `recall`'s `withheld` uses: an empty inventory and a
             // suppressed one are the same "nothing here" without it.
-            "archived_excluded": before - entities.len(),
+            "archived_excluded": archived,
+            // **And how many it left out because they were folded into another
+            // thing**, counted apart: an archived thing was put away, a folded
+            // one went into the survivor, and the handle of each still answers.
+            "merged_excluded": folded,
             "entities": entities.iter().map(entity_json).collect::<Vec<_>>(),
         });
         if entities.is_empty() {
@@ -107,7 +114,10 @@ impl Jojobot {
             };
             body["searched"] = answer::population_line(
                 &looked,
-                &["archived entities".to_string()],
+                &[
+                    "archived entities".to_string(),
+                    "entities merged into another".to_string(),
+                ],
                 "drop `kind` or `parent`; recall a handle to read an archived entity",
             )
             .into();
@@ -551,6 +561,79 @@ mod tests {
         assert!(
             tool_description.contains("DIRECT"),
             "the tool-level description does not say direct children only: {tool_description}"
+        );
+    }
+
+    /// Fold `duplicate` into `survivor` through the verb a caller uses.
+    async fn merged(jojobot: &Jojobot, duplicate: &str, survivor: &str) {
+        let landed = json_of(
+            &jojobot
+                .merge_entities(Parameters(crate::memory::merge_entities::MergeArgs {
+                    duplicate: duplicate.into(),
+                    survivor: survivor.into(),
+                    reason: None,
+                    recorded_at: None,
+                    sid: Some(writing_as(jojobot)),
+                }))
+                .await
+                .expect("merge ok"),
+        );
+        assert_eq!(landed["merged"], duplicate, "the merge landed: {landed}");
+    }
+
+    /// 🚨 **A thing that was folded into another is not in the inventory, is
+    /// counted as left out, and still answers when it is asked for.** Paired
+    /// with the survivor, which is listed: the negative alone would pass on a
+    /// listing that returned nothing.
+    #[tokio::test]
+    async fn a_merged_away_entity_is_not_listed_but_is_counted_and_still_answers() {
+        let jojobot = handler();
+        ensure(&jojobot, "person:bart").await;
+        ensure(&jojobot, "person:milhouse").await;
+        merged(&jojobot, "person:bart", "person:milhouse").await;
+
+        let body = json_of(
+            &jojobot
+                .list_entities(Parameters(ListEntitiesArgs {
+                    kind: None,
+                    parent: None,
+                    sid: None,
+                }))
+                .await
+                .expect("list_entities ok"),
+        );
+        let ids: Vec<&str> = body["entities"]
+            .as_array()
+            .expect("entities is a list")
+            .iter()
+            .filter_map(|e| e["id"].as_str())
+            .collect();
+        assert!(
+            ids.contains(&"person:milhouse"),
+            "the survivor is listed: {body}"
+        );
+        assert!(
+            !ids.contains(&"person:bart"),
+            "a folded thing is not a thing in the inventory: {body}"
+        );
+        assert_eq!(
+            body["merged_excluded"], 1,
+            "the listing says one was left out as folded: {body}"
+        );
+        assert_eq!(
+            body["archived_excluded"], 0,
+            "a folded thing is not counted as archived: {body}"
+        );
+
+        let recalled = json_of(
+            &jojobot
+                .recall(Parameters(of_subject("person:bart")))
+                .await
+                .expect("recall ok"),
+        );
+        assert!(
+            recalled.to_string().contains("person:milhouse"),
+            "the direct door still answers a folded handle, and says where it went: {recalled}"
         );
     }
 }

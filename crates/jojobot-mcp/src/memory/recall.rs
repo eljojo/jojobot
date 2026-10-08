@@ -2017,6 +2017,7 @@ impl Jojobot {
             withheld,
             unplaced,
             archived_excluded,
+            merged_excluded,
         } = match graph::walk(self.memory.as_ref(), &session_docs, &query).await {
             Ok(answer) => answer,
             Err(e) => return memory_declined("recall", e),
@@ -2335,6 +2336,10 @@ impl Jojobot {
             // `list_entities` does; without this a caller cannot tell "only
             // two exist" from "one was hidden".
             "archived_excluded": archived_excluded,
+            // **And how many it left out because they were folded into another
+            // thing**, apart from the archived ones: the handle still answers,
+            // naming where it went, but a browse does not offer it.
+            "merged_excluded": merged_excluded,
             // 🚨 **The type-only search path has its own ceiling, and this is
             // the only place a caller can learn it was reached.** A structural
             // query naming no handle and no kind routes through the search
@@ -2530,6 +2535,9 @@ impl Jojobot {
                 format!("{population}, narrowed by {}", looked.join(", "))
             };
             let mut left_out = vec![format!("archived entities ({archived_excluded})")];
+            if merged_excluded > 0 {
+                left_out.push(format!("{merged_excluded} merged into another entity"));
+            }
             if withheld > 0 {
                 left_out.push(format!("{withheld} owned by another identity"));
             }

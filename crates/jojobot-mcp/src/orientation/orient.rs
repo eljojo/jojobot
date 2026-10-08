@@ -2533,6 +2533,57 @@ mod tests {
         );
     }
 
+    /// 🚨 **A bot that was folded into another is not offered to boot as.** The
+    /// snapshot is a browse, and a browse leaves out a folded thing as it leaves
+    /// out an archived one. Paired with the survivor, which is listed.
+    #[tokio::test]
+    async fn a_merged_away_bot_is_absent_from_the_snapshot_and_the_survivor_is_listed() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        make_bot(&jojobot, "delta").await;
+        let landed = json_of(
+            &jojobot
+                .merge_entities(Parameters(crate::memory::merge_entities::MergeArgs {
+                    duplicate: "bot:delta".into(),
+                    survivor: "bot:gamma".into(),
+                    reason: None,
+                    recorded_at: None,
+                    sid: Some(writing_as(&jojobot)),
+                }))
+                .await
+                .expect("merge ok"),
+        );
+        assert_eq!(landed["merged"], "bot:delta", "the merge landed: {landed}");
+
+        let anonymous = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    claim: None,
+                    timezone: None,
+                    bot: None,
+                    brief: None,
+                    skill: None,
+                    section: None,
+                    resume: None,
+                    sid: None,
+                    today: None,
+                }))
+                .await
+                .expect("start_here ok"),
+        );
+        let bots = anonymous["snapshot"]["entities"]["bots"]
+            .as_array()
+            .expect("a roster");
+        assert!(
+            bots.iter().all(|b| b["handle"] != "bot:delta"),
+            "a folded bot is still offered to boot as: {bots:?}"
+        );
+        assert!(
+            bots.iter().any(|b| b["handle"] == "bot:gamma"),
+            "the survivor is still listed: {bots:?}"
+        );
+    }
+
     /// 🚨 **A boot carries at most `CARRIED_RULES` of a bot's own records —
     /// the ones the writer marked, never more, never chosen for it** (rule
     /// 306, the backpack's other axis). Paired against the positive on

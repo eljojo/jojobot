@@ -1324,6 +1324,11 @@ pub struct Selected {
     /// archived, and zero for a selection naming a handle directly, since
     /// naming one never browses and archival never took it out of anything.
     pub archived_excluded: usize,
+    /// **How many this browse matched and left out because they were folded
+    /// into another thing**, counted apart from the archived ones: the two
+    /// reasons are different, and a reader who sees one number cannot tell
+    /// which it is looking at. Zero for a selection naming a handle.
+    pub merged_excluded: usize,
 }
 
 pub fn resolve(
@@ -1346,6 +1351,7 @@ pub fn resolve(
         withheld: ctx.withheld(&query.select),
         unplaced: ctx.unplaced(&query.select),
         archived_excluded: ctx.archived_excluded(&query.select),
+        merged_excluded: ctx.merged_excluded(&query.select),
     })
 }
 
@@ -1618,7 +1624,7 @@ impl<'a> Ctx<'a> {
         // handle already skipped this function above — this only ever runs
         // for a selection that chose the object rather than being given it,
         // and an archived thing is not something a browse chooses.
-        entity.archived.is_none() && self.admits_ignoring_archived(entity, select)
+        entity.browsable() && self.admits_ignoring_archived(entity, select)
     }
 
     /// **Every filter `admits` asks except archival** — one definition, so
@@ -1676,6 +1682,20 @@ impl<'a> Ctx<'a> {
         self.entities
             .values()
             .filter(|e| e.archived.is_some())
+            .filter(|e| self.admits_ignoring_archived(e, select))
+            .count()
+    }
+
+    /// **What this selection matched and left out because the thing was folded
+    /// into another.** The same rule as [`Ctx::archived_excluded`], for the
+    /// other reason a browse omits a thing.
+    fn merged_excluded(&self, select: &Selection) -> usize {
+        if select.subject.is_some() {
+            return 0;
+        }
+        self.entities
+            .values()
+            .filter(|e| e.left_out_as_folded())
             .filter(|e| self.admits_ignoring_archived(e, select))
             .count()
     }

@@ -556,10 +556,20 @@ impl Entity {
     }
 
     /// **The one definition of "belongs in a default browse."** `false` once
-    /// archived. Every listing that browses rather than names a handle
-    /// filters on this; a direct read by handle never calls it.
+    /// archived, and `false` once folded into another thing, which is no
+    /// longer a thing: the handle keeps answering and says where it went, but a
+    /// listing does not offer it. Every listing that browses rather than names
+    /// a handle filters on this; a direct read by handle never calls it.
     pub fn browsable(&self) -> bool {
-        self.archived.is_none()
+        self.archived.is_none() && self.merged_into.is_none()
+    }
+
+    /// **A thing a browse leaves out because it was folded into another** and
+    /// not because it was archived: the one a browse counts apart, so a reader
+    /// can tell the two reasons from each other. An entity both folded and
+    /// archived is counted as archived.
+    pub fn left_out_as_folded(&self) -> bool {
+        self.archived.is_none() && self.merged_into.is_some()
     }
 }
 

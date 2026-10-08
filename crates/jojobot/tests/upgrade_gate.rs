@@ -1814,10 +1814,43 @@ async fn links_the_served_fields_imply(
             things.push(object.clone());
         }
     }
-    let known: std::collections::BTreeSet<String> = things
+    let mut known: std::collections::BTreeSet<String> = things
         .iter()
         .filter_map(|object| object["id"].as_str().map(str::to_string))
         .collect();
+    // **A thing a browse does not list is still a thing a value can name.** An
+    // archived one and one folded into another are left out of a kind browse,
+    // and the direct door by its handle answers both. A value that names one is
+    // a link as much as one that names a listed thing, so the oracle asks the
+    // direct door for every handle-shaped value the browse did not know.
+    let mut unlisted = std::collections::BTreeSet::new();
+    for object in &things {
+        for fact in object["facts"].as_array().into_iter().flatten() {
+            for value in fact["fields"]
+                .as_object()
+                .into_iter()
+                .flatten()
+                .map(|(_, v)| v)
+            {
+                for item in value.as_str().unwrap_or("").split(',').map(str::trim) {
+                    let named_kind = item.split_once(':').map(|(kind, _)| kind);
+                    if named_kind.is_some_and(|kind| kinds.iter().any(|k| k == kind))
+                        && !known.contains(item)
+                    {
+                        unlisted.insert(item.to_string());
+                    }
+                }
+            }
+        }
+    }
+    for handle in unlisted {
+        let read = surface.call("recall", json!({"subject": handle})).await;
+        let parsed: serde_json::Value = serde_json::from_str(&read)
+            .unwrap_or_else(|_| fail(&format!("the direct read of {handle}"), &read));
+        if parsed["objects"][0]["id"] == handle.as_str() {
+            known.insert(handle);
+        }
+    }
 
     let mut links = std::collections::BTreeSet::new();
     for object in &things {

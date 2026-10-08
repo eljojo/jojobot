@@ -1168,6 +1168,62 @@ async fn a_browse_with_no_handle_named_reports_how_many_archival_excluded() {
     );
 }
 
+/// 🚨 **A thing folded into another is out of `recall`'s kind browse and
+/// counted, and the survivor is in.** The browse and `list_entities` hold one
+/// rule: a folded thing is not a thing any more, and the direct door by its
+/// handle still answers it.
+#[tokio::test]
+async fn a_kind_browse_leaves_out_a_merged_away_entity_and_counts_it() {
+    let jojobot = handler();
+    ensure(&jojobot, "person:bart").await;
+    ensure(&jojobot, "person:milhouse").await;
+    let landed = json_of(
+        &jojobot
+            .merge_entities(Parameters(crate::memory::merge_entities::MergeArgs {
+                duplicate: "person:bart".into(),
+                survivor: "person:milhouse".into(),
+                reason: None,
+                recorded_at: None,
+                sid: Some(writing_as(&jojobot)),
+            }))
+            .await
+            .expect("merge ok"),
+    );
+    assert_eq!(
+        landed["merged"], "person:bart",
+        "the merge landed: {landed}"
+    );
+
+    let body = json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                kind: Some("person".into()),
+                ..of_nothing()
+            }))
+            .await
+            .expect("recall ok"),
+    );
+    let ids: Vec<&str> = body["objects"]
+        .as_array()
+        .expect("an answer carries objects")
+        .iter()
+        .filter_map(|o| o["id"].as_str())
+        .collect();
+    assert!(
+        ids.contains(&"person:milhouse"),
+        "the survivor is browsed: {body}"
+    );
+    assert!(
+        !ids.contains(&"person:bart"),
+        "a folded thing crossed a kind browse: {body}"
+    );
+    assert_eq!(body["merged_excluded"], 1, "{body}");
+    assert_eq!(
+        body["archived_excluded"], 0,
+        "a folded thing is not counted as archived: {body}"
+    );
+}
+
 /// **The direct door excludes nothing, so it counts nothing.** Naming
 /// the archived entity's own handle returns it whole — untouched by
 /// this change — and the count reads zero rather than being left off,
