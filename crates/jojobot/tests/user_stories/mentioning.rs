@@ -544,6 +544,31 @@ async fn the_way_a_link_is_stored_is_refused_when_a_caller_writes_it() {
     .await
     .says("blocked");
 
+    // **A creation with a first claim is a write of the caller's words too**:
+    // the claim's words are the thing's name, so a name carrying the stored
+    // mark is refused and the thing is not made. The same creation with a plain
+    // name lands.
+    s.refused(
+        "add_entity",
+        json!({
+            "kind": "thing", "handle": "red-kite", "name": "Anvil @#k7h2mn",
+            "source": "user-named", "sets": {"weight": "heavy"},
+        }),
+    )
+    .await
+    .says("blocked");
+    s.refused("recall", json!({"subject": "thing:red-kite"}))
+        .await;
+    s.call(
+        "add_entity",
+        json!({
+            "kind": "thing", "handle": "blue-kite", "name": "Anvil",
+            "source": "user-named", "sets": {"weight": "heavy"},
+        }),
+    )
+    .await;
+    s.recall("thing:blue-kite").await.says("heavy");
+
     // The positive the refusals are measured against: as a handle it lands, and
     // nothing of the refused writes did.
     s.event_with(

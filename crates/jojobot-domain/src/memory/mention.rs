@@ -541,6 +541,10 @@ impl super::Memory for Mentioning {
         new: super::NewEntity,
         first: super::NewFact,
     ) -> Result<super::Guarded<(Entity, super::Fact)>, super::MemoryError> {
+        refuse_forged(&[
+            first.content.as_str(),
+            first.details.as_deref().unwrap_or(""),
+        ])?;
         let known = self.known().await?;
         if let Some(blocked) = Self::screen(
             &[
@@ -1202,5 +1206,78 @@ mod tests {
             .set_prose(&holder, "a mark with no badge, @# , is text")
             .await
             .expect("prose with a bare mark is stored");
+    }
+
+    /// **The first claim of a new thing is a caller's text too.** Creating a
+    /// thing with its first claim refuses the stored mark in the claim's words
+    /// and in its details, exactly as a capture does, and nothing is made. The
+    /// same call with plain words lands the thing and its claim.
+    #[tokio::test]
+    async fn a_first_claim_cannot_carry_the_stored_mark() {
+        use crate::memory::{Guarded, Memory, NewEntity, NewFact};
+        let store = Mentioning::new(std::sync::Arc::new(
+            crate::memory::testing::InMemoryMemory::booted(),
+        ));
+        let day = jiff::civil::date(2026, 8, 1);
+        let listed = |id: &EntityId| {
+            let store = &store;
+            let id = id.clone();
+            async move {
+                store
+                    .list_entities(None)
+                    .await
+                    .expect("the roster reads")
+                    .iter()
+                    .any(|entity| entity.id == id)
+            }
+        };
+        for (what, id, first) in [
+            (
+                "claim words",
+                EntityId("thing:contract-forged-holder".into()),
+                NewFact::about(
+                    EntityId("thing:contract-forged-holder".into()),
+                    "waits on @#k7h2mn",
+                    day,
+                ),
+            ),
+            (
+                "claim details",
+                EntityId("thing:contract-forged-holder".into()),
+                NewFact {
+                    details: Some("because of @#k7h2mn".to_string()),
+                    ..NewFact::about(
+                        EntityId("thing:contract-forged-holder".into()),
+                        "waits",
+                        day,
+                    )
+                },
+            ),
+        ] {
+            let outcome = store
+                .add_entity_with_first_claim(NewEntity::new(id.clone(), "Forged", "test"), first)
+                .await;
+            assert!(
+                matches!(outcome, Err(crate::memory::MemoryError::InvalidFact(_))),
+                "a first claim's {what} carrying the stored mark is refused: {:?}",
+                outcome.map(|_| ()),
+            );
+            assert!(!listed(&id).await, "a refused first claim made {id}");
+        }
+
+        let plain = EntityId("thing:contract-forged-holder".into());
+        let Guarded::Written((entity, fact)) = store
+            .add_entity_with_first_claim(
+                NewEntity::new(plain.clone(), "Plain", "test"),
+                NewFact::about(plain.clone(), "a mark with no badge, @# , is text", day),
+            )
+            .await
+            .expect("plain words are a first claim")
+        else {
+            panic!("{plain} was expected to be written");
+        };
+        assert_eq!(entity.id, plain);
+        assert!(fact.content.contains("is text"), "the claim reads back");
+        assert!(listed(&plain).await, "the thing was made");
     }
 }
