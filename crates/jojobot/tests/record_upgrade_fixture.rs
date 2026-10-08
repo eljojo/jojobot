@@ -637,8 +637,14 @@ async fn seed_representative_records(surface: &Surface) -> String {
 async fn seed_what_a_real_store_holds_beyond_the_plain_records(surface: &Surface, sid: &str) {
     // **A type named for a shipped kind.** The deployed build lets a caller
     // declare it; a later build ships a kind of the same name and has to boot.
-    surface
-        .must(
+    //
+    // **A build that already ships the type refuses it, and that refusal is the
+    // only one taken here.** The gap exists in a store only if the recording
+    // build let the caller declare the name: a later build ships `topic` as a
+    // type too, so on it there is no such row to record. Any other refusal is
+    // still a recording that did not reach its starting state.
+    let declared = surface
+        .call(
             "declare_type",
             json!({
                 "name": "topic",
@@ -646,8 +652,12 @@ async fn seed_what_a_real_store_holds_beyond_the_plain_records(surface: &Surface
                 "sid": sid,
             }),
         )
-        .await
-        .expect("a type named topic is declared");
+        .await;
+    assert!(
+        !declared.contains("\"status\":\"blocked\"")
+            || declared.contains("is a type that ships with the software"),
+        "a type named topic is declared, or the build already ships it: {declared}"
+    );
 
     // **A handle that two things have worn.** One thing is renamed, which frees
     // its handle, and a new thing takes it: the handle now names the new thing
