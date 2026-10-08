@@ -314,7 +314,8 @@ that it did not happen.
 `snoozed` — the cycle is not consumed, and the snooze names the day the loop
 comes back. Send that day in `fields` as `snoozed_until`, a date after the
 check-in's own. A snooze with no day is refused, so ask the operator which day
-if they have not said. The loop is not due before that day, and it is due on it.
+if they have not said. A snoozed loop falls due on the later of its own due day
+and the snooze day: it is not due before that day, and it is due on it.
 
 A refusal is not a run. Ask the operator whether the cycle moves on, which is
 `skipped`, or comes back, which is `snoozed`. A refusal recorded as `ran` says
@@ -588,6 +589,16 @@ mod tests {
             "{}",
             rhythms.when_to_use
         );
+    }
+
+    /// **The rhythms skill names the later-of rule for a snooze.** A snoozed loop
+    /// falls due on the later of its own due day and the snooze day, so a snooze
+    /// to a day before the loop is due moves nothing. A skill that said only
+    /// "due on that day" left a caller guessing which of the two days won.
+    #[test]
+    fn the_rhythms_skill_names_the_later_of_rule_for_a_snooze() {
+        let rhythms = body("rhythms");
+        assert!(rhythms.contains("later of"), "{rhythms}");
     }
 
     /// **The asking skill does not say an empty answer is final.** Search matches

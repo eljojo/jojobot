@@ -583,8 +583,8 @@ impl Jojobot {
                 &[],
                 format!(
                     "Nothing was written. This call sends '{key}' in fields AND asks for a \
-                     check-in, and a check-in computes '{key}' itself. Send the check-in without \
-                     that key, or send the fields without check_in and keep the arithmetic."
+                     check-in, and a check-in computes '{key}' itself. Check in without that key, \
+                     and jojobot works it out."
                 ),
             )));
         }
