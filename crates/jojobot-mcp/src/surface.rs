@@ -740,6 +740,15 @@ fn the_recall_description_names_not_shown_offset_and_facts_not_shown() {
     assert_description_names("recall", &["not_shown", "offset", "facts_not_shown"]);
 }
 
+/// **`recall`'s refusal of a query that narrows nothing lists `parent` among the
+/// ways to select**, as the selection itself counts it: a bot's children are a
+/// question on their own, and a list that leaves the argument out sends a
+/// caller to a kind or a subject it did not need.
+#[test]
+fn the_recall_description_lists_parent_among_the_ways_to_select() {
+    assert_description_names("recall", &["subject, kind, parent, answers_type or fields"]);
+}
+
 /// **`merge_entities` says its names become aliases of the survivor.**
 #[test]
 fn the_merge_description_names_the_aliases_it_carries() {

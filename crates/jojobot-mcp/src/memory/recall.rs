@@ -1612,7 +1612,7 @@ impl Jojobot {
                        the nearest handles, never as an empty answer. An object that draws edges \
                        the walk did not follow says so; an empty `connected` with no such note is \
                        an object with nothing beyond it. A query that narrows nothing is refused: \
-                       name at least one of subject, kind, answers_type or fields. AN \
+                       name at least one of subject, kind, parent, answers_type or fields. AN \
                        answers_type THAT SELECTS NOTHING STILL SAYS WHAT THE TYPE IS: the \
                        answer carries type_keys, the type's keys and what each holds, so the \
                        spelling to write under it is in the empty answer. AN ANSWER STOPS AT THE \

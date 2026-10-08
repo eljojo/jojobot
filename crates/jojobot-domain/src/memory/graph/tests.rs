@@ -2635,7 +2635,8 @@ fn a_named_subject_is_not_filtered_away_and_an_unknown_one_is_a_miss() {
 /// `built_on` each select without a subject, by filling one in from the
 /// address's own home entity, so a refusal that omits them from its list
 /// of options misleads a caller into thinking a subject, a kind, a type
-/// or a key are the only ways to select something.
+/// or a key are the only ways to select something. A parent selects too:
+/// its direct children are a question on their own.
 #[test]
 fn the_narrows_nothing_refusal_names_a_record_address_as_a_way_forward() {
     let refused = resolved(&store(), &[], &GraphQuery::default())
@@ -2643,6 +2644,7 @@ fn the_narrows_nothing_refusal_names_a_record_address_as_a_way_forward() {
     let message = refused.to_string();
     assert!(message.contains("history_record"), "{message}");
     assert!(message.contains("built_on"), "{message}");
+    assert!(message.contains("parent"), "{message}");
 }
 
 /// **A query that narrows nothing is refused**, and so is a walk of no
