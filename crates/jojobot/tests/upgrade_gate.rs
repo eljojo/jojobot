@@ -1712,6 +1712,24 @@ async fn testimony_an_older_build_recorded_is_corrected_by_the_route_and_not_in_
         fail("the describing key the edit set", &read);
     }
 
+    // (4) **A resend of what it already says is not a rewrite.** The recorded
+    // words and the value its field holds, sent back beside a key that only
+    // describes the record, change nothing the operator said, so the call lands
+    // on a claim no session wrote. A changed word is the refusal of step (1).
+    let resent = surface
+        .call(
+            "update_fact",
+            json!({
+                "address": address, "content": WORDS,
+                "fields": {"since": "2026-01-01", "purpose": "a note on the resend"},
+                "sid": sid,
+            }),
+        )
+        .await;
+    if resent.contains("\"status\":\"blocked\"") {
+        fail("a resend of the recorded words and values", &resent);
+    }
+
     // (2) Archive the claim, then write the corrected one derived from it.
     let archived = surface
         .call(

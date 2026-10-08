@@ -14354,6 +14354,28 @@ pub async fn a_testimony_claims_value_fields_belong_to_the_session_that_wrote_it
         );
     };
 
+    // ── a resend of what the claim already says is not a rewrite ────────────
+    //
+    // The words sent back as they stand and the fields with the values they hold,
+    // beside a key that only describes the record, change nothing the operator
+    // said, so another session's call lands. The same call with one value
+    // different is the refusal below.
+    store
+        .update_fact(
+            &said.address(),
+            FactPatch {
+                content: Some("prefers tea".to_string()),
+                fields: map(&[("mug", "blue"), ("label", "resent")]),
+                session: Some("session-b".to_string()),
+                ..Default::default()
+            },
+            &other_caller(),
+        )
+        .await
+        .expect("a resend of the claim's own words and values is not a rewrite")
+        .written()
+        .expect("nothing blocks it");
+
     // ── another session: change, set and clear are all refused ──────────────
     refused(
         store
@@ -14410,7 +14432,7 @@ pub async fn a_testimony_claims_value_fields_belong_to_the_session_that_wrote_it
     );
     assert_eq!(
         read_back(store, &subject, &said.id).await.fields,
-        map(&[("mug", "blue")]),
+        map(&[("mug", "blue"), ("label", "resent")]),
         "a refused edit leaves the fields as they were",
     );
 
@@ -14429,7 +14451,7 @@ pub async fn a_testimony_claims_value_fields_belong_to_the_session_that_wrote_it
     }
     assert_eq!(
         read_back(store, &subject, &said.id).await.fields,
-        map(&[("mug", "red")]),
+        map(&[("mug", "red"), ("label", "resent")]),
     );
 
     // ── what only describes the record, and archiving, are anybody's ────────

@@ -1798,6 +1798,10 @@ pub fn validate_happened_span(
 /// corrected claim derived from it. **Only testimony is protected**: an inference
 /// or an observation is rewritten as it always was, whoever wrote it.
 ///
+/// **A resend says nothing new**: words sent back as they stand, and fields sent
+/// back with the values they hold, are not a rewrite, so a status move or a
+/// describing key that carries them lands.
+///
 /// **What only describes the record says nothing the operator said**, so a patch
 /// that sets or clears nothing but describing keys is not a rewrite, and neither
 /// is one that moves the due moment jojobot works out, or a move of the status, which is the route itself, or of the standing, whose
@@ -1817,19 +1821,31 @@ pub fn settle_rewrite(
     written_in: Option<&str>,
     declared: &[types::DeclaredType],
 ) -> Result<FactPatch, MemoryError> {
-    let rewrites_words = patch.content.is_some();
-    // **Setting a key, changing one and taking one off are the same rewrite.**
-    // **Two kinds of key are not the operator's words**: one that only describes
-    // the record, and the due moment jojobot works out, which moves with the
-    // status and which a caller's own copy of is refused elsewhere.
+    // **Words sent back as they stand are not a rewrite**, and are taken out of
+    // the patch so nothing downstream asks how unchanged words are known.
+    let rewrites_words = patch
+        .content
+        .as_deref()
+        .is_some_and(|words| words.trim() != fact.content.trim());
+    if !rewrites_words {
+        patch.content = None;
+    }
+    // **Setting a key, changing one and taking one off are the same rewrite.** A
+    // key set to the value the claim already holds, or taken off a claim that does
+    // not carry it, changes nothing. **Two kinds of key are not the operator's
+    // words**: one that only describes the record, and the due moment jojobot
+    // works out, which moves with the status and which a caller's own copy of is
+    // refused elsewhere.
+    let held = |key: &str| fact.fields.get(key).map(|value| value.trim());
     let rewrites_values = patch
         .fields
-        .keys()
-        .chain(patch.clear_fields.iter())
-        .any(|key| {
-            let key = key.trim();
+        .iter()
+        .map(|(key, value)| (key.trim(), Some(value.trim())))
+        .chain(patch.clear_fields.iter().map(|key| (key.trim(), None)))
+        .any(|(key, value)| {
             key != crate::attention::DUE_ON
                 && types::fold_of(key, declared) != types::Fold::Describes
+                && held(key) != value
         });
     if !rewrites_words && !rewrites_values {
         return Ok(patch);

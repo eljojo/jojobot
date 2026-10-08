@@ -349,3 +349,80 @@ async fn a_later_run_cannot_set_change_or_clear_a_value_field_on_the_operators_c
         .await;
     story.finish().await;
 }
+
+/// **A resend of what a testimony claim already says is not a rewrite.** A later
+/// run that sends the claim's own words, with the values its fields already hold,
+/// beside a status move or a key that only describes the record, changes nothing
+/// the operator said, and it lands. A word or a value that differs is still
+/// refused with the route, in the same read: a build that let every such call
+/// through would not pass.
+#[tokio::test]
+async fn a_resend_of_the_operators_words_and_fields_is_not_a_rewrite() {
+    let story = Story::begin("bot:gamma").await;
+    let first = story.session().await;
+    first.add("thing:handcart", "The Handcart").await;
+    let red = first
+        .call(
+            "capture",
+            json!({
+                "subject": "thing:handcart", "content": "the handcart is red",
+                "provenance": "testimony", "fields": {"colour": "red"},
+            }),
+        )
+        .await
+        .field("address");
+    let spare = first
+        .call(
+            "capture",
+            json!({
+                "subject": "thing:handcart", "content": "the handcart has two wheels",
+                "provenance": "testimony", "fields": {"wheels": "two"},
+            }),
+        )
+        .await
+        .field("address");
+    first.wrap("wrote down what the operator said").await;
+
+    let later = story.session_in("UTC", Some("new")).await;
+
+    // ── the words and the value, resent, with a key that only describes ─────
+    later
+        .call(
+            "update_fact",
+            json!({
+                "address": red, "content": "the handcart is red",
+                "fields": {"colour": "red", "purpose": "a note on the colour"},
+            }),
+        )
+        .await;
+    later
+        .recall("thing:handcart")
+        .await
+        .says("a note on the colour")
+        .says("the handcart is red");
+
+    // ── the words resent beside a status move: the route itself ─────────────
+    later
+        .call(
+            "update_fact",
+            json!({
+                "address": spare, "content": "the handcart has two wheels",
+                "status": "archived", "details": "no longer true",
+            }),
+        )
+        .await;
+
+    // ── a word or a value that differs is still the operator's ──────────────
+    for edit in [
+        json!({"address": red, "content": "the handcart is blue", "provenance": "testimony"}),
+        json!({"address": red, "content": "the handcart is red", "fields": {"colour": "blue"}}),
+    ] {
+        later
+            .refused("update_fact", edit)
+            .await
+            .says("blocked")
+            .says("derived_from")
+            .says("archived");
+    }
+    story.finish().await;
+}
