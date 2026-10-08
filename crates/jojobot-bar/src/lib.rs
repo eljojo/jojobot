@@ -10,8 +10,10 @@
 //! anywhere in it is a summary of a workspace that did not compile, not one
 //! that compiled and passed everything.
 
+mod history;
 mod known_reds;
 pub mod sweep;
+pub use history::{JobRecord, TestRecord, Verdict, parse_job};
 pub use known_reds::{KnownRed, KnownReds, load as load_known_reds};
 
 /// **What a `cargo test` run said about itself**, summed across every suite

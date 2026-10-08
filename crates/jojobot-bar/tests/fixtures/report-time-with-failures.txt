@@ -1,0 +1,136 @@
+running 37 tests
+test known_reds::tests::a_malformed_file_is_refused_with_the_line_it_is_about ... ok <0.000s>
+test known_reds::tests::a_malformed_expects_is_refused_with_its_line ... ok <0.000s>
+test known_reds::tests::an_empty_file_is_an_empty_list ... ok <0.000s>
+test known_reds::tests::a_test_listed_twice_is_refused_naming_both_lines ... ok <0.000s>
+test known_reds::tests::a_failure_is_compared_with_what_the_entry_expects ... ok <0.000s>
+test known_reds::tests::an_entry_missing_a_part_is_refused_at_its_header ... ok <0.000s>
+test known_reds::tests::an_entry_reads_back_what_it_expects ... ok <0.000s>
+test known_reds::tests::an_entry_reads_back_with_its_card_owner_and_date ... ok <0.000s>
+test known_reds::tests::the_shipped_list_parses ... ok <0.000s>
+test known_reds::tests::comments_blank_lines_and_several_entries_are_read ... ok <0.000s>
+test size_report_tests::a_tree_with_nothing_grown_names_nothing ... ok <0.000s>
+test size_report_tests::a_grown_file_is_named_largest_delta_first ... ok <0.000s>
+test size_report_tests::a_tree_with_nothing_oversized_names_nothing ... ok <0.000s>
+test size_report_tests::an_oversized_file_is_named_largest_first ... ok <0.000s>
+test size_report_tests::no_base_ref_is_named_rather_than_read_as_nothing_grown ... ok <0.000s>
+test size_report_tests::the_rendered_report_names_an_oversized_and_a_grown_file ... ok <0.000s>
+test tests::a_crashed_suite_is_unhealthy_even_though_the_text_alone_reads_clean ... FAILED <0.000s>
+test known_reds::tests::a_missing_file_is_empty_and_a_broken_one_is_refused_with_its_path ... ok <0.003s>
+test tests::a_failing_test_not_on_the_list_prints_without_an_annotation ... FAILED <0.000s>
+test tests::a_failed_tests_name_is_readable_from_the_summary_alone ... FAILED <0.001s>
+test tests::a_failing_test_on_the_list_is_annotated_and_the_verdict_stays_red ... FAILED <0.000s>
+test tests::a_failing_tests_own_output_is_kept_under_its_name ... ok <0.000s>
+test tests::a_real_compile_error_reads_as_did_not_compile_not_as_a_clean_pass ... ok <0.000s>
+test tests::a_real_green_run_sums_every_suites_counts_and_fails_nothing ... FAILED <0.000s>
+test tests::a_red_that_fails_on_more_than_it_expects_is_new ... FAILED <0.000s>
+test tests::a_real_single_failure_is_named_and_the_rest_still_counted ... FAILED <0.000s>
+test tests::a_red_that_fails_on_what_it_expects_is_annotated ... FAILED <0.000s>
+test tests::a_red_with_more_than_it_expects_is_listed_ahead_of_known_ones ... FAILED <0.000s>
+test tests::an_empty_listing_still_runs_the_doc_tests ... ok <0.000s>
+test tests::a_run_of_only_known_reds_is_still_red ... ok <0.000s>
+test tests::an_expected_item_that_is_gone_is_said ... FAILED <0.000s>
+test tests::an_unknown_failure_is_listed_ahead_of_known_ones ... ok <0.000s>
+test tests::a_real_listing_becomes_one_job_per_test_file_and_one_per_group ... ok <0.001s>
+test tests::the_job_limit_is_the_default_or_a_positive_whole_number_and_nothing_else ... ok <0.000s>
+test tests::the_rendered_summary_names_a_crashed_suite_distinctly_from_a_clean_pass ... FAILED <0.000s>
+test tests::the_rendered_summary_names_did_not_compile_distinctly_from_a_clean_pass ... FAILED <0.000s>
+test tests::the_summary_stays_under_ten_lines_even_over_a_real_multi_suite_run ... ok <0.000s>
+
+failures:
+
+---- tests::a_crashed_suite_is_unhealthy_even_though_the_text_alone_reads_clean stdout ----
+
+thread 'tests::a_crashed_suite_is_unhealthy_even_though_the_text_alone_reads_clean' (2243333) panicked at crates/jojobot-bar/src/lib.rs:642:9:
+the text alone has nothing marked failed
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- tests::a_failing_test_not_on_the_list_prints_without_an_annotation stdout ----
+
+thread 'tests::a_failing_test_not_on_the_list_prints_without_an_annotation' (2243335) panicked at crates/jojobot-bar/src/lib.rs:776:9:
+verdict: RED
+test: DID NOT COMPILE — 0 suites ran
+
+
+---- tests::a_failed_tests_name_is_readable_from_the_summary_alone stdout ----
+
+thread 'tests::a_failed_tests_name_is_readable_from_the_summary_alone' (2243334) panicked at crates/jojobot-bar/src/lib.rs:708:9:
+verdict: RED
+test: DID NOT COMPILE — 0 suites ran
+
+
+---- tests::a_failing_test_on_the_list_is_annotated_and_the_verdict_stays_red stdout ----
+
+thread 'tests::a_failing_test_on_the_list_is_annotated_and_the_verdict_stays_red' (2243336) panicked at crates/jojobot-bar/src/lib.rs:750:9:
+verdict: RED
+test: DID NOT COMPILE — 0 suites ran
+
+
+---- tests::a_real_green_run_sums_every_suites_counts_and_fails_nothing stdout ----
+
+thread 'tests::a_real_green_run_sums_every_suites_counts_and_fails_nothing' (2243339) panicked at crates/jojobot-bar/src/lib.rs:583:9:
+a green run has test result: lines
+
+---- tests::a_red_that_fails_on_more_than_it_expects_is_new stdout ----
+
+thread 'tests::a_red_that_fails_on_more_than_it_expects_is_new' (2243342) panicked at crates/jojobot-bar/src/lib.rs:911:9:
+verdict: RED
+test: DID NOT COMPILE — 0 suites ran
+
+
+---- tests::a_real_single_failure_is_named_and_the_rest_still_counted stdout ----
+
+thread 'tests::a_real_single_failure_is_named_and_the_rest_still_counted' (2243341) panicked at crates/jojobot-bar/src/lib.rs:598:9:
+assertion failed: verdict.compiled
+
+---- tests::a_red_that_fails_on_what_it_expects_is_annotated stdout ----
+
+thread 'tests::a_red_that_fails_on_what_it_expects_is_annotated' (2243343) panicked at crates/jojobot-bar/src/lib.rs:890:9:
+verdict: RED
+test: DID NOT COMPILE — 0 suites ran
+
+
+---- tests::a_red_with_more_than_it_expects_is_listed_ahead_of_known_ones stdout ----
+
+thread 'tests::a_red_with_more_than_it_expects_is_listed_ahead_of_known_ones' (2243344) panicked at crates/jojobot-bar/src/lib.rs:957:57:
+verdict: RED
+test: DID NOT COMPILE — 0 suites ran
+
+
+---- tests::an_expected_item_that_is_gone_is_said stdout ----
+
+thread 'tests::an_expected_item_that_is_gone_is_said' (2243347) panicked at crates/jojobot-bar/src/lib.rs:927:9:
+verdict: RED
+test: DID NOT COMPILE — 0 suites ran
+
+
+---- tests::the_rendered_summary_names_a_crashed_suite_distinctly_from_a_clean_pass stdout ----
+
+thread 'tests::the_rendered_summary_names_a_crashed_suite_distinctly_from_a_clean_pass' (2243350) panicked at crates/jojobot-bar/src/lib.rs:668:9:
+the reader needs to know this was not a counted failure: verdict: RED
+test: DID NOT COMPILE — 0 suites ran
+
+
+---- tests::the_rendered_summary_names_did_not_compile_distinctly_from_a_clean_pass stdout ----
+
+thread 'tests::the_rendered_summary_names_did_not_compile_distinctly_from_a_clean_pass' (2243351) panicked at crates/jojobot-bar/src/lib.rs:680:9:
+assertion failed: clean.render().contains("test: ok")
+
+
+failures:
+    tests::a_crashed_suite_is_unhealthy_even_though_the_text_alone_reads_clean
+    tests::a_failed_tests_name_is_readable_from_the_summary_alone
+    tests::a_failing_test_not_on_the_list_prints_without_an_annotation
+    tests::a_failing_test_on_the_list_is_annotated_and_the_verdict_stays_red
+    tests::a_real_green_run_sums_every_suites_counts_and_fails_nothing
+    tests::a_real_single_failure_is_named_and_the_rest_still_counted
+    tests::a_red_that_fails_on_more_than_it_expects_is_new
+    tests::a_red_that_fails_on_what_it_expects_is_annotated
+    tests::a_red_with_more_than_it_expects_is_listed_ahead_of_known_ones
+    tests::an_expected_item_that_is_gone_is_said
+    tests::the_rendered_summary_names_a_crashed_suite_distinctly_from_a_clean_pass
+    tests::the_rendered_summary_names_did_not_compile_distinctly_from_a_clean_pass
+
+test result: FAILED. 25 passed; 12 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p jojobot-bar --lib`
