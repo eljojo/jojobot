@@ -2730,6 +2730,76 @@ async fn an_edit_into_a_room_counts_a_thought_that_aged_out_the_way_capture_does
     );
 }
 
+/// 🚨 **An edit ages a thought on the bot's own setting, as `capture` does.**
+/// Two runs are far below the default of twenty, so a build whose edit path
+/// ignores the field refuses the edit. Paired with the same edit on a bot
+/// that carries no setting and has the same two runs, which is refused.
+#[tokio::test]
+async fn an_edit_ages_a_thought_on_the_bots_own_ageing_setting() {
+    let sessions = Arc::new(jojobot_domain::session::testing::InMemorySessions::new());
+    let jojobot = Jojobot::new(
+        Arc::new(InMemoryMemory::booted()),
+        Arc::new(SpySearch::default()),
+        Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
+        sessions.clone(),
+        Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+        seeded_registry(),
+    );
+    let set = "bot:mcp-thought-aging";
+    let unset = "bot:mcp-seats-update";
+    let set_plain = a_full_room_and_a_claim_that_would_join_it(&jojobot, set).await;
+    let unset_plain = a_full_room_and_a_claim_that_would_join_it(&jojobot, unset).await;
+    capture_ok(
+        &jojobot,
+        CaptureArgs {
+            fields: Some(
+                [("thought_ages_after_runs".to_string(), "2".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+            ..capture_args(set, "ageing is two runs")
+        },
+    )
+    .await;
+    for (bot, tag) in [(set, "ar"), (unset, "rr")] {
+        for n in 0..2 {
+            sessions
+                .begin(jojobot_domain::session::NewSession {
+                    bot: EntityId(bot.to_string()),
+                    sid: jojobot_domain::session::Sid(format!("{tag}{n:02}")),
+                    focus: "working".into(),
+                    started_at: jiff::Timestamp::now(),
+                    timezone: None,
+                    started_on: None,
+                })
+                .await
+                .expect("seeding a run");
+        }
+    }
+    let join = |address: &str| UpdateFactArgs {
+        shape: Some("connection".into()),
+        object: Some("thing:the-air-filter".into()),
+        ..update_args(address)
+    };
+
+    let refused = blocked(
+        &jojobot
+            .update_fact(Parameters(join(&unset_plain)))
+            .await
+            .expect("a refusal is an answer, not a failure"),
+    );
+    assert_eq!(
+        refused["aged_out"], 0,
+        "two runs age nothing on a bot with no setting: {refused}"
+    );
+
+    let landed = update_ok(&jojobot, join(&set_plain)).await;
+    assert_eq!(
+        landed["content_head"], "the filter is in the hall",
+        "two runs age the old thought when the bot's own setting is two: {landed}"
+    );
+}
+
 /// **A store that cannot be read refuses an archive of a role's own record.**
 /// The guard reads the record to see whether it carries a role field, and a
 /// read that failed used to read as "carries none". Paired with the healthy

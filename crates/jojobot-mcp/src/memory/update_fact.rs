@@ -515,10 +515,15 @@ impl Jojobot {
                 .is_some_and(|e| e.shape == EdgeShape::Connection)
                 || patch.status == Some(FactStatus::Active))
         {
+            let ages_after = match self.ages_after_runs_of(&address.home).await {
+                Ok(runs) => runs,
+                Err(e) => return memory_declined("update_fact", e),
+            };
             match self.sessions.summaries_of(&address.home).await {
                 Ok(runs) => {
                     patch.aged_before = jojobot_domain::memory::aging_cutoff(
                         &runs.iter().map(|r| r.started_at).collect::<Vec<_>>(),
+                        ages_after,
                     );
                 }
                 Err(e) => return session_declined(e, caller.sid.as_str()),

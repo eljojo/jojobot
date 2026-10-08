@@ -77,6 +77,17 @@ pub(crate) fn router() -> ToolRouter<Jojobot> {
 }
 
 impl Jojobot {
+    /// **How many runs a thought of this bot may go untouched before it ages
+    /// out of the count**: the bot's own setting, else the default.
+    ///
+    /// Read by the two verbs that compute a cutoff before they write, so the
+    /// number a write is judged on is the one a later read reports.
+    pub(crate) async fn ages_after_runs_of(&self, bot: &EntityId) -> Result<usize, MemoryError> {
+        Ok(jojobot_domain::memory::ages_after_runs_of(
+            &self.memory.fields(bot).await?,
+        ))
+    }
+
     /// **The handle a thing answers to now, for a name it may have worn once.**
     ///
     /// A guard that compares who a write is about with who is making it must

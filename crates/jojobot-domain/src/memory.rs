@@ -1993,6 +1993,31 @@ pub fn rule_seats_of(fields: &BTreeMap<String, String>) -> usize {
 /// itself a role, for the reason it cannot raise its own ceiling.
 pub const CLAIMS_ROLE: &str = "claims_role";
 
+/// **The key a bot's own ageing threshold is read from** — an ordinary field,
+/// folded like [`THOUGHT_CAPACITY`], on the thing that holds the room. It is
+/// how many runs a thought may go untouched before it ages out of the count.
+/// A bot with none ages on [`AGES_AFTER_RUNS`]. A bot cannot set its own, for
+/// the reason it cannot raise its own capacity: a ceiling that its holder can
+/// move is no ceiling.
+pub const THOUGHT_AGES_AFTER_RUNS: &str = "thought_ages_after_runs";
+
+/// **How many runs a thought may go untouched on this bot's room**, from the
+/// fields it folds to. A value that is not a whole number above zero reads as
+/// no key at all, so a mistyped setting never ages every thought at once.
+pub fn ages_after_runs_of(fields: &BTreeMap<String, String>) -> usize {
+    ages_after_runs_setting(fields).unwrap_or(AGES_AFTER_RUNS)
+}
+
+/// **The bot's own setting, when it holds a usable one.** `None` is "ages on
+/// the default", and a caller that must say where the number came from asks
+/// this instead of [`ages_after_runs_of`].
+pub fn ages_after_runs_setting(fields: &BTreeMap<String, String>) -> Option<usize> {
+    fields
+        .get(THOUGHT_AGES_AFTER_RUNS)
+        .and_then(|held| held.trim().parse::<usize>().ok())
+        .filter(|runs| *runs > 0)
+}
+
 /// **Who may write a key, relative to the thing it is written about.** A key
 /// the build ships declares one of these, and one predicate
 /// ([`refuses_unlicensed_write`] and its two twins) judges every write against
@@ -2030,16 +2055,21 @@ pub struct GuardedKey {
 pub const REPORTS_TO: &str = "reports_to";
 
 /// **The keys this build guards.** Its own room's capacity, its own thoughts'
-/// body cap, its own boot seats and the role its boot claims: each binds the
-/// thing it is read off, so each is a different-identity key. And the chart:
-/// who a bot reports to is changed only by a superior.
-pub const GUARDED_KEYS: [GuardedKey; 5] = [
+/// body cap, how long a thought of its own may go untouched, its own boot seats
+/// and the role its boot claims: each binds the thing it is read off, so each
+/// is a different-identity key. And the chart: who a bot reports to is changed
+/// only by a superior.
+pub const GUARDED_KEYS: [GuardedKey; 6] = [
     GuardedKey {
         key: THOUGHT_CAPACITY,
         may: MayWrite::DifferentIdentity,
     },
     GuardedKey {
         key: THOUGHT_BODY_CAP,
+        may: MayWrite::DifferentIdentity,
+    },
+    GuardedKey {
+        key: THOUGHT_AGES_AFTER_RUNS,
         may: MayWrite::DifferentIdentity,
     },
     GuardedKey {
@@ -2788,28 +2818,32 @@ pub fn carried_seats_status(in_force: &[Fact], seats: usize) -> Option<CarriedSe
 }
 
 /// **How many runs a bot's own thought may go untouched before it ages out
-/// of the room a capacity write counts against.**
+/// of the room a capacity write counts against, when the bot carries no
+/// setting of its own.**
 ///
-/// ⚠️ **A placeholder, not a ruling.** Nobody has decided this number; it
-/// lives here, once, so a ruling changes one line rather than a
-/// search-and-replace across every caller.
+/// The default is twenty: the PM decided it on 10-04 and the decision stands.
+/// A bot's room reads [`THOUGHT_AGES_AFTER_RUNS`] first and falls back to this.
 pub const AGES_AFTER_RUNS: usize = 20;
 
 /// **The moment before which a thought counts as aged out**, given a bot's
-/// own run-start moments in any order. `None` when the bot has not yet run
-/// [`AGES_AFTER_RUNS`] times — the question is not askable yet, so nothing
-/// is ever aged before it is.
+/// own run-start moments in any order and the number of runs a thought may go
+/// untouched ([`ages_after_runs_of`]). `None` when the bot has not yet run
+/// that many times — the question is not askable yet, so nothing is ever aged
+/// before it is.
 ///
 /// **Counted in runs, never in days** — a worker booting once per task and
 /// an assistant booting once a day age at their own pace, and neither reads
 /// a clock to do it.
-pub fn aging_cutoff(run_starts: &[jiff::Timestamp]) -> Option<jiff::Timestamp> {
-    if run_starts.len() < AGES_AFTER_RUNS {
+pub fn aging_cutoff(
+    run_starts: &[jiff::Timestamp],
+    ages_after_runs: usize,
+) -> Option<jiff::Timestamp> {
+    if ages_after_runs == 0 || run_starts.len() < ages_after_runs {
         return None;
     }
     let mut starts = run_starts.to_vec();
     starts.sort_unstable_by(|a, b| b.cmp(a));
-    Some(starts[AGES_AFTER_RUNS - 1])
+    Some(starts[ages_after_runs - 1])
 }
 
 /// **A bot's own room, split by age.**

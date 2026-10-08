@@ -668,6 +668,14 @@ pub(crate) fn memory_declined(
                 // wait instead of dropping needs to know that count is
                 // already excluding some.
                 "aged_out": aged_out,
+                // **Where that count's threshold comes from.** The number of
+                // runs a thought may go untouched is the bot's own setting,
+                // which a different identity writes, and the default when it
+                // carries none.
+                "ageing": {
+                    "setting": jojobot_domain::memory::THOUGHT_AGES_AFTER_RUNS,
+                    "default": jojobot_domain::memory::AGES_AFTER_RUNS,
+                },
                 // **How many thoughts an edit has to archive before it can
                 // land**, as a number a caller does not have to read out of
                 // a sentence. `null` for a verb that has other ways forward.

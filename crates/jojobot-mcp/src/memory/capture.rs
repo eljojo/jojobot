@@ -110,14 +110,15 @@ pub struct CaptureArgs {
     /// thoughts at once. A write that would go over is refused, naming how
     /// many are held and asking you to name one to drop and why — see
     /// `drop`, below. One nobody touches for long enough goes quiet on its
-    /// own: still there, just no longer counted. `update_fact`'s
-    /// `keep: true` is the designed way to say one still matters, on
-    /// purpose, without changing a word of it.
+    /// own: still there, just no longer counted. How long is counted in the
+    /// bot's runs: its own `thought_ages_after_runs` setting, twenty when it
+    /// has none. `update_fact`'s `keep: true` is the designed way to say one
+    /// still matters, on purpose, without changing a word of it.
     ///
     /// **`thought_capacity` is a ceiling, and the thing it binds cannot set
     /// it.** Send this key about your own handle and the write is refused,
     /// whatever else the call carries — only a different identity may raise
-    /// or lower it.
+    /// or lower it. The same holds for `thought_ages_after_runs`.
     #[serde(default)]
     pub(crate) shape: Option<String>,
     /// The entity the edge points at, as `kind:slug`. **It must already exist**,
@@ -878,9 +879,14 @@ impl Jojobot {
                 .as_ref()
                 .is_some_and(|e| e.shape == EdgeShape::Connection)
         {
+            let ages_after = match self.ages_after_runs_of(&subject).await {
+                Ok(runs) => runs,
+                Err(e) => return memory_declined("capture", e),
+            };
             match self.sessions.summaries_of(&subject).await {
                 Ok(runs) => jojobot_domain::memory::aging_cutoff(
                     &runs.iter().map(|r| r.started_at).collect::<Vec<_>>(),
+                    ages_after,
                 ),
                 Err(e) => return session_declined(e, caller.sid.as_str()),
             }

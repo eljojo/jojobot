@@ -5463,6 +5463,82 @@ async fn a_fits_type_that_reached_nothing_names_the_types_keys() {
     assert!(names.contains(&"leaves_on"), "{empty}");
 }
 
+/// **A room read ages a thought on the bot's own setting, and names where the
+/// threshold came from.** The first bot carries a setting of two and has run
+/// twice, which is far below the default of twenty, so a build that ignores
+/// the setting reports nothing aged for it. The second carries none, has run
+/// twenty times, and reads back the default and says so.
+#[tokio::test]
+async fn a_room_read_ages_on_the_bots_own_setting_and_names_where_it_came_from() {
+    let sessions = Arc::new(jojobot_domain::session::testing::InMemorySessions::new());
+    let jojobot = Jojobot::new(
+        Arc::new(InMemoryMemory::booted()),
+        Arc::new(SpySearch::default()),
+        Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
+        sessions.clone(),
+        Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+        seeded_registry(),
+    );
+    let set = "bot:mcp-thought-aging";
+    let unset = "bot:mcp-seats-capture";
+    for (bot, tag, ageing, runs) in [(set, "ar", Some("2"), 2), (unset, "rr", None, 20)] {
+        ensure(&jojobot, bot).await;
+        let mut fields: std::collections::BTreeMap<String, String> = [(
+            jojobot_domain::memory::THOUGHT_CAPACITY.to_string(),
+            "1".to_string(),
+        )]
+        .into_iter()
+        .collect();
+        if let Some(ageing) = ageing {
+            // Pinned as a literal: the spelling is stored on the bot.
+            fields.insert("thought_ages_after_runs".to_string(), ageing.to_string());
+        }
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                fields: Some(fields),
+                ..capture_args(bot, "capacity is one")
+            },
+        )
+        .await;
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                shape: Some("connection".into()),
+                object: Some("thing:the-couch".into()),
+                ..capture_args(bot, "the couch needs a leg fixed")
+            },
+        )
+        .await;
+        for n in 0..runs {
+            sessions
+                .begin(jojobot_domain::session::NewSession {
+                    bot: EntityId(bot.to_string()),
+                    sid: jojobot_domain::session::Sid(format!("{tag}{n:02}")),
+                    focus: "working".into(),
+                    started_at: jiff::Timestamp::now(),
+                    timezone: None,
+                    started_on: None,
+                })
+                .await
+                .expect("seeding a run");
+        }
+    }
+
+    for (bot, threshold, from) in [(set, 2, "thought_ages_after_runs"), (unset, 20, "default")] {
+        let recalled = json_of(
+            &jojobot
+                .recall(Parameters(recall_args(bot)))
+                .await
+                .expect("recall ok"),
+        );
+        let room = &recalled["objects"][0]["room"];
+        assert_eq!(room["aged_out"], 1, "{bot}: {recalled}");
+        assert_eq!(room["ages_after_runs"], threshold, "{bot}: {recalled}");
+        assert_eq!(room["ages_after_from"], from, "{bot}: {recalled}");
+    }
+}
+
 /// **No `room` block when nothing has aged out**, which is what the verb's
 /// description says: the block is sent only when at least one thought has gone
 /// quiet, so its absence means none has. Paired with

@@ -514,7 +514,55 @@ fn the_four_existing_keys_are_different_identity_keys() {
         .find(|rule| rule.key == REPORTS_TO)
         .expect("reports_to is declared");
     assert_eq!(chart.may, MayWrite::Superior);
-    assert_eq!(GUARDED_KEYS.len(), 5);
+    assert_eq!(GUARDED_KEYS.len(), 6);
+}
+
+/// **The cutoff counts back the number of runs it is given**, not a fixed
+/// twenty: three runs age on a setting of three and answer the oldest of them,
+/// and the same three runs answer nothing on the default.
+#[test]
+fn the_cutoff_counts_back_the_number_of_runs_it_is_given() {
+    let starts: Vec<jiff::Timestamp> = (0..3)
+        .map(|i| at(&format!("2026-04-{:02}T00:00:00Z", i + 1)))
+        .collect();
+    assert_eq!(aging_cutoff(&starts, 3), Some(starts[0]), "{starts:?}");
+    assert_eq!(aging_cutoff(&starts, 2), Some(starts[1]), "{starts:?}");
+    assert_eq!(aging_cutoff(&starts, AGES_AFTER_RUNS), None, "{starts:?}");
+}
+
+/// **A setting that is not a whole number above zero reads as no setting**,
+/// so a mistyped value never ages every thought at once. A good one is read as
+/// written, trimmed.
+#[test]
+fn the_ageing_setting_reads_a_good_value_and_falls_back_on_a_bad_one() {
+    let fold = |value: Option<&str>| -> BTreeMap<String, String> {
+        value
+            .map(|v| ("thought_ages_after_runs".to_string(), v.to_string()))
+            .into_iter()
+            .collect()
+    };
+    assert_eq!(ages_after_runs_of(&fold(Some("3"))), 3);
+    assert_eq!(ages_after_runs_of(&fold(Some(" 7 "))), 7);
+    assert_eq!(ages_after_runs_of(&fold(None)), AGES_AFTER_RUNS);
+    for bad in ["0", "", "soon", "-2", "2.5"] {
+        assert_eq!(
+            ages_after_runs_of(&fold(Some(bad))),
+            AGES_AFTER_RUNS,
+            "{bad:?} is not a setting"
+        );
+    }
+}
+
+/// **The ageing setting is a different-identity key beside the capacity it
+/// is read with.** Pinned by its stored spelling, which nothing outside this
+/// process declares.
+#[test]
+fn the_ageing_setting_is_a_different_identity_key() {
+    let rule = GUARDED_KEYS
+        .iter()
+        .find(|rule| rule.key == "thought_ages_after_runs")
+        .expect("thought_ages_after_runs is declared");
+    assert_eq!(rule.may, MayWrite::DifferentIdentity);
 }
 
 fn thought(id: &str, pointer: &str) -> Fact {
@@ -549,7 +597,7 @@ fn fewer_runs_than_the_threshold_answers_no_cutoff() {
     let starts: Vec<_> = (0..AGES_AFTER_RUNS - 1)
         .map(|_| at("2026-01-01T00:00:00Z"))
         .collect();
-    assert_eq!(aging_cutoff(&starts), None, "{starts:?}");
+    assert_eq!(aging_cutoff(&starts, AGES_AFTER_RUNS), None, "{starts:?}");
 }
 
 /// **Exactly the threshold answers the oldest of them** — the run that,
@@ -560,7 +608,11 @@ fn exactly_the_threshold_answers_the_oldest_run() {
         .map(|i| at(&format!("2026-01-{:02}T00:00:00Z", i + 1)))
         .collect();
     let oldest = starts[0];
-    assert_eq!(aging_cutoff(&starts), Some(oldest), "{starts:?}");
+    assert_eq!(
+        aging_cutoff(&starts, AGES_AFTER_RUNS),
+        Some(oldest),
+        "{starts:?}"
+    );
 }
 
 /// 🚨 **More than the threshold answers the Nth-newest, never the
@@ -575,7 +627,7 @@ fn more_than_the_threshold_answers_the_nth_newest_not_the_oldest() {
         .collect();
     let nth_newest = starts[extra];
     let oldest = starts[0];
-    let cutoff = aging_cutoff(&starts).expect("more than enough runs");
+    let cutoff = aging_cutoff(&starts, AGES_AFTER_RUNS).expect("more than enough runs");
     assert_eq!(cutoff, nth_newest, "{starts:?}");
     assert_ne!(
         cutoff, oldest,

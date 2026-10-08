@@ -2330,6 +2330,228 @@ async fn an_aged_thought_frees_the_room_and_the_refusal_still_counts_it() {
     );
 }
 
+/// **A bot's room, one slot big, holding one old thought**, and the sessions
+/// double its runs are seeded onto. `threshold` is written onto the bot as
+/// its ageing setting by a different identity, or left off.
+async fn a_full_room_of_one_old_thought(
+    threshold: Option<&str>,
+) -> (
+    Jojobot,
+    Arc<jojobot_domain::session::testing::InMemorySessions>,
+    &'static str,
+    String,
+) {
+    let sessions = Arc::new(jojobot_domain::session::testing::InMemorySessions::new());
+    let jojobot = Jojobot::new(
+        Arc::new(InMemoryMemory::booted()),
+        Arc::new(SpySearch::default()),
+        Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
+        sessions.clone(),
+        Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+        seeded_registry(),
+    );
+    let bot = "bot:mcp-thought-aging";
+    ensure(&jojobot, bot).await;
+    let mut fields: std::collections::BTreeMap<String, String> = [(
+        jojobot_domain::memory::THOUGHT_CAPACITY.to_string(),
+        "1".to_string(),
+    )]
+    .into_iter()
+    .collect();
+    if let Some(threshold) = threshold {
+        // The spelling is pinned here as a literal: it is stored on the bot,
+        // and nothing outside this process declares it.
+        fields.insert("thought_ages_after_runs".to_string(), threshold.to_string());
+    }
+    capture_ok(
+        &jojobot,
+        CaptureArgs {
+            fields: Some(fields),
+            ..capture_args(bot, "capacity is one")
+        },
+    )
+    .await;
+    let old = capture_ok(
+        &jojobot,
+        CaptureArgs {
+            shape: Some("connection".into()),
+            object: Some("thing:the-couch".into()),
+            ..capture_args(bot, "the couch needs a leg fixed")
+        },
+    )
+    .await;
+    (jojobot, sessions, bot, address_of(&old))
+}
+
+/// Seed `count` runs of `bot`, begun after everything captured so far.
+async fn seed_runs(
+    sessions: &jojobot_domain::session::testing::InMemorySessions,
+    bot: &str,
+    first: usize,
+    count: usize,
+) {
+    for n in first..first + count {
+        sessions
+            .begin(jojobot_domain::session::NewSession {
+                bot: EntityId(bot.to_string()),
+                sid: jojobot_domain::session::Sid(format!("as{n:02}")),
+                focus: "working".into(),
+                started_at: jiff::Timestamp::now(),
+                timezone: None,
+                started_on: None,
+            })
+            .await
+            .expect("seeding a run");
+    }
+}
+
+/// A second thought into the room `a_full_room_of_one_old_thought` made.
+async fn a_second_thought(jojobot: &Jojobot, bot: &str) -> serde_json::Value {
+    ensure(jojobot, "thing:the-fern").await;
+    json_of(
+        &jojobot
+            .capture(Parameters(CaptureArgs {
+                shape: Some("connection".into()),
+                object: Some("thing:the-fern".into()),
+                ..capture_args(bot, "the fern needs water")
+            }))
+            .await
+            .expect("capture answers rather than failing the protocol"),
+    )
+}
+
+/// **A bot that carries an ageing setting ages its thoughts on that value.**
+/// Two runs are far below the default of twenty, so a build that ignores the
+/// field refuses the second thought. Paired with
+/// [`a_bot_with_no_ageing_setting_ages_on_twenty_runs_and_not_before`].
+#[tokio::test]
+async fn a_bot_with_an_ageing_setting_ages_a_thought_on_that_value() {
+    let (jojobot, sessions, bot, old_address) = a_full_room_of_one_old_thought(Some("2")).await;
+    seed_runs(&sessions, bot, 0, 2).await;
+
+    let landed = a_second_thought(&jojobot, bot).await;
+    assert_ne!(
+        landed["status"], "blocked",
+        "two runs age the old thought when the bot's own setting is two: {landed}"
+    );
+    let recalled = json_of(
+        &jojobot
+            .recall(Parameters(recall_args(bot)))
+            .await
+            .expect("recall ok"),
+    );
+    let old_fact = recalled["objects"][0]["facts"]
+        .as_array()
+        .expect("facts asked for")
+        .iter()
+        .find(|f| f["address"] == old_address)
+        .unwrap_or_else(|| panic!("an aged thought is still readable: {recalled}"));
+    assert_eq!(
+        old_fact["status"], "active",
+        "ageing leaves the thought active, never archived: {old_fact}"
+    );
+}
+
+/// **A bot with no setting ages on twenty runs, and not on nineteen.** The
+/// default is exactly the old constant: one run short of it refuses, the run
+/// that reaches it lets the write land.
+#[tokio::test]
+async fn a_bot_with_no_ageing_setting_ages_on_twenty_runs_and_not_before() {
+    let (jojobot, sessions, bot, old_address) = a_full_room_of_one_old_thought(None).await;
+    seed_runs(&sessions, bot, 0, 19).await;
+
+    let refused = a_second_thought(&jojobot, bot).await;
+    assert_eq!(refused["status"], "blocked", "{refused}");
+    assert_eq!(
+        refused["aged_out"], 0,
+        "nineteen runs age nothing without a setting: {refused}"
+    );
+    // The refusal says where the threshold behind `aged_out` comes from.
+    assert_eq!(
+        refused["ageing"]["setting"], "thought_ages_after_runs",
+        "{refused}"
+    );
+    assert_eq!(refused["ageing"]["default"], 20, "{refused}");
+
+    seed_runs(&sessions, bot, 19, 1).await;
+    let landed = a_second_thought(&jojobot, bot).await;
+    assert_ne!(
+        landed["status"], "blocked",
+        "the twentieth run ages the old thought: {landed}"
+    );
+    let recalled = json_of(
+        &jojobot
+            .recall(Parameters(recall_args(bot)))
+            .await
+            .expect("recall ok"),
+    );
+    assert!(
+        recalled["objects"][0]["facts"]
+            .as_array()
+            .expect("facts asked for")
+            .iter()
+            .any(|f| f["address"] == old_address && f["status"] == "active"),
+        "nothing that ages is archived or deleted: {recalled}"
+    );
+}
+
+/// **The thing a setting binds cannot write that setting.** A bot capturing
+/// its ageing setting about its own handle is refused, and nothing is left
+/// behind. Paired with
+/// [`a_different_bot_can_set_this_bots_ageing_setting`].
+#[tokio::test]
+async fn a_bot_cannot_set_its_own_ageing_setting() {
+    let jojobot = handler();
+    ensure(&jojobot, "bot:otto").await;
+
+    let refused = blocked(
+        &jojobot
+            .capture(Parameters(CaptureArgs {
+                fields: Some(
+                    [("thought_ages_after_runs".to_string(), "1".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..capture_args("bot:otto", "shortening my own ageing")
+            }))
+            .await
+            .expect("a refusal is an answer, not a failure"),
+    );
+    assert_eq!(refused["status"], "blocked", "{refused}");
+
+    let after = fields_of(&jojobot, "bot:otto").await;
+    assert!(
+        after.get("thought_ages_after_runs").is_none(),
+        "the refused write must not be readable back: {after}"
+    );
+}
+
+/// **The positive half.** A different identity setting the same key on a bot
+/// lands, so the guard is about who asks and not about the key.
+#[tokio::test]
+async fn a_different_bot_can_set_this_bots_ageing_setting() {
+    let jojobot = handler();
+    let landed = capture_ok(
+        &jojobot,
+        CaptureArgs {
+            fields: Some(
+                [("thought_ages_after_runs".to_string(), "7".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+            ..capture_args("bot:milhouse", "ageing is seven runs")
+        },
+    )
+    .await;
+    assert_ne!(landed["status"], "blocked", "{landed}");
+
+    let after = fields_of(&jojobot, "bot:milhouse").await;
+    assert_eq!(
+        after["thought_ages_after_runs"], "7",
+        "a different identity's write must land: {after}"
+    );
+}
+
 /// **The thing a ceiling binds cannot write that ceiling.** A bot
 /// capturing `thought_capacity` about its own handle is refused,
 /// naming why and who has to do it instead — never a state the store

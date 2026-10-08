@@ -1363,7 +1363,10 @@ impl Jojobot {
                        handle — see capture's shape) adds a `room` block naming the capacity, how \
                        many count against it now, and how many have gone quiet from being untouched \
                        too long — still there, marked aged_out on the fact itself, excluded from \
-                       the count rather than hidden. THE BLOCK IS SENT ONLY WHEN AT LEAST ONE \
+                       the count rather than hidden. THE BLOCK NAMES THE THRESHOLD: \
+                       ages_after_runs is how many of the bot's runs a thought may go untouched, \
+                       and ages_after_from says whether the bot's own thought_ages_after_runs \
+                       setting gave it or the default did. THE BLOCK IS SENT ONLY WHEN AT LEAST ONE \
                        THOUGHT HAS GONE QUIET: no block means none has, and the room is \
                        exactly as full as its live thoughts. A write that would go over the \
                        capacity is refused the same way; this is the same room, read rather \
@@ -2033,6 +2036,10 @@ impl Jojobot {
             capacity: usize,
             live: usize,
             aged: std::collections::HashSet<jojobot_domain::memory::FactId>,
+            /// The runs a thought may go untouched, and whether the bot's own
+            /// setting said so (else the default did).
+            ages_after: usize,
+            from_setting: bool,
         }
         let mut room_views: std::collections::HashMap<EntityId, RoomView> =
             std::collections::HashMap::new();
@@ -2063,8 +2070,11 @@ impl Jojobot {
                 let Ok(runs) = self.sessions.summaries_of(&object.entity.id).await else {
                     continue;
                 };
+                let setting = jojobot_domain::memory::ages_after_runs_setting(&object.fields);
+                let ages_after = setting.unwrap_or(jojobot_domain::memory::AGES_AFTER_RUNS);
                 let cutoff = jojobot_domain::memory::aging_cutoff(
                     &runs.iter().map(|r| r.started_at).collect::<Vec<_>>(),
+                    ages_after,
                 );
                 let split = jojobot_domain::memory::split_by_age(nominal_room, &touched, cutoff);
                 if !split.aged_out.is_empty() {
@@ -2074,6 +2084,8 @@ impl Jojobot {
                             capacity,
                             live: split.live.len(),
                             aged: split.aged_out.iter().map(|f| f.id.clone()).collect(),
+                            ages_after,
+                            from_setting: setting.is_some(),
                         },
                     );
                 }
@@ -2238,6 +2250,12 @@ impl Jojobot {
                             "capacity": view.capacity,
                             "live": view.live,
                             "aged_out": view.aged.len(),
+                            "ages_after_runs": view.ages_after,
+                            "ages_after_from": if view.from_setting {
+                                jojobot_domain::memory::THOUGHT_AGES_AFTER_RUNS
+                            } else {
+                                "default"
+                            },
                         });
                         if let Some(facts) = rendered["facts"].as_array_mut() {
                             for (fact, raw) in facts.iter_mut().zip(&o.facts) {
