@@ -59,6 +59,7 @@ async fn a_kinds_keys_are_a_schema_and_the_two_questions_differ() {
                 fields: [("pitch".to_string(), "somewhere".to_string())]
                     .into_iter()
                     .collect(),
+                session: Some("kind-schema-session".to_string()),
                 ..NewFact::about(id.clone(), what, jiff::civil::date(2026, 5, 2))
             })
             .await
@@ -205,6 +206,7 @@ async fn a_key_added_to_a_kind_refuses_no_write_that_worked_before() {
             ]
             .into_iter()
             .collect(),
+            session: Some("kind-schema-session".to_string()),
             ..NewFact::about(
                 fitting.clone(),
                 "a complete record",
@@ -220,6 +222,7 @@ async fn a_key_added_to_a_kind_refuses_no_write_that_worked_before() {
             &whole.address(),
             FactPatch {
                 clear_fields: vec!["opens_at".to_string()],
+                session: Some("kind-schema-session".to_string()),
                 ..FactPatch::default()
             },
             &EntityId("bot:sigma".into()),
@@ -260,6 +263,7 @@ async fn the_floor_protects_a_thing_that_fits_and_leaves_one_that_does_not() {
             &held,
             FactPatch {
                 clear_fields: vec!["pitch".to_string()],
+                session: Some("kind-schema-session".to_string()),
                 ..FactPatch::default()
             },
             &EntityId("bot:sigma".into()),
@@ -281,6 +285,7 @@ async fn the_floor_protects_a_thing_that_fits_and_leaves_one_that_does_not() {
             &loose,
             FactPatch {
                 clear_fields: vec!["colour".to_string()],
+                session: Some("kind-schema-session".to_string()),
                 ..FactPatch::default()
             },
             &EntityId("bot:sigma".into()),
@@ -374,6 +379,7 @@ async fn work_written_under_invented_keys_survives_the_kind_shipping_its_own() {
         .capture(NewFact {
             provenance: Provenance::Testimony,
             fields: invented.clone(),
+            session: Some("kind-schema-session".to_string()),
             ..NewFact::about(
                 thing.clone(),
                 "a first pass",
@@ -824,6 +830,7 @@ async fn a_required_key_is_a_floor_and_an_optional_one_is_checked_but_never_dema
             ]
             .into_iter()
             .collect(),
+            session: Some("kind-schema-session".to_string()),
             ..NewFact::about(corner.clone(), "a record", jiff::civil::date(2026, 5, 2))
         })
         .await
@@ -838,6 +845,7 @@ async fn a_required_key_is_a_floor_and_an_optional_one_is_checked_but_never_dema
             &record.address(),
             FactPatch {
                 clear_fields: vec!["awning".to_string()],
+                session: Some("kind-schema-session".to_string()),
                 ..FactPatch::default()
             },
             &EntityId("bot:sigma".into()),
@@ -853,6 +861,7 @@ async fn a_required_key_is_a_floor_and_an_optional_one_is_checked_but_never_dema
             &record.address(),
             FactPatch {
                 clear_fields: vec!["pitch".to_string()],
+                session: Some("kind-schema-session".to_string()),
                 ..FactPatch::default()
             },
             &EntityId("bot:sigma".into()),
@@ -876,6 +885,7 @@ async fn a_required_key_is_a_floor_and_an_optional_one_is_checked_but_never_dema
                 fields: [("awning".to_string(), "sometime in may".to_string())]
                     .into_iter()
                     .collect(),
+                session: Some("kind-schema-session".to_string()),
                 ..FactPatch::default()
             },
             &EntityId("bot:sigma".into()),
@@ -945,6 +955,7 @@ async fn a_list_key_holds_none_one_or_many_and_a_span_is_one_value() {
             ]
             .into_iter()
             .collect(),
+            session: Some("kind-schema-session".to_string()),
             ..NewFact::about(day.clone(), "a record", jiff::civil::date(2026, 4, 18))
         })
         .await
@@ -972,6 +983,7 @@ async fn a_list_key_holds_none_one_or_many_and_a_span_is_one_value() {
                     fields: [("came_with".to_string(), wrote.to_string())]
                         .into_iter()
                         .collect(),
+                    session: Some("kind-schema-session".to_string()),
                     ..FactPatch::default()
                 },
                 &EntityId("bot:sigma".into()),
@@ -999,6 +1011,7 @@ async fn a_list_key_holds_none_one_or_many_and_a_span_is_one_value() {
                 )]
                 .into_iter()
                 .collect(),
+                session: Some("kind-schema-session".to_string()),
                 ..FactPatch::default()
             },
             &EntityId("bot:sigma".into()),
@@ -1018,6 +1031,7 @@ async fn a_list_key_holds_none_one_or_many_and_a_span_is_one_value() {
                 fields: [("away".to_string(), "2026-04-25/2026-04-18".to_string())]
                     .into_iter()
                     .collect(),
+                session: Some("kind-schema-session".to_string()),
                 ..FactPatch::default()
             },
             &EntityId("bot:sigma".into()),
@@ -1100,6 +1114,7 @@ async fn the_rhythm_kind_owns_its_name_and_asks_for_two_keys() {
             ]
             .into_iter()
             .collect(),
+            session: Some("kind-schema-session".to_string()),
             ..NewFact::about(ran.clone(), "a record", jiff::civil::date(2026, 5, 2))
         })
         .await
@@ -1112,6 +1127,7 @@ async fn the_rhythm_kind_owns_its_name_and_asks_for_two_keys() {
             &record.address(),
             FactPatch {
                 clear_fields: vec!["last_check_in".to_string()],
+                session: Some("kind-schema-session".to_string()),
                 ..FactPatch::default()
             },
             &EntityId("bot:sigma".into()),
@@ -1142,6 +1158,7 @@ async fn the_rhythm_kind_owns_its_name_and_asks_for_two_keys() {
             fields: [("name".to_string(), "water the plant".to_string())]
                 .into_iter()
                 .collect(),
+            session: Some("kind-schema-session".to_string()),
             ..NewFact::about(bare.clone(), "a record", jiff::civil::date(2026, 5, 2))
         })
         .await
@@ -1260,6 +1277,7 @@ async fn an_ordering_on_the_schedule_date_is_licensed_by_the_kind() {
                 ]
                 .into_iter()
                 .collect(),
+                session: Some("kind-schema-session".to_string()),
                 ..NewFact::about(loop_id, "a record", jiff::civil::date(2026, 6, 20))
             })
             .await
@@ -1359,6 +1377,7 @@ async fn the_required_keys_are_the_ones_the_loop_actually_writes() {
         .capture(NewFact {
             provenance: Provenance::Testimony,
             fields,
+            session: Some("kind-schema-session".to_string()),
             ..NewFact::about(descale.clone(), "a record", jiff::civil::date(2026, 6, 1))
         })
         .await

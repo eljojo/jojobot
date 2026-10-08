@@ -253,3 +253,99 @@ async fn a_later_run_still_rewrites_an_earlier_runs_inference_in_place() {
         .says("the handcart is yellow");
     story.finish().await;
 }
+
+/// **The operator's words include the fields their claim carries.** A later run
+/// cannot set, change or clear a value field on a testimony claim in place, in
+/// the claim's own fields or in its setting bag, and the refusal names the same
+/// route as for the words: archive it, then capture the correction derived from
+/// it. The run that wrote the claim changes its fields as it always did.
+///
+/// **What describes the record says nothing the operator said**, so a later run
+/// still sets a describing key, and archiving, which is the route itself, still
+/// lands. Each refusal sits beside the same edit made where it is allowed.
+#[tokio::test]
+async fn a_later_run_cannot_set_change_or_clear_a_value_field_on_the_operators_claim() {
+    let story = Story::begin("bot:gamma").await;
+    let first = story.session().await;
+    first.add("thing:handcart", "The Handcart").await;
+    let red = first
+        .call(
+            "capture",
+            json!({
+                "subject": "thing:handcart", "content": "the handcart is red",
+                "provenance": "testimony", "fields": {"colour": "red"},
+            }),
+        )
+        .await
+        .field("address");
+    let heavy = first
+        .call(
+            "capture",
+            json!({
+                "subject": "thing:handcart", "content": "the handcart weighs ninety",
+                "provenance": "testimony", "sets": {"weight": "90"},
+            }),
+        )
+        .await
+        .field("address");
+    let spare = first
+        .call(
+            "capture",
+            said("thing:handcart", "the handcart has two wheels", "testimony"),
+        )
+        .await
+        .field("address");
+
+    // ── the run that wrote the claim changes its fields ─────────────────────
+    first
+        .call(
+            "update_fact",
+            json!({"address": red, "fields": {"colour": "crimson"}}),
+        )
+        .await;
+    first.wrap("wrote down what the operator said").await;
+
+    // ── a later run cannot set, change or clear a value field in place ──────
+    let later = story.session_in("UTC", Some("new")).await;
+    for edit in [
+        json!({"address": red, "fields": {"colour": "blue"}}),
+        json!({"address": red, "fields": {"wheels": "two"}}),
+        json!({"address": red, "clear_fields": ["colour"]}),
+        json!({"address": heavy, "sets": {"weight": "95"}}),
+    ] {
+        later
+            .refused("update_fact", edit)
+            .await
+            .says("blocked")
+            .says("derived_from")
+            .says("archived");
+    }
+    // Nothing moved: the claim still carries what its own run left.
+    later
+        .recall("thing:handcart")
+        .await
+        .says("\"colour\":\"crimson\"")
+        .says("\"weight\":\"90\"")
+        .never_says("\"colour\":\"blue\"");
+
+    // ── what describes the record is anybody's to set ───────────────────────
+    later
+        .call(
+            "update_fact",
+            json!({"address": red, "fields": {"purpose": "a note on the colour"}}),
+        )
+        .await;
+    later
+        .recall("thing:handcart")
+        .await
+        .says("a note on the colour");
+
+    // ── and archiving, which is the route itself, lands ─────────────────────
+    later
+        .call(
+            "update_fact",
+            json!({"address": spare, "status": "archived", "details": "no longer true"}),
+        )
+        .await;
+    story.finish().await;
+}

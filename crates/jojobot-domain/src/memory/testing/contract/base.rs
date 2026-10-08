@@ -14072,6 +14072,14 @@ pub async fn a_rewrite_of_testimony_belongs_to_the_session_that_wrote_it<M: Memo
         NewEntity::new(subject.clone(), "Session Rewrite", "contract-fixture"),
     )
     .await;
+    // A key that only describes its record, which any session may set.
+    store
+        .declare_type(crate::memory::types::DeclaredType::shipped(
+            "contract-session-label",
+            vec![crate::memory::types::Field::describing("label")],
+        ))
+        .await
+        .expect("a describing key is declared");
     let written_in = |session: &str, provenance: Provenance, words: &str| NewFact {
         provenance,
         session: Some(session.to_string()),
@@ -14161,12 +14169,14 @@ pub async fn a_rewrite_of_testimony_belongs_to_the_session_that_wrote_it<M: Memo
         "a refused rewrite leaves the words as they were",
     );
 
-    // **Another session's field edit does not make it the owner.**
+    // **Another session's edit does not make it the owner.** What it may edit is
+    // what describes the record: a value field is the operator's, and is held
+    // in the case beneath this one.
     store
         .update_fact(
             &said.address(),
             FactPatch {
-                fields: [("mug".to_string(), "blue".to_string())]
+                fields: [("label".to_string(), "a note on the drink".to_string())]
                     .into_iter()
                     .collect(),
                 session: Some("session-b".to_string()),
@@ -14175,7 +14185,9 @@ pub async fn a_rewrite_of_testimony_belongs_to_the_session_that_wrote_it<M: Memo
             &other_caller(),
         )
         .await
-        .expect("a field edit is not a content rewrite");
+        .expect("a describing key is not a rewrite of the operator's words")
+        .written()
+        .expect("nothing blocks it");
     refused(
         store
             .update_fact(
@@ -14265,6 +14277,212 @@ pub async fn a_rewrite_of_testimony_belongs_to_the_session_that_wrote_it<M: Memo
         matches!(promote, MemoryError::UnconfirmedPromotion),
         "{promote:?}",
     );
+}
+
+/// **A testimony claim's value fields are the session's that wrote it, as its
+/// words are.**
+///
+/// Another session cannot set a key, change one or take one off a testimony
+/// claim, in the claim's own fields or in its setting bag, and a claim no
+/// session wrote is refused the same way. The session that wrote it does all
+/// three. **What only describes the record is anybody's**: a describing key
+/// lands from any session, and so does archiving. Only testimony is protected: an
+/// inference's fields are edited by any session. Every refusal sits beside the
+/// same edit made where it is allowed.
+pub async fn a_testimony_claims_value_fields_belong_to_the_session_that_wrote_it<M: Memory>(
+    store: &M,
+) {
+    let subject = EntityId::person("person:contract-testified-values");
+    add(
+        store,
+        NewEntity::new(subject.clone(), "Testified Values", "contract-fixture"),
+    )
+    .await;
+    // A key that only describes its record, which any session may set.
+    store
+        .declare_type(crate::memory::types::DeclaredType::shipped(
+            "contract-testified-label",
+            vec![crate::memory::types::Field::describing("label")],
+        ))
+        .await
+        .expect("a describing key is declared");
+    let map = |pairs: &[(&str, &str)]| -> std::collections::BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(key, value)| (key.to_string(), value.to_string()))
+            .collect()
+    };
+    let claim = |session: Option<&str>, provenance: Provenance, words: &str| NewFact {
+        provenance,
+        session: session.map(str::to_string),
+        fields: map(&[("mug", "blue")]),
+        ..NewFact::about(subject.clone(), words, date(2026, 7, 1))
+    };
+    let said = capture(
+        store,
+        claim(Some("session-a"), Provenance::Testimony, "prefers tea"),
+    )
+    .await;
+    let setting = capture(
+        store,
+        NewFact {
+            provenance: Provenance::Testimony,
+            session: Some("session-a".to_string()),
+            fields: map(&[("weight", "90")]),
+            sets: ["weight".to_string()].into_iter().collect(),
+            ..NewFact::about(subject.clone(), "weighs ninety", date(2026, 7, 1))
+        },
+    )
+    .await;
+    let unrecorded = capture(store, claim(None, Provenance::Testimony, "owns a ferret")).await;
+    let guessed = capture(
+        store,
+        claim(Some("session-a"), Provenance::Inference, "rides a bicycle"),
+    )
+    .await;
+    let edit = |session: Option<&str>, fields: &[(&str, &str)], clear: &[&str]| FactPatch {
+        fields: map(fields),
+        clear_fields: clear.iter().map(|key| key.to_string()).collect(),
+        session: session.map(str::to_string),
+        ..Default::default()
+    };
+    let refused = |outcome: Result<Guarded<Fact>, MemoryError>, what: &str| {
+        assert!(
+            matches!(outcome, Err(MemoryError::TestimonyRewritten { .. })),
+            "{what}: refused with the route: {:?}",
+            outcome.map(|_| ()),
+        );
+    };
+
+    // ── another session: change, set and clear are all refused ──────────────
+    refused(
+        store
+            .update_fact(
+                &said.address(),
+                edit(Some("session-b"), &[("mug", "red")], &[]),
+                &other_caller(),
+            )
+            .await,
+        "changing a field",
+    );
+    refused(
+        store
+            .update_fact(
+                &said.address(),
+                edit(Some("session-b"), &[("handle", "wooden")], &[]),
+                &other_caller(),
+            )
+            .await,
+        "setting a new field",
+    );
+    refused(
+        store
+            .update_fact(
+                &said.address(),
+                edit(Some("session-b"), &[], &["mug"]),
+                &other_caller(),
+            )
+            .await,
+        "taking a field off",
+    );
+    refused(
+        store
+            .update_fact(
+                &setting.address(),
+                FactPatch {
+                    sets: ["weight".to_string()].into_iter().collect(),
+                    ..edit(Some("session-b"), &[("weight", "95")], &[])
+                },
+                &other_caller(),
+            )
+            .await,
+        "changing a setting",
+    );
+    refused(
+        store
+            .update_fact(
+                &unrecorded.address(),
+                edit(Some("session-a"), &[("mug", "red")], &[]),
+                &other_caller(),
+            )
+            .await,
+        "a claim no session wrote",
+    );
+    assert_eq!(
+        read_back(store, &subject, &said.id).await.fields,
+        map(&[("mug", "blue")]),
+        "a refused edit leaves the fields as they were",
+    );
+
+    // ── the session that wrote it does all three ────────────────────────────
+    for patch in [
+        edit(Some("session-a"), &[("mug", "red")], &[]),
+        edit(Some("session-a"), &[("handle", "wooden")], &[]),
+        edit(Some("session-a"), &[], &["handle"]),
+    ] {
+        store
+            .update_fact(&said.address(), patch, &other_caller())
+            .await
+            .expect("the writing session edits its own claim's fields")
+            .written()
+            .expect("nothing blocks it");
+    }
+    assert_eq!(
+        read_back(store, &subject, &said.id).await.fields,
+        map(&[("mug", "red")]),
+    );
+
+    // ── what only describes the record, and archiving, are anybody's ────────
+    store
+        .update_fact(
+            &said.address(),
+            edit(Some("session-b"), &[("label", "a note on the drink")], &[]),
+            &other_caller(),
+        )
+        .await
+        .expect("a describing key lands from another session")
+        .written()
+        .expect("nothing blocks it");
+    store
+        .update_fact(
+            &said.address(),
+            FactPatch {
+                status: Some(FactStatus::Archived),
+                session: Some("session-b".to_string()),
+                ..Default::default()
+            },
+            &other_caller(),
+        )
+        .await
+        .expect("archiving is the route itself, and lands from another session")
+        .written()
+        .expect("nothing blocks it");
+
+    // ── the due moment jojobot works out is not the operator's words ────────
+    //
+    // Finishing work takes it off with the status, from whatever session does.
+    store
+        .update_fact(
+            &setting.address(),
+            edit(Some("session-b"), &[], &["due_on"]),
+            &other_caller(),
+        )
+        .await
+        .expect("taking the computed due moment off is not a rewrite of the words")
+        .written()
+        .expect("nothing blocks it");
+
+    // ── an inference is not protected ───────────────────────────────────────
+    store
+        .update_fact(
+            &guessed.address(),
+            edit(Some("session-b"), &[("mug", "green")], &[]),
+            &other_caller(),
+        )
+        .await
+        .expect("another session edits an inference's fields")
+        .written()
+        .expect("nothing blocks it");
 }
 
 /// **A thing created with its first claim is made whole or not at all.**
@@ -14680,6 +14898,7 @@ macro_rules! all_cases {
         $m!(both_provenances_survive($store));
         $m!(a_content_replacement_without_provenance_is_refused($store));
         $m!(a_rewrite_of_testimony_belongs_to_the_session_that_wrote_it($store));
+        $m!(a_testimony_claims_value_fields_belong_to_the_session_that_wrote_it($store));
         $m!(a_setting_bag_reaches_the_thing_and_a_key_stays_in_its_bag($store));
         $m!(an_entity_edited_with_a_claim_is_made_whole_or_not_at_all($store));
         $m!(edge_whitespace_is_normalized($store));

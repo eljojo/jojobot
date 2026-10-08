@@ -4132,6 +4132,7 @@ impl Memory for DoltMemory {
             &fact,
             patch,
             first_session.as_deref(),
+            &Self::types_in(&mut tx).await?,
         )?;
         // **Which bag each key is written under**, read off what this record holds
         // now: a key stays in the bag it was first written under.

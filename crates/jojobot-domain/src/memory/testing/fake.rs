@@ -384,8 +384,11 @@ impl InMemoryMemory {
             subject: home,
             content: "staged past the guard".to_string(),
             details: None,
-            provenance: crate::memory::Provenance::Testimony,
-            standing: crate::memory::Standing::Settled,
+            // **An inference, so a case about the keys staged here is not also a
+            // case about who may edit the operator's words**: testimony with no
+            // session is nobody's to edit in place.
+            provenance: crate::memory::Provenance::Inference,
+            standing: crate::memory::Standing::Open,
             status: FactStatus::Active,
             recorded_at: jiff::civil::date(2026, 8, 1),
             happened_at: None,
@@ -2437,8 +2440,13 @@ impl Memory for InMemoryMemory {
             }
         }
         let first_session = self.first_write_session(&key, &address.local);
-        let patch =
-            super::super::settle_rewrite(address, &edited, patch, first_session.as_deref())?;
+        let patch = super::super::settle_rewrite(
+            address,
+            &edited,
+            patch,
+            first_session.as_deref(),
+            &self.declarations(),
+        )?;
         // **Which bag each key is written under**, read off what this record holds
         // now: a key stays in the bag it was first written under.
         let held_classes = self.held_classes(&key, &address.local);

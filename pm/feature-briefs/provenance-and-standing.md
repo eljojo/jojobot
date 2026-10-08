@@ -29,6 +29,8 @@ Writing in the value that provenance suggests would be the same defect one level
 
 **Which shape a correction takes depends on who wrote the claim.** A claim the current session wrote is rewritten in place. A claim an earlier session wrote is archived, and the corrected claim stands beside it, so the correction stays visible — somebody may already have read the old one. **The session boundary is the axis because it is the one signal an agent actually has.**
 
+**jojobot enforces that boundary for the operator's own words.** A testimony claim's content, and every field on it except the six that describe the record, is rewritten in place only by the session that first wrote it; any other session is refused, and the refusal names the route — archive it, then capture the correction with `derived_from`. A claim written before sessions were recorded counts as written by none. For an inference or an observation the boundary is the agent's to keep, and an in-place rewrite is not refused.
+
 **Either shape, new words need a new answer to the first question.** ⭐ **Replacing what a claim says while leaving its provenance alone lets a record go on naming the operator as the source of words they never said** — so a rewrite that changes the content and states no provenance is refused, and the refusal says what to supply. ⛔️ **Never a silent demotion.** Somebody fixing a typo in their own testimony should not find it quietly downgraded, and the caller is the one who knows how they know.
 
 **Nothing stores a sentence saying what a thing is not.** A negative about the world is an ordinary claim — *Milhouse did not attend* — and a negative is never the shape a correction takes.

@@ -1124,7 +1124,9 @@ async fn assert_the_project_keys_and_the_due_day_read_back_and_bind(
     }
 
     // **An edit that sets another key leaves the stored due day where it was**,
-    // and is not refused because of it.
+    // and is not refused because of it. The record is testimony an older build
+    // wrote, so the key is one that only describes the record: a value field on
+    // it is the operator's, and the gate's legacy case holds that refusal.
     let read = surface
         .call(
             "recall",
@@ -1146,17 +1148,23 @@ async fn assert_the_project_keys_and_the_due_day_read_back_and_bind(
     let landed = surface
         .call(
             "update_fact",
-            json!({"address": address, "fields": {"colour": "red"}, "sid": sid}),
+            json!({"address": address, "fields": {"purpose": "a note on the day"}, "sid": sid}),
         )
         .await;
     if landed.contains("\"status\":\"blocked\"") {
         fail("an edit beside the stored due day", &landed);
     }
     let read = surface
-        .call("recall", json!({"subject": "thing:upgrade-fixture-thing"}))
+        .call(
+            "recall",
+            json!({"subject": "thing:upgrade-fixture-thing", "facts": true}),
+        )
         .await;
-    let after = fields_of(&read, "the thing after an edit beside its due day");
-    if after["due_on"] != "2026-12-01" || after["colour"] != "red" {
+    let parsed: serde_json::Value =
+        serde_json::from_str(&read).unwrap_or_else(|_| fail("the thing after the edit", &read));
+    if parsed["objects"][0]["fields"]["due_on"] != "2026-12-01"
+        || !read.contains("a note on the day")
+    {
         fail("the due day beside an edit that set another key", &read);
     }
 
@@ -1577,10 +1585,11 @@ async fn an_old_role_field_on_a_bot_that_is_not_the_owner_does_not_stop_the_owne
 }
 
 /// **Testimony an older build recorded has no session of its own, and this
-/// build refuses to rewrite its words in place.** The refusal names the route,
-/// the route works, and an edit that touches no words still lands. The claim is
-/// one the recording wrote as testimony, so the case is about stored rows and
-/// not about a claim this build wrote a moment ago.
+/// build refuses to rewrite its words or its value fields in place.** The
+/// refusal names the route, the route works, and an edit of a key that only
+/// describes the record still lands. The claim is one the recording wrote as
+/// testimony, so the case is about stored rows and not about a claim this build
+/// wrote a moment ago.
 #[tokio::test]
 async fn testimony_an_older_build_recorded_is_corrected_by_the_route_and_not_in_place() {
     let Restored {
@@ -1657,15 +1666,21 @@ async fn testimony_an_older_build_recorded_is_corrected_by_the_route_and_not_in_
         fail("the refused rewrite leaving the words alone", &read);
     }
 
-    // (3) An edit that sets a field and leaves the words alone still lands.
-    let landed = surface
+    // (3) **A value field on it is the operator's, as its words are.** An edit
+    // that sets one, with the words left alone, is refused with the same route
+    // and changes nothing. A key that only describes the record is anybody's, and
+    // lands.
+    let refused = surface
         .call(
             "update_fact",
             json!({"address": address, "fields": {"colour": "red"}, "sid": sid}),
         )
         .await;
-    if landed.contains("\"status\":\"blocked\"") {
-        fail("a field-only edit", &landed);
+    if !refused.contains("\"status\":\"blocked\"")
+        || !refused.contains("derived_from")
+        || !refused.contains("archived")
+    {
+        fail("a refusal of a value field that names the route", &refused);
     }
     let read = surface
         .call(
@@ -1675,8 +1690,26 @@ async fn testimony_an_older_build_recorded_is_corrected_by_the_route_and_not_in_
         .await;
     let parsed: serde_json::Value =
         serde_json::from_str(&read).unwrap_or_else(|_| fail("the person's fields", &read));
-    if parsed["objects"][0]["fields"]["colour"] != "red" {
-        fail("the field the edit set", &read);
+    if !parsed["objects"][0]["fields"]["colour"].is_null() {
+        fail("the refused field staying off the person", &read);
+    }
+    let landed = surface
+        .call(
+            "update_fact",
+            json!({"address": address, "fields": {"purpose": "a note on where"}, "sid": sid}),
+        )
+        .await;
+    if landed.contains("\"status\":\"blocked\"") {
+        fail("an edit of a key that only describes the record", &landed);
+    }
+    let read = surface
+        .call(
+            "recall",
+            json!({"subject": "person:upgrade-fixture-person", "facts": true}),
+        )
+        .await;
+    if !read.contains("a note on where") {
+        fail("the describing key the edit set", &read);
     }
 
     // (2) Archive the claim, then write the corrected one derived from it.

@@ -307,9 +307,10 @@ async fn every_check_holds_once_the_goal_is_worked() {
 ///
 /// Four different paths through the same surface: the brief is retired without
 /// the box ever being drained, the service day rides a key of the occupant's
-/// own naming, this year's distance arrives as an edit of the record beside it
-/// rather than as a record of its own, and the handoff is left on the run
-/// instead of in a box. An intermediate that fails here is asserting the route.
+/// own naming, this year's distance arrives by the correction route (the newest
+/// tally is archived and the corrected one is captured from it) rather than as
+/// a record of its own, and the handoff is left on the run instead of in a box.
+/// An intermediate that fails here is asserting the route.
 #[tokio::test]
 async fn every_check_holds_for_a_route_nobody_predicted() {
     let (_room, surface, sid) = furnished().await;
@@ -339,15 +340,29 @@ async fn every_check_holds_for_a_route_nobody_predicted() {
     )
     .await;
 
-    // This year's number as an edit of the newest tally rather than a record of
-    // its own: a key's writes accumulate either way, so the bike reads 4100 and
-    // its history carries three writes.
+    // This year's number by the correction route, which is the one open for a
+    // tally an earlier session wrote as testimony: the newest tally is archived,
+    // and the corrected one is captured from it. A key's writes accumulate either
+    // way, so the bike reads 4100 and its history carries three writes.
     let newest = newest_tally(&surface).await;
     as_the_occupant(
         &surface,
         &sid,
         "update_fact",
-        json!({"address": newest, "fields": {"km": "4100"}}),
+        json!({"address": newest, "status": "archived", "details": "the year's number is in"}),
+    )
+    .await;
+    as_the_occupant(
+        &surface,
+        &sid,
+        "capture",
+        json!({
+            "subject": "thing:gravel-bike",
+            "content": "the distance this year",
+            "provenance": "testimony",
+            "derived_from": newest,
+            "fields": {"km": "4100"},
+        }),
     )
     .await;
 

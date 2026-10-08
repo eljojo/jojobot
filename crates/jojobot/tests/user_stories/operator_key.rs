@@ -11,6 +11,9 @@
 //! at the head, a held value is changed by nobody, and the refusal says what
 //! makes a head.
 //!
+//! **The claims here are inferences**, so an edit of one is judged by this key's
+//! own rule and not by the session rule a testimony claim has.
+//!
 //! **Every refusal here sits beside the positive it depends on**, in the same
 //! story: the same call from the head lands, so a build that refused every write
 //! of the key would not pass. The routes that reach the key are each tried: a
@@ -24,7 +27,7 @@ use super::dsl::Story;
 fn naming(operator: &str) -> serde_json::Value {
     json!({
         "subject": "topic:instance", "content": "who the operator is",
-        "provenance": "testimony", "fields": {"operator": operator},
+        "provenance": "inference", "fields": {"operator": operator},
     })
 }
 
@@ -188,7 +191,7 @@ async fn the_operator_is_named_by_any_bot_and_changed_only_by_the_head_of_the_ch
             "capture",
             json!({
                 "subject": "thing:handcart", "content": "who runs it",
-                "provenance": "testimony", "fields": {"operator": "person:lisa"},
+                "provenance": "inference", "fields": {"operator": "person:lisa"},
             }),
         )
         .await

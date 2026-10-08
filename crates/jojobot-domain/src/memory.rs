@@ -1786,30 +1786,52 @@ pub fn validate_happened_span(
     Ok(())
 }
 
-/// **What a content rewrite is allowed to be, decided before the patch applies.**
+/// **What a rewrite of a claim is allowed to be, decided before the patch
+/// applies.**
 ///
-/// A claim is its own session's to rewrite and nobody else's testimony. A
-/// rewrite of **testimony** is refused unless the caller's session is the one
-/// that wrote the claim, and a claim with no recorded session is refused the
-/// same way, because nothing says the caller wrote it. The refusal names the
-/// route: archive it, then capture the corrected claim derived from it. **Only
-/// testimony is protected**: an inference or an observation is rewritten as it
-/// always was, whoever wrote it.
+/// A claim is its own session's to rewrite and nobody else's testimony. **What a
+/// testimony claim says is its words and the value fields it carries**, in its
+/// own fields and in its setting bag alike. A patch that rewrites either is
+/// refused unless the caller's session is the one that wrote the claim, and a
+/// claim with no recorded session is refused the same way, because nothing says
+/// the caller wrote it. The refusal names the route: archive it, then capture the
+/// corrected claim derived from it. **Only testimony is protected**: an inference
+/// or an observation is rewritten as it always was, whoever wrote it.
 ///
-/// A rewrite by the session that wrote the claim, which sends no provenance,
-/// keeps the provenance the claim has. Anyone else still has to say how the new
-/// words are known, which [`apply_fact_patch`] asks.
+/// **What only describes the record says nothing the operator said**, so a patch
+/// that sets or clears nothing but describing keys is not a rewrite, and neither
+/// is one that moves the due moment jojobot works out, or a move of the status, which is the route itself, or of the standing, whose
+/// settling asks for the operator's confirmation on its own.
+///
+/// A rewrite of the words by the session that wrote the claim, which sends no
+/// provenance, keeps the provenance the claim has. Anyone else still has to say
+/// how the new words are known, which [`apply_fact_patch`] asks.
 ///
 /// `written_in` is the session of the claim's FIRST write: the session that
-/// brought the claim in. A patch that names no content is none of this
-/// function's business.
+/// brought the claim in. `declared` is the types the store holds, which say which
+/// keys only describe their record.
 pub fn settle_rewrite(
     address: &FactAddress,
     fact: &Fact,
     mut patch: FactPatch,
     written_in: Option<&str>,
+    declared: &[types::DeclaredType],
 ) -> Result<FactPatch, MemoryError> {
-    if patch.content.is_none() {
+    let rewrites_words = patch.content.is_some();
+    // **Setting a key, changing one and taking one off are the same rewrite.**
+    // **Two kinds of key are not the operator's words**: one that only describes
+    // the record, and the due moment jojobot works out, which moves with the
+    // status and which a caller's own copy of is refused elsewhere.
+    let rewrites_values = patch
+        .fields
+        .keys()
+        .chain(patch.clear_fields.iter())
+        .any(|key| {
+            let key = key.trim();
+            key != crate::attention::DUE_ON
+                && types::fold_of(key, declared) != types::Fold::Describes
+        });
+    if !rewrites_words && !rewrites_values {
         return Ok(patch);
     }
     let own = matches!(
@@ -1821,7 +1843,7 @@ pub fn settle_rewrite(
             address: address.to_string(),
         });
     }
-    if own && patch.provenance.is_none() {
+    if rewrites_words && own && patch.provenance.is_none() {
         patch.provenance = Some(fact.provenance);
     }
     Ok(patch)
@@ -5307,13 +5329,13 @@ pub enum MemoryError {
     /// `testimony` would go on naming the operator as the source of words they
     /// never said. The way to correct them leaves the original readable.
     #[error(
-        "{address} is testimony from an earlier session, so its words are not rewritten in \
-         place: archive it with a reason (update_fact, status: archived, details), then capture \
-         the corrected claim with derived_from naming it. The original stays readable: recall \
-         the subject with history_record: {address}"
+        "{address} is testimony from an earlier session, so its words and its fields are not \
+         rewritten in place: archive it with a reason (update_fact, status: archived, details), \
+         then capture the corrected claim with derived_from naming it. The original stays \
+         readable: recall the subject with history_record: {address}"
     )]
     TestimonyRewritten {
-        /// The claim a content rewrite was refused on.
+        /// The claim a rewrite of its words or its fields was refused on.
         address: String,
     },
     /// **A key is written under one bag at a time.** A record holds a key as its
