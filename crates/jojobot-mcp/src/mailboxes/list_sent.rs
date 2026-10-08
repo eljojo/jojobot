@@ -93,6 +93,17 @@ impl Jojobot {
             Ok(caller) => caller,
             Err(refused) => return Ok(refused),
         };
+        // **A page of no messages is refused**, as `search` refuses it. It cut
+        // every message and named the offset it was given as the one that reads
+        // the rest, so following that pointer repeated the same call.
+        if args.limit == Some(0) {
+            return Ok(mailbox_blocked_body(
+                "list_sent",
+                None,
+                "limit must be at least 1: it is the size of a page. Leave it off for the \
+                 twenty newest, or send a larger limit.",
+            ));
+        }
         let declared = args
             .sender
             .as_deref()
@@ -283,6 +294,16 @@ impl Jojobot {
                 offset + shown.len(),
                 "messages",
             );
+        }
+        // **An empty page past the last message says so**, as `search`, `recall`
+        // and `list_entities` do: an empty page with no note reads as "nothing
+        // was sent".
+        if shown.is_empty() && offset > 0 && offset >= held {
+            answer["past_the_end"] = format!(
+                "offset {offset} is past the last of the {held} messages this read lists, so \
+                 nothing is left to read"
+            )
+            .into();
         }
         json_result(&answer)
     }
@@ -1217,5 +1238,71 @@ mod tests {
             "the page still carries most of what fits: {}",
             page["count"]
         );
+    }
+
+    async fn page_of(
+        jojobot: &Jojobot,
+        sid: &str,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> rmcp::model::CallToolResult {
+        jojobot
+            .list_sent(Parameters(ListSentArgs {
+                limit,
+                offset,
+                sender: None,
+                to: None,
+                include_bodies: None,
+                sid: Some(sid.to_string()),
+            }))
+            .await
+            .expect("list_sent ok")
+    }
+
+    /// **A page of no messages is refused, as `search` refuses it.** A limit of
+    /// 0 cut every message and named `not_shown.offset` equal to the offset it
+    /// was given, so a caller that followed the pointer repeated the same call
+    /// for ever.
+    #[tokio::test]
+    async fn a_limit_of_zero_is_refused_with_a_way_forward() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "pm").await;
+        send(&jojobot, "pm", "otto", "report 0").await;
+        let sid = as_bot(&jojobot, "otto");
+
+        let refused = page_of(&jojobot, &sid, Some(0), None).await;
+        assert_fix_by("a limit of zero", &refused, "change");
+        let body = blocked(&refused);
+        assert_eq!(body["wrote"], false, "{body}");
+
+        // The refusal is about the zero: a page of one is served.
+        let one = json_of(&page_of(&jojobot, &sid, Some(1), None).await);
+        assert_eq!(one["count"], 1, "{one}");
+    }
+
+    /// **An offset beyond the last message says so**, as `search`, `recall`
+    /// and `list_entities` do. An empty page with no note reads as "nothing was
+    /// ever sent".
+    #[tokio::test]
+    async fn an_offset_past_the_last_message_says_it_is_past_the_end() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "pm").await;
+        for n in 0..2 {
+            send(&jojobot, "pm", "otto", &format!("report {n}")).await;
+        }
+        let sid = as_bot(&jojobot, "otto");
+
+        let past = json_of(&page_of(&jojobot, &sid, None, Some(5)).await);
+        assert_eq!(past["count"], 0, "{past}");
+        assert!(past["past_the_end"].is_string(), "{past}");
+
+        // The offset that sits exactly at the end has nothing left to read.
+        let at_end = json_of(&page_of(&jojobot, &sid, None, Some(2)).await);
+        assert!(at_end["past_the_end"].is_string(), "{at_end}");
+
+        // An offset inside the list reads messages and carries no such note.
+        let inside = json_of(&page_of(&jojobot, &sid, None, Some(1)).await);
+        assert_eq!(inside["count"], 1, "{inside}");
+        assert!(inside.get("past_the_end").is_none(), "{inside}");
     }
 }
