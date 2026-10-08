@@ -14548,6 +14548,116 @@ pub async fn a_setting_bag_reaches_the_thing_and_a_key_stays_in_its_bag<M: Memor
         .expect("nothing blocks it");
 }
 
+/// **An entity is edited and a claim sets keys on it in one act, made whole or
+/// not at all.**
+///
+/// Three halves, each against the others. The call that is allowed edits the
+/// thing and writes the claim, whose keys are the thing's settings. An edit that
+/// the entity screen blocks writes no claim. A claim that a guard blocks takes
+/// the edit back with it, so a name is never changed under a refused claim; that
+/// is the half a store that edits first and captures after fails.
+pub async fn an_entity_edited_with_a_claim_is_made_whole_or_not_at_all<M: Memory>(store: &M) {
+    let thing = EntityId("thing:contract-claimed-edit".into());
+    let rival = EntityId("thing:contract-claimed-rival".into());
+    add(
+        store,
+        NewEntity::new(thing.clone(), "Edit Subject", "contract-fixture"),
+    )
+    .await;
+    add(
+        store,
+        NewEntity::new(rival.clone(), "Edit Rival", "contract-fixture"),
+    )
+    .await;
+    let claim = |fields: &[(&str, &str)]| NewFact {
+        fields: fields
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
+        sets: fields.iter().map(|(k, _)| k.to_string()).collect(),
+        session: Some("session-claimed".to_string()),
+        ..NewFact::about(thing.clone(), "set along with an edit", date(2026, 9, 2))
+    };
+    let named = |name: &str| EntityPatch {
+        name: Some(name.to_string()),
+        ..Default::default()
+    };
+    let listed_name = |id: &EntityId| {
+        let id = id.clone();
+        async move {
+            store
+                .list_entities(None)
+                .await
+                .expect("the roster reads")
+                .into_iter()
+                .find(|e| e.id == id)
+                .map(|e| e.name)
+        }
+    };
+
+    // The allowed call edits the thing and sets it.
+    let (edited, written) = store
+        .update_entity_with_claim(
+            &thing,
+            named("Edit Subject Renamed"),
+            claim(&[("colour", "red")]),
+        )
+        .await
+        .expect("the call answers")
+        .written()
+        .expect("nothing blocks it");
+    assert_eq!(edited.name, "Edit Subject Renamed");
+    assert_eq!(
+        listed_name(&thing).await.as_deref(),
+        Some("Edit Subject Renamed")
+    );
+    assert_eq!(
+        store.fields(&thing).await.expect("fields")["colour"],
+        "red",
+        "the claim's key is set on the thing",
+    );
+    assert_eq!(written.subject, thing);
+
+    // A name the screen blocks writes no claim.
+    let blocked = store
+        .update_entity_with_claim(&thing, named("Edit Rival"), claim(&[("size", "large")]))
+        .await
+        .expect("the call answers");
+    assert!(
+        matches!(blocked, Guarded::Blocked { .. }),
+        "a colliding name is blocked: {blocked:?}",
+    );
+    assert!(
+        !store
+            .fields(&thing)
+            .await
+            .expect("fields")
+            .contains_key("size"),
+        "a blocked edit wrote no claim",
+    );
+
+    // **A claim a guard blocks takes the edit back.** Its key names a handle
+    // nobody holds, so the claim is blocked after the edit has been applied
+    // inside the one act.
+    let taken_back = store
+        .update_entity_with_claim(
+            &thing,
+            named("Edit Subject Second Name"),
+            claim(&[("blocks", "work:contract-claimed-nobody")]),
+        )
+        .await
+        .expect("the call answers");
+    assert!(
+        matches!(taken_back, Guarded::Blocked { .. }),
+        "a link to a handle nobody holds is blocked: {taken_back:?}",
+    );
+    assert_eq!(
+        listed_name(&thing).await.as_deref(),
+        Some("Edit Subject Renamed"),
+        "the edit was taken back with the refused claim",
+    );
+}
+
 /// **Every case of the memory contract, listed once.** The list is a macro so
 /// that counting the cases and running a slice of them read the same list: a
 /// case added here is counted and run, and no second list can drift from it.
@@ -14571,6 +14681,7 @@ macro_rules! all_cases {
         $m!(a_content_replacement_without_provenance_is_refused($store));
         $m!(a_rewrite_of_testimony_belongs_to_the_session_that_wrote_it($store));
         $m!(a_setting_bag_reaches_the_thing_and_a_key_stays_in_its_bag($store));
+        $m!(an_entity_edited_with_a_claim_is_made_whole_or_not_at_all($store));
         $m!(edge_whitespace_is_normalized($store));
         $m!(multiple_facts_all_recallable($store));
         $m!(subjects_are_isolated($store));

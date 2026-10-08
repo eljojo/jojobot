@@ -583,6 +583,58 @@ impl super::Memory for Mentioning {
             blocked => blocked,
         })
     }
+    /// **The claim written with an edit resolves what it says, exactly as a
+    /// capture does**, and faces the stored-mark rule. Forwarded and not left to
+    /// the port's default, which refuses.
+    async fn update_entity_with_claim(
+        &self,
+        handle: &EntityId,
+        patch: super::EntityPatch,
+        claim: super::NewFact,
+    ) -> Result<super::Guarded<(Entity, super::Fact)>, super::MemoryError> {
+        refuse_forged(&[
+            claim.content.as_str(),
+            claim.details.as_deref().unwrap_or(""),
+            claim.drop_because.as_deref().unwrap_or(""),
+        ])?;
+        let known = self.known().await?;
+        if let Some(blocked) = Self::screen(
+            &[
+                claim.content.as_str(),
+                claim.details.as_deref().unwrap_or(""),
+            ],
+            &known,
+        ) {
+            return Ok(blocked);
+        }
+        let written = self
+            .inner
+            .update_entity_with_claim(
+                handle,
+                patch,
+                super::NewFact {
+                    content: resolved(&claim.content, &known).map_err(unloaded)?,
+                    details: claim
+                        .details
+                        .as_deref()
+                        .map(|d| resolved(d, &known))
+                        .transpose()
+                        .map_err(unloaded)?,
+                    ..claim
+                },
+            )
+            .await?;
+        Ok(match written {
+            super::Guarded::Written((entity, mut stored)) => {
+                let known = self.known().await?;
+                let former = self.former().await?;
+                let declared = self.declared().await?;
+                self.render_fact(&mut stored, &known, &former, &declared);
+                super::Guarded::Written((entity, stored))
+            }
+            blocked => blocked,
+        })
+    }
     async fn list_entities(
         &self,
         kind: Option<super::EntityKind>,
@@ -1208,6 +1260,17 @@ mod tests {
                         "made with @#k7h2mn",
                         day,
                     ),
+                )
+                .await
+                .map(|_| ()),
+        );
+        refused(
+            "a claim written with an edit",
+            store
+                .update_entity_with_claim(
+                    &holder,
+                    crate::memory::EntityPatch::default(),
+                    NewFact::about(holder.clone(), "edited with @#k7h2mn", day),
                 )
                 .await
                 .map(|_| ()),

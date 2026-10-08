@@ -1053,6 +1053,7 @@ mod tests {
                         aliases: None,
                         source: None,
                         crm: None,
+                        sets: None,
                         override_token: None,
                         sid: Some(sid.clone()),
                     }))

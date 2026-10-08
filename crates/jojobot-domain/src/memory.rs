@@ -4669,8 +4669,8 @@ impl<T> Guarded<T> {
 pub enum Landed {
     /// What [`Memory::capture`] or [`Memory::update_fact`] wrote.
     Fact(Box<Fact>),
-    /// What [`Memory::add_entity_with_first_claim`] wrote: the thing and its
-    /// first claim.
+    /// What [`Memory::add_entity_with_first_claim`] or
+    /// [`Memory::update_entity_with_claim`] wrote: the thing and its claim.
     Creation(Box<(Entity, Fact)>),
     /// What [`Memory::retract`] wrote.
     Retraction(Box<Retraction>),
@@ -5452,6 +5452,27 @@ pub trait Memory: Send + Sync {
         let _ = (new, first);
         Err(MemoryError::InvalidFact(
             "this store cannot create a thing and write its first claim in one act".into(),
+        ))
+    }
+
+    /// **Edit an entity and write a claim that sets keys on it, in one act.** The
+    /// claim is about the entity being edited and runs every guard a
+    /// [`capture`](Memory::capture) runs. If the edit's own screen or any guard of
+    /// the claim refuses, **nothing is written**: the edit is taken back with the
+    /// claim, so a name is never changed under a claim that was refused.
+    ///
+    /// **A store that cannot do this refuses loudly rather than editing and then
+    /// capturing**, for the reason [`add_entity_with_first_claim`](Memory::add_entity_with_first_claim)
+    /// does.
+    async fn update_entity_with_claim(
+        &self,
+        handle: &EntityId,
+        patch: EntityPatch,
+        claim: NewFact,
+    ) -> Result<Guarded<(Entity, Fact)>, MemoryError> {
+        let _ = (handle, patch, claim);
+        Err(MemoryError::InvalidFact(
+            "this store cannot edit a thing and write a claim about it in one act".into(),
         ))
     }
 

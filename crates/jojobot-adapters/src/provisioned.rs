@@ -232,6 +232,32 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
         self.inner.add_entity_with_first_claim(new, first).await
     }
 
+    /// **A supplied record is not edited by the edit that writes a claim**, for the
+    /// reason `update_entity` refuses it: the claim must not be a way past the
+    /// screen.
+    async fn update_entity_with_claim(
+        &self,
+        handle: &EntityId,
+        patch: EntityPatch,
+        claim: NewFact,
+    ) -> Result<Guarded<(Entity, Fact)>, MemoryError> {
+        if let Some((supplied, _)) = self.provisions.record_for(handle) {
+            return Ok(Guarded::Blocked {
+                attempted: handle.clone(),
+                candidates: vec![guard::EntityMatch {
+                    handle: supplied.id.clone(),
+                    kind: supplied.kind,
+                    name: supplied.name.clone(),
+                    source: supplied.source.clone(),
+                    reason: guard::MatchReason::ExactHandle,
+                }],
+            });
+        }
+        self.inner
+            .update_entity_with_claim(handle, patch, claim)
+            .await
+    }
+
     // ── the reads a WHOLE supplied record has to answer ─────────────────────
     //
     // A record the build supplies is in no table, so every read that would

@@ -6754,3 +6754,28 @@ async fn dolt_reads_a_row_from_before_the_class_as_legacy_and_keeps_it_so() {
 
     store.stop().await;
 }
+
+/// **An edit and the claim that sets the thing are one transaction, over the real
+/// store.** The contract case holds the rule against the fake. Here a claim that a
+/// guard blocks after the edit was applied must leave the entity's row as it was,
+/// which only a store that really holds the two in one transaction can do.
+#[tokio::test]
+async fn dolt_takes_an_edit_back_with_the_claim_it_was_made_with() {
+    let scratch = Scratch::new("edit-with-claim");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("edit_with_claim")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+
+    memory::an_entity_edited_with_a_claim_is_made_whole_or_not_at_all(&DoltMemory::open(
+        pool.clone(),
+    ))
+    .await;
+
+    store.stop().await;
+}

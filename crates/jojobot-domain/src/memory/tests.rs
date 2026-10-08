@@ -1082,6 +1082,13 @@ fn the_three_write_classes_are_stored_as_legacy_own_and_sets() {
     );
 }
 
+/// An edit and its claim in one act, in milliseconds against the fake.
+#[tokio::test]
+async fn an_entity_edited_with_a_claim_is_whole_against_the_fake() {
+    contract::an_entity_edited_with_a_claim_is_made_whole_or_not_at_all(&InMemoryMemory::booted())
+        .await;
+}
+
 /// The full behavioural contract holds for the fake — the same suite the
 /// real-store test runs against the real adapter.
 #[tokio::test]

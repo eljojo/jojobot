@@ -1364,6 +1364,67 @@ impl DoltMemory {
         }))
     }
 
+    /// **An edit of an entity's own row, in a transaction its caller owns.** The
+    /// caller commits it only when this answers `Written`.
+    /// [`update_entity`](Memory::update_entity) is that, and so is the edit that
+    /// writes a claim in the same act.
+    async fn update_entity_in(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        handle: &EntityId,
+        patch: EntityPatch,
+    ) -> Result<Guarded<Entity>, MemoryError> {
+        // **A row, never a supplied record.** `update_entity` mutates a stored
+        // row — there is no row to mutate for a record the build supplies, and
+        // finding one here would let an edit turn a shipped record into a
+        // stored one wearing its handle, which is exactly what a caller must
+        // not be able to do (rule 234's own exception).
+        let rows = self.index(tx).await?;
+        let Some(mut entity) = rows.iter().find(|e| &e.id == handle).cloned() else {
+            return Err(MemoryError::UnknownEntity {
+                attempted: handle.to_string(),
+                nearest: guard::screen(handle, &[], &rows),
+            });
+        };
+        // **The screen alone reads the wider set** — rows plus what the build
+        // supplies — so a rename that collides with a supplied record is
+        // caught exactly as one against a stored record is.
+        let known = self.extend_with_supplied(rows);
+        // Changing what an entity is CALLED is an entity-touching write, so it
+        // faces the same gate — display name and aliases alike.
+        if let guard::Decision::Block(candidates) = screen_entity_patch(&entity, &patch, &known) {
+            return Ok(Guarded::Blocked {
+                attempted: handle.clone(),
+                candidates,
+            });
+        }
+        apply_entity_patch(&mut entity, &patch)?;
+        // **The badge rides on the record this edit was read from**, and
+        // `write_entity` carries the row's own across — so the answer already
+        // says what the row says and nothing has to put it back.
+        //
+        // **`entity.parent` came off `index`, which serves the handle**
+        // (rule 268). `EntityPatch` carries no field that could have changed
+        // it, so it is resolved back to the badge here before the row is
+        // written — or every metadata edit would quietly turn a badge-keyed
+        // parent back into a handle.
+        let stored = if let Some(parent) = &entity.parent {
+            let stored_parent = self
+                .resolve(tx, parent)
+                .await?
+                .map(|(key, _)| key)
+                .unwrap_or_else(|| parent.clone());
+            Entity {
+                parent: Some(stored_parent),
+                ..entity.clone()
+            }
+        } else {
+            entity.clone()
+        };
+        write_entity(tx, &self.draw, &stored, &self.clock).await?;
+        Ok(Guarded::Written(entity))
+    }
+
     /// **A capture, in a transaction its caller owns.** The caller begins the
     /// transaction and commits it only when this answers `Written`, so a refusal
     /// or a block leaves nothing behind. [`capture`](Memory::capture) is that, and so
@@ -3095,56 +3156,70 @@ impl Memory for DoltMemory {
     ) -> Result<Guarded<Entity>, MemoryError> {
         validate_write_subject(handle)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
-        // **A row, never a supplied record.** `update_entity` mutates a stored
-        // row — there is no row to mutate for a record the build supplies, and
-        // finding one here would let an edit turn a shipped record into a
-        // stored one wearing its handle, which is exactly what a caller must
-        // not be able to do (rule 234's own exception).
-        let rows = self.index(&mut tx).await?;
-        let Some(mut entity) = rows.iter().find(|e| &e.id == handle).cloned() else {
-            return Err(MemoryError::UnknownEntity {
-                attempted: handle.to_string(),
-                nearest: guard::screen(handle, &[], &rows),
-            });
-        };
-        // **The screen alone reads the wider set** — rows plus what the build
-        // supplies — so a rename that collides with a supplied record is
-        // caught exactly as one against a stored record is.
-        let known = self.extend_with_supplied(rows);
-        // Changing what an entity is CALLED is an entity-touching write, so it
-        // faces the same gate — display name and aliases alike.
-        if let guard::Decision::Block(candidates) = screen_entity_patch(&entity, &patch, &known) {
-            return Ok(Guarded::Blocked {
-                attempted: handle.clone(),
-                candidates,
-            });
+        let edited = self.update_entity_in(&mut tx, handle, patch).await?;
+        if matches!(edited, Guarded::Written(_)) {
+            tx.commit().await.map_err(store)?;
         }
-        apply_entity_patch(&mut entity, &patch)?;
-        // **The badge rides on the record this edit was read from**, and
-        // `write_entity` carries the row's own across — so the answer already
-        // says what the row says and nothing has to put it back.
-        //
-        // **`entity.parent` came off `index`, which serves the handle**
-        // (rule 268). `EntityPatch` carries no field that could have changed
-        // it, so it is resolved back to the badge here before the row is
-        // written — or every metadata edit would quietly turn a badge-keyed
-        // parent back into a handle.
-        let stored = if let Some(parent) = &entity.parent {
-            let stored_parent = self
-                .resolve(&mut tx, parent)
-                .await?
-                .map(|(key, _)| key)
-                .unwrap_or_else(|| parent.clone());
-            Entity {
-                parent: Some(stored_parent),
-                ..entity.clone()
+        Ok(edited)
+    }
+
+    async fn update_entity_with_claim(
+        &self,
+        handle: &EntityId,
+        patch: EntityPatch,
+        claim: NewFact,
+    ) -> Result<Guarded<(Entity, Fact)>, MemoryError> {
+        validate_write_subject(handle)?;
+        if claim.subject != *handle {
+            return Err(MemoryError::InvalidFact(format!(
+                "the claim is about {}, and the thing being edited is {handle}",
+                claim.subject
+            )));
+        }
+        validate_new_fact(&claim)?;
+        // **One transaction for both writes.** A refusal or a block of the claim
+        // returns before the commit, so the edit is never stored without it.
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        let entity = if patch == EntityPatch::default() {
+            // A call that names no change to the entity writes no row of its own:
+            // the claim is the whole of it.
+            let rows = self.index(&mut tx).await?;
+            match rows.iter().find(|e| &e.id == handle) {
+                Some(entity) => entity.clone(),
+                None => {
+                    return Err(MemoryError::UnknownEntity {
+                        attempted: handle.to_string(),
+                        nearest: guard::screen(handle, &[], &rows),
+                    });
+                }
             }
         } else {
-            entity.clone()
+            match self.update_entity_in(&mut tx, handle, patch).await? {
+                Guarded::Written(entity) => entity,
+                Guarded::Blocked {
+                    attempted,
+                    candidates,
+                } => {
+                    return Ok(Guarded::Blocked {
+                        attempted,
+                        candidates,
+                    });
+                }
+            }
         };
-        write_entity(&mut tx, &self.draw, &stored, &self.clock).await?;
-        tx.commit().await.map_err(store)?;
-        Ok(Guarded::Written(entity))
+        match self.capture_in(&mut tx, claim).await? {
+            Guarded::Written(fact) => {
+                tx.commit().await.map_err(store)?;
+                Ok(Guarded::Written((entity, fact)))
+            }
+            Guarded::Blocked {
+                attempted,
+                candidates,
+            } => Ok(Guarded::Blocked {
+                attempted,
+                candidates,
+            }),
+        }
     }
 
     async fn archive_entity(&self, id: &EntityId, reason: &str) -> Result<Entity, MemoryError> {

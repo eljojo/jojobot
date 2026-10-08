@@ -194,6 +194,24 @@ impl Memory for IndexedMemory {
         Ok(written)
     }
 
+    /// **The edited thing and its claim enter the index together.** Forwarded and
+    /// not left to the port's default, which refuses.
+    async fn update_entity_with_claim(
+        &self,
+        handle: &EntityId,
+        patch: EntityPatch,
+        claim: NewFact,
+    ) -> Result<Guarded<(Entity, Fact)>, MemoryError> {
+        let written = self
+            .inner
+            .update_entity_with_claim(handle, patch, claim)
+            .await?;
+        if let Guarded::Written((entity, _)) = &written {
+            self.refresh(&entity.id).await;
+        }
+        Ok(written)
+    }
+
     async fn list_entities(&self, kind: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError> {
         self.inner.list_entities(kind).await
     }

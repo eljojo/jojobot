@@ -308,6 +308,10 @@ impl Jojobot {
                 }
                 let recorded_at = self.dated(None, args.sid.as_deref()).await?;
                 let first = jojobot_domain::memory::NewFact {
+                    // **Every key of the call is a setting on the new thing**, the
+                    // computed due moment included: the claim says them as the
+                    // thing's own, and a later edit keeps each in that bag.
+                    sets: fields.keys().cloned().collect(),
                     fields,
                     // **The session that made it, as a capture records it**: a
                     // claim's first write names the run that wrote it, and a

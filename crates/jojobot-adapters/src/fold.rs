@@ -160,6 +160,31 @@ impl Memory for Folded {
         }
     }
 
+    /// **An edit that writes a claim refreshes the fold for the thing, as a
+    /// capture does.** Forwarded and not left to the port's default, which
+    /// refuses.
+    async fn update_entity_with_claim(
+        &self,
+        handle: &EntityId,
+        patch: EntityPatch,
+        claim: NewFact,
+    ) -> Result<Guarded<(Entity, Fact)>, MemoryError> {
+        match self
+            .inner
+            .update_entity_with_claim(handle, patch, claim)
+            .await?
+        {
+            Guarded::Written((entity, fact)) => match self.refresh(&fact.home).await {
+                Ok(()) => Ok(Guarded::Written((entity, fact))),
+                Err(source) => Err(fold_behind(
+                    Landed::Creation(Box::new((entity, fact))),
+                    source,
+                )),
+            },
+            blocked => Ok(blocked),
+        }
+    }
+
     async fn list_entities(&self, kind: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError> {
         self.inner.list_entities(kind).await
     }

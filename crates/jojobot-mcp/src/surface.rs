@@ -3249,6 +3249,7 @@ mod a_write_needs_an_identity {
                     aliases: None,
                     source: None,
                     crm: None,
+                    sets: None,
                     override_token: None,
                     sid: None,
                 }))

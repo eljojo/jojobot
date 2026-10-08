@@ -32,6 +32,18 @@ pub struct UpdateEntityArgs {
     /// is.
     #[serde(default)]
     pub(crate) override_token: Option<String>,
+    /// **What this call sets on the thing**, as key/value pairs, written as one
+    /// claim about it in the same act as the edit. The claim says what was set
+    /// and carries these keys in its setting bag, and it faces every guard a
+    /// `capture` does: a key the kind declares is held to what it declares, and a
+    /// key that holds a handle must name a thing that exists. **Whole or not at
+    /// all**: a key that is refused refuses the call, and the edit is not made.
+    /// A call that sends only `sets` leaves the entity's own row alone.
+    ///
+    /// The claim is `inference`, as a capture's is when it says nothing. To put
+    /// the operator's own word behind a key, write it with `capture`.
+    #[serde(default)]
+    pub(crate) sets: Option<std::collections::BTreeMap<String, String>>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
     /// every call — it is what tells jojobot which bot is asking. Reads are
     /// attributed, never journalled.
@@ -75,9 +87,10 @@ impl Jojobot {
     ) -> Result<CallToolResult, McpError> {
         // Refused here, before anything is written — see
         // [`Jojobot::attributable`].
-        if let Err(refused) = self.identified_for_write(args.sid.as_deref()).await {
-            return Ok(refused);
-        }
+        let caller = match self.identified_for_write(args.sid.as_deref()).await {
+            Ok(caller) => caller,
+            Err(refused) => return Ok(refused),
+        };
         let handle = EntityId::person(&args.handle);
         // Taken before `args`' fields are moved into `patch` below — this
         // owns its own copy, so it survives the moves that follow.
@@ -89,15 +102,102 @@ impl Jojobot {
             crm: args.crm,
             override_token: args.override_token.clone(),
         };
-        let written = match self.memory.update_entity(&handle, patch).await {
-            Ok(written) => written,
-            Err(e) => return memory_declined("update_entity", e),
+        // **What this call sets, when it sends anything**, is written as one claim
+        // about the thing in the same act, through the store's own combined write:
+        // the store runs the guards of a capture inside the transaction that edits
+        // the entity, and a refusal takes the edit back with it.
+        let sets = args.sets.clone().filter(|sets| !sets.is_empty());
+        let mut claim = None;
+        let mut fold_behind = None;
+        let written = match sets {
+            None => match self.memory.update_entity(&handle, patch).await {
+                Ok(written) => written,
+                Err(e) => return memory_declined("update_entity", e),
+            },
+            Some(mut fields) => {
+                // **The checks a capture makes before it writes**, on what the
+                // caller sent: a role's own two fields are the boot door's, and
+                // the stored due moment is jojobot's own.
+                if let Some(refused) =
+                    jojobot_domain::memory::refuses_role_fields(&handle, fields.keys())
+                {
+                    return memory_declined("update_entity", refused);
+                }
+                if let Some(refused) = self
+                    .refuses_a_hand_written_due_moment(&handle, &fields, &[])
+                    .await
+                {
+                    return Ok(refused);
+                }
+                let (due_on, _) = self.moved_due_moment(&handle, &fields, &[]).await;
+                if let jojobot_domain::attention::DueMove::Set(due_on) = due_on {
+                    fields.insert(
+                        jojobot_domain::attention::DUE_ON.to_string(),
+                        due_on.to_string(),
+                    );
+                }
+                let keys = fields.keys().cloned().collect::<Vec<_>>();
+                let recorded_at = self.dated(None, args.sid.as_deref()).await?;
+                let first = jojobot_domain::memory::NewFact {
+                    sets: keys.iter().cloned().collect(),
+                    fields,
+                    session: Some(caller.sid.as_str().to_string()),
+                    ..jojobot_domain::memory::NewFact::about(
+                        handle.clone(),
+                        // **What the generated claim says**: which keys were set,
+                        // on the thing as a link, so the words follow a rename.
+                        format!("Set {} on @{}.", keys.join(", "), handle.as_str()),
+                        recorded_at,
+                    )
+                };
+                match self
+                    .memory
+                    .update_entity_with_claim(&handle, patch, first)
+                    .await
+                {
+                    Ok(Guarded::Written((entity, fact))) => {
+                        claim = Some(fact);
+                        Guarded::Written(entity)
+                    }
+                    Ok(Guarded::Blocked {
+                        attempted,
+                        candidates,
+                    }) => Guarded::Blocked {
+                        attempted,
+                        candidates,
+                    },
+                    // **A write that landed is never reported as failed**
+                    // (rule 130), the same as on a capture.
+                    Err(MemoryError::FoldBehind {
+                        landed: Landed::Creation(created),
+                        behind,
+                        ..
+                    }) => {
+                        let (entity, fact) = *created;
+                        fold_behind = Some(behind);
+                        claim = Some(fact);
+                        Guarded::Written(entity)
+                    }
+                    Err(e) => return memory_declined("update_entity", e),
+                }
+            }
         };
         match written {
             Guarded::Written(entity) => {
                 self.beat("update_entity", entity.id.as_str(), args.sid.as_deref())
                     .await;
                 let mut body = entity_json(&entity);
+                // **The claim's receipt**, so the claim has an address a later edit
+                // goes through, and the answer says the claim exists.
+                if let (Some(fact), Some(obj)) = (&claim, body.as_object_mut()) {
+                    obj.insert(
+                        "claim".into(),
+                        fact_receipt_json(fact, self.dated(None, args.sid.as_deref()).await?),
+                    );
+                }
+                if let Some(behind) = fold_behind {
+                    crate::answer::note_fold_behind(&mut body, behind);
+                }
                 // **No reason given, and that is the honest answer.**
                 // Reading a bare handle as a person is what the argument
                 // means; a sentence restating the comparison would be a
@@ -159,6 +259,7 @@ mod tests {
             aliases: None,
             source: None,
             crm: None,
+            sets: None,
             override_token: None,
             sid: Some(sid.clone()),
         };
@@ -207,6 +308,7 @@ mod tests {
                 aliases: None,
                 source: None,
                 crm: Some("card:551".into()),
+                sets: None,
                 override_token: None,
                 sid: Some(crate::harness::TEST_SID.into()),
             }))
@@ -243,6 +345,7 @@ mod tests {
             source: None,
             crm: None,
             override_token,
+            sets: None,
             sid: Some(crate::harness::TEST_SID.into()),
         };
 
@@ -333,6 +436,7 @@ mod tests {
                 aliases: Some(vec!["Homer Simpson".into()]),
                 source: None,
                 crm: None,
+                sets: None,
                 override_token: None,
                 sid: Some(crate::harness::TEST_SID.into()),
             }))
@@ -399,6 +503,7 @@ mod tests {
             aliases: Some(aliases),
             source: None,
             crm: None,
+            sets: None,
             override_token: None,
             sid: Some(crate::harness::TEST_SID.into()),
         };
@@ -459,6 +564,7 @@ mod tests {
                 aliases: None,
                 source: None,
                 crm: None,
+                sets: None,
                 override_token: None,
                 sid: Some(crate::harness::TEST_SID.into()),
             }))

@@ -140,3 +140,119 @@ async fn an_edit_sets_the_thing_and_a_key_stays_in_its_bag() {
     .says("\"painter\":\"now a property of the cart\"");
     story.finish().await;
 }
+
+/// **A thing is made with its settings, and they are settings.** The claim
+/// `add_entity` writes carries them in the setting bag, so an edit that names one
+/// as one of the claim's own fields is refused by name.
+#[tokio::test]
+async fn a_thing_made_with_settings_holds_them_as_settings() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+
+    let made = s
+        .call(
+            "add_entity",
+            json!({
+                "kind": "thing", "handle": "kettle", "name": "The Kettle",
+                "source": "user-named", "sets": {"colour": "white"},
+            }),
+        )
+        .await
+        .json();
+    let claim = made["first_claim"]["address"]
+        .as_str()
+        .expect("the creation hands back its first claim's address")
+        .to_string();
+    s.shape("what the kettle holds", json!({"subject": "thing:kettle"}))
+        .await
+        .says("\"colour\":\"white\"");
+
+    s.refused(
+        "update_fact",
+        json!({"address": claim, "fields": {"colour": "black"}}),
+    )
+    .await
+    .says("blocked")
+    .says("colour");
+    s.call(
+        "update_fact",
+        json!({"address": claim, "sets": {"colour": "black"}}),
+    )
+    .await;
+    s.shape("what the kettle holds", json!({"subject": "thing:kettle"}))
+        .await
+        .says("\"colour\":\"black\"");
+    story.finish().await;
+}
+
+/// **An edit and the settings written with it are one act.** One call renames the
+/// thing and sets a key on it, and the answer carries the claim it wrote. A
+/// setting a guard refuses takes the rename back with it, and the settings ride in
+/// the setting bag.
+#[tokio::test]
+async fn an_edit_and_its_settings_are_made_whole_or_not_at_all() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    s.add("thing:handcart", "The Handcart").await;
+
+    let edited = s
+        .call(
+            "update_entity",
+            json!({"handle": "thing:handcart", "name": "The Red Handcart", "sets": {"colour": "red"}}),
+        )
+        .await
+        .json();
+    assert_eq!(edited["name"], "The Red Handcart", "{edited}");
+    let claim = edited["claim"]["address"]
+        .as_str()
+        .expect("the edit hands back the claim it wrote")
+        .to_string();
+    s.shape(
+        "what the handcart holds",
+        json!({"subject": "thing:handcart"}),
+    )
+    .await
+    .says("\"colour\":\"red\"");
+
+    // The key is a setting: naming it as one of the claim's own fields is refused.
+    s.refused(
+        "update_fact",
+        json!({"address": claim, "fields": {"colour": "blue"}}),
+    )
+    .await
+    .says("blocked")
+    .says("colour");
+
+    // **A setting a guard refuses takes the rename back with it.**
+    s.refused(
+        "update_entity",
+        json!({
+            "handle": "thing:handcart", "name": "The Blue Handcart",
+            "sets": {"blocks": "work:nobody-holds-this"},
+        }),
+    )
+    .await
+    .says("blocked");
+    s.shape(
+        "what the handcart is called",
+        json!({"subject": "thing:handcart"}),
+    )
+    .await
+    .says("The Red Handcart")
+    .never_says("The Blue Handcart");
+
+    // A call that sends only settings leaves the entity's own row alone.
+    s.call(
+        "update_entity",
+        json!({"handle": "thing:handcart", "sets": {"size": "large"}}),
+    )
+    .await;
+    s.shape(
+        "what the handcart holds",
+        json!({"subject": "thing:handcart"}),
+    )
+    .await
+    .says("\"size\":\"large\"")
+    .says("The Red Handcart");
+    story.finish().await;
+}
