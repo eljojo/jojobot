@@ -1007,17 +1007,38 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             ref duplicate,
             ref survivor,
             ref keys,
-            ..
+            may,
+            ref allowed,
         } => Ok(blocked_body(
             &EntityId(duplicate.clone()),
             &[],
-            format!(
-                "Nothing was written. '{duplicate}' carries {keys}, and merging it into \
-                 '{survivor}', your own bot, would raise your own ceiling, which only a \
-                 different identity may do. Ask a different identity to make this merge, or \
-                 take {keys} off '{duplicate}' first: update_fact the record that sets it with \
-                 clear_fields, then merge again."
-            ),
+            match may {
+                // **The chart, not a ceiling.** The merge would change who the
+                // survivor reports to, which only the bots that may place it
+                // may do, so they are the ones named. With nobody recorded
+                // above, it says to ask whoever is at the top of the chart.
+                jojobot_domain::memory::MayWrite::Ancestor
+                | jojobot_domain::memory::MayWrite::Superior => {
+                    let who = match allowed.is_empty() {
+                        true => "whoever is at the top of the chart".to_string(),
+                        false => allowed.join(" or "),
+                    };
+                    format!(
+                        "Nothing was written. '{duplicate}' carries {keys}, and merging it into \
+                         '{survivor}' would change who '{survivor}' reports to, which only \
+                         {who} may do. Ask {who} to make this merge, or take {keys} off \
+                         '{duplicate}' first: update_fact the record that sets it with \
+                         clear_fields, then merge again."
+                    )
+                }
+                _ => format!(
+                    "Nothing was written. '{duplicate}' carries {keys}, and merging it into \
+                     '{survivor}', your own bot, would raise your own ceiling, which only a \
+                     different identity may do. Ask a different identity to make this merge, or \
+                     take {keys} off '{duplicate}' first: update_fact the record that sets it \
+                     with clear_fields, then merge again."
+                ),
+            },
         )),
         // **A role's own two fields, named on the ordinary surface.** The
         // subject named here is not an entity handle — `blocked_body` wants
@@ -1296,6 +1317,44 @@ mod tests {
         // ceilings' own and are unchanged).
         assert!(refused(MayWrite::Subject, &[]).contains("bot:sigma"));
         assert!(refused(MayWrite::DifferentIdentity, &[]).contains("different identity"));
+    }
+
+    /// **A merge refused for a chart key names the bots that may make it, and a
+    /// merge refused for a ceiling still says a different identity must.** The
+    /// two keys have different relations, and the refusal for the second was
+    /// worded for the first: a stranger folding in a duplicate that holds a
+    /// manager was told the merge would raise its own ceiling, and nobody was
+    /// named. Paired, so neither wording stands in for the other.
+    #[test]
+    fn a_merge_refused_for_a_chart_key_names_who_may_make_it() {
+        use jojobot_domain::memory::MayWrite;
+        let refused = |may: MayWrite, allowed: &[&str]| {
+            let result = memory_declined(
+                "merge_entities",
+                MemoryError::MergeCarriesGuardedKeys {
+                    duplicate: "bot:epsilon".into(),
+                    survivor: "bot:psi".into(),
+                    keys: "reports_to".into(),
+                    may,
+                    allowed: allowed.iter().map(ToString::to_string).collect(),
+                },
+            )
+            .expect("a refusal is an answer");
+            blocked(&result)["how_to_proceed"]
+                .as_str()
+                .expect("a way forward")
+                .to_string()
+        };
+        let chart = refused(MayWrite::Superior, &["bot:omega", "bot:sigma"]);
+        for who in ["bot:omega", "bot:sigma", "bot:epsilon", "bot:psi"] {
+            assert!(chart.contains(who), "{who}: {chart}");
+        }
+        assert!(
+            !chart.contains("your own ceiling"),
+            "the chart is not a ceiling: {chart}"
+        );
+        let ceiling = refused(MayWrite::DifferentIdentity, &[]);
+        assert!(ceiling.contains("different identity"), "{ceiling}");
     }
 
     /// **A chart cycle is refused with a way forward that names a different
