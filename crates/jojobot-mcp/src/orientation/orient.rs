@@ -907,19 +907,18 @@ impl Jojobot {
                     "role": role,
                     "status": "refused",
                     "owner": owner.as_str(),
+                    FixBy::KEY: FixBy::Change.as_token(),
                     "how_to_proceed": crate::memory::role_owned_way_forward(role, owner.as_str()),
                 });
             }
             Ok(None) => {}
             Err(e) => {
                 tracing::warn!(error = %e, %bot, role, "the owner of a role could not be read");
-                return serde_json::json!({
-                    "role": role,
-                    "status": "unavailable",
-                    "note": "the claim was decided but could not be written. Nothing is \
-                             held.",
-                    "how_to_proceed": claim_unavailable_way_forward(role),
-                });
+                return unavailable_claim(
+                    role,
+                    "the claim could not be decided, because the bot that owns the role \
+                     could not be read. Nothing is held.",
+                );
             }
         }
         let written = self
@@ -1106,6 +1105,77 @@ mod tests {
             how.contains("dev-dispatch"),
             "the way forward names the role it is about: {how}"
         );
+    }
+
+    /// **The boot door, claiming `role` as `bot`**, and the claim's own outcome.
+    async fn claim_outcome(jojobot: &Jojobot, bot: &str, role: &str) -> serde_json::Value {
+        let booted = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    claim: Some(role.into()),
+                    timezone: None,
+                    bot: Some(bot.into()),
+                    brief: None,
+                    skill: None,
+                    section: None,
+                    resume: None,
+                    sid: None,
+                    today: None,
+                }))
+                .await
+                .expect("start_here ok"),
+        );
+        booted["session"]["claim"].clone()
+    }
+
+    /// **A claim from the wrong bot is refused and says it is the caller's call
+    /// to change.** The role belongs to another bot, so sending the same claim
+    /// again meets the same refusal; the word is `change`, and the owner is
+    /// named. Paired with the owner's own claim, which lands, so a build that
+    /// refused every claim would not pass.
+    #[tokio::test]
+    async fn a_claim_from_the_wrong_bot_says_the_caller_must_change_it() {
+        let jojobot = handler();
+        make_bot(&jojobot, "alpha").await;
+        make_bot(&jojobot, "beta").await;
+
+        let owner = claim_outcome(&jojobot, "beta", "dev-dispatch").await;
+        assert_eq!(owner["status"], "taken", "the first claim lands: {owner}");
+
+        let claim = claim_outcome(&jojobot, "alpha", "dev-dispatch").await;
+        assert_eq!(claim["status"], "refused", "{claim}");
+        assert_eq!(claim["owner"], "bot:beta", "{claim}");
+        assert_eq!(
+            claim["fix_by"],
+            FixBy::Change.as_token(),
+            "a role another bot owns is not got past by claiming again: {claim}"
+        );
+    }
+
+    /// **A claim whose owner could not be READ comes back `unavailable`, wears
+    /// the storage-failure word and does not say it could not be written.** The
+    /// read that decides ownership failed before anything was written, so the
+    /// note names a read; the way forward is the one every other undecided
+    /// claim gives.
+    #[tokio::test]
+    async fn a_claim_whose_owner_cannot_be_read_says_to_retry_and_names_a_read() {
+        let (healthy, blind) = healthy_and_down(Down::EntityIndex);
+        make_bot(&healthy, "gamma").await;
+
+        let claim = claim_outcome(&blind, "gamma", "dev-dispatch").await;
+        assert_eq!(claim["status"], "unavailable", "{claim}");
+        assert_eq!(
+            claim["fix_by"].as_str(),
+            memory_store_failure_word().map(FixBy::as_token),
+            "an ownership read that failed wears the storage-failure word: {claim}"
+        );
+        let note = claim["note"].as_str().unwrap_or_default();
+        assert!(
+            note.contains("read") && !note.contains("written"),
+            "the failure was a read, and the note says so: {note}"
+        );
+        let how = claim["how_to_proceed"].as_str().unwrap_or_default();
+        assert!(how.contains("dev-dispatch"), "{how}");
     }
 
     /// 🚨 **The bar the correction asked for: the WHOLE answer against the
