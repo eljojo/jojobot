@@ -108,7 +108,7 @@
           // {
             inherit src;
             pname = "jojobot-tests";
-            cargoExtraArgs = "--workspace --exclude=jojobot-exercise --locked";
+            cargoExtraArgs = "--workspace --locked";
             cargoBuildCommand = "cargo build --profile release --all-targets";
           }
         );
@@ -127,8 +127,7 @@
         );
 
         # **The suite, moved out of the package build and kept whole.**
-        # The same exclusions and the same sandbox environment the package's
-        # check phase had.
+        # The same sandbox environment the package's check phase had.
         tests = craneLib.cargoTest (
           common
           // {
@@ -163,38 +162,29 @@
             preCheck = ''
               patchShebangs scripts
             '';
-            # **Two kinds of test live in this workspace, and only one of them
-            # is about the package being built here.** Most suites prove the
-            # shipped binary behaves; a few prove something about the DEV-TIME
-            # tooling around it instead, and neither belongs in this check —
-            # they test a tool or a workflow, not the artifact.
+            # **The whole workspace runs here, the exercise crate included.** Its
+            # free cases spawn the shipped server and a store of their own and
+            # watch for the line that says the server is serving, which is the
+            # harness every room stands on, so a sandbox that cannot run them
+            # would be a sandbox that cannot run a room. They run here with the
+            # rest. (The paid half of that crate is a binary somebody has to
+            # invoke, and no test starts it.)
             #
-            # `jojobot-exercise` is the whole crate for one of those: its own
-            # manifest calls it "the third test tier", a harness that drives a
-            # real model through a throwaway instance and costs money to run
-            # for real. Nothing in the shipped `jojobot` binary depends on it.
-            # Its free unit tests prove the harness itself works — spawning a
-            # real jojobot+dolt process pair and watching for a ready line —
-            # which `make check` already does, in the dev shell that harness
-            # was built for. Excluded at the crate level rather than skipped
-            # test by test, because the whole crate is the same kind of thing.
-            #
-            # fixture_roster's unpushed-commit check is the other kind, at test
-            # granularity: it reads `git log origin/main..HEAD` against the
-            # checkout it runs in, and fails loud rather than passing quietly
-            # when it cannot — by design, so a missing check is never reported
-            # as a clean one. `src` here is a Nix store path: it has no `.git`,
-            # the same reason JOJOBOT_BUILD above falls back to "unknown"
+            # fixture_roster's unpushed-commit check is the one kind of test
+            # skipped, at test granularity: it reads `git log origin/main..HEAD`
+            # against the checkout it runs in, and fails loud rather than passing
+            # quietly when it cannot — by design, so a missing check is never
+            # reported as a clean one. `src` here is a Nix store path: it has no
+            # `.git`, the same reason JOJOBOT_BUILD above falls back to "unknown"
             # instead of reading `self.rev`. That makes the check unrunnable in
             # this sandbox on every build, not occasionally broken. The two
             # checks that read the commit range from the roster boundary to HEAD
             # are the same kind, for the same reason.
             #
-            # Both stay enforced by `make check`, which is where dev-time
-            # tooling is actually exercised.
+            # All three stay enforced by `make check`, which is where they can
+            # read the history.
             cargoTestExtraArgs = builtins.concatStringsSep " " [
               "--workspace"
-              "--exclude=jojobot-exercise"
               "--"
               "--skip=no_unpushed_commit_message_writes_a_pronoun_for_the_operator"
               "--skip=no_commit_message_since_the_boundary_quotes_an_off_roster_handle"
