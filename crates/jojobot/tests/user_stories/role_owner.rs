@@ -315,7 +315,7 @@ async fn only_the_owner_or_the_chart_head_may_move_or_merge_a_role_object() {
         .call("capture", reporting_to("bot:alpha", "bot:omega"))
         .await;
 
-    for role in ["gamma", "sigma", "theta"] {
+    for role in ["gamma", "sigma", "theta", "iota", "kappa"] {
         let (claimed, _) = story
             .call(
                 "start_here",
@@ -356,12 +356,32 @@ async fn only_the_owner_or_the_chart_head_may_move_or_merge_a_role_object() {
         json!({"duplicate": "thing:handcart", "survivor": "role:gamma", "reason": "tidy"}),
     )
     .await
+    .says("\"wrote\":false")
     .says("bot:alpha");
+    // Read back: the thing a stranger tried to fold into a role object is still
+    // there, whole, and was folded into nothing.
+    s.call("recall", json!({"subject": "thing:handcart"}))
+        .await
+        .says("\"id\":\"thing:handcart\"")
+        .never_says("merged_into");
     s.call("recall", json!({"subject": "role:sigma"}))
         .await
         .never_says("merged_into");
 
     // ── the owner's and the head's own acts land ────────────────────────────
+    //
+    // Each act is tried, the owner's reparent and merge and the head's merge and
+    // reparent, and the first of each pair is the one a build that refused only
+    // that licence would stop at.
+    alpha
+        .call(
+            "rename_entity",
+            json!({"handle": "role:iota", "to": "role:iota", "parent": "bot:beta"}),
+        )
+        .await;
+    s.call("recall", json!({"subject": "role:iota"}))
+        .await
+        .says("\"parent\":\"bot:beta\"");
     alpha
         .call(
             "merge_entities",
@@ -369,6 +389,15 @@ async fn only_the_owner_or_the_chart_head_may_move_or_merge_a_role_object() {
         )
         .await;
     s.call("recall", json!({"subject": "role:sigma"}))
+        .await
+        .says("merged_into");
+    omega
+        .call(
+            "merge_entities",
+            json!({"duplicate": "role:kappa", "survivor": "role:gamma", "reason": "the same seat"}),
+        )
+        .await;
+    s.call("recall", json!({"subject": "role:kappa"}))
         .await
         .says("merged_into");
     omega
