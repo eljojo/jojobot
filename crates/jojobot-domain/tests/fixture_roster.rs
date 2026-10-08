@@ -769,6 +769,7 @@ const ROSTER: &[&str] = &[
     "rhythm:holds-nothing",
     "role:contract-capture-race",
     "role:contract-concurrent-race",
+    "role:contract-lease-stamp",
     "role:contract-lease-version",
     "role:contract-many-renewals",
     "role:contract-old-shape",
