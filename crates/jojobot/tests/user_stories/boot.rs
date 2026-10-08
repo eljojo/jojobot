@@ -265,3 +265,31 @@ async fn a_fresh_anonymous_boot_is_under_the_ceiling_and_names_what_it_left_out(
         "{booted}"
     );
 }
+
+/// **A caller meets `fix_by` in the boot's orientation, where it first learns
+/// what a refusal looks like.** The essay's account of a blocked result names
+/// the word, what each of its values asks of the caller, and when a refusal may
+/// be sent again unchanged. A fresh instance's anonymous boot ships that
+/// section (it may leave a later one out), so the paragraph is in the answer
+/// rather than behind a section call.
+#[tokio::test]
+async fn a_new_callers_boot_names_fix_by_and_what_each_word_asks() {
+    let story = Story::begin_with_nothing_written().await;
+    let (anon, _) = story.call("start_here", json!({})).await;
+    let booted = anon.json();
+    let essay = booted["orientation"].as_str().expect("the essay");
+    assert!(
+        essay.contains("## The answers that are not errors"),
+        "the section that explains a blocked result is in the boot, not behind a call: {booted}"
+    );
+    for word in ["fix_by", "retry", "change", "person"] {
+        assert!(
+            essay.contains(&format!("`{word}`")),
+            "the boot's orientation does not name `{word}`: it is where a caller first meets a refusal"
+        );
+    }
+    assert!(
+        !essay.contains("Never retry one unchanged"),
+        "the old rule is false now that a refusal can say retry"
+    );
+}
