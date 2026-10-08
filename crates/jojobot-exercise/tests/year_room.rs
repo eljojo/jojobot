@@ -1491,11 +1491,13 @@ async fn later_december(room: &Surface, sid: &str) {
     if let Some(wrong_word) =
         try_address_of(room, "thing:gravel-bike", "serviced the drivetrain").await
     {
-        did(
+        put_the_word_right(
             room,
             sid,
-            "update_fact",
-            json!({"address": wrong_word, "fields": {"settled": "invoiced"}}),
+            "thing:gravel-bike",
+            &wrong_word,
+            "the shop serviced the drivetrain",
+            "45",
         )
         .await;
     }
@@ -1504,11 +1506,13 @@ async fn later_december(room: &Surface, sid: &str) {
     // find.**
     if let Some(wrong_word) = try_address_of(room, "thing:floor-pump", "needed a new washer").await
     {
-        did(
+        put_the_word_right(
             room,
             sid,
-            "update_fact",
-            json!({"address": wrong_word, "fields": {"settled": "invoiced"}}),
+            "thing:floor-pump",
+            &wrong_word,
+            "the pump needed a new washer",
+            "20",
         )
         .await;
     }
@@ -1526,6 +1530,38 @@ async fn later_december(room: &Surface, sid: &str) {
     )
     .await;
     fold_the_canoes_pile(room, sid).await;
+}
+
+/// **A job filed under a word the operator does not use, put right by the
+/// correction route.** Late November's sitting wrote the job as testimony, and a
+/// later sitting does not edit another sitting's testimony in place: it archives
+/// the job and captures the corrected one from it, with the same words and the
+/// same cost under the operator's own word.
+async fn put_the_word_right(
+    room: &Surface,
+    sid: &str,
+    subject: &str,
+    wrong_word: &str,
+    content: &str,
+    cost: &str,
+) {
+    did(
+        room,
+        sid,
+        "update_fact",
+        json!({"address": wrong_word, "status": "archived",
+               "details": "filed under a word the operator does not use"}),
+    )
+    .await;
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": subject, "content": content, "provenance": "testimony",
+               "derived_from": wrong_word,
+               "fields": {"cost": cost, "settled": "invoiced"}}),
+    )
+    .await;
 }
 
 /// **THE SELECTIVE SUM, done properly.** Every job-bearing thing the year
