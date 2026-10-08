@@ -258,7 +258,14 @@ async fn dump_store(state_dir: &std::path::Path) -> String {
         "the binary's database directory is not where boot_store puts it: {}",
         database_dir.display()
     );
+    // The store's tool keeps its global configuration under a home directory
+    // and fails where the environment names none (a build sandbox). The run's
+    // own state directory holds it, as the adapter does for every store it
+    // spawns.
+    let dolt_home = state_dir.join("dolt-dump-home");
+    std::fs::create_dir_all(&dolt_home).expect("a directory for the dump tool's configuration");
     let dump = tokio::process::Command::new("dolt")
+        .env("DOLT_ROOT_PATH", &dolt_home)
         .arg("dump")
         .arg("-r")
         .arg("sql")
