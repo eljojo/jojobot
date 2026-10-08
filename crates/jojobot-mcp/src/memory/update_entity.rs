@@ -78,7 +78,10 @@ impl Jojobot {
                        carries is how you confirm a genuinely shared name — a token lifts the one \
                        refusal that minted it and no other. Passing `aliases` REPLACES the whole \
                        set ([] clears \
-                       it); source and crm edits are never questioned. A handle that names \
+                       it); source and crm edits are never questioned. `sets` sets keys on the \
+                       thing in the same call, through a claim of inference; a call that sends \
+                       only `sets` leaves the entity itself alone, and a key that needs the \
+                       operator's word is written with capture. A handle that names \
                        nothing comes back blocked with the nearest handles — it never creates."
     )]
     pub(crate) async fn update_entity(

@@ -244,7 +244,9 @@ impl Jojobot {
                        exactly as it declares its provenance — what needs the operator's word \
                        is moving a claim they hedged. IT ALSO REACHES THE RECORD'S FIELDS: \
                        fields sets the keys you name and leaves every other key alone, and \
-                       clear_fields takes keys off. Those are two arguments rather than one, \
+                       clear_fields takes keys off; `sets` does the same for the keys that are \
+                       properties of the thing the claim is about, apart from the claim's own \
+                       `fields`. Those are two arguments rather than one, \
                        because setting a key to an empty value and removing the key are \
                        different edits and a caller means one of them. A field you set that \
                        equals what jojobot ships as its default today is stored exactly as you \

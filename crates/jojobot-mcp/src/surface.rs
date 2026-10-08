@@ -1364,6 +1364,39 @@ fn add_entity_names_the_argument_that_gives_a_new_thing_its_first_fields() {
     }
 }
 
+/// **Every write verb that publishes `sets` names it in its own description.**
+/// A caller reads the description to learn what a verb can do and the argument
+/// docs only to learn how; an argument only the docs mention goes unfound. Each
+/// verb is read from the published schema, so a verb that gains `sets` later
+/// is held to the same rule without being listed here.
+#[test]
+fn every_verb_that_takes_sets_names_it_in_its_description() {
+    let tools = Jojobot::tool_router().list_all();
+    let takers: Vec<_> = tools
+        .iter()
+        .filter(|tool| {
+            serde_json::to_value(&tool.input_schema).expect("the schema serializes")
+                ["properties"]["sets"]
+                .is_object()
+        })
+        .collect();
+    let names: Vec<&str> = takers.iter().map(|t| t.name.as_ref()).collect();
+    for verb in ["add_entity", "capture", "update_fact", "update_entity"] {
+        assert!(
+            names.contains(&verb),
+            "{verb} publishes no `sets`: {names:?}"
+        );
+    }
+    for tool in takers {
+        let description = tool.description.as_deref().unwrap_or_default();
+        assert!(
+            description.contains("`sets`"),
+            "{}'s description does not name `sets`: {description}",
+            tool.name
+        );
+    }
+}
+
 /// **`recall` says what its three newest behaviours are, where a caller reads
 /// them.** A view's keys come back by asking without the view, a status filter
 /// narrows the claims an answer lists, and a comma list of handles is a field
