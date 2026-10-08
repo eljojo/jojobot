@@ -34,6 +34,10 @@ async fn the_boot_names_the_operator_and_what_waits_on_them_is_one_read_away() {
         said.contains("add_entity") && said.contains("topic:instance"),
         "with no record, the line says how to make one: {boot}",
     );
+    assert!(
+        said.contains("add_entity topic:instance"),
+        "and that the record itself is made first when it is missing: {boot}",
+    );
     assert!(!said.starts_with("person:"), "no operator is named: {boot}");
 
     // The record is there, and holds only a zone: still no operator, and the

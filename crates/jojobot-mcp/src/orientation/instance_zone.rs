@@ -89,8 +89,8 @@ impl Jojobot {
 /// tell a caller different things.
 pub(crate) fn no_operator_yet() -> String {
     format!(
-        "no entity yet: add_entity a person, then capture {INSTANCE_OPERATOR_KEY} on \
-         {INSTANCE_RECORD}"
+        "no entity yet: add_entity a person, add_entity {INSTANCE_RECORD} if it is missing, \
+         then capture {INSTANCE_OPERATOR_KEY} on {INSTANCE_RECORD}"
     )
 }
 
