@@ -88,6 +88,20 @@ async fn restore_a_fixture(fixture_dir: &str, label: &str) -> Restored {
                 panic!("replaying the fixture recorded at {git_ref} failed on:\n{statement}\n{e}")
             });
     }
+    // **The old claim is moved to ten minutes ago, as the store of a deploy a
+    // little while ago holds it.** The recording is hours old and its lease has
+    // lapsed by the time this runs, and a lapsed lease proves nothing about a
+    // role being read in the shape it was written in. Ten minutes is inside the
+    // lease and past the renewal age: a younger moment would make the holder's
+    // write renew nothing, so the claim would not move. This is the one edit made
+    // to the recording, and it changes a moment, not a shape: the key is the old
+    // build's own.
+    sqlx::query("UPDATE field_write SET value = ? WHERE `key` = ?")
+        .bind((jiff::Timestamp::now() - jiff::SignedDuration::from_mins(10)).to_string())
+        .bind("role/upgrade-fixture-holder/claimed_at")
+        .execute(restoring.pool())
+        .await
+        .expect("the recorded claim's moment is moved to now");
     restoring.stop().await;
     Restored {
         scratch,
@@ -158,6 +172,8 @@ async fn boots_on_a_store_filled_by(fixture_dir: &str, label: &str) {
         .trim()
         .to_string();
     assert_every_recorded_record_reads_back(&surface, &git_ref, &role_holder).await;
+    assert_a_role_claimed_in_the_old_shape_is_held_and_moves(&surface, &git_ref, &role_holder)
+        .await;
     surface.finish().await;
 
     third.stop().await;
@@ -317,6 +333,77 @@ fn split_sql_statements(dump: &str) -> Vec<String> {
         .filter(|stmt| !stmt.is_empty())
         .map(|stmt| format!("{stmt};"))
         .collect()
+}
+
+/// **A role claimed before roles were objects is held by the current binary,
+/// and its holder's next write past the renewal age moves it onto the object.**
+/// Release 1 reads both shapes and writes the new one, so the store a deploy
+/// leaves behind must still refuse a rival while the old lease is fresh, then show
+/// the claim on the role object once its holder writes, with a rival still refused
+/// after. Without the
+/// both-shapes read, every role in the store would read as empty here and the
+/// rival would be seated.
+async fn assert_a_role_claimed_in_the_old_shape_is_held_and_moves(
+    surface: &Surface,
+    git_ref: &str,
+    role_holder: &str,
+) {
+    let fail = |what: &str, body: &str| -> ! { panic!("recorded at {git_ref}: {what}: {body}") };
+    let rival = |label: &'static str| async move {
+        let read = surface
+            .call(
+                "start_here",
+                json!({"bot": "assistant", "brief": true, "resume": "new",
+                       "claim": "upgrade-fixture-holder"}),
+            )
+            .await;
+        let parsed: serde_json::Value =
+            serde_json::from_str(&read).unwrap_or_else(|_| fail(label, &read));
+        parsed["session"]["claim"].clone()
+    };
+
+    let before = rival("a rival's claim on a role held in the old shape").await;
+    if before["status"] != "refused" || before["holder"] != role_holder {
+        fail(
+            "a role held in the old shape did not refuse a rival, naming its holder",
+            &before.to_string(),
+        );
+    }
+
+    // The holder writes. That renews the claim, and the renewal lands on the role
+    // object, which did not exist.
+    let beat = surface
+        .call(
+            "journal",
+            json!({"entry": "worked on after the upgrade", "sid": role_holder}),
+        )
+        .await;
+    if beat.contains("\"status\":\"blocked\"") {
+        fail("the holder's write after the upgrade was refused", &beat);
+    }
+    let read = surface
+        .call("recall", json!({"kind": "role", "parent": "bot:assistant"}))
+        .await;
+    let parsed: serde_json::Value =
+        serde_json::from_str(&read).unwrap_or_else(|_| fail("the role objects", &read));
+    let object = &parsed["objects"][0];
+    if object["id"] != "role:upgrade-fixture-holder"
+        || object["fields"]["holder"] != role_holder
+        || object["fields"]["claimed_at"].as_str().is_none()
+    {
+        fail(
+            "the holder's write did not move its claim onto the role object",
+            &read,
+        );
+    }
+
+    let after = rival("a rival's claim after the claim moved").await;
+    if after["status"] != "refused" || after["holder"] != role_holder {
+        fail(
+            "the moved claim did not still refuse a rival, naming its holder",
+            &after.to_string(),
+        );
+    }
 }
 
 /// **Every category the recording wrote, read back through the served

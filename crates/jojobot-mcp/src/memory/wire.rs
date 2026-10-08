@@ -345,6 +345,9 @@ pub(crate) fn type_name(kind: EntityKind) -> &'static str {
         // here: the plain word over a nearest-fit that would state something
         // false.
         "thread" => "Thread",
+        // A seat held by one session at a time has no schema.org word, and the
+        // plain one is the same choice as for `thread` and `rhythm`.
+        "role" => "Role",
         // **A kind the software never heard of has no word waiting for it.**
         // The set of kinds is data, so a store may hold one this build has no
         // opinion about, and the honest answer is the caller's own token
@@ -401,6 +404,7 @@ mod tests {
             (EntityKind::VIEW, "view", "View"),
             (EntityKind::SESSION, "session", "Session"),
             (EntityKind::THREAD, "thread", "Thread"),
+            (EntityKind::ROLE, "role", "Role"),
         ];
         assert_eq!(
             table.len(),

@@ -442,6 +442,7 @@ impl Jojobot {
         // two. See `refuses_role_fields` and `capture`'s own copy of this
         // check.
         if let Some(refused) = jojobot_domain::memory::refuses_role_fields(
+            &address.home,
             patch.fields.keys().chain(&patch.clear_fields),
         ) {
             return memory_declined("update_fact", refused);
@@ -479,7 +480,9 @@ impl Jojobot {
             let refused = carried
                 .iter()
                 .find(|fact| fact.id == address.local)
-                .and_then(|fact| jojobot_domain::memory::refuses_role_fields(fact.fields.keys()));
+                .and_then(|fact| {
+                    jojobot_domain::memory::refuses_role_fields(&address.home, fact.fields.keys())
+                });
             if let Some(refused) = refused {
                 return memory_declined("update_fact", refused);
             }

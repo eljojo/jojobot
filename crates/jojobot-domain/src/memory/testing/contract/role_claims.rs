@@ -1,22 +1,69 @@
 //! **The claim's own exclusivity, proven against any [`Memory`] adapter.**
 //!
-//! A role's holder and claim moment are decided atomically inside the same
-//! write that lands them — see [`crate::session::role_write_in`] and
+//! A role is its own object, a child of the bot that holds it, and its holder
+//! and claim moment are decided atomically inside the same write that lands
+//! them — see [`crate::memory::refuses_role_write`] and
 //! [`crate::session::claim_role`]. That is a property of the STORE, not of
 //! the orientation door that calls it, so it belongs here rather than only
 //! in an MCP-level test: the fake and the real adapter must both answer for
 //! it, or a fake that only looks race-free is standing in for a real store
 //! that still has one.
+//!
+//! **Both shapes are read.** A role claimed before the role became an object
+//! lives in the bot's own `role/<role>/holder` and `role/<role>/claimed_at`,
+//! and it stays held until the role object carries a moment of its own.
 
-use super::support::{capture, ensure};
+use super::support::{add, capture, ensure};
 use super::*;
 
-const ROLE: &str = "contract-dispatch";
+/// A role object for one case, and the bot it is the child of. Each case has
+/// its own pair, so no case reads another's lease.
+struct Seat {
+    /// The role object.
+    role: EntityId,
+    /// The role's name, which is the slug of its handle.
+    name: String,
+    /// The bot that holds it, and the caller the case writes as.
+    bot: EntityId,
+}
+
+async fn a_seat<M: Memory>(store: &M, bot: &str, role: &str) -> Seat {
+    let bot = EntityId(bot.to_string());
+    ensure(store, &bot).await;
+    let role = EntityId(role.to_string());
+    let name = role.as_str().trim_start_matches("role:").to_string();
+    add(
+        store,
+        NewEntity {
+            parent: Some(bot.clone()),
+            ..NewEntity::new(role.clone(), name.as_str(), "contract-fixture")
+        },
+    )
+    .await;
+    Seat { role, name, bot }
+}
 
 fn role_fields(claimant: &str, at: jiff::Timestamp) -> std::collections::BTreeMap<String, String> {
     [
-        (crate::session::role_holder_key(ROLE), claimant.to_string()),
-        (crate::session::role_claimed_at_key(ROLE), at.to_string()),
+        (
+            crate::session::ROLE_HOLDER.to_string(),
+            claimant.to_string(),
+        ),
+        (crate::session::ROLE_CLAIMED_AT.to_string(), at.to_string()),
+    ]
+    .into_iter()
+    .collect()
+}
+
+/// The fields the old shape kept on the bot.
+fn old_role_fields(
+    role: &str,
+    claimant: &str,
+    at: jiff::Timestamp,
+) -> std::collections::BTreeMap<String, String> {
+    [
+        (crate::session::role_holder_key(role), claimant.to_string()),
+        (crate::session::role_claimed_at_key(role), at.to_string()),
     ]
     .into_iter()
     .collect()
@@ -62,15 +109,19 @@ async fn folded_fields_of<M: Memory>(
 /// this is the one path those tests never touch, on the fake or the real
 /// store.
 pub async fn a_second_capture_racing_the_first_is_refused<M: Memory>(store: &M) {
-    let bot = EntityId("bot:contract-role-capture-race".into());
-    ensure(store, &bot).await;
+    let seat = a_seat(
+        store,
+        "bot:contract-role-capture-race",
+        "role:contract-capture-race",
+    )
+    .await;
     let now = crate::session::testing::contract::epoch();
 
     capture(
         store,
         NewFact {
             fields: role_fields("delta", now),
-            ..NewFact::about(bot.clone(), "delta claims the role", date(2026, 7, 1))
+            ..NewFact::about(seat.role.clone(), "delta claims the role", date(2026, 7, 1))
         },
     )
     .await;
@@ -78,22 +129,26 @@ pub async fn a_second_capture_racing_the_first_is_refused<M: Memory>(store: &M) 
     let refused = store
         .capture(NewFact {
             fields: role_fields("epsilon", now),
-            ..NewFact::about(bot.clone(), "epsilon claims the role too", date(2026, 7, 1))
+            ..NewFact::about(
+                seat.role.clone(),
+                "epsilon claims the role too",
+                date(2026, 7, 1),
+            )
         })
         .await;
     assert!(
         matches!(
             &refused,
             Err(MemoryError::RoleTaken { role, holder, .. })
-                if role == ROLE && holder == "delta"
+                if *role == seat.name && holder == "delta"
         ),
         "a second capture while the lease is fresh must be refused, naming the first holder: \
          {refused:?}",
     );
 
-    let fields = folded_fields_of(store, &bot).await;
+    let fields = folded_fields_of(store, &seat.role).await;
     assert_eq!(
-        fields.get(&crate::session::role_holder_key(ROLE)),
+        fields.get(crate::session::ROLE_HOLDER),
         Some(&"delta".to_string()),
         "the refused second capture must not have moved the holder: {fields:?}",
     );
@@ -105,15 +160,19 @@ pub async fn a_second_capture_racing_the_first_is_refused<M: Memory>(store: &M) 
 /// store answers for it directly, not only through the MCP-level boot-door
 /// tests that already covered it for the fake.
 pub async fn a_rival_update_fact_claim_is_refused_while_the_lease_is_fresh<M: Memory>(store: &M) {
-    let bot = EntityId("bot:contract-role-update-race".into());
-    ensure(store, &bot).await;
+    let seat = a_seat(
+        store,
+        "bot:contract-role-update-race",
+        "role:contract-update-race",
+    )
+    .await;
     let now = crate::session::testing::contract::epoch();
 
     let claimed = capture(
         store,
         NewFact {
             fields: role_fields("delta", now),
-            ..NewFact::about(bot.clone(), "delta claims the role", date(2026, 7, 1))
+            ..NewFact::about(seat.role.clone(), "delta claims the role", date(2026, 7, 1))
         },
     )
     .await;
@@ -125,14 +184,14 @@ pub async fn a_rival_update_fact_claim_is_refused_while_the_lease_is_fresh<M: Me
                 fields: role_fields("epsilon", now),
                 ..FactPatch::default()
             },
-            &bot,
+            &seat.bot,
         )
         .await;
     assert!(
         matches!(
             &refused,
             Err(MemoryError::RoleTaken { role, holder, .. })
-                if role == ROLE && holder == "delta"
+                if *role == seat.name && holder == "delta"
         ),
         "a rival update_fact claim while the lease is fresh must be refused: {refused:?}",
     );
@@ -155,18 +214,30 @@ pub async fn a_rival_update_fact_claim_is_refused_while_the_lease_is_fresh<M: Me
 /// instead — a real, documented, non-error outcome that means "retry the
 /// same call", not a defect in the atomic check.
 pub async fn two_concurrent_captures_race_and_exactly_one_wins<M: Memory>(store: &M) {
-    let bot = EntityId("bot:contract-role-concurrent-race".into());
-    ensure(store, &bot).await;
+    let seat = a_seat(
+        store,
+        "bot:contract-role-concurrent-race",
+        "role:contract-concurrent-race",
+    )
+    .await;
     let now = crate::session::testing::contract::epoch();
 
     let (a, b) = tokio::join!(
         store.capture(NewFact {
             fields: role_fields("delta", now),
-            ..NewFact::about(bot.clone(), "delta races for the role", date(2026, 7, 1))
+            ..NewFact::about(
+                seat.role.clone(),
+                "delta races for the role",
+                date(2026, 7, 1)
+            )
         }),
         store.capture(NewFact {
             fields: role_fields("epsilon", now),
-            ..NewFact::about(bot.clone(), "epsilon races for the role", date(2026, 7, 1))
+            ..NewFact::about(
+                seat.role.clone(),
+                "epsilon races for the role",
+                date(2026, 7, 1)
+            )
         }),
     );
     let a_won = matches!(a, Ok(Guarded::Written(_)));
@@ -195,7 +266,7 @@ pub async fn two_concurrent_captures_race_and_exactly_one_wins<M: Memory>(store:
 /// it faces the same check a rival's would** — the fix for the exact bug a
 /// release once had: reading the holder, then writing unconditionally,
 /// with nothing between the two re-checking who holds it NOW. Renew and
-/// release both write `role_holder_key` and `role_claimed_at_key`
+/// release both write `holder` and `claimed_at`
 /// together, the same shape a claim writes, differing only in the
 /// timestamp — so a former holder's own write, arriving after a rival has
 /// legitimately taken over, is refused by [`crate::session::claim_role`]
@@ -203,8 +274,12 @@ pub async fn two_concurrent_captures_race_and_exactly_one_wins<M: Memory>(store:
 pub async fn a_stale_holders_own_write_is_refused_once_a_rival_has_taken_over<M: Memory>(
     store: &M,
 ) {
-    let bot = EntityId("bot:contract-role-takeover-race".into());
-    ensure(store, &bot).await;
+    let seat = a_seat(
+        store,
+        "bot:contract-role-takeover-race",
+        "role:contract-takeover-race",
+    )
+    .await;
     let claimed_at = crate::session::testing::contract::epoch();
     let stale = claimed_at + crate::session::LEASE_FRESHNESS + jiff::SignedDuration::from_secs(1);
 
@@ -212,7 +287,7 @@ pub async fn a_stale_holders_own_write_is_refused_once_a_rival_has_taken_over<M:
         store,
         NewFact {
             fields: role_fields("delta", claimed_at),
-            ..NewFact::about(bot.clone(), "delta claims the role", date(2026, 7, 1))
+            ..NewFact::about(seat.role.clone(), "delta claims the role", date(2026, 7, 1))
         },
     )
     .await;
@@ -227,7 +302,7 @@ pub async fn a_stale_holders_own_write_is_refused_once_a_rival_has_taken_over<M:
                 fields: role_fields("epsilon", stale),
                 ..FactPatch::default()
             },
-            &bot,
+            &seat.bot,
         )
         .await;
     assert!(
@@ -250,7 +325,7 @@ pub async fn a_stale_holders_own_write_is_refused_once_a_rival_has_taken_over<M:
                     fields: role_fields("delta", delta_writes),
                     ..FactPatch::default()
                 },
-                &bot,
+                &seat.bot,
             )
             .await;
         assert!(
@@ -260,9 +335,9 @@ pub async fn a_stale_holders_own_write_is_refused_once_a_rival_has_taken_over<M:
         );
     }
 
-    let fields = folded_fields_of(store, &bot).await;
+    let fields = folded_fields_of(store, &seat.role).await;
     assert_eq!(
-        fields.get(&crate::session::role_holder_key(ROLE)),
+        fields.get(crate::session::ROLE_HOLDER),
         Some(&"epsilon".to_string()),
         "epsilon's legitimate claim must survive both of delta's refused writes: {fields:?}",
     );
@@ -279,14 +354,18 @@ pub async fn a_stale_holders_own_write_is_refused_once_a_rival_has_taken_over<M:
 /// renewal lands while its sid holds the role, and a fresh claimant takes the
 /// role the instant after the release.
 pub async fn a_renewal_after_a_release_is_refused_and_the_role_stays_free<M: Memory>(store: &M) {
-    let bot = EntityId("bot:contract-role-renew-after-release".into());
-    ensure(store, &bot).await;
+    let seat = a_seat(
+        store,
+        "bot:contract-role-renew-after-release",
+        "role:contract-renew-after-release",
+    )
+    .await;
     let t0 = crate::session::testing::contract::epoch() + jiff::SignedDuration::from_secs(60);
     let later = t0 + jiff::SignedDuration::from_secs(60);
     let move_of = |kind| {
         Some(crate::session::RoleMove {
             kind,
-            role: ROLE.to_string(),
+            role: seat.name.clone(),
             claimant: "delta".to_string(),
         })
     };
@@ -300,14 +379,14 @@ pub async fn a_renewal_after_a_release_is_refused_and_the_role_stays_free<M: Mem
         store,
         NewFact {
             fields: role_fields("delta", t0),
-            ..NewFact::about(bot.clone(), "delta claims the role", date(2026, 7, 1))
+            ..NewFact::about(seat.role.clone(), "delta claims the role", date(2026, 7, 1))
         },
     )
     .await;
 
     // The positive: while delta holds the role, its renewal lands.
     let renewed = store
-        .update_fact(&claimed.address(), renew(later), &bot)
+        .update_fact(&claimed.address(), renew(later), &seat.bot)
         .await;
     assert!(
         matches!(renewed, Ok(Guarded::Written(_))),
@@ -320,25 +399,25 @@ pub async fn a_renewal_after_a_release_is_refused_and_the_role_stays_free<M: Mem
             &claimed.address(),
             FactPatch {
                 fields: [(
-                    crate::session::role_claimed_at_key(ROLE),
+                    crate::session::ROLE_CLAIMED_AT.to_string(),
                     jiff::Timestamp::UNIX_EPOCH.to_string(),
                 )]
                 .into_iter()
                 .collect(),
-                clear_fields: vec![crate::session::role_holder_key(ROLE)],
+                clear_fields: vec![crate::session::ROLE_HOLDER.to_string()],
                 role_move: move_of(crate::session::RoleMoveKind::Release),
                 ..FactPatch::default()
             },
-            &bot,
+            &seat.bot,
         )
         .await;
     assert!(
         matches!(released, Ok(Guarded::Written(_))),
         "the holder's own release must land: {released:?}"
     );
-    let fields = folded_fields_of(store, &bot).await;
+    let fields = folded_fields_of(store, &seat.role).await;
     assert_eq!(
-        fields.get(&crate::session::role_holder_key(ROLE)),
+        fields.get(crate::session::ROLE_HOLDER),
         None,
         "a release clears the holder: {fields:?}"
     );
@@ -348,16 +427,16 @@ pub async fn a_renewal_after_a_release_is_refused_and_the_role_stays_free<M: Mem
         .update_fact(
             &claimed.address(),
             renew(later + jiff::SignedDuration::from_secs(1)),
-            &bot,
+            &seat.bot,
         )
         .await;
     assert!(
         matches!(late, Err(MemoryError::RoleNotHeld { .. })),
         "a renewal after the release must be refused: {late:?}"
     );
-    let fields = folded_fields_of(store, &bot).await;
+    let fields = folded_fields_of(store, &seat.role).await;
     assert_eq!(
-        fields.get(&crate::session::role_holder_key(ROLE)),
+        fields.get(crate::session::ROLE_HOLDER),
         None,
         "a refused renewal leaves the role free: {fields:?}"
     );
@@ -370,7 +449,7 @@ pub async fn a_renewal_after_a_release_is_refused_and_the_role_stays_free<M: Mem
                 fields: role_fields("epsilon", later + jiff::SignedDuration::from_secs(2)),
                 ..FactPatch::default()
             },
-            &bot,
+            &seat.bot,
         )
         .await;
     assert!(
@@ -379,7 +458,212 @@ pub async fn a_renewal_after_a_release_is_refused_and_the_role_stays_free<M: Mem
     );
 }
 
+/// **A role claimed before it was an object is still held.** The bot's own
+/// `role/<role>/holder` and `role/<role>/claimed_at` answer until the role
+/// object carries a moment, so a rival is refused naming the old holder, and that
+/// holder's first write on the new object is a renewal, never a refusal. A
+/// reader that understood only the new shape would see this role as empty, and a
+/// watcher that sees an empty role starts a second session for it.
+///
+/// **Both halves**, or a store that read no old keys would pass the refusal as a
+/// store that refused everything: the old holder's own write lands, and the rival
+/// stays refused after it.
+pub async fn a_role_claimed_in_the_old_shape_is_still_held<M: Memory>(store: &M) {
+    let seat = a_seat(
+        store,
+        "bot:contract-role-old-shape",
+        "role:contract-old-shape",
+    )
+    .await;
+    let t0 = crate::session::testing::contract::epoch() + jiff::SignedDuration::from_secs(60);
+    let soon = t0 + jiff::SignedDuration::from_secs(10);
+
+    // The claim the previous build wrote, on the bot.
+    capture(
+        store,
+        NewFact {
+            fields: old_role_fields(&seat.name, "delta", t0),
+            ..NewFact::about(seat.bot.clone(), "delta claimed the role", date(2026, 7, 1))
+        },
+    )
+    .await;
+
+    let rival = store
+        .capture(NewFact {
+            fields: role_fields("epsilon", soon),
+            ..NewFact::about(
+                seat.role.clone(),
+                "epsilon claims the role",
+                date(2026, 7, 1),
+            )
+        })
+        .await;
+    assert!(
+        matches!(
+            &rival,
+            Err(MemoryError::RoleTaken { role, holder, .. })
+                if *role == seat.name && holder == "delta"
+        ),
+        "a role claimed in the old shape must refuse a rival, naming its holder: {rival:?}",
+    );
+
+    // The old holder's first write on the role object: its own renewal.
+    let renewed = store
+        .capture(NewFact {
+            fields: role_fields("delta", soon),
+            ..NewFact::about(seat.role.clone(), "delta renews the role", date(2026, 7, 1))
+        })
+        .await;
+    assert!(
+        matches!(renewed, Ok(Guarded::Written(_))),
+        "the old holder's own write must land, or this proves nothing: {renewed:?}",
+    );
+    let fields = folded_fields_of(store, &seat.role).await;
+    assert_eq!(
+        fields.get(crate::session::ROLE_HOLDER),
+        Some(&"delta".to_string()),
+        "the role object now carries the claim: {fields:?}",
+    );
+
+    let after = store
+        .capture(NewFact {
+            fields: role_fields("epsilon", soon + jiff::SignedDuration::from_secs(1)),
+            ..NewFact::about(seat.role.clone(), "epsilon tries again", date(2026, 7, 1))
+        })
+        .await;
+    assert!(
+        matches!(&after, Err(MemoryError::RoleTaken { holder, .. }) if holder == "delta"),
+        "the rival is still refused after the renewal: {after:?}",
+    );
+}
+
+/// **A released role object is not read past to the bot's old keys.** A release
+/// clears the holder and keeps the moment, so the old keys, which still name the
+/// holder the release ended, must not answer for a role object that carries a
+/// moment. The positive is the rival that takes the released role at once.
+pub async fn a_released_role_object_is_not_read_past_to_the_old_keys<M: Memory>(store: &M) {
+    let seat = a_seat(
+        store,
+        "bot:contract-role-released-over-old",
+        "role:contract-released-over-old",
+    )
+    .await;
+    let t0 = crate::session::testing::contract::epoch() + jiff::SignedDuration::from_secs(60);
+    let soon = t0 + jiff::SignedDuration::from_secs(10);
+
+    capture(
+        store,
+        NewFact {
+            fields: old_role_fields(&seat.name, "delta", t0),
+            ..NewFact::about(seat.bot.clone(), "delta claimed the role", date(2026, 7, 1))
+        },
+    )
+    .await;
+    // Delta moves its claim onto the role object, then gives the role up.
+    let claimed = capture(
+        store,
+        NewFact {
+            fields: role_fields("delta", t0),
+            ..NewFact::about(seat.role.clone(), "delta claims the role", date(2026, 7, 1))
+        },
+    )
+    .await;
+    let released = store
+        .update_fact(
+            &claimed.address(),
+            FactPatch {
+                fields: [(
+                    crate::session::ROLE_CLAIMED_AT.to_string(),
+                    jiff::Timestamp::UNIX_EPOCH.to_string(),
+                )]
+                .into_iter()
+                .collect(),
+                clear_fields: vec![crate::session::ROLE_HOLDER.to_string()],
+                role_move: Some(crate::session::RoleMove {
+                    kind: crate::session::RoleMoveKind::Release,
+                    role: seat.name.clone(),
+                    claimant: "delta".to_string(),
+                }),
+                ..FactPatch::default()
+            },
+            &seat.bot,
+        )
+        .await;
+    assert!(
+        matches!(released, Ok(Guarded::Written(_))),
+        "the holder's own release must land: {released:?}",
+    );
+
+    let taken = store
+        .capture(NewFact {
+            fields: role_fields("epsilon", soon),
+            ..NewFact::about(
+                seat.role.clone(),
+                "epsilon claims the role",
+                date(2026, 7, 1),
+            )
+        })
+        .await;
+    assert!(
+        matches!(taken, Ok(Guarded::Written(_))),
+        "a released role is free although the bot's old keys still name its old holder: \
+         {taken:?}",
+    );
+}
+
+/// **Anything else written to a role object is not a lease question.** The agent
+/// key and a watcher's marks land while another session's lease is fresh, and
+/// they move neither the holder nor the moment.
+pub async fn a_role_objects_other_keys_land_without_moving_the_lease<M: Memory>(store: &M) {
+    let seat = a_seat(
+        store,
+        "bot:contract-role-other-keys",
+        "role:contract-other-keys",
+    )
+    .await;
+    let now = crate::session::testing::contract::epoch();
+    capture(
+        store,
+        NewFact {
+            fields: role_fields("delta", now),
+            ..NewFact::about(seat.role.clone(), "delta claims the role", date(2026, 7, 1))
+        },
+    )
+    .await;
+
+    let wrote = store
+        .capture(NewFact {
+            fields: [("agent".to_string(), "an-agent-id".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(
+                seat.role.clone(),
+                "the line records its agent",
+                date(2026, 7, 1),
+            )
+        })
+        .await;
+    assert!(
+        matches!(wrote, Ok(Guarded::Written(_))),
+        "a write that names no holder is not a claim and must land: {wrote:?}",
+    );
+    let fields = folded_fields_of(store, &seat.role).await;
+    assert_eq!(
+        fields.get("agent"),
+        Some(&"an-agent-id".to_string()),
+        "{fields:?}"
+    );
+    assert_eq!(
+        fields.get(crate::session::ROLE_HOLDER),
+        Some(&"delta".to_string()),
+        "the agent key did not move the holder: {fields:?}",
+    );
+}
+
 pub async fn run_all_role_claims<M: Memory>(store: &M) {
+    a_role_claimed_in_the_old_shape_is_still_held(store).await;
+    a_released_role_object_is_not_read_past_to_the_old_keys(store).await;
+    a_role_objects_other_keys_land_without_moving_the_lease(store).await;
     a_second_capture_racing_the_first_is_refused(store).await;
     a_rival_update_fact_claim_is_refused_while_the_lease_is_fresh(store).await;
     two_concurrent_captures_race_and_exactly_one_wins(store).await;

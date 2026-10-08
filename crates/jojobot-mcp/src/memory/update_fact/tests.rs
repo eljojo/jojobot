@@ -2109,14 +2109,13 @@ async fn update_fact_refuses_to_set_clear_or_archive_a_roles_own_fields() {
     let sid = sid_of(&booted).expect("a handle");
     assert_eq!(booted["session"]["claim"]["status"], "taken", "{booted}");
 
-    let bot = EntityId("bot:gamma".into());
     let claim_address = jojobot
         .memory
-        .recall(&bot)
+        .recall(&EntityId("role:dev-dispatch".into()))
         .await
         .expect("recall ok")
         .into_iter()
-        .find(|fact| fact.fields.contains_key("role/dev-dispatch/holder"))
+        .find(|fact| fact.fields.contains_key("holder"))
         .expect("the claim left a fact carrying its own fields")
         .address()
         .to_string();
@@ -2125,12 +2124,9 @@ async fn update_fact_refuses_to_set_clear_or_archive_a_roles_own_fields() {
         &jojobot
             .update_fact(Parameters(UpdateFactArgs {
                 fields: Some(
-                    [(
-                        "role/dev-dispatch/holder".to_string(),
-                        "epsilon".to_string(),
-                    )]
-                    .into_iter()
-                    .collect(),
+                    [("holder".to_string(), "epsilon".to_string())]
+                        .into_iter()
+                        .collect(),
                 ),
                 ..update_args(&claim_address)
             }))
@@ -2142,7 +2138,7 @@ async fn update_fact_refuses_to_set_clear_or_archive_a_roles_own_fields() {
     let cleared = blocked(
         &jojobot
             .update_fact(Parameters(UpdateFactArgs {
-                clear_fields: Some(vec!["role/dev-dispatch/claimed_at".into()]),
+                clear_fields: Some(vec!["claimed_at".into()]),
                 ..update_args(&claim_address)
             }))
             .await
@@ -2161,22 +2157,26 @@ async fn update_fact_refuses_to_set_clear_or_archive_a_roles_own_fields() {
     );
     assert_eq!(archived["wrote"], false, "{archived}");
 
-    let after = jojobot.memory.fields(&bot).await.expect("fields ok");
+    let after = jojobot
+        .memory
+        .fields(&EntityId("role:dev-dispatch".into()))
+        .await
+        .expect("fields ok");
     assert_eq!(
-        after.get("role/dev-dispatch/holder"),
+        after.get("holder"),
         Some(&sid),
         "the claim's own holder must survive all three refused attempts: {after:?}"
     );
 
     // The claim path itself, untouched: a renewal through the boot door
     // still moves the claim moment after every side door was refused.
-    crate::session::testing::age_role_lease(&memory, "bot:gamma", "dev-dispatch", 10);
+    crate::session::testing::age_role_lease(&memory, "dev-dispatch", 10);
     let claimed_at_before = jojobot
         .memory
-        .fields(&bot)
+        .fields(&EntityId("role:dev-dispatch".into()))
         .await
         .expect("fields ok")
-        .get("role/dev-dispatch/claimed_at")
+        .get("claimed_at")
         .cloned()
         .expect("the aged moment is there");
     journal_entry(
@@ -2185,9 +2185,13 @@ async fn update_fact_refuses_to_set_clear_or_archive_a_roles_own_fields() {
         "kept working after the side doors were tried",
     )
     .await;
-    let renewed = jojobot.memory.fields(&bot).await.expect("fields ok");
+    let renewed = jojobot
+        .memory
+        .fields(&EntityId("role:dev-dispatch".into()))
+        .await
+        .expect("fields ok");
     assert_ne!(
-        renewed.get("role/dev-dispatch/claimed_at"),
+        renewed.get("claimed_at"),
         Some(&claimed_at_before),
         "the claim path must still renew once the side doors are closed: {renewed:?}"
     );
@@ -2825,11 +2829,11 @@ async fn update_fact_refuses_to_archive_a_role_record_when_the_store_cannot_be_r
     );
     let after = healthy
         .memory
-        .fields(&EntityId("bot:gamma".into()))
+        .fields(&EntityId("role:dev-dispatch".into()))
         .await
         .expect("fields ok");
     assert!(
-        after.contains_key("role/dev-dispatch/holder"),
+        after.contains_key("holder"),
         "the claim's holder left the fold with the store unreadable: {after:?}"
     );
 
@@ -2870,11 +2874,11 @@ async fn update_fact_refuses_to_archive_a_role_record_when_the_read_fails_for_an
     assert_eq!(refused["wrote"], false, "{refused}");
     let after = healthy
         .memory
-        .fields(&EntityId("bot:gamma".into()))
+        .fields(&EntityId("role:dev-dispatch".into()))
         .await
         .expect("fields ok");
     assert!(
-        after.contains_key("role/dev-dispatch/holder"),
+        after.contains_key("holder"),
         "the claim's holder left the fold with the read failing: {after:?}"
     );
 
@@ -2917,7 +2921,7 @@ async fn update_fact_archiving_an_unknown_home_gets_the_unknown_entity_answer() 
 async fn update_fact_refuses_to_archive_a_role_record_addressed_by_a_former_handle() {
     let jojobot = handler();
     let (claim, ordinary) = a_role_and_an_ordinary_claim_under_a_former_handle(&jojobot).await;
-    assert!(claim.starts_with("bot:gamma#"), "{claim}");
+    assert!(claim.starts_with("role:dev-dispatch#"), "{claim}");
 
     let refused = blocked(
         &jojobot
@@ -2931,11 +2935,11 @@ async fn update_fact_refuses_to_archive_a_role_record_addressed_by_a_former_hand
     assert_eq!(refused["wrote"], false, "{refused}");
     let after = jojobot
         .memory
-        .fields(&EntityId("bot:delta".into()))
+        .fields(&EntityId("role:dev-desk".into()))
         .await
         .expect("fields ok");
     assert!(
-        after.contains_key("role/dev-dispatch/holder"),
+        after.contains_key("holder"),
         "the claim's holder left the fold through a former handle: {after:?}"
     );
 

@@ -420,31 +420,36 @@ pub(crate) async fn a_claimed_role(jojobot: &Jojobot) -> String {
     assert_eq!(booted["session"]["claim"]["status"], "taken", "{booted}");
     jojobot
         .memory
-        .recall(&EntityId("bot:gamma".into()))
+        .recall(&EntityId("role:dev-dispatch".into()))
         .await
         .expect("recall ok")
         .into_iter()
-        .find(|fact| fact.fields.contains_key("role/dev-dispatch/holder"))
+        .find(|fact| fact.fields.contains_key("holder"))
         .expect("the claim left a fact carrying its own fields")
         .address()
         .to_string()
 }
 
-/// **A bot that claimed a role and holds an ordinary claim, renamed since.**
+/// **A role object that holds a claim and an ordinary claim, renamed since.**
 /// Returns the address of the record that carries the role's holder and claim
 /// moment and the address of the ordinary claim, both typed under the handle the
-/// bot wore before the rename.
+/// role object wore before the rename.
 pub(crate) async fn a_role_and_an_ordinary_claim_under_a_former_handle(
     jojobot: &Jojobot,
 ) -> (String, String) {
     let claim = a_claimed_role(jojobot).await;
-    let ordinary =
-        address_of(&capture_ok(jojobot, capture_args("bot:gamma", "an ordinary claim")).await);
+    let ordinary = address_of(
+        &capture_ok(
+            jojobot,
+            capture_args("role:dev-dispatch", "an ordinary claim"),
+        )
+        .await,
+    );
     let renamed = json_of(
         &jojobot
             .rename_entity(Parameters(RenameEntityArgs {
-                handle: "bot:gamma".into(),
-                to: "bot:delta".into(),
+                handle: "role:dev-dispatch".into(),
+                to: "role:dev-desk".into(),
                 parent: None,
                 recorded_at: None,
                 override_token: None,

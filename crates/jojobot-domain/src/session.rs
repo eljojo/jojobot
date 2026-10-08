@@ -488,6 +488,67 @@ pub fn role_from_field_key(key: &str) -> Option<&str> {
         .or_else(|| rest.strip_suffix("/claimed_at"))
 }
 
+/// **The key a role object holds its current claimant under.** The role is its
+/// own object, a child of the bot that holds it, so the key carries no role name:
+/// the object is the role.
+pub const ROLE_HOLDER: &str = "holder";
+
+/// **The key a role object holds the moment of its last claim under.** A release
+/// keeps it and writes the epoch.
+pub const ROLE_CLAIMED_AT: &str = "claimed_at";
+
+/// **What a role's lease says right now**, whichever shape holds it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RoleState {
+    /// The session id that holds the role, if any session does.
+    pub holder: Option<String>,
+    /// When the role was last claimed or renewed, if it ever was.
+    pub claimed_at: Option<Timestamp>,
+}
+
+/// **A role's state, read in both shapes** until the old one is dropped.
+///
+/// `child` is the role object's folded fields, `None` when no such object
+/// exists yet; `bot` is the holding bot's folded fields, where the old shape
+/// keeps `role/<role>/holder` and `role/<role>/claimed_at`. **A role object that
+/// carries a claim moment is the whole truth**, with or without a holder: a
+/// release clears the holder and keeps the moment, and reading the bot's old keys
+/// past it would find a holder the release had ended. A role object with no
+/// moment says nothing about the lease, so the old keys answer. A reader that
+/// understood only the new shape would see every role claimed before the change
+/// as empty, and a watcher that sees an empty role starts a second session.
+pub fn role_state(
+    role: &str,
+    child: Option<&std::collections::BTreeMap<String, String>>,
+    bot: &std::collections::BTreeMap<String, String>,
+) -> RoleState {
+    if let Some(child) = child
+        && child.contains_key(ROLE_CLAIMED_AT)
+    {
+        return RoleState {
+            holder: child.get(ROLE_HOLDER).cloned(),
+            claimed_at: child.get(ROLE_CLAIMED_AT).and_then(|s| s.parse().ok()),
+        };
+    }
+    RoleState {
+        holder: bot.get(&role_holder_key(role)).cloned(),
+        claimed_at: bot
+            .get(&role_claimed_at_key(role))
+            .and_then(|s| s.parse().ok()),
+    }
+}
+
+/// **What a write to a role object's own fields says about a claim.** `None`
+/// when it names no holder and a moment that reads as one: a write of anything
+/// else on a role object is not this write's business.
+pub fn role_claim_in(
+    fields: &std::collections::BTreeMap<String, String>,
+) -> Option<(String, Timestamp)> {
+    let claimant = fields.get(ROLE_HOLDER)?.clone();
+    let now: Timestamp = fields.get(ROLE_CLAIMED_AT)?.parse().ok()?;
+    Some((claimant, now))
+}
+
 /// **What a write's own fields say about a role claim, extracted rather
 /// than decided.** `None` when `fields` names neither of a role's own two
 /// keys: nothing here is this write's business. Otherwise the role, the
@@ -2581,6 +2642,90 @@ mod tests {
         assert_eq!(
             normalize_entry("line one\r\r\nline two"),
             "line one\nline two"
+        );
+    }
+
+    fn fields_of(pairs: &[(&str, &str)]) -> std::collections::BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    /// **A role object that carries a claim moment is the whole truth about the
+    /// role, even when it carries no holder.** A released role keeps its moment
+    /// and loses its holder; reading the bot's old keys past it would find a
+    /// holder the release had already ended.
+    #[test]
+    fn a_role_object_with_a_claim_moment_wins_over_the_bots_old_keys() {
+        let at = contract::epoch();
+        let old = fields_of(&[
+            ("role/dev-dispatch/holder", "stale-holder"),
+            ("role/dev-dispatch/claimed_at", &at.to_string()),
+        ]);
+        let released = fields_of(&[("claimed_at", &at.to_string())]);
+        let state = role_state("dev-dispatch", Some(&released), &old);
+        assert_eq!(
+            state.holder, None,
+            "the release is not read past: {state:?}"
+        );
+        assert_eq!(state.claimed_at, Some(at));
+
+        let held = fields_of(&[("holder", "delta"), ("claimed_at", &at.to_string())]);
+        let state = role_state("dev-dispatch", Some(&held), &old);
+        assert_eq!(state.holder.as_deref(), Some("delta"), "{state:?}");
+    }
+
+    /// **Until a role object holds a claim moment, the bot's old keys answer.**
+    /// This is the half of the cutover that keeps a lease alive across the
+    /// deploy: a role that was claimed in the old shape and not renewed yet has
+    /// no object, or one with no moment, and must still read as held.
+    #[test]
+    fn the_bots_old_keys_answer_until_a_role_object_holds_a_moment() {
+        let at = contract::epoch();
+        let old = fields_of(&[
+            ("role/dev-dispatch/holder", "gamma"),
+            ("role/dev-dispatch/claimed_at", &at.to_string()),
+        ]);
+        for child in [None, Some(fields_of(&[("agent", "an-agent-id")]))] {
+            let state = role_state("dev-dispatch", child.as_ref(), &old);
+            assert_eq!(
+                state.holder.as_deref(),
+                Some("gamma"),
+                "{child:?}: {state:?}"
+            );
+            assert_eq!(state.claimed_at, Some(at));
+        }
+        // And another role's old keys are nobody's answer for this one.
+        let other = fields_of(&[
+            ("role/em/holder", "gamma"),
+            ("role/em/claimed_at", &at.to_string()),
+        ]);
+        assert_eq!(
+            role_state("dev-dispatch", None, &other),
+            RoleState::default()
+        );
+    }
+
+    /// **A claim on a role object is read off its own two keys**, and a write
+    /// that names only one of them is not a claim.
+    #[test]
+    fn a_claim_on_a_role_object_names_a_holder_and_a_moment() {
+        let now = contract::epoch();
+        let both = fields_of(&[("holder", "gamma"), ("claimed_at", &now.to_string())]);
+        assert_eq!(role_claim_in(&both), Some(("gamma".to_string(), now)));
+        assert_eq!(role_claim_in(&fields_of(&[("holder", "gamma")])), None);
+        assert_eq!(
+            role_claim_in(&fields_of(&[("claimed_at", &now.to_string())])),
+            None
+        );
+        assert_eq!(
+            role_claim_in(&fields_of(&[
+                ("holder", "gamma"),
+                ("claimed_at", "yesterday")
+            ])),
+            None,
+            "a moment that is no moment is not a claim"
         );
     }
 }

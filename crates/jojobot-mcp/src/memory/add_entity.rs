@@ -13,7 +13,7 @@ use crate::teaching::{
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AddEntityArgs {
     /// One of `person`, `project`, `place`, `event`, `work`, `thing`, `org`,
-    /// `topic`, `bot`, `pet`, `rhythm`, `promise`, `machine`, `view`, `thread`.
+    /// `topic`, `bot`, `pet`, `rhythm`, `promise`, `machine`, `view`, `thread`, `role`.
     ///
     /// **A pet is a `pet` and not a `thing`.** `thing` is a named possession —
     /// a bike, a hand tool — and a companion animal is not one.
@@ -49,6 +49,11 @@ pub struct AddEntityArgs {
     /// it is DONE; a thread ends when it stops being TRUE. A topic is the glue noun
     /// for a world-fact belonging to no person, place or project; a thread
     /// belongs to somebody's life and is never the anchor of last resort.
+    ///
+    /// **A `role` is a seat one session holds at a time**, the child of the bot
+    /// that holds it: `holder`, `claimed_at` and `agent` say who has it, since
+    /// when and in which runtime agent. jojobot makes one the first time a role is
+    /// claimed, and only a claim writes its `holder` and `claimed_at`.
     pub(crate) kind: String,
     /// The slug half of the handle (`[a-z0-9-]+`), or a full `kind:slug` id
     /// whose kind must match `kind`. The handle is the name this entity is
@@ -271,7 +276,9 @@ impl Jojobot {
                 // **The checks a capture makes before it writes**, on what the
                 // caller sent: a role's own two fields are the boot door's, and
                 // the stored due moment is jojobot's own.
-                if let Some(refused) = jojobot_domain::memory::refuses_role_fields(fields.keys()) {
+                if let Some(refused) =
+                    jojobot_domain::memory::refuses_role_fields(&creating, fields.keys())
+                {
                     return memory_declined("add_entity", refused);
                 }
                 // **A guarded key is licensed here as on a capture**, through

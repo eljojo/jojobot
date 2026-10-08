@@ -410,14 +410,16 @@ mod tests {
         // bookkeeping rather than a rule the bot is held to.
         let held = jojobot
             .memory
-            .recall(&bot)
+            .recall(&EntityId("role:dev-dispatch".into()))
             .await
             .expect("recall ok")
             .into_iter()
             .filter(|fact| {
                 fact.fields
-                    .keys()
-                    .any(|key| jojobot_domain::session::role_from_field_key(key).is_some())
+                    .contains_key(jojobot_domain::session::ROLE_HOLDER)
+                    || fact
+                        .fields
+                        .contains_key(jojobot_domain::session::ROLE_CLAIMED_AT)
             })
             .count();
         assert_eq!(held, 1, "a claim record was written again");
@@ -631,9 +633,9 @@ mod tests {
                     view: None,
                     subject: Some(format!("session:{session_id}")),
                     kind: None,
+                    parent: None,
                     answers_type: None,
                     fields: None,
-                    parent: None,
                     facts: None,
                     stood_for: None,
                     status: None,

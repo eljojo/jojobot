@@ -23,25 +23,58 @@ fn at(s: &str) -> jiff::Timestamp {
 
 /// **Both of a role's own fields are caught, by shape, and an ordinary
 /// field never is.** The positive and the negative in one read: a write
-/// naming neither role field has nothing here to refuse.
+/// naming neither role field has nothing here to refuse. The old shape is
+/// caught on any subject, because it is a key written on a bot.
 #[test]
 fn refuses_role_fields_catches_both_of_a_roles_fields_and_nothing_else() {
+    let bot = EntityId("bot:gamma".into());
     let holder = crate::session::role_holder_key("dev-dispatch");
     let claimed_at = crate::session::role_claimed_at_key("dev-dispatch");
     let ordinary = "thought_capacity".to_string();
 
-    let refused = refuses_role_fields([&holder]);
+    let refused = refuses_role_fields(&bot, [&holder]);
     assert!(
         matches!(&refused, Some(MemoryError::RoleFieldGuarded { role, key }) if role == "dev-dispatch" && key == &holder),
         "{refused:?}",
     );
-    let refused = refuses_role_fields([&claimed_at]);
+    let refused = refuses_role_fields(&bot, [&claimed_at]);
     assert!(
         matches!(&refused, Some(MemoryError::RoleFieldGuarded { role, key }) if role == "dev-dispatch" && key == &claimed_at),
         "{refused:?}",
     );
-    assert!(refuses_role_fields([&ordinary]).is_none());
-    assert!(refuses_role_fields(std::iter::empty::<&String>()).is_none());
+    assert!(refuses_role_fields(&bot, [&ordinary]).is_none());
+    assert!(refuses_role_fields(&bot, std::iter::empty::<&String>()).is_none());
+}
+
+/// **A role object's holder and claim moment are guarded on the role object,
+/// and nowhere else.** The agent key and a watcher's mark are plain keys the
+/// line and the watchers write, so they are not caught; a person, or a bot, that
+/// carries a field called `holder` is not a role and is not caught either. The
+/// negatives are what keep a guard that refused every write on a role from
+/// passing the positives.
+#[test]
+fn a_role_objects_holder_and_moment_are_guarded_on_that_object_alone() {
+    let role = EntityId("role:dev-dispatch".into());
+    let person = EntityId("person:milhouse".into());
+    for key in [crate::session::ROLE_HOLDER, crate::session::ROLE_CLAIMED_AT] {
+        let key = key.to_string();
+        let refused = refuses_role_fields(&role, [&key]);
+        assert!(
+            matches!(&refused, Some(MemoryError::RoleFieldGuarded { role, key: k }) if role == "dev-dispatch" && k == &key),
+            "{key}: {refused:?}",
+        );
+        assert!(
+            refuses_role_fields(&person, [&key]).is_none(),
+            "{key} on a person is an ordinary key",
+        );
+    }
+    for plain in ["agent", "probed_at", "first_seen_empty"] {
+        let key = plain.to_string();
+        assert!(
+            refuses_role_fields(&role, [&key]).is_none(),
+            "{plain} is written by the line or a watcher and lands",
+        );
+    }
 }
 
 /// **A fold is served with its manager as the handle that manager answers to,
@@ -1285,6 +1318,7 @@ fn the_shipped_kinds_round_trip_and_the_set_is_closed() {
         (EntityKind::VIEW, "view"),
         (EntityKind::SESSION, "session"),
         (EntityKind::THREAD, "thread"),
+        (EntityKind::ROLE, "role"),
     ];
     for (kind, token) in all {
         assert_eq!(kind.as_token(), token);

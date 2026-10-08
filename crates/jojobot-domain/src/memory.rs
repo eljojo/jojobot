@@ -164,10 +164,21 @@ impl EntityKind {
     /// the anchor of last resort, it is the thing the story is ABOUT.
     pub const THREAD: EntityKind = EntityKind("thread");
 
+    /// **A seat one session holds at a time**, as its own object: the child of
+    /// the bot that holds it. Its plain keys say who holds it, when it was last
+    /// claimed and which runtime agent is running it, and a watcher's marks
+    /// about the seat sit on it too, so every fact about one role is in one
+    /// place.
+    ///
+    /// **Not a bot and not a rule.** A bot is an identity that can hold several
+    /// seats; a rule binds a bot's behaviour; a role is the lease on one seat.
+    /// Only the claim itself writes its holder and its claim moment.
+    pub const ROLE: EntityKind = EntityKind("role");
+
     /// **The kinds the software ships**, in the order they are seeded and
     /// listed. Not "every kind there is": that is [`kinds::all`], which answers
     /// from what this process loaded.
-    pub const ALL: [EntityKind; 16] = [
+    pub const ALL: [EntityKind; 17] = [
         EntityKind::PERSON,
         EntityKind::PROJECT,
         EntityKind::PLACE,
@@ -184,6 +195,7 @@ impl EntityKind {
         EntityKind::VIEW,
         EntityKind::SESSION,
         EntityKind::THREAD,
+        EntityKind::ROLE,
     ];
 
     /// A kind from a token this crate already holds for the life of the
@@ -780,42 +792,44 @@ pub struct FactPatch {
     pub session: Option<String>,
 }
 
-/// **The role a patch writes to, if it writes to one** — named by a renewal's
-/// or a release's own move, or by a claim's two fields.
-pub fn role_of_patch(patch: &FactPatch) -> Option<String> {
-    match &patch.role_move {
-        Some(role_move) => Some(role_move.role.clone()),
-        None => crate::session::role_write_in(&patch.fields).map(|(role, _, _)| role),
-    }
+/// **The role an entity IS, when it is a role object**: the slug of its handle.
+/// `None` for anything else, which is every write that has nothing to do with a
+/// lease.
+pub fn role_named_by(subject: &EntityId) -> Option<String> {
+    let (kind, slug) = subject.as_str().split_once(':')?;
+    (kind == EntityKind::ROLE.as_token()).then(|| slug.to_string())
 }
 
-/// **The store's atomic decision on a patch that writes to a role**, taken
-/// against the thing's folded fields in the same act as the write: `None`
-/// lets it land. A renewal or a release applies only while its own sid holds
-/// the role, so one that arrives after the holder gave the role up is
-/// refused; a claim is decided by [`crate::session::claim_role`].
-pub fn refuses_role_patch(
-    patch: &FactPatch,
+/// **The store's atomic decision on a write to a role object**, taken against
+/// the role's state as read in the same act as the write: `None` lets it land.
+///
+/// One function for the three writes a role takes. A renewal or a release
+/// (`role_move`) applies only while its own sid still holds the role, so one
+/// that arrives after the holder gave the role up is refused. A claim, which
+/// names a holder and a moment in `fields`, is decided by
+/// [`crate::session::claim_role`]. Anything else written to a role object, such
+/// as the agent key or a watcher's mark, is not a lease question and lands.
+/// `state` is [`crate::session::role_state`] over both shapes, so a role claimed
+/// before the change is held here too.
+pub fn refuses_role_write(
     role: &str,
-    folded: &BTreeMap<String, String>,
+    role_move: Option<&crate::session::RoleMove>,
+    fields: &BTreeMap<String, String>,
+    state: &crate::session::RoleState,
 ) -> Option<MemoryError> {
-    let current_holder = folded.get(&crate::session::role_holder_key(role));
-    if let Some(role_move) = &patch.role_move {
-        return (current_holder.map(String::as_str) != Some(role_move.claimant.as_str())).then(
-            || MemoryError::RoleNotHeld {
+    if let Some(role_move) = role_move {
+        return (state.holder.as_deref() != Some(role_move.claimant.as_str())).then(|| {
+            MemoryError::RoleNotHeld {
                 role: role.to_string(),
                 claimant: role_move.claimant.clone(),
-            },
-        );
+            }
+        });
     }
-    let (_, claimant, now) = crate::session::role_write_in(&patch.fields)?;
-    let current_claimed_at = folded
-        .get(&crate::session::role_claimed_at_key(role))
-        .and_then(|s| s.parse().ok());
+    let (claimant, now) = crate::session::role_claim_in(fields)?;
     match crate::session::claim_role(
         &claimant,
-        current_holder.map(String::as_str),
-        current_claimed_at,
+        state.holder.as_deref(),
+        state.claimed_at,
         now,
         crate::session::LEASE_FRESHNESS,
     ) {
@@ -2695,7 +2709,7 @@ pub fn refuses_merge_into_room(
     })
 }
 
-/// **A role's holder and claim moment are the boot door's to write, never an
+/// **A role's holder and claim moment are the claim's to write, never an
 /// ordinary capture or edit's.**
 ///
 /// Checked against a set of field KEYS rather than a `NewFact`/`FactPatch`,
@@ -2703,19 +2717,37 @@ pub fn refuses_merge_into_room(
 /// dropping them (`clear_fields`) alike — the two halves of the same
 /// mistake, and the reason a ceiling's own guard (`refuses_unlicensed_write`)
 /// only ever checked the first is what makes a bot able to clear its own
-/// capacity by patch. Named by [`crate::session::role_from_field_key`]
-/// rather than a roster: a role's name is the caller's own choice, so the
-/// only thing that identifies one of its two fields is its shape.
+/// capacity by patch.
+///
+/// **Two shapes, one guard.** On a role object, the keys `holder` and
+/// `claimed_at` are the role's own; the role is named by the object's handle.
+/// The same keys on anything else are ordinary. The previous shape, a bot's
+/// `role/<role>/holder` and `role/<role>/claimed_at`, is caught by its key's
+/// shape on any subject, since it is written on a bot, and stays guarded until
+/// it is dropped. The agent key and a watcher's marks on a role object are
+/// plain keys and are not caught.
 ///
 /// The claim path (`orientation::orient::decide_role_claim`) and the
 /// renewal path write these fields directly through the `Memory` trait,
 /// never through this call — it guards the ordinary, caller-facing surface
 /// only, the same split `refuses_unlicensed_write` already draws between a
 /// verb's own guard and what the trait itself allows.
-pub fn refuses_role_fields<'a>(keys: impl IntoIterator<Item = &'a String>) -> Option<MemoryError> {
+pub fn refuses_role_fields<'a>(
+    subject: &EntityId,
+    keys: impl IntoIterator<Item = &'a String>,
+) -> Option<MemoryError> {
+    let object_role = role_named_by(subject);
     keys.into_iter().find_map(|key| {
-        crate::session::role_from_field_key(key).map(|role| MemoryError::RoleFieldGuarded {
-            role: role.to_string(),
+        let role = match &object_role {
+            Some(role)
+                if key == crate::session::ROLE_HOLDER || key == crate::session::ROLE_CLAIMED_AT =>
+            {
+                Some(role.clone())
+            }
+            _ => crate::session::role_from_field_key(key).map(str::to_string),
+        };
+        role.map(|role| MemoryError::RoleFieldGuarded {
+            role,
             key: key.clone(),
         })
     })

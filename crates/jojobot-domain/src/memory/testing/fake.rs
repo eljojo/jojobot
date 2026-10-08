@@ -885,6 +885,35 @@ impl InMemoryMemory {
     ///
     /// The records are passed in rather than locked here, because the write
     /// path reads this while it is already holding them.
+    /// **A role object's lease state, read in both shapes**, or `None` when the
+    /// entity is no role. The role's own folded fields answer first; the holding
+    /// bot's old `role/<role>/...` keys answer until the role carries a moment.
+    fn role_state_for(
+        &self,
+        entity: &Entity,
+        index: &[Entity],
+        facts: &[Fact],
+    ) -> Option<(String, crate::session::RoleState)> {
+        let role = super::super::role_named_by(&entity.id)?;
+        let stored_as = |e: &Entity| match &e.badge {
+            Some(badge) => EntityId(badge.clone()),
+            None => e.id.clone(),
+        };
+        let declared = self.declarations();
+        let child =
+            super::super::folded_fields(&self.writes_on(&stored_as(entity), facts), &declared);
+        let bot = entity
+            .parent
+            .as_ref()
+            .and_then(|parent| index.iter().find(|e| &e.id == parent))
+            .map(|parent| {
+                super::super::folded_fields(&self.writes_on(&stored_as(parent), facts), &declared)
+            })
+            .unwrap_or_default();
+        let state = crate::session::role_state(&role, Some(&child), &bot);
+        Some((role, state))
+    }
+
     fn writes_on(&self, entity: &EntityId, facts: &[Fact]) -> Vec<super::super::KeyWrite> {
         let writes = self.writes.lock().expect("fake mutex poisoned");
         writes
@@ -1506,33 +1535,14 @@ impl Memory for InMemoryMemory {
         let existing: Vec<&Fact> = facts.iter().filter(|f| f.home == home).collect();
         let id = FactId(format!("f{}", existing.len() + 1));
         // **A role's own claim is decided atomically with the write it
-        // gates, against the folded state this same lock already holds** —
-        // the same reason the capacity check just below reads under it
-        // rather than in a call of its own. `role_write_in` reads `None`
-        // for any write that names neither of a role's two fields, so this
-        // costs nothing on the ordinary path.
-        if let Some((role, claimant, now)) = crate::session::role_write_in(&fact.fields) {
-            let folded =
-                super::super::folded_fields(&self.writes_on(&home, &facts), &self.declarations());
-            let current_holder = folded.get(&crate::session::role_holder_key(&role));
-            let current_claimed_at = folded
-                .get(&crate::session::role_claimed_at_key(&role))
-                .and_then(|s| s.parse().ok());
-            if let crate::session::LeaseClaim::Refused { holder, until } =
-                crate::session::claim_role(
-                    &claimant,
-                    current_holder.map(String::as_str),
-                    current_claimed_at,
-                    now,
-                    crate::session::LEASE_FRESHNESS,
-                )
-            {
-                return Err(MemoryError::RoleTaken {
-                    role,
-                    holder,
-                    until,
-                });
-            }
+        // gates, against the state this same lock already holds**, in both
+        // shapes. Only a write whose subject is a role object reads anything:
+        // every other write costs nothing here.
+        if let Some((role, state)) = self.role_state_for(&subject_entity, &index, &facts)
+            && let Some(refused) =
+                super::super::refuses_role_write(&role, None, &fact.fields, &state)
+        {
+            return Err(refused);
         }
         // **A ceiling's cardinality is enforced here, atomically with the
         // write it gates** — the same rule and the same reasons the real
@@ -1954,14 +1964,17 @@ impl Memory for InMemoryMemory {
         }
         // **A role's own claim, renewed or re-claimed by patch, is decided
         // atomically with the write it gates** — the same check `capture`
-        // runs, against the same folded state under the same lock, so a
-        // renewal and a fresh claim are one mechanism rather than two.
-        if let Some(role) = super::super::role_of_patch(&patch) {
-            let folded =
-                super::super::folded_fields(&self.writes_on(&key, &facts), &self.declarations());
-            if let Some(refused) = super::super::refuses_role_patch(&patch, &role, &folded) {
-                return Err(refused);
-            }
+        // runs, against the same state under the same lock, so a renewal and a
+        // fresh claim are one mechanism rather than two.
+        if let Some((role, state)) = self.role_state_for(entity, &index, &facts)
+            && let Some(refused) = super::super::refuses_role_write(
+                &role,
+                patch.role_move.as_ref(),
+                &patch.fields,
+                &state,
+            )
+        {
+            return Err(refused);
         }
         // **The patch is applied to the record as it reads now**, so a set that
         // replaces a value is validated against the value it replaces — and the

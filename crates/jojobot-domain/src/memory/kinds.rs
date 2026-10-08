@@ -28,9 +28,9 @@ use super::EntityKind;
 /// change is that the set is data. What makes the shipped ones different from any
 /// other kind is not the compiler: it is that a seed writes them at every
 /// startup and a caller cannot redeclare one.
-pub const SHIPPED: [&str; 16] = [
+pub const SHIPPED: [&str; 17] = [
     "person", "project", "place", "event", "work", "thing", "org", "topic", "bot", "pet", "rhythm",
-    "promise", "machine", "view", "session", "thread",
+    "promise", "machine", "view", "session", "thread", "role",
 ];
 
 /// **The statuses a `work` thing or a `project` holds**, in the order work
@@ -229,6 +229,16 @@ pub fn keys_of(token: &str) -> Vec<super::types::Field> {
             // `overdue`. It is a named ask rather than a filter because being
             // late is arithmetic over two dates and a cadence, not a value.
             Field::one_of("asks", ["overdue"]),
+        ],
+        // **A seat, and the three keys the software knows about it.** All optional:
+        // a released role has no holder, and a role nobody has claimed has none of
+        // them. `claimed_at` is text because it holds a MOMENT, to the second, and
+        // a lease is 45 minutes; the date type holds a day. A watcher's marks about
+        // the seat are plain keys beside these and no kind refuses them.
+        "role" => vec![
+            Field::new(crate::session::ROLE_HOLDER, ValueType::Text),
+            Field::new(crate::session::ROLE_CLAIMED_AT, ValueType::Text),
+            Field::new("agent", ValueType::Text),
         ],
         _ => Vec::new(),
     }

@@ -899,57 +899,16 @@ impl Jojobot {
         now: jiff::Timestamp,
         today: jiff::civil::Date,
     ) -> serde_json::Value {
-        let holder_key = jojobot_domain::session::role_holder_key(role);
-        let claimed_at_key = jojobot_domain::session::role_claimed_at_key(role);
-        let existing = match self.memory.recall(bot).await {
-            Ok(facts) => facts
-                .into_iter()
-                // **Either key names the claim record**: a release clears the
-                // holder and keeps the moment, and the next claim patches that
-                // record rather than writing a second one.
-                .find(|f| {
-                    f.fields.contains_key(&holder_key) || f.fields.contains_key(&claimed_at_key)
-                }),
-            Err(e) => {
-                tracing::warn!(
-                    error = %e, %bot, role,
-                    "could not read the bot's claims to decide a role claim"
-                );
-                return unavailable_claim(
-                    role,
-                    "the memory world could not be read, so this claim was neither granted nor \
-                     refused. Nothing was written.",
-                );
-            }
-        };
-        let written = match &existing {
-            Some(found) => {
-                self.memory
-                    .update_fact(
-                        &found.address(),
-                        FactPatch {
-                            fields: [
-                                (holder_key, claimant.to_string()),
-                                (claimed_at_key, now.to_string()),
-                            ]
-                            .into_iter()
-                            .collect(),
-                            ..FactPatch::default()
-                        },
-                        bot,
-                    )
-                    .await
-            }
-            None => {
-                let mut fact =
-                    NewFact::about(bot.clone(), format!("claimed the {role} role"), today);
-                fact.fields.insert(holder_key, claimant.to_string());
-                fact.fields.insert(claimed_at_key, now.to_string());
-                self.memory.capture(fact).await
-            }
-        };
+        let written = self
+            .write_role_keys(
+                bot,
+                role,
+                crate::session::role_write::RoleWrite::Claim { claimant, now },
+                today,
+            )
+            .await;
         match written {
-            Ok(Guarded::Written(_)) => serde_json::json!({
+            Ok(()) => serde_json::json!({
                 "role": role,
                 "status": "taken",
             }),
@@ -982,12 +941,8 @@ impl Jojobot {
                              what you sent.",
                 })
             }
-            other => {
-                if let Err(e) = &other {
-                    tracing::warn!(error = %e, %bot, role, "a role claim could not be written");
-                } else {
-                    tracing::warn!(%bot, role, "a role claim's own write was blocked unexpectedly");
-                }
+            Err(e) => {
+                tracing::warn!(error = %e, %bot, role, "a role claim could not be written");
                 unavailable_claim(
                     role,
                     "the claim was decided but could not be written. Nothing is held.",
@@ -1012,9 +967,9 @@ fn unavailable_claim(role: &str, note: &str) -> serde_json::Value {
     outcome
 }
 
-/// **What to do about a claim the store could not decide.** Said once for both
-/// places it happens, the read that precedes the claim and the write that makes
-/// it, so the two cannot come to say different things.
+/// **What to do about a claim the store could not decide.** One wording for every
+/// way the read or the write of a claim can fail, so they cannot come to say
+/// different things.
 fn claim_unavailable_way_forward(role: &str) -> String {
     format!(
         "Nothing is held. Call start_here again with the same claim for '{role}' in a \

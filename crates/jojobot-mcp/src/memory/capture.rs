@@ -808,7 +808,8 @@ impl Jojobot {
         // and the renewal path, never through this verb — so a write that
         // reaches here naming either field is, by construction, not one of
         // those two. See `refuses_role_fields`.
-        if let Some(refused) = jojobot_domain::memory::refuses_role_fields(fields.keys()) {
+        if let Some(refused) = jojobot_domain::memory::refuses_role_fields(&subject, fields.keys())
+        {
             return memory_declined("capture", refused);
         }
         // **The stored due moment is jojobot's, so a caller's own copy of it is

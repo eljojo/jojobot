@@ -16,6 +16,7 @@ pub mod amend_journal;
 pub mod declined;
 pub mod journal;
 pub mod list_runs;
+pub mod role_write;
 #[cfg(test)]
 pub mod testing;
 pub mod wire;

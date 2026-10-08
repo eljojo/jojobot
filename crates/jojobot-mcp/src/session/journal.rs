@@ -226,14 +226,14 @@ impl Jojobot {
     /// add_entity, post_message, and the rest) renews there instead — one
     /// mechanism, called from the two places a write actually lands.
     ///
-    /// A role claim lives entirely in the bot's own fields (see
-    /// [`crate::orientation::orient::OrientRequest`]'s sibling, the boot
-    /// door's `decide_role_claim`), so this scans that bot's own backing
-    /// rather than tracking a claimed role on the session record: a second
-    /// place to remember what is claimed is a second place for the two to
-    /// disagree. The write is the ordinary field-edit path
-    /// ([`Memory::update_fact`], patching the claim's own existing fact in
-    /// place) rather than a fresh fact per beat.
+    /// A role claim lives on the role's own object, a child of the bot (see
+    /// the boot door's `decide_role_claim`), with the bot's old keys as the
+    /// fallback for a claim made before that object existed. This asks the
+    /// store which roles that bot holds rather than tracking a claimed role
+    /// on the session record: a second place to remember what is claimed is
+    /// a second place for the two to disagree. The write goes through
+    /// `write_role_keys`, which moves a claim in the old shape onto its
+    /// object.
     ///
     /// Best-effort: a read or write failure here is logged and never turns a
     /// write that landed into a failed call — renewing a lease is not what a
@@ -255,9 +255,8 @@ impl Jojobot {
     /// [`Jojobot::renew_role_claims`] does, rather than a graph-wide search
     /// for the sid.
     ///
-    /// **The holder is cleared**, through the ordinary field-edit path
-    /// ([`Memory::update_fact`], `clear_fields`), and the moment is written as
-    /// the epoch. A write of this session's that was in flight when the wrap
+    /// **The holder is cleared** on the role's object, through
+    /// `write_role_keys`, and the moment is written as the epoch. A write of this session's that was in flight when the wrap
     /// landed then finds no holder to renew: the store applies a renewal only
     /// while its own sid still holds the role.
     ///
@@ -299,93 +298,36 @@ impl Jojobot {
         at: jiff::Timestamp,
         verb: &'static str,
     ) {
-        let fields = match self.memory.fields(bot).await {
-            Ok(fields) => fields,
+        let held_roles = match self.roles_held_by(bot, claimant).await {
+            Ok(roles) => roles,
             Err(e) => {
-                tracing::warn!(error = %e, %bot, verb, "could not read the bot's fields");
+                tracing::warn!(error = %e, %bot, verb, "could not read the bot's roles");
                 return;
             }
         };
-        let held_roles: Vec<String> = fields
-            .iter()
-            .filter_map(|(key, holder)| {
-                if holder != claimant {
-                    return None;
-                }
-                key.strip_prefix("role/")?
-                    .strip_suffix("/holder")
-                    .map(str::to_string)
-            })
-            .collect();
-        if held_roles.is_empty() {
-            return;
-        }
-        let backing = match self.memory.backing(bot).await {
-            Ok(backing) => backing,
-            Err(e) => {
-                tracing::warn!(error = %e, %bot, verb, "could not read the bot's fields' backing");
-                return;
-            }
-        };
-        for role in held_roles {
-            let holder_key = jojobot_domain::session::role_holder_key(&role);
-            let claimed_at_key = jojobot_domain::session::role_claimed_at_key(&role);
+        let today = at.to_zoned(jiff::tz::TimeZone::UTC).date();
+        for held in held_roles {
             // **A renewal that would barely move the expiry writes nothing.**
-            // The moment already read above is what decides it, so a write
+            // The moment read with the held roles decides it, so a write
             // inside the renewal age costs no store write. A release is never
             // skipped, and a moment that does not parse is due.
-            if verb == "renew"
-                && !jojobot_domain::session::renewal_is_due(
-                    fields
-                        .get(&claimed_at_key)
-                        .and_then(|moment| moment.parse().ok()),
-                    at,
-                )
-            {
+            if verb == "renew" && !jojobot_domain::session::renewal_is_due(held.claimed_at, at) {
                 continue;
             }
-            let Some(backing) = backing.get(&holder_key) else {
-                tracing::warn!(%bot, role, verb, "a held role's holder field has no backing");
-                continue;
+            let role = held.role;
+            let write = || {
+                if verb == "release" {
+                    crate::session::role_write::RoleWrite::Release { claimant }
+                } else {
+                    crate::session::role_write::RoleWrite::Renew { claimant, at }
+                }
             };
-            let address = FactAddress::new(bot.clone(), backing.fact.clone());
-            let kind = if verb == "release" {
-                jojobot_domain::session::RoleMoveKind::Release
-            } else {
-                jojobot_domain::session::RoleMoveKind::Renew
-            };
-            let role_move = || {
-                Some(jojobot_domain::session::RoleMove {
-                    kind,
-                    role: role.clone(),
-                    claimant: claimant.to_string(),
-                })
-            };
-            let patch = || match kind {
-                jojobot_domain::session::RoleMoveKind::Renew => FactPatch {
-                    fields: std::collections::BTreeMap::from([
-                        (holder_key.clone(), claimant.to_string()),
-                        (claimed_at_key.clone(), at.to_string()),
-                    ]),
-                    role_move: role_move(),
-                    ..Default::default()
-                },
-                jojobot_domain::session::RoleMoveKind::Release => FactPatch {
-                    fields: std::collections::BTreeMap::from([(
-                        claimed_at_key.clone(),
-                        at.to_string(),
-                    )]),
-                    clear_fields: vec![holder_key.clone()],
-                    role_move: role_move(),
-                    ..Default::default()
-                },
-            };
-            let mut outcome = self.memory.update_fact(&address, patch(), bot).await;
+            let mut outcome = self.write_role_keys(bot, &role, write(), today).await;
             if matches!(outcome, Err(MemoryError::Conflict)) {
-                outcome = self.memory.update_fact(&address, patch(), bot).await;
+                outcome = self.write_role_keys(bot, &role, write(), today).await;
             }
             match outcome {
-                Ok(_) | Err(MemoryError::RoleTaken { .. } | MemoryError::RoleNotHeld { .. }) => {}
+                Ok(()) | Err(MemoryError::RoleTaken { .. } | MemoryError::RoleNotHeld { .. }) => {}
                 Err(e) => {
                     tracing::warn!(error = %e, %bot, role, verb, "a role claim write failed");
                 }
@@ -1145,29 +1087,36 @@ mod tests {
     #[tokio::test]
     async fn a_beat_renews_the_session_s_own_role_claim() {
         let (jojobot, memory, sid) = holding_dev_dispatch().await;
-        age_role_lease(&memory, "bot:gamma", "dev-dispatch", 10);
+        age_role_lease(&memory, "dev-dispatch", 10);
 
-        let bot = EntityId("bot:gamma".into());
-        let before = jojobot.memory.fields(&bot).await.expect("fields ok");
+        let before = jojobot
+            .memory
+            .fields(&EntityId("role:dev-dispatch".into()))
+            .await
+            .expect("fields ok");
         let claimed_at_before = before
-            .get("role/dev-dispatch/claimed_at")
+            .get("claimed_at")
             .cloned()
             .expect("the claim's own field is present");
         let holder_before = before
-            .get("role/dev-dispatch/holder")
+            .get("holder")
             .cloned()
             .expect("the claim's own holder is present");
 
         journal_entry(&jojobot, &sid, "did some of the work").await;
 
-        let after = jojobot.memory.fields(&bot).await.expect("fields ok");
+        let after = jojobot
+            .memory
+            .fields(&EntityId("role:dev-dispatch".into()))
+            .await
+            .expect("fields ok");
         assert_ne!(
-            after.get("role/dev-dispatch/claimed_at"),
+            after.get("claimed_at"),
             Some(&claimed_at_before),
             "the beat must move the claim's own timestamp, not merely leave it standing: {after:?}"
         );
         assert_eq!(
-            after.get("role/dev-dispatch/holder"),
+            after.get("holder"),
             Some(&holder_before),
             "…and the holder is unchanged by a renewal: {after:?}"
         );
@@ -1182,9 +1131,13 @@ mod tests {
     #[tokio::test]
     async fn a_holders_many_writes_leave_the_lease_record_bounded() {
         let (jojobot, _memory, sid) = holding_dev_dispatch().await;
-        let bot = EntityId("bot:gamma".into());
-        let key = "role/dev-dispatch/claimed_at";
-        let written_by_the_claim = jojobot.memory.history(&bot, key).await.expect("history ok");
+        let role = EntityId("role:dev-dispatch".into());
+        let key = "claimed_at";
+        let written_by_the_claim = jojobot
+            .memory
+            .history(&role, key)
+            .await
+            .expect("history ok");
         assert_eq!(
             written_by_the_claim.len(),
             1,
@@ -1203,15 +1156,19 @@ mod tests {
             .await;
         }
 
-        let writes = jojobot.memory.history(&bot, key).await.expect("history ok");
+        let writes = jojobot
+            .memory
+            .history(&role, key)
+            .await
+            .expect("history ok");
         assert_eq!(
             writes.len(),
             1,
             "forty writes inside the renewal age rewrote the lease moment: {writes:?}"
         );
-        let fields = jojobot.memory.fields(&bot).await.expect("fields ok");
+        let fields = jojobot.memory.fields(&role).await.expect("fields ok");
         assert_eq!(
-            fields.get("role/dev-dispatch/holder"),
+            fields.get("holder"),
             Some(&sid),
             "the holder still holds: {fields:?}"
         );
@@ -1247,14 +1204,14 @@ mod tests {
 
         let (jojobot, memory, sid) = holding_dev_dispatch().await;
         journal_entry(&jojobot, &sid, "a write inside the renewal age").await;
-        age_role_lease(&memory, "bot:gamma", "dev-dispatch", 44);
+        age_role_lease(&memory, "dev-dispatch", 44);
         let inside = claim_as_rival(&jojobot).await;
         assert_eq!(
             inside["session"]["claim"]["status"], "refused",
             "a lease 44 minutes old is still held: {inside}"
         );
 
-        age_role_lease(&memory, "bot:gamma", "dev-dispatch", 46);
+        age_role_lease(&memory, "dev-dispatch", 46);
         let past = claim_as_rival(&jojobot).await;
         assert_eq!(
             past["session"]["claim"]["status"], "taken",

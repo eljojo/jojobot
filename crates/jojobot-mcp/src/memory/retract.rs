@@ -99,7 +99,9 @@ impl Jojobot {
         let refused = carried
             .iter()
             .find(|fact| fact.id == address.local)
-            .and_then(|fact| jojobot_domain::memory::refuses_role_fields(fact.fields.keys()));
+            .and_then(|fact| {
+                jojobot_domain::memory::refuses_role_fields(&address.home, fact.fields.keys())
+            });
         if let Some(refused) = refused {
             return memory_declined("retract", refused);
         }
@@ -786,14 +788,13 @@ mod tests {
         let sid = sid_of(&booted).expect("a handle");
         assert_eq!(booted["session"]["claim"]["status"], "taken", "{booted}");
 
-        let bot = EntityId("bot:gamma".into());
         let claim_address = jojobot
             .memory
-            .recall(&bot)
+            .recall(&EntityId("role:dev-dispatch".into()))
             .await
             .expect("recall ok")
             .into_iter()
-            .find(|fact| fact.fields.contains_key("role/dev-dispatch/holder"))
+            .find(|fact| fact.fields.contains_key("holder"))
             .expect("the claim left a fact carrying its own fields")
             .address()
             .to_string();
@@ -809,27 +810,35 @@ mod tests {
         );
         assert_eq!(refused["wrote"], false, "{refused}");
 
-        let after = jojobot.memory.fields(&bot).await.expect("fields ok");
+        let after = jojobot
+            .memory
+            .fields(&EntityId("role:dev-dispatch".into()))
+            .await
+            .expect("fields ok");
         assert_eq!(
-            after.get("role/dev-dispatch/holder"),
+            after.get("holder"),
             Some(&sid),
             "the claim's own holder must survive the refused retraction: {after:?}"
         );
 
-        crate::session::testing::age_role_lease(&memory, "bot:gamma", "dev-dispatch", 10);
+        crate::session::testing::age_role_lease(&memory, "dev-dispatch", 10);
         let claimed_at_before = jojobot
             .memory
-            .fields(&bot)
+            .fields(&EntityId("role:dev-dispatch".into()))
             .await
             .expect("fields ok")
-            .get("role/dev-dispatch/claimed_at")
+            .get("claimed_at")
             .cloned()
             .expect("the aged moment is there");
         crate::session::testing::journal_entry(&jojobot, &sid, "kept working past the refusal")
             .await;
-        let renewed = jojobot.memory.fields(&bot).await.expect("fields ok");
+        let renewed = jojobot
+            .memory
+            .fields(&EntityId("role:dev-dispatch".into()))
+            .await
+            .expect("fields ok");
         assert_ne!(
-            renewed.get("role/dev-dispatch/claimed_at"),
+            renewed.get("claimed_at"),
             Some(&claimed_at_before),
             "the claim path must still renew once the side door is closed: {renewed:?}"
         );
@@ -859,10 +868,13 @@ mod tests {
             "the refusal must name the storage failure and what to do next: {}",
             err.message
         );
-        let bot = EntityId("bot:gamma".into());
-        let after = healthy.memory.fields(&bot).await.expect("fields ok");
+        let after = healthy
+            .memory
+            .fields(&EntityId("role:dev-dispatch".into()))
+            .await
+            .expect("fields ok");
         assert!(
-            after.contains_key("role/dev-dispatch/holder"),
+            after.contains_key("holder"),
             "the claim's holder left the fold with the store unreadable: {after:?}"
         );
 
@@ -902,11 +914,11 @@ mod tests {
         assert_eq!(refused["wrote"], false, "{refused}");
         let after = healthy
             .memory
-            .fields(&EntityId("bot:gamma".into()))
+            .fields(&EntityId("role:dev-dispatch".into()))
             .await
             .expect("fields ok");
         assert!(
-            after.contains_key("role/dev-dispatch/holder"),
+            after.contains_key("holder"),
             "the claim's holder left the fold with the read failing: {after:?}"
         );
 
@@ -951,7 +963,7 @@ mod tests {
         let (claim, ordinary) =
             crate::memory::testing::a_role_and_an_ordinary_claim_under_a_former_handle(&jojobot)
                 .await;
-        assert!(claim.starts_with("bot:gamma#"), "{claim}");
+        assert!(claim.starts_with("role:dev-dispatch#"), "{claim}");
 
         let refused = blocked(
             &jojobot
@@ -962,11 +974,11 @@ mod tests {
         assert_eq!(refused["wrote"], false, "{refused}");
         let after = jojobot
             .memory
-            .fields(&EntityId("bot:delta".into()))
+            .fields(&EntityId("role:dev-desk".into()))
             .await
             .expect("fields ok");
         assert!(
-            after.contains_key("role/dev-dispatch/holder"),
+            after.contains_key("holder"),
             "the claim's holder left the fold through a former handle: {after:?}"
         );
 

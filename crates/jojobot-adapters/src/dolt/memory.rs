@@ -1488,32 +1488,14 @@ impl DoltMemory {
             .expect("resolved above")
             .kind;
         // **A role's own claim is decided atomically with the write it
-        // gates, against the folded state this same transaction already
-        // reads** — the same reason the capacity check just below reads
-        // under it rather than in a call of its own. `role_write_in` reads
-        // `None` for any write that names neither of a role's two fields,
-        // so this costs nothing on the ordinary path.
-        if let Some((role, claimant, now)) = jojobot_domain::session::role_write_in(&fact.fields) {
-            let folded = Self::held_by(tx, &home).await?;
-            let current_holder = folded.get(&jojobot_domain::session::role_holder_key(&role));
-            let current_claimed_at = folded
-                .get(&jojobot_domain::session::role_claimed_at_key(&role))
-                .and_then(|s| s.parse().ok());
-            if let jojobot_domain::session::LeaseClaim::Refused { holder, until } =
-                jojobot_domain::session::claim_role(
-                    &claimant,
-                    current_holder.map(String::as_str),
-                    current_claimed_at,
-                    now,
-                    jojobot_domain::session::LEASE_FRESHNESS,
-                )
-            {
-                return Err(MemoryError::RoleTaken {
-                    role,
-                    holder,
-                    until,
-                });
-            }
+        // gates, against the state this same transaction reads**, in both
+        // shapes. Only a write whose subject is a role object reads anything:
+        // every other write costs nothing here.
+        if let Some((role, state)) = self.role_state_of(tx, &subject_handle, &home).await?
+            && let Some(refused) =
+                jojobot_domain::memory::refuses_role_write(&role, None, &fact.fields, &state)
+        {
+            return Err(refused);
         }
         // **A ceiling's cardinality is enforced here, atomically with the
         // write it gates** — never as a separate call, because a drop with
@@ -2052,6 +2034,36 @@ impl DoltMemory {
             );
         }
         Ok(walk.above())
+    }
+
+    /// **A role object's lease state, read in both shapes inside the write's own
+    /// transaction**, or `None` when the subject is no role. The role's own
+    /// folded fields answer first; the holding bot's old `role/<role>/...` keys
+    /// answer until the role carries a moment. The parent is read straight off
+    /// the entity row, which keeps the badge it wears, so a write to anything
+    /// else pays nothing here.
+    async fn role_state_of(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        handle: &EntityId,
+        key: &EntityId,
+    ) -> Result<Option<(String, jojobot_domain::session::RoleState)>, MemoryError> {
+        let Some(role) = jojobot_domain::memory::role_named_by(handle) else {
+            return Ok(None);
+        };
+        let child = Self::held_by(tx, key).await?;
+        let parent: Option<String> = sqlx::query_scalar("SELECT parent FROM entity WHERE id = ?")
+            .bind(handle.as_str())
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(store)?
+            .flatten();
+        let bot = match parent {
+            Some(parent) => Self::held_by(tx, &EntityId(parent)).await?,
+            None => Default::default(),
+        };
+        let state = jojobot_domain::session::role_state(&role, Some(&child), &bot);
+        Ok(Some((role, state)))
     }
 
     /// **The columns of the project a work item or project is filed under**, read inside
@@ -3703,15 +3715,17 @@ impl Memory for DoltMemory {
         }
         // **A role's own claim, renewed or re-claimed by patch, is decided
         // atomically with the write it gates** — the same check `capture`
-        // runs, against the same folded state under the same transaction,
-        // so a renewal and a fresh claim are one mechanism rather than two.
-        if let Some(role) = jojobot_domain::memory::role_of_patch(&patch) {
-            let folded = Self::held_by(&mut tx, &key).await?;
-            if let Some(refused) =
-                jojobot_domain::memory::refuses_role_patch(&patch, &role, &folded)
-            {
-                return Err(refused);
-            }
+        // runs, against the same state under the same transaction, so a
+        // renewal and a fresh claim are one mechanism rather than two.
+        if let Some((role, state)) = self.role_state_of(&mut tx, &handle, &key).await?
+            && let Some(refused) = jojobot_domain::memory::refuses_role_write(
+                &role,
+                patch.role_move.as_ref(),
+                &patch.fields,
+                &state,
+            )
+        {
+            return Err(refused);
         }
         // What the ADDRESSED RECORD carries right now — read off before the
         // patch rewrites it, because that is what decides which of the patch's
