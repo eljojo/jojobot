@@ -996,6 +996,15 @@ impl Session {
         }
     }
 
+    /// **A call's answer and the characters it was served in**, whatever the
+    /// size: for the case that reads what comes back when one record is itself
+    /// past the ceiling.
+    pub async fn answer_and_size(&self, tool: &str, args: Value) -> (Value, usize) {
+        let mut args = args;
+        self.riding(&mut args);
+        call_measured(&self.client, tool, args).await
+    }
+
     /// This run's own handle — what a later boot offers back when this one
     /// stops without wrapping, and what a story compares against to say the
     /// run was resumed rather than replaced.

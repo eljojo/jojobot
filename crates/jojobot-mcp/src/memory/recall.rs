@@ -1011,7 +1011,8 @@ struct KeyNarrowing<'a> {
 /// several fills the objects: `offset` is how many were already read, whole
 /// objects only; an object that cannot fit even as the first of its part has its
 /// facts cut where it stands, `facts_not_shown` says so, and recalling it alone
-/// reads them in parts. What was left out is counted under `not_shown` with the
+/// reads them in parts, except that a single fact larger than the ceiling is
+/// never cut and still comes back whole. What was left out is counted under `not_shown` with the
 /// `offset` that reads on.
 fn fit_recall(body: &mut serde_json::Value, offset: usize) {
     use jojobot_domain::text::{ANSWER_CEILING, Capped};
@@ -1101,7 +1102,8 @@ fn fit_recall(body: &mut serde_json::Value, offset: usize) {
             let pointer = serde_json::json!({
                 "count": held,
                 "how_to_proceed": format!(
-                    "recall {id} alone with facts: true reads its facts in parts that fit"
+                    "recall {id} alone with facts: true reads its facts in parts that fit, and a \
+                     single fact larger than the ceiling still comes back whole"
                 ),
             });
             object["facts_not_shown"] = pointer;
@@ -1619,7 +1621,8 @@ impl Jojobot {
                        reads on — repeat the same call with it. One subject with more facts than \
                        fit is read the same way, `offset` counting its facts, and an object that \
                        cannot fit even first in its part carries `facts_not_shown` naming that \
-                       subject to recall alone. AN EMPTY ANSWER NAMES WHAT \
+                       subject to recall alone, which reads its facts in parts, and a single \
+                       fact larger than the ceiling still comes back whole. AN EMPTY ANSWER NAMES WHAT \
                        IT LOOKED THROUGH: it carries `searched`, one line saying the population, \
                        what was left out and the call that widens it."
     )]

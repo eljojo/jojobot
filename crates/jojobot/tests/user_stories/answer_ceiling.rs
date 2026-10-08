@@ -1031,3 +1031,104 @@ async fn a_kind_of_places_of_different_ages_says_each_ones_age_under_the_ceiling
     written.sort();
     assert_eq!(seen, written, "every place that was written, once");
 }
+
+/// **One fact larger than the ceiling is served whole, and the pointer that
+/// sends a caller to it does not promise otherwise.** A place whose one fact is
+/// past the ceiling cannot fit in a part of a kind recall, so its facts are cut
+/// and `facts_not_shown` names the call that reads them. That call returns the
+/// fact whole, over the ceiling, because a fact is never cut mid-record. The
+/// pointer says so; a sentence promising parts that fit would be false for
+/// exactly the fact that triggers it.
+#[tokio::test]
+async fn a_fact_larger_than_the_ceiling_is_served_whole_and_the_pointer_says_so() {
+    use jojobot_domain::memory::{EntityId, EntityKind, Guarded, NewEntity, NewFact};
+
+    let first = Story::begin("bot:otto").await;
+    let memory = first.memory_store();
+    let today: jiff::civil::Date = "2026-10-01".parse().expect("a day");
+    let huge = filler(ANSWER_CEILING + 5_000, 3);
+    let mut written_len = 0;
+    let mut place_ids: Vec<String> = Vec::new();
+    for (p, size) in [(0usize, huge.len()), (1, 200)] {
+        let id = EntityId::new(EntityKind::PLACE, slug(20_000 + p));
+        let added = memory
+            .add_entity(NewEntity::new(
+                id.clone(),
+                format!("Spot {}", slug(20_000 + p)),
+                "user-named",
+            ))
+            .await;
+        assert!(
+            matches!(added, Ok(Guarded::Written(_))),
+            "a place lands: {added:?}"
+        );
+        let mut fact = NewFact::about(id.clone(), format!("record {p}"), today);
+        fact.details = Some(filler(size, p));
+        let outcome = memory.capture(fact).await;
+        let Ok(Guarded::Written(fact)) = outcome else {
+            panic!("a fact about a place that exists lands: {outcome:?}");
+        };
+        if p == 0 {
+            written_len = fact.details.as_deref().map_or(0, str::len);
+        }
+        place_ids.push(id.as_str().to_string());
+    }
+    assert!(
+        written_len > ANSWER_CEILING,
+        "the store kept the fact whole: {written_len}"
+    );
+    let story = first.restarted().await;
+    let otto = story.as_bot("bot:otto").await;
+    let heavy = place_ids[0].clone();
+
+    // The kind recall cuts the heavy place's facts where it stands and says where
+    // to read them.
+    let mut pointer: Option<Value> = None;
+    let mut offset = 0u64;
+    for _ in 0..5 {
+        let part = otto
+            .call(
+                "recall",
+                json!({"kind": "place", "facts": true, "offset": offset}),
+            )
+            .await;
+        assert!(part.size() <= ANSWER_CEILING, "{}", part.size());
+        let body = part.json();
+        for object in body["objects"].as_array().expect("objects") {
+            if object["facts_not_shown"].is_object() {
+                assert_eq!(object["id"], heavy.as_str(), "{object}");
+                pointer = Some(object["facts_not_shown"].clone());
+            }
+        }
+        match body["not_shown"]["offset"].as_u64() {
+            Some(next) => offset = next,
+            None => break,
+        }
+    }
+    let pointer = pointer.expect("the heavy place had its facts cut and said so");
+
+    // Read alone, the one fact comes back whole and over the ceiling.
+    let (body, size) = otto
+        .answer_and_size("recall", json!({"subject": heavy, "facts": true}))
+        .await;
+    assert!(
+        size > ANSWER_CEILING,
+        "a fact is never cut mid-record: {size}"
+    );
+    let facts = body["objects"][0]["facts"].as_array().expect("the facts");
+    assert_eq!(facts.len(), 1, "one fact, not cut to none: {size}");
+    assert_eq!(
+        facts[0]["details"].as_str().map(str::len),
+        Some(written_len),
+        "the fact came back whole"
+    );
+    assert!(body.get("not_shown").is_none(), "nothing left to read on");
+
+    // And the pointer says it: this is the one word the old sentence lacked.
+    let said = pointer["how_to_proceed"].as_str().expect("a way on");
+    assert!(said.contains(&heavy), "it names the place: {said}");
+    assert!(
+        said.contains("whole"),
+        "it says the fact comes back whole: {said}"
+    );
+}
