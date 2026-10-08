@@ -72,3 +72,74 @@ async fn a_session_that_closed_properly_is_what_the_next_one_is_handed() {
 
     story.finish().await;
 }
+
+/// "I stopped twice without wrapping. Which one do I pick up?" The offer a boot
+/// hands back names every run it offers, each by the sid that `resume` takes,
+/// beside what the run was working on. Resuming by one of those sids lands on
+/// that run and no other, and the offer hands out no sid of its own until one is
+/// picked.
+#[tokio::test]
+async fn the_resume_offer_names_each_runs_sid_and_resuming_by_one_lands() {
+    let story = Story::begin("bot:otto").await;
+    let first = story.session().await;
+    first
+        .call(
+            "journal",
+            json!({"entry": "surveyed the east gorge", "focus": "the east gorge survey"}),
+        )
+        .await;
+    let second = story.as_bot("bot:otto").await;
+    second
+        .call(
+            "journal",
+            json!({"entry": "priced the wheels", "focus": "pricing the replacement wheels"}),
+        )
+        .await;
+    let (first_sid, second_sid) = (first.sid().to_string(), second.sid().to_string());
+    assert_ne!(first_sid, second_sid, "two runs, not the same one twice");
+
+    // The boot offers both, each by its sid and beside its focus.
+    let (door, minted) = story
+        .call("start_here", json!({"bot": "otto", "brief": true}))
+        .await;
+    assert!(minted.is_none(), "an offer mints no handle");
+    let offer = door.json();
+    assert!(
+        offer["session"]["sid"].is_null(),
+        "the offer hands out no sid of its own until one is picked: {offer}"
+    );
+    let choices = offer["session"]["choices"]
+        .as_array()
+        .unwrap_or_else(|| panic!("two runs in flight are offered back: {offer}"));
+    let working_on = |sid: &str| {
+        choices
+            .iter()
+            .find(|c| c["sid"] == sid)
+            .unwrap_or_else(|| panic!("{sid} is not named in the offer: {offer}"))["working_on"]
+            .clone()
+    };
+    assert_eq!(working_on(&first_sid), "the east gorge survey", "{offer}");
+    assert_eq!(
+        working_on(&second_sid),
+        "pricing the replacement wheels",
+        "{offer}"
+    );
+
+    // Resuming by one of those sids lands on that run.
+    let (resumed, _) = story
+        .call(
+            "start_here",
+            json!({"bot": "otto", "brief": true, "resume": first_sid}),
+        )
+        .await;
+    let resumed = resumed.json();
+    assert_eq!(
+        resumed["session"]["sid"], first_sid,
+        "resuming by a sid from the offer lands on that run: {resumed}"
+    );
+    assert_ne!(
+        resumed["session"]["sid"], second_sid,
+        "and not on the other: {resumed}"
+    );
+    story.finish().await;
+}
