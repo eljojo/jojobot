@@ -113,6 +113,7 @@ async fn restore_a_fixture(fixture_dir: &str, label: &str) -> Restored {
     // migration or a filter that changed what a thing holds cannot move this side
     // with it.
     let held_before = fields_every_thing_holds(restoring.pool()).await;
+    assert_every_held_row_joined(restoring.pool(), &git_ref).await;
     assert!(
         held_before.len() >= 5,
         "the fixture holds things with fields, or this compares nothing: {held_before:?}"
@@ -667,6 +668,47 @@ async fn fields_every_thing_holds(pool: &sqlx::MySqlPool) -> Vec<(String, String
         .collect()
 }
 
+/// **The rows `fields_every_thing_holds` cannot place under a handle**, as
+/// `(entity, key)`: the same newest value of a key on a record that still
+/// stands, whose entity column no entity wears as its badge. That is a field
+/// written in a store that never badged, keyed by a bare handle. The join to
+/// `entity` leaves such a row out without a word, so the oracle would compare
+/// less than the fixture holds and still pass; this names what it left out.
+async fn held_rows_that_do_not_join(pool: &sqlx::MySqlPool) -> Vec<(String, String)> {
+    sqlx::query_as(
+        "SELECT w.entity, w.`key`
+         FROM field_write w
+         JOIN fact f ON f.entity = w.entity AND f.id = w.fact_id AND f.status = 'active'
+         LEFT JOIN entity e ON e.badge = w.entity
+         WHERE e.id IS NULL
+           AND w.value IS NOT NULL
+           AND w.`key` NOT IN ('merged_from', 'retracts')
+           AND w.`key` NOT IN (SELECT key_name FROM type_field WHERE folds = 'describes')
+           AND w.ordinal = (
+             SELECT MAX(w2.ordinal)
+             FROM field_write w2
+             JOIN fact f2 ON f2.entity = w2.entity AND f2.id = w2.fact_id AND f2.status = 'active'
+             WHERE w2.entity = w.entity AND w2.`key` = w.`key`)
+         ORDER BY w.entity, w.`key`",
+    )
+    .fetch_all(pool)
+    .await
+    .expect("the old store's unjoined fields read")
+}
+
+/// **The oracle compares everything the fixture holds, or the gate fails.** A
+/// row it could not join is not compared, and a comparison that skipped rows
+/// says nothing about them.
+async fn assert_every_held_row_joined(pool: &sqlx::MySqlPool, git_ref: &str) {
+    let unjoined = held_rows_that_do_not_join(pool).await;
+    assert!(
+        unjoined.is_empty(),
+        "recorded at {git_ref}: {} held values are unjoined to any entity, so the upgrade \
+         comparison would skip them: {unjoined:?}",
+        unjoined.len()
+    );
+}
+
 /// **A stored value with each item that is a badge replaced by the handle of the
 /// entity wearing it.** An item is one piece of a comma list, and it is a badge
 /// when it is one an entity wears, with or without the `@#` mark: a field a type
@@ -724,6 +766,65 @@ async fn assert_every_thing_holds_what_it_held(
              read as the handles they answered to) and holds '{now}' after"
         );
     }
+}
+
+/// **A fixture whose rows all join leaves nothing out of the comparison.** Both
+/// recordings come from builds that badge, so every held value belongs to an
+/// entity that wears the badge it is keyed by.
+#[tokio::test]
+async fn every_recorded_held_value_joins_to_an_entity() {
+    for (fixture_dir, label) in [
+        (FIXTURE_DIR, "joins-first"),
+        (DEPLOY_3_FIXTURE_DIR, "joins-second"),
+    ] {
+        let restored = restore_a_fixture(fixture_dir, label).await;
+        assert!(
+            !restored.held_before.is_empty(),
+            "the comparison is over something at {}",
+            restored.git_ref
+        );
+    }
+}
+
+/// **A held value keyed by a bare handle fails the gate.** One thing in the
+/// restored store loses its badge, which is what a store that never badged
+/// looks like to the join: its field rows are still keyed by the old badge and
+/// no entity wears it. The oracle must name them and stop, not compare the rest.
+#[tokio::test]
+#[should_panic(expected = "unjoined")]
+async fn a_held_value_the_oracle_cannot_join_fails_the_gate() {
+    let state_dir = std::env::temp_dir().join(format!(
+        "jojobot-upgrade-gate-{}-unjoined",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&state_dir).expect("a scratch directory");
+    let _scratch = Scratch(state_dir.clone());
+    let git_ref = std::fs::read_to_string(format!("{FIXTURE_DIR}/ref.txt"))
+        .expect("the fixture's ref")
+        .trim()
+        .to_string();
+    let store = Dolt::start(&state_dir.join("db"), free_port())
+        .await
+        .expect("a fresh store comes up to receive the fixture");
+    let dump =
+        std::fs::read_to_string(format!("{FIXTURE_DIR}/doltdump.sql")).expect("the fixture's dump");
+    for statement in split_sql_statements(&dump) {
+        sqlx::raw_sql(&statement)
+            .execute(store.pool())
+            .await
+            .expect("the fixture replays");
+    }
+    let (holder, _, _) = fields_every_thing_holds(store.pool())
+        .await
+        .into_iter()
+        .next()
+        .expect("the fixture holds a field");
+    sqlx::query("UPDATE entity SET badge = NULL WHERE id = ?")
+        .bind(&holder)
+        .execute(store.pool())
+        .await
+        .expect("one thing loses its badge");
+    assert_every_held_row_joined(store.pool(), &git_ref).await;
 }
 
 /// **A naive split, safe for what this fixture actually contains**: this
