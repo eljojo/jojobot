@@ -600,8 +600,12 @@ impl InMemoryMemory {
         // value stored behind the mark is the thing's id. One stored as plain
         // handle text, from before ids were kept, is resolved through the
         // thing's rename history, so it keeps pointing at the thing it named.
-        let known = self.known();
-        let former = self.former();
+        //
+        // **Read the rows and the rename history only when a value needs
+        // them.** Both rebuild every entity the store holds, and a scan runs
+        // this once per document and once per claim, almost all of them with
+        // no handle in any value.
+        let mut resolution: Option<(Vec<Entity>, Vec<FormerHandle>)> = None;
         for (key, value) in fields.clone() {
             if referenced.iter().any(|(held, _)| held == &key) {
                 continue;
@@ -622,10 +626,12 @@ impl InMemoryMemory {
                 if handles.is_empty() {
                     continue;
                 }
+                let (known, former) =
+                    resolution.get_or_insert_with(|| (self.known(), self.former()));
                 let composed: Vec<String> = handles
                     .iter()
                     .map(|id| {
-                        super::super::resolve_handle(id, &known, &former)
+                        super::super::resolve_handle(id, known, former)
                             .map_or_else(|| id.to_string(), |entity| entity.id.to_string())
                     })
                     .collect();
