@@ -136,8 +136,8 @@ pub(crate) fn private_box(id: &MessageId) -> CallToolResult {
 /// It names the message the caller gave and nothing about it.
 pub(crate) fn box_moved(id: &MessageId) -> CallToolResult {
     let how_to_proceed = WayForward::retry(format!(
-        "Nothing was delivered and nothing moved. The box message '{id}' sits in changed name \
-         while this call ran, so it could not be judged. Send the same call again."
+        "Nothing was delivered and nothing moved. The box that message '{id}' sits in changed \
+         its name while this call ran, so it could not be judged. Send the same call again."
     ));
     let mut body = serde_json::json!({
         "status": "blocked",
