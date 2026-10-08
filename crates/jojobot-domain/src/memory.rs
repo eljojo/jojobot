@@ -2178,9 +2178,9 @@ pub const INSTANCE_RECORD: &str = "topic:instance";
 /// **The keys this build guards.** Its own room's capacity, its own thoughts'
 /// body cap, how long a thought of its own may go untouched, its own boot seats
 /// and the role its boot claims: each binds the thing it is read off, so each
-/// is a different-identity key. The capacity of a thread is the one exception:
-/// it binds the bots that write into the thread, so it is written by a bot above
-/// one of them. And the chart: who a bot reports to is changed only by a
+/// is a different-identity key. The capacity and the ageing of a thread are the
+/// two exceptions: they bind the bots that write into the thread, so each is
+/// written by a bot above one of them. And the chart: who a bot reports to is changed only by a
 /// superior. And who the operator is:
 /// named by any bot while nobody is, changed afterwards only by the head of the
 /// chart.
@@ -2195,7 +2195,7 @@ pub const GUARDED_KEYS: [GuardedKey; 7] = [
     },
     GuardedKey {
         key: THOUGHT_AGES_AFTER_RUNS,
-        may: MayWrite::DifferentIdentity,
+        may: MayWrite::WritersSuperior,
     },
     GuardedKey {
         key: RULE_SEATS,

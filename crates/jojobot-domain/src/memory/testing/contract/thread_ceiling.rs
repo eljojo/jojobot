@@ -13,17 +13,56 @@
 
 use super::support::{capture, ensure};
 use super::*;
-use crate::memory::{Edge, EdgeShape, THOUGHT_CAPACITY};
+use crate::memory::{Edge, EdgeShape, THOUGHT_AGES_AFTER_RUNS, THOUGHT_CAPACITY};
 
 /// **The ceiling of a thread is set above the bots that write into it.**
 pub async fn a_threads_ceiling_is_set_only_above_the_bots_that_write_into_it<M: Memory>(store: &M) {
-    let thread = EntityId("thread:contract-ceiling-line".into());
-    let empty = EntityId("thread:contract-ceiling-unwritten".into());
-    let writer = EntityId("bot:contract-ceiling-writer".into());
-    let boss = EntityId("bot:contract-ceiling-boss".into());
-    let head = EntityId("bot:contract-ceiling-head".into());
-    let outsider = EntityId("bot:contract-ceiling-outsider".into());
-    let rival = EntityId("bot:contract-ceiling-rival".into());
+    the_key_is_set_only_above_the_bots_that_write_into_the_thread(
+        store,
+        THOUGHT_CAPACITY,
+        [
+            "thread:contract-ceiling-line",
+            "thread:contract-ceiling-unwritten",
+            "bot:contract-ceiling-writer",
+            "bot:contract-ceiling-boss",
+            "bot:contract-ceiling-head",
+            "bot:contract-ceiling-outsider",
+            "bot:contract-ceiling-rival",
+        ],
+    )
+    .await;
+}
+
+/// **How long a thought may go untouched on a thread is set the same way**, for
+/// the same reason: the bots that write into the thread are the ones the ageing
+/// threshold is for, and a threshold they could move is none.
+pub async fn a_threads_ageing_is_set_only_above_the_bots_that_write_into_it<M: Memory>(store: &M) {
+    the_key_is_set_only_above_the_bots_that_write_into_the_thread(
+        store,
+        THOUGHT_AGES_AFTER_RUNS,
+        [
+            "thread:contract-ageing-line",
+            "thread:contract-ageing-unwritten",
+            "bot:contract-ageing-writer",
+            "bot:contract-ageing-boss",
+            "bot:contract-ageing-head",
+            "bot:contract-ageing-outsider",
+            "bot:contract-ageing-rival",
+        ],
+    )
+    .await;
+}
+
+/// The one case both keys are held to, on the handles each names: the thread, a
+/// thread nobody writes into, the writer, its manager, the head above that, a
+/// bot on another chart and the head of that chart.
+async fn the_key_is_set_only_above_the_bots_that_write_into_the_thread<M: Memory>(
+    store: &M,
+    ceiling_key: &str,
+    handles: [&str; 7],
+) {
+    let [thread, empty, writer, boss, head, outsider, rival] =
+        handles.map(|handle| EntityId(handle.into()));
     for id in [&thread, &empty, &writer, &boss, &head, &outsider, &rival] {
         ensure(store, id).await;
     }
@@ -40,19 +79,19 @@ pub async fn a_threads_ceiling_is_set_only_above_the_bots_that_write_into_it<M: 
         .await;
     }
     let ceiling = |value: &str| FactPatch {
-        fields: [(THOUGHT_CAPACITY.to_string(), value.to_string())]
+        fields: [(ceiling_key.to_string(), value.to_string())]
             .into_iter()
             .collect(),
         ..Default::default()
     };
     let clear = FactPatch {
-        clear_fields: vec![THOUGHT_CAPACITY.to_string()],
+        clear_fields: vec![ceiling_key.to_string()],
         ..Default::default()
     };
     // The bots a refusal names as the ones that may make the write.
     let refused = |err: MemoryError, what: &str| -> Vec<String> {
         match err {
-            MemoryError::KeyNotYours { key, allowed, .. } if key == THOUGHT_CAPACITY => allowed,
+            MemoryError::KeyNotYours { key, allowed, .. } if key == ceiling_key => allowed,
             other => panic!("{what}: expected KeyNotYours for the ceiling, got {other:?}"),
         }
     };
@@ -61,7 +100,7 @@ pub async fn a_threads_ceiling_is_set_only_above_the_bots_that_write_into_it<M: 
             .fields(&id)
             .await
             .expect("readable")
-            .get(THOUGHT_CAPACITY)
+            .get(ceiling_key)
             .cloned()
     };
     let claim = capture(

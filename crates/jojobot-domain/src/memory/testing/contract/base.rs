@@ -15128,6 +15128,7 @@ macro_rules! all_cases {
         $m!(the_head_of_a_chart_places_itself($store));
         $m!(the_operator_is_named_by_any_bot_and_changed_only_by_the_head_of_the_chart($store));
         $m!(a_threads_ceiling_is_set_only_above_the_bots_that_write_into_it($store));
+        $m!(a_threads_ageing_is_set_only_above_the_bots_that_write_into_it($store));
         $m!(undoing_the_newest_manager_cannot_close_a_loop($store));
         $m!(restating_the_same_manager_is_not_a_change($store));
         $m!(a_thought_carrying_a_guarded_key_cannot_be_dropped_to_make_room($store));

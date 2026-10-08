@@ -123,6 +123,52 @@ async fn a_threads_ceiling_is_raised_by_a_bot_above_its_writers_and_never_by_the
         .await
         .never_says("thought_capacity");
 
+    // ── how long a thought may go untouched on the thread follows the rule ──
+    let ages = |value: &str| {
+        json!({
+            "subject": "thread:milhouse-moves", "content": "how long the move's thoughts last",
+            "fields": {"thought_ages_after_runs": value},
+        })
+    };
+    omega
+        .refused("capture", ages("9"))
+        .await
+        .says("thought_ages_after_runs")
+        .says("bot:beta")
+        .says("\"wrote\":false");
+    sigma
+        .refused("capture", ages("9"))
+        .await
+        .says("bot:beta")
+        .says("\"wrote\":false");
+    let ageing = beta.call("capture", ages("4")).await.field("address");
+    s.call("recall", json!({"subject": "thread:milhouse-moves"}))
+        .await
+        .says("\"thought_ages_after_runs\":\"4\"");
+    let age =
+        |value: &str| json!({"address": ageing, "fields": {"thought_ages_after_runs": value}});
+    omega
+        .refused("update_fact", age("9"))
+        .await
+        .says("bot:beta");
+    sigma
+        .refused("update_fact", age("9"))
+        .await
+        .says("bot:beta");
+    alpha.call("update_fact", age("6")).await;
+    s.call("recall", json!({"subject": "thread:milhouse-moves"}))
+        .await
+        .says("\"thought_ages_after_runs\":\"6\"");
+    let off = json!({"address": ageing, "clear_fields": ["thought_ages_after_runs"]});
+    omega
+        .refused("update_fact", off.clone())
+        .await
+        .says("bot:beta");
+    beta.call("update_fact", off).await;
+    s.call("recall", json!({"subject": "thread:milhouse-moves"}))
+        .await
+        .never_says("thought_ages_after_runs");
+
     // ── a bot's own ceiling stays any different identity's to set ───────────
     omega
         .refused(
@@ -147,6 +193,29 @@ async fn a_threads_ceiling_is_raised_by_a_bot_above_its_writers_and_never_by_the
     s.call("recall", json!({"subject": "bot:omega"}))
         .await
         .says("\"thought_capacity\":\"9\"");
+    omega
+        .refused(
+            "capture",
+            json!({
+                "subject": "bot:omega", "content": "its own ageing",
+                "fields": {"thought_ages_after_runs": "7"},
+            }),
+        )
+        .await
+        .says("bot:omega")
+        .says("\"wrote\":false");
+    sigma
+        .call(
+            "capture",
+            json!({
+                "subject": "bot:omega", "content": "its ageing, set by another",
+                "fields": {"thought_ages_after_runs": "7"},
+            }),
+        )
+        .await;
+    s.call("recall", json!({"subject": "bot:omega"}))
+        .await
+        .says("\"thought_ages_after_runs\":\"7\"");
 
     s.wrap("kept a thread's ceiling above its writers").await;
     story.finish().await;

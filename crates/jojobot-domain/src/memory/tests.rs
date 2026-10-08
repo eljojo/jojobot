@@ -624,12 +624,12 @@ fn a_walk_up_the_chart_stops_at_the_top_a_loop_a_non_handle_and_the_depth_bound(
     assert!(endless.len() > 1);
 }
 
-/// **The four keys a bot cannot write about itself are declarations in the
-/// one table.** Three are different-identity keys. The fourth, a room's
-/// capacity, is the same on a bot and reaches the bots above the writers on a
-/// thread.
+/// **The keys a bot cannot write about itself are declarations in the one
+/// table.** Three are different-identity keys. A room's capacity and how long its
+/// thoughts may go untouched are the same on a bot and reach the bots above the
+/// writers on a thread.
 #[test]
-fn the_four_existing_keys_are_ceilings_a_bot_does_not_write_about_itself() {
+fn the_ceilings_a_bot_does_not_write_about_itself_are_declared_in_the_one_table() {
     for key in [THOUGHT_BODY_CAP, RULE_SEATS, CLAIMS_ROLE] {
         let rule = GUARDED_KEYS
             .iter()
@@ -637,11 +637,14 @@ fn the_four_existing_keys_are_ceilings_a_bot_does_not_write_about_itself() {
             .unwrap_or_else(|| panic!("{key} is declared"));
         assert_eq!(rule.may, MayWrite::DifferentIdentity, "{key}");
     }
-    let capacity = GUARDED_KEYS
-        .iter()
-        .find(|rule| rule.key == THOUGHT_CAPACITY)
-        .expect("the capacity is declared");
-    assert_eq!(capacity.may, MayWrite::WritersSuperior);
+    // The two keys a thread's writers are bound by.
+    for key in [THOUGHT_CAPACITY, THOUGHT_AGES_AFTER_RUNS] {
+        let rule = GUARDED_KEYS
+            .iter()
+            .find(|rule| rule.key == key)
+            .unwrap_or_else(|| panic!("{key} is declared"));
+        assert_eq!(rule.may, MayWrite::WritersSuperior, "{key}");
+    }
     // …and the chart's own key is the one superior-only key beside them.
     let chart = GUARDED_KEYS
         .iter()
@@ -731,16 +734,16 @@ fn the_ageing_setting_reads_a_good_value_and_falls_back_on_a_bad_one() {
     }
 }
 
-/// **The ageing setting is a different-identity key beside the capacity it
-/// is read with.** Pinned by its stored spelling, which nothing outside this
-/// process declares.
+/// **The ageing setting is a key beside the capacity it is read with, and it is
+/// written the way the capacity is.** Pinned by its stored spelling, which
+/// nothing outside this process declares.
 #[test]
-fn the_ageing_setting_is_a_different_identity_key() {
+fn the_ageing_setting_is_written_the_way_the_capacity_is() {
     let rule = GUARDED_KEYS
         .iter()
         .find(|rule| rule.key == "thought_ages_after_runs")
         .expect("thought_ages_after_runs is declared");
-    assert_eq!(rule.may, MayWrite::DifferentIdentity);
+    assert_eq!(rule.may, MayWrite::WritersSuperior);
 }
 
 fn thought(id: &str, pointer: &str) -> Fact {
