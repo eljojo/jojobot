@@ -514,7 +514,7 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
     },
     NegativeControl {
         room: YEAR_ROOM,
-        lock: "Phase 10 — October: September's account of the pump was not corrected in place — either it still stands unrevised, or it was retracted rather than rewritten",
+        lock: "Phase 10 — October: September's account of the pump was not archived with a correction derived from it — either it still stands unrevised, or it was retracted, or it was archived and nothing was put in its place",
         file: "tests/year_room.rs",
         function: "a_year_nobody_worked_in_fails_every_lock",
         strength: Strength::Blanket,

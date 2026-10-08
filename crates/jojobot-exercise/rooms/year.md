@@ -446,6 +446,11 @@ the pump came back instead.
 # on the pump carries that day — February's record is dated February and
 # October's is dated October — so only this sitting can satisfy it.
 #
+# ⚠️ **Only standing claims are asked.** October archives this record when it
+# corrects it, and an archived claim keeps the day it carried, so a read of
+# every status would find the day on a claim nobody reads any more. The day has
+# to be on a claim that stands.
+#
 # 🚨 **A Query lock reads the FINISHED board and cannot window, so its
 # sentence must not speak as though it watched September itself.** October may
 # legitimately correct this record — the operator's ruling makes that a
@@ -456,7 +461,7 @@ the pump came back instead.
 # inherited from Ralph's, and this lock's sentence used to convict September
 # for it. So the sentence below says only what is observably true of the
 # finished room — never who is to blame.
-recall {"subject": "thing:floor-pump", "facts": true}
+recall {"subject": "thing:floor-pump", "facts": true, "status": "active"}
 carries "happened_at":"2026-06-14"
 say     nothing on the pump currently carries the day it came back, so a reader is left with no day to find — whether it was never recorded, or a later, legitimate correction cleared the only trace of it
 
@@ -483,22 +488,23 @@ say     September: nothing on the canoe carries this sitting's own day, so the c
 # happened, it is more information about the same one, so it corrects
 # September's record rather than sitting beside it.
 #
-# What is locked is that the correction lands on September's own address, in
-# place — never a second record filed beside it, and never September's
-# address retracted rather than rewritten. September's account stays
-# reachable through that address's own history, because a correction
-# supersedes and never destroys.
+# What is locked is the route the product gives a session for words an EARLIER
+# session wrote, because a session rewrites testimony in place only when it
+# wrote it: September's address is ARCHIVED, still saying Ralph, and a
+# standing claim about Nelson names that address in `derived_from`. Never a
+# second claim filed beside an unrevised one, never September's address
+# retracted, and never an archive with nothing derived from it. September's
+# account stays reachable at its own address, because a correction supersedes
+# and never destroys.
 #
-# 🚨 **A hatch, and it needs two things a document assertion cannot give
-# together.** A retraction is marked rather than filtered, so `carries
-# person:ralph` cannot see the `status` key beside an edge it found — a
-# retracted account reads identically to an active one to a substring, which
-# is the paid run this lock was originally written against. And nothing on
-# this surface correlates a record's CURRENT content against its own PAST
-# content in one query: telling a correction from a retraction, an untouched
-# claim, or a second claim filed beside the first needs both.
-check   septembers_account_of_the_pump_is_corrected_in_place
-say     October: September's account of the pump was not corrected in place — either it still stands unrevised, or it was retracted rather than rewritten
+# 🚨 **A hatch, and it needs two reads a document assertion cannot give
+# together.** A retraction also reads archived, so `carries person:ralph`
+# cannot tell an archive from a retraction; what tells them apart is the
+# companion record under `retracts`. And the correction is a different record
+# from the one it corrects, so only a caller that reads the address's own
+# history and the pump's other claims can say which claim stands in its place.
+check   septembers_account_of_the_pump_is_superseded_by_a_derived_correction
+say     October: September's account of the pump was not archived with a correction derived from it — either it still stands unrevised, or it was retracted, or it was archived and nothing was put in its place
 
 # 🚨 **A write only a sitting that READ June's claim could have made.** The
 # operator asks where the survey was held and never says. **One record in the

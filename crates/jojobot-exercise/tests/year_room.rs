@@ -238,6 +238,30 @@ async fn did(room: &Surface, sid: &str, verb: &str, mut args: Value) -> String {
     room.call(verb, args).await
 }
 
+/// **Correct a testimony claim an EARLIER sitting wrote, the way the product
+/// asks for it.** A session rewrites testimony in place only if it wrote the
+/// claim, so a later sitting archives the claim, with the reason in `details`,
+/// and captures the corrected claim with `derived_from` naming it. The
+/// original stays readable at its address. One helper, so every play that
+/// corrects an earlier sitting's words does it the same way.
+async fn corrects_an_earlier_claim(
+    room: &Surface,
+    sid: &str,
+    address: &str,
+    reason: &str,
+    mut correction: Value,
+) {
+    did(
+        room,
+        sid,
+        "update_fact",
+        json!({"address": address, "status": "archived", "details": reason}),
+    )
+    .await;
+    correction["derived_from"] = json!(address);
+    did(room, sid, "capture", correction).await;
+}
+
 /// Every lock the year registers, run against the room as it stands and
 /// against the readings the run took as it went.
 ///
@@ -833,23 +857,25 @@ async fn late_november_stands_up_a_second_loop(room: &Surface, sid: &str) {
     .await;
 }
 
-/// **A July that rewrites March's claim in place instead of taking it back.**
+/// **A July that corrects March's claim instead of taking it back.**
 ///
 /// The wrong move under the operator's own rule: March and July are different
 /// sittings, so this is not a sitting correcting its own mistake in the same
 /// breath — it is one sitting editing what an EARLIER one said and calling it
-/// the same claim. A defensible-looking move, since the words end up right
-/// either way, which is exactly why the room needs a lock that can tell the
-/// two apart.
+/// the same claim. The product no longer lets it rewrite the words in place, so
+/// the defensible-looking move left is to archive March's claim and capture a
+/// corrected one derived from it. The words end up right either way, which is
+/// exactly why the room needs a lock that can tell it from a retraction.
 async fn july(room: &Surface, sid: &str) {
     let wrong = address_of(room, "org:north-gorge-club", "Tuesdays").await;
-    did(
+    corrects_an_earlier_claim(
         room,
         sid,
-        "update_fact",
-        json!({"address": wrong,
+        &wrong,
+        "the operator was mistaken in March",
+        json!({"subject": "org:north-gorge-club",
                "content": "The North Gorge Club does not meet on Tuesdays — the operator was mistaken in March; that never stood.",
-               "recorded_at": "2026-07-05", "provenance": "testimony"}),
+               "provenance": "testimony", "recorded_at": "2026-07-05"}),
     )
     .await;
     did(
@@ -1135,19 +1161,25 @@ async fn septembers_pump_address(room: &Surface) -> Option<String> {
 }
 
 /// **Correct September's account when there is one; capture Nelson's fresh
-/// when there is not.** The taught distinction, played: `update_fact` for a
-/// correction, `capture` only when nothing came before it to correct — the
-/// shape a year that skipped September actually meets.
+/// when there is not.** The taught distinction, played: archive the earlier
+/// claim and capture the correction derived from it when something came before
+/// to correct, and a plain `capture` only when nothing did — the shape a year
+/// that skipped September actually meets.
+///
+/// **The correction restates the day the pump came back.** The old claim keeps
+/// its own, but it is archived, and a reader looking for the day among the
+/// standing claims finds it only if the correction says it.
 async fn corrects_or_captures_the_pump(room: &Surface, sid: &str) {
     match septembers_pump_address(room).await {
         Some(ralphs) => {
-            did(
+            corrects_an_earlier_claim(
                 room,
                 sid,
-                "update_fact",
-                json!({"address": ralphs, "content": "brought round over the summer",
-                       "shape": "connection", "object": "person:nelson",
-                       "recorded_at": "2026-10-11", "provenance": "testimony"}),
+                &ralphs,
+                "Nelson brought the pump back, not Ralph",
+                json!({"subject": "thing:floor-pump", "content": "brought round over the summer",
+                       "provenance": "testimony", "happened_at": "2026-06-14",
+                       "shape": "connection", "object": "person:nelson"}),
             )
             .await;
         }
@@ -1177,22 +1209,23 @@ async fn october_corrects_the_pump_and_clears_its_day(room: &Surface, sid: &str)
     let Some(ralphs) = septembers_pump_address(room).await else {
         panic!("september wrote nothing on the pump for october to correct");
     };
-    did(
+    corrects_an_earlier_claim(
         room,
         sid,
-        "update_fact",
-        json!({"address": ralphs, "content": "brought round over the summer",
-               "shape": "connection", "object": "person:nelson",
-               "clear_happened_at": true, "recorded_at": "2026-10-11", "provenance": "testimony"}),
+        &ralphs,
+        "Nelson brought the pump back, not Ralph",
+        json!({"subject": "thing:floor-pump", "content": "brought round over the summer",
+               "provenance": "testimony",
+               "shape": "connection", "object": "person:nelson"}),
     )
     .await;
 }
 
 async fn october_writes_the_pump_and_the_place(room: &Surface, sid: &str) {
-    // **A correction, on September's own address.** The operator's ruling
-    // makes October's account a correction of September's, not a second
-    // thing that happened, so it rewrites the record IN PLACE rather than
-    // filing a fresh claim beside it.
+    // **A correction of September's claim.** The operator's ruling makes
+    // October's account a correction of September's, not a second thing that
+    // happened, so September's claim is archived and the correction is derived
+    // from it, rather than a fresh claim standing beside an unrevised one.
     corrects_or_captures_the_pump(room, sid).await;
     // **The note lands on the place, which this sitting had to find.** The
     // operator says where we held the survey and never says where that was;
@@ -1280,6 +1313,44 @@ async fn october_captures_a_second_account_instead_of_correcting(room: &Surface,
         "capture",
         json!({"subject": "thing:floor-pump", "content": "brought round over the summer",
                "provenance": "testimony",
+               "shape": "connection", "object": "person:nelson"}),
+    )
+    .await;
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "event:gorge-survey",
+               "content": "the ground needs a look before next year",
+               "provenance": "testimony",
+               "shape": "location", "object": "place:north-gorge"}),
+    )
+    .await;
+}
+
+/// **October archives September's account and files Nelson's with nothing
+/// naming its source.** The archive is the product's route, and the correction
+/// is there, but nothing on it points back at the account it replaces, so a
+/// reader cannot follow the correction to what it corrected. The location note
+/// is filed exactly as the honest October files it, so this targets one lock.
+async fn october_archives_the_account_and_names_nothing(room: &Surface, sid: &str) {
+    let Some(ralphs) = septembers_pump_address(room).await else {
+        panic!("september wrote nothing on the pump for october to archive");
+    };
+    did(
+        room,
+        sid,
+        "update_fact",
+        json!({"address": ralphs, "status": "archived",
+               "details": "Nelson brought the pump back, not Ralph"}),
+    )
+    .await;
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "thing:floor-pump", "content": "brought round over the summer",
+               "provenance": "testimony", "happened_at": "2026-06-14",
                "shape": "connection", "object": "person:nelson"}),
     )
     .await;
@@ -1934,22 +2005,25 @@ async fn december(room: &Surface, sid: &str) {
     .await;
 }
 
-/// **A December that rewrites a claim nobody raised — and this is LEGITIMATE.**
+/// **A December that corrects a claim nobody raised — and this is LEGITIMATE.**
 ///
-/// A sitting may notice its own mistake and correct it, on any record it made.
-/// The pairing's lock used to score this as a fault, because it demanded the
-/// record carry one write and no other; that asserted what the model happened
-/// to do rather than anything about jojobot, and a paid run failed on it while
-/// the product did nothing wrong. **The play is kept and its verdict is
-/// flipped**: a run that really made a second write must produce a trace
-/// reporting two.
+/// A sitting may notice a mistake and correct it. The claim was written by an
+/// earlier sitting, so the correction is the product's route: archive it and
+/// capture the corrected claim derived from it. The pairing's lock used to
+/// score this as a fault, because it demanded the record carry one write and
+/// no other; that asserted what the model happened to do rather than anything
+/// about jojobot, and a paid run failed on it while the product did nothing
+/// wrong. **The play is kept and its verdict is flipped**: a run that really
+/// made a second write must produce a trace reporting two.
 async fn december_corrects_a_claim_nobody_questioned(room: &Surface, sid: &str) {
-    did(
+    corrects_an_earlier_claim(
         room,
         sid,
-        "update_fact",
-        json!({"address": "person:bart#f1", "content": "joined the club in the autumn",
-               "recorded_at": "2026-12-13", "provenance": "testimony"}),
+        "person:bart#f1",
+        "Bart joined in the autumn",
+        json!({"subject": "person:bart", "content": "joined the club in the autumn",
+               "provenance": "testimony", "recorded_at": "2026-12-13",
+               "shape": "membership", "object": "org:north-gorge-club"}),
     )
     .await;
 }
@@ -2061,6 +2135,12 @@ const JUNE_POINTS_AT_A_DIFFERENTLY_SPELLED_SURVEY: usize = 25;
 /// pump lock used to require before the operator's ruling overturned it.
 const OCTOBER_CAPTURES_A_SECOND_ACCOUNT_INSTEAD_OF_CORRECTING: usize = 24;
 
+/// **October's seventh guilt, named the same way.** September's account is
+/// archived, as the product asks, and the correction is filed with nothing
+/// naming it as its source: an account removed and none put in its place that
+/// anyone can follow back.
+const OCTOBER_ARCHIVES_THE_ACCOUNT_AND_NAMES_NOTHING: usize = 49;
+
 /// Where late November sits in the year, named for the reason `JUNE_AT` is.
 const LATE_NOVEMBER_AT: usize = 12;
 
@@ -2128,6 +2208,8 @@ async fn work_the_year(
             && guilty.contains(&OCTOBER_CAPTURES_A_SECOND_ACCOUNT_INSTEAD_OF_CORRECTING);
         let october_clears_the_day_variant =
             at == OCTOBER_AT && guilty.contains(&OCTOBER_ALSO_CLEARS_THE_DAY);
+        let october_archives_without_a_source_variant =
+            at == OCTOBER_AT && guilty.contains(&OCTOBER_ARCHIVES_THE_ACCOUNT_AND_NAMES_NOTHING);
         let september_prose_variant =
             at == SEPTEMBER_AT && guilty.contains(&SEPTEMBER_NAMES_RALPH_IN_PROSE);
         let september_nobody_variant =
@@ -2149,6 +2231,7 @@ async fn work_the_year(
             && !october_retracts_and_renames_variant
             && !october_second_account_variant
             && !october_clears_the_day_variant
+            && !october_archives_without_a_source_variant
             && !september_prose_variant
             && !september_nobody_variant
         {
@@ -2188,6 +2271,8 @@ async fn work_the_year(
             october_captures_a_second_account_instead_of_correcting(room, sid).await;
         } else if october_clears_the_day_variant {
             october_corrects_the_pump_and_clears_its_day(room, sid).await;
+        } else if october_archives_without_a_source_variant {
+            october_archives_the_account_and_names_nothing(room, sid).await;
         } else if september_prose_variant {
             september_names_ralph_in_prose(room, sid).await;
         } else if september_nobody_variant {
@@ -3804,6 +3889,43 @@ async fn a_retracted_account_does_not_satisfy_the_pump_lock() {
     );
 }
 
+/// 🚨 **An archive with no correction derived from it does not satisfy the pump
+/// lock.** The product's route for correcting words an earlier session wrote is
+/// to archive the claim AND capture the correction with `derived_from` naming
+/// it. A sitting that does the first half and files Nelson's account with no
+/// source has removed one account and put another beside it that nothing links
+/// to the first.
+#[tokio::test]
+async fn an_archive_with_no_correction_derived_from_it_does_not_satisfy_the_pump_lock() {
+    let (_room, surface) = furnished().await;
+    let boundaries = work_the_year(
+        &surface,
+        &room_document(),
+        &WORKED,
+        &[OCTOBER_ARCHIVES_THE_ACCOUNT_AND_NAMES_NOTHING],
+    )
+    .await;
+    let judged = judge_all(&surface, &boundaries).await;
+    assert!(
+        !judged[OCTOBER[0]].held,
+        "October archived Ralph's account and filed Nelson's with nothing derived from the \
+         archived claim, and the pump lock held anyway: {}",
+        saying(&judged),
+    );
+    assert!(
+        judged[OCTOBER[0]].saying.contains("derived_from"),
+        "the failure text should say the correction names no source: {}",
+        saying(&judged),
+    );
+    // **The positive that says the guilty sitting is otherwise a good one.**
+    assert!(
+        judged[OCTOBER[1]].held,
+        "the guilty October failed the lock it was not meant to, so the case above is measuring \
+         a sitting that did not happen: {}",
+        saying(&judged),
+    );
+}
+
 /// 🚨 **A second claim beside September's does not correct it, and the
 /// operator's ruling is what makes this a failure now.**
 ///
@@ -3852,7 +3974,7 @@ async fn a_second_claim_beside_septembers_does_not_satisfy_the_pump_lock() {
     let judged = judge_all(&surface, &boundaries).await;
     assert!(
         judged[OCTOBER[0]].held,
-        "the year corrected September's account in place and the pump lock still failed: {}",
+        "the year archived September's account and derived the correction from it, and the pump lock still failed: {}",
         saying(&judged),
     );
 }

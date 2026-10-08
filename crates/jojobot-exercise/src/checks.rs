@@ -37,18 +37,18 @@
 //!   `outcome` beside `last_check_in` on the same record, and an assertion
 //!   cannot ask whether two keys landed together on one object out of a
 //!   folded answer.
-//! * **`septembers_account_of_the_pump_is_corrected_in_place`** — say that ONE
-//!   record now reads what October said, with what it said before still
-//!   reachable through that same record's own history. A retraction is
-//!   marked rather than filtered — `recall` serves a retracted record's own
-//!   text back, by design — so `carries person:ralph` cannot see the
-//!   `status` key beside an edge it found, and a retraction reads
-//!   identically to an active claim to a substring. And no query on this
-//!   surface correlates a record's CURRENT content against its own PAST
-//!   content: `facts` answers what it says now, `history_record` answers
-//!   what it said before, and only a caller that reads both can tell a
-//!   correction from a retraction, an untouched claim, or a second claim
-//!   filed beside the first.
+//! * **`septembers_account_of_the_pump_is_superseded_by_a_derived_correction`**
+//!   — say that September's address is archived, still saying Ralph's
+//!   account, and that a standing claim about Nelson names it in
+//!   `derived_from`. A retraction is marked rather than filtered — `recall`
+//!   serves a retracted record's own text back, by design, and reads it
+//!   archived — so `carries person:ralph` cannot see the `status` key beside
+//!   an edge it found, and a retraction reads like an archive to a substring;
+//!   what tells them apart is the record under `retracts`. And no single
+//!   query answers both which claim is archived and which one stands in its
+//!   place: only a caller that reads the address's own history and the pump's
+//!   other claims can tell a correction from a retraction, an untouched
+//!   claim, or a second claim filed beside the first.
 //! * **`junes_survey_drew_a_standing_attendee_for_each`** — say that a
 //!   record's own edge and its own status are the SAME record's, asked in
 //!   June's own window. A retraction is marked rather than filtered, so
@@ -223,8 +223,12 @@ pub const CHECKS: [Hatch; 44] = [
         checked(|seen| Box::pin(julys_claim_is_withdrawn_rather_than_rewritten(seen)))
     }),
     (
-        "septembers_account_of_the_pump_is_corrected_in_place",
-        || checked(|seen| Box::pin(septembers_account_of_the_pump_is_corrected_in_place(seen))),
+        "septembers_account_of_the_pump_is_superseded_by_a_derived_correction",
+        || {
+            checked(|seen| {
+                Box::pin(septembers_account_of_the_pump_is_superseded_by_a_derived_correction(seen))
+            })
+        },
     ),
     ("august_put_nobody_new_at_the_survey", || {
         checked(|seen| Box::pin(august_put_nobody_new_at_the_survey(seen)))
@@ -1040,21 +1044,28 @@ fn floor_pump_addresses(world: &str) -> std::collections::HashSet<String> {
     found
 }
 
-/// 🚨 **October corrects September's account of the pump, IN PLACE.**
+/// 🚨 **October corrects September's account of the pump: the claim is
+/// archived and the correction names it.**
 ///
 /// The operator ruled 2026-09-10: a later statement is a correction whether
 /// or not it is worded as one. September's sentence about who returned the
 /// pump is not sealed against October's — October's account is the same
-/// claim, better informed, so the record after October must be September's
-/// own address, rewritten to say what October said, with what September said
-/// still reachable through that address's own history.
+/// claim, better informed. The product's route for words an EARLIER session
+/// wrote is to archive that claim and capture the corrected claim with
+/// `derived_from` naming it, so what the record must show afterwards is
+/// September's own address archived, still saying Ralph, and a standing claim
+/// about Nelson derived from that address. A session cannot rewrite
+/// September's words in place any more, and a lock that demanded it would
+/// convict every honest October.
 ///
-/// ⛔️ **The two ways of not correcting are worth telling apart, and both
-/// fail here.** A sitting that captures a fresh claim beside September's
-/// leaves September's own address still saying Ralph, unrevised — a
-/// correction that never reached the record. A sitting that retracts
-/// September's address rather than rewriting it picked a winner by deletion
-/// instead of by correction.
+/// ⛔️ **The ways of not correcting are worth telling apart, and all of them
+/// fail here.** A sitting that captures a fresh claim beside September's, with
+/// no archive, leaves September's address standing and unrevised — still
+/// Ralph's. A sitting that RETRACTS September's address picked a winner by
+/// deletion: a retraction also reads archived, and what tells it from an
+/// archive is the companion record under `retracts` that names the address.
+/// A sitting that archives September's address and files nothing derived from
+/// it removed an account and put none in its place.
 ///
 /// ⛔️ **Naming the edge is not enough.** February also draws a `connection`
 /// edge at Ralph — lending the pump, not returning it — and that edge
@@ -1062,26 +1073,19 @@ fn floor_pump_addresses(world: &str) -> std::collections::HashSet<String> {
 /// wrote the address, the same technique February's own neighbour lock uses
 /// for the identical ambiguity.
 ///
-/// ⛔️ **A hatch, and it needs two things a document assertion cannot give
-/// together.** A retraction is marked rather than filtered, so `carries
-/// person:ralph` cannot see the `status` key beside the edge it found, and a
-/// retracted account reads identically to an active one to a substring.
-/// Worse, nothing on this surface correlates a record's CURRENT content
-/// against its own PAST content in one query: `facts` answers what the
-/// record says now, `history_record` answers what it said before, and only a
-/// caller that reads both can tell a correction from a retraction, an
-/// untouched claim, or a second claim filed beside the first.
+/// ⛔️ **A hatch, and it needs two reads a document assertion cannot give
+/// together.** The record's own history says what September's address said
+/// and what it says now; the pump's claims say which standing claim names that
+/// address as its source. Neither read answers alone.
 ///
 /// 🚨 **September's own wording survives EITHER as an edge or as a mention in
 /// content, and this reads both.** A paid run named Ralph by drawing a
 /// `connection` edge at him; a later one drew an `attendance` edge at the
 /// event instead and named Ralph inside the sentence — both are reasonable
 /// accounts of who returned the pump, and a check that recognised only the
-/// first read the second's history as destroyed rather than superseded. The
-/// claim being tested is that the WORDING survives, not that it survives in
-/// one structural place, so this is not a widening: an account that named
-/// nobody at all, by either route, still fails.
-async fn septembers_account_of_the_pump_is_corrected_in_place(
+/// first read the second's history as destroyed rather than superseded. An
+/// account that named nobody at all, by either route, still fails.
+async fn septembers_account_of_the_pump_is_superseded_by_a_derived_correction(
     seen: &Observed<'_>,
 ) -> Result<(), String> {
     let Some((before_sep, after_sep)) = seen.across(SEPTEMBER) else {
@@ -1115,7 +1119,8 @@ async fn septembers_account_of_the_pump_is_corrected_in_place(
         )
         .await;
     let parsed: Value = read_json(&read)?;
-    let Some(current) = parsed["objects"][0]["facts"].as_array().and_then(|facts| {
+    let facts = parsed["objects"][0]["facts"].as_array();
+    let Some(current) = facts.and_then(|facts| {
         facts
             .iter()
             .find(|fact| fact["address"] == address.as_str())
@@ -1125,33 +1130,51 @@ async fn septembers_account_of_the_pump_is_corrected_in_place(
              corrected rather than something else: {read}"
         ));
     };
-    if current["status"] != "active" {
+    // The standing claims that name this address as their source.
+    let derived = facts.is_some_and(|facts| {
+        facts.iter().any(|fact| {
+            fact["status"] == "active"
+                && fact["derived_from"] == address.as_str()
+                && fact["edge"]["object"] == "person:nelson"
+        })
+    });
+    if current["status"] == "active" {
         return Err(format!(
-            "{address} is not active — September's account was retracted rather than corrected \
-             in place, a sitting picked a winner by deletion: {read}"
+            "{address} still stands, so October's statement about the pump either went nowhere \
+             or was filed as a second claim instead of a correction: {read}"
         ));
     }
-    if current["edge"]["object"] != "person:nelson" {
+    if read.contains(&format!("\"retracts\":\"{address}\"")) {
         return Err(format!(
-            "{address} still carries Ralph's account, so October's statement about the pump \
-             either went nowhere or was filed as a second claim instead of a correction: {read}"
+            "{address} was retracted rather than archived with a correction — a sitting picked \
+             a winner by deletion: {read}"
         ));
     }
-    let held_ralph = parsed["objects"][0]["record_history"]["writes"]
-        .as_array()
-        .is_some_and(|writes| {
-            writes.iter().any(|write| {
-                write["edge"]["object"] == "person:ralph"
-                    || write["content"]
-                        .as_str()
-                        .is_some_and(|content| content.contains("person:ralph"))
-            })
-        });
+    if !derived {
+        return Err(format!(
+            "{address} is archived, but no standing claim about Nelson names it in \
+             derived_from, so an account was removed and none put in its place: {read}"
+        ));
+    }
+    let held_ralph = current["edge"]["object"] == "person:ralph"
+        || current["content"]
+            .as_str()
+            .is_some_and(|content| content.contains("person:ralph"))
+        || parsed["objects"][0]["record_history"]["writes"]
+            .as_array()
+            .is_some_and(|writes| {
+                writes.iter().any(|write| {
+                    write["edge"]["object"] == "person:ralph"
+                        || write["content"]
+                            .as_str()
+                            .is_some_and(|content| content.contains("person:ralph"))
+                })
+            });
     match held_ralph {
         true => Ok(()),
         false => Err(format!(
-            "{address}'s own history no longer carries Ralph's account, so the correction \
-             destroyed the earlier wording instead of superseding it: {read}"
+            "{address}'s own words no longer carry Ralph's account, so the correction destroyed \
+             the earlier wording instead of superseding it: {read}"
         )),
     }
 }
@@ -2097,7 +2120,7 @@ fn subject_of(address: &str) -> &str {
 /// under a handle June's own words never used — but only one of them is a
 /// rename, and only one is what October's reason was given for. **A
 /// retraction never appears in a boundary at all** — `search` serves active
-/// records only, [`septembers_account_of_the_pump_is_corrected_in_place`]
+/// records only, [`septembers_account_of_the_pump_is_superseded_by_a_derived_correction`]
 /// says why — so this
 /// finds June's own addresses by the same window-diff that check uses, and
 /// asks a LIVE, status-aware read of each one whether it is still active
@@ -2380,11 +2403,12 @@ fn held_at(world: &str, address: &str) -> Option<String> {
 async fn a_records_trace_matches_the_writes_the_run_made(
     seen: &Observed<'_>,
 ) -> Result<(), String> {
-    let held: Vec<String> = seen
+    let observed: Vec<Option<String>> = seen
         .boundaries
         .iter()
-        .filter_map(|at| held_at(&at.world, UNTOUCHED_RECORD))
+        .map(|at| held_at(&at.world, UNTOUCHED_RECORD))
         .collect();
+    let held: Vec<String> = observed.iter().flatten().cloned().collect();
     // **The positive the lock rests on.** Without it a year where the record
     // was never written reports a trace of one write as correct, because zero
     // observed states and a one-write trace would never be compared at all.
@@ -2394,8 +2418,16 @@ async fn a_records_trace_matches_the_writes_the_run_made(
         ));
     }
     // The record's first appearance is one write; every later change of what it
-    // holds is one more.
-    let made = 1 + held.windows(2).filter(|pair| pair[0] != pair[1]).count();
+    // holds is one more. **So is its leaving the index:** a later sitting
+    // corrects a claim an earlier one wrote by archiving it, which changes its
+    // status and not its words, and an archived claim is not in the index. The
+    // boundary that stops seeing the record is the only trace of that write.
+    let appeared = observed.iter().position(Option::is_some).unwrap_or(0);
+    let left = observed[appeared..]
+        .windows(2)
+        .filter(|pair| pair[0].is_some() && pair[1].is_none())
+        .count();
+    let made = 1 + held.windows(2).filter(|pair| pair[0] != pair[1]).count() + left;
 
     let read = seen
         .room
